@@ -770,15 +770,49 @@ pub async fn update_personnel(
         AvailabilityStatus::try_from(s.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     }
 
-    // Contract date validation
-    let eff_start = input
-        .contract_start_date
+    // Optional texts: `null` or an empty text clears the field (`PersonnelUpdateInput`).
+    let text = |v: &Option<Option<String>>| -> Option<Option<String>> {
+        v.as_ref().map(|inner| {
+            inner
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+        })
+    };
+    let hire_date = text(&input.hire_date);
+    let termination_date = text(&input.termination_date);
+    let email = text(&input.email);
+    let phone = text(&input.phone);
+    let contract_number = text(&input.contract_number);
+    let contract_start_date = text(&input.contract_start_date);
+    let contract_end_date = text(&input.contract_end_date);
+    let notes = text(&input.notes);
+
+    // An external person keeps a contractor company: it cannot be cleared.
+    let eff_origin = input
+        .employment_origin
         .as_deref()
-        .or(current.contract_start_date.as_deref());
-    let eff_end = input
-        .contract_end_date
-        .as_deref()
-        .or(current.contract_end_date.as_deref());
+        .unwrap_or(current.employment_origin.as_str());
+    let eff_company = match input.external_company_id {
+        Some(v) => v,
+        None => current.external_company_id,
+    };
+    if eff_origin == "external" && eff_company.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "external_company_id est requis pour un collaborateur externe.".into(),
+        ]));
+    }
+
+    // Contract date validation (on the values after the update, cleared ones included)
+    let eff_start = match &contract_start_date {
+        Some(v) => v.as_deref(),
+        None => current.contract_start_date.as_deref(),
+    };
+    let eff_end = match &contract_end_date {
+        Some(v) => v.as_deref(),
+        None => current.contract_end_date.as_deref(),
+    };
     if let (Some(start), Some(end)) = (eff_start, eff_end) {
         if start > end {
             return Err(AppError::ValidationFailed(vec![
@@ -788,7 +822,7 @@ pub async fn update_personnel(
     }
 
     // Supervisor cycle check
-    if let Some(sup_id) = input.supervisor_id {
+    if let Some(Some(sup_id)) = input.supervisor_id {
         assert_no_supervisor_cycle(db, input.id, sup_id).await?;
     }
 
@@ -801,7 +835,10 @@ pub async fn update_personnel(
     let new_position_id = input.position_id.or(current.position_id);
     let new_entity_id = input.primary_entity_id.or(current.primary_entity_id);
     let new_team_id = input.primary_team_id.or(current.primary_team_id);
-    let new_supervisor_id = input.supervisor_id.or(current.supervisor_id);
+    let new_supervisor_id = match input.supervisor_id {
+        Some(v) => v,
+        None => current.supervisor_id,
+    };
     let new_schedule_id = input
         .home_schedule_reference_value_id
         .or(current.home_schedule_reference_value_id);
@@ -813,7 +850,7 @@ pub async fn update_personnel(
         || input
             .primary_team_id
             .is_some_and(|v| Some(v) != current.primary_team_id)
-        || input.supervisor_id.is_some_and(|v| Some(v) != current.supervisor_id)
+        || input.supervisor_id.is_some_and(|v| v != current.supervisor_id)
         || input
             .home_schedule_reference_value_id
             .is_some_and(|v| Some(v) != current.home_schedule_reference_value_id);
@@ -865,41 +902,25 @@ pub async fn update_personnel(
         sets.push("availability_status = ?".into());
         values.push(s.clone().into());
     }
-    if let Some(ref h) = input.hire_date {
-        sets.push("hire_date = ?".into());
-        values.push(h.clone().into());
-    }
-    if let Some(ref t) = input.termination_date {
-        sets.push("termination_date = ?".into());
-        values.push(t.clone().into());
-    }
-    if let Some(ref e) = input.email {
-        sets.push("email = ?".into());
-        values.push(e.clone().into());
-    }
-    if let Some(ref p) = input.phone {
-        sets.push("phone = ?".into());
-        values.push(p.clone().into());
+    // Optional fields: present = set to the value, or cleared (NULL) when `null` / empty.
+    for (column, value) in [
+        ("hire_date", hire_date),
+        ("termination_date", termination_date),
+        ("email", email),
+        ("phone", phone),
+        ("contract_number", contract_number),
+        ("contract_start_date", contract_start_date),
+        ("contract_end_date", contract_end_date),
+        ("notes", notes),
+    ] {
+        if let Some(v) = value {
+            sets.push(format!("{column} = ?"));
+            values.push(v.into());
+        }
     }
     if let Some(v) = input.external_company_id {
         sets.push("external_company_id = ?".into());
         values.push(v.into());
-    }
-    if let Some(ref c) = input.contract_number {
-        sets.push("contract_number = ?".into());
-        values.push(c.clone().into());
-    }
-    if let Some(ref c) = input.contract_start_date {
-        sets.push("contract_start_date = ?".into());
-        values.push(c.clone().into());
-    }
-    if let Some(ref c) = input.contract_end_date {
-        sets.push("contract_end_date = ?".into());
-        values.push(c.clone().into());
-    }
-    if let Some(ref n) = input.notes {
-        sets.push("notes = ?".into());
-        values.push(n.clone().into());
     }
     // employee_code handled separately below
 

@@ -27,3 +27,5 @@ mod migration_tests;
 mod reference_lists_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod update_clear_tests;
