@@ -577,6 +577,7 @@
       "title": "Create availability block",
       "editTitle": "Edit availability block",
       "personnel": "Personnel",
+      "personnelPlaceholder": "Choose the person",
       "blockType": "Block type",
       "startAt": "Start",
       "endAt": "End",

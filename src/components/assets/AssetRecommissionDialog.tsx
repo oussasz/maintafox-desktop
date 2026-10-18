@@ -31,9 +31,6 @@ import { recordLifecycleEvent } from "@/services/asset-lifecycle-service";
 import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 import type { Asset } from "@shared/ipc-types";
 
-/** Status proposed first when the plant's list has it (the in-service status). */
-const DEFAULT_STATUS = "ACTIVE_IN_SERVICE";
-
 interface AssetRecommissionDialogProps {
   open: boolean;
   asset: Asset;
@@ -66,22 +63,23 @@ export function AssetRecommissionDialog({
     return key ? String(t(key)) : (statuses.find((s) => s.code === code)?.label ?? code);
   };
 
+  // Each opening starts blank: the person chooses the status, nothing is proposed for them.
   useEffect(() => {
     if (!open) return;
     setReason("");
     setSubmitted(false);
     setError(null);
-    setStatus(
-      statuses.some((s) => s.code === DEFAULT_STATUS) ? DEFAULT_STATUS : (statuses[0]?.code ?? ""),
-    );
-  }, [open, statuses]);
+    setStatus("");
+  }, [open]);
 
   const reasonMissing = reason.trim() === "";
+  // A choice only counts while the plant's list still offers it (the list can be republished).
+  const statusChosen = statuses.some((s) => s.code === status);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setSubmitted(true);
-    if (reasonMissing || !status) return;
+    if (reasonMissing || !statusChosen) return;
     setBusy(true);
     setError(null);
     try {
@@ -117,14 +115,18 @@ export function AssetRecommissionDialog({
             name="recommission-status"
             label={t("recommission.status")}
             required
-            error={submitted && !status ? t("recommission.noStatus") : undefined}
+            error={
+              submitted && statuses.length > 0 && !statusChosen
+                ? t("recommission.statusRequired")
+                : undefined
+            }
           >
             {statuses.length === 0 ? (
               <p className="text-sm text-text-muted">{t("recommission.noStatus")}</p>
             ) : (
-              <Select value={status} onValueChange={setStatus}>
+              <Select value={statusChosen ? status : ""} onValueChange={setStatus}>
                 <SelectTrigger id="recommission-status" className="h-10">
-                  <SelectValue />
+                  <SelectValue placeholder={t("recommission.statusPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
                   {statuses.map((s) => (

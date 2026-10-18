@@ -577,6 +577,7 @@
       "title": "Créer un bloc de disponibilité",
       "editTitle": "Modifier le bloc de disponibilité",
       "personnel": "Personnel",
+      "personnelPlaceholder": "Choisir la personne",
       "blockType": "Type de bloc",
       "startAt": "Début",
       "endAt": "Fin",

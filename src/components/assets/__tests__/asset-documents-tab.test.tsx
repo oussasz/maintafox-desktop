@@ -1,8 +1,9 @@
 /**
  * Asset documents tab: document categories come from the plant's list (Données de référence),
- * named by exact code; a category under review, or missing from the list, is marked.
+ * named by exact code; a category under review, or missing from the list, is marked. A new
+ * document's category is chosen by the person: none is proposed.
  */
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -82,5 +83,28 @@ describe("AssetDocumentsTab", () => {
     // "SOPS" is not the code "sops": shown as stored, marked for review.
     expect(within(row("Ancien")).getByText(/SOPS/)).toBeInTheDocument();
     expect(within(row("Ancien")).getByText("listValue.review")).toBeInTheDocument();
+  });
+
+  it("proposes no category for a new document and says it is missing", async () => {
+    render(<AssetDocumentsTab asset={{ id: 3, asset_code: "P-101" } as Asset} />);
+    await screen.findByText("Graissage");
+    fireEvent.click(screen.getByRole("button", { name: "documents.upload" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const category = within(dialog).getByRole("combobox");
+    await waitFor(() => expect(category).toBeEnabled());
+    expect(category).toHaveTextContent("documents.categoryPlaceholder");
+
+    fireEvent.change(within(dialog).getByLabelText(/documents\.docTitle/), {
+      target: { value: "Notice" },
+    });
+    expect(within(dialog).getByText("documents.categoryRequired")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "documents.upload" })).toBeDisabled();
+
+    fireEvent.keyDown(category, { key: "Enter" });
+    // A category under review is not offered for new documents.
+    expect(screen.queryByRole("option", { name: "Plans" })).toBeNull();
+    fireEvent.click(await screen.findByRole("option", { name: "Modes opératoires" }));
+    expect(within(dialog).queryByText("documents.categoryRequired")).toBeNull();
   });
 });

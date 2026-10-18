@@ -130,6 +130,43 @@ describe("SiteRulesPanel", () => {
     expect(screen.getByRole("dialog", { name: "siteRules.confirmTitle" })).toBeInTheDocument();
   });
 
+  it("after a refusal, reads the site again so a retry carries the current version", async () => {
+    const changedElsewhere = {
+      ...SITES[0],
+      value: false,
+      updated_by_name: "Nadia",
+      updated_at: "2026-10-18T09:00:00Z",
+      row_version: 4,
+    };
+    svc.listSiteSettings.mockResolvedValueOnce(SITES).mockResolvedValue([changedElsewhere]);
+    svc.setSiteSetting.mockRejectedValueOnce({
+      code: "VALIDATION_FAILED",
+      message: "SITE_SETTING_STALE",
+    });
+    render(<SiteRulesPanel onToast={() => undefined} />);
+    fireEvent.change(await screen.findByLabelText("siteRules.site"), { target: { value: "7" } });
+    fireEvent.click(await screen.findByRole("switch"));
+    const ask = await screen.findByRole("dialog", { name: "siteRules.confirmTitle" });
+    fireEvent.change(within(ask).getByRole("textbox"), {
+      target: { value: "One reliability engineer on this site" },
+    });
+    fireEvent.click(within(ask).getByRole("button", { name: "siteRules.confirm" }));
+
+    await waitFor(() => expect(svc.listSiteSettings).toHaveBeenCalledTimes(2));
+    expect(svc.listSiteSettingEvents).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("dialog", { name: "siteRules.confirmTitle" })).toBeInTheDocument();
+
+    const retry = within(screen.getByRole("dialog", { name: "siteRules.confirmTitle" }));
+    await waitFor(() =>
+      expect(retry.getByRole("button", { name: "siteRules.confirm" })).toBeEnabled(),
+    );
+    fireEvent.click(retry.getByRole("button", { name: "siteRules.confirm" }));
+    await waitFor(() => expect(svc.setSiteSetting).toHaveBeenCalledTimes(2));
+    expect(svc.setSiteSetting).toHaveBeenLastCalledWith(
+      expect.objectContaining({ site_node_id: 7, value: true, expected_row_version: 4 }),
+    );
+  });
+
   it("says when the stored rule cannot be read (the default applies)", async () => {
     svc.listSiteSettings.mockResolvedValueOnce([{ ...SITES[0], value_unreadable: true }]);
     render(<SiteRulesPanel onToast={() => undefined} />);

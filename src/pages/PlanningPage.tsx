@@ -82,7 +82,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { appErrorText } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
-import { useReadableLists } from "@/lib/list-access";
+import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
 import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
 import { cancelScheduleCommitment, releaseScheduleCommitment } from "@/services/planning-service";
 import { listUsers } from "@/services/rbac-service";
@@ -119,6 +119,7 @@ export function PlanningPage() {
   // Crews and people come from the personnel module and approvers from user administration: each
   // list is read only when the user may read it, so a missing right never costs the whole page.
   const readable = useReadableLists(["teams", "people", "users"] as const);
+  const rightsLoading = usePermissionsLoading();
   const { toast } = useToast();
   const { formatDateTime } = useFormatters();
   /** Confirms a planning action that went through (failures already have their toast). */
@@ -271,10 +272,19 @@ export function PlanningPage() {
   }, [backlog, loading, searchParams, setSearchParams, can]);
 
   useEffect(() => {
+    // While the rights load (page opening, after an unlock, after a role change) nothing is
+    // decided: the saved crew is neither replaced on screen nor overwritten in storage.
+    if (rightsLoading) return;
+    if (!readable.teams) {
+      // The crews cannot be read: show all crews, but keep the saved choice for when they can.
+      setTeams([]);
+      setBoardScope({ kind: "all" });
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
-        const crewRows = readable.teams ? await listActiveTeams({}) : [];
+        const crewRows = await listActiveTeams({});
         if (cancelled) return;
         const crewOptions = crewRows.map((row) => ({
           id: row.id,
@@ -288,7 +298,7 @@ export function PlanningPage() {
         if (stored.kind === "crew" && crewIds.has(stored.teamId)) {
           setBoardScope(stored);
         } else {
-          // Invalid stored crew (or All) → plant-wide All Crews.
+          // The crews were read and the saved one is not among them (or All) → All crews.
           setBoardScope({ kind: "all" });
           writeStoredBoardScope(userId, { kind: "all" });
         }
@@ -299,7 +309,7 @@ export function PlanningPage() {
     return () => {
       cancelled = true;
     };
-  }, [readable.teams]);
+  }, [rightsLoading, readable.teams]);
 
   useEffect(() => {
     if (!readable.people) {

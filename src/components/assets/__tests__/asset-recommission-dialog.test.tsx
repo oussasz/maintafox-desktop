@@ -63,6 +63,11 @@ function open(onRecommissioned = vi.fn()) {
   return onRecommissioned;
 }
 
+async function chooseStatus(label: string) {
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("option", { name: label }));
+}
+
 describe("AssetRecommissionDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -77,8 +82,20 @@ describe("AssetRecommissionDialog", () => {
     expect(svc.recordLifecycleEvent).not.toHaveBeenCalled();
   });
 
+  it("proposes no status: the person must choose one before anything is recorded", async () => {
+    open();
+    expect(screen.getByRole("combobox")).toHaveTextContent("recommission.statusPlaceholder");
+    fireEvent.change(screen.getByLabelText(/recommission\.reason/), {
+      target: { value: "Overhauled" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "recommission.confirm" }));
+    expect(await screen.findByText("recommission.statusRequired")).toBeInTheDocument();
+    expect(svc.recordLifecycleEvent).not.toHaveBeenCalled();
+  });
+
   it("records the return to service with the chosen status and the reason", async () => {
     const done = open();
+    await chooseStatus("status.inStock");
     fireEvent.change(screen.getByLabelText(/recommission\.reason/), {
       target: { value: "Overhauled, back on line 2" },
     });
@@ -87,7 +104,7 @@ describe("AssetRecommissionDialog", () => {
       expect(svc.recordLifecycleEvent).toHaveBeenCalledWith({
         asset_id: 5,
         event_type: "RECOMMISSIONED",
-        to_status_code: "ACTIVE_IN_SERVICE",
+        to_status_code: "IN_STOCK",
         notes: "Overhauled, back on line 2",
         expected_row_version: 3,
       }),
@@ -98,7 +115,8 @@ describe("AssetRecommissionDialog", () => {
   it("never offers a retired status as the status after recommission", () => {
     open();
     fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
-    expect(screen.queryByRole("option", { name: /DECOMMISSIONED|SCRAPPED/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /decommissioned|scrapped/i })).toBeNull();
+    expect(screen.getByRole("option", { name: "status.inStock" })).toBeInTheDocument();
   });
 
   it("shows the server's refusal in words and stays open", async () => {
@@ -108,6 +126,7 @@ describe("AssetRecommissionDialog", () => {
       details: [{ message: "ASSET_STALE_VERSION" }],
     });
     const done = open();
+    await chooseStatus("status.operational");
     fireEvent.change(screen.getByLabelText(/recommission\.reason/), {
       target: { value: "Back" },
     });

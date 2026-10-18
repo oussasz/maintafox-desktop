@@ -165,20 +165,25 @@ export function AssetEditForm() {
     }
   }, []);
 
+  // The lists are re-read when the rights or the language change; the form itself is reset only
+  // when it opens or shows another asset (below), so typed edits survive a rights reload.
   useEffect(() => {
-    if (!open || !asset) return;
-    setSubmitError(null);
+    if (!open) return;
     setOrgTreeError(null);
+    // Without the organisation view right the list is not requested; the field says why.
+    if (!canReadOrg) return;
+    void listOrgTree()
+      .then(setOrgNodes)
+      .catch((err) => {
+        console.error("[AssetEditForm] listOrgTree failed", err);
+        setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} ${appErrorReason(err)}`);
+      });
+  }, [open, t, canReadOrg]);
+
+  useEffect(() => {
+    if (!open) return;
     setReferenceCatalogError(null);
     setCatalogReady(false);
-    // Without the organisation view right the list is not requested; the field says why.
-    if (canReadOrg)
-      void listOrgTree()
-        .then(setOrgNodes)
-        .catch((err) => {
-          console.error("[AssetEditForm] listOrgTree failed", err);
-          setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} ${appErrorReason(err)}`);
-        });
     void getEquipmentTaxonomyCatalog()
       .then(() => setCatalogReady(true))
       .catch((err) => {
@@ -188,6 +193,11 @@ export function AssetEditForm() {
         );
         setCatalogReady(false);
       });
+  }, [open, t]);
+
+  useEffect(() => {
+    if (!open || !asset) return;
+    setSubmitError(null);
     void loadPhotos(asset.id);
 
     reset({
@@ -207,7 +217,7 @@ export function AssetEditForm() {
       rams_schedule_reference_value_id: asset.rams_schedule_reference_value_id ?? null,
       rams_utilization_factor: asset.rams_utilization_factor ?? 1.0,
     });
-  }, [open, asset, reset, t, loadPhotos, canReadOrg]);
+  }, [open, asset, reset, loadPhotos]);
 
   const orgOptions: EquipmentSearchOption[] = useMemo(
     () =>

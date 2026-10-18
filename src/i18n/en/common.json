@@ -265,6 +265,7 @@
       "retry": "Try again",
       "technicalDetails": "Technical details",
       "truncated": "Showing {{shown}} of {{total}}.",
+      "choose": "Choose…",
       "loadMore": "Load more"
     },
     "view": {

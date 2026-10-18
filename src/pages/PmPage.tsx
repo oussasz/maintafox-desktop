@@ -49,6 +49,7 @@ import {
   filterDueOccurrences,
   filterPlans,
 } from "@/components/pm/pm-model";
+import { usePmCalendarLoad } from "@/components/pm/use-pm-calendar-load";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
@@ -65,7 +66,7 @@ import { useFormatters } from "@/hooks/use-formatters";
 import { LIST_PARAM, dueWindowParam, withoutParams } from "@/lib/list-links";
 import { type PmOccurrenceRow, getPmOccurrence } from "@/services/pm-service";
 import { pushAppToast } from "@/store/app-toast-store";
-import { type PmCalendarRange, usePmStore } from "@/stores/pm-store";
+import { usePmStore } from "@/stores/pm-store";
 import type { PmPlanVersion } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -122,19 +123,13 @@ export function PmPage() {
   const detailError = usePmStore((s) => s.detailError);
   const loadWorkspace = usePmStore((s) => s.loadWorkspace);
   const loadCalendarOccurrences = usePmStore((s) => s.loadCalendarOccurrences);
-  // The calendar reads only the dates it shows; a failed read is shown on the calendar.
-  const [calendarError, setCalendarError] = useState<unknown>(null);
-  const [calendarLoading, setCalendarLoading] = useState(false);
-  const loadCalendarRange = useCallback(
-    (range?: PmCalendarRange) => {
-      setCalendarError(null);
-      setCalendarLoading(true);
-      loadCalendarOccurrences(range)
-        .catch((err: unknown) => setCalendarError(err))
-        .finally(() => setCalendarLoading(false));
-    },
-    [loadCalendarOccurrences],
-  );
+  // The calendar reads only the dates it shows; a failed read is shown on the calendar. Only the
+  // latest read sets the error and loading state (an older month's late answer is ignored).
+  const {
+    error: calendarError,
+    loading: calendarLoading,
+    loadRange: loadCalendarRange,
+  } = usePmCalendarLoad(loadCalendarOccurrences);
   const openPlan = usePmStore((s) => s.openPlan);
   const closePlan = usePmStore((s) => s.closePlan);
   const createPlan = usePmStore((s) => s.createPlan);
