@@ -51,7 +51,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| Every "open work order" count uses one of the two shared rules and its figure shows the rule name, with a list link using the same rule. The SMRP backlog figure is being aligned. | Data | Step 5 |
+| Every "open work order" count uses one of the two shared rules and its figure shows the rule name, with a list link using the same rule (SMRP backlog included). | Data | Accepted |
 | Devices on the previous version must upgrade together with this one: they would still send the old urgency and type references, and an edit from an old PC turns a part line marked optional back to required (the safe direction). | Data | Release |
 | The 4 h estimated duration once used for DI planning candidates was removed; DIs are "not estimated" until converted and estimated. | UX | Accepted |
 | Planned labour per technician on a work order does not exist (labour lines hold actuals only), so planning counts only the named assignee per commitment ("+N crew members not named"). Naming every crew member is proposed for later. | Data | Owner decision |
