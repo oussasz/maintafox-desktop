@@ -175,6 +175,23 @@ pub async fn list_work_order_types_to_review(
     types::list_types_without_nature(&state.db).await
 }
 
+/// Give a plant's own OT type without a nature its maintenance nature (reference-data manage
+/// right, reason, audited).
+#[tauri::command]
+pub async fn set_work_order_type_nature(
+    input: types::SetWorkOrderTypeNatureInput,
+    state: State<'_, AppState>,
+) -> AppResult<types::WorkOrderTypeOption> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
+    types::set_work_order_type_nature(&state.db, input, i64::from(user.user_id)).await
+}
+
 /// The shift windows a work order can be planned on: its assigned team's — or `team_id`'s, the
 /// team being assigned — Classes horaires at `planned_start` (local `YYYY-MM-DDTHH:MM` as typed,
 /// or a stored instant; default: its planned start). Empty, with the reason, when there is no

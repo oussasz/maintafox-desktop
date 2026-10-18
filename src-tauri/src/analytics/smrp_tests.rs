@@ -547,6 +547,118 @@ async fn work_mix_counts_work_orders_whose_type_has_no_nature() {
         1,
         "nature and label not rewritten"
     );
+
+    // Giving it a nature: the right, a reason and a known nature are required; a system type is
+    // refused; once set, it is recorded and the type leaves the review list and joins the mix.
+    use crate::wo::types::{nature_codes as nc, set_work_order_type_nature, SetWorkOrderTypeNatureInput};
+    let code_of = |e: crate::errors::AppError| match e {
+        crate::errors::AppError::OrgValidationFailed(i) => i.first().map(|x| x.code.clone()).unwrap_or_default(),
+        other => format!("{other:?}"),
+    };
+    let own = id_of(&db, "SELECT id FROM reference_values WHERE code = 'PLANT_OWN'").await;
+    let input = |nature: &str, reason: &str| SetWorkOrderTypeNatureInput {
+        type_id: own,
+        nature: nature.into(),
+        reason: reason.into(),
+    };
+    exec(
+        &db,
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+         force_password_change, created_at, updated_at) VALUES ('nt-user', 'clerk', 'Clerk', 'local', 1, 0, 0, \
+         datetime('now'), datetime('now'))",
+    )
+    .await;
+    let clerk = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'clerk'").await;
+    let admin = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let why = "Plant type is planned maintenance";
+    assert_eq!(
+        code_of(
+            set_work_order_type_nature(&db, input("preventive_predetermined", why), clerk)
+                .await
+                .unwrap_err()
+        ),
+        nc::RIGHT_REQUIRED
+    );
+    assert_eq!(
+        code_of(
+            set_work_order_type_nature(&db, input("preventive_predetermined", "short"), admin)
+                .await
+                .unwrap_err()
+        ),
+        nc::REASON_REQUIRED
+    );
+    assert_eq!(
+        code_of(
+            set_work_order_type_nature(&db, input("planned", why), admin)
+                .await
+                .unwrap_err()
+        ),
+        nc::UNKNOWN_NATURE
+    );
+    let corrective = id_of(
+        &db,
+        "SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+         JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'corrective'",
+    )
+    .await;
+    assert_eq!(
+        code_of(
+            set_work_order_type_nature(
+                &db,
+                SetWorkOrderTypeNatureInput {
+                    type_id: corrective,
+                    nature: "improvement".into(),
+                    reason: why.into(),
+                },
+                admin,
+            )
+            .await
+            .unwrap_err()
+        ),
+        nc::SYSTEM_TYPE
+    );
+    let set = set_work_order_type_nature(&db, input("preventive_predetermined", why), admin)
+        .await
+        .expect("set");
+    assert_eq!(set.nature.as_deref(), Some("preventive_predetermined"));
+    assert_eq!(
+        code_of(
+            set_work_order_type_nature(&db, input("improvement", why), admin)
+                .await
+                .unwrap_err()
+        ),
+        nc::ALREADY_SET,
+        "set once, never overwritten"
+    );
+    assert!(crate::wo::types::list_types_without_nature(&db)
+        .await
+        .expect("review")
+        .is_empty());
+    assert_eq!(
+        id_of(
+            &db,
+            "SELECT COUNT(*) FROM reference_values WHERE code = 'PLANT_OWN' \
+             AND json_extract(metadata_json, '$.nature_review_required') IS NULL \
+             AND json_extract(metadata_json, '$.origin') = 'migrated'"
+        )
+        .await,
+        1,
+        "review flag cleared, the rest kept"
+    );
+    assert_eq!(
+        id_of(
+            &db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' \
+             AND json_extract(details_json, '$.reason') = 'Plant type is planned maintenance' \
+             AND json_extract(details_json, '$.new_nature') = 'preventive_predetermined'"
+        )
+        .await,
+        1,
+        "audited with who, why and old -> new"
+    );
+    let m = smrp::work_mix(&db, SmrpWindow::last_days(now, 30), None).await.unwrap();
+    assert_eq!(m.without_nature, 0);
+    assert_eq!(m.planned.current.numerator, 1.0, "N2 is now planned work");
 }
 
 // ── Backlog ────────────────────────────────────────────────────────────────────────────────

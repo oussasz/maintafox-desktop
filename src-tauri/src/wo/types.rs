@@ -498,6 +498,148 @@ pub async fn flag_types_without_nature(conn: &impl ConnectionTrait) -> AppResult
     Ok(result.rows_affected())
 }
 
+/// Stable codes of the nature-setting refusals.
+pub mod nature_codes {
+    pub const RIGHT_REQUIRED: &str = "WO_TYPE_NATURE_RIGHT_REQUIRED";
+    pub const REASON_REQUIRED: &str = "WO_TYPE_NATURE_REASON_REQUIRED";
+    pub const UNKNOWN_NATURE: &str = "WO_TYPE_NATURE_UNKNOWN";
+    pub const TYPE_NOT_FOUND: &str = "WO_TYPE_NATURE_TYPE_NOT_FOUND";
+    pub const SYSTEM_TYPE: &str = "WO_TYPE_NATURE_SYSTEM_TYPE";
+    pub const ALREADY_SET: &str = "WO_TYPE_NATURE_ALREADY_SET";
+}
+
+/// Shortest reason accepted to give a type its nature (the audit trail's "why").
+pub const MIN_NATURE_REASON_CHARS: usize = 10;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetWorkOrderTypeNatureInput {
+    /// `reference_values.id` of the OT type.
+    pub type_id: i64,
+    /// One of the maintenance natures (`MaintenanceNature` code).
+    pub nature: String,
+    pub reason: String,
+}
+
+/// Give a plant's own OT type (carried over without a nature, flagged "to review") its maintenance
+/// nature, once. The person holds the reference-data manage right (or is an administrator),
+/// checked here; a reason of 10 characters or more is required. The nature is written only while
+/// the type still has none (a second person setting it at the same moment is refused, never
+/// overwritten), the review flag is cleared, and an audit event records who, when, why and
+/// old → new, all in one transaction. Shipped types keep the nature Maintafox gives them.
+pub async fn set_work_order_type_nature(
+    db: &sea_orm::DatabaseConnection,
+    input: SetWorkOrderTypeNatureInput,
+    actor_id: i64,
+) -> AppResult<WorkOrderTypeOption> {
+    use sea_orm::TransactionTrait;
+    let params = |pairs: &[(&str, String)]| crate::errors::issue_params(pairs);
+    let reason = input.reason.trim().to_string();
+    if reason.chars().count() < MIN_NATURE_REASON_CHARS {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::REASON_REQUIRED,
+            format!("Give a reason of at least {MIN_NATURE_REASON_CHARS} characters."),
+            params(&[("min", MIN_NATURE_REASON_CHARS.to_string())]),
+        ));
+    }
+    let Some(nature) = MaintenanceNature::parse(input.nature.trim()) else {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::UNKNOWN_NATURE,
+            format!("'{}' is not a maintenance nature.", input.nature.trim()),
+            params(&[("nature", input.nature.trim().to_string())]),
+        ));
+    };
+    let txn = db.begin().await?;
+    if !crate::settings::site::holds_tenant_right(&txn, actor_id, crate::rbac::permissions::REF_MANAGE).await? {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::RIGHT_REQUIRED,
+            "Giving a work-order type its nature needs the reference-data manage right.".to_string(),
+            std::collections::HashMap::new(),
+        ));
+    }
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT t.code, t.semantic_tag, t.metadata_json FROM reference_values t \
+               JOIN reference_sets rs ON rs.id = t.set_id \
+               JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE t.id = ? AND UPPER(TRIM(d.code)) = 'WORK.ORDER_TYPES'",
+            [input.type_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            crate::errors::org_validation_failed(
+                nature_codes::TYPE_NOT_FOUND,
+                "This work-order type does not exist.".to_string(),
+                params(&[("typeId", input.type_id.to_string())]),
+            )
+        })?;
+    let code: String = row.try_get("", "code").map_err(decode)?;
+    let old_tag: Option<String> = row.try_get("", "semantic_tag").map_err(decode)?;
+    let meta: Option<String> = row.try_get("", "metadata_json").map_err(decode)?;
+    if meta_str(meta.as_deref(), "origin").as_deref() == Some("system") {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::SYSTEM_TYPE,
+            format!("'{code}' is a Maintafox type: its nature is fixed."),
+            params(&[("code", code)]),
+        ));
+    }
+    if old_tag.as_deref().and_then(MaintenanceNature::parse).is_some() {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::ALREADY_SET,
+            format!("'{code}' already has a nature."),
+            params(&[("code", code)]),
+        ));
+    }
+    // Only while it still has none: a concurrent change is refused, never overwritten.
+    let updated = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE reference_values AS t \
+                    SET semantic_tag = ?, \
+                        metadata_json = json_remove(CASE WHEN json_valid(t.metadata_json) THEN t.metadata_json \
+                                                         ELSE '{{}}' END, '$.nature_review_required') \
+                  WHERE t.id = ? AND {}",
+                without_nature_sql()
+            ),
+            [nature.as_str().into(), input.type_id.into()],
+        ))
+        .await?;
+    if updated.rows_affected() != 1 {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::ALREADY_SET,
+            format!("'{code}' already has a nature."),
+            params(&[("code", code)]),
+        ));
+    }
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: "wo_type.nature.set".to_string(),
+            target_type: Some("work_order_type".to_string()),
+            target_id: Some(input.type_id.to_string()),
+            actor_id: Some(actor_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "code": code,
+                "old_nature": old_tag,
+                "new_nature": nature.as_str(),
+                "reason": reason,
+            })),
+        },
+    )
+    .await?;
+    let out = type_by(&txn, "t.id = ?", input.type_id.into())
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("type {} missing after update", input.type_id)))?;
+    txn.commit().await?;
+    Ok(out)
+}
+
 /// Every OT type (active and inactive), in the product order.
 pub async fn list_work_order_types(conn: &impl ConnectionTrait) -> AppResult<Vec<WorkOrderTypeOption>> {
     let rows = conn
