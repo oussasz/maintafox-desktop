@@ -2219,6 +2219,8 @@ export interface RecordLifecycleEventPayload {
   reason_code?: string | null;
   notes?: string | null;
   approved_by_id?: number | null;
+  /** Row version the person saw (required by a recommission; refused when the asset changed). */
+  expected_row_version?: number | null;
 }
 
 export interface AssetMeter {

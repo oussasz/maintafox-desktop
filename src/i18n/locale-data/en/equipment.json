@@ -1,4 +1,16 @@
 {
+  "recommission": {
+    "action": "Recommission",
+    "title": "Return the asset to service?",
+    "description": "{{code}} takes the chosen status and its end-of-life date is cleared. The return is recorded in the asset's history with its reason.",
+    "status": "Status after recommission",
+    "noStatus": "No status other than a retired one is published in Reference data.",
+    "reason": "Reason",
+    "reasonRequired": "Say why the asset returns to service.",
+    "cancel": "Cancel",
+    "confirm": "Recommission",
+    "done": "{{code}} is back in service ({{status}})."
+  },
   "page": {
     "title": "Equipment",
     "titleDetail": "Equipment detail",

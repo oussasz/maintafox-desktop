@@ -1,4 +1,16 @@
 {
+  "recommission": {
+    "action": "Remettre en service",
+    "title": "Remettre l'équipement en service ?",
+    "description": "{{code}} reprend le statut choisi et sa date de fin de vie est effacée. Le retour est enregistré dans l'historique de l'équipement avec son motif.",
+    "status": "Statut après la remise en service",
+    "noStatus": "Aucun statut hors « retiré » n'est publié dans les données de référence.",
+    "reason": "Motif",
+    "reasonRequired": "Indiquez pourquoi l'équipement revient en service.",
+    "cancel": "Annuler",
+    "confirm": "Remettre en service",
+    "done": "{{code}} est de nouveau en service ({{status}})."
+  },
   "page": {
     "title": "Équipements",
     "titleDetail": "Détail de l'équipement",
