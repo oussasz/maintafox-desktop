@@ -1711,3 +1711,88 @@ async fn to_reorder_counts_articles_like_the_article_list() {
         "analytics overview count"
     );
 }
+
+/// "Low stock only" on the stock balances is the shared low-stock rule (`evaluate_reorder`, per
+/// article and store), not a per-location comparison: two bins of one store that are each under the
+/// reorder point but together above it are not low; an article short only of its minimum stock is.
+#[tokio::test]
+async fn low_stock_only_follows_the_shared_rule() {
+    let db = setup_db().await;
+    let main = main_location_id(&db).await;
+    let warehouse: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT warehouse_id FROM stock_locations WHERE id = ?",
+            [main.into()],
+        ))
+        .await
+        .expect("q")
+        .expect("row")
+        .try_get("", "warehouse_id")
+        .expect("warehouse");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO stock_locations (warehouse_id, code, name, is_active) VALUES (?, 'LS-BIN2', 'Bin 2', 1)",
+        [warehouse.into()],
+    ))
+    .await
+    .expect("second bin");
+    let bin2: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM stock_locations WHERE code = 'LS-BIN2'".to_string(),
+        ))
+        .await
+        .expect("q")
+        .expect("row")
+        .try_get("", "id")
+        .expect("bin2");
+
+    // Reorder point 5: 3 + 3 in the store = 6, above it (the old per-bin rule listed both bins).
+    let split = create_test_article(&db, "LS-SPLIT").await;
+    // Reorder point 0, minimum stock 1, nothing in stock: short of its minimum.
+    let min_only = create_test_article(&db, "LS-MIN").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE articles SET reorder_point = 0 WHERE id = ?",
+        [min_only.into()],
+    ))
+    .await
+    .expect("no reorder point");
+    for loc in [main, bin2] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO stock_balances (article_id, warehouse_id, location_id, on_hand_qty, reserved_qty, available_qty) \
+             VALUES (?, ?, ?, 3, 0, 3)",
+            [split.into(), warehouse.into(), loc.into()],
+        ))
+        .await
+        .expect("balance");
+    }
+
+    let low = queries::list_stock_balances(
+        &db,
+        InventoryStockFilter {
+            article_id: None,
+            warehouse_id: Some(warehouse),
+            low_stock_only: Some(true),
+        },
+    )
+    .await
+    .expect("low stock");
+    assert!(low.iter().all(|b| b.article_id != split), "6 in the store is above 5");
+    assert!(
+        low.iter().any(|b| b.article_id == min_only),
+        "short of its minimum stock"
+    );
+    let shared: std::collections::HashSet<(i64, i64)> = queries::evaluate_reorder(&db, Some(warehouse))
+        .await
+        .expect("reorder")
+        .into_iter()
+        .map(|r| (r.article_id, r.warehouse_id))
+        .collect();
+    assert!(
+        low.iter().all(|b| shared.contains(&(b.article_id, b.warehouse_id))),
+        "every listed row is low by the shared rule"
+    );
+}
