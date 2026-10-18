@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { PartNecessityChoice, PartOptionalChip } from "@/components/common/PartNecessityChoice";
 import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import { Button } from "@/components/ui/button";
@@ -105,6 +106,8 @@ interface PartDraft {
   quantity_planned: string;
   unit_cost: string;
   reservation_id: number | null;
+  /** Required or optional; null until the planner answers (no preselected answer). */
+  is_required: boolean | null;
   persisted: boolean;
 }
 
@@ -173,6 +176,7 @@ function toPartDraft(part: WoExecPart): PartDraft {
     quantity_planned: String(part.quantity_planned),
     unit_cost: part.unit_cost != null ? String(part.unit_cost) : "",
     reservation_id: part.reservation_id ?? null,
+    is_required: part.is_required,
     persisted: true,
   };
 }
@@ -875,6 +879,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           quantity_planned: "",
           unit_cost: "",
           reservation_id: null,
+          is_required: null,
           persisted: false,
         },
       ]);
@@ -907,6 +912,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           setError(t("planning.error.addPart"));
           return;
         }
+        if (row.is_required === null) {
+          setError(t("common:partNecessity.choose"));
+          return;
+        }
 
         setBusy(true);
         setError(null);
@@ -920,6 +929,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             stock_location_id: row.stock_location_id,
             auto_reserve: true,
             notes: null,
+            is_required: row.is_required,
           });
 
           setParts((prev) =>
@@ -1556,6 +1566,22 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       >
                         {t("planning.removePart")}
                       </Button>
+                    )}
+                  </div>
+                  <div className="space-y-1 md:col-span-6">
+                    {part.persisted ? (
+                      part.is_required === false ? (
+                        <PartOptionalChip />
+                      ) : null
+                    ) : (
+                      <PartNecessityChoice
+                        value={part.is_required}
+                        onChange={(required) =>
+                          updatePartRow(part.localId, { is_required: required })
+                        }
+                        disabled={tasksPartsDisabled}
+                        partLabel={part.article_query || t("planning.partReference")}
+                      />
                     )}
                   </div>
                 </div>

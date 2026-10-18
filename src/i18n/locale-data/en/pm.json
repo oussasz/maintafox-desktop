@@ -381,6 +381,7 @@
     "noSkills": "No skill in the catalogue."
   },
   "hints": {
+    "partNecessityMissing": "Say for each part whether it is required or optional: {{codes}}.",
     "publishBlockedByLifecycle": "To publish, set plan status to approved, active, or suspended.",
     "publishDraftOnly": "Publish is available only for draft versions.",
     "editVersionDraftOnly": "Edit is available only for draft versions.",

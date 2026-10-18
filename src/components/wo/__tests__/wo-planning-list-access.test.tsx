@@ -28,7 +28,7 @@ const personnel = vi.hoisted(() => ({
   listTeamMembers: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/services/personnel-service", () => personnel);
-vi.mock("@/services/wo-execution-service", () => ({
+const exec = vi.hoisted(() => ({
   addPart: vi.fn(),
   addTask: vi.fn(),
   addWoTool: vi.fn(),
@@ -36,6 +36,7 @@ vi.mock("@/services/wo-execution-service", () => ({
   listTasks: vi.fn().mockResolvedValue([]),
   listWoTools: vi.fn().mockResolvedValue([]),
 }));
+vi.mock("@/services/wo-execution-service", () => exec);
 const woSvc = vi.hoisted(() => ({
   PERMIT_REQUIREMENT_EDITABLE_STATUSES: new Set<string>(),
   SHUTDOWN_FLAG_EDITABLE_STATUSES: new Set<string>(["draft", "planning", "ready"]),
@@ -165,5 +166,47 @@ describe("WoPlanningPanel — needs shutdown", () => {
     const box = await screen.findByRole("checkbox", { name: "shutdownRequirement.label" });
     expect(box).toBeDisabled();
     expect(screen.getByText("shutdownRequirement.frozen")).toBeInTheDocument();
+  });
+});
+
+describe("WoPlanningPanel — required / optional part lines", () => {
+  it("marks optional lines and asks the question on a new line, unanswered", async () => {
+    inv.checkWoPartStockAvailability.mockResolvedValue({
+      is_fully_available: true,
+      shortages: [],
+    });
+    exec.listParts.mockResolvedValueOnce([
+      {
+        id: 31,
+        work_order_id: 12,
+        article_id: 4,
+        article_ref: "JOINT-2",
+        quantity_planned: 1,
+        quantity_used: null,
+        unit_cost: null,
+        stock_location_id: 1,
+        reservation_id: null,
+        quantity_reserved: 0,
+        quantity_issued: 0,
+        notes: null,
+        is_required: false,
+      },
+    ]);
+    render(
+      <MemoryRouter>
+        <PermissionContext.Provider value={permissionsWithout()}>
+          <WoPlanningPanel wo={WO} canEdit />
+        </PermissionContext.Provider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("partNecessity.optional")).toBeInTheDocument();
+    // A saved line cannot be re-answered here: no choice on it.
+    expect(screen.queryByRole("radiogroup", { name: "partNecessity.legendFor" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "planning.addRow" }));
+    const group = await screen.findByRole("radiogroup", { name: "partNecessity.legendFor" });
+    expect(group.querySelectorAll("input:checked")).toHaveLength(0);
+    expect(screen.getByText("partNecessity.choose")).toBeInTheDocument();
+    inv.checkWoPartStockAvailability.mockResolvedValue([]);
   });
 });

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { PmVersionFormDialog } from "@/components/pm/PmVersionFormDialog";
@@ -75,10 +75,24 @@ describe("PmVersionFormDialog", () => {
     const qty = screen.getByLabelText("Quantity of FLT-10");
     fireEvent.change(qty, { target: { value: "2" } });
     fireEvent.click(await screen.findByRole("checkbox", { name: "Mécanicien" }));
+
+    // (common keys are echoed by this test translator.) No answer is preselected: saving is refused until the line says required or optional.
+    const group = screen.getByRole("radiogroup", { name: "partNecessity.legendFor" });
+    expect(within(group).getByRole("radio", { name: "partNecessity.required" })).not.toBeChecked();
+    expect(within(group).getByRole("radio", { name: "partNecessity.optional" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Say for each part whether it is required or optional: FLT-10.",
+    );
+    expect(onCreate).not.toHaveBeenCalled();
+
+    fireEvent.click(within(group).getByRole("radio", { name: "partNecessity.optional" }));
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(onCreate).toHaveBeenCalled());
     const payload = onCreate.mock.calls[0]?.[1] as Record<string, unknown>;
-    expect(payload["required_parts_json"]).toBe('[{"article_code":"FLT-10","quantity":2}]');
+    expect(payload["required_parts_json"]).toBe(
+      '[{"article_code":"FLT-10","quantity":2,"required":false}]',
+    );
     expect(payload["required_skills_json"]).toBe('["MECA"]');
     expect(JSON.parse(String(payload["trigger_definition_json"]))).toEqual({
       interval_unit: "day",

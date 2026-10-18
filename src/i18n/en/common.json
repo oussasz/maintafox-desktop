@@ -1,4 +1,13 @@
 {
+  "partNecessity": {
+    "legend": "Part required or optional",
+    "legendFor": "{{part}}: required or optional",
+    "required": "Required",
+    "optional": "Optional",
+    "choose": "Say whether the part is required or optional.",
+    "requiredHint": "When short, it blocks committing the work.",
+    "optionalHint": "When short, it only warns: the work can be committed without it."
+  },
   "listValue": {
     "review": "To review",
     "reviewHint": "Legacy value, or a value missing from the plant's list: check it in Reference data."

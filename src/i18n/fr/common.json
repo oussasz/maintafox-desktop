@@ -1,4 +1,13 @@
 {
+  "partNecessity": {
+    "legend": "Pièce obligatoire ou optionnelle",
+    "legendFor": "{{part}} : obligatoire ou optionnelle",
+    "required": "Obligatoire",
+    "optional": "Optionnelle",
+    "choose": "Indiquez si la pièce est obligatoire ou optionnelle.",
+    "requiredHint": "En rupture, elle bloque l'engagement du travail.",
+    "optionalHint": "En rupture, elle avertit seulement : le travail peut être engagé sans elle."
+  },
   "listValue": {
     "review": "À revoir",
     "reviewHint": "Ancienne valeur, ou valeur absente de la liste de l'usine : à vérifier dans Données de référence."

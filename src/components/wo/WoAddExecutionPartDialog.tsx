@@ -11,6 +11,7 @@ import { Loader2, PackagePlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PartNecessityChoice } from "@/components/common/PartNecessityChoice";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -75,6 +76,8 @@ export function WoAddExecutionPartDialog({
   const [locationId, setLocationId] = useState("");
   const [label, setLabel] = useState("");
   const [qty, setQty] = useState("1");
+  /** Required or optional: no preselected answer. */
+  const [isRequired, setIsRequired] = useState<boolean | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -87,6 +90,7 @@ export function WoAddExecutionPartDialog({
     setLocationId("");
     setLabel("");
     setQty("1");
+    setIsRequired(null);
     setFormError(null);
     let cancelled = false;
     if (!canReadArticles) return;
@@ -187,6 +191,11 @@ export function WoAddExecutionPartDialog({
       return;
     }
 
+    if (isRequired === null) {
+      setFormError(t("common:partNecessity.choose"));
+      return;
+    }
+
     setPending(true);
     setFormError(null);
     try {
@@ -197,6 +206,7 @@ export function WoAddExecutionPartDialog({
           stock_location_id: selectedBalance.location_id,
           quantity_planned: quantity,
           auto_reserve: true,
+          is_required: isRequired,
         });
       } else {
         await addPart({
@@ -204,6 +214,7 @@ export function WoAddExecutionPartDialog({
           article_ref: label.trim(),
           quantity_planned: quantity,
           auto_reserve: false,
+          is_required: isRequired,
         });
       }
       onOpenChange(false);
@@ -366,6 +377,8 @@ export function WoAddExecutionPartDialog({
               onChange={(e) => setQty(e.target.value)}
             />
           </div>
+
+          <PartNecessityChoice value={isRequired} onChange={setIsRequired} />
 
           {formError ? (
             <p role="alert" className="text-sm text-tone-danger-fg">

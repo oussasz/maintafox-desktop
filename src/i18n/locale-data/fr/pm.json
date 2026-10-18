@@ -381,6 +381,7 @@
     "noSkills": "Aucune compétence au catalogue."
   },
   "hints": {
+    "partNecessityMissing": "Indiquez pour chaque pièce si elle est obligatoire ou optionnelle : {{codes}}.",
     "publishBlockedByLifecycle": "Pour publier, passez le plan en approuvé, actif ou suspendu.",
     "publishDraftOnly": "La publication est réservée aux versions brouillon.",
     "editVersionDraftOnly": "La modification est réservée aux versions brouillon.",

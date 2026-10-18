@@ -48,6 +48,8 @@ export interface AddPartInput {
   stock_location_id?: number | null;
   auto_reserve?: boolean | null;
   notes?: string | null;
+  /** Required for the job or optional: always stated, the backend has no default. */
+  is_required: boolean;
 }
 
 export interface AddTaskInput {

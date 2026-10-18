@@ -5643,6 +5643,8 @@ export interface WoExecPart {
   not_used_comment?: string | null;
   /** Enriched label for the not-used reason (JOIN from reference_values) */
   not_used_reason_label?: string | null;
+  /** Required for the job (short: blocks the plan) or optional (short: only warns). */
+  is_required: boolean;
 }
 
 // ── Plan vs Actual adherence ──────────────────────────────────────────────────
