@@ -108,11 +108,19 @@ macro_rules! criticality_code_sql {
 /// the legacy link read with the system correspondence). NULL when neither gives one.
 pub const CRITICALITY_CODE_SQL: &str = criticality_code_sql!();
 
-/// SQL predicate (alias `e`, no bind): the equipment has no `EQUIPMENT.CRITICALITY` reference value
-/// but a legacy criticality link — its criticality is read through that link (or not at all, for a
-/// legacy code with no correspondence) and should be set by a planner.
-pub const CRITICALITY_TO_REVIEW_SQL: &str =
-    "(e.equipment_criticality_ref_id IS NULL AND e.criticality_value_id IS NOT NULL)";
+/// SQL predicate (alias `e`, no bind; usable in `concat!`): the equipment has no
+/// `EQUIPMENT.CRITICALITY` reference value but a legacy criticality link — its criticality is read
+/// through that link (or not at all, for a legacy code with no correspondence) and should be set
+/// by a planner.
+macro_rules! criticality_to_review_sql {
+    () => {
+        "(e.equipment_criticality_ref_id IS NULL AND e.criticality_value_id IS NOT NULL)"
+    };
+}
+pub(crate) use criticality_to_review_sql;
+
+/// SQL predicate (alias `e`, no bind): see `criticality_to_review_sql!`.
+pub const CRITICALITY_TO_REVIEW_SQL: &str = criticality_to_review_sql!();
 
 /// SQL predicate (alias `e`, no bind): the equipment is at the most critical level of the published
 /// `EQUIPMENT.CRITICALITY` list (lowest `sort_order`), read from its reference value or, failing
