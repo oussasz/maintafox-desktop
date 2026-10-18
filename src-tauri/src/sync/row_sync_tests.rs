@@ -478,10 +478,23 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
     }
 
     // History rows are never deleted (append-only; sync refuses such deletes, see
-    // `append_only_rows_are_never_deleted_by_sync`); media attachments are the exception.
+    // `append_only_rows_are_never_deleted_by_sync`); media attachments are the exception. Permits
+    // past draft with its isolations and suspensions, permit types and qualification requirements
+    // are not deleted either (`permit::sync_check::inbound_delete_check`; the generic rows carry no
+    // real permit status).
     let created: Vec<_> = created
         .into_iter()
         .filter(|row| !SINGLETON_TYPES.contains(&row.entity_type))
+        .filter(|row| {
+            ![
+                "work_permits",
+                "permit_isolations",
+                "permit_suspensions",
+                "permit_types",
+                "qualification_requirements",
+            ]
+            .contains(&row.entity_type)
+        })
         .filter(|row| {
             row.entity_type == "media_attachments"
                 || registry::entity(row.entity_type).is_none_or(|d| d.conflict_policy != ConflictPolicy::AppendOnly)

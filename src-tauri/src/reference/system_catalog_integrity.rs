@@ -46,6 +46,9 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     crate::pm::reason_catalog::ensure_pm_reason_catalogs(db).await?;
     // Which work needs a permit at request conversion (COMPANY list, shipped empty).
     crate::permit::requirement_rules::ensure_permit_requirement_rules(db).await?;
+    // Permit hand-over roles (COMPANY list, shipped empty); free texts received by sync from a PC
+    // that has not run migration 235 are adopted with their exact text, flagged "à revoir".
+    crate::permit::handover_roles::adopt_stored_roles(db).await?;
     // Personnel lists: employment statuses (SYSTEM), employment types, absence types (with their
     // behaviour tag) and position categories (COMPANY); document categories (COMPANY).
     crate::personnel::reference_lists::ensure_personnel_reference_lists(db).await?;

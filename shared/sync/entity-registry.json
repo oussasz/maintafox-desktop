@@ -1187,7 +1187,8 @@
       "conflict_policy": "append_only",
       "apply_priority": 13,
       "parents": [
-        "work_permits"
+        "work_permits",
+        "user_accounts"
       ],
       "sync_status": "synced"
     },

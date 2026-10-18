@@ -23,6 +23,16 @@
 //! - `weekly_schedules`: a received week that would go backwards in its lifecycle here (frozen
 //!   back to draft, a later baseline back to an earlier one) is refused as a conflict
 //!   (`planning::weekly_schedule::inbound_lifecycle_conflict`, `before_upsert_checked`);
+//! - `work_permits` / `permit_isolations` / `work_orders`: the permit and LOTO rules (activation,
+//!   close, hand-back, suspension, two-person verification, the work-order start gate) are checked
+//!   again on the received state; a failed rule is a conflict, a permit type or status not applied
+//!   yet makes the row wait (`permit::sync_check`);
+//!   A work order whose permit flag set by a plant rule is cleared names who cleared it (holding the
+//!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`);
+//! - `permit_handover_logs`: a hand-over received by the person who signed it is refused as a
+//!   conflict (`permit::sync_check::inbound_handover_check`); one without a signer is accepted;
+//! - `qualification_overrides`: reason, subject, context, no self-override and the approver's
+//!   certification right (`qualification::sync_check`);
 //! - `media_attachments`: the file is queued for download from object storage
 //!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download.
 
@@ -82,13 +92,29 @@ pub(crate) async fn before_upsert_checked(
                 },
             }));
     }
-    if layout.def.entity_type == "site_settings" || layout.def.entity_type == "site_setting_events" {
-        use crate::settings::site::{inbound_site_setting_check, inbound_site_setting_event_check, InboundVerdict};
-        let verdict = if layout.def.entity_type == "site_settings" {
-            inbound_site_setting_check(conn, payload).await?
-        } else {
-            inbound_site_setting_event_check(payload).await?
-        };
+    let safety_check = match layout.def.entity_type {
+        "site_settings" => Some(crate::settings::site::inbound_site_setting_check(conn, payload).await?),
+        "site_setting_events" => Some(crate::settings::site::inbound_site_setting_event_check(payload).await?),
+        "work_permits" => Some(crate::permit::sync_check::inbound_permit_check(conn, entity_sync_id, payload).await?),
+        "permit_isolations" => {
+            Some(crate::permit::sync_check::inbound_isolation_check(conn, entity_sync_id, payload).await?)
+        }
+        "permit_handover_logs" => {
+            Some(crate::permit::sync_check::inbound_handover_check(conn, entity_sync_id, payload).await?)
+        }
+        "work_orders" => Some(
+            match crate::permit::sync_check::inbound_permit_rule_check(conn, entity_sync_id, payload).await? {
+                Some(verdict) => Some(verdict),
+                None => crate::permit::sync_check::inbound_work_order_check(conn, entity_sync_id, payload).await?,
+            },
+        ),
+        "qualification_overrides" => {
+            Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)
+        }
+        _ => None,
+    };
+    if let Some(verdict) = safety_check {
+        use crate::settings::site::InboundVerdict;
         return Ok(verdict.map(|v| match v {
             InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
                 code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
@@ -132,6 +158,58 @@ pub(crate) async fn before_upsert_checked(
         })),
         Err(other) => Err(other),
     }
+}
+
+/// Rows waiting in the inbox that a received permit or work-order start was judged on
+/// (`permit::sync_check`): applied right after it, in its transaction (`after_upsert_group`).
+pub(crate) async fn upsert_group(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<crate::permit::sync_check::Group>> {
+    match layout.def.entity_type {
+        "work_permits" => crate::permit::sync_check::permit_group(conn, entity_sync_id, payload).await,
+        "work_orders" => crate::permit::sync_check::work_order_group(conn, entity_sync_id, payload).await,
+        _ => Ok(None),
+    }
+}
+
+/// Applies a group (`upsert_group`) after its row was written; `Some` (a conflict) makes the caller
+/// roll the whole transaction back: nothing of the group is kept.
+pub(crate) async fn after_upsert_group(
+    conn: &impl ConnectionTrait,
+    group: crate::permit::sync_check::Group,
+) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
+    crate::permit::sync_check::apply_group(conn, group).await
+}
+
+/// Checks of an inbound delete before it is applied; `Some` stops it with that outcome. A permit
+/// past draft with its isolations and suspensions, a permit type and a qualification requirement
+/// are never deleted on this device: such a delete received by sync is a conflict
+/// (`permit::sync_check::inbound_delete_check`).
+pub(crate) async fn before_delete_checked(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
+    use crate::sync::materialize::ApplyOutcome;
+    let verdict = match layout.def.entity_type {
+        "work_permits" | "permit_isolations" | "permit_suspensions" | "permit_types" | "qualification_requirements" => {
+            crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?
+        }
+        _ => None,
+    };
+    Ok(verdict.map(|v| match v {
+        crate::settings::site::InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
+            code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+            message,
+        },
+        crate::settings::site::InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
+            code: code.into(),
+            message,
+        },
+    }))
 }
 
 fn hook_err(table: &str, e: impl std::fmt::Display) -> AppError {
