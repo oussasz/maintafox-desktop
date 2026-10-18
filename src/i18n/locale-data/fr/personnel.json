@@ -556,6 +556,12 @@
         "status": "Statut",
         "noReasons": "Aucune raison de contrainte active."
       },
+      "reason": {
+        "employment_terminated": "Contrat terminé.",
+        "blocked_override": "Bloqué manuellement.",
+        "open_work_orders_one": "Sur {{count}} ordre de travail ouvert (responsable ou main-d'œuvre prévue).",
+        "open_work_orders_other": "Sur {{count}} ordres de travail ouverts (responsable ou main-d'œuvre prévue)."
+      },
       "horizon": {
         "title": "Bandeau jours",
         "hint": "Cliquez un jour pour préremplir un nouveau bloc."

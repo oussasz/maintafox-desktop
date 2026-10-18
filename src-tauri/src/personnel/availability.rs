@@ -474,12 +474,20 @@ pub async fn end_availability_block(db: &DatabaseConnection, id: i64) -> AppResu
 // Computed availability state (point-in-time)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Reason codes of [`compute_personnel_availability_state`]; the screen shows them in the user's
+/// language (`personnel` namespace, `availability.inspector.reason.<code>`). A block reason is the
+/// block's absence type code instead.
+pub const REASON_EMPLOYMENT_TERMINATED: &str = "employment_terminated";
+pub const REASON_BLOCKED_OVERRIDE: &str = "blocked_override";
+/// The person is on open work orders; their number is `open_work_order_count`.
+pub const REASON_OPEN_WORK_ORDERS: &str = "open_work_orders";
+
 /// Compute the current availability state for a single personnel.
 ///
 /// Priority:
 /// 1. `blocked_override = 1` → blocked
 /// 2. Active `personnel_availability_blocks` (leave / training / medical) → on_leave / in_training / blocked
-/// 3. Open WO assignments as primary_responsible → assigned
+/// 3. Open WOs the person is on (responsible or booked labour, `queries::PERSON_ON_WO`) → assigned
 /// 4. Otherwise → available
 pub async fn compute_personnel_availability_state(
     db: &DatabaseConnection,
@@ -510,7 +518,8 @@ pub async fn compute_personnel_availability_state(
             personnel_id,
             status: "inactive".to_string(),
             blocked_override: false,
-            reasons: vec!["Employment terminated.".to_string()],
+            reasons: vec![REASON_EMPLOYMENT_TERMINATED.to_string()],
+            open_work_order_count: None,
             as_of,
         });
     }
@@ -520,7 +529,8 @@ pub async fn compute_personnel_availability_state(
             personnel_id,
             status: "blocked".to_string(),
             blocked_override: true,
-            reasons: vec!["Blocked by manual override.".to_string()],
+            reasons: vec![REASON_BLOCKED_OVERRIDE.to_string()],
+            open_work_order_count: None,
             as_of,
         });
     }
@@ -564,24 +574,26 @@ pub async fn compute_personnel_availability_state(
             status: status.to_string(),
             blocked_override: false,
             reasons: block_types,
+            open_work_order_count: None,
             as_of,
         });
     }
 
-    // Open work assigned to the person: "Open (work to do)" OTs (`wo::backlog::OPEN_STATUS_SQL`)
-    // whose primary responsible is the person's login. A failed read is an error, never "free".
+    // Open work the person is on: "Open (work to do)" OTs (`wo::backlog::OPEN_STATUS_SQL`) where
+    // the person is responsible or booked as labour — the same rule as their workload
+    // (`queries::PERSON_ON_WO`). A failed read is an error, never "free".
     let wo_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
                 "SELECT COUNT(*) AS n FROM work_orders wo
                  JOIN work_order_statuses s ON s.id = wo.status_id
-                 JOIN user_accounts ua ON ua.id = wo.primary_responsible_id
-                 WHERE ua.personnel_id = ?
-                   AND s.code IN {}",
-                crate::wo::backlog::OPEN_STATUS_SQL
+                 WHERE {person_on_wo}
+                   AND s.code IN {open}",
+                person_on_wo = super::queries::PERSON_ON_WO,
+                open = crate::wo::backlog::OPEN_STATUS_SQL
             ),
-            [personnel_id.into()],
+            [personnel_id.into(), personnel_id.into(), personnel_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("open work order count returned no row")))?;
@@ -593,7 +605,8 @@ pub async fn compute_personnel_availability_state(
             personnel_id,
             status: "assigned".to_string(),
             blocked_override: false,
-            reasons: vec![format!("{count} ordre(s) de travail actif(s).")],
+            reasons: vec![REASON_OPEN_WORK_ORDERS.to_string()],
+            open_work_order_count: Some(count),
             as_of,
         });
     }
@@ -603,6 +616,7 @@ pub async fn compute_personnel_availability_state(
         status: "available".to_string(),
         blocked_override: false,
         reasons: vec![],
+        open_work_order_count: Some(0),
         as_of,
     })
 }
