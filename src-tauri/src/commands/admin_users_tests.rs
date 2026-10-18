@@ -623,6 +623,7 @@ async fn usernames_are_unique_regardless_of_case_and_spaces() {
         username: name.into(),
         identity_mode: "local".into(),
         role_id: readonly,
+        scope_node_id: None,
         personnel_id: None,
         initial_password: Some("ValidPass1".into()),
         force_password_change: None,
@@ -1798,4 +1799,89 @@ async fn a_sign_in_whose_session_row_fails_leaves_no_session_in_memory() {
         .await
         .expect("stored");
     assert!(manager.current.is_some());
+}
+
+#[tokio::test]
+async fn a_user_created_on_a_site_gets_only_that_site_and_administrators_stay_plant_wide() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let readonly = role_id(&db, "Readonly").await;
+    let administrator = role_id(&db, "Administrator").await;
+    let site: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM org_nodes WHERE deleted_at IS NULL ORDER BY id LIMIT 1".to_string(),
+        ))
+        .await
+        .expect("query")
+        .expect("a node")
+        .try_get("", "id")
+        .expect("id");
+    let input = |name: &str, role: i64, node: Option<i64>| CreateUserInput {
+        username: name.into(),
+        identity_mode: "local".into(),
+        role_id: role,
+        scope_node_id: node,
+        personnel_id: None,
+        initial_password: Some("ValidPass1".into()),
+        force_password_change: None,
+    };
+
+    // On a site: one assignment on that node, no plant-wide one added.
+    let created = create_user_impl(&state, &caller, input("site.tech", readonly, Some(site)))
+        .await
+        .expect("site user");
+    let scopes = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT scope_type, scope_reference FROM user_scope_assignments WHERE user_id = ? AND deleted_at IS NULL",
+            [created.id.into()],
+        ))
+        .await
+        .expect("assignments")
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String>("", "scope_type").expect("type"),
+                r.try_get::<Option<String>>("", "scope_reference").expect("reference"),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(scopes, vec![("org_node".to_string(), Some(site.to_string()))]);
+
+    // A deleted or unknown node is refused; an administrator role on a site is refused.
+    assert!(
+        create_user_impl(&state, &caller, input("ghost.tech", readonly, Some(999_999)))
+            .await
+            .is_err()
+    );
+    let admin_on_site = create_user_impl(&state, &caller, input("site.admin", administrator, Some(site)))
+        .await
+        .expect_err("administrator on a site");
+    assert!(
+        format!("{admin_on_site:?}").contains("SCOPE_ADMIN_ROLE_PLANT_WIDE"),
+        "{admin_on_site:?}"
+    );
+
+    // Emergency access follows the same rule.
+    let in_one_hour = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+    let emergency = grant_emergency_elevation_impl(
+        &state,
+        &caller,
+        GrantEmergencyElevationInput {
+            user_id: created.id,
+            role_id: administrator,
+            scope_type: "org_node".into(),
+            scope_reference: Some(site.to_string()),
+            reason: "Line stop".into(),
+            expires_at: in_one_hour,
+        },
+    )
+    .await
+    .expect_err("emergency administrator on a site");
+    assert!(
+        format!("{emergency:?}").contains("SCOPE_ADMIN_ROLE_PLANT_WIDE"),
+        "{emergency:?}"
+    );
 }
