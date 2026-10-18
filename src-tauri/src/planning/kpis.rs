@@ -151,6 +151,11 @@ struct Baseline {
 }
 
 /// The week's current baseline: jobs, hours, and hours whose work was finished by `week_end_at`.
+///
+/// "Finished by the week's end" is not one of the two open-OT rules (`wo::backlog`): those read
+/// the OT's status now, while schedule compliance asks whether the work ended before a past
+/// instant, so it reads the OT's completion time (mechanical completion, else actual end, else
+/// closure; a cancelled OT is never done) as `planning::load::finished_at_sql` does.
 async fn baseline(db: &impl ConnectionTrait, schedule: &WeeklySchedule, week_end_at: &str) -> AppResult<Baseline> {
     let row = db
         .query_one(Statement::from_sql_and_values(

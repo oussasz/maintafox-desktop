@@ -69,6 +69,9 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
     };
 
     // ── In-progress count ─────────────────────────────────────────────────
+    // `in_progress` and `completed` are slices of the status breakdown (being executed; finished),
+    // not an "open" figure: neither of the two open-OT rules (`wo::backlog::OPEN_STATUS_SQL`,
+    // `NOT_CLOSED_SQL`) is meant here, so their own status lists stay.
     let in_progress = count_by_macro_state(db, &["in_progress", "on_hold"]).await?;
 
     // ── Completed count (completed + closed) ──
