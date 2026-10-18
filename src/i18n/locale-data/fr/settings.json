@@ -501,6 +501,8 @@
     "SETTING_REASON_REQUIRED": "Indiquez le motif de ce changement (au moins 10 caractères) : il est conservé dans l'historique.",
     "SITE_SETTING_STALE": "Quelqu'un a modifié la règle de ce site entre-temps. Rechargez puis réessayez.",
     "SITE_SETTING_NOT_A_SITE": "Ce nœud d'organisation n'est pas un site de planification (son type ne peut pas porter de travaux).",
-    "SITE_SETTING_UNKNOWN": "Règle de site inconnue."
+    "SITE_SETTING_UNKNOWN": "Règle de site inconnue.",
+    "FIRST_ADMIN_ALREADY_EXISTS": "Un administrateur existe déjà pour cette organisation : connectez-vous avec ce compte.",
+    "LICENSE_RECONCILE_ADMIN_REQUIRED": "Ce changement de licence demande un administrateur : connectez-vous en tant qu'administrateur, puis réessayez."
   }
 }

@@ -14,6 +14,7 @@ import { AuthShell } from "@/components/auth/shell/AuthShell";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { ProductLicenseGateContext } from "@/contexts/product-license-gate-context";
 import { mfAuth } from "@/design-system/tokens";
+import { appErrorText } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { getAppInfo } from "@/services/app.service";
 import { getEntitlementSummary, notifyEntitlementsUpdated } from "@/services/entitlement-service";
@@ -43,7 +44,10 @@ import {
   type ProductLicenseOnboardingState,
   type UserFacingActivationError,
 } from "@/services/product-license-service";
-import { isSessionUnavailableError } from "@/utils/errors";
+import { extractIpcValidationDetails, isSessionUnavailableError } from "@/utils/errors";
+
+/** This PC refused a licence change without an administrator signed in (`apply_product_license_reconciliation`). */
+const LICENSE_RECONCILE_ADMIN_REQUIRED = "LICENSE_RECONCILE_ADMIN_REQUIRED";
 
 type ReconcileOrigin = "submit" | "scheduled" | "manual" | "policy" | "startup" | "login";
 
@@ -261,6 +265,14 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
           setWarning(null);
         }
       } catch (err) {
+        // This PC refused to apply the claim (a licence change needs an administrator signed
+        // in): say what to do, record nothing (it is not a network or server failure).
+        if (
+          extractIpcValidationDetails(err).some((d) => d.code === LICENSE_RECONCILE_ADMIN_REQUIRED)
+        ) {
+          setWarning(appErrorText(err));
+          return;
+        }
         const e = err as Error & { code?: string; status?: number };
         const code = e.code;
         const status = e.status;

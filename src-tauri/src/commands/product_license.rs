@@ -567,7 +567,7 @@ pub async fn tenant_config_sync_payload(db: &DatabaseConnection) -> AppResult<Op
 /// True when at least one active user has Administrator or Superadmin explicitly scoped to this tenant.
 /// Only permanent assignments in force count (an expired or emergency grant does not make the
 /// tenant administered).
-pub async fn tenant_has_administrator_for_id(db: &DatabaseConnection, tenant_id: &str) -> AppResult<bool> {
+pub async fn tenant_has_administrator_for_id(db: &impl ConnectionTrait, tenant_id: &str) -> AppResult<bool> {
     let now = crate::rbac::resolver::assignment_clock();
     let mut values: Vec<sea_orm::Value> = crate::rbac::resolver::permanent_binds(&now).to_vec();
     values.push(tenant_id.into());
@@ -769,18 +769,35 @@ pub async fn get_activation_license_metadata(
     }))
 }
 
+/// A first-start action refused because the plant already has an administrator.
+fn first_admin_exists() -> AppError {
+    crate::errors::org_validation_failed(
+        "FIRST_ADMIN_ALREADY_EXISTS",
+        "An administrator already exists for this activation: sign in with that account.",
+        std::collections::HashMap::new(),
+    )
+}
+
+/// Creates the first administrator of the activated tenant. Runs without a session (first start),
+/// so it is refused as soon as an administrator exists (`tenant_has_administrator_for_id`); the
+/// check and the account, role and scope rows are one transaction (two clicks never make two).
 #[tauri::command]
 pub async fn bootstrap_initial_tenant_admin(
     input: BootstrapInitialAdminInput,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let tenant_id = get_activation_claim_tenant_id(&state.db)
+    bootstrap_initial_tenant_admin_in(&state.db, input).await
+}
+
+pub(crate) async fn bootstrap_initial_tenant_admin_in(
+    db: &DatabaseConnection,
+    input: BootstrapInitialAdminInput,
+) -> AppResult<()> {
+    let tenant_id = get_activation_claim_tenant_id(db)
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["Device is not activated.".into()]))?;
-    if tenant_has_administrator_for_id(&state.db, &tenant_id).await? {
-        return Err(AppError::ValidationFailed(vec![
-            "A tenant administrator already exists for this activation.".into(),
-        ]));
+    if tenant_has_administrator_for_id(db, &tenant_id).await? {
+        return Err(first_admin_exists());
     }
 
     let username = input.username.trim();
@@ -792,9 +809,13 @@ pub async fn bootstrap_initial_tenant_admin(
         return Err(AppError::ValidationFailed(vec!["A valid email is required.".into()]));
     }
     crate::commands::admin_users::validate_password_strength(&input.password)?;
+    let password_hash = crate::auth::password::hash_password(&input.password)?;
 
-    let exists = state
-        .db
+    let txn = db.begin().await?;
+    if tenant_has_administrator_for_id(&txn, &tenant_id).await? {
+        return Err(first_admin_exists());
+    }
+    let exists = txn
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "SELECT id FROM user_accounts WHERE LOWER(username) = LOWER(?) AND deleted_at IS NULL",
@@ -807,8 +828,7 @@ pub async fn bootstrap_initial_tenant_admin(
         )]));
     }
 
-    let role_row = state
-        .db
+    let role_row = txn
         .query_one(Statement::from_string(
             DatabaseBackend::Sqlite,
             "SELECT id FROM roles WHERE name = 'Administrator' AND deleted_at IS NULL LIMIT 1".to_string(),
@@ -817,7 +837,6 @@ pub async fn bootstrap_initial_tenant_admin(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Administrator role not found in seed data")))?;
     let role_id: i64 = role_row.try_get("", "id")?;
 
-    let password_hash = crate::auth::password::hash_password(&input.password)?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let entity_sync_id = Uuid::new_v4().to_string();
     let display_name = input
@@ -828,28 +847,25 @@ pub async fn bootstrap_initial_tenant_admin(
         .map(std::string::ToString::to_string)
         .unwrap_or_else(|| "Administrator".to_string());
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            r"INSERT INTO user_accounts
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        r"INSERT INTO user_accounts
                 (entity_sync_id, username, display_name, identity_mode, password_hash,
                  is_active, is_admin, force_password_change, failed_login_attempts,
                  created_at, updated_at, row_version)
              VALUES (?, ?, ?, 'local', ?, 1, 1, 1, 0, ?, ?, 1)",
-            vec![
-                entity_sync_id.into(),
-                username.to_string().into(),
-                display_name.into(),
-                password_hash.into(),
-                now.clone().into(),
-                now.into(),
-            ],
-        ))
-        .await?;
+        vec![
+            entity_sync_id.into(),
+            username.to_string().into(),
+            display_name.into(),
+            password_hash.into(),
+            now.clone().into(),
+            now.into(),
+        ],
+    ))
+    .await?;
 
-    let id_row = state
-        .db
+    let id_row = txn
         .query_one(Statement::from_string(
             DatabaseBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -860,28 +876,27 @@ pub async fn bootstrap_initial_tenant_admin(
 
     let assign_sync = Uuid::new_v4().to_string();
     let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            r"INSERT INTO user_scope_assignments
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        r"INSERT INTO user_scope_assignments
                 (entity_sync_id, user_id, role_id, scope_type, scope_reference,
                  valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version)
              VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, NULL, ?, ?, ?, 1)",
-            vec![
-                assign_sync.into(),
-                new_id.into(),
-                role_id.into(),
-                tenant_id.clone().into(),
-                "Bootstrap initial tenant admin".into(),
-                now_iso.clone().into(),
-                now_iso.into(),
-            ],
-        ))
-        .await?;
+        vec![
+            assign_sync.into(),
+            new_id.into(),
+            role_id.into(),
+            tenant_id.clone().into(),
+            "Bootstrap initial tenant admin".into(),
+            now_iso.clone().into(),
+            now_iso.into(),
+        ],
+    ))
+    .await?;
+    txn.commit().await?;
 
     crate::audit::emit(
-        &state.db,
+        db,
         crate::audit::AuditEvent {
             event_type: crate::audit::event_type::USER_CREATED,
             summary: "Bootstrap initial tenant administrator",
@@ -903,9 +918,18 @@ async fn persist_state_record(
     record: &ProductLicenseStateRecord,
     summary: &str,
 ) -> AppResult<()> {
+    persist_state_record_in(&state.db, user_id, record, summary).await
+}
+
+async fn persist_state_record_in(
+    db: &DatabaseConnection,
+    user_id: Option<i32>,
+    record: &ProductLicenseStateRecord,
+    summary: &str,
+) -> AppResult<()> {
     let json = serde_json::to_string(record)?;
     settings::set_setting(
-        &state.db,
+        db,
         PRODUCT_LICENSE_ONBOARDING_KEY,
         PRODUCT_LICENSE_SCOPE,
         &json,
@@ -1099,6 +1123,70 @@ pub async fn submit_product_license_key(
     Ok(())
 }
 
+/// A licence change refused without an administrator signed in (coded, translated on screen).
+fn reconcile_admin_required() -> AppError {
+    crate::errors::org_validation_failed(
+        "LICENSE_RECONCILE_ADMIN_REQUIRED",
+        "This licence change needs an administrator: sign in as an administrator, then retry.",
+        std::collections::HashMap::new(),
+    )
+}
+
+/// Who may apply a successful reconciliation (it runs at the licence gate, before sign-in, on
+/// every start):
+/// - a refresh of the activation stored here (same tenant, licence and machine): anyone, as it is
+///   how a licence is renewed or a suspension lifted while nobody can sign in;
+/// - a change of tenant, licence or machine: without a session only while the plant has no
+///   administrator yet (first start) or this PC has no usable licence (the rule of key entry,
+///   `authorize_license_key_submission`); otherwise a signed-in user with `adm.settings`;
+/// - a claim that would seed demo data on a plant that has an administrator: only a signed-in
+///   user with `adm.settings`.
+///
+/// Denials and network / HTTP errors only restrict or degrade the licence: always recorded.
+async fn authorize_reconciled_claim(
+    db: &DatabaseConnection,
+    record: &ProductLicenseStateRecord,
+    claim: &ProductActivationClaimRecord,
+    may_administer: bool,
+) -> AppResult<()> {
+    if may_administer {
+        return Ok(());
+    }
+    let stored = record
+        .activation_claim
+        .as_ref()
+        .filter(|c| activation_claim_is_complete(c));
+    let mut administered = false;
+    for tenant in [stored.map(|c| c.tenant_id.trim()), Some(claim.tenant_id.trim())]
+        .into_iter()
+        .flatten()
+        .filter(|t| !t.is_empty())
+    {
+        administered = administered || tenant_has_administrator_for_id(db, tenant).await?;
+    }
+    if !administered {
+        return Ok(());
+    }
+    if crate::db::tenant_bootstrap::claim_would_seed_demo(db, claim).await? {
+        return Err(reconcile_admin_required());
+    }
+    let same_activation = stored.is_some_and(|s| {
+        s.tenant_id.trim() == claim.tenant_id.trim()
+            && s.license_id.trim() == claim.license_id.trim()
+            && s.machine_fingerprint.trim() == claim.machine_fingerprint.trim()
+    });
+    let usable_activation = record_has_valid_activation_claim(record)
+        && matches!(
+            record.status,
+            ProductLicenseActivationStatus::Active | ProductLicenseActivationStatus::DegradedApiUnavailable
+        );
+    if same_activation || !usable_activation {
+        Ok(())
+    } else {
+        Err(reconcile_admin_required())
+    }
+}
+
 #[tauri::command]
 pub async fn apply_product_license_reconciliation(
     outcome_json: String,
@@ -1111,10 +1199,31 @@ pub async fn apply_product_license_reconciliation(
         .current
         .as_ref()
         .map(|session| session.user.user_id);
-    let mut record = load_state_record(&state)
+    let may_administer = match changed_by_id {
+        Some(user_id) => {
+            crate::auth::rbac::check_permission(
+                &state.db,
+                user_id,
+                crate::rbac::permissions::ADM_SETTINGS,
+                &crate::auth::rbac::PermissionScope::Global,
+            )
+            .await?
+        }
+        None => false,
+    };
+    apply_product_license_reconciliation_in(&state.db, changed_by_id, may_administer, &outcome_json).await
+}
+
+pub(crate) async fn apply_product_license_reconciliation_in(
+    db: &DatabaseConnection,
+    changed_by_id: Option<i32>,
+    may_administer: bool,
+    outcome_json: &str,
+) -> AppResult<ProductLicenseOnboardingState> {
+    let mut record = load_state_record_from_db(db)
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["No local product license state found.".into()]))?;
-    let outcome_value: serde_json::Value = serde_json::from_str(&outcome_json)
+    let outcome_value: serde_json::Value = serde_json::from_str(outcome_json)
         .map_err(|e| AppError::ValidationFailed(vec![format!("outcomeJson must be valid JSON: {e}")]))?;
     let entitlement_envelope = match outcome_value
         .get("entitlement_envelope")
@@ -1149,6 +1258,9 @@ pub async fn apply_product_license_reconciliation(
         )])
     })?;
     outcome.entitlement_envelope = entitlement_envelope;
+    if let (ProductLicenseReconciliationOutcomeKind::Success, Some(claim)) = (&outcome.kind, outcome.claim.as_ref()) {
+        authorize_reconciled_claim(db, &record, claim, may_administer).await?;
+    }
 
     let now = Utc::now().to_rfc3339();
     record.reconciliation.last_attempt_at = Some(now.clone());
@@ -1249,17 +1361,17 @@ pub async fn apply_product_license_reconciliation(
         "Product license reconciliation outcome applied"
     );
 
-    persist_state_record(
-        &state,
+    persist_state_record_in(
+        db,
         changed_by_id,
         &record,
         "product license reconciliation state updated",
     )
     .await?;
     if matches!(outcome.kind, ProductLicenseReconciliationOutcomeKind::Success) {
-        apply_claim_entitlement_envelope(&state.db, outcome.entitlement_envelope).await?;
+        apply_claim_entitlement_envelope(db, outcome.entitlement_envelope).await?;
     }
-    crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, changed_by_id).await?;
+    crate::db::tenant_bootstrap::bootstrap_from_activation_claim(db, changed_by_id).await?;
 
     Ok(onboarding_state_from_record(&record))
 }
@@ -1660,3 +1772,7 @@ pub(crate) async fn record_activation_claim_for_tests(
     )
     .await
 }
+
+#[cfg(test)]
+#[path = "product_license_first_start_tests.rs"]
+mod first_start_tests;

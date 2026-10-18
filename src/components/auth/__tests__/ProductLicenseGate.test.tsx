@@ -363,6 +363,43 @@ describe("ProductLicenseGate", () => {
     expect(mockedClaimProductActivation).not.toHaveBeenCalled();
   });
 
+  it("never records a licence change this PC refused as a network failure", async () => {
+    setUpDueActiveDevice();
+    mockedRefreshProductActivationPolicy.mockResolvedValue({
+      tenant_id: "ten_other",
+      license_id: "lic_other",
+      machine_fingerprint: "fp",
+      activation_token: "device-token",
+    } as never);
+    mockedApplyProductLicenseReconciliation.mockRejectedValue({
+      code: "ORG_VALIDATION_FAILED",
+      message: "Validation failed",
+      details: [
+        {
+          code: "LICENSE_RECONCILE_ADMIN_REQUIRED",
+          message:
+            "This licence change needs an administrator: sign in as an administrator, then retry.",
+        },
+      ],
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "success" }),
+      );
+    });
+    // Only the refused success is sent (once per check): never a "network_error", "http_error" or
+    // "denial" recorded because of it.
+    const kinds = mockedApplyProductLicenseReconciliation.mock.calls.map((c) => c[0].kind);
+    expect(kinds.every((k) => k === "success")).toBe(true);
+  });
+
   it("re-claims with the cached key when the device token was superseded", async () => {
     setUpDueActiveDevice();
     mockedRefreshProductActivationPolicy.mockRejectedValue(
