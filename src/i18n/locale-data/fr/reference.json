@@ -492,14 +492,6 @@
     "reason": "Motif",
     "reasonMin": "Écrivez au moins {{min}} caractères.",
     "cancel": "Annuler",
-    "save": "Enregistrer",
-    "natures": {
-      "corrective_immediate": "Corrective — immédiate",
-      "corrective_deferred": "Corrective — différée",
-      "preventive_predetermined": "Préventive — systématique",
-      "preventive_condition_based": "Préventive — conditionnelle",
-      "preventive_predictive": "Préventive — prévisionnelle",
-      "improvement": "Amélioration / modification"
-    }
+    "save": "Enregistrer"
   }
 }

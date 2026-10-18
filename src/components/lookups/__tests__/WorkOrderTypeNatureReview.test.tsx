@@ -51,6 +51,34 @@ vi.mock("@/stores/work-order-types-catalog-store", () => ({
   refreshWorkOrderTypesCatalog: vi.fn().mockResolvedValue(undefined),
 }));
 
+// The natures come from the published reference list, not from the component.
+const NATURES = {
+  preventive_predetermined: "Preventive — predetermined",
+  improvement: "Improvement / modification",
+};
+vi.mock("@/services/reference-service", () => ({
+  listPublishedReferenceValuesByDomainCode: vi.fn().mockResolvedValue(
+    [
+      ["preventive_predetermined", "Preventive — predetermined"],
+      ["improvement", "Improvement / modification"],
+    ].map(([code, label], i) => ({
+      id: i + 1,
+      set_id: 1,
+      parent_id: null,
+      code,
+      label,
+      description: null,
+      sort_order: i + 1,
+      color_hex: null,
+      icon_name: null,
+      semantic_tag: null,
+      external_code: null,
+      is_active: true,
+      metadata_json: JSON.stringify({ label_en: label }),
+    })),
+  ),
+}));
+
 const perms = vi.hoisted(() => ({ denied: new Set<string>() }));
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({ can: (p: string) => !perms.denied.has(p), isLoading: false }),
@@ -106,9 +134,7 @@ describe("WorkOrderTypeNatureReview", () => {
     render(<WorkOrderTypeNatureReview />);
     await openDialog();
     fireEvent.keyDown(screen.getByRole("combobox", { name: nr.nature }), { key: "Enter" });
-    fireEvent.click(
-      await screen.findByRole("option", { name: nr.natures.preventive_predetermined }),
-    );
+    fireEvent.click(await screen.findByRole("option", { name: NATURES.preventive_predetermined }));
     fireEvent.change(screen.getByLabelText(new RegExp(nr.reason)), {
       target: { value: "  Planned lubrication rounds  " },
     });
@@ -136,7 +162,7 @@ describe("WorkOrderTypeNatureReview", () => {
     render(<WorkOrderTypeNatureReview />);
     await openDialog();
     fireEvent.keyDown(screen.getByRole("combobox", { name: nr.nature }), { key: "Enter" });
-    fireEvent.click(await screen.findByRole("option", { name: nr.natures.improvement }));
+    fireEvent.click(await screen.findByRole("option", { name: NATURES.improvement }));
     fireEvent.change(screen.getByLabelText(new RegExp(nr.reason)), {
       target: { value: "Plant type is an improvement" },
     });

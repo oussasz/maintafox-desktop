@@ -33,23 +33,17 @@ import { refreshWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-
 import type { MaintenanceNatureCode, WorkOrderTypeToReview } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { natureValueLabel, useMaintenanceNatures } from "./MaintenanceNaturePicker";
+
 /** Shortest reason the server accepts (`MIN_NATURE_REASON_CHARS`). */
 export const NATURE_REASON_MIN = 10;
 
-/** The maintenance natures (EN 13306), in the order the program lists them. */
-export const MAINTENANCE_NATURES: MaintenanceNatureCode[] = [
-  "corrective_immediate",
-  "corrective_deferred",
-  "preventive_predetermined",
-  "preventive_condition_based",
-  "preventive_predictive",
-  "improvement",
-];
-
 export function WorkOrderTypeNatureReview() {
-  const { t } = useTranslation("reference");
+  const { t, i18n } = useTranslation("reference");
   const { can } = usePermissions();
   const canManage = can(P.REF_MANAGE);
+  // The natures are the published values of the SYSTEM list WORK.MAINTENANCE_NATURES.
+  const natures = useMaintenanceNatures(canManage);
   const [rows, setRows] = useState<WorkOrderTypeToReview[] | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [target, setTarget] = useState<WorkOrderTypeToReview | null>(null);
@@ -169,9 +163,9 @@ export function WorkOrderTypeNatureReview() {
                   <SelectValue placeholder={t("natureReview.naturePlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {MAINTENANCE_NATURES.map((code) => (
-                    <SelectItem key={code} value={code}>
-                      {t(`natureReview.natures.${code}`)}
+                  {natures.map((n) => (
+                    <SelectItem key={n.id} value={n.code}>
+                      {natureValueLabel(n, i18n.language)}
                     </SelectItem>
                   ))}
                 </SelectContent>
