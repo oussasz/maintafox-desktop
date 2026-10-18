@@ -262,7 +262,23 @@ pub async fn append_permit_handover_log(
         crate::rbac::permissions::PTW_CLOSE,
         PermissionScope::Global
     );
-    queries::append_permit_handover_log(&state.db, input).await
+    // The signer is the session user, never a value from the screen.
+    queries::append_permit_handover_log(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// The plant's hand-over roles (Données de référence › `PERMIT.HANDOVER_ROLES`). Requires `ptw.view`.
+#[tauri::command]
+pub async fn list_permit_handover_roles(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::permit::handover_roles::HandoverRoleOption>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PTW_VIEW,
+        PermissionScope::Global
+    );
+    crate::permit::handover_roles::list_handover_roles(&state.db).await
 }
 
 #[tauri::command]

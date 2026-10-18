@@ -381,6 +381,15 @@ fn map_permit_suspension(row: &sea_orm::QueryResult) -> AppResult<PermitSuspensi
     })
 }
 
+/// Columns of a hand-over log with the signer's and receiver's names (alias `h`).
+const HANDOVER_SELECT: &str = "SELECT h.id, h.entity_sync_id, h.permit_id, h.handed_from_role, h.handed_to_role, \
+     h.confirmation_note, h.signed_at, h.signed_by_id, h.received_by_id, h.row_version, \
+     COALESCE(us.display_name, us.username) AS signed_by_name, \
+     COALESCE(ur.display_name, ur.username) AS received_by_name \
+     FROM permit_handover_logs h \
+     LEFT JOIN user_accounts us ON us.id = h.signed_by_id \
+     LEFT JOIN user_accounts ur ON ur.id = h.received_by_id";
+
 fn map_permit_handover_log(row: &sea_orm::QueryResult) -> AppResult<PermitHandoverLog> {
     Ok(PermitHandoverLog {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
@@ -398,6 +407,18 @@ fn map_permit_handover_log(row: &sea_orm::QueryResult) -> AppResult<PermitHandov
             .try_get("", "confirmation_note")
             .map_err(|e| decode_err("confirmation_note", e))?,
         signed_at: row.try_get("", "signed_at").map_err(|e| decode_err("signed_at", e))?,
+        signed_by_id: row
+            .try_get("", "signed_by_id")
+            .map_err(|e| decode_err("signed_by_id", e))?,
+        signed_by_name: row
+            .try_get("", "signed_by_name")
+            .map_err(|e| decode_err("signed_by_name", e))?,
+        received_by_id: row
+            .try_get("", "received_by_id")
+            .map_err(|e| decode_err("received_by_id", e))?,
+        received_by_name: row
+            .try_get("", "received_by_name")
+            .map_err(|e| decode_err("received_by_name", e))?,
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -1355,12 +1376,17 @@ async fn suspend_work_permit_in(
     Ok((wp, suspension))
 }
 
+/// Record a hand-over of a closed permit, signed by `signer_id` (the session user — never taken
+/// from the screen). Roles are values of `PERMIT.HANDOVER_ROLES`; the confirmation note has at
+/// least `MIN_HANDOVER_NOTE_CHARS` characters; the receiving person, when named, is an active
+/// user account other than the signer.
 pub async fn append_permit_handover_log(
     db: &DatabaseConnection,
     input: PermitHandoverLogInput,
+    signer_id: i64,
 ) -> AppResult<PermitHandoverLog> {
     let txn = db.begin().await?;
-    let out = append_permit_handover_log_in(&txn, input).await?;
+    let out = append_permit_handover_log_in(&txn, input, signer_id).await?;
     txn.commit().await?;
     Ok(out)
 }
@@ -1368,6 +1394,7 @@ pub async fn append_permit_handover_log(
 async fn append_permit_handover_log_in(
     db: &impl ConnectionTrait,
     input: PermitHandoverLogInput,
+    signer_id: i64,
 ) -> AppResult<PermitHandoverLog> {
     let current = require_work_permit(db, input.permit_id).await?;
     if current.status != "closed" {
@@ -1380,19 +1407,59 @@ async fn append_permit_handover_log_in(
     if input.handed_from_role.trim().is_empty() || input.handed_to_role.trim().is_empty() {
         return Err(refused("PERMIT_HANDOVER_ROLES_REQUIRED", "Roles are required.", &[]));
     }
+    let from_role = super::handover_roles::checked_role(db, "handed_from_role", &input.handed_from_role).await?;
+    let to_role = super::handover_roles::checked_role(db, "handed_to_role", &input.handed_to_role).await?;
+    let note = input.confirmation_note.trim().to_string();
+    if note.chars().count() < super::domain::MIN_HANDOVER_NOTE_CHARS {
+        return Err(refused(
+            "PERMIT_HANDOVER_NOTE_TOO_SHORT",
+            format!(
+                "The confirmation note needs at least {} characters.",
+                super::domain::MIN_HANDOVER_NOTE_CHARS
+            ),
+            &[("min", super::domain::MIN_HANDOVER_NOTE_CHARS.to_string())],
+        ));
+    }
+    if let Some(receiver) = input.received_by_id {
+        if receiver == signer_id {
+            return Err(refused(
+                "PERMIT_HANDOVER_RECEIVER_IS_SIGNER",
+                "The receiving person cannot be the person signing the hand-over.",
+                &[],
+            ));
+        }
+        let active = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS ok FROM user_accounts WHERE id = ? AND is_active = 1 AND deleted_at IS NULL",
+                [receiver.into()],
+            ))
+            .await?
+            .is_some();
+        if !active {
+            return Err(refused(
+                "PERMIT_HANDOVER_RECEIVER_UNKNOWN",
+                "The receiving person is not an active user account.",
+                &[("userId", receiver.to_string())],
+            ));
+        }
+    }
     let signed = now_ts();
     let sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
-         confirmation_note, signed_at, row_version) VALUES (?, ?, ?, ?, ?, ?, 1)",
+         confirmation_note, signed_at, signed_by_id, received_by_id, row_version) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             sync_id.into(),
             input.permit_id.into(),
-            input.handed_from_role.trim().to_string().into(),
-            input.handed_to_role.trim().to_string().into(),
-            input.confirmation_note.into(),
+            from_role.into(),
+            to_role.into(),
+            note.into(),
             signed.into(),
+            signer_id.into(),
+            opt_i64(input.received_by_id),
         ],
     ))
     .await?;
@@ -1407,8 +1474,7 @@ async fn append_permit_handover_log_in(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, permit_id, handed_from_role, handed_to_role, confirmation_note, \
-             signed_at, row_version FROM permit_handover_logs WHERE id = ?",
+            format!("{HANDOVER_SELECT} WHERE h.id = ?"),
             [new_id.into()],
         ))
         .await?
@@ -1439,8 +1505,7 @@ pub async fn list_permit_handover_logs(db: &impl ConnectionTrait, permit_id: i64
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, permit_id, handed_from_role, handed_to_role, confirmation_note, \
-             signed_at, row_version FROM permit_handover_logs WHERE permit_id = ? ORDER BY id ASC",
+            format!("{HANDOVER_SELECT} WHERE h.permit_id = ? ORDER BY h.id ASC"),
             [permit_id.into()],
         ))
         .await?;

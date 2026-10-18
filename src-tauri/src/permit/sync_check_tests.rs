@@ -880,6 +880,8 @@ async fn hand_back_suspension_and_revalidation_are_rechecked() {
     );
     let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &handed_back).await;
     assert_eq!(code(&outcome), Some("PERMIT_HANDOVER_REQUIRED"), "{outcome:?}");
+    super::tests::add_handover_role(&db, "Exécutant").await;
+    super::tests::add_handover_role(&db, "Exploitation").await;
     queries::append_permit_handover_log(
         &db,
         crate::permit::domain::PermitHandoverLogInput {
@@ -887,7 +889,9 @@ async fn hand_back_suspension_and_revalidation_are_rechecked() {
             handed_from_role: "Exécutant".into(),
             handed_to_role: "Exploitation".into(),
             confirmation_note: "Zone rendue propre".into(),
+            received_by_id: None,
         },
+        super::tests::APPLIER,
     )
     .await
     .expect("handover");

@@ -251,6 +251,8 @@ async fn full_lifecycle_to_handed_back_stamps_timestamps() {
     assert!(wp.closed_at.is_some());
 
     assert_validation(set_status(&db, &wp, "handed_back").await, "handover");
+    add_handover_role(&db, "Maintenance").await;
+    add_handover_role(&db, "Operations").await;
     queries::append_permit_handover_log(
         &db,
         PermitHandoverLogInput {
@@ -258,12 +260,142 @@ async fn full_lifecycle_to_handed_back_stamps_timestamps() {
             handed_from_role: "Maintenance".into(),
             handed_to_role: "Operations".into(),
             confirmation_note: "Area clean".into(),
+            received_by_id: None,
         },
+        APPLIER,
     )
     .await
     .expect("handover log");
     let wp = set_status(&db, &wp, "handed_back").await.expect("hand back");
     assert!(wp.handed_back_at.is_some());
+}
+
+/// A role of the plant's hand-over list (`PERMIT.HANDOVER_ROLES`), as Données de référence adds it.
+pub(super) async fn add_handover_role(db: &DatabaseConnection, code: &str) {
+    crate::permit::handover_roles::ensure_handover_roles(db)
+        .await
+        .expect("list");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active) \
+         SELECT rs.id, ?, ?, 1, 1 FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'PERMIT.HANDOVER_ROLES' AND rs.status = 'published' \
+            AND NOT EXISTS (SELECT 1 FROM reference_values v WHERE v.set_id = rs.id AND v.code = ?) \
+          ORDER BY rs.version_no DESC LIMIT 1",
+        [code.into(), code.into(), code.into()],
+    ))
+    .await
+    .expect("role");
+}
+
+fn refusal_code(err: AppError) -> String {
+    match err {
+        AppError::OrgValidationFailed(issues) => issues.first().map(|i| i.code.clone()).unwrap_or_default(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// A hand-over is signed by the session user (never from the screen), names roles of the plant's
+/// list and a note of 10 characters or more; the receiving person, when named, is another active
+/// account.
+#[tokio::test]
+async fn a_handover_is_signed_from_the_session_with_listed_roles_and_a_note() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-HO").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let wp = set_status(&db, &wp, "closed").await.expect("close");
+    let input = |from: &str, to: &str, note: &str, receiver: Option<i64>| PermitHandoverLogInput {
+        permit_id: wp.id,
+        handed_from_role: from.into(),
+        handed_to_role: to.into(),
+        confirmation_note: note.into(),
+        received_by_id: receiver,
+    };
+
+    // The list ships empty: no role is accepted until the plant adds its own.
+    let err = queries::append_permit_handover_log(
+        &db,
+        input("Maintenance", "Operations", "Zone left clean", None),
+        APPLIER,
+    )
+    .await
+    .expect_err("empty list");
+    assert_eq!(refusal_code(err), crate::permit::handover_roles::CODE_ROLE_NOT_IN_LIST);
+
+    add_handover_role(&db, "Maintenance").await;
+    add_handover_role(&db, "Operations").await;
+    let err = queries::append_permit_handover_log(&db, input("Maintenance", "Operations", "ok", None), APPLIER)
+        .await
+        .expect_err("short note");
+    assert_eq!(refusal_code(err), "PERMIT_HANDOVER_NOTE_TOO_SHORT");
+    let err = queries::append_permit_handover_log(
+        &db,
+        input("Maintenance", "Operations", "Zone left clean", Some(APPLIER)),
+        APPLIER,
+    )
+    .await
+    .expect_err("receiver is signer");
+    assert_eq!(refusal_code(err), "PERMIT_HANDOVER_RECEIVER_IS_SIGNER");
+    let err = queries::append_permit_handover_log(
+        &db,
+        input("Maintenance", "Operations", "Zone left clean", Some(999_999)),
+        APPLIER,
+    )
+    .await
+    .expect_err("unknown receiver");
+    assert_eq!(refusal_code(err), "PERMIT_HANDOVER_RECEIVER_UNKNOWN");
+
+    let log = queries::append_permit_handover_log(
+        &db,
+        input("maintenance", "Operations", "  Zone left clean  ", Some(VERIFIER)),
+        APPLIER,
+    )
+    .await
+    .expect("handover");
+    assert_eq!(log.handed_from_role, "Maintenance", "stored as the list code");
+    assert_eq!(log.confirmation_note, "Zone left clean");
+    assert_eq!(log.signed_by_id, Some(APPLIER));
+    assert!(log.signed_by_name.is_some());
+    assert_eq!(log.received_by_id, Some(VERIFIER));
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (listed[0].id, listed[0].signed_by_id, listed[0].received_by_id),
+        (log.id, Some(APPLIER), Some(VERIFIER))
+    );
+}
+
+/// Free texts stored before the list existed are adopted with their exact text, flagged
+/// "à revoir"; the stored hand-over and its (unknown) signer are left as they were.
+#[tokio::test]
+async fn stored_handover_roles_are_adopted_and_flagged_without_rewrite() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-HO2").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+         confirmation_note, signed_at, row_version) VALUES ('ho-old', ?, 'Équipe nuit', 'Exploitation', '', \
+         '2026-01-01T00:00:00Z', 1)",
+        [wp.id.into()],
+    ))
+    .await
+    .expect("old log");
+    crate::permit::handover_roles::adopt_stored_roles(&db)
+        .await
+        .expect("adopt");
+    crate::permit::handover_roles::adopt_stored_roles(&db)
+        .await
+        .expect("again");
+    let roles = crate::permit::handover_roles::list_handover_roles(&db)
+        .await
+        .expect("roles");
+    let codes: Vec<_> = roles.iter().map(|r| (r.code.as_str(), r.review_required)).collect();
+    assert_eq!(codes, [("Exploitation", true), ("Équipe nuit", true)]);
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    assert_eq!(listed[0].handed_from_role, "Équipe nuit");
+    assert_eq!(listed[0].signed_by_id, None, "no signer invented");
 }
 
 #[tokio::test]

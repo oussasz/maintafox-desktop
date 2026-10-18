@@ -80,6 +80,16 @@ pub struct PermitHandoverLog {
     pub handed_to_role: String,
     pub confirmation_note: String,
     pub signed_at: String,
+    /// Who recorded the hand-over (the session user; NULL on hand-overs recorded before 235).
+    #[serde(default)]
+    pub signed_by_id: Option<i64>,
+    #[serde(default)]
+    pub signed_by_name: Option<String>,
+    /// The receiving person, when named.
+    #[serde(default)]
+    pub received_by_id: Option<i64>,
+    #[serde(default)]
+    pub received_by_name: Option<String>,
     pub row_version: i64,
 }
 
@@ -202,10 +212,19 @@ pub struct PermitSuspendInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermitHandoverLogInput {
     pub permit_id: i64,
+    /// Codes of `PERMIT.HANDOVER_ROLES` (Données de référence).
     pub handed_from_role: String,
     pub handed_to_role: String,
+    /// At least `MIN_HANDOVER_NOTE_CHARS` characters.
     pub confirmation_note: String,
+    /// The receiving person (a user account), optional. The signer is never sent: the server takes
+    /// the session user.
+    #[serde(default)]
+    pub received_by_id: Option<i64>,
 }
+
+/// Shortest confirmation note a hand-over accepts.
+pub const MIN_HANDOVER_NOTE_CHARS: usize = 10;
 
 /// Defines (or edits, before application) an isolation point. Application,
 /// verification and removal verification go through dedicated actions so the
