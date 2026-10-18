@@ -1188,11 +1188,12 @@ async fn a_synced_site_opt_out_needs_its_audited_change() {
         Some(InboundVerdict::Conflict { code, .. }) => *code,
         other => panic!("expected a conflict, got {other:?}"),
     };
-    // Turned on with no audit trail anywhere: conflict, never applied.
-    assert_eq!(
-        conflict_code(&verdict(rule("true", "2026-10-17T10:00:00Z", &admin_sync)).await),
-        "SITE_SETTING_UNAUDITED"
-    );
+    // Turned on with no audit event received yet (a sync page or push batch can end between the
+    // rule and its event): the rule waits for it, never applied meanwhile.
+    assert!(matches!(
+        verdict(rule("true", "2026-10-17T10:00:00Z", &admin_sync)).await,
+        Some(InboundVerdict::Defer(_))
+    ));
     // Turning it off (the strict side) is applied.
     assert!(verdict(rule("false", "2026-10-17T10:00:00Z", &admin_sync))
         .await
@@ -2100,6 +2101,27 @@ async fn a_received_site_rule_is_applied_only_with_its_latest_audited_change() {
     )
     .await;
     assert_eq!(conflict_code(&outcome), Some("SITE_SETTING_UNAUDITED"), "{outcome:?}");
+
+    // Received before its audited change (the change comes in a later sync page or push batch):
+    // the rule waits, it is not a conflict and is not applied.
+    let outcome = apply_wire(
+        &f,
+        "site_settings",
+        rule_sync,
+        "upsert",
+        &rule("true", "2026-10-18T08:30:00Z", &admin_sync),
+    )
+    .await;
+    assert!(
+        matches!(outcome, crate::sync::materialize::ApplyOutcome::Deferred { .. }),
+        "{outcome:?}"
+    );
+    assert_ne!(
+        crate::settings::site::site_setting(&f.db, 1, SELF_APPROVAL_SETTING)
+            .await
+            .expect("read"),
+        Some(true)
+    );
 
     // The audited change still in the inbox: the rule waits; once the change is here: applied.
     let pending_event = serde_json::json!({
