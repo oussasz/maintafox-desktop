@@ -18,7 +18,8 @@
 //!   (`closed` → `handed_back`, `handed_back` → `cancelled`);
 //! - an isolation (`isolation_rule_breach`): verified after it was applied and by someone other than
 //!   the person who applied it; its lock removal verified after verification and by someone other
-//!   than the applier. It never moves to another permit; it is added, applied or verified (and its
+//!   than the applier (and, when the permit's type requires the three-person chain, than the
+//!   isolation verifier). It never moves to another permit; it is added, applied or verified (and its
 //!   people never change) only while its permit is prepared or suspended — when that change reaches
 //!   a permit protecting the work, it must date from before the permit started protecting it; its
 //!   lock removal is verified only once the permit was active (`ISOLATION_SETUP_STATUSES` and
@@ -144,8 +145,9 @@ pub(crate) fn overlay(local: Option<&Payload>, received: &Payload) -> Payload {
 }
 
 /// The isolation rule a state of an isolation breaks, if any (`permit::queries`: verify and verify
-/// removal).
-pub(crate) fn isolation_rule_breach(iso: &Payload) -> Option<(&'static str, String)> {
+/// removal). `three_person`: the permit's type requires the three-person chain (migration 236), so the
+/// lock removal is verified by someone other than the isolation verifier too.
+pub(crate) fn isolation_rule_breach(iso: &Payload, three_person: bool) -> Option<(&'static str, String)> {
     let point = field(iso, "isolation_point").unwrap_or("?");
     let applier = field(iso, "applied_by_sync_id");
     if field(iso, "verified_at").is_some() {
@@ -173,6 +175,15 @@ pub(crate) fn isolation_rule_breach(iso: &Payload) -> Option<(&'static str, Stri
             return Some((
                 "PERMIT_TWO_PERSON_REMOVAL",
                 format!("isolation '{point}': lock removal verified by the person who applied it (or by nobody)"),
+            ));
+        }
+        if three_person && field(iso, "removal_verified_by_sync_id") == field(iso, "verified_by_sync_id") {
+            return Some((
+                "PERMIT_THREE_PERSON_REMOVAL",
+                format!(
+                    "isolation '{point}': lock removal verified by the person who verified it (the permit type \
+                     requires a third person)"
+                ),
             ));
         }
     }
@@ -256,6 +267,7 @@ async fn children(
     parent_key: &str,
     parent_sync_id: &str,
 ) -> AppResult<Children> {
+    let three_person = table == "permit_isolations" && permit_three_person(conn, parent_sync_id).await?;
     let mut rows: BTreeMap<String, Payload> = BTreeMap::new();
     let local = conn
         .query_all(Statement::from_sql_and_values(
@@ -319,7 +331,7 @@ async fn children(
             continue;
         }
         let merged = overlay(rows.get(&sid), &received);
-        if table == "permit_isolations" && isolation_rule_breach(&merged).is_some() {
+        if table == "permit_isolations" && isolation_rule_breach(&merged, three_person).is_some() {
             continue;
         }
         if table == "permit_handover_logs" && handover_rule_breach(&merged).is_some() {
@@ -379,6 +391,47 @@ async fn type_requires_isolation(conn: &impl ConnectionTrait, permit: &Payload) 
         .map(|v| v != 0))
 }
 
+/// Whether the type of the permit named by the payload requires the three-person lock-removal chain
+/// (read from this device's type, as the local removal check does; a type not here: no).
+async fn type_three_person(conn: &impl ConnectionTrait, permit: &Payload) -> AppResult<bool> {
+    let Some(type_sync) = field(permit, "permit_type_sync_id") else {
+        return Ok(false);
+    };
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(requires_three_person_removal, 0) AS r FROM permit_types WHERE entity_sync_id = ?",
+            [type_sync.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<i64>("", "r").map_err(sync_err))
+        .transpose()?
+        .is_some_and(|v| v != 0))
+}
+
+/// The three-person setting of a permit's type, for the permit here or still waiting in the inbox.
+async fn permit_three_person(conn: &impl ConnectionTrait, permit_sync_id: &str) -> AppResult<bool> {
+    if let Some(permit) = local_wire(conn, "work_permits", permit_sync_id).await? {
+        return type_three_person(conn, &permit).await;
+    }
+    let waiting = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT payload_json FROM sync_inbox WHERE entity_type = 'work_permits' AND entity_sync_id = ? \
+               AND apply_status IN ('pending', 'deferred') ORDER BY row_version DESC, id DESC LIMIT 1",
+            [permit_sync_id.into()],
+        ))
+        .await?;
+    let Some(row) = waiting else {
+        return Ok(false);
+    };
+    let json: String = row.try_get("", "payload_json").map_err(sync_err)?;
+    match serde_json::from_str::<Value>(&json) {
+        Ok(Value::Object(permit)) => type_three_person(conn, &permit).await,
+        _ => Ok(false),
+    }
+}
+
 /// The moment a permit (last) started protecting the work: its activation, or its last
 /// reinstatement when later. Reinstatements dated after the permit's own close or in the future are
 /// ignored. `None` without a readable activation time.
@@ -409,6 +462,7 @@ fn removed_before(iso: &Payload, at: DateTime<Utc>) -> bool {
 fn isolations_ready(
     permit_code: &str,
     needs_isolation: bool,
+    three_person: bool,
     isolations: &[&Payload],
     at: DateTime<Utc>,
 ) -> Option<(&'static str, String)> {
@@ -420,7 +474,7 @@ fn isolations_ready(
     }
     let unverified = isolations
         .iter()
-        .filter(|i| field(i, "verified_at").is_none() || isolation_rule_breach(i).is_some())
+        .filter(|i| field(i, "verified_at").is_none() || isolation_rule_breach(i, three_person).is_some())
         .count();
     if unverified > 0 {
         return Some((
@@ -515,7 +569,8 @@ pub(crate) async fn inbound_permit_check(
             let Some(needs) = type_requires_isolation(conn, &permit).await? else {
                 return wait(format!("permit {code}: its permit type is not applied yet"));
             };
-            if let Some((c, m)) = isolations_ready(&code, needs, &payloads(&isolations), at) {
+            let three_person = type_three_person(conn, &permit).await?;
+            if let Some((c, m)) = isolations_ready(&code, needs, three_person, &payloads(&isolations), at) {
                 return conflict(c, m);
             }
         }
@@ -671,7 +726,11 @@ pub(crate) async fn inbound_isolation_check(
             );
         }
     }
-    if let Some((c, m)) = isolation_rule_breach(&iso) {
+    let three_person = match field(&iso, "permit_sync_id") {
+        Some(permit_sync) => permit_three_person(conn, permit_sync).await?,
+        None => false,
+    };
+    if let Some((c, m)) = isolation_rule_breach(&iso, three_person) {
         return conflict(c, m);
     }
     // The permit is applied before its isolations; not here yet, the apply waits for it.
@@ -1233,7 +1292,8 @@ pub(crate) async fn inbound_work_order_check(
                 format!("work order {code} started at {at} before an isolation of permit {pcode} was verified"),
             );
         }
-        if let Some((c, m)) = isolations_ready(pcode, needs, &held, at) {
+        let three_person = type_three_person(conn, p).await?;
+        if let Some((c, m)) = isolations_ready(pcode, needs, three_person, &held, at) {
             return conflict(c, m);
         }
     }

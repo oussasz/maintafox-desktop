@@ -1841,6 +1841,41 @@ async fn a_received_handover_signed_and_received_by_one_person_is_refused() {
     );
 }
 
+/// Three-person LOTO chain (a setting of the permit type): a received lock removal verified by the
+/// isolation's verifier is refused when the type requires it, applied when it does not.
+#[tokio::test]
+async fn a_received_removal_keeps_the_three_person_chain_of_its_permit_type() {
+    for three_person in [true, false] {
+        let db = setup().await;
+        let asset = insert_equipment(&db, "EQ-SYNC-26").await;
+        exec(
+            &db,
+            &format!(
+                "UPDATE permit_types SET requires_three_person_removal = {} WHERE code = 'loto'",
+                i64::from(three_person)
+            ),
+        )
+        .await;
+        let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+        let iso = apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-26 breaker").await).await;
+        set_status(&db, &wp, "active").await.expect("activate");
+        let verifier = user_sync(&db, VERIFIER).await;
+        let removal = with(
+            wire(&db, "permit_isolations", &iso.entity_sync_id).await,
+            &[
+                ("removal_verified_by_sync_id", json!(verifier)),
+                ("removal_verified_at", json!(now())),
+            ],
+        );
+        let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &removal).await;
+        if three_person {
+            assert_eq!(code(&outcome), Some("PERMIT_THREE_PERSON_REMOVAL"), "{outcome:?}");
+        } else {
+            assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+        }
+    }
+}
+
 /// The rights of an override's approver are waited for only on rows that could give THAT person
 /// the right: a waiting permission row of another role, or for another permission, a waiting
 /// assignment of another person, or a site-scoped or emergency assignment of the approver, never

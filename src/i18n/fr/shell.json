@@ -101,6 +101,7 @@
       "WO_PERMIT_RULE_CLEAR_UNAUTHORISED": "Un permis exigé par une règle de l'usine a été levé par une personne sans le droit de délivrer des permis",
       "PERMIT_TYPE_REQUIRED_TO_START": "Un ordre de travail démarré sans permis du type exigé par une règle de l'usine",
       "WO_PERMIT_RULE_CHANGED": "La règle de l'usine qui exige le permis d'un ordre de travail a été retirée ou modifiée ailleurs",
+      "PERMIT_THREE_PERSON_REMOVAL": "Un retrait de cadenas vérifié par la personne qui avait vérifié l'isolement, alors que le type de permis exige une troisième personne",
       "PERMIT_HANDOVER_RECEIVER_IS_SIGNER": "Une passation de permis reçue par la personne qui l'a signée",
       "other": "À examiner"
     },
