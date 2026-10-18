@@ -547,8 +547,20 @@ pub async fn apply_pm_content_to_work_order(
 /// Stable code of a PM part line without its required / optional flag.
 pub const CODE_PART_REQUIRED_FLAG_MISSING: &str = "PM_PART_REQUIRED_FLAG_MISSING";
 
-/// A version's `required_parts_json` as written by the PM screens: a list of objects with a code
-/// and a boolean `required` (no default: every new line says whether it is required).
+/// The code of an entry as `parse_required_parts` reads it (`article_code` or `code`).
+fn entry_code(obj: &serde_json::Map<String, Value>) -> Option<String> {
+    ["article_code", "code"]
+        .iter()
+        .find_map(|k| obj.get(*k).and_then(Value::as_str))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// A version's `required_parts_json` as the PM screens write it. It accepts exactly what
+/// [`parse_required_parts`] reads, plus the flag rule: every part entry (an object with a code)
+/// says whether it is `required` (boolean, no default). Free text that is not JSON (an old
+/// version's note) is read as one part and accepted as stored; a JSON list may not hold bare
+/// strings, which cannot carry the flag.
 pub fn validate_required_parts_json(raw: Option<&str>) -> crate::errors::AppResult<()> {
     let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(());
@@ -560,25 +572,63 @@ pub fn validate_required_parts_json(raw: Option<&str>) -> crate::errors::AppResu
             std::collections::HashMap::from([("code".to_string(), code)]),
         )
     };
-    let Ok(Value::Array(items)) = serde_json::from_str::<Value>(raw) else {
-        return Err(refused(raw.chars().take(40).collect()));
+    let items = match serde_json::from_str::<Value>(raw) {
+        Ok(Value::Array(items)) => items,
+        Ok(Value::String(s)) => return Err(refused(s)),
+        // Not a list (an object, a number): the reader finds no part in it.
+        Ok(_) => return Ok(()),
+        // Free text: the reader keeps it as one part (stored by an old version).
+        Err(_) => return Ok(()),
     };
     for item in items {
-        let ok = matches!(&item, Value::Object(obj) if obj.get("required").is_some_and(Value::is_boolean));
-        if !ok {
-            let code = match &item {
-                Value::Object(obj) => ["article_code", "code"]
-                    .iter()
-                    .find_map(|k| obj.get(*k).and_then(Value::as_str))
-                    .unwrap_or_default()
-                    .to_string(),
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            return Err(refused(code));
+        match &item {
+            Value::String(s) if !s.trim().is_empty() => return Err(refused(s.trim().to_string())),
+            Value::Object(obj) => {
+                // An object without a code is no part for the reader either.
+                if let Some(code) = entry_code(obj) {
+                    if !obj.get("required").is_some_and(Value::is_boolean) {
+                        return Err(refused(code));
+                    }
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
+}
+
+/// Copied part lines (a new draft from a published version): every entry gets the flag it is read
+/// with — a flag-less entry (stored before migration 231 or received from a PC that has not run it)
+/// is required, a bare code becomes `{"code", "required": true}`; free text stays as stored. The
+/// result always passes [`validate_required_parts_json`] and reads the same parts.
+pub fn normalized_required_parts_json(raw: Option<&str>) -> Option<String> {
+    let text = raw?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Some(text.to_string());
+    }
+    match serde_json::from_str::<Value>(trimmed) {
+        Ok(Value::String(s)) => Some(serde_json::json!([{ "code": s.trim(), "required": true }]).to_string()),
+        Ok(Value::Array(items)) => Some(
+            Value::Array(
+                items
+                    .into_iter()
+                    .map(|item| match item {
+                        Value::String(s) => serde_json::json!({ "code": s.trim(), "required": true }),
+                        Value::Object(mut obj) => {
+                            if entry_code(&obj).is_some() && !obj.get("required").is_some_and(Value::is_boolean) {
+                                obj.insert("required".into(), Value::Bool(true));
+                            }
+                            Value::Object(obj)
+                        }
+                        other => other,
+                    })
+                    .collect(),
+            )
+            .to_string(),
+        ),
+        _ => Some(text.to_string()),
+    }
 }
 
 #[cfg(test)]

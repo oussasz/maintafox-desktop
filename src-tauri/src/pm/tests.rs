@@ -850,7 +850,7 @@ async fn planning_readiness_projection_returns_blockers_without_scheduler_side_e
             effective_to: None,
             trigger_definition_json: r#"{"interval_unit":"day","interval_value":1}"#.to_string(),
             task_package_json: None,
-            required_parts_json: Some(r#"[{"part":"BRG-001","required":true}]"#.to_string()),
+            required_parts_json: Some(r#"[{"code":"BRG-001","required":true}]"#.to_string()),
             required_skills_json: None,
             required_tools_json: None,
             estimated_duration_hours: None,

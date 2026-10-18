@@ -785,3 +785,123 @@ fn meter_offset_rules() {
         (MeterReadingKind::Normal, 3.0)
     );
 }
+
+/// Revising a version copies its part lines as they are read (review of migration 231): a legacy
+/// flag-less entry (stored before 231 or received from a PC that has not run it) and a bare code
+/// become required lines, free text stays free text — the new draft is never refused for text the
+/// planner did not type.
+#[tokio::test]
+async fn a_revision_copies_legacy_and_free_text_part_lines_as_they_are_read() {
+    for (stored, expect_free_text) in [
+        (r#"[{"article_code":"FLT-10","quantity":2},"Graisse EP2"]"#, false),
+        ("Graisse EP2 et chiffons", true),
+    ] {
+        let db = setup_db().await;
+        seed_plant(&db).await;
+        let plan_id = active_plan(
+            &db,
+            PlanSpec {
+                code: "PM-REVP",
+                scope_type: "equipment",
+                scope_id: Some(1),
+                strategy: "fixed",
+                trigger: r#"{"interval_unit":"day","interval_value":7}"#.to_string(),
+                effective_from: "2026-01-01T00:00:00Z",
+                parts: None,
+            },
+        )
+        .await;
+        // The stored lines as an older version wrote them.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE pm_plan_versions SET required_parts_json = ? WHERE pm_plan_id = ?",
+            [stored.into(), plan_id.into()],
+        ))
+        .await
+        .expect("legacy lines");
+        generate(&db, plan_id, "2026-01-10T00:00:00Z", 5).await;
+        let occ = to_in_progress(&db, occurrences(&db, plan_id).await.remove(0)).await;
+        let result = queries::execute_pm_occurrence(
+            &db,
+            ExecutePmOccurrenceInput {
+                occurrence_id: occ.id,
+                expected_occurrence_row_version: occ.row_version,
+                execution_result: "completed_with_findings".to_string(),
+                note: None,
+                actor_id: Some(1),
+                work_order_id: None,
+                defer_reason_code: None,
+                miss_reason_code: None,
+                findings: Some(vec![crate::pm::domain::PmExecutionFindingInput {
+                    finding_type: "vibration".to_string(),
+                    severity: Some("high".to_string()),
+                    description: "Lignes de pièces anciennes".to_string(),
+                    create_follow_up_di: None,
+                    create_follow_up_work_order: None,
+                    follow_up_work_order_type_id: None,
+                }]),
+            },
+        )
+        .await
+        .expect("execute");
+        let draft = crate::pm::plan_tools::create_pm_revision_from_finding(&db, result.findings[0].id)
+            .await
+            .expect("the revision is not refused for copied lines");
+        let copied = draft.required_parts_json.clone().expect("lines copied");
+        if expect_free_text {
+            assert_eq!(copied, stored, "free text stays free text");
+        } else {
+            let v: serde_json::Value = serde_json::from_str(&copied).expect("json");
+            assert_eq!(v[0]["required"], true);
+            assert_eq!(v[1]["code"], "Graisse EP2");
+            assert_eq!(v[1]["required"], true);
+        }
+        let parts = crate::pm::wo_content::parse_required_parts(Some(&copied));
+        assert!(parts.iter().all(|p| p.required), "read as required");
+        crate::pm::wo_content::validate_required_parts_json(Some(&copied)).expect("valid as copied");
+    }
+}
+
+/// The PM planning projection blocks on REQUIRED part lines only (planning readiness: an optional
+/// short part warns).
+#[tokio::test]
+async fn only_required_part_lines_block_the_pm_planning_projection() {
+    for (parts, blocked) in [
+        (r#"[{"article_code":"FLT-10","quantity":2,"required":false}]"#, false),
+        (r#"[{"article_code":"FLT-10","quantity":2,"required":true}]"#, true),
+    ] {
+        let db = setup_db().await;
+        seed_plant(&db).await;
+        let plan_id = active_plan(
+            &db,
+            PlanSpec {
+                code: "PM-OPT",
+                scope_type: "equipment",
+                scope_id: Some(1),
+                strategy: "fixed",
+                trigger: r#"{"interval_unit":"day","interval_value":7}"#.to_string(),
+                effective_from: "2026-01-01T00:00:00Z",
+                parts: Some(parts),
+            },
+        )
+        .await;
+        generate(&db, plan_id, "2026-01-10T00:00:00Z", 5).await;
+        let readiness = queries::list_pm_planning_readiness(
+            &db,
+            crate::pm::domain::PmPlanningReadinessInput {
+                pm_plan_id: Some(plan_id),
+                due_from: None,
+                due_to: None,
+                include_linked_work_orders: Some(false),
+                limit: Some(100),
+            },
+        )
+        .await
+        .expect("readiness");
+        let has_missing_parts = readiness
+            .candidates
+            .iter()
+            .any(|c| c.blockers.iter().any(|b| b.code == "missing_parts"));
+        assert_eq!(has_missing_parts, blocked, "{parts}");
+    }
+}

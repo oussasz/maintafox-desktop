@@ -1083,7 +1083,12 @@ pub async fn list_pm_planning_readiness(
 
         let mut blockers: Vec<PmPlanningReadinessBlocker> = Vec::new();
 
-        if json_array_has_items(required_parts_json.as_deref()) {
+        // Only a REQUIRED part line blocks the projection (planning readiness: an optional part
+        // only warns).
+        if crate::pm::wo_content::parse_required_parts(required_parts_json.as_deref())
+            .iter()
+            .any(|p| p.required)
+        {
             blockers.push(PmPlanningReadinessBlocker {
                 code: "missing_parts".to_string(),
                 message: "PM version defines required_parts_json and no planning reservation contract exists yet."

@@ -143,3 +143,94 @@ mod tests {
         assert_eq!(with_required_flags("not json"), None, "free text left as stored");
     }
 }
+
+#[cfg(test)]
+mod chain_tests {
+    use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+    use sea_orm_migration::MigratorTrait;
+
+    use crate::migrations::Migrator;
+
+    async fn exec(db: &DatabaseConnection, sql: &str) {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+
+    async fn text(db: &DatabaseConnection, sql: &str) -> String {
+        db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+            .unwrap_or_else(|| panic!("{sql}: no row"))
+            .try_get_by_index::<String>(0)
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    }
+
+    /// On a real database at migration 230: the column is added with every existing line required,
+    /// a legacy PM part list gets its flags, an explicit one is kept; running 231 again changes
+    /// nothing.
+    #[tokio::test]
+    async fn the_real_migration_adds_the_flag_and_reruns_without_change() {
+        let db = crate::db::test_db::empty_memory_db().await;
+        let pos = Migrator::migrations()
+            .iter()
+            .position(|m| m.name() == "m20261018_000231_part_lines_required")
+            .expect("registered");
+        Migrator::up(&db, Some(u32::try_from(pos).expect("position")))
+            .await
+            .expect("up to 230");
+        exec(&db, "PRAGMA foreign_keys = OFF").await;
+        exec(
+            &db,
+            "INSERT INTO work_order_parts (work_order_id, article_ref, quantity_planned) VALUES (1, 'OLD-LINE', 2)",
+        )
+        .await;
+        exec(
+            &db,
+            r#"INSERT INTO pm_plan_versions (pm_plan_id, version_no, effective_from, trigger_definition_json, required_parts_json)
+               VALUES (1, 1, '2026-01-01T00:00:00Z', '{}', '["FLT-01", {"code":"X","required":false}]'),
+                      (1, 2, '2026-01-01T00:00:00Z', '{}', 'free text kept')"#,
+        )
+        .await;
+        exec(&db, "PRAGMA foreign_keys = ON").await;
+
+        Migrator::up(&db, None).await.expect("231");
+        assert_eq!(
+            text(
+                &db,
+                "SELECT CAST(is_required AS TEXT) FROM work_order_parts WHERE article_ref = 'OLD-LINE'"
+            )
+            .await,
+            "1",
+            "an existing line is required"
+        );
+        let rewritten = text(
+            &db,
+            "SELECT required_parts_json FROM pm_plan_versions WHERE version_no = 1",
+        )
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&rewritten).expect("json");
+        assert_eq!(v[0], serde_json::json!({ "code": "FLT-01", "required": true }));
+        assert_eq!(v[1]["required"], false, "an explicit flag is kept");
+        assert_eq!(
+            text(
+                &db,
+                "SELECT required_parts_json FROM pm_plan_versions WHERE version_no = 2"
+            )
+            .await,
+            "free text kept"
+        );
+
+        // 231 again (its down keeps the data): nothing changes.
+        Migrator::down(&db, Some(1)).await.expect("down 231");
+        Migrator::up(&db, None).await.expect("231 again");
+        assert_eq!(
+            text(
+                &db,
+                "SELECT required_parts_json FROM pm_plan_versions WHERE version_no = 1"
+            )
+            .await,
+            rewritten
+        );
+    }
+}
