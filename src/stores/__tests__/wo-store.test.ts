@@ -163,6 +163,7 @@ function makeAsset(overrides: Partial<AssetSearchResult> = {}): AssetSearchResul
     subfamily_code: null,
     subfamily_name: null,
     criticality_code: null,
+    criticality_to_review: false,
     status_code: "in_service",
     org_node_id: null,
     org_node_name: null,

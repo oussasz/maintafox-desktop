@@ -2417,6 +2417,8 @@ export interface AssetSearchResult {
   subfamily_code: string | null;
   subfamily_name: string | null;
   criticality_code: string | null;
+  /** The criticality only comes from the old criticality list: shown "à revoir". */
+  criticality_to_review: boolean;
   status_code: string;
   org_node_id: number | null;
   org_node_name: string | null;

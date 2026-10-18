@@ -20,6 +20,11 @@ const svc = vi.hoisted(() => ({
 }));
 vi.mock("@/services/asset-search-service", () => svc);
 vi.mock("@/components/assets/AssetStatusBadge", () => ({ AssetStatusBadge: () => null }));
+vi.mock("@/components/assets/CriticalityBadge", () => ({
+  CriticalityBadge: ({ criticality }: { criticality: string | null }) => (
+    <span>crit:{criticality}</span>
+  ),
+}));
 
 function asset(id: number, code: string): AssetSearchResult {
   return {
@@ -108,5 +113,33 @@ describe("AssetPicker", () => {
     expect(await screen.findByText("assetPicker.legacyLabel")).toBeInTheDocument();
     expect(svc.searchAssetsPage).not.toHaveBeenCalled();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("marks a criticality from the old list to review in the options and the chosen asset", async () => {
+    svc.searchAssetsPage.mockResolvedValueOnce({
+      items: [
+        { ...asset(1, "PMP-101"), criticality_code: "A", criticality_to_review: true },
+        { ...asset(2, "PMP-102"), criticality_code: "B", criticality_to_review: false },
+      ],
+      total: 2,
+    });
+    const { rerender } = render(<AssetPicker value={null} onChange={vi.fn()} />);
+    type("PMP");
+    const options = await screen.findAllByRole("option");
+    expect(options[0]).toHaveTextContent("crit:A");
+    expect(options[0]).toHaveTextContent("listValue.review");
+    expect(options[1]).toHaveTextContent("crit:B");
+    expect(options[1]).not.toHaveTextContent("listValue.review");
+
+    rerender(
+      <AssetPicker
+        value={{ ...asset(1, "PMP-101"), criticality_code: "A", criticality_to_review: true }}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("listValue.review").closest("[title]")).toHaveAttribute(
+      "title",
+      "criticalityReview.hint",
+    );
   });
 });

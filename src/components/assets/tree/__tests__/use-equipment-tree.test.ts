@@ -21,6 +21,7 @@ function row(id: number, code: string, childCount = 0, isMatch = true): AssetTre
     subfamily_code: null,
     subfamily_name: null,
     criticality_code: null,
+    criticality_to_review: false,
     status_code: "ACTIVE_IN_SERVICE",
     org_node_id: null,
     org_node_name: null,

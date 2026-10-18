@@ -31,6 +31,7 @@ function makeResult(overrides: Partial<AssetSearchResult> = {}): AssetSearchResu
     subfamily_code: null,
     subfamily_name: null,
     criticality_code: "HIGH",
+    criticality_to_review: false,
     status_code: "ACTIVE_IN_SERVICE",
     org_node_id: 1,
     org_node_name: "Usine Principale",
