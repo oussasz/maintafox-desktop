@@ -1589,10 +1589,27 @@ async fn a_clearing_waits_for_the_rights_of_its_clearer() {
             ("permit_rule_clear_reason", json!("Consignation faite par l'exploitant")),
         ],
     );
-    let assignment = json!({ "user_sync_id": verifier, "scope_type": "tenant", "_sync_format": "row.v1" })
-        .as_object()
-        .cloned()
-        .expect("object");
+    // A plant-wide assignment of the clearer to a role carrying the permit-issue right.
+    let issuing_role = text(
+        &db,
+        &format!(
+            "SELECT r.entity_sync_id FROM roles r JOIN role_permissions rp ON rp.role_id = r.id \
+             JOIN permissions p ON p.id = rp.permission_id WHERE p.name = '{}' ORDER BY r.id LIMIT 1",
+            crate::rbac::permissions::PTW_ISSUE
+        ),
+    )
+    .await
+    .expect("a role carrying the right");
+    let assignment = json!({
+        "user_sync_id": verifier,
+        "role_sync_id": issuing_role,
+        "scope_type": "tenant",
+        "is_emergency": 0,
+        "_sync_format": "row.v1",
+    })
+    .as_object()
+    .cloned()
+    .expect("object");
     inbox(&db, "user_scope_assignments", "usa-verifier", 1, "pending", &assignment).await;
     let outcome = apply(&db, "work_orders", &wo_sync, &cleared).await;
     assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
@@ -1822,4 +1839,295 @@ async fn a_received_handover_signed_and_received_by_one_person_is_refused() {
         Some("0"),
         "no signer invented"
     );
+}
+
+/// The rights of an override's approver are waited for only on rows that could give THAT person
+/// the right: a waiting permission row of another role, or for another permission, a waiting
+/// assignment of another person, or a site-scoped or emergency assignment of the approver, never
+/// hold it; a plant-wide assignment of the approver to a role carrying the right does.
+#[tokio::test]
+async fn only_rows_that_could_give_the_approver_the_right_hold_an_override() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-27").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    exec(
+        &db,
+        "INSERT INTO personnel (entity_sync_id, employee_code, full_name, availability_status) \
+         VALUES ('pers-sync-27', 'SYNC-P27', 'Opérateur', 'available')",
+    )
+    .await;
+    let verifier = user_sync(&db, VERIFIER).await;
+    let by_verifier = json!({
+        "personnel_sync_id": "pers-sync-27",
+        "user_sync_id": null,
+        "context_kind": "work_order",
+        "work_order_sync_id": wo_sync,
+        "permit_sync_id": null,
+        "role_code": null,
+        "gaps_json": "[]",
+        "reason": "Habilitation en cours de renouvellement",
+        "approved_by_sync_id": verifier,
+        "approved_at": now(),
+        "created_at": now(),
+        "_sync_format": "row.v1",
+    })
+    .as_object()
+    .cloned()
+    .expect("object");
+    let refused = |db: &DatabaseConnection, why: &'static str| {
+        let payload = by_verifier.clone();
+        let db = db.clone();
+        async move {
+            let outcome = apply(&db, "qualification_overrides", "qo-27", &payload).await;
+            assert_eq!(
+                code(&outcome),
+                Some("QUALIFICATION_OVERRIDE_UNAUTHORISED"),
+                "{why}: {outcome:?}"
+            );
+            exec(&db, "DELETE FROM sync_inbox").await;
+        }
+    };
+    let row = |v: serde_json::Value| v.as_object().cloned().expect("object");
+    let certifying_role = text(
+        &db,
+        &format!(
+            "SELECT r.entity_sync_id FROM roles r JOIN role_permissions rp ON rp.role_id = r.id \
+             JOIN permissions p ON p.id = rp.permission_id WHERE p.name = '{}' ORDER BY r.id LIMIT 1",
+            crate::rbac::permissions::TRN_CERTIFY
+        ),
+    )
+    .await
+    .expect("a role carrying the right");
+
+    // No roles at all, nothing waiting.
+    refused(&db, "no roles").await;
+    // A permission row of a role the approver does not hold.
+    let other_role = row(json!({
+        "role_sync_id": "role-not-held",
+        "permission_key": crate::rbac::permissions::TRN_CERTIFY,
+        "_sync_format": "row.v1",
+    }));
+    inbox(&db, "role_permissions", "rp-other-role", 1, "pending", &other_role).await;
+    refused(&db, "another role").await;
+    // An assignment of another person.
+    let other_user = row(json!({
+        "user_sync_id": "someone-else",
+        "role_sync_id": certifying_role,
+        "scope_type": "tenant",
+        "is_emergency": 0,
+        "_sync_format": "row.v1",
+    }));
+    inbox(&db, "user_scope_assignments", "usa-other", 1, "pending", &other_user).await;
+    refused(&db, "another person").await;
+    // Site-scoped or emergency assignments of the approver.
+    for (scope, emergency) in [("site", 0), ("tenant", 1)] {
+        let assignment = row(json!({
+            "user_sync_id": verifier,
+            "role_sync_id": certifying_role,
+            "scope_type": scope,
+            "is_emergency": emergency,
+            "_sync_format": "row.v1",
+        }));
+        inbox(&db, "user_scope_assignments", "usa-scoped", 1, "pending", &assignment).await;
+        refused(&db, "site-scoped or emergency assignment").await;
+    }
+    // The approver holds a role here; a permission row of it for ANOTHER permission is waiting.
+    let held_role = text(
+        &db,
+        &format!(
+            "SELECT r.entity_sync_id FROM roles r WHERE NOT EXISTS (SELECT 1 FROM role_permissions rp \
+             JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = r.id AND p.name = '{}') \
+             AND r.entity_sync_id IS NOT NULL ORDER BY r.id LIMIT 1",
+            crate::rbac::permissions::TRN_CERTIFY
+        ),
+    )
+    .await
+    .expect("a role without the right");
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
+             created_at, updated_at, row_version) VALUES ('usa-sync-27', {VERIFIER}, \
+             (SELECT id FROM roles WHERE entity_sync_id = '{held_role}'), 'tenant', NULL, \
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)"
+        ),
+    )
+    .await;
+    let other_permission = row(json!({
+        "role_sync_id": held_role,
+        "permission_key": crate::rbac::permissions::PTW_ISSUE,
+        "_sync_format": "row.v1",
+    }));
+    inbox(
+        &db,
+        "role_permissions",
+        "rp-other-permission",
+        1,
+        "pending",
+        &other_permission,
+    )
+    .await;
+    refused(&db, "another permission").await;
+    // The approver now holds a role: a permission row of a role they do not hold still holds nothing.
+    inbox(&db, "role_permissions", "rp-other-role", 1, "pending", &other_role).await;
+    refused(&db, "another role, approver holding roles").await;
+    // A waiting assignment to a role not here yet, whose waiting permission row is for another
+    // permission: nothing could give the right, refused.
+    let new_role = row(json!({ "name": "Certificateur 27", "_sync_format": "row.v1" }));
+    let new_role_assignment = row(json!({
+        "user_sync_id": verifier,
+        "role_sync_id": "role-new-27",
+        "scope_type": "tenant",
+        "is_emergency": 0,
+        "_sync_format": "row.v1",
+    }));
+    let new_role_other_permission = row(json!({
+        "role_sync_id": "role-new-27",
+        "permission_key": crate::rbac::permissions::PTW_ISSUE,
+        "_sync_format": "row.v1",
+    }));
+    inbox(&db, "roles", "role-new-27", 1, "pending", &new_role).await;
+    inbox(
+        &db,
+        "user_scope_assignments",
+        "usa-new-27",
+        1,
+        "pending",
+        &new_role_assignment,
+    )
+    .await;
+    inbox(
+        &db,
+        "role_permissions",
+        "rp-new-27-other",
+        1,
+        "pending",
+        &new_role_other_permission,
+    )
+    .await;
+    refused(&db, "a waiting role without the right").await;
+    // The role, the assignment and a permission row of that role for the right all still waiting:
+    // the override waits (fail-closed toward waiting).
+    let new_role_grant = row(json!({
+        "role_sync_id": "role-new-27",
+        "permission_key": crate::rbac::permissions::TRN_CERTIFY,
+        "_sync_format": "row.v1",
+    }));
+    inbox(&db, "roles", "role-new-27", 1, "pending", &new_role).await;
+    inbox(
+        &db,
+        "user_scope_assignments",
+        "usa-new-27",
+        1,
+        "pending",
+        &new_role_assignment,
+    )
+    .await;
+    inbox(&db, "role_permissions", "rp-new-27", 1, "deferred", &new_role_grant).await;
+    let outcome = apply(&db, "qualification_overrides", "qo-27", &by_verifier).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Deferred { .. }),
+        "waiting role: {outcome:?}"
+    );
+    exec(&db, "DELETE FROM sync_inbox").await;
+
+    // A waiting plant-wide assignment of the approver to a role carrying the right: wait.
+    let assignment = row(json!({
+        "user_sync_id": verifier,
+        "role_sync_id": certifying_role,
+        "scope_type": "tenant",
+        "is_emergency": 0,
+        "_sync_format": "row.v1",
+    }));
+    inbox(
+        &db,
+        "user_scope_assignments",
+        "usa-certifying",
+        1,
+        "pending",
+        &assignment,
+    )
+    .await;
+    let outcome = apply(&db, "qualification_overrides", "qo-27", &by_verifier).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+}
+
+/// The whole clearing of a rule permit flag is its audit trace: a received row that changes who
+/// cleared it or why is judged in full, and a clearing recorded here is never rewritten.
+#[tokio::test]
+async fn the_clearing_of_a_rule_permit_flag_is_never_rewritten() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-28").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET permit_rule_code = 'rule-elec', requires_permit = 1 WHERE id = {wo_id}"),
+    )
+    .await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let flagged = wire(&db, "work_orders", &wo_sync).await;
+    // Still flagged, with only a reason (or a clearer) slipped in: judged in full, refused.
+    for (key, value) in [
+        ("permit_rule_clear_reason", json!("Consignation faite par l'exploitant")),
+        ("permit_rule_cleared_by_sync_id", json!(user_sync(&db, APPLIER).await)),
+    ] {
+        let outcome = apply(&db, "work_orders", &wo_sync, &with(flagged.clone(), &[(key, value)])).await;
+        assert_eq!(
+            code(&outcome),
+            Some("WO_PERMIT_RULE_CLEAR_INVALID"),
+            "{key}: {outcome:?}"
+        );
+    }
+    // A valid clearing applies; a later row rewriting its reason is refused.
+    let cleared = with(
+        flagged.clone(),
+        &[
+            ("requires_permit", json!(0)),
+            ("permit_rule_cleared_by_sync_id", json!(user_sync(&db, APPLIER).await)),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Consignation faite par l'exploitant")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &cleared).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // Flagged again by the general edit (`set_permit_requirement`), the clearing kept: applies.
+    let reflagged = with(cleared.clone(), &[("requires_permit", json!(1))]);
+    let outcome = apply(&db, "work_orders", &wo_sync, &reflagged).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "re-flag: {outcome:?}");
+    // No local action rewrites or removes a recorded clearing: a received row doing so is refused.
+    let verifier = user_sync(&db, VERIFIER).await;
+    for (what, changes) in [
+        (
+            "reason",
+            vec![("permit_rule_clear_reason", json!("Autre motif plus commode"))],
+        ),
+        ("clearer", vec![("permit_rule_cleared_by_sync_id", json!(verifier))]),
+        ("time", vec![("permit_rule_cleared_at", json!("2026-01-01T00:00:00Z"))]),
+        (
+            "removed",
+            vec![
+                ("permit_rule_cleared_by_sync_id", json!(null)),
+                ("permit_rule_cleared_at", json!(null)),
+                ("permit_rule_clear_reason", json!(null)),
+            ],
+        ),
+    ] {
+        let outcome = apply(&db, "work_orders", &wo_sync, &with(reflagged.clone(), &changes)).await;
+        assert_eq!(
+            code(&outcome),
+            Some("WO_PERMIT_RULE_CLEAR_INVALID"),
+            "{what}: {outcome:?}"
+        );
+    }
 }

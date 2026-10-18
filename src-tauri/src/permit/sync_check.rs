@@ -896,21 +896,30 @@ pub(crate) async fn inbound_permit_rule_check(
             field(p, "permit_rule_clear_reason").map(str::to_string),
         ]
     };
-    let cleared_changed = local
+    // The whole clearing (who, when, why) is the audit trace: any change of it is judged.
+    let none: [Option<String>; 3] = [None, None, None];
+    let clearing_changed = local
         .as_ref()
-        .map_or(field(&wo, "permit_rule_cleared_at").is_some(), |l| {
-            field(l, "permit_rule_cleared_at") != field(&wo, "permit_rule_cleared_at")
-        });
-    // Still flagged and no new clearing: the flag is in force (the start gate judges it).
-    if flag(&wo, "requires_permit") && !cleared_changed {
-        return Ok(None);
-    }
-    // The clearing held here, unchanged.
-    if local
-        .as_ref()
-        .is_some_and(|l| flag(l, "requires_permit") == flag(&wo, "requires_permit") && clearing(l) == clearing(&wo))
+        .map_or(clearing(&wo) != none, |l| clearing(l) != clearing(&wo));
+    if clearing_changed
+        && local
+            .as_ref()
+            .is_some_and(|l| field(l, "permit_rule_cleared_at").is_some())
     {
-        return Ok(None);
+        return conflict(
+            "WO_PERMIT_RULE_CLEAR_INVALID",
+            format!("work order {code}: the clearing of its rule permit flag recorded here cannot be rewritten"),
+        );
+    }
+    if !clearing_changed {
+        // Still flagged: the flag is in force (the start gate judges it).
+        if flag(&wo, "requires_permit") {
+            return Ok(None);
+        }
+        // The cleared state held here, unchanged.
+        if local.as_ref().is_some_and(|l| !flag(l, "requires_permit")) {
+            return Ok(None);
+        }
     }
     let invalid = |why: &str| {
         conflict(
@@ -967,39 +976,27 @@ pub(crate) async fn inbound_permit_rule_check(
 }
 
 /// Whether rows that could give `user_sync_id` the right `permission` are still waiting in the inbox
-/// here: an assignment of that person, a role that person holds (here or by a waiting assignment),
-/// or a permission of such a role for `permission`. Rows of other people or roles never hold the
-/// check. A right is held before it is used, so its rows reach this PC before (or with) the rows
-/// that use it; while they wait, the check waits too (fail-closed: nothing is applied without the
-/// right).
+/// here: a waiting plant-wide, non-emergency assignment of that person to a role that carries the
+/// permission (here), or a waiting permission row for `permission` of a role that person holds
+/// plant-wide (here, or by such a waiting assignment). Rows of other people, other roles, other
+/// permissions, site-scoped or emergency assignments never hold the check. A right is held before it
+/// is used, so its rows reach this PC before (or with) the rows that use it; while they wait, the
+/// check waits too (fail-closed: nothing is applied without the right).
 pub(crate) async fn rights_may_still_arrive(
     conn: &impl ConnectionTrait,
     user_sync_id: &str,
     permission: &str,
 ) -> AppResult<bool> {
     const WAITING: &str = "apply_status IN ('pending', 'deferred') AND operation NOT IN ('delete', 'archive')";
-    // An assignment of this person is still waiting.
-    let assignment_waiting = conn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!(
-                "SELECT 1 AS w FROM sync_inbox WHERE entity_type = 'user_scope_assignments' AND {WAITING} \
-                   AND json_extract(payload_json, '$.user_sync_id') = ? LIMIT 1"
-            ),
-            [user_sync_id.into()],
-        ))
-        .await?
-        .is_some();
-    if assignment_waiting {
-        return Ok(true);
-    }
+    // The roles that person holds plant-wide: here, and by waiting assignments.
     let mut roles: Vec<String> = Vec::new();
     for r in conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT ro.entity_sync_id AS role FROM user_scope_assignments usa \
                JOIN roles ro ON ro.id = usa.role_id JOIN user_accounts ua ON ua.id = usa.user_id \
-              WHERE ua.entity_sync_id = ? AND usa.deleted_at IS NULL",
+              WHERE ua.entity_sync_id = ? AND usa.deleted_at IS NULL AND usa.scope_type = 'tenant' \
+                AND COALESCE(usa.is_emergency, 0) = 0",
             [user_sync_id.into()],
         ))
         .await?
@@ -1008,22 +1005,57 @@ pub(crate) async fn rights_may_still_arrive(
             roles.push(role);
         }
     }
+    let mut waiting_roles: Vec<String> = Vec::new();
+    for r in conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT json_extract(payload_json, '$.role_sync_id') AS role FROM sync_inbox \
+                 WHERE entity_type = 'user_scope_assignments' AND {WAITING} \
+                   AND json_extract(payload_json, '$.user_sync_id') = ? \
+                   AND json_extract(payload_json, '$.scope_type') = 'tenant' \
+                   AND COALESCE(json_extract(payload_json, '$.is_emergency'), 0) = 0"
+            ),
+            [user_sync_id.into()],
+        ))
+        .await?
+    {
+        if let Some(role) = r.try_get::<Option<String>>("", "role").map_err(sync_err)? {
+            waiting_roles.push(role);
+        }
+    }
+    // A waiting assignment to a role that carries the permission here.
+    for role in &waiting_roles {
+        let carries = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS c FROM roles ro JOIN role_permissions rp ON rp.role_id = ro.id \
+                   JOIN permissions p ON p.id = rp.permission_id \
+                  WHERE ro.entity_sync_id = ? AND p.name = ?",
+                [role.as_str().into(), permission.into()],
+            ))
+            .await?
+            .is_some();
+        if carries {
+            return Ok(true);
+        }
+    }
+    roles.extend(waiting_roles);
     if roles.is_empty() {
         return Ok(false);
     }
+    // A waiting permission row for that permission, of a role that person holds.
     let list = serde_json::to_string(&roles)?;
     Ok(conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT 1 AS w FROM sync_inbox WHERE {WAITING} AND ( \
-                   (entity_type = 'roles' AND entity_sync_id IN (SELECT value FROM json_each(?))) \
-                   OR (entity_type = 'role_permissions' \
-                       AND json_extract(payload_json, '$.role_sync_id') IN (SELECT value FROM json_each(?)) \
-                       AND json_extract(payload_json, '$.permission_key') = ?)) \
+                "SELECT 1 AS w FROM sync_inbox WHERE entity_type = 'role_permissions' AND {WAITING} \
+                   AND json_extract(payload_json, '$.role_sync_id') IN (SELECT value FROM json_each(?)) \
+                   AND json_extract(payload_json, '$.permission_key') = ? \
                  LIMIT 1"
             ),
-            [list.clone().into(), list.into(), permission.into()],
+            [list.into(), permission.into()],
         ))
         .await?
         .is_some())
