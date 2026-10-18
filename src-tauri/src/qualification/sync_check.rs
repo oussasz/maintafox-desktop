@@ -110,6 +110,16 @@ pub(crate) async fn inbound_override_check(
         _ => {}
     }
     if !crate::settings::site::holds_tenant_right(conn, approver, crate::rbac::permissions::TRN_CERTIFY).await? {
+        // Rows giving the approver the right are still waiting here: wait (never applied without it).
+        if crate::permit::sync_check::rights_may_still_arrive(
+            conn,
+            approver_sync,
+            crate::rbac::permissions::TRN_CERTIFY,
+        )
+        .await?
+        {
+            return wait(format!("the rights of approver {approver_sync} are still arriving"));
+        }
         return conflict(
             "QUALIFICATION_OVERRIDE_UNAUTHORISED",
             "qualification override approved by someone who does not hold the certification right here".into(),

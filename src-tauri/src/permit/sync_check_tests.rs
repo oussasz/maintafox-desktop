@@ -1499,3 +1499,230 @@ async fn a_started_work_order_applies_the_waiting_isolations_it_was_judged_on() 
         Some("L-0021")
     );
 }
+
+/// The plant rule that requires a work order's permit is never removed or changed by a received row,
+/// and an invented clearing is judged in full, whatever the permit flag says.
+#[tokio::test]
+async fn a_rule_flag_is_never_dropped_or_forged_by_a_received_row() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-22").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET permit_rule_code = 'rule-elec', permit_rule_permit_type = 'loto', \
+             requires_permit = 1 WHERE id = {wo_id}"
+        ),
+    )
+    .await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let flagged = wire(&db, "work_orders", &wo_sync).await;
+
+    // Rule removed, or its permit type changed, with the flag dropped and no clearing: refused.
+    for changes in [
+        vec![("permit_rule_code", Value::Null), ("requires_permit", json!(0))],
+        vec![("permit_rule_permit_type", json!("hot_work"))],
+    ] {
+        let outcome = apply(&db, "work_orders", &wo_sync, &with(flagged.clone(), &changes)).await;
+        assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CHANGED"), "{outcome:?}");
+    }
+    // Still flagged but with an invented clearing (no reason, no clearer): judged in full.
+    let invented = with(flagged.clone(), &[("permit_rule_cleared_at", json!(now()))]);
+    let outcome = apply(&db, "work_orders", &wo_sync, &invented).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+
+    let admin = json!(user_sync(&db, APPLIER).await);
+    let clear = |at: String| {
+        with(
+            flagged.clone(),
+            &[
+                ("requires_permit", json!(0)),
+                ("permit_rule_cleared_by_sync_id", admin.clone()),
+                ("permit_rule_cleared_at", json!(at)),
+                ("permit_rule_clear_reason", json!("Consignation faite par l'exploitant")),
+            ],
+        )
+    };
+    // Dated in the future: refused.
+    let outcome = apply(&db, "work_orders", &wo_sync, &clear("2999-01-01T00:00:00Z".into())).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    // After the work started: refused.
+    let after_start = with(clear(now()), &[("actual_start", json!("2026-01-01T00:00:00Z"))]);
+    let outcome = apply(&db, "work_orders", &wo_sync, &after_start).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+}
+
+/// A clearer whose rights are still waiting in the inbox: the work order waits (never applied
+/// without the right).
+#[tokio::test]
+async fn a_clearing_waits_for_the_rights_of_its_clearer() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-23").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET permit_rule_code = 'rule-elec', requires_permit = 1 WHERE id = {wo_id}"),
+    )
+    .await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let verifier = user_sync(&db, VERIFIER).await;
+    let cleared = with(
+        wire(&db, "work_orders", &wo_sync).await,
+        &[
+            ("requires_permit", json!(0)),
+            ("permit_rule_cleared_by_sync_id", json!(verifier)),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Consignation faite par l'exploitant")),
+        ],
+    );
+    let assignment = json!({ "user_sync_id": verifier, "scope_type": "tenant", "_sync_format": "row.v1" })
+        .as_object()
+        .cloned()
+        .expect("object");
+    inbox(&db, "user_scope_assignments", "usa-verifier", 1, "pending", &assignment).await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &cleared).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    // Nothing waiting for that person: refused.
+    exec(&db, "DELETE FROM sync_inbox").await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &cleared).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+}
+
+/// A row of the group that waits (here a wait sent by an older version, without its hold kind)
+/// makes the received start wait too, instead of a conflict.
+#[tokio::test]
+async fn a_waiting_row_of_the_group_makes_the_start_wait() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-24").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let in_progress = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'in_progress'",
+    )
+    .await
+    .expect("status sync id");
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-24 breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO work_order_delay_segments (entity_sync_id, work_order_id, started_at, ended_at, hold_kind, \
+             delay_reason_id) VALUES ('seg-sync-24', {wo_id}, '2026-01-01T08:00:00Z', '2026-01-01T09:00:00Z', 'pause', \
+             (SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+              JOIN reference_domains d ON d.id = rs.domain_id WHERE UPPER(d.code) = 'WORK.DELAY_REASONS' LIMIT 1))"
+        ),
+    )
+    .await;
+    let mut segment = wire(&db, "work_order_delay_segments", "seg-sync-24").await;
+    segment.remove("hold_kind");
+    exec(
+        &db,
+        "DELETE FROM work_order_delay_segments WHERE entity_sync_id = 'seg-sync-24'",
+    )
+    .await;
+    inbox(&db, "work_order_delay_segments", "seg-sync-24", 1, "pending", &segment).await;
+    let started = with(
+        wire(&db, "work_orders", &wo_sync).await,
+        &[("status_sync_id", json!(in_progress)), ("actual_start", json!(now()))],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+}
+
+/// An override whose approver lacks the right here waits only for rows that could give THAT person
+/// the right (an assignment, or a permission of a role they hold); an unrelated waiting role does
+/// not hold it.
+#[tokio::test]
+async fn an_override_waits_only_for_rights_of_its_own_approver() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-25").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    exec(
+        &db,
+        "INSERT INTO personnel (entity_sync_id, employee_code, full_name, availability_status) \
+         VALUES ('pers-sync-25', 'SYNC-P25', 'Opérateur', 'available')",
+    )
+    .await;
+    let verifier = user_sync(&db, VERIFIER).await;
+    let by_verifier = json!({
+        "personnel_sync_id": "pers-sync-25",
+        "user_sync_id": null,
+        "context_kind": "work_order",
+        "work_order_sync_id": wo_sync,
+        "permit_sync_id": null,
+        "role_code": null,
+        "gaps_json": "[]",
+        "reason": "Habilitation en cours de renouvellement",
+        "approved_by_sync_id": verifier,
+        "approved_at": now(),
+        "created_at": now(),
+        "_sync_format": "row.v1",
+    })
+    .as_object()
+    .cloned()
+    .expect("object");
+
+    // An unrelated role waiting: refused at once.
+    let role = json!({ "name": "Unrelated", "_sync_format": "row.v1" })
+        .as_object()
+        .cloned()
+        .expect("object");
+    inbox(&db, "roles", "role-unrelated", 1, "deferred", &role).await;
+    let outcome = apply(&db, "qualification_overrides", "qo-25", &by_verifier).await;
+    assert_eq!(
+        code(&outcome),
+        Some("QUALIFICATION_OVERRIDE_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+
+    // The approver holds a role here without the right; a permission of that role for the right is
+    // still waiting: wait.
+    let role_sync = text(
+        &db,
+        "SELECT r.entity_sync_id FROM roles r WHERE NOT EXISTS (SELECT 1 FROM role_permissions rp \
+         JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = r.id AND p.name = 'trn.certify') \
+         AND r.entity_sync_id IS NOT NULL ORDER BY r.id LIMIT 1",
+    )
+    .await
+    .expect("a role without the right");
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
+             created_at, updated_at, row_version) VALUES ('usa-sync-25', {VERIFIER}, \
+             (SELECT id FROM roles WHERE entity_sync_id = '{role_sync}'), 'tenant', NULL, \
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)"
+        ),
+    )
+    .await;
+    let grant = json!({ "role_sync_id": role_sync, "permission_key": "trn.certify", "_sync_format": "row.v1" })
+        .as_object()
+        .cloned()
+        .expect("object");
+    inbox(&db, "role_permissions", "rp-sync-25", 1, "pending", &grant).await;
+    let outcome = apply(&db, "qualification_overrides", "qo-25", &by_verifier).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+}

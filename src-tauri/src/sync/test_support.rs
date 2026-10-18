@@ -341,6 +341,11 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // active (its generic times are in order: fitted, verified, activated, lock removed, expiry),
     // so its generic isolations arrive with it as a valid group.
     ("work_permits", "status", "'active'"),
+    // A generic work order carries no plant-rule permit flag (that trace is written at conversion and
+    // judged on arrival, `permit::sync_check::inbound_permit_rule_check`).
+    ("work_orders", "permit_rule_code", "NULL"),
+    ("work_orders", "permit_rule_permit_type", "NULL"),
+    ("work_orders", "permit_rule_cleared_at", "NULL"),
     // A calendar day, not a timestamp.
     ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
     // A planned crew is 1–50 people (migration 207 triggers).

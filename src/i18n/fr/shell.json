@@ -100,6 +100,7 @@
       "WO_PERMIT_RULE_CLEAR_INVALID": "Un permis exigé par une règle de l'usine a été levé sans qui, quand ou pourquoi (ou après le début des travaux)",
       "WO_PERMIT_RULE_CLEAR_UNAUTHORISED": "Un permis exigé par une règle de l'usine a été levé par une personne sans le droit de délivrer des permis",
       "PERMIT_TYPE_REQUIRED_TO_START": "Un ordre de travail démarré sans permis du type exigé par une règle de l'usine",
+      "WO_PERMIT_RULE_CHANGED": "La règle de l'usine qui exige le permis d'un ordre de travail a été retirée ou modifiée ailleurs",
       "other": "À examiner"
     },
     "history": {

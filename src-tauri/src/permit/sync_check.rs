@@ -563,7 +563,18 @@ pub(crate) async fn apply_group(
             .await?;
         match outcome {
             ApplyOutcome::Applied | ApplyOutcome::Unchanged => {}
-            ApplyOutcome::Conflict { code, message } | ApplyOutcome::Deferred { code, message } => {
+            // A child that waits (a row it needs has not arrived) makes the whole group wait: rolled
+            // back, retried with the next rows applied.
+            ApplyOutcome::Deferred { code, message } => {
+                return Ok(Some(ApplyOutcome::Deferred {
+                    code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+                    message: format!(
+                        "{} {} received with it waits ({code}: {message})",
+                        row.entity_type, item.entity_sync_id
+                    ),
+                }));
+            }
+            ApplyOutcome::Conflict { code, message } => {
                 return Ok(Some(ApplyOutcome::Conflict {
                     code: "SYNC_GROUP_REFUSED".into(),
                     message: format!(
@@ -811,7 +822,24 @@ pub(crate) async fn inbound_permit_rule_check(
 ) -> AppResult<Option<InboundVerdict>> {
     let local = local_wire(conn, "work_orders", entity_sync_id).await?;
     let wo = overlay(local.as_ref(), received);
-    if field(&wo, "permit_rule_code").is_none() || flag(&wo, "requires_permit") {
+    let code = field(&wo, "code").unwrap_or(entity_sync_id).to_string();
+    // The rule trace is written once, at conversion, and never changes (`di::conversion`): a received
+    // row that blanks or changes it is refused, and the local trace is the one judged.
+    if let Some(l) = local.as_ref().filter(|l| field(l, "permit_rule_code").is_some()) {
+        let trace = |p: &Payload| {
+            (
+                field(p, "permit_rule_code").map(str::to_string),
+                field(p, "permit_rule_permit_type").map(str::to_string),
+            )
+        };
+        if trace(l) != trace(&wo) {
+            return conflict(
+                "WO_PERMIT_RULE_CHANGED",
+                format!("work order {code}: the plant rule that requires its permit cannot be removed or changed"),
+            );
+        }
+    }
+    if field(&wo, "permit_rule_code").is_none() {
         return Ok(None);
     }
     let clearing = |p: &Payload| {
@@ -821,12 +849,22 @@ pub(crate) async fn inbound_permit_rule_check(
             field(p, "permit_rule_clear_reason").map(str::to_string),
         ]
     };
-    if local.as_ref().is_some_and(|l| {
-        field(l, "permit_rule_code").is_some() && !flag(l, "requires_permit") && clearing(l) == clearing(&wo)
-    }) {
+    let cleared_changed = local
+        .as_ref()
+        .map_or(field(&wo, "permit_rule_cleared_at").is_some(), |l| {
+            field(l, "permit_rule_cleared_at") != field(&wo, "permit_rule_cleared_at")
+        });
+    // Still flagged and no new clearing: the flag is in force (the start gate judges it).
+    if flag(&wo, "requires_permit") && !cleared_changed {
         return Ok(None);
     }
-    let code = field(&wo, "code").unwrap_or(entity_sync_id).to_string();
+    // The clearing held here, unchanged.
+    if local
+        .as_ref()
+        .is_some_and(|l| flag(l, "requires_permit") == flag(&wo, "requires_permit") && clearing(l) == clearing(&wo))
+    {
+        return Ok(None);
+    }
     let invalid = |why: &str| {
         conflict(
             "WO_PERMIT_RULE_CLEAR_INVALID",
@@ -865,12 +903,83 @@ pub(crate) async fn inbound_permit_rule_check(
         ));
     };
     if !crate::settings::site::holds_tenant_right(conn, clearer, crate::rbac::permissions::PTW_ISSUE).await? {
+        // The right is held on the PC that cleared it before the clearing, so its rows come before
+        // this one: while some are still waiting here, wait; otherwise refuse (never applied without
+        // the right).
+        if rights_may_still_arrive(conn, clearer_sync, crate::rbac::permissions::PTW_ISSUE).await? {
+            return wait(format!(
+                "work order {code}: the rights of the person who cleared its permit flag are still arriving"
+            ));
+        }
         return conflict(
             "WO_PERMIT_RULE_CLEAR_UNAUTHORISED",
             format!("work order {code}: the permit required by a plant rule was cleared by someone without the permit-issue right here"),
         );
     }
     Ok(None)
+}
+
+/// Whether rows that could give `user_sync_id` the right `permission` are still waiting in the inbox
+/// here: an assignment of that person, a role that person holds (here or by a waiting assignment),
+/// or a permission of such a role for `permission`. Rows of other people or roles never hold the
+/// check. A right is held before it is used, so its rows reach this PC before (or with) the rows
+/// that use it; while they wait, the check waits too (fail-closed: nothing is applied without the
+/// right).
+pub(crate) async fn rights_may_still_arrive(
+    conn: &impl ConnectionTrait,
+    user_sync_id: &str,
+    permission: &str,
+) -> AppResult<bool> {
+    const WAITING: &str = "apply_status IN ('pending', 'deferred') AND operation NOT IN ('delete', 'archive')";
+    // An assignment of this person is still waiting.
+    let assignment_waiting = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT 1 AS w FROM sync_inbox WHERE entity_type = 'user_scope_assignments' AND {WAITING} \
+                   AND json_extract(payload_json, '$.user_sync_id') = ? LIMIT 1"
+            ),
+            [user_sync_id.into()],
+        ))
+        .await?
+        .is_some();
+    if assignment_waiting {
+        return Ok(true);
+    }
+    let mut roles: Vec<String> = Vec::new();
+    for r in conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT ro.entity_sync_id AS role FROM user_scope_assignments usa \
+               JOIN roles ro ON ro.id = usa.role_id JOIN user_accounts ua ON ua.id = usa.user_id \
+              WHERE ua.entity_sync_id = ? AND usa.deleted_at IS NULL",
+            [user_sync_id.into()],
+        ))
+        .await?
+    {
+        if let Some(role) = r.try_get::<Option<String>>("", "role").map_err(sync_err)? {
+            roles.push(role);
+        }
+    }
+    if roles.is_empty() {
+        return Ok(false);
+    }
+    let list = serde_json::to_string(&roles)?;
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT 1 AS w FROM sync_inbox WHERE {WAITING} AND ( \
+                   (entity_type = 'roles' AND entity_sync_id IN (SELECT value FROM json_each(?))) \
+                   OR (entity_type = 'role_permissions' \
+                       AND json_extract(payload_json, '$.role_sync_id') IN (SELECT value FROM json_each(?)) \
+                       AND json_extract(payload_json, '$.permission_key') = ?)) \
+                 LIMIT 1"
+            ),
+            [list.clone().into(), list.into(), permission.into()],
+        ))
+        .await?
+        .is_some())
 }
 
 /// Re-check of a work order received by synchronisation as it enters `in_progress`: the permit gate
