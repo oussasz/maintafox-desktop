@@ -33,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { describeAppError } from "@/lib/app-error";
+import { importProblemText } from "@/lib/import-problem-text";
 import {
   applyPersonnelImportBatch,
   createPersonnelImportBatch,
@@ -63,6 +64,7 @@ function sourceKindFromName(fileName: string): "csv" | "xlsx" {
 
 export function PersonnelImportWizard() {
   const { t } = useTranslation("personnel");
+  const tText = t as unknown as (key: string, options?: Record<string, unknown>) => string;
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<ImportMode>("create_and_update");
@@ -256,18 +258,23 @@ export function PersonnelImportWizard() {
                               className="text-xs text-text-secondary"
                               data-testid="import-message"
                             >
-                              {/* Translated reason; the server's own text stays under Detail. */}
+                              {/* Translated reason and detail; a problem without a code this
+                                  version can say keeps the server's sentence under Detail. */}
                               <span className="font-medium">
                                 {t(`import.category.${msg.category.replace(/\./g, "_")}`, {
                                   defaultValue: t("import.category.other"),
                                 })}
                               </span>
-                              <details className="text-text-muted">
-                                <summary className="cursor-pointer select-none">
-                                  {t("import.messageDetail")}
-                                </summary>
-                                {msg.message}
-                              </details>
+                              {importProblemText(msg, tText) ? (
+                                <span className="block">{importProblemText(msg, tText)}</span>
+                              ) : (
+                                <details className="text-text-muted">
+                                  <summary className="cursor-pointer select-none">
+                                    {t("import.messageDetail")}
+                                  </summary>
+                                  {msg.message}
+                                </details>
+                              )}
                             </div>
                           ))}
                         </TableCell>

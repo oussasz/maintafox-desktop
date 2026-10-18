@@ -316,6 +316,17 @@ async fn local_id<C: ConnectionTrait>(conn: &C, table: &str, sync_id: Option<&st
 
 /// Whether `user_id` holds `adm.settings` tenant-wide (or is an administrator).
 async fn holds_settings_right<C: ConnectionTrait>(conn: &C, user_id: i64) -> AppResult<bool> {
+    holds_tenant_right(conn, user_id, crate::rbac::permissions::ADM_SETTINGS).await
+}
+
+/// Whether `user_id` (active account) holds `permission` tenant-wide now, through a role in force
+/// that is not an emergency grant, or is an administrator. Used to re-check, on arrival, the right
+/// of the person named by a received row.
+pub(crate) async fn holds_tenant_right<C: ConnectionTrait>(
+    conn: &C,
+    user_id: i64,
+    permission: &str,
+) -> AppResult<bool> {
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     Ok(conn
         .query_one(Statement::from_sql_and_values(
@@ -330,12 +341,7 @@ async fn holds_settings_right<C: ConnectionTrait>(conn: &C, user_id: i64) -> App
                    AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
                    AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
                    AND p.name = ?))",
-            [
-                user_id.into(),
-                now.clone().into(),
-                now.into(),
-                crate::rbac::permissions::ADM_SETTINGS.into(),
-            ],
+            [user_id.into(), now.clone().into(), now.into(), permission.into()],
         ))
         .await?
         .is_some())
@@ -368,8 +374,9 @@ fn bool_of(raw: Option<&str>) -> Option<bool> {
 /// A per-site rule received by synchronisation (`site_settings`). Unknown rule or unreadable
 /// value: conflict. Turning a rule OFF (the strict side) is applied. Turning it ON is applied only
 /// with its audit event here (same site, rule, value and moment; step-up; a reason; made by a
-/// holder of `adm.settings`); while that event waits in the inbox the rule waits too; without
-/// one it is a conflict.
+/// holder of `adm.settings`); until that event is here the rule waits (deferred), whether the event
+/// is already in the inbox or not received yet. A later audited change that does not match (an
+/// older "on" replayed, another author, no step-up or reason) is a conflict.
 pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
     conn: &C,
     payload: &serde_json::Map<String, serde_json::Value>,
@@ -444,7 +451,13 @@ pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
             }));
         }
     }
-    // The audit event may still be waiting in the inbox (same batch or an earlier one).
+    // No audited change at or after this one here yet. The origin writes the rule and then its
+    // event in one transaction, so the event follows the rule in the outbox; but a push batch
+    // (`SYNC_OUTBOX_BATCH_SIZE`, outbox id order) or a server delta page can end between the two,
+    // and this device applies each exchange's rows before the next one arrives. So the rule waits
+    // for its event like a row waiting for its parent, instead of becoming a conflict a person must
+    // resolve for a legitimate change. While it waits the rule is not on here (the strict side), and
+    // the wait shows in the sync status as a deferred row.
     let waiting = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -455,20 +468,17 @@ pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
             [site_sync.unwrap_or_default().into(), key.into()],
         ))
         .await?;
-    let mut pending = false;
+    let mut in_inbox = false;
     for w in &waiting {
         if get::<Option<String>>(w, "changed_at")?.as_deref().and_then(instant) == Some(changed_at) {
-            pending = true;
+            in_inbox = true;
         }
     }
-    Ok(Some(if pending {
-        InboundVerdict::Defer("audit event of the site rule not applied yet".into())
+    Ok(Some(InboundVerdict::Defer(if in_inbox {
+        format!("site rule '{key}': its audit event is received but not applied yet")
     } else {
-        InboundVerdict::Conflict {
-            code: "SITE_SETTING_UNAUDITED",
-            message: format!("site rule '{key}' turned on without an audited change (step-up, reason, settings right)"),
-        }
-    }))
+        format!("site rule '{key}': waiting for its audit event (step-up, reason, settings right)")
+    })))
 }
 
 /// An audit event of a per-site rule received by synchronisation (`site_setting_events`): known

@@ -67,7 +67,30 @@ pub struct RefImportRow {
 pub struct ImportRowMessage {
     pub category: String,
     pub severity: String,
+    /// Stable code (`REF_IMPORT_*`) and its params (`row`, `code`, …) for the screen to say the
+    /// detail in the user's language. Empty on rows checked before the codes existed.
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub params: std::collections::BTreeMap<String, String>,
+    /// The server's sentence (French), kept as the fallback detail.
     pub message: String,
+}
+
+impl ImportRowMessage {
+    fn error(category: &str, code: &str, params: &[(&str, String)], message: String) -> Self {
+        Self::new(category, "error", code, params, message)
+    }
+
+    fn new(category: &str, severity: &str, code: &str, params: &[(&str, String)], message: String) -> Self {
+        Self {
+            category: category.into(),
+            severity: severity.into(),
+            code: code.into(),
+            params: params.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect(),
+            message,
+        }
+    }
 }
 
 /// Full preview response: batch + all rows.
@@ -435,37 +458,44 @@ pub async fn validate_import_batch(
         // â”€â”€ Check: code presence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         match &norm_code {
             None => {
-                messages.push(ImportRowMessage {
-                    category: "MissingCode".into(),
-                    severity: "error".into(),
-                    message: format!("Ligne {row_no}: code de reference manquant."),
-                });
+                messages.push(ImportRowMessage::error(
+                    "MissingCode",
+                    "REF_IMPORT_MISSING_CODE",
+                    &[("row", row_no.to_string())],
+                    format!("Ligne {row_no}: code de reference manquant."),
+                ));
                 status = "error";
             }
             Some(code) => {
                 // â”€â”€ Check: code format â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 if !is_valid_code(input.code.as_deref().unwrap_or("")) {
-                    messages.push(ImportRowMessage {
-                        category: "InvalidCodeFormat".into(),
-                        severity: "error".into(),
-                        message: format!(
+                    messages.push(ImportRowMessage::error(
+                        "InvalidCodeFormat",
+                        "REF_IMPORT_INVALID_CODE_FORMAT",
+                        &[("row", row_no.to_string()), ("code", code.clone())],
+                        format!(
                             "Ligne {row_no}: code '{code}' invalide \
                              (majuscules ASCII, chiffres, underscores, points; 1-64 car.)."
                         ),
-                    });
+                    ));
                     status = "error";
                 }
 
                 // â”€â”€ Check: duplicate within batch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 if let Some(prev_row) = batch_codes.get(code) {
-                    messages.push(ImportRowMessage {
-                        category: "DuplicateInBatch".into(),
-                        severity: "error".into(),
-                        message: format!(
+                    messages.push(ImportRowMessage::error(
+                        "DuplicateInBatch",
+                        "REF_IMPORT_DUPLICATE_IN_BATCH",
+                        &[
+                            ("row", row_no.to_string()),
+                            ("code", code.clone()),
+                            ("firstRow", prev_row.to_string()),
+                        ],
+                        format!(
                             "Ligne {row_no}: code '{code}' duplique dans le lot \
                              (premiere occurrence: ligne {prev_row})."
                         ),
-                    });
+                    ));
                     status = "error";
                 } else {
                     batch_codes.insert(code.clone(), row_no);
@@ -475,15 +505,21 @@ pub async fn validate_import_batch(
                 if existing_codes.contains(code) {
                     proposed_action = Some("update".into());
                     if is_protected {
-                        messages.push(ImportRowMessage {
-                            category: "ProtectedDomainUpdate".into(),
-                            severity: "warning".into(),
-                            message: format!(
+                        messages.push(ImportRowMessage::new(
+                            "ProtectedDomainUpdate",
+                            "warning",
+                            "REF_IMPORT_PROTECTED_DOMAIN_UPDATE",
+                            &[
+                                ("row", row_no.to_string()),
+                                ("code", code.clone()),
+                                ("domain", domain.code.clone()),
+                            ],
+                            format!(
                                 "Ligne {row_no}: code '{code}' existe dans le domaine \
                                  protege '{}'. La mise a jour sera trace.",
                                 domain.code
                             ),
-                        });
+                        ));
                         if status == "valid" {
                             status = "warning";
                         }
@@ -497,19 +533,21 @@ pub async fn validate_import_batch(
         // â”€â”€ Check: label presence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         match &input.label {
             None => {
-                messages.push(ImportRowMessage {
-                    category: "MissingLabel".into(),
-                    severity: "error".into(),
-                    message: format!("Ligne {row_no}: libelle manquant."),
-                });
+                messages.push(ImportRowMessage::error(
+                    "MissingLabel",
+                    "REF_IMPORT_MISSING_LABEL",
+                    &[("row", row_no.to_string())],
+                    format!("Ligne {row_no}: libelle manquant."),
+                ));
                 status = "error";
             }
             Some(label) if label.trim().is_empty() => {
-                messages.push(ImportRowMessage {
-                    category: "BlankLabel".into(),
-                    severity: "error".into(),
-                    message: format!("Ligne {row_no}: libelle vide."),
-                });
+                messages.push(ImportRowMessage::error(
+                    "BlankLabel",
+                    "REF_IMPORT_BLANK_LABEL",
+                    &[("row", row_no.to_string())],
+                    format!("Ligne {row_no}: libelle vide."),
+                ));
                 status = "error";
             }
             _ => {}
@@ -519,14 +557,15 @@ pub async fn validate_import_batch(
         if let Some(parent_domain) = values::required_parent_domain(&domain.code) {
             match input.parent_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
                 None => {
-                    messages.push(ImportRowMessage {
-                        category: "MissingParent".into(),
-                        severity: "error".into(),
-                        message: format!(
+                    messages.push(ImportRowMessage::error(
+                        "MissingParent",
+                        "REF_IMPORT_MISSING_PARENT",
+                        &[("row", row_no.to_string()), ("parentDomain", parent_domain.to_string())],
+                        format!(
                             "Ligne {row_no}: la valeur doit etre rattachee a une valeur de '{parent_domain}' \
                              (colonne parent_code)."
                         ),
-                    });
+                    ));
                     status = "error";
                 }
                 Some(parent_code) => {
@@ -534,13 +573,16 @@ pub async fn validate_import_batch(
                         .await?
                         .is_none()
                     {
-                        messages.push(ImportRowMessage {
-                            category: "InvalidParent".into(),
-                            severity: "error".into(),
-                            message: format!(
-                                "Ligne {row_no}: parent '{parent_code}' introuvable dans '{parent_domain}'."
-                            ),
-                        });
+                        messages.push(ImportRowMessage::error(
+                            "InvalidParent",
+                            "REF_IMPORT_INVALID_PARENT",
+                            &[
+                                ("row", row_no.to_string()),
+                                ("parentCode", parent_code.to_string()),
+                                ("parentDomain", parent_domain.to_string()),
+                            ],
+                            format!("Ligne {row_no}: parent '{parent_code}' introuvable dans '{parent_domain}'."),
+                        ));
                         status = "error";
                     }
                 }
@@ -551,11 +593,17 @@ pub async fn validate_import_batch(
         if let Err(AppError::ValidationFailed(errs)) =
             values::checked_semantic_tag(&txn, &domain.code, input.semantic_tag.as_deref()).await
         {
-            messages.push(ImportRowMessage {
-                category: "InvalidNatureTag".into(),
-                severity: "error".into(),
-                message: format!("Ligne {row_no}: {}", errs.join(" ")),
-            });
+            let detail = errs.join(" ");
+            messages.push(ImportRowMessage::error(
+                "InvalidNatureTag",
+                "REF_IMPORT_INVALID_NATURE_TAG",
+                &[
+                    ("row", row_no.to_string()),
+                    ("tag", input.semantic_tag.clone().unwrap_or_default()),
+                    ("detail", detail.clone()),
+                ],
+                format!("Ligne {row_no}: {detail}"),
+            ));
             status = "error";
         }
 
@@ -565,11 +613,12 @@ pub async fn validate_import_batch(
                 input.parent_code.as_deref(),
                 input.metadata_json.as_deref(),
             ) {
-                messages.push(ImportRowMessage {
-                    category: "InvalidUnit".into(),
-                    severity: "error".into(),
-                    message: format!("Ligne {row_no}: {problem}"),
-                });
+                messages.push(ImportRowMessage::error(
+                    "InvalidUnit",
+                    "REF_IMPORT_INVALID_UNIT",
+                    &[("row", row_no.to_string()), ("detail", problem.to_string())],
+                    format!("Ligne {row_no}: {problem}"),
+                ));
                 status = "error";
             }
         }
@@ -580,11 +629,17 @@ pub async fn validate_import_batch(
                 input.code.as_deref().unwrap_or(""),
                 input.metadata_json.as_deref(),
             ) {
-                messages.push(ImportRowMessage {
-                    category: "InvalidCurrency".into(),
-                    severity: "error".into(),
-                    message: format!("Ligne {row_no}: {}", errs.join(" ")),
-                });
+                let detail = errs.join(" ");
+                messages.push(ImportRowMessage::error(
+                    "InvalidCurrency",
+                    "REF_IMPORT_INVALID_CURRENCY",
+                    &[
+                        ("row", row_no.to_string()),
+                        ("code", input.code.clone().unwrap_or_default()),
+                        ("detail", detail.clone()),
+                    ],
+                    format!("Ligne {row_no}: {detail}"),
+                ));
                 status = "error";
             }
         }

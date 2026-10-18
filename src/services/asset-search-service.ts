@@ -32,6 +32,7 @@ export const AssetSearchResultSchema = z.object({
   subfamily_code: z.string().nullable(),
   subfamily_name: z.string().nullable(),
   criticality_code: z.string().nullable(),
+  criticality_to_review: z.boolean(),
   status_code: z.string(),
   org_node_id: z.number().nullable(),
   org_node_name: z.string().nullable(),

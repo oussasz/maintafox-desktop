@@ -209,6 +209,7 @@ mod m20261018_000229_legacy_list_values;
 mod m20261018_000230_wo_requires_shutdown;
 mod m20261018_000231_part_lines_required;
 mod m20261018_000232_inventory_count_tolerances;
+mod m20261018_000233_wo_permit_rule_flag;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -431,6 +432,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261018_000230_wo_requires_shutdown::Migration),
             Box::new(m20261018_000231_part_lines_required::Migration),
             Box::new(m20261018_000232_inventory_count_tolerances::Migration),
+            Box::new(m20261018_000233_wo_permit_rule_flag::Migration),
         ]
     }
 }

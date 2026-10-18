@@ -37,6 +37,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfTable } from "@/design-system/tokens";
 import { mfTone, type Tone, toneOf } from "@/design-system/tone";
+import { importProblemText } from "@/lib/import-problem-text";
 import { cn } from "@/lib/utils";
 import {
   applyRefImportBatch,
@@ -81,6 +82,7 @@ export function ReferenceImportWizard({
   onComplete,
 }: ReferenceImportWizardProps) {
   const { t } = useTranslation("reference");
+  const tText = t as unknown as (key: string, options?: Record<string, unknown>) => string;
 
   const [step, setStep] = useState<Step>("upload");
   const [loading, setLoading] = useState(false);
@@ -348,18 +350,23 @@ export function ReferenceImportWizard({
                               className="block"
                               data-testid="import-message"
                             >
-                              {/* Translated reason; the server's own text stays under Detail. */}
+                              {/* Translated reason and detail; a problem without a code this
+                                  version can say keeps the server's sentence under Detail. */}
                               <span className="font-medium text-text-secondary">
                                 {t(`import.category.${m.category}`, {
                                   defaultValue: t("import.category.other"),
                                 })}
                               </span>
-                              <details>
-                                <summary className="cursor-pointer select-none">
-                                  {t("import.messageDetail")}
-                                </summary>
-                                {m.message}
-                              </details>
+                              {importProblemText(m, tText) ? (
+                                <span className="block">{importProblemText(m, tText)}</span>
+                              ) : (
+                                <details>
+                                  <summary className="cursor-pointer select-none">
+                                    {t("import.messageDetail")}
+                                  </summary>
+                                  {m.message}
+                                </details>
+                              )}
                             </span>
                           ))}
                         </td>

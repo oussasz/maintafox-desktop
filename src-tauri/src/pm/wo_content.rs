@@ -15,7 +15,9 @@
 //!   no quantity) is only listed in the description, because no quantity can be planned for it.
 //! - `estimated_duration_hours` → `expected_duration_hours`; `planned_crew_size` → the OT's crew
 //!   size; plan `requires_permit` → OT permit gate;
-//!   plan `requires_shutdown` → a line in the description (the OT has no shutdown field).
+//!   plan `requires_shutdown` → the OT's own "needs shutdown" flag (`work_orders.requires_shutdown`,
+//!   so planning checks the job against the shutdown windows as for any flagged OT) and a line in
+//!   the description for the technician.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde_json::Value;
@@ -70,6 +72,8 @@ pub struct PmWoContent {
     pub expected_duration_hours: Option<f64>,
     pub planned_crew_size: Option<i64>,
     pub requires_permit: bool,
+    /// The plan's "needs shutdown": the generated OT carries the same flag.
+    pub requires_shutdown: bool,
     pub equipment_id: Option<i64>,
     pub tasks: Vec<PmWoTask>,
     pub tools: Vec<String>,
@@ -469,6 +473,7 @@ pub async fn build_pm_work_order_content(
         expected_duration_hours: estimated_duration_hours.filter(|h| *h > 0.0),
         planned_crew_size: planned_crew_size.filter(|n| *n >= 1),
         requires_permit: requires_permit == 1,
+        requires_shutdown: requires_shutdown == 1,
         equipment_id: asset_scope_id,
         tasks,
         tools,
@@ -476,8 +481,9 @@ pub async fn build_pm_work_order_content(
     })
 }
 
-/// Adds the tasks, tools and plannable parts to the freshly created (draft) OT, through the WO
-/// module's own functions so the OT execution log and reservations behave as for a planner entry.
+/// Adds the crew size, the "needs shutdown" flag, the tasks, tools and plannable parts to the
+/// freshly created (draft) OT, through the WO module's own functions so the OT execution log and
+/// reservations behave as for a planner entry.
 pub async fn apply_pm_content_to_work_order(
     db: &DatabaseConnection,
     wo_id: i64,
@@ -489,6 +495,18 @@ pub async fn apply_pm_content_to_work_order(
             "UPDATE work_orders SET planned_crew_size = ?, row_version = row_version + 1, \
                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
             [crew.into(), wo_id.into()],
+        ))
+        .await?;
+    }
+    if content.requires_shutdown {
+        // The OT was just created as a draft by this generation: the flag is part of its content,
+        // as the crew size above (a planner changes it later through
+        // `wo::workflow::actions::schedule::save_shutdown_requirement`).
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET requires_shutdown = 1, row_version = row_version + 1, \
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+            [wo_id.into()],
         ))
         .await?;
     }

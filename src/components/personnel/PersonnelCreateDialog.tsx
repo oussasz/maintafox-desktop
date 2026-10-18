@@ -222,15 +222,6 @@ export function PersonnelCreateDialog() {
     setLocalError(null);
   }, []);
 
-  // A new person starts on the first value of each list (the plant's order), once read.
-  useEffect(() => {
-    if (!showCreateForm || isEdit) return;
-    const firstType = lists.values("employment_types").find((v) => !v.review_required);
-    const firstStatus = lists.values("employment_statuses").find((v) => !v.review_required);
-    if (!employmentType && firstType) setEmploymentType(firstType.code);
-    if (!employmentStatus && firstStatus) setEmploymentStatus(firstStatus.code);
-  }, [showCreateForm, isEdit, lists, employmentType, employmentStatus]);
-
   useEffect(() => {
     if (!showCreateForm) return;
     resetForm();

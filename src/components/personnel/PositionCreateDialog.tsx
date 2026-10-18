@@ -52,13 +52,6 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const categories = lists.values("position_categories");
-  useEffect(() => {
-    if (!open || category !== "") return;
-    const first = categories.find((v) => !v.review_required);
-    if (first) setCategory(first.code);
-  }, [open, category, categories]);
-
   const loadCertTypes = useCallback(async () => {
     try {
       const list = await listCertificationTypes();
@@ -178,7 +171,7 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="pos-category">{t("position.field.category", "Category")}</Label>
+              <Label htmlFor="pos-category">{t("position.field.category", "Category")} *</Label>
               <PersonnelListSelect
                 id="pos-category"
                 list="position_categories"

@@ -5,11 +5,14 @@ export interface AppToastItem {
   title: string;
   description?: string;
   variant?: "default" | "destructive" | "success";
+  /** Stays until the user dismisses it (a warning that must not be missed). */
+  persistent?: boolean;
 }
 
 interface AppToastState {
   items: AppToastItem[];
   push: (item: Omit<AppToastItem, "id">) => void;
+  dismiss: (id: string) => void;
 }
 
 export const useAppToastStore = create<AppToastState>((set) => ({
@@ -17,9 +20,13 @@ export const useAppToastStore = create<AppToastState>((set) => ({
   push: (item): void => {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     set((s) => ({ items: [...s.items, { ...item, id }] }));
+    if (item.persistent) return;
     window.setTimeout(() => {
       set((s) => ({ items: s.items.filter((x) => x.id !== id) }));
     }, 6000);
+  },
+  dismiss: (id): void => {
+    set((s) => ({ items: s.items.filter((x) => x.id !== id) }));
   },
 }));
 

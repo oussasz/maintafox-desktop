@@ -1,4 +1,7 @@
 {
+  "toast": {
+    "dismiss": "Dismiss the message"
+  },
   "partNecessity": {
     "legend": "Part required or optional",
     "legendFor": "{{part}}: required or optional",
@@ -22,6 +25,7 @@
     }
   },
   "listAccess": {
+    "permitTypes": "Reading the permit types requires the permit view right.",
     "documentCategories": "Reading the document categories requires the documentation view right.",
     "people": "Reading people requires the personnel view right.",
     "teams": "Reading teams requires the personnel view right.",
@@ -261,6 +265,7 @@
       "retry": "Try again",
       "technicalDetails": "Technical details",
       "truncated": "Showing {{shown}} of {{total}}.",
+      "choose": "Choose…",
       "loadMore": "Load more"
     },
     "view": {

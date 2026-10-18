@@ -262,14 +262,26 @@ fn seeded_value_id(domain: &str, code: &str) -> String {
 /// Review flag: the former setting could not be read; the product grids stand in until reviewed.
 pub const REVIEW_FORMER_GRIDS_UNREADABLE: &str = "former_grids_unreadable";
 
+/// The former setting's matrix names exactly the product's four zones (each once). A zone code
+/// outside them, or a missing one, cannot be stored in Données de référence (the zone domain holds
+/// the four product codes), so such a matrix is not read.
+fn former_zones_readable(zones: &[MatrixZone]) -> bool {
+    let mut codes: Vec<&str> = zones.iter().map(|z| z.zone.as_str()).collect();
+    codes.sort_unstable();
+    let mut expected: Vec<&str> = ZONE_LABELS.iter().map(|(code, _, _)| *code).collect();
+    expected.sort_unstable();
+    codes == expected
+}
+
 /// Grids to seed: the former setting (the plant's edits); the product grids when there is none;
-/// the product grids flagged for review when it cannot be read.
+/// the product grids flagged for review when it cannot be read — including a matrix whose zones
+/// are not exactly the four product zones, so a plant's matrix is never dropped silently.
 async fn seed_source(conn: &impl ConnectionTrait) -> AppResult<RatingScales> {
     let Some(stored) = settings::get_setting(conn, SETTING_KEY, "tenant").await? else {
         return Ok(default_scales());
     };
     match serde_json::from_str::<RatingScales>(&stored.setting_value_json) {
-        Ok(grids) if grids.validate().is_ok() => Ok(grids),
+        Ok(grids) if grids.validate().is_ok() && former_zones_readable(&grids.matrix.zones) => Ok(grids),
         _ => {
             tracing::warn!("ram.fmeca_rating_scales cannot be read: product grids seeded, flagged for review");
             Ok(RatingScales {
@@ -366,8 +378,9 @@ pub async fn ensure_fmeca_rating_scales(conn: &impl ConnectionTrait) -> AppResul
             .zones
             .iter()
             .find(|z| z.zone == *code)
-            .map(|z| z.min_product);
-        let Some(min_product) = min_product else { continue };
+            .map(|z| z.min_product)
+            // `seed_source` only returns matrices that name the four zones.
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("FMECA seed matrix has no '{code}' zone")))?;
         let meta = LevelMeta {
             label_en: (*label_en).to_string(),
             min_product: Some(min_product),
@@ -677,6 +690,48 @@ mod tests {
         // A reliability manager reviews and saves: the flag is cleared.
         let saved = save_scales(&db, &loaded, 1).await.expect("save");
         assert_eq!(saved.review, None);
+    }
+
+    #[tokio::test]
+    async fn a_former_matrix_with_unknown_or_missing_zones_is_flagged_for_review() {
+        // An unknown zone code, then one of the four zones missing.
+        let mut unknown = default_scales();
+        unknown.matrix.zones[1].zone = "high".into();
+        let mut missing = default_scales();
+        missing.matrix.zones.retain(|z| z.zone != ZONE_MONITOR);
+        for (case, former) in [("unknown zone", unknown), ("missing zone", missing)] {
+            let db = fresh_db().await;
+            let mut former = former;
+            former.severity[0].label_fr = "Accident mortel possible".into();
+            assert!(former.validate().is_ok(), "{case}: the rest of the setting is valid");
+            settings::set_setting(
+                &db,
+                SETTING_KEY,
+                "tenant",
+                &serde_json::to_string(&former).unwrap(),
+                None,
+                "test",
+            )
+            .await
+            .expect("setting");
+            ensure_fmeca_rating_scales(&db).await.expect("ensure");
+            let loaded = load_scales(&db).await.expect("load");
+            assert_eq!(
+                loaded.review.as_deref(),
+                Some(REVIEW_FORMER_GRIDS_UNREADABLE),
+                "{case}: flagged for review, not dropped silently"
+            );
+            assert_eq!(
+                loaded.matrix,
+                default_scales().matrix,
+                "{case}: product matrix in place"
+            );
+            assert_eq!(
+                loaded.severity,
+                default_scales().severity,
+                "{case}: product grids in place"
+            );
+        }
     }
 
     #[tokio::test]

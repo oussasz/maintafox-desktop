@@ -294,7 +294,12 @@ pub struct PersonnelAvailabilityState {
     pub personnel_id: i64,
     pub status: String,
     pub blocked_override: bool,
+    /// Reason codes (`personnel::availability::REASON_*`), or the absence type codes of the
+    /// active blocks.
     pub reasons: Vec<String>,
+    /// Open work orders the person is on, when the check reached them (`None` when an earlier
+    /// rule — terminated, override, active block — already decided the state).
+    pub open_work_order_count: Option<i64>,
     pub as_of: String,
 }
 

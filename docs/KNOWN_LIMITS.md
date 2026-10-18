@@ -27,6 +27,7 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | Placeholder FMECA rows created by the old Ishikawa promotion (S=O=D=5) are flagged "à revoir" and excluded from risk rankings until a person reviews them. | Data | Release |
 | New synced record types: the per-site rules (site settings and their change history) must be in the server sync allowlist before PCs upgrade. The desktop copy of the allowlist already has them; the server's original must be updated at release. | Data | Release |
 | Per-site self-approval rule: the sync server must accept site rules and their change history only from users who hold the settings-administration right. The desktop checks that every change carries a complete, consistent, latest audit trail, but cannot prove who really sent it, so a device with valid credentials could otherwise forge one. | Safety | Release (sync server) |
+| A per-site self-approval rule received from another PC is applied only together with its matching audit record; until that record arrives it waits (shown as a deferred row in the sync status). A rule whose record never comes, including a forged one, waits indefinitely and is never applied; it does not become a conflict by itself. | Safety | Accepted |
 | Photos and attachments are the one kind of history that sync may delete (so a removal on one PC applies everywhere): the sync server must accept such a delete only from a user allowed to remove that attachment (its work order, request or equipment right, or the person who added it). Otherwise a paired PC with valid credentials could erase work-order, request or equipment photos everywhere. Inspection evidence and all other history cannot be deleted by sync. | Safety | Release (sync server) |
 | The licence server does not sign the activation details it returns (tenant, licence, PC, demo data, expiry); only the entitlement envelope is signed. The desktop therefore cannot prove a licence change came from the server, so a change of plant, licence or PC needs a signed-in administrator once the plant has one (and demo data always does). The server must sign the activation details (or include them in the signed envelope) so the desktop can refuse unsigned ones. | Safety | Release (licence server) |
 | Personnel and document list values found in existing data but not in the new lists are kept exactly as stored, added to their list and flagged "à revoir"; an administrator must review them (filter "à revoir"). People whose stored employment status is not a known status are listed for review. | Data | Release |
@@ -51,7 +52,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| Every "open work order" count uses one of the two shared rules and its figure shows the rule name, with a list link using the same rule. The SMRP backlog figure is being aligned. | Data | Step 5 |
+| Every "open work order" count uses one of the two shared rules and its figure shows the rule name, with a list link using the same rule (SMRP backlog included). | Data | Accepted |
 | Devices on the previous version must upgrade together with this one: they would still send the old urgency and type references, and an edit from an old PC turns a part line marked optional back to required (the safe direction). | Data | Release |
 | The 4 h estimated duration once used for DI planning candidates was removed; DIs are "not estimated" until converted and estimated. | UX | Accepted |
 | Planned labour per technician on a work order does not exist (labour lines hold actuals only), so planning counts only the named assignee per commitment ("+N crew members not named"). Naming every crew member is proposed for later. | Data | Owner decision |
@@ -70,7 +71,9 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Limit | Impact | Handled in |
 |---|---|---|
 | A permit that expires during the work is only warned in planning and by the expiry notification; start is refused only for an already expired permit. | Safety | Accepted |
-| Requests (DI) have no permit field; permit readiness is checked for work orders and PM only. | Safety | Step 7 |
+| Requests (DI) carry no permit; at conversion, the new work order is flagged "permit required" when a plant rule in Données de référence (equipment class and/or work type → permit type) matches, and the work order cannot start or resume until a linked permit of the rule's permit type is active and ready (a permit of another type does not count). With no rule configured nothing is flagged and the conversion says so. Clearing a rule's flag needs the permit-issue right and a reason (audited); rules that cannot be applied are marked in Données de référence and a conversion that skipped them shows a warning that stays until closed. | Safety | Accepted (owner decision) |
+| The refusal "a permit of type … is required" names the permit type by its stored name, which has one language (as entered in the permit types), so a French screen can show an English type name. | UX | After pilot |
+| If a permit type named by a permit rule is later removed, a work order already flagged by that rule cannot start (no permit can be of a type that no longer exists) until someone with the permit-issue right clears the flag with a reason. This fails closed by design. | Safety | Accepted |
 | LOTO hand-over roles are free text. | Data | After pilot |
 | Permits created before expiry became required (none set) are left unchanged: they cannot be activated or edited until someone sets an expiry (refused with "Permit … has no expiry"); permits already active keep running until closed. | Safety | Release (review open permits) |
 
@@ -119,6 +122,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 
 | Limit | Impact | Handled in |
 |---|---|---|
+| A new person's origin (internal / external) starts as "internal"; the person can change it before saving. Owner decision 2026-10-18: "Keep 'internal'". Every list value from Données de référence (employment type and status, position category, absence type, document category) starts empty and must be chosen. | UX | Accepted (owner decision) |
 | Teams without a Classe horaire have 0 h capacity (never an assumed day); migrated teams carry a "Standard 8 h (migrated)" class flagged to review. | Data | Release (review) |
 | A Classe horaire version can be edited in place only before it is in force; planned work orders keep their shift-window snapshot and show "Timetable changed since planning". | Data | Accepted |
 | A member whose shift window is unknown counts in full on the days a slot touches. | Data | Accepted |
@@ -155,7 +159,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | The work mix link (planned / reactive / emergency) finds the matching work-order types on the screen with the same nature rule the figures use; a work-order type with no nature set appears in no mix, in the figure or the list. | Data | Step 7 (check every type has a nature) |
 | "My rounds" counts rounds assigned to me personally, not to my team; "My PM" means PM whose work order is mine. | Data | Accepted |
 | The planning backlog panel reads at most 2,000 jobs, with a notice. | UX | Accepted |
-| Very old equipment linked only through the legacy criticality list is not counted as critical. | Data | Step 7 |
+| Equipment whose criticality comes only from the old criticality list is read through the standard correspondence (CRITIQUE→A, IMPORTANT→B, STANDARD→C, NON-CRITIQUE→D) and flagged "à revoir"; a plant's own old code is read as no criticality until a planner sets one. Nothing stored is rewritten. | Data | Release (review flagged equipment) |
 
 ## Reliability decisions (four-eyes, owner decision 2026-10-17)
 
@@ -189,10 +193,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 |---|---|---|
 | There is no search across all record types; the top-bar box opens modules (Ctrl K). | UX | After pilot |
 | An organisation unit's cost centre is free text, not picked from finance cost centres (needs a decision on which permission may set it). | Data | Owner decision |
-| A node type cannot be placed under a node of the same type (the publish check treats it as a cycle), e.g. area inside area. | UX | Step 7 |
 | The sync centre names about 40 record types; others show as "Other record" with their number. | UX | Accepted |
-| Import wizards (reference data, personnel) show each problem's category translated, but the detail line (row, code, parent) is the server's sentence in one language (French for reference data, English for personnel). | UX | Step 7 (needs coded details from the server) |
-| The access-policy editor's "test" results show the server's rule messages untranslated. | UX | Step 7 |
 
 ## In progress (program side done, screens being wired)
 

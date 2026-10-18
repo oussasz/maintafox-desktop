@@ -20,6 +20,7 @@ import { AssetFilterBar } from "@/components/assets/AssetFilterBar";
 import { AssetResultTable } from "@/components/assets/AssetResultTable";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
+import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark";
 import { EquipmentRegistryMetricCards } from "@/components/assets/EquipmentRegistryMetricCards";
 import { DataTable } from "@/components/data/DataTable";
 import { DiFormDialog } from "@/components/di/DiFormDialog";
@@ -182,7 +183,12 @@ export function AssetRegistryPage() {
         id: "criticality",
         accessorFn: (a) => a.criticality_code ?? "",
         header: t("list.columns.criticality"),
-        cell: ({ row }) => <CriticalityBadge criticality={row.original.criticality_code} compact />,
+        cell: ({ row }) => (
+          <span className="inline-flex items-center gap-1">
+            <CriticalityBadge criticality={row.original.criticality_code} compact />
+            {row.original.criticality_to_review ? <CriticalityReviewMark /> : null}
+          </span>
+        ),
       },
       {
         id: "status",

@@ -556,6 +556,12 @@
         "status": "Status",
         "noReasons": "No active constraint reasons."
       },
+      "reason": {
+        "employment_terminated": "Employment terminated.",
+        "blocked_override": "Blocked by manual override.",
+        "open_work_orders_one": "On {{count}} open work order (responsible or booked labour).",
+        "open_work_orders_other": "On {{count}} open work orders (responsible or booked labour)."
+      },
       "horizon": {
         "title": "Day strip",
         "hint": "Click a day to seed a new block for that date."
@@ -577,6 +583,7 @@
       "title": "Create availability block",
       "editTitle": "Edit availability block",
       "personnel": "Personnel",
+      "personnelPlaceholder": "Choose the person",
       "blockType": "Block type",
       "startAt": "Start",
       "endAt": "End",
@@ -614,6 +621,18 @@
     }
   },
   "import": {
+    "problem": {
+      "PERSONNEL_IMPORT_EXISTING_SKIPPED": "The row targets an existing person: it will be skipped in create-only mode.",
+      "PERSONNEL_IMPORT_FULL_NAME_REQUIRED": "The full name is required to create a person.",
+      "PERSONNEL_IMPORT_UNKNOWN_EMPLOYMENT_TYPE": "Employment type “{{value}}” is not an active value of the employment types list (Reference data).",
+      "PERSONNEL_IMPORT_HIRE_DATE_NOT_UPDATED": "The hire date is only taken on creation: it does not replace an existing person's.",
+      "PERSONNEL_IMPORT_TERMINATION_DATE_IGNORED": "The termination date is protected: the import ignores it.",
+      "PERSONNEL_IMPORT_UNKNOWN_POSITION": "Unknown position “{{code}}”.",
+      "PERSONNEL_IMPORT_UNKNOWN_ENTITY": "Unknown entity “{{code}}”.",
+      "PERSONNEL_IMPORT_UNKNOWN_TEAM": "Unknown team “{{code}}”.",
+      "PERSONNEL_IMPORT_UNKNOWN_SUPERVISOR": "Unknown supervisor “{{code}}” (employee code).",
+      "PERSONNEL_IMPORT_UNKNOWN_EXTERNAL_COMPANY": "Unknown external company “{{name}}”."
+    },
     "messageDetail": "Detail",
     "category": {
       "CreateOnly": "Existing record: skipped in create-only mode",

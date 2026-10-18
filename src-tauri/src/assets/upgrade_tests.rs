@@ -837,3 +837,48 @@ async fn maintenance_profile_open_count_is_the_not_yet_closed_rule() {
         profile.open_work_order_count
     );
 }
+
+/// The registry list and the asset picker mark equipment whose criticality comes only from the
+/// legacy criticality list.
+#[tokio::test]
+async fn search_and_picker_mark_a_criticality_to_review() {
+    let db = setup().await;
+    let site = site_with_cost_center(&db).await;
+    for code in ["PMP-201", "PMP-202"] {
+        identity::create_asset(&db, payload(code, site, None), 1)
+            .await
+            .expect("create");
+    }
+    // PMP-202 keeps only its legacy link (as before the reference list).
+    exec(
+        &db,
+        "UPDATE equipment SET equipment_criticality_ref_id = NULL, \
+         criticality_value_id = (SELECT lv.id FROM lookup_values lv \
+            JOIN lookup_domains ld ON ld.id = lv.domain_id \
+            WHERE ld.domain_key = 'equipment.criticality' AND lv.code = 'CRITIQUE') \
+         WHERE asset_id_code = 'PMP-202'",
+    )
+    .await;
+
+    let page = search::search_assets_page(&db, filters(10, 0)).await.expect("page");
+    let flags: Vec<(&str, bool)> = page
+        .items
+        .iter()
+        .map(|a| (a.asset_code.as_str(), a.criticality_to_review))
+        .collect();
+    assert_eq!(flags, [("PMP-201", false), ("PMP-202", true)]);
+
+    let picked = search::suggest_picker_assets(
+        &db,
+        1,
+        search::AssetPickerSuggestFilters {
+            query: Some("PMP-202".into()),
+            include_decommissioned: None,
+            limit: None,
+        },
+    )
+    .await
+    .expect("picker");
+    let item = picked.items.iter().find(|a| a.asset_code == "PMP-202").expect("found");
+    assert!(item.criticality_to_review);
+}

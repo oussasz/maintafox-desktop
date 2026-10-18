@@ -101,6 +101,7 @@
       "login__success": "Connexion réussie",
       "login__offline": "Connexion hors ligne",
       "login__failure": "Échec de connexion",
+      "logout": "Déconnexion",
       "session__unlocked_with_pin": "Session déverrouillée par code PIN",
       "session__idle_locked": "Session verrouillée après inactivité",
       "session__expired": "Session expirée",

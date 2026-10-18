@@ -47,6 +47,14 @@ import { P } from "@shared/rbac/permissions.generated";
 
 export type AvailabilityCertWarning = "expired" | "expiring";
 
+/** Reason codes of the availability state (`personnel::availability::REASON_*`); any other reason
+ * is the absence type code of an active block. */
+const AVAILABILITY_REASON_CODES: ReadonlySet<string> = new Set([
+  "employment_terminated",
+  "blocked_override",
+  "open_work_orders",
+]);
+
 export type AvailabilityInspectorWorkspaceProps = {
   person: AvailabilityPersonRow;
   selectedBlock: PersonnelAvailabilityBlock | null;
@@ -356,7 +364,13 @@ export function AvailabilityInspectorWorkspace({
                 {availabilityState.reasons.length > 0 ? (
                   <ul className="mt-2 list-inside list-disc text-sm text-text-muted">
                     {availabilityState.reasons.map((reason) => (
-                      <li key={reason}>{reason}</li>
+                      <li key={reason}>
+                        {AVAILABILITY_REASON_CODES.has(reason)
+                          ? t(`availability.inspector.reason.${reason}`, {
+                              count: availabilityState.open_work_order_count ?? 0,
+                            })
+                          : lists.text("absence_types", reason)}
+                      </li>
                     ))}
                   </ul>
                 ) : (

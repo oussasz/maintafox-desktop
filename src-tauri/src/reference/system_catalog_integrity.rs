@@ -44,6 +44,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     crate::permit::energy_reference::map_isolation_texts(db).await?;
     // PM deferral / miss reasons (COMPANY) and finding severities (SYSTEM).
     crate::pm::reason_catalog::ensure_pm_reason_catalogs(db).await?;
+    // Which work needs a permit at request conversion (COMPANY list, shipped empty).
+    crate::permit::requirement_rules::ensure_permit_requirement_rules(db).await?;
     // Personnel lists: employment statuses (SYSTEM), employment types, absence types (with their
     // behaviour tag) and position categories (COMPANY); document categories (COMPANY).
     crate::personnel::reference_lists::ensure_personnel_reference_lists(db).await?;

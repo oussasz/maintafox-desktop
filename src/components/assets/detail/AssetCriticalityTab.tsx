@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
+import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark";
 import { useLoad } from "@/components/assets/detail/use-load";
 import { DetailSectionCard } from "@/components/detail";
 import { Button } from "@/components/ui/button";
@@ -183,7 +184,11 @@ export function AssetCriticalityTab({
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm text-text-muted">{t("critMethod.current")}</span>
           <CriticalityBadge criticality={asset.criticality_code} />
+          {asset.criticality_to_review ? <CriticalityReviewMark /> : null}
         </div>
+        {asset.criticality_to_review ? (
+          <p className="text-xs text-tone-warning-fg">{t("criticalityReview.hint")}</p>
+        ) : null}
         <p className="text-xs text-text-muted">
           {t("critMethod.explain", {
             a: method.class_a_min_risk,

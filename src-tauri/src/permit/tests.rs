@@ -129,7 +129,7 @@ async fn create_permit(db: &DatabaseConnection, type_code: &str, asset_id: i64) 
     .expect("create permit")
 }
 
-async fn set_status(db: &DatabaseConnection, wp: &WorkPermit, status: &str) -> Result<WorkPermit, AppError> {
+pub(super) async fn set_status(db: &DatabaseConnection, wp: &WorkPermit, status: &str) -> Result<WorkPermit, AppError> {
     queries::set_work_permit_status(
         db,
         WorkPermitStatusInput {
@@ -143,7 +143,7 @@ async fn set_status(db: &DatabaseConnection, wp: &WorkPermit, status: &str) -> R
 }
 
 /// `draft` → `pending_review` → `approved` → `issued`
-async fn advance_to_issued(db: &DatabaseConnection, mut wp: WorkPermit) -> WorkPermit {
+pub(super) async fn advance_to_issued(db: &DatabaseConnection, mut wp: WorkPermit) -> WorkPermit {
     for s in ["pending_review", "approved", "issued"] {
         wp = set_status(db, &wp, s).await.unwrap_or_else(|e| panic!("-> {s}: {e:?}"));
     }
@@ -600,7 +600,11 @@ async fn start(db: &DatabaseConnection, wo_id: i64, rv: i64) -> Result<(), AppEr
     .map(|_| ())
 }
 
-async fn create_from_wo(db: &DatabaseConnection, type_code: &str, wo_id: i64) -> Result<WorkPermit, AppError> {
+pub(super) async fn create_from_wo(
+    db: &DatabaseConnection,
+    type_code: &str,
+    wo_id: i64,
+) -> Result<WorkPermit, AppError> {
     queries::create_work_permit(
         db,
         WorkPermitCreateInput {

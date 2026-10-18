@@ -1,9 +1,14 @@
 {
+  "criticalityReview": {
+    "hint": "Criticality taken from the old criticality list: a planner should set it in the Criticality tab."
+  },
   "recommission": {
     "action": "Recommission",
     "title": "Return the asset to service?",
     "description": "{{code}} takes the chosen status and its end-of-life date is cleared. The return is recorded in the asset's history with its reason.",
     "status": "Status after recommission",
+    "statusPlaceholder": "Choose the status",
+    "statusRequired": "Choose the status the asset returns to.",
     "noStatus": "No status other than a retired one is published in Reference data.",
     "reason": "Reason",
     "reasonRequired": "Say why the asset returns to service.",
@@ -799,6 +804,8 @@
     "upload": "Add a document",
     "uploadTitle": "New document — {{code}}",
     "category": "Category",
+    "categoryPlaceholder": "Choose the category",
+    "categoryRequired": "Choose the category the document goes under.",
     "file": "File",
     "tooBig": "The file is larger than {{mb}} MB.",
     "docTitle": "Title"

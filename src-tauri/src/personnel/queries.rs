@@ -1071,8 +1071,9 @@ pub async fn deactivate_personnel(
 
 /// A work order the person `?` is on: responsible (through their login), or labour booked for
 /// them — directly (`personnel_id`, people without a login) or through their login. Binds the
-/// personnel id three times.
-const PERSON_ON_WO: &str = "( \
+/// personnel id three times. One rule for the person's workload, the deactivation check and the
+/// availability state (`personnel::availability`).
+pub(crate) const PERSON_ON_WO: &str = "( \
     wo.primary_responsible_id IN (SELECT ua.id FROM user_accounts ua WHERE ua.personnel_id = ?) \
     OR EXISTS ( \
         SELECT 1 FROM work_order_interveners woi \

@@ -48,6 +48,8 @@ function makeTestResult(overrides: Partial<PolicyTestResult> = {}): PolicyTestRe
   return {
     rule_name: "idle_timeout_range",
     severity: "pass",
+    code: "POLICY_TEST_IN_RANGE",
+    params: { field: "idle_timeout_minutes", value: "30", min: "1", max: "480" },
     message: "Idle timeout within range",
     ...overrides,
   };

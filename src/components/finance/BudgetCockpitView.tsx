@@ -71,6 +71,9 @@ export function cockpitCsv(
   return lines.join("\n");
 }
 
+/** A cockpit line with its category name in the interface language. */
+type CockpitTableRow = BudgetCockpitRow & { bucket_label: string };
+
 export function BudgetCockpitView({
   fiscalYear,
   budgetVersionId,
@@ -109,29 +112,23 @@ export function BudgetCockpitView({
   const money = useCallback((v: number) => formatCurrency(v, currency), [formatCurrency, currency]);
   const { categoryLabel: bucketLabel, reasonLabel } = useFinanceCatalogs();
 
-  // Values the cells read, kept current on every render. The columns themselves stay the same
-  // object while catalogues, permissions or the cockpit load: new column functions would make the
-  // table re-mount every row, and a click landing during that swap was lost.
-  const live = useRef({
-    money,
-    bucketLabel,
-    reasonLabel,
-    formatPercent,
-    can,
-    cockpit,
-    onAnalyseVariance,
-  });
-  live.current = {
-    money,
-    bucketLabel,
-    reasonLabel,
-    formatPercent,
-    can,
-    cockpit,
-    onAnalyseVariance,
-  };
+  // The parent passes a new callback on every render; the columns call the latest one without
+  // being rebuilt for it (the ref is updated after render, never during it).
+  const analyseRef = useRef(onAnalyseVariance);
+  useEffect(() => {
+    analyseRef.current = onAnalyseVariance;
+  }, [onAnalyseVariance]);
 
-  const columns = useMemo<ColumnDef<BudgetCockpitRow>[]>(
+  // The table caches each row's sort and search values until its data changes, so the category
+  // name travels with the rows: when the cost-category catalogue arrives the rows are rebuilt and
+  // sorting and search use the names instead of the raw codes. Rows stay mounted (the table keys
+  // them by position), so a click landing meanwhile is not lost.
+  const tableRows = useMemo<CockpitTableRow[]>(
+    () => (cockpit?.rows ?? []).map((r) => ({ ...r, bucket_label: bucketLabel(r.bucket) })),
+    [cockpit, bucketLabel],
+  );
+
+  const columns = useMemo<ColumnDef<CockpitTableRow>[]>(
     () => [
       {
         id: "cc",
@@ -147,13 +144,11 @@ export function BudgetCockpitView({
       {
         id: "bucket",
         header: t("cockpit.col.category"),
-        accessorFn: (r) => live.current.bucketLabel(r.bucket),
-        // The table caches accessor values: the cell reads the label live, so it follows the
-        // catalogue once it has loaded.
-        cell: ({ row }) => live.current.bucketLabel(row.original.bucket),
+        accessorFn: (r) => r.bucket_label,
+        cell: ({ row }) => row.original.bucket_label,
       },
       ...(["budget", "committed", "actual", "forecast"] as const).map(
-        (key): ColumnDef<BudgetCockpitRow> => ({
+        (key): ColumnDef<CockpitTableRow> => ({
           id: key,
           header: () => <span className="block text-end">{t(`cockpit.col.${key}`)}</span>,
           accessorFn: (r) => r[key],
@@ -166,7 +161,7 @@ export function BudgetCockpitView({
               <span
                 className={cn("block text-end font-mono tabular-nums", tone && mfTone[tone].text)}
               >
-                {live.current.money(row.original[key])}
+                {money(row.original[key])}
               </span>
             );
           },
@@ -185,7 +180,7 @@ export function BudgetCockpitView({
                 v < -0.005 ? mfTone.danger.text : "text-text-secondary",
               )}
             >
-              {live.current.money(v)}
+              {money(v)}
             </span>
           );
         },
@@ -198,7 +193,7 @@ export function BudgetCockpitView({
           <ConsumptionBar
             pct={row.original.consumed_pct}
             label={t("cockpit.consumedAria")}
-            formatPercent={live.current.formatPercent}
+            formatPercent={formatPercent}
           />
         ),
       },
@@ -208,7 +203,7 @@ export function BudgetCockpitView({
         enableSorting: false,
         cell: ({ row }) => {
           const r = row.original;
-          const canReview = live.current.can(P.FIN_BUDGET) || live.current.can(P.FIN_MANAGE);
+          const canReview = can(P.FIN_BUDGET) || can(P.FIN_MANAGE);
           return (
             <div className="flex items-center gap-2">
               {r.open_reviews > 0 ? (
@@ -216,19 +211,16 @@ export function BudgetCockpitView({
                   {t("cockpit.openReviews", { count: r.open_reviews })}
                 </span>
               ) : r.latest_driver_code ? (
-                <span className="text-xs text-text-muted">
-                  {live.current.reasonLabel(r.latest_driver_code)}
-                </span>
+                <span className="text-xs text-text-muted">{reasonLabel(r.latest_driver_code)}</span>
               ) : null}
-              {canReview && r.variance < -0.005 && r.open_reviews === 0 && live.current.cockpit ? (
+              {canReview && r.variance < -0.005 && r.open_reviews === 0 && cockpit ? (
                 <Button
                   size="sm"
                   variant="outline"
                   className="h-7 text-xs"
                   onClick={(e) => {
                     e.stopPropagation();
-                    const current = live.current.cockpit;
-                    if (current) live.current.onAnalyseVariance(r, current);
+                    analyseRef.current(r, cockpit);
                   }}
                 >
                   {t("cockpit.analyse")}
@@ -239,8 +231,9 @@ export function BudgetCockpitView({
         },
       },
     ],
-    // Only the language changes the columns: everything else is read live (see `live`).
-    [t],
+    // Rebuilding the columns is safe: the table calls cell functions directly and keeps its rows
+    // mounted, so a click landing while the catalogues or permissions load is not lost.
+    [t, reasonLabel, money, formatPercent, can, cockpit],
   );
 
   const exportCsv = async () => {
@@ -413,7 +406,7 @@ export function BudgetCockpitView({
       ) : (
         <DataTable
           columns={columns}
-          data={cockpit.rows}
+          data={tableRows}
           pageSize={50}
           onRowClick={(r) => setDrillRow(r)}
         />

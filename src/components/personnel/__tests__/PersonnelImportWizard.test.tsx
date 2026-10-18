@@ -97,4 +97,43 @@ describe("PersonnelImportWizard", () => {
     expect(within(message).getByText(enPersonnel.import.messageDetail)).toBeInTheDocument();
     expect(message).toHaveTextContent("Unknown team_code 'XX'.");
   });
+
+  it("says a coded problem in the user's language, without the server text", async () => {
+    svc.getPersonnelImportPreview.mockResolvedValue({
+      batch,
+      rows: [
+        {
+          id: 1,
+          row_no: 1,
+          employee_code: "E-1",
+          validation_status: "error",
+          proposed_action: "create",
+          messages: [
+            {
+              category: "FieldRule.Mapped",
+              severity: "error",
+              code: "PERSONNEL_IMPORT_UNKNOWN_TEAM",
+              params: { code: "XX" },
+              message: "Unknown team_code 'XX'.",
+            },
+          ],
+        },
+      ],
+    });
+    render(<PersonnelImportWizard />);
+    fireEvent.click(screen.getByRole("button", { name: enPersonnel.import.action.openWizard }));
+    const dialog = await screen.findByRole("dialog");
+    const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["employee_code\nE-1"], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "arrayBuffer", {
+      value: () => Promise.resolve(new ArrayBuffer(8)),
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    const message = await within(dialog).findByTestId("import-message");
+    // (this test's t() shows the text as written, without filling the values)
+    expect(message).toHaveTextContent(enPersonnel.import.problem.PERSONNEL_IMPORT_UNKNOWN_TEAM);
+    expect(within(message).queryByText(enPersonnel.import.messageDetail)).toBeNull();
+    expect(message).not.toHaveTextContent("Unknown team_code 'XX'.");
+  });
 });

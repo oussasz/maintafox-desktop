@@ -571,6 +571,12 @@ pub async fn create_value(
             &code,
             payload.metadata_json.as_deref(),
         )?)
+    } else if crate::permit::requirement_rules::is_rules_domain(&domain.code) {
+        // A permit rule names what it matches and the permit it needs (`permit::requirement_rules`).
+        Some(
+            crate::permit::requirement_rules::checked_rule_metadata(db, &code, payload.metadata_json.as_deref())
+                .await?,
+        )
     } else {
         payload.metadata_json.clone()
     };
@@ -832,6 +838,11 @@ pub async fn update_value(
     if let Some(ref mj) = payload.metadata_json {
         if crate::reference::currencies::is_currency_domain(&domain.code) {
             let checked = crate::reference::currencies::checked_currency_metadata(&existing.code, mj.as_deref())?;
+            sets_clause.push("metadata_json = ?".into());
+            values.push(checked.into());
+        } else if crate::permit::requirement_rules::is_rules_domain(&domain.code) {
+            let checked =
+                crate::permit::requirement_rules::checked_rule_metadata(db, &existing.code, mj.as_deref()).await?;
             sets_clause.push("metadata_json = ?".into());
             values.push(checked.into());
         } else if !crate::reference::units::is_units_domain(&domain.code) {

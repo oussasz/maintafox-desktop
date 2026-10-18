@@ -49,7 +49,7 @@ export function PersonnelListSelect({
     <div className="space-y-1">
       <Select value={value} onValueChange={onChange} disabled={disabled === true || lists.loading}>
         <SelectTrigger id={id} aria-label={ariaLabel}>
-          <SelectValue placeholder={lists.loading ? t("ds.state.loading") : undefined} />
+          <SelectValue placeholder={t(lists.loading ? "ds.state.loading" : "ds.state.choose")} />
         </SelectTrigger>
         <SelectContent>
           {choices.map((v) => (

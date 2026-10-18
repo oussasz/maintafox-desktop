@@ -2538,6 +2538,43 @@ async fn the_crew_load_counts_its_work_orders_outside_planning_once() {
     assert!((loads["2026-05-04"].0 - 6.0).abs() < 0.01, "counted once: {loads:?}");
 }
 
+/// Planning load follows the shared "Open (work to do)" rule on the OT's status: a completed OT
+/// awaiting close-out is not load, even when its mechanical-completion time was never written.
+#[tokio::test]
+async fn a_completed_work_order_without_completion_time_is_not_planning_load() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let person = roster_person(&db, team_id).await;
+    let wo_id = wo_outside_planning(&db, person, "2026-05-04T08:00", "2026-05-04T12:00", 2.0).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET assigned_team_id = ? WHERE id = ?",
+        [team_id.into(), wo_id.into()],
+    ))
+    .await
+    .expect("crew OT outside planning");
+    let team_hours = |loads: std::collections::BTreeMap<String, (f64, Option<f64>, String)>| {
+        loads.get("2026-05-04").map(|l| l.0).unwrap_or(0.0)
+    };
+    assert!((person_hours_on(&db, person, "2026-05-04").await - 2.0).abs() < 0.01);
+    assert!(team_hours(team_loads(&db, team_id, "2026-05-04", "2026-05-04").await) > 0.0);
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'completed'), \
+             mechanically_completed_at = NULL WHERE id = ?",
+        [wo_id.into()],
+    ))
+    .await
+    .expect("completed without a completion time");
+    assert!(
+        person_hours_on(&db, person, "2026-05-04").await.abs() < 0.01,
+        "a completed OT is no longer the technician's load"
+    );
+    let team = team_hours(team_loads(&db, team_id, "2026-05-04", "2026-05-04").await);
+    assert!(team.abs() < 0.01, "a completed OT is no longer the crew's load: {team}");
+}
+
 #[test]
 fn a_slot_books_net_working_hours_not_the_raw_overlap() {
     use crate::planning::load::{net_hours_in, working_hours_in};

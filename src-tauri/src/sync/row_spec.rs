@@ -511,6 +511,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("planner_id", USER),
             r("primary_responsible_id", USER),
             r("planning_approved_by_id", USER),
+            // Who cleared the permit flag a conversion rule set (migration 233).
+            r("permit_rule_cleared_by_id", USER),
             r("assigned_team_id", "teams"),
             r("urgency_id", "reference_values"),
             r("source_di_id", "intervention_requests"),

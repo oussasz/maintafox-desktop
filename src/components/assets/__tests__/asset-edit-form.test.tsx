@@ -175,4 +175,32 @@ describe("AssetEditForm", () => {
     expect(lifecycle.listAssetPhotos).toHaveBeenCalled();
     expect(screen.queryByText("0 photos")).not.toBeInTheDocument();
   });
+
+  it("keeps the typed edits when the rights are reloaded while the form is open", async () => {
+    const can = () => true;
+    const perms = (isLoading: boolean): PermissionContextValue => ({
+      permissions: [],
+      isLoading,
+      can,
+      canAny: () => true,
+      canAll: () => true,
+      refresh: vi.fn(),
+    });
+    useAssetStore.setState({ showEditForm: true, editingAsset: ASSET });
+    const view = (isLoading: boolean) => (
+      <PermissionContext.Provider value={perms(isLoading)}>
+        <AssetEditForm />
+      </PermissionContext.Provider>
+    );
+    const { rerender } = render(view(false));
+    const name = await screen.findByDisplayValue("Pompe");
+    fireEvent.change(name, { target: { value: "Pompe de relevage" } });
+
+    // A role change reloads the rights: the lists flip to "not yet readable" and back.
+    rerender(view(true));
+    rerender(view(false));
+    await waitFor(() => expect(orgSvc.listOrgTree).toHaveBeenCalledTimes(2));
+    expect(screen.getByDisplayValue("Pompe de relevage")).toBeInTheDocument();
+    expect(lifecycle.listAssetPhotos).toHaveBeenCalledTimes(1);
+  });
 });

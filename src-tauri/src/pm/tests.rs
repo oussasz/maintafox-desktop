@@ -1771,6 +1771,29 @@ async fn generated_work_order_carries_the_pm_version_content() {
 }
 
 #[tokio::test]
+async fn generated_work_order_inherits_the_plan_shutdown_flag() {
+    let db = setup_db().await;
+    // The plan of this helper has `requires_shutdown = true`.
+    let occ = occurrence_with_generated_wo(&db, "PM-WO-SHUTDOWN").await;
+    let wo_id = occ.linked_work_order_id.expect("linked OT");
+    let wo = crate::wo::queries::get_work_order(&db, wo_id)
+        .await
+        .expect("get OT")
+        .expect("OT exists");
+    assert!(
+        wo.requires_shutdown,
+        "the OT generated from a plan that needs a shutdown is flagged \"needs shutdown\", so planning checks its windows"
+    );
+    let stored = count_for(
+        &db,
+        "SELECT requires_shutdown AS c FROM work_orders WHERE id = ?",
+        wo_id,
+    )
+    .await;
+    assert_eq!(stored, 1);
+}
+
+#[tokio::test]
 async fn wo_close_records_the_ot_outcome_not_a_blanket_no_findings() {
     let db = setup_db().await;
     let occ = occurrence_with_generated_wo(&db, "PM-WO-OUTCOME").await;
