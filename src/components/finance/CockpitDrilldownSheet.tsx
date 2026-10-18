@@ -3,7 +3,7 @@
  * and the open commitments (purchase orders and requisitions raised for OTs, manual ones) of a
  * cost centre and category.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
@@ -60,10 +60,17 @@ export function CockpitDrilldownSheet({
   const [loading, setLoading] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  /**
+   * Which figure the sheet is showing. Bumped whenever the row, year, version or retry changes,
+   * so an answer for an earlier figure (a late "load more" page) is dropped instead of being
+   * appended to the lines and totals of the figure now on screen.
+   */
+  const generation = useRef(0);
 
   /** Next page of actual lines (the server pages them; the totals cover every line). */
   const loadMore = () => {
     if (!row || !data || loadingMore) return;
+    const asked = generation.current;
     setLoadingMore(true);
     getBudgetCockpitDrilldown({
       fiscal_year: fiscalYear,
@@ -74,6 +81,7 @@ export function CockpitDrilldownSheet({
       offset: data.actuals.length,
     })
       .then((page) => {
+        if (asked !== generation.current) return;
         setData((prev) => {
           if (!prev) return prev;
           const known = new Set(prev.actuals.map((a) => a.actual_id));
@@ -88,10 +96,14 @@ export function CockpitDrilldownSheet({
       .catch(() => {
         // The global IPC toast reports the failure; the loaded lines stay.
       })
-      .finally(() => setLoadingMore(false));
+      .finally(() => {
+        if (asked === generation.current) setLoadingMore(false);
+      });
   };
 
   useEffect(() => {
+    generation.current += 1;
+    setLoadingMore(false);
     if (!row) return;
     let cancelled = false;
     setLoading(true);
