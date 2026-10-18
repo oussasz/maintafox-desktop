@@ -32,6 +32,7 @@ const asset = {
   subfamily_name: null,
   criticality_value_id: 3,
   criticality_code: "A",
+  criticality_to_review: false,
   status_code: "ACTIVE_IN_SERVICE",
   manufacturer: "KSB",
   model: null,

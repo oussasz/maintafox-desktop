@@ -1,4 +1,7 @@
 {
+  "criticalityReview": {
+    "hint": "Criticité reprise de l'ancienne liste de criticité : un planificateur doit la fixer dans l'onglet Criticité."
+  },
   "recommission": {
     "action": "Remettre en service",
     "title": "Remettre l'équipement en service ?",

@@ -2084,6 +2084,11 @@ export interface Asset {
   subfamily_name: string | null;
   criticality_value_id: number | null;
   criticality_code: string | null;
+  /**
+   * The criticality is only read from the old criticality list (no value of the published list
+   * yet): shown "à revoir" until a planner sets it.
+   */
+  criticality_to_review: boolean;
   status_code: string;
   manufacturer: string | null;
   model: string | null;

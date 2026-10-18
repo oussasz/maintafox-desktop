@@ -37,6 +37,7 @@ import { AssetQrCode } from "@/components/assets/AssetQrCode";
 import { AssetRecommissionDialog } from "@/components/assets/AssetRecommissionDialog";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
+import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark";
 import { isRetiredStatus } from "@/components/assets/asset-tones";
 import { AssetCommercialDialog } from "@/components/assets/detail/AssetCommercialDialog";
 import { AssetCriticalityTab } from "@/components/assets/detail/AssetCriticalityTab";
@@ -202,6 +203,7 @@ export function AssetDetailDialog() {
                   <div className="flex flex-wrap items-center gap-1.5 pt-1">
                     <AssetStatusBadge code={asset.status_code} size="md" />
                     <CriticalityBadge criticality={asset.criticality_code} />
+                    {asset.criticality_to_review ? <CriticalityReviewMark /> : null}
                     {warranty !== "none" ? (
                       <StatusChip
                         tone={WARRANTY_TONE[warranty]}
