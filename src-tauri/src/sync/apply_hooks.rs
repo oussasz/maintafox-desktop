@@ -23,6 +23,12 @@
 //! - `weekly_schedules`: a received week that would go backwards in its lifecycle here (frozen
 //!   back to draft, a later baseline back to an earlier one) is refused as a conflict
 //!   (`planning::weekly_schedule::inbound_lifecycle_conflict`, `before_upsert_checked`);
+//! - `work_permits` / `permit_isolations` / `work_orders`: the permit and LOTO rules (activation,
+//!   close, hand-back, suspension, two-person verification, the work-order start gate) are checked
+//!   again on the received state; a failed rule is a conflict, a permit type or status not applied
+//!   yet makes the row wait (`permit::sync_check`);
+//! - `qualification_overrides`: reason, subject, context, no self-override and the approver's
+//!   certification right (`qualification::sync_check`);
 //! - `media_attachments`: the file is queued for download from object storage
 //!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download.
 
@@ -82,13 +88,23 @@ pub(crate) async fn before_upsert_checked(
                 },
             }));
     }
-    if layout.def.entity_type == "site_settings" || layout.def.entity_type == "site_setting_events" {
-        use crate::settings::site::{inbound_site_setting_check, inbound_site_setting_event_check, InboundVerdict};
-        let verdict = if layout.def.entity_type == "site_settings" {
-            inbound_site_setting_check(conn, payload).await?
-        } else {
-            inbound_site_setting_event_check(payload).await?
-        };
+    let safety_check = match layout.def.entity_type {
+        "site_settings" => Some(crate::settings::site::inbound_site_setting_check(conn, payload).await?),
+        "site_setting_events" => Some(crate::settings::site::inbound_site_setting_event_check(payload).await?),
+        "work_permits" => Some(crate::permit::sync_check::inbound_permit_check(conn, entity_sync_id, payload).await?),
+        "permit_isolations" => {
+            Some(crate::permit::sync_check::inbound_isolation_check(conn, entity_sync_id, payload).await?)
+        }
+        "work_orders" => {
+            Some(crate::permit::sync_check::inbound_work_order_check(conn, entity_sync_id, payload).await?)
+        }
+        "qualification_overrides" => {
+            Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)
+        }
+        _ => None,
+    };
+    if let Some(verdict) = safety_check {
+        use crate::settings::site::InboundVerdict;
         return Ok(verdict.map(|v| match v {
             InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
                 code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),

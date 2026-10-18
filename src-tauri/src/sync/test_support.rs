@@ -334,6 +334,9 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // A personnel record or a login without one, never both.
     ("qualification_overrides", "user_id", "NULL"),
     ("qualification_overrides", "permit_id", "NULL"),
+    // The approver of an override must hold the certification right on the receiving device
+    // (`qualification::sync_check`): generic accounts (administrators, `is_*` = 1) are not deleted.
+    ("user_accounts", "deleted_at", "NULL"),
     // A calendar day, not a timestamp.
     ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
     // A planned crew is 1–50 people (migration 207 triggers).

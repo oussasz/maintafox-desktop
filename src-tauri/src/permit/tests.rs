@@ -19,8 +19,8 @@ use crate::wo::workflow::actions::submit::{submit_wo, WoSubmitInput};
 
 /// Applier and verifier are different people; tests never reuse one for the other
 /// unless they assert the two-person rejection.
-const APPLIER: i64 = 1;
-const VERIFIER: i64 = 2;
+pub(super) const APPLIER: i64 = 1;
+pub(super) const VERIFIER: i64 = 2;
 
 /// A permit-type editor without the administrator right / step-up.
 const EDITOR: queries::PermitTypeWriter = queries::PermitTypeWriter {
@@ -33,7 +33,7 @@ const ADMIN_STEP_UP: queries::PermitTypeWriter = queries::PermitTypeWriter {
     may_relax_isolation: true,
 };
 
-async fn setup() -> DatabaseConnection {
+pub(super) async fn setup() -> DatabaseConnection {
     let db = crate::db::test_db::seeded().await;
     // APPLIER is the seeded admin; VERIFIER is a second real account (the isolation
     // actor columns reference `user_accounts`).
@@ -48,7 +48,7 @@ async fn setup() -> DatabaseConnection {
     db
 }
 
-async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> i64 {
+pub(super) async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> i64 {
     let row = db
         .query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
         .await
@@ -57,7 +57,7 @@ async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> i64 {
     row.try_get_by_index::<i64>(0).expect("i64")
 }
 
-async fn admin_id(db: &DatabaseConnection) -> i64 {
+pub(super) async fn admin_id(db: &DatabaseConnection) -> i64 {
     scalar_i64(db, "SELECT id FROM user_accounts WHERE username = 'admin' LIMIT 1").await
 }
 
@@ -80,11 +80,11 @@ async fn method(db: &DatabaseConnection, code: &str) -> Option<i64> {
     Some(list_value_id(db, crate::permit::energy_reference::ISOLATION_METHODS_DOMAIN, code).await)
 }
 
-async fn type_id(db: &DatabaseConnection, code: &str) -> i64 {
+pub(super) async fn type_id(db: &DatabaseConnection, code: &str) -> i64 {
     scalar_i64(db, &format!("SELECT id FROM permit_types WHERE code = '{code}'")).await
 }
 
-async fn insert_equipment(db: &DatabaseConnection, code: &str) -> i64 {
+pub(super) async fn insert_equipment(db: &DatabaseConnection, code: &str) -> i64 {
     for sql in [
         "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at)          VALUES (1, 'permit-test-model-001', 1, 'active', datetime('now'), datetime('now'))",
         "INSERT OR IGNORE INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active,          created_at, updated_at) VALUES (1, 'permit-test-type-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'))",
@@ -110,11 +110,11 @@ async fn insert_equipment(db: &DatabaseConnection, code: &str) -> i64 {
     scalar_i64(db, &format!("SELECT id FROM equipment WHERE asset_id_code = '{code}'")).await
 }
 
-fn future_expiry() -> String {
+pub(super) fn future_expiry() -> String {
     (chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339()
 }
 
-async fn create_permit(db: &DatabaseConnection, type_code: &str, asset_id: i64) -> WorkPermit {
+pub(super) async fn create_permit(db: &DatabaseConnection, type_code: &str, asset_id: i64) -> WorkPermit {
     queries::create_work_permit(
         db,
         WorkPermitCreateInput {
@@ -150,7 +150,7 @@ pub(super) async fn advance_to_issued(db: &DatabaseConnection, mut wp: WorkPermi
     wp
 }
 
-async fn add_isolation(db: &DatabaseConnection, permit_id: i64, point: &str) -> PermitIsolation {
+pub(super) async fn add_isolation(db: &DatabaseConnection, permit_id: i64, point: &str) -> PermitIsolation {
     queries::upsert_permit_isolation(
         db,
         PermitIsolationUpsertInput {
@@ -166,7 +166,7 @@ async fn add_isolation(db: &DatabaseConnection, permit_id: i64, point: &str) -> 
     .expect("add isolation")
 }
 
-fn action(iso: &PermitIsolation) -> PermitIsolationActionInput {
+pub(super) fn action(iso: &PermitIsolation) -> PermitIsolationActionInput {
     PermitIsolationActionInput {
         isolation_id: iso.id,
         expected_row_version: iso.row_version,
@@ -174,7 +174,7 @@ fn action(iso: &PermitIsolation) -> PermitIsolationActionInput {
     }
 }
 
-async fn apply_and_verify(db: &DatabaseConnection, iso: &PermitIsolation) -> PermitIsolation {
+pub(super) async fn apply_and_verify(db: &DatabaseConnection, iso: &PermitIsolation) -> PermitIsolation {
     let applied = queries::apply_permit_isolation(db, action(iso), APPLIER)
         .await
         .expect("apply");
@@ -498,7 +498,7 @@ async fn close_requires_every_lock_removal_verified() {
 // ── WO gate integration ──────────────────────────────────────────────
 
 /// Creates a WO that requires a permit, on `asset_id`, advanced to `ready`.
-async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_id: i64) -> (i64, i64) {
+pub(super) async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_id: i64) -> (i64, i64) {
     let actor = admin_id(db).await;
     let wo = crate::wo::queries::create_work_order(
         db,
