@@ -146,6 +146,8 @@ const WO_COLS: &str = "\
     wo.notes, wo.cancel_reason, wo.parts_actuals_confirmed, \
     wo.service_cost_input, wo.reopen_count, wo.last_closed_at, \
     wo.requires_permit, \
+    wo.permit_rule_code, wo.permit_rule_permit_type, wo.permit_rule_cleared_by_id, \
+    wo.permit_rule_cleared_at, wo.permit_rule_clear_reason, \
     wo.entity_sync_id, wo.closeout_validation_profile_id, wo.closeout_validation_passed, \
     wo.no_downtime_attestation, wo.no_downtime_attestation_reason, \
     wo.row_version, wo.created_at, wo.updated_at";
@@ -860,6 +862,10 @@ pub async fn update_wo_draft_fields(
         values.push(urgency_id.into());
     }
     if let Some(rp) = input.requires_permit {
+        // A flag set by a plant permit rule is cleared only by the clear command.
+        if !rp {
+            crate::wo::workflow::actions::permit_requirement::assert_not_rule_flagged(&txn, input.id).await?;
+        }
         sets.push("requires_permit = ?".into());
         values.push((if rp { 1i64 } else { 0i64 }).into());
     }

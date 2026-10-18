@@ -42,6 +42,9 @@ pub struct WoConversionResult {
     pub di: InterventionRequest,
     pub wo_id: i64,
     pub wo_code: String,
+    /// Whether the new work order requires a permit, and why (the plant's permit rules,
+    /// `permit::requirement_rules`, and the request's safety flag).
+    pub permit_flag: crate::permit::requirement_rules::PermitFlagOutcome,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -207,7 +210,16 @@ pub async fn convert_di_to_work_order(
     let urgency_id = crate::reference::urgency_scale::urgency_value_id(&txn, carried_urgency.as_str()).await?;
     let nature = conversion_nature(&txn, &di.request_type, carried_urgency).await?;
     let type_id = crate::wo::types::default_type_for_nature(&txn, nature).await?.id;
-    let requires_permit: i64 = i64::from(di.safety_flag);
+    // Permit: the plant's rules (equipment class / work type → permit type), and the request's
+    // safety flag as before. No rule configured → nothing flagged by a rule, and the outcome says so.
+    let permit_flag = crate::permit::requirement_rules::evaluate(
+        &txn,
+        (di.equipment_id != 0).then_some(di.equipment_id),
+        type_id,
+        di.safety_flag,
+    )
+    .await?;
+    let requires_permit: i64 = i64::from(permit_flag.requires_permit);
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -215,8 +227,9 @@ pub async fn convert_di_to_work_order(
             code, type_id, status_id, equipment_id, \
             source_di_id, entity_id, requester_id, \
             title, description, urgency_id, requires_permit, \
+            permit_rule_code, permit_rule_permit_type, \
             entity_sync_id, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             wo_code.clone().into(),
             type_id.into(),
@@ -237,6 +250,8 @@ pub async fn convert_di_to_work_order(
             di.description.clone().into(),
             urgency_id.into(),
             requires_permit.into(),
+            permit_flag.rule_code.clone().into(),
+            permit_flag.permit_type_code.clone().into(),
             crate::sync::identity::new_entity_sync_id().into(),
             now.clone().into(),
             now.clone().into(),
@@ -442,5 +457,6 @@ pub async fn convert_di_to_work_order(
         di: updated_di,
         wo_id,
         wo_code,
+        permit_flag,
     })
 }

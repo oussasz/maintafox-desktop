@@ -820,6 +820,7 @@ pub fn run() {
             commands::wo::plan_wo,
             commands::wo::set_wo_requires_shutdown,
             commands::wo::set_wo_permit_requirement,
+            commands::wo::clear_wo_permit_rule_flag,
             commands::wo::submit_wo,
             commands::wo::evaluate_wo_readiness,
             commands::wo::mark_wo_ready,

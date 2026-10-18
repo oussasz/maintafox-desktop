@@ -157,6 +157,19 @@ pub struct WorkOrder {
     pub reopen_count: i64,
     pub last_closed_at: Option<String>,
     pub requires_permit: bool,
+    /// The plant rule (`PERMIT.REQUIREMENT_RULES`) that flagged this work order "permit required"
+    /// when it was converted from a request, and the permit type it calls for (migration 233).
+    #[serde(default)]
+    pub permit_rule_code: Option<String>,
+    #[serde(default)]
+    pub permit_rule_permit_type: Option<String>,
+    /// Who cleared that flag (permit-issue right, reason, audited), when and why.
+    #[serde(default)]
+    pub permit_rule_cleared_by_id: Option<i64>,
+    #[serde(default)]
+    pub permit_rule_cleared_at: Option<String>,
+    #[serde(default)]
+    pub permit_rule_clear_reason: Option<String>,
     pub entity_sync_id: Option<String>,
     pub closeout_validation_profile_id: Option<i64>,
     pub closeout_validation_passed: bool,
@@ -530,6 +543,21 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .try_get::<i64>("", "requires_permit")
             .map_err(|e| decode_err("requires_permit", e))?
             != 0,
+        permit_rule_code: row
+            .try_get::<Option<String>>("", "permit_rule_code")
+            .map_err(|e| decode_err("permit_rule_code", e))?,
+        permit_rule_permit_type: row
+            .try_get::<Option<String>>("", "permit_rule_permit_type")
+            .map_err(|e| decode_err("permit_rule_permit_type", e))?,
+        permit_rule_cleared_by_id: row
+            .try_get::<Option<i64>>("", "permit_rule_cleared_by_id")
+            .map_err(|e| decode_err("permit_rule_cleared_by_id", e))?,
+        permit_rule_cleared_at: row
+            .try_get::<Option<String>>("", "permit_rule_cleared_at")
+            .map_err(|e| decode_err("permit_rule_cleared_at", e))?,
+        permit_rule_clear_reason: row
+            .try_get::<Option<String>>("", "permit_rule_clear_reason")
+            .map_err(|e| decode_err("permit_rule_clear_reason", e))?,
         entity_sync_id: row
             .try_get::<Option<String>>("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,

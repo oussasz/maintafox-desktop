@@ -397,6 +397,48 @@ pub async fn set_wo_permit_requirement(
     Ok(wo)
 }
 
+/// Clear the permit flag a plant rule set when the work order was converted from a request.
+/// Needs the permit-issue right (`ptw.issue`) — editing the work order is not enough — and a
+/// reason of 10 characters or more; recorded on the work order and in its audit trail.
+#[tauri::command]
+pub async fn clear_wo_permit_rule_flag(
+    input: crate::wo::workflow::actions::permit_requirement::WoPermitRuleClearInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PTW_ISSUE,
+        PermissionScope::Global
+    );
+    let actor_id = i64::from(user.user_id);
+    let reason = input.reason.trim().to_string();
+    let wo =
+        crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await?;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "permit_rule_flag_cleared".into(),
+            actor_id: Some(actor_id),
+            summary: Some("Exigence de permis (règle) levée".into()),
+            details_json: Some(
+                serde_json::json!({
+                    "requires_permit": false,
+                    "rule": wo.permit_rule_code,
+                    "reason": reason,
+                })
+                .to_string(),
+            ),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(wo)
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // F2) submit / mark ready / readiness / return / approve — ot.edit / ot.plan
 // ═══════════════════════════════════════════════════════════════════════════════
