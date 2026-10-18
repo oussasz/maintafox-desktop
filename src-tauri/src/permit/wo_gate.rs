@@ -55,7 +55,10 @@ async fn assert_live_permits_ready(
         ));
     }
     if let Some(permit_type) = rule_permit_type {
-        if !permits.iter().any(|p| p.permit_type_code.as_deref() == Some(permit_type)) {
+        if !permits
+            .iter()
+            .any(|p| p.permit_type_code.as_deref() == Some(permit_type))
+        {
             let name = db
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,

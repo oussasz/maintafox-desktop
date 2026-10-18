@@ -331,7 +331,9 @@ async fn a_rule_flag_needs_a_permit_of_the_rule_type_to_start() {
 
     // Another type, active and ready: refused, naming the type the rule asks for.
     let wrong = convert(&db, actor).await;
-    let wp = create_from_wo(&db, "cold_work", wrong.wo_id).await.expect("cold work permit");
+    let wp = create_from_wo(&db, "cold_work", wrong.wo_id)
+        .await
+        .expect("cold work permit");
     set_status(&db, &advance_to_issued(&db, wp).await, "active")
         .await
         .expect("activate");
@@ -349,7 +351,9 @@ async fn a_rule_flag_needs_a_permit_of_the_rule_type_to_start() {
 
     // The rule's type, active and ready: the work can start.
     let right = convert(&db, actor).await;
-    let wp = create_from_wo(&db, "hot_work", right.wo_id).await.expect("hot work permit");
+    let wp = create_from_wo(&db, "hot_work", right.wo_id)
+        .await
+        .expect("hot work permit");
     set_status(&db, &advance_to_issued(&db, wp).await, "active")
         .await
         .expect("activate");
