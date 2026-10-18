@@ -111,21 +111,31 @@ export function AssetCreateForm() {
     formState: { errors },
   } = form;
 
+  // What the user entered is cleared only when the form opens: a rights reload or a language
+  // change re-reads the lists below but never discards typed values or chosen photos.
   useEffect(() => {
     if (!open) return;
     setSubmitError(null);
+    setPendingPhotos([]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     setOrgTreeError(null);
+    // Without the organisation view right the list is not requested; the field says why.
+    if (!canReadOrg) return;
+    void listOrgTree()
+      .then(setOrgNodes)
+      .catch((err) => {
+        console.error("[AssetCreateForm] listOrgTree failed", err);
+        setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} ${appErrorReason(err)}`);
+      });
+  }, [open, t, canReadOrg]);
+
+  useEffect(() => {
+    if (!open) return;
     setReferenceCatalogError(null);
     setCatalogReady(false);
-    setPendingPhotos([]);
-    // Without the organisation view right the list is not requested; the field says why.
-    if (canReadOrg)
-      void listOrgTree()
-        .then(setOrgNodes)
-        .catch((err) => {
-          console.error("[AssetCreateForm] listOrgTree failed", err);
-          setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} ${appErrorReason(err)}`);
-        });
     void getEquipmentTaxonomyCatalog()
       .then(() => setCatalogReady(true))
       .catch((err) => {
@@ -135,7 +145,7 @@ export function AssetCreateForm() {
         );
         setCatalogReady(false);
       });
-  }, [open, t, canReadOrg]);
+  }, [open, t]);
 
   useEffect(() => {
     if (open && parentPreFill) {
