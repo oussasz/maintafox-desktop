@@ -276,6 +276,8 @@
     "cumulative": "Cumul à date : réel {{actual}} pour un budget de {{budget}}."
   },
   "drill": {
+    "actualsTotal_one": "Total de {{count}} écriture : {{amount}}",
+    "actualsTotal_other": "Total des {{count}} écritures : {{amount}}",
     "title": "{{cc}} · {{bucket}}",
     "summary": "Réel {{actual}} · engagé {{committed}} · budget {{budget}}",
     "loadError": "Le détail n'a pas pu être chargé.",
