@@ -77,7 +77,7 @@
       "LOTO_NOT_VERIFIED": "Un permis activé avec des isolements non vérifiés par une deuxième personne",
       "LOTO_ISOLATION_REMOVED": "Un permis activé avec un cadenas déjà retiré",
       "PERMIT_REMOVAL_PENDING": "Un permis clôturé avec des cadenas encore en place",
-      "PERMIT_HANDOVER_REQUIRED": "Un permis restitué sans journal de passation",
+      "PERMIT_HANDOVER_REQUIRED": "Un permis restitué sans journal de passation valide",
       "PERMIT_SUSPENSION_MISSING": "Un permis suspendu sans suspension enregistrée",
       "PERMIT_ISOLATION_NOT_APPLIED": "Un isolement vérifié avant d'avoir été posé",
       "PERMIT_TWO_PERSON_VERIFY": "Un isolement vérifié par la personne qui l'a posé (règle des deux personnes)",

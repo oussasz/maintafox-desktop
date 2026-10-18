@@ -77,7 +77,7 @@
       "LOTO_NOT_VERIFIED": "A permit activated with isolations not verified by a second person",
       "LOTO_ISOLATION_REMOVED": "A permit activated with a lock already removed",
       "PERMIT_REMOVAL_PENDING": "A permit closed with locks still in place",
-      "PERMIT_HANDOVER_REQUIRED": "A permit handed back without a handover log",
+      "PERMIT_HANDOVER_REQUIRED": "A permit handed back without a valid handover log",
       "PERMIT_SUSPENSION_MISSING": "A permit suspended without a recorded suspension",
       "PERMIT_ISOLATION_NOT_APPLIED": "An isolation verified before it was applied",
       "PERMIT_TWO_PERSON_VERIFY": "An isolation verified by the person who applied it (two-person rule)",
