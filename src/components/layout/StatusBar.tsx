@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 
+import { type DbHealth, useDbHealth } from "@/hooks/use-db-health";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 
@@ -8,6 +9,7 @@ export function StatusBar() {
   const isOnline = useAppStore((s) => s.isOnline);
   const syncStatus = useAppStore((s) => s.syncStatus);
   const appVersion = useAppStore((s) => s.appVersion);
+  const db = useDbHealth();
 
   return (
     <footer
@@ -45,11 +47,48 @@ export function StatusBar() {
         )}
       </div>
 
-      {/* Right: version. No database indicator: nothing checks the database while the app
-          runs, and a dot that is always green would claim a health it does not know. */}
+      {/* Right: database state (the backend's real probe) and version. */}
       <div className="flex items-center gap-3">
+        <DbIndicator db={db} />
         {appVersion && <span>{t("status.version", { version: appVersion })}</span>}
       </div>
     </footer>
+  );
+}
+
+const DB_DOT: Record<DbHealth["state"], string> = {
+  checking: "bg-tone-neutral-fg",
+  ok: "bg-tone-success-fg",
+  degraded: "bg-tone-danger-fg",
+  unknown: "bg-tone-warning-fg",
+};
+
+/** Database state as the probe said it: degraded stays visible; unknown is never shown as green. */
+function DbIndicator({ db }: { db: DbHealth }) {
+  const { t } = useTranslation("shell");
+  const text =
+    db.state === "ok"
+      ? db.latencyMs != null
+        ? t("status.dbOkLatency", { ms: db.latencyMs })
+        : t("status.dbOk")
+      : db.state === "degraded"
+        ? t(db.errorCode === "DB_TIMEOUT" ? "status.dbTimeout" : "status.dbError")
+        : db.state === "unknown"
+          ? t("status.dbUnknown")
+          : t("status.dbChecking");
+  return (
+    <span
+      role="status"
+      data-testid="db-health"
+      data-state={db.state}
+      className={cn(
+        "flex items-center gap-1",
+        db.state === "degraded" && "font-medium text-tone-danger-fg",
+        db.state === "unknown" && "text-tone-warning-fg",
+      )}
+    >
+      <span className={cn("inline-block h-1.5 w-1.5 rounded-full", DB_DOT[db.state])} aria-hidden />
+      {text}
+    </span>
   );
 }
