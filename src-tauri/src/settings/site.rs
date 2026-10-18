@@ -375,38 +375,41 @@ pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
         return Ok(None);
     }
     let changed_at = text(payload, "updated_at").unwrap_or_default();
-    let audited = conn
+    // The rule's latest audited change at this site: an older "on" replayed after a later "off"
+    // (or any change that is not the latest) is refused.
+    let latest = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT changed_by_id FROM site_setting_events \
-              WHERE site_node_id = ? AND setting_key = ? AND TRIM(new_value_json) = 'true' \
-                AND required_step_up = 1 AND changed_at = ? \
-                AND LENGTH(TRIM(reason)) >= ? \
-              ORDER BY id DESC LIMIT 1",
-            [
-                site.into(),
-                key.into(),
-                changed_at.into(),
-                i64::try_from(super::catalog::MIN_REASON_CHARS).unwrap_or(10).into(),
-            ],
+            "SELECT changed_by_id, new_value_json, required_step_up, reason, changed_at FROM site_setting_events \
+              WHERE site_node_id = ? AND setting_key = ? \
+              ORDER BY changed_at DESC, id DESC LIMIT 1",
+            [site.into(), key.into()],
         ))
         .await?;
-    if let Some(event) = audited {
-        let by: Option<i64> = get(&event, "changed_by_id")?;
-        let updated_by = local_id(conn, "user_accounts", text(payload, "updated_by_sync_id")).await?;
-        let by_holder = match by {
-            Some(u) => holds_settings_right(conn, u).await?,
-            None => false,
-        };
-        if by.is_some() && by == updated_by && by_holder {
-            return Ok(None);
+    if let Some(event) = &latest {
+        let event_at: String = get(event, "changed_at")?;
+        if event_at.as_str() >= changed_at {
+            let by: Option<i64> = get(event, "changed_by_id")?;
+            let reason: String = get(event, "reason")?;
+            let audited_on = event_at == changed_at
+                && bool_of(Some(get::<String>(event, "new_value_json")?.as_str())) == Some(true)
+                && get::<i64>(event, "required_step_up")? == 1
+                && reason.trim().chars().count() >= super::catalog::MIN_REASON_CHARS;
+            let updated_by = local_id(conn, "user_accounts", text(payload, "updated_by_sync_id")).await?;
+            let by_holder = match by {
+                Some(u) => holds_settings_right(conn, u).await?,
+                None => false,
+            };
+            if audited_on && by.is_some() && by == updated_by && by_holder {
+                return Ok(None);
+            }
+            return Ok(Some(InboundVerdict::Conflict {
+                code: "SITE_SETTING_UNAUDITED",
+                message: format!(
+                    "site rule '{key}' turned on without being its latest audited change by a holder of the settings right"
+                ),
+            }));
         }
-        return Ok(Some(InboundVerdict::Conflict {
-            code: "SITE_SETTING_UNAUDITED",
-            message: format!(
-                "site rule '{key}' turned on by someone without the settings right, or not by the person in its audit event"
-            ),
-        }));
     }
     // The audit event may still be waiting in the inbox (same batch or an earlier one).
     let pending = conn
@@ -433,8 +436,7 @@ pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
 
 /// An audit event of a per-site rule received by synchronisation (`site_setting_events`): known
 /// rule, readable values, a reason, and step-up when it relaxes the site.
-pub(crate) async fn inbound_site_setting_event_check<C: ConnectionTrait>(
-    _conn: &C,
+pub(crate) async fn inbound_site_setting_event_check(
     payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<Option<InboundVerdict>> {
     let key = text(payload, "setting_key").unwrap_or_default();

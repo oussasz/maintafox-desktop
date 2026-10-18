@@ -535,7 +535,7 @@ mod tests {
         assert_eq!(asset.status_code, "ACTIVE_IN_SERVICE");
         assert!(asset.decommissioned_at.is_none());
 
-        let event = lifecycle::record_lifecycle_event(
+        let event = record_unguarded(
             &db,
             RecordLifecycleEventPayload {
                 asset_id: asset.id,
@@ -591,7 +591,7 @@ mod tests {
 
         let asset = create_test_asset(&db, "DEC-B", node_id).await;
 
-        lifecycle::record_lifecycle_event(
+        record_unguarded(
             &db,
             RecordLifecycleEventPayload {
                 asset_id: asset.id,
@@ -639,7 +639,7 @@ mod tests {
         let asset = create_test_asset(&db, "REC-A", node_id).await;
 
         // First: decommission
-        lifecycle::record_lifecycle_event(
+        record_unguarded(
             &db,
             RecordLifecycleEventPayload {
                 asset_id: asset.id,
@@ -756,7 +756,7 @@ mod tests {
             lifecycle::RECOMMISSION_NOT_RETIRED
         );
 
-        lifecycle::record_lifecycle_event(&db, event("DECOMMISSIONED", Some("DECOMMISSIONED"), None, None), 1)
+        record_unguarded(&db, event("DECOMMISSIONED", Some("DECOMMISSIONED"), None, None), 1)
             .await
             .expect("decommission");
         let retired = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
@@ -834,6 +834,84 @@ mod tests {
         let back = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
         assert_eq!(back.status_code, "ACTIVE_IN_SERVICE");
         assert!(back.decommissioned_at.is_none());
+    }
+
+    /// Records a retirement directly (the path `decommission_asset` uses inside its transaction).
+    async fn record_unguarded(
+        db: &sea_orm::DatabaseConnection,
+        payload: RecordLifecycleEventPayload,
+        actor_id: i32,
+    ) -> Result<lifecycle::AssetLifecycleEvent, AppError> {
+        use sea_orm::TransactionTrait;
+        let txn = db.begin().await?;
+        let event = lifecycle::record_lifecycle_event_in(&txn, payload, actor_id).await?;
+        txn.commit().await?;
+        Ok(event)
+    }
+
+    #[tokio::test]
+    async fn retirement_is_recorded_only_by_declasser() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
+        let asset = create_test_asset(&db, "DEC-G", node_id).await;
+        let retire = |to: &str| RecordLifecycleEventPayload {
+            asset_id: asset.id,
+            event_type: "DECOMMISSIONED".to_string(),
+            event_at: None,
+            from_org_node_id: None,
+            to_org_node_id: None,
+            from_status_code: None,
+            to_status_code: Some(to.to_string()),
+            from_class_code: None,
+            to_class_code: None,
+            related_asset_id: None,
+            reason_code: None,
+            notes: Some("Fin de vie".to_string()),
+            approved_by_id: None,
+            expected_row_version: None,
+        };
+        // The generic lifecycle command never retires an asset.
+        let refused = lifecycle::record_lifecycle_event(&db, retire("SCRAPPED"), 1).await;
+        assert!(
+            matches!(refused, Err(AppError::ValidationFailed(ref m)) if m[0] == lifecycle::DECOMMISSION_THROUGH_DECLASSER),
+            "{refused:?}"
+        );
+        let unchanged = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        assert_eq!(unchanged.status_code, "ACTIVE_IN_SERVICE");
+
+        // Déclasser retires once; a second retirement (DECOMMISSIONED -> SCRAPPED) is refused and
+        // the end-of-life date stays.
+        let first = crate::assets::decommission::decommission_asset(
+            &db,
+            crate::assets::decommission::DecommissionAssetPayload {
+                asset_id: asset.id,
+                target_status: "DECOMMISSIONED".into(),
+                reason: "Remplacée par une pompe neuve".into(),
+                notes: None,
+            },
+            1,
+        )
+        .await
+        .expect("decommission");
+        let again = crate::assets::decommission::decommission_asset(
+            &db,
+            crate::assets::decommission::DecommissionAssetPayload {
+                asset_id: asset.id,
+                target_status: "SCRAPPED".into(),
+                reason: "Mise au rebut".into(),
+                notes: None,
+            },
+            1,
+        )
+        .await;
+        assert!(again.is_err(), "already retired");
+        let after = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        assert_eq!(after.status_code, "DECOMMISSIONED");
+        assert_eq!(after.decommissioned_at, first.decommissioned_at);
     }
 
     // ── Additional: event type governance ─────────────────────────────────

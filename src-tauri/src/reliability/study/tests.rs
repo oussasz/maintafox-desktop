@@ -1235,21 +1235,17 @@ async fn a_synced_site_opt_out_needs_its_audited_change() {
     let mut no_step_up = event_payload.as_object().cloned().expect("object");
     no_step_up.insert("required_step_up".into(), serde_json::json!(0));
     assert!(matches!(
-        inbound_site_setting_event_check(&f.db, &no_step_up)
-            .await
-            .expect("check"),
+        inbound_site_setting_event_check(&no_step_up).await.expect("check"),
         Some(InboundVerdict::Conflict { .. })
     ));
     let mut no_reason = event_payload.as_object().cloned().expect("object");
     no_reason.insert("reason".into(), "ok".into());
     assert!(matches!(
-        inbound_site_setting_event_check(&f.db, &no_reason)
-            .await
-            .expect("check"),
+        inbound_site_setting_event_check(&no_reason).await.expect("check"),
         Some(InboundVerdict::Conflict { .. })
     ));
     assert!(
-        inbound_site_setting_event_check(&f.db, event_payload.as_object().expect("object"))
+        inbound_site_setting_event_check(event_payload.as_object().expect("object"))
             .await
             .expect("check")
             .is_none()
@@ -1921,4 +1917,276 @@ async fn system_model_uses_equipment_history_and_saves_rbd_and_fault_tree() {
     )
     .await;
     assert!(matches!(incomplete, Err(AppError::ValidationFailed(m)) if m[0] == "SYSTEM_MODEL_INCOMPLETE"));
+}
+
+/// Applies a received row as the sync worker does (real layout, hooks, codec).
+async fn apply_wire(
+    f: &Fixture,
+    entity_type: &str,
+    sync_id: &str,
+    operation: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> crate::sync::materialize::ApplyOutcome {
+    let layout = crate::sync::row_layout::layout(&f.db, entity_type)
+        .await
+        .expect("layout");
+    crate::sync::row_codec::apply_row(
+        &f.db,
+        &layout,
+        sync_id,
+        operation,
+        &serde_json::to_string(payload).expect("json"),
+    )
+    .await
+    .expect("apply")
+}
+
+/// The row as this device would send it.
+async fn wire_of(f: &Fixture, entity_type: &str, sync_id: &str) -> serde_json::Map<String, serde_json::Value> {
+    let layout = crate::sync::row_layout::layout(&f.db, entity_type)
+        .await
+        .expect("layout");
+    crate::sync::row_codec::load_row_payload(
+        &f.db,
+        &layout,
+        &crate::sync::row_codec::RowLocator::Identity(sync_id.to_string()),
+    )
+    .await
+    .expect("payload")
+    .expect("row")
+    .payload
+}
+
+fn conflict_code(outcome: &crate::sync::materialize::ApplyOutcome) -> Option<&str> {
+    match outcome {
+        crate::sync::materialize::ApplyOutcome::Conflict { code, .. } => Some(code.as_str()),
+        _ => None,
+    }
+}
+
+/// A second planning site (node 2) under the fixture's model.
+async fn second_site(f: &Fixture) {
+    exec(
+        &f.db,
+        "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, ancestor_path, depth, \
+         created_at, updated_at, structure_model_id) VALUES (2, 'st-node-2', 'SITE-2', 'Usine 2', 1, 'active', '/2/', 0, \
+         datetime('now'), datetime('now'), 1)",
+    )
+    .await;
+    make_site(f, 2).await;
+}
+
+#[tokio::test]
+async fn a_received_decision_keeps_the_strictest_site_and_its_local_fields() {
+    let f = setup().await;
+    let study_id = scenario(&f).await;
+    second_site(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    // Proposed while the pumps are at site 1 (four-eyes): the decision stores site 1.
+    let d = create_decision(
+        &f.db,
+        CreateDecisionInput {
+            study_id,
+            title: "Contrôle".into(),
+            action_kind: "one_off_wo".into(),
+            equipment_id: Some(f.p101),
+            pm_plan_id: None,
+            proposed_interval_hours: None,
+            wo_type_code: Some("corrective".into()),
+            approver_id: None,
+            fmeca_item_id: None,
+            rcm_decision_id: None,
+            justification: None,
+            planned_cost: None,
+            failure_cost: None,
+        },
+        f.admin,
+    )
+    .await
+    .expect("decision");
+    let sync_id = text(
+        &f,
+        &format!(
+            "SELECT entity_sync_id FROM reliability_study_decisions WHERE id = {}",
+            d.id
+        ),
+    )
+    .await;
+    let admin_sync = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM user_accounts WHERE id = {}", f.admin),
+    )
+    .await;
+    // P-101 then moves to site 2, which allows self-approval.
+    exec(
+        &f.db,
+        &format!("UPDATE equipment SET installed_at_node_id = 2 WHERE id = {}", f.p101),
+    )
+    .await;
+    set_opt_out(&f, 2, true, None).await;
+
+    // An older device sends the self-approval without the stored site: the site stored here
+    // (four-eyes) still applies.
+    let mut wire = wire_of(&f, "reliability_study_decisions", &sync_id).await;
+    wire.insert("status".into(), "approved".into());
+    wire.insert("decided_by_sync_id".into(), admin_sync.clone().into());
+    wire.remove("site_node_sync_id");
+    wire.remove("site_recorded");
+    let outcome = apply_wire(&f, "reliability_study_decisions", &sync_id, "upsert", &wire).await;
+    assert_eq!(conflict_code(&outcome), Some("DECISION_SELF_APPROVAL"), "{outcome:?}");
+
+    // No status in the payload: the local one (proposed) is used; no decider then is fine.
+    let mut no_status = wire_of(&f, "reliability_study_decisions", &sync_id).await;
+    no_status.remove("status");
+    let outcome = apply_wire(&f, "reliability_study_decisions", &sync_id, "upsert", &no_status).await;
+    assert_eq!(conflict_code(&outcome), None, "{outcome:?}");
+
+    // Approved with nobody named as approver, here or in the payload: refused.
+    let mut nobody = wire_of(&f, "reliability_study_decisions", &sync_id).await;
+    nobody.insert("status".into(), "approved".into());
+    nobody.insert("decided_by_sync_id".into(), serde_json::Value::Null);
+    let outcome = apply_wire(&f, "reliability_study_decisions", &sync_id, "upsert", &nobody).await;
+    assert_eq!(conflict_code(&outcome), Some("DECISION_SELF_APPROVAL"), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn a_received_site_rule_is_applied_only_with_its_latest_audited_change() {
+    let f = setup().await;
+    make_site(&f, 1).await;
+    let site_sync = text(&f, "SELECT entity_sync_id FROM org_nodes WHERE id = 1").await;
+    let admin_sync = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM user_accounts WHERE id = {}", f.admin),
+    )
+    .await;
+    let reviewer_sync = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM user_accounts WHERE id = {}", f.reviewer),
+    )
+    .await;
+    let rule_sync = "ss-wire-1";
+    let rule = |value: &str, at: &str, by: &str| {
+        serde_json::json!({
+            "site_node_sync_id": site_sync,
+            "setting_key": SELF_APPROVAL_SETTING,
+            "value_json": value,
+            "updated_by_sync_id": by,
+            "updated_at": at,
+            "row_version": 7,
+            "_sync_format": "row.v1",
+        })
+        .as_object()
+        .cloned()
+        .expect("object")
+    };
+    let event = |by: i64, at: &str| {
+        format!(
+            "INSERT INTO site_setting_events (entity_sync_id, site_node_id, setting_key, old_value_json, \
+             new_value_json, reason, changed_by_id, required_step_up, changed_at) VALUES \
+             ('sse-{at}-{by}', 1, '{SELF_APPROVAL_SETTING}', 'false', 'true', \
+             'Single reliability engineer on this site', {by}, 1, '{at}')"
+        )
+    };
+
+    // Turned on by someone without the settings right, even with an audit event: conflict.
+    exec(&f.db, &event(f.reviewer, "2026-10-18T08:00:00Z")).await;
+    let outcome = apply_wire(
+        &f,
+        "site_settings",
+        rule_sync,
+        "upsert",
+        &rule("true", "2026-10-18T08:00:00Z", &reviewer_sync),
+    )
+    .await;
+    assert_eq!(conflict_code(&outcome), Some("SITE_SETTING_UNAUDITED"), "{outcome:?}");
+
+    // The audited change still in the inbox: the rule waits; once the change is here: applied.
+    let pending_event = serde_json::json!({
+        "site_node_sync_id": site_sync,
+        "setting_key": SELF_APPROVAL_SETTING,
+        "changed_at": "2026-10-18T09:00:00Z",
+    });
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
+             row_version, payload_json, payload_hash) VALUES ('b2', 'c2', 'site_setting_events', 'sse-wire-9', \
+             'upsert', 1, '{}', 'h9')",
+            pending_event.to_string().replace('\'', "''")
+        ),
+    )
+    .await;
+    let outcome = apply_wire(
+        &f,
+        "site_settings",
+        rule_sync,
+        "upsert",
+        &rule("true", "2026-10-18T09:00:00Z", &admin_sync),
+    )
+    .await;
+    assert!(
+        matches!(outcome, crate::sync::materialize::ApplyOutcome::Deferred { .. }),
+        "{outcome:?}"
+    );
+    exec(&f.db, &event(f.admin, "2026-10-18T09:00:00Z")).await;
+    let outcome = apply_wire(
+        &f,
+        "site_settings",
+        rule_sync,
+        "upsert",
+        &rule("true", "2026-10-18T09:00:00Z", &admin_sync),
+    )
+    .await;
+    assert_eq!(conflict_code(&outcome), None, "{outcome:?}");
+    assert_eq!(
+        crate::settings::site::site_setting(&f.db, 1, SELF_APPROVAL_SETTING)
+            .await
+            .expect("read"),
+        Some(true)
+    );
+
+    // Off at 10:00 (audited, latest), then the 09:00 "on" replayed (any row version): conflict.
+    let off = rule("false", "2026-10-18T10:00:00Z", &admin_sync);
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO site_setting_events (entity_sync_id, site_node_id, setting_key, old_value_json, \
+             new_value_json, reason, changed_by_id, required_step_up, changed_at) VALUES ('sse-off', 1, \
+             '{SELF_APPROVAL_SETTING}', 'true', 'false', 'Second engineer joined the site', {}, 1, \
+             '2026-10-18T10:00:00Z')",
+            f.admin
+        ),
+    )
+    .await;
+    assert_eq!(
+        conflict_code(&apply_wire(&f, "site_settings", rule_sync, "upsert", &off).await),
+        None
+    );
+    let mut replay = rule("true", "2026-10-18T09:00:00Z", &admin_sync);
+    replay.insert("row_version".into(), serde_json::json!(99));
+    let outcome = apply_wire(&f, "site_settings", rule_sync, "upsert", &replay).await;
+    assert_eq!(conflict_code(&outcome), Some("SITE_SETTING_UNAUDITED"), "{outcome:?}");
+    assert_eq!(
+        crate::settings::site::site_setting(&f.db, 1, SELF_APPROVAL_SETTING)
+            .await
+            .expect("read"),
+        Some(false)
+    );
+
+    // History is never erased by synchronisation.
+    let layout = crate::sync::row_layout::layout(&f.db, "site_setting_events")
+        .await
+        .expect("layout");
+    let delete = crate::sync::row_codec::delete_payload(&layout, None);
+    let outcome = apply_wire(&f, "site_setting_events", "sse-off", "delete", &delete).await;
+    assert_eq!(conflict_code(&outcome), Some("APPEND_ONLY_DELETE"), "{outcome:?}");
+    assert_eq!(
+        scalar(
+            &f.db,
+            "SELECT COUNT(*) FROM site_setting_events WHERE entity_sync_id = 'sse-off'"
+        )
+        .await,
+        1
+    );
 }

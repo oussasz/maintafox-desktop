@@ -87,7 +87,7 @@ pub(crate) async fn before_upsert_checked(
         let verdict = if layout.def.entity_type == "site_settings" {
             inbound_site_setting_check(conn, payload).await?
         } else {
-            inbound_site_setting_event_check(conn, payload).await?
+            inbound_site_setting_event_check(payload).await?
         };
         return Ok(verdict.map(|v| match v {
             InboundVerdict::Defer(message) => ApplyOutcome::Deferred {

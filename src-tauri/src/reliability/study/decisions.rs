@@ -833,6 +833,10 @@ struct LocalDecision {
     equipment: Option<String>,
     proposer: Option<String>,
     decider: Option<String>,
+    study_id: i64,
+    equipment_id: Option<i64>,
+    site_node_id: Option<i64>,
+    site_recorded: bool,
 }
 
 async fn local_decision<C: ConnectionTrait>(conn: &C, sync_id: &str) -> AppResult<Option<LocalDecision>> {
@@ -840,7 +844,8 @@ async fn local_decision<C: ConnectionTrait>(conn: &C, sync_id: &str) -> AppResul
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT d.status, s.entity_sync_id AS study, e.entity_sync_id AS equipment, \
-                    pb.entity_sync_id AS proposer, db.entity_sync_id AS decider \
+                    pb.entity_sync_id AS proposer, db.entity_sync_id AS decider, \
+                    d.study_id, d.equipment_id, d.site_node_id, d.site_recorded \
              FROM reliability_study_decisions d \
              LEFT JOIN reliability_studies s ON s.id = d.study_id \
              LEFT JOIN equipment e ON e.id = d.equipment_id \
@@ -857,6 +862,10 @@ async fn local_decision<C: ConnectionTrait>(conn: &C, sync_id: &str) -> AppResul
             equipment: get(&r, "equipment")?,
             proposer: get(&r, "proposer")?,
             decider: get(&r, "decider")?,
+            study_id: get(&r, "study_id")?,
+            equipment_id: get(&r, "equipment_id")?,
+            site_node_id: get(&r, "site_node_id")?,
+            site_recorded: get::<i64>(&r, "site_recorded")? != 0,
         })
     })
     .transpose()
@@ -876,15 +885,18 @@ pub(crate) async fn inbound_self_approval_check<C: ConnectionTrait>(
     entity_sync_id: &str,
     payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<Option<InboundDecisionVerdict>> {
+    let local = local_decision(conn, entity_sync_id).await?;
+    // A field left out of the payload (older device, partial row) keeps the local value.
     let status = payload
         .get("status")
         .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .or_else(|| local.as_ref().map(|l| l.status.clone()))
         .unwrap_or_default();
-    let local = local_decision(conn, entity_sync_id).await?;
+    let status = status.as_str();
     let party = |key: &str, local_value: Option<&String>| -> Option<String> {
         match payload.get(key) {
             Some(serde_json::Value::String(v)) => Some(v.clone()),
-            Some(serde_json::Value::Null) => None,
             Some(_) => None,
             None => local_value.cloned(),
         }
@@ -895,6 +907,12 @@ pub(crate) async fn inbound_self_approval_check<C: ConnectionTrait>(
         .get("title")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
+    let decided = status == STATUS_APPROVED || status == STATUS_APPLIED;
+    if decided && decider.is_none() {
+        return Ok(Some(InboundDecisionVerdict::Conflict(format!(
+            "decision '{title}' is {status} but names nobody who approved it"
+        ))));
+    }
     let self_decided = proposer.is_some() && proposer == decider;
     if !self_decided {
         return Ok(None);
@@ -905,36 +923,61 @@ pub(crate) async fn inbound_self_approval_check<C: ConnectionTrait>(
         ))));
     }
     // Rejecting one's own proposal withdraws it: allowed, as on this device.
-    if status != STATUS_APPROVED && status != STATUS_APPLIED {
+    if !decided {
         return Ok(None);
     }
-    let study_sync = payload.get("study_sync_id").and_then(serde_json::Value::as_str);
-    let equipment_sync = payload.get("equipment_sync_id").and_then(serde_json::Value::as_str);
+    let ref_sync = |key: &str, local_value: Option<&String>| -> Option<String> {
+        match payload.get(key) {
+            Some(serde_json::Value::String(v)) => Some(v.clone()),
+            Some(_) => None,
+            None => local_value.cloned(),
+        }
+    };
+    let study_sync = ref_sync("study_sync_id", local.as_ref().and_then(|l| l.study.as_ref()));
+    let equipment_sync = ref_sync("equipment_sync_id", local.as_ref().and_then(|l| l.equipment.as_ref()));
     if let Some(l) = &local {
         let advances = matches!((status_rank(&l.status), status_rank(status)), (Some(a), Some(b)) if b >= a);
-        let same_parties = l.study.as_deref() == study_sync
-            && l.equipment.as_deref() == equipment_sync
-            && l.proposer == proposer
-            && l.decider == decider;
+        let same_parties =
+            l.study == study_sync && l.equipment == equipment_sync && l.proposer == proposer && l.decider == decider;
         let held_approval = (l.status == STATUS_APPROVED || l.status == STATUS_APPLIED) && l.proposer == l.decider;
         if held_approval && same_parties && advances {
             return Ok(None);
         }
     }
-    let Ok(Some(study)) = payload_ref(conn, payload, "study_sync_id", "reliability_studies").await? else {
+    // The study and equipment named by the payload, else the local ones.
+    let study = match payload.get("study_sync_id") {
+        None => local.as_ref().map(|l| l.study_id),
+        Some(_) => match payload_ref(conn, payload, "study_sync_id", "reliability_studies").await? {
+            Ok(id) => id,
+            Err(()) => return Ok(Some(InboundDecisionVerdict::Defer("study not applied yet".into()))),
+        },
+    };
+    let Some(study) = study else {
         return Ok(Some(InboundDecisionVerdict::Defer("study not applied yet".into())));
     };
-    let Ok(equipment) = payload_ref(conn, payload, "equipment_sync_id", "equipment").await? else {
-        return Ok(Some(InboundDecisionVerdict::Defer("equipment not applied yet".into())));
+    let equipment = match payload.get("equipment_sync_id") {
+        None => local.as_ref().and_then(|l| l.equipment_id),
+        Some(_) => match payload_ref(conn, payload, "equipment_sync_id", "equipment").await? {
+            Ok(id) => id,
+            Err(()) => return Ok(Some(InboundDecisionVerdict::Defer("equipment not applied yet".into()))),
+        },
     };
-    let has_stored_site = payload
+    // The strictest of: the equipment's current site, the site the payload says was stored at
+    // proposal, and the site stored here.
+    let mut rule = self_approval_rule(conn, study, equipment).await?;
+    let payload_recorded = payload
         .get("site_recorded")
         .and_then(|v| v.as_i64().or_else(|| v.as_bool().map(i64::from)))
         == Some(1);
-    let Ok(site) = payload_ref(conn, payload, "site_node_sync_id", "org_nodes").await? else {
-        return Ok(Some(InboundDecisionVerdict::Defer("site not applied yet".into())));
-    };
-    let rule = recorded_decision_rule(conn, site, study, equipment, has_stored_site).await?;
+    if payload_recorded {
+        let Ok(site) = payload_ref(conn, payload, "site_node_sync_id", "org_nodes").await? else {
+            return Ok(Some(InboundDecisionVerdict::Defer("site not applied yet".into())));
+        };
+        rule = strictest(rule, site_rule(conn, site).await?);
+    }
+    if let Some(l) = local.as_ref().filter(|l| l.site_recorded) {
+        rule = strictest(rule, site_rule(conn, l.site_node_id).await?);
+    }
     Ok(match rule {
         SelfApprovalRule::Allowed => None,
         SelfApprovalRule::FourEyes => Some(InboundDecisionVerdict::Conflict(format!(

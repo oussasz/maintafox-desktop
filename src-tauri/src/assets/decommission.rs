@@ -3,12 +3,11 @@
 //! Production entry point for the Déclasser / Decommission UI. Reuses the
 //! governed lifecycle event path — does not write status outside lifecycle.
 
-use sea_orm::DatabaseConnection;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::Deserialize;
 
 use crate::errors::{AppError, AppResult};
 
-use super::bindings;
 use super::identity::{self, Asset};
 use super::lifecycle::{self, RecordLifecycleEventPayload};
 
@@ -55,16 +54,53 @@ pub async fn decommission_asset(
 
     let target_status = normalize_target_status(&payload.target_status)?;
 
-    let asset = identity::get_asset_by_id(db, payload.asset_id).await?;
-    if TERMINAL_STATUSES.contains(&asset.status_code.as_str()) {
+    // The checks and the event are one transaction: no request or work order can open, and no
+    // other retirement can land, between the check and the change.
+    let txn = db.begin().await?;
+    let status: String = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT lifecycle_status FROM equipment WHERE id = ? AND deleted_at IS NULL",
+            [payload.asset_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "equipment".into(),
+            id: payload.asset_id.to_string(),
+        })?
+        .try_get("", "lifecycle_status")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.lifecycle_status: {e}")))?;
+    if TERMINAL_STATUSES.contains(&status.as_str()) || identity::is_retired_status_code(&txn, &status).await? {
         return Err(AppError::ValidationFailed(vec![format!(
-            "L'équipement est déjà en statut terminal '{}'.",
-            asset.status_code
+            "L'équipement est déjà en statut terminal '{status}'."
         )]));
     }
 
-    let open_di = bindings::count_open_di(db, payload.asset_id).await?;
-    let open_wo = bindings::count_open_wo(db, payload.asset_id).await?;
+    let count = |sql: String| {
+        let txn = &txn;
+        async move {
+            let row = txn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    sql,
+                    [payload.asset_id.into()],
+                ))
+                .await?;
+            Ok::<i64, AppError>(row.and_then(|r| r.try_get::<i64>("", "cnt").ok()).unwrap_or(0))
+        }
+    };
+    // Same open rules as the binding summary (`assets::bindings`).
+    let open_di = count(format!(
+        "SELECT COUNT(*) AS cnt FROM intervention_requests ir WHERE ir.equipment_id = ? AND {}",
+        crate::di::stats::OPEN_SQL
+    ))
+    .await?;
+    let open_wo = count(format!(
+        "SELECT COUNT(*) AS cnt FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+         WHERE wo.equipment_id = ? AND {}",
+        crate::wo::backlog::NOT_CLOSED_SQL
+    ))
+    .await?;
     if open_di > 0 || open_wo > 0 {
         let mut msgs = Vec::new();
         if open_di > 0 {
@@ -82,8 +118,8 @@ pub async fn decommission_asset(
 
     let notes = compose_notes(&reason, payload.notes.as_deref());
 
-    lifecycle::record_lifecycle_event(
-        db,
+    lifecycle::record_lifecycle_event_in(
+        &txn,
         RecordLifecycleEventPayload {
             asset_id: payload.asset_id,
             event_type: "DECOMMISSIONED".to_string(),
@@ -103,6 +139,7 @@ pub async fn decommission_asset(
         actor_id,
     )
     .await?;
+    txn.commit().await?;
 
     identity::get_asset_by_id(db, payload.asset_id).await
 }

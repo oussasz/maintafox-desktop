@@ -1126,13 +1126,20 @@ pub async fn update_asset_identity(
         }
     }
     if let Some(ref decom_at) = payload.decommissioned_at {
-        if decom_at.as_deref().map(str::trim).filter(|s| !s.is_empty())
-            != current_decommissioned_at
-                .as_deref()
-                .map(str::trim)
+        // Compared by calendar day: a different format of the same date is no change.
+        let day = |v: Option<&str>| {
+            v.map(str::trim)
                 .filter(|s| !s.is_empty())
-        {
-            return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]));
+                .map(|s| s.get(..10).unwrap_or(s).to_string())
+        };
+        match (day(current_decommissioned_at.as_deref()), day(decom_at.as_deref())) {
+            (None, Some(_)) => return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()])),
+            // Clearing the end-of-life date is a return to service.
+            (Some(_), None) => return Err(AppError::ValidationFailed(vec![RECOMMISSION_REQUIRED.into()])),
+            (Some(a), Some(b)) if a != b => {
+                return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]))
+            }
+            _ => {}
         }
     }
 
@@ -1296,10 +1303,8 @@ pub async fn update_asset_identity(
         sets.push("commissioning_date = ?".to_string());
         binds.push(com_at.clone().into());
     }
-    if let Some(ref decom_at) = payload.decommissioned_at {
-        sets.push("decommissioned_at = ?".to_string());
-        binds.push(decom_at.clone().into());
-    }
+    // The end-of-life date is written only by Déclasser and recommission (checked above: an
+    // identity edit can only send it back unchanged), so it is never rewritten here.
 
     if sets.is_empty() {
         return Err(AppError::ValidationFailed(vec!["Aucun champ à mettre à jour.".into()]));

@@ -905,6 +905,15 @@ pub(crate) async fn apply_row(
     };
 
     if is_delete(operation) {
+        // History and audit rows are never erased by synchronisation (append-only). Media
+        // attachments are the one append-only type whose removal is replicated (its file is
+        // dropped with it, `apply_hooks::after_delete`).
+        if layout.def.conflict_policy == ConflictPolicy::AppendOnly && layout.def.entity_type != "media_attachments" {
+            return Ok(ApplyOutcome::Conflict {
+                code: "APPEND_ONLY_DELETE".into(),
+                message: format!("{table}: history rows are never deleted by synchronisation"),
+            });
+        }
         let Some(locator) = locator else {
             return Ok(ApplyOutcome::Unchanged);
         };
