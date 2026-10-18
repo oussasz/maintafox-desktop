@@ -220,6 +220,8 @@ const PolicySnapshotSchema = z.object({
 const PolicyTestResultSchema = z.object({
   rule_name: z.string(),
   severity: z.enum(["pass", "warn", "fail"]),
+  code: z.string(),
+  params: z.record(z.string(), z.string()),
   message: z.string(),
 });
 

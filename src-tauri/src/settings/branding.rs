@@ -306,3 +306,127 @@ pub async fn read_document_branding_logo_preview(
         relative_path: rel,
     }))
 }
+
+/// The letterhead a print uses, and whether it can be used.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrintDocumentHeader {
+    /// `valid` (printed), `absent` (none configured: prints carry no letterhead, as chosen) or
+    /// `invalid` (configured but unreadable: prints carry no letterhead and must say so).
+    pub status: String,
+    /// `DOC_HEADER_INVALID` when `status` is `invalid`.
+    pub code: Option<String>,
+    /// The header HTML (already checked against the editor's allowlist) when `valid`.
+    pub html: Option<String>,
+    /// Why the stored header was refused (server text, for the log / detail).
+    pub detail: Option<String>,
+}
+
+pub const PRINT_HEADER_VALID: &str = "valid";
+pub const PRINT_HEADER_ABSENT: &str = "absent";
+pub const PRINT_HEADER_INVALID: &str = "invalid";
+pub const CODE_DOC_HEADER_INVALID: &str = "DOC_HEADER_INVALID";
+
+/// The stored letterhead checked with the same rules as the Settings panel (version 1 object,
+/// size limit, editor allowlist): a header that fails them is reported, never dropped silently.
+pub async fn print_document_header(db: &impl sea_orm::ConnectionTrait) -> AppResult<PrintDocumentHeader> {
+    let row = db
+        .query_one(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            "SELECT setting_value_json FROM app_settings WHERE setting_key = ? AND setting_scope = ?",
+            [DOCUMENT_HEADER_SETTING_KEY.into(), DOCUMENT_HEADER_SCOPE.into()],
+        ))
+        .await?;
+    let absent = PrintDocumentHeader {
+        status: PRINT_HEADER_ABSENT.into(),
+        code: None,
+        html: None,
+        detail: None,
+    };
+    let Some(row) = row else {
+        return Ok(absent);
+    };
+    let raw: String = row.try_get("", "setting_value_json")?;
+    if raw.trim().is_empty() || raw.trim() == "null" {
+        return Ok(absent);
+    }
+    let def = super::catalog::definition(DOCUMENT_HEADER_SETTING_KEY)
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("document header missing from the settings catalog")))?;
+    match super::catalog::validate_value(def, &raw) {
+        Ok(canonical) => {
+            let html = serde_json::from_str::<Value>(&canonical)
+                .ok()
+                .and_then(|v| v.get("html").and_then(Value::as_str).map(str::to_string))
+                .unwrap_or_default();
+            if html.trim().is_empty() {
+                Ok(absent)
+            } else {
+                Ok(PrintDocumentHeader {
+                    status: PRINT_HEADER_VALID.into(),
+                    code: None,
+                    html: Some(html),
+                    detail: None,
+                })
+            }
+        }
+        Err(e) => Ok(PrintDocumentHeader {
+            status: PRINT_HEADER_INVALID.into(),
+            code: Some(CODE_DOC_HEADER_INVALID.into()),
+            html: None,
+            detail: Some(match e {
+                AppError::ValidationFailed(m) => m.join(" "),
+                other => other.to_string(),
+            }),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod print_header_tests {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    use super::{
+        print_document_header, CODE_DOC_HEADER_INVALID, PRINT_HEADER_ABSENT, PRINT_HEADER_INVALID, PRINT_HEADER_VALID,
+    };
+
+    async fn store(db: &sea_orm::DatabaseConnection, value: &str) {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO app_settings (setting_key, setting_scope, setting_value_json, category, setting_risk, \
+             validation_status, last_modified_at) VALUES ('documents.default_header', 'tenant', ?, 'documents', \
+             'low', 'valid', datetime('now')) \
+             ON CONFLICT(setting_key, setting_scope) DO UPDATE SET setting_value_json = excluded.setting_value_json",
+            [value.into()],
+        ))
+        .await
+        .expect("store header");
+    }
+
+    /// A valid, an empty and a corrupt stored letterhead each say what prints get.
+    #[tokio::test]
+    async fn the_print_header_says_valid_absent_or_invalid() {
+        let db = crate::db::test_db::seeded().await;
+        store(&db, r#"{"version":1,"html":"<p>ACME Oran</p>"}"#).await;
+        let h = print_document_header(&db).await.expect("read");
+        assert_eq!(h.status, PRINT_HEADER_VALID);
+        assert_eq!(h.html.as_deref(), Some("<p>ACME Oran</p>"));
+
+        store(&db, r#"{"version":1,"html":""}"#).await;
+        assert_eq!(
+            print_document_header(&db).await.expect("read").status,
+            PRINT_HEADER_ABSENT
+        );
+
+        for corrupt in [
+            r#"{"version":1,"html":"<script>alert(1)</script>"}"#,
+            r#"{"version":2,"html":"<p>x</p>"}"#,
+            "not json",
+        ] {
+            store(&db, corrupt).await;
+            let h = print_document_header(&db).await.expect("read");
+            assert_eq!(h.status, PRINT_HEADER_INVALID, "{corrupt}");
+            assert_eq!(h.code.as_deref(), Some(CODE_DOC_HEADER_INVALID));
+            assert_eq!(h.html, None, "an invalid header is never printed");
+            assert!(h.detail.is_some());
+        }
+    }
+}

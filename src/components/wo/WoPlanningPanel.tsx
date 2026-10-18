@@ -70,6 +70,7 @@ import type {
 import { P } from "@shared/rbac/permissions.generated";
 
 import { WoPermitRequirementField } from "./WoPermitRequirementField";
+import { WoPermitRuleNote, permitRuleFlagActive } from "./WoPermitRuleNote";
 import { WoShiftSelect } from "./WoShiftSelect";
 import { WoShutdownRequirementField } from "./WoShutdownRequirementField";
 import { useWoPeopleOptions } from "./use-wo-people";
@@ -673,13 +674,22 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     const handleMoveToReady = handleSavePlan;
 
+    // A flag set by a plant rule is not an edit of the work order: it is cleared with the
+    // permit-issue right and a reason (WoPermitRuleNote), so the box stays locked meanwhile.
+    const ruleFlagActive = permitRuleFlagActive(wo);
     const permitRequirementEditable =
-      canEdit && PERMIT_REQUIREMENT_EDITABLE_STATUSES.has(statusCode) && !busy && !permitBusy;
+      canEdit &&
+      PERMIT_REQUIREMENT_EDITABLE_STATUSES.has(statusCode) &&
+      !ruleFlagActive &&
+      !busy &&
+      !permitBusy;
     const permitRequirementReason = !canEdit
       ? t("permitRequirement.noPermission")
-      : PERMIT_REQUIREMENT_EDITABLE_STATUSES.has(statusCode)
-        ? null
-        : t("permitRequirement.frozen");
+      : !PERMIT_REQUIREMENT_EDITABLE_STATUSES.has(statusCode)
+        ? t("permitRequirement.frozen")
+        : ruleFlagActive
+          ? t("permitRule.checkboxLocked", { rule: wo.permit_rule_code ?? "" })
+          : null;
     const permitOriginHint =
       wo.source_di_id != null && wo.requires_permit ? t("permitRequirement.fromSafetyDi") : null;
 
@@ -719,13 +729,23 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     );
 
     const permitRequirementControl = (
-      <WoPermitRequirementField
-        checked={requiresPermit}
-        onCheckedChange={(next) => void handlePermitRequirementChange(next)}
-        disabled={!permitRequirementEditable}
-        disabledReason={permitBusy || busy ? null : permitRequirementReason}
-        originHint={permitOriginHint}
-      />
+      <>
+        <WoPermitRequirementField
+          checked={requiresPermit}
+          onCheckedChange={(next) => void handlePermitRequirementChange(next)}
+          disabled={!permitRequirementEditable}
+          disabledReason={permitBusy || busy ? null : permitRequirementReason}
+          originHint={permitOriginHint}
+        />
+        <WoPermitRuleNote
+          wo={wo}
+          onCleared={async (saved) => {
+            setRequiresPermit(Boolean(saved.requires_permit));
+            setRowVersion(saved.row_version);
+            await refreshActiveWo();
+          }}
+        />
+      </>
     );
 
     const shutdownFlagEditable =

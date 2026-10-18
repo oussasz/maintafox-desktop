@@ -34,6 +34,13 @@ pub struct PersonnelImportBatchSummary {
 pub struct PersonnelImportMessage {
     pub category: String,
     pub severity: String,
+    /// Stable code (`PERSONNEL_IMPORT_*`) and its params for the screen to say the detail in the
+    /// user's language. Empty on rows checked before the codes existed.
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub params: std::collections::BTreeMap<String, String>,
+    /// The server's sentence (English), kept as the fallback detail.
     pub message: String,
 }
 
@@ -542,6 +549,8 @@ async fn validate_row(
             &mut messages,
             "CreateOnly",
             "warning",
+            "PERSONNEL_IMPORT_EXISTING_SKIPPED",
+            &[],
             "Row targets an existing personnel record; it will be skipped in create-only mode.",
         );
     }
@@ -551,6 +560,8 @@ async fn validate_row(
             &mut messages,
             "RequiredField",
             "error",
+            "PERSONNEL_IMPORT_FULL_NAME_REQUIRED",
+            &[],
             "full_name is required when creating a personnel record.",
         );
     }
@@ -562,6 +573,8 @@ async fn validate_row(
                 &mut messages,
                 "FieldRule.CreateAndUpdate",
                 "error",
+                "PERSONNEL_IMPORT_UNKNOWN_EMPLOYMENT_TYPE",
+                &[("value", kind)],
                 "employment_type must be an active value of the employment types list (Données de référence).",
             );
         }
@@ -572,6 +585,8 @@ async fn validate_row(
             &mut messages,
             "FieldRule.CreateOnly",
             "warning",
+            "PERSONNEL_IMPORT_HIRE_DATE_NOT_UPDATED",
+            &[],
             "hire_date is CreateOnly and will not overwrite existing rows.",
         );
     }
@@ -580,6 +595,8 @@ async fn validate_row(
             &mut messages,
             "FieldRule.Protected",
             "warning",
+            "PERSONNEL_IMPORT_TERMINATION_DATE_IGNORED",
+            &[],
             "termination_date is protected and ignored by import apply.",
         );
     }
@@ -656,6 +673,8 @@ async fn validate_mapped_fields(
                 messages,
                 "FieldRule.Mapped",
                 "error",
+                "PERSONNEL_IMPORT_UNKNOWN_POSITION",
+                &[("code", position_code)],
                 &format!("Unknown position_code '{position_code}'."),
             );
         }
@@ -667,6 +686,8 @@ async fn validate_mapped_fields(
                 messages,
                 "FieldRule.Mapped",
                 "error",
+                "PERSONNEL_IMPORT_UNKNOWN_ENTITY",
+                &[("code", entity_code)],
                 &format!("Unknown entity_code '{entity_code}'."),
             );
         }
@@ -678,6 +699,8 @@ async fn validate_mapped_fields(
                 messages,
                 "FieldRule.Mapped",
                 "error",
+                "PERSONNEL_IMPORT_UNKNOWN_TEAM",
+                &[("code", team_code)],
                 &format!("Unknown team_code '{team_code}'."),
             );
         }
@@ -695,6 +718,8 @@ async fn validate_mapped_fields(
                 messages,
                 "FieldRule.Mapped",
                 "error",
+                "PERSONNEL_IMPORT_UNKNOWN_SUPERVISOR",
+                &[("code", supervisor_code)],
                 &format!("Unknown supervisor_employee_code '{supervisor_code}'."),
             );
         }
@@ -712,6 +737,8 @@ async fn validate_mapped_fields(
                 messages,
                 "FieldRule.Mapped",
                 "error",
+                "PERSONNEL_IMPORT_UNKNOWN_EXTERNAL_COMPANY",
+                &[("name", company_name)],
                 &format!("Unknown external_company_name '{company_name}'."),
             );
         }
@@ -902,10 +929,22 @@ fn normalize_row(fields: &HashMap<String, String>) -> NormalizedPersonnelRow {
     }
 }
 
-fn push_message(messages: &mut Vec<PersonnelImportMessage>, category: &str, severity: &str, message: &str) {
+fn push_message(
+    messages: &mut Vec<PersonnelImportMessage>,
+    category: &str,
+    severity: &str,
+    code: &str,
+    params: &[(&str, &str)],
+    message: &str,
+) {
     messages.push(PersonnelImportMessage {
         category: category.to_string(),
         severity: severity.to_string(),
+        code: code.to_string(),
+        params: params
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect(),
         message: message.to_string(),
     });
 }
@@ -947,4 +986,45 @@ async fn get_batch_summary(db: &impl ConnectionTrait, batch_id: i64) -> AppResul
 fn decode_col<T: sea_orm::TryGetable>(row: &QueryResult, col: &str) -> AppResult<T> {
     row.try_get("", col)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to decode column {col}: {e}")))
+}
+
+#[cfg(test)]
+mod coded_message_tests {
+    /// Each problem carries a code and the params its translation needs; the English sentence
+    /// stays as the fallback detail.
+    #[tokio::test]
+    async fn import_problems_are_coded() {
+        let db = crate::db::test_db::seeded().await;
+        let batch = super::create_import_batch(
+            &db,
+            super::PersonnelImportCreateInput {
+                filename: "people.csv".into(),
+                source_sha256: "sha-coded".into(),
+                source_kind: "csv".into(),
+                mode: "CreateAndUpdate".into(),
+                file_content: b"employee_code,full_name,position_code,team_code
+E-CODED,Ann,NO-POS,NO-TEAM
+"
+                .to_vec(),
+            },
+            None,
+        )
+        .await
+        .expect("batch");
+        let preview = super::get_import_preview(&db, batch.id).await.expect("preview");
+        let messages = &preview.rows[0].messages;
+        let position = messages
+            .iter()
+            .find(|m| m.code == "PERSONNEL_IMPORT_UNKNOWN_POSITION")
+            .expect("position");
+        assert_eq!(position.params["code"], "NO-POS");
+        assert_eq!(position.category, "FieldRule.Mapped");
+        assert!(!position.message.is_empty());
+        let team = messages
+            .iter()
+            .find(|m| m.code == "PERSONNEL_IMPORT_UNKNOWN_TEAM")
+            .expect("team");
+        assert_eq!(team.params["code"], "NO-TEAM");
+        assert!(messages.iter().all(|m| m.code.starts_with("PERSONNEL_IMPORT_")));
+    }
 }

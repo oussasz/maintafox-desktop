@@ -518,6 +518,109 @@ async fn critical_assets_down_are_read_from_reference_data() {
     );
 }
 
+/// Equipment linked only through the legacy criticality list (no `EQUIPMENT.CRITICALITY` value) is
+/// read through that link with the system correspondence; the link is not rewritten, and the
+/// equipment is flagged for review. A legacy code with no correspondence is not guessed.
+#[tokio::test]
+async fn legacy_criticality_links_are_read_flagged_and_kept() {
+    let db = setup().await;
+    let b = ref_id(&db, "EQUIPMENT.CRITICALITY", "B").await;
+    let down = ref_id(&db, "EQUIPMENT.STATUS", "OUT_OF_SERVICE").await;
+    exec(
+        &db,
+        "INSERT INTO lookup_values (entity_sync_id, domain_id, code, label, sort_order, is_active, is_system,          created_at, updated_at, row_version)          SELECT 'hm-lv-own', ld.id, 'PLANT_OWN', 'Plant own', 99, 1, 0, datetime('now'), datetime('now'), 1            FROM lookup_domains ld WHERE ld.domain_key = 'equipment.criticality'",
+    )
+    .await;
+    let legacy = |code: &str| {
+        format!(
+            "SELECT lv.id FROM lookup_values lv JOIN lookup_domains ld ON ld.id = lv.domain_id              WHERE ld.domain_key = 'equipment.criticality' AND lv.code = '{code}'"
+        )
+    };
+    let critique = scalar(&db, &legacy("CRITIQUE")).await;
+    let important = scalar(&db, &legacy("IMPORTANT")).await;
+    let own = scalar(&db, &legacy("PLANT_OWN")).await;
+    // (code, legacy link, reference value)
+    for (code, lv, rv) in [
+        ("LG-1", Some(critique), None),
+        ("LG-2", Some(important), None),
+        ("LG-3", Some(own), None),
+        ("LG-4", Some(critique), Some(b)),
+    ] {
+        let id = equipment(&db, code).await;
+        exec(
+            &db,
+            &format!(
+                "UPDATE equipment SET criticality_value_id = {}, equipment_criticality_ref_id = {},                  equipment_status_ref_id = {down} WHERE id = {id}",
+                lv.map_or("NULL".to_string(), |v| v.to_string()),
+                rv.map_or("NULL".to_string(), |v: i64| v.to_string()),
+            ),
+        )
+        .await;
+    }
+
+    let s = assets(&db).await.expect("assets");
+    assert_eq!(
+        s.items.iter().map(|i| i.asset_code.as_str()).collect::<Vec<_>>(),
+        ["LG-1"],
+        "CRITIQUE reads as A; IMPORTANT is B; a plant code is not guessed; the reference value wins"
+    );
+
+    let to_review = scalar(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM equipment e WHERE e.asset_id_code LIKE 'LG-%' AND {}",
+            crate::assets::taxonomy_reference::CRITICALITY_TO_REVIEW_SQL
+        ),
+    )
+    .await;
+    assert_eq!(to_review, 3, "LG-1..3 have only the legacy link");
+    let unresolved = scalar(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM equipment e WHERE e.asset_id_code LIKE 'LG-%' AND {} IS NULL",
+            crate::assets::taxonomy_reference::CRITICALITY_CODE_SQL
+        ),
+    )
+    .await;
+    assert_eq!(unresolved, 1, "only the plant's own legacy code has no criticality");
+    let kept = scalar(
+        &db,
+        "SELECT COUNT(*) FROM equipment WHERE asset_id_code LIKE 'LG-%'          AND criticality_value_id IS NOT NULL AND equipment_criticality_ref_id IS NULL",
+    )
+    .await;
+    assert_eq!(kept, 3, "reading does not rewrite the legacy links");
+
+    let lg1 = scalar(&db, "SELECT id FROM equipment WHERE asset_id_code = 'LG-1'").await;
+    let lg4 = scalar(&db, "SELECT id FROM equipment WHERE asset_id_code = 'LG-4'").await;
+    let asset = crate::assets::identity::get_asset_by_id(&db, lg1).await.expect("LG-1");
+    assert!(asset.criticality_to_review, "the asset screen shows it as to review");
+    let asset = crate::assets::identity::get_asset_by_id(&db, lg4).await.expect("LG-4");
+    assert!(!asset.criticality_to_review);
+}
+
+/// The SQL correspondence of legacy criticality codes is the one the asset screens accept.
+#[test]
+fn the_legacy_criticality_correspondence_matches_the_asset_rule() {
+    let sql = crate::assets::taxonomy_reference::CRITICALITY_CODE_SQL;
+    for legacy in [
+        "A",
+        "B",
+        "C",
+        "D",
+        "CRITIQUE",
+        "IMPORTANT",
+        "STANDARD",
+        "NON_CRITIQUE",
+        "NON-CRITIQUE",
+    ] {
+        let canon = crate::assets::identity::normalize_criticality_to_canon(legacy).expect("known");
+        assert!(
+            sql.contains(&format!("WHEN '{legacy}' THEN '{canon}'")),
+            "{legacy} -> {canon}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn open_requests_as_of_now_are_the_di_module_open_requests() {
     let db = setup().await;

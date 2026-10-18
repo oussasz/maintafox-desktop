@@ -316,6 +316,17 @@ async fn local_id<C: ConnectionTrait>(conn: &C, table: &str, sync_id: Option<&st
 
 /// Whether `user_id` holds `adm.settings` tenant-wide (or is an administrator).
 async fn holds_settings_right<C: ConnectionTrait>(conn: &C, user_id: i64) -> AppResult<bool> {
+    holds_tenant_right(conn, user_id, crate::rbac::permissions::ADM_SETTINGS).await
+}
+
+/// Whether `user_id` (active account) holds `permission` tenant-wide now, through a role in force
+/// that is not an emergency grant, or is an administrator. Used to re-check, on arrival, the right
+/// of the person named by a received row.
+pub(crate) async fn holds_tenant_right<C: ConnectionTrait>(
+    conn: &C,
+    user_id: i64,
+    permission: &str,
+) -> AppResult<bool> {
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     Ok(conn
         .query_one(Statement::from_sql_and_values(
@@ -330,12 +341,7 @@ async fn holds_settings_right<C: ConnectionTrait>(conn: &C, user_id: i64) -> App
                    AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
                    AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
                    AND p.name = ?))",
-            [
-                user_id.into(),
-                now.clone().into(),
-                now.into(),
-                crate::rbac::permissions::ADM_SETTINGS.into(),
-            ],
+            [user_id.into(), now.clone().into(), now.into(), permission.into()],
         ))
         .await?
         .is_some())

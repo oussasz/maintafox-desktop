@@ -404,6 +404,85 @@ mod tests {
         );
     }
 
+    // ── A type under the same type is nesting, not a loop ─────────────────
+
+    #[tokio::test]
+    async fn a_type_under_the_same_type_publishes_and_a_real_loop_still_blocks() {
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+
+        // Draft v2: a zone may sit inside a zone.
+        let (draft_id, _, _, draft_zone) = create_matching_draft_model(&db).await;
+        relationship_rules::create_rule(
+            &db,
+            CreateRelationshipRulePayload {
+                structure_model_id: draft_id,
+                parent_type_id: draft_zone,
+                child_type_id: draft_zone,
+                min_children: None,
+                max_children: None,
+            },
+        )
+        .await
+        .expect("ZONE→ZONE rule");
+        let result = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+            .await
+            .expect("validate");
+        assert!(
+            !result.issues.iter().any(|i| i.code == "RULE_GRAPH_CYCLE"),
+            "a type under itself is not a loop: {:?}",
+            result.issues
+        );
+        assert!(result.can_publish, "issues: {:?}", result.issues);
+        validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect("publish with ZONE→ZONE");
+
+        // The published rule lets a zone be created inside a zone.
+        let zn1 = active_node_id_by_code(&db, "ZN1").await;
+        let inner = nodes::create_org_node(
+            &db,
+            CreateOrgNodePayload {
+                code: "ZN1-A".to_string(),
+                name: "Zone 1 A".to_string(),
+                node_type_id: draft_zone as i64,
+                parent_id: Some(zn1),
+                description: None,
+                cost_center_code: None,
+                external_reference: None,
+                effective_from: None,
+                erp_reference: None,
+                notes: None,
+                structure_model_id: draft_id as i64,
+            },
+            1,
+        )
+        .await
+        .expect("zone inside a zone");
+        assert_eq!(inner.parent_id, Some(zn1));
+
+        // Draft v3: PLANT under ZONE closes a real loop (PLANT→ZONE→PLANT): still blocked.
+        let (draft3, _, plant3, zone3) = create_matching_draft_model(&db).await;
+        relationship_rules::create_rule(
+            &db,
+            CreateRelationshipRulePayload {
+                structure_model_id: draft3,
+                parent_type_id: zone3,
+                child_type_id: plant3,
+                min_children: None,
+                max_children: None,
+            },
+        )
+        .await
+        .expect("ZONE→PLANT rule");
+        let result = validation::validate_draft_model_for_publish(&db, draft3 as i64)
+            .await
+            .expect("validate");
+        assert!(!result.can_publish);
+        assert!(result.issues.iter().any(|i| i.code == "RULE_GRAPH_CYCLE"));
+    }
+
     // ── V3 — Missing type-code mapping blocks publish ─────────────────────
 
     #[tokio::test]

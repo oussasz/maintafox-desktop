@@ -178,6 +178,7 @@ pub async fn validate_reference_set(
     // ── Check 4c: nature tag of request types (EN 13306 nature or empty) ───
     check_nature_tags(db, &domain, &all_values, &mut issues).await?;
     check_unit_dimensions(db, &domain, &all_values, &mut issues).await?;
+    check_permit_rules(db, &domain, &all_values, &mut issues).await?;
 
     // ── Check 5: invalid color format ─────────────────────────────────────
     check_invalid_colors(&all_values, &mut issues);
@@ -502,6 +503,32 @@ async fn check_nature_tags(
             issues.push(ReferenceValidationIssue {
                 check: "invalid_nature_tag".into(),
                 message: format!("La valeur '{}' : {}", v.code, errs.join(" ")),
+                severity: IssueSeverity::Blocking,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Check 4e: permit rules (`PERMIT.REQUIREMENT_RULES`) name what they match (an equipment class
+/// and / or a work type of the published lists) and an existing permit type. An active rule that
+/// does not read blocks publishing (a rule cannot be guessed at conversion).
+async fn check_permit_rules(
+    db: &DatabaseConnection,
+    domain: &crate::reference::domains::ReferenceDomain,
+    vals: &[values::ReferenceValue],
+    issues: &mut Vec<ReferenceValidationIssue>,
+) -> AppResult<()> {
+    if !crate::permit::requirement_rules::is_rules_domain(&domain.code) {
+        return Ok(());
+    }
+    for v in vals.iter().filter(|v| v.is_active) {
+        if let Some(problem) = crate::permit::requirement_rules::rule_problem(db, v.metadata_json.as_deref()).await? {
+            issues.push(ReferenceValidationIssue {
+                check: "invalid_permit_rule".into(),
+                message: format!("Permit rule '{}': {problem}.", v.code),
                 severity: IssueSeverity::Blocking,
                 value_id: Some(v.id),
                 value_code: Some(v.code.clone()),

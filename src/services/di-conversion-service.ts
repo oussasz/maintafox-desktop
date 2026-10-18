@@ -18,10 +18,20 @@ import type {
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+const PermitFlagOutcomeSchema = z.object({
+  requires_permit: z.boolean(),
+  reason_code: z.string(),
+  rule_code: z.string().nullable(),
+  permit_type_code: z.string().nullable(),
+  safety_flag: z.boolean(),
+  unreadable_rule_codes: z.array(z.string()),
+});
+
 const WoConversionResultSchema = z.object({
   di: InterventionRequestSchema,
   wo_id: z.number(),
   wo_code: z.string(),
+  permit_flag: PermitFlagOutcomeSchema,
 });
 
 const DiSlaStatusSchema = z.object({

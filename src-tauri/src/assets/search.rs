@@ -72,6 +72,10 @@ pub struct AssetSearchResult {
     pub subfamily_code: Option<String>,
     pub subfamily_name: Option<String>,
     pub criticality_code: Option<String>,
+    /// The criticality comes only from the legacy criticality list
+    /// (`taxonomy_reference::CRITICALITY_TO_REVIEW_SQL`): to be set by a planner.
+    #[serde(default)]
+    pub criticality_to_review: bool,
     pub status_code: String,
     pub org_node_id: Option<i64>,
     pub org_node_name: Option<String>,
@@ -173,6 +177,9 @@ pub(crate) fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResul
         criticality_code: row
             .try_get::<Option<String>>("", "criticality_code")
             .map_err(|e| decode_err("criticality_code", e))?,
+        criticality_to_review: row
+            .try_get::<bool>("", "criticality_to_review")
+            .map_err(|e| decode_err("criticality_to_review", e))?,
         status_code: row
             .try_get::<String>("", "status_code")
             .map_err(|e| decode_err("status_code", e))?,
@@ -484,6 +491,9 @@ pub(crate) const SEARCH_SELECT: &str = concat!(
     rs_sub.code             AS subfamily_code,
     rs_sub.label            AS subfamily_name,
     COALESCE(rs_crit.code, lv.code) AS criticality_code,
+    ",
+    crate::assets::taxonomy_reference::criticality_to_review_sql!(),
+    r" AS criticality_to_review,
     COALESCE(rs_stat.code, e.lifecycle_status) AS status_code,
     e.installed_at_node_id  AS org_node_id,
     n.name                  AS org_node_name,

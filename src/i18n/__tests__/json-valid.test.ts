@@ -54,6 +54,8 @@ const COMMON_TOP_KEYS = [
   "listValue",
   // Required / optional part lines (src/components/common/PartNecessityChoice.tsx).
   "partNecessity",
+  // Dismiss button of the app-wide messages (src/components/shell/AppToastHost.tsx).
+  "toast",
 ];
 const AUTH_TOP_KEYS = [
   "activation",

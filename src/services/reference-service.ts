@@ -381,6 +381,9 @@ export async function deleteReferenceAlias(aliasId: number): Promise<void> {
 const ImportRowMessageSchema = z.object({
   category: z.string(),
   severity: z.string(),
+  // Rows checked before the codes existed have none: the server's sentence is shown.
+  code: z.string().default(""),
+  params: z.record(z.string(), z.string()).default({}),
   message: z.string(),
 });
 

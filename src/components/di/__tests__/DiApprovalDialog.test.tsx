@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "@/i18n/en/common.json";
 import enDi from "@/i18n/locale-data/en/di.json";
+import { useAppToastStore } from "@/store/app-toast-store";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 import { DiApprovalDialog } from "../DiApprovalDialog";
@@ -143,13 +144,22 @@ describe("DiApprovalDialog", () => {
     expect(review.approve).not.toHaveBeenCalled();
   });
 
-  it("converts an approved request after confirmation and opens the new work order", async () => {
+  it("converts an approved request after confirmation, says what it decided about the permit and opens the new work order", async () => {
     review.approvalDi = di({ status: "approved" } as unknown as Partial<InterventionRequest>);
     conversion.convertDiToWo.mockResolvedValue({
       wo_id: 88,
       wo_code: "OT-0088",
       di: di({ status: "converted_to_work_order" } as unknown as Partial<InterventionRequest>),
+      permit_flag: {
+        requires_permit: true,
+        reason_code: "PERMIT_RULE_MATCHED",
+        rule_code: "PUMP_HOT",
+        permit_type_code: "HOT_WORK",
+        safety_flag: false,
+        unreadable_rule_codes: [],
+      },
     });
+    useAppToastStore.setState({ items: [] });
 
     render(<DiApprovalDialog />);
     fireEvent.click(screen.getByRole("button", { name: enDi.review.convertToWo }));
@@ -161,5 +171,12 @@ describe("DiApprovalDialog", () => {
 
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("/work-orders?openWo=88"));
     expect(conversion.convertDiToWo).toHaveBeenCalledWith({ diId: 31, expectedRowVersion: 4 });
+    expect(useAppToastStore.getState().items).toEqual([
+      expect.objectContaining({
+        title: "Permit required for OT-0088",
+        description:
+          "The rule PUMP_HOT calls for a HOT_WORK permit: the work order will not start without an active permit.",
+      }),
+    ]);
   });
 });

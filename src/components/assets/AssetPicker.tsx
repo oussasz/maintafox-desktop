@@ -22,6 +22,8 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
+import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
+import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -110,6 +112,19 @@ export function highlightMatch(text: string, query: string): ReactNode {
       {before}
       <mark className="rounded-sm bg-tone-attention-bg px-0.5 text-inherit">{match}</mark>
       {after}
+    </>
+  );
+}
+
+/** The asset's criticality, with "à revoir" when it only comes from the old list. */
+function PickerCriticality({ asset }: { asset: AssetSearchResult }) {
+  if (!asset.criticality_code && !asset.criticality_to_review) return null;
+  return (
+    <>
+      {asset.criticality_code ? (
+        <CriticalityBadge criticality={asset.criticality_code} compact />
+      ) : null}
+      {asset.criticality_to_review ? <CriticalityReviewMark /> : null}
     </>
   );
 }
@@ -398,6 +413,7 @@ export function AssetPicker({
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-mono text-sm font-semibold">{value.asset_code}</span>
               <AssetStatusBadge code={value.status_code} />
+              <PickerCriticality asset={value} />
               {value.family_name && (
                 <Badge variant="outline" className="text-[10px]">
                   {value.family_name}
@@ -543,6 +559,7 @@ export function AssetPicker({
                   {highlightMatch(asset.asset_code, query)}
                 </span>
                 <AssetStatusBadge code={asset.status_code} />
+                <PickerCriticality asset={asset} />
                 {asset.family_name && (
                   <Badge variant="outline" className="text-[10px] ml-auto shrink-0">
                     {asset.family_name}

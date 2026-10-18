@@ -57,6 +57,7 @@ const asset = {
   subfamily_name: null,
   criticality_value_id: 3,
   criticality_code: "C",
+  criticality_to_review: false,
   status_code: "ACTIVE_IN_SERVICE",
   manufacturer: null,
   model: null,
@@ -152,6 +153,31 @@ const line = {
   min_stock: 2,
   row_version: 3,
 };
+
+describe("AssetCriticalityTab — criticality from the old list", () => {
+  it("marks the criticality to review and says a planner should set it", async () => {
+    svc.getAssetCriticalityMethod.mockResolvedValue(method);
+    svc.listAssetCriticalityAssessments.mockResolvedValue([]);
+    render(
+      <AssetCriticalityTab
+        asset={{ ...asset, criticality_to_review: true }}
+        onAssetChanged={vi.fn()}
+      />,
+    );
+    const mark = await screen.findByText("listValue.review");
+    expect(mark.closest("[title]")).toHaveAttribute("title", "criticalityReview.hint");
+    expect(screen.getByText("criticalityReview.hint")).toBeInTheDocument();
+  });
+
+  it("shows no mark for a criticality from the published list", async () => {
+    svc.getAssetCriticalityMethod.mockResolvedValue(method);
+    svc.listAssetCriticalityAssessments.mockResolvedValue([]);
+    render(<AssetCriticalityTab asset={asset} onAssetChanged={vi.fn()} />);
+    await screen.findByText("critMethod.current");
+    expect(screen.queryByText("listValue.review")).toBeNull();
+    expect(screen.queryByText("criticalityReview.hint")).toBeNull();
+  });
+});
 
 describe("AssetSparePartsTab", () => {
   it("flags a critical spare out of stock and removes a line after confirmation", async () => {

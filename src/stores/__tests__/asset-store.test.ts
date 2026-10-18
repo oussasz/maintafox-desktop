@@ -61,6 +61,7 @@ function makeAsset(overrides: Partial<Asset> = {}): Asset {
     subfamily_name: null,
     criticality_value_id: 7,
     criticality_code: "A",
+    criticality_to_review: false,
     status_code: "ACTIVE",
     manufacturer: "Grundfos",
     model: "CR-10",

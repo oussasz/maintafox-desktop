@@ -120,11 +120,20 @@ async fn setting_json(db: &DatabaseConnection, key: &str) -> Option<serde_json::
     serde_json::from_str(&s.setting_value_json).ok()
 }
 
-async fn company_header(db: &DatabaseConnection) -> Vec<String> {
-    setting_json(db, "documents.default_header")
-        .await
-        .and_then(|v| v.get("html").and_then(|h| h.as_str()).map(header_lines))
-        .unwrap_or_default()
+/// The letterhead lines of the report. A configured header that fails the editor's rules is not
+/// printed; a line says so instead, so a report never silently loses its letterhead.
+async fn company_header(db: &DatabaseConnection, locale: ReportLocale) -> AppResult<Vec<String>> {
+    let header = crate::settings::branding::print_document_header(db).await?;
+    Ok(match header.status.as_str() {
+        crate::settings::branding::PRINT_HEADER_VALID => header.html.as_deref().map(header_lines).unwrap_or_default(),
+        crate::settings::branding::PRINT_HEADER_INVALID => vec![locale
+            .pick(
+                "[En-tête de document invalide : à corriger dans Paramètres › Documents]",
+                "[Invalid document header: fix it in Settings › Documents]",
+            )
+            .to_string()],
+        _ => Vec::new(),
+    })
 }
 
 async fn tenant_currency(db: &DatabaseConnection) -> String {
@@ -259,7 +268,7 @@ pub async fn gather(db: &DatabaseConnection, locale: ReportLocale, now: DateTime
             )
             .to_string(),
         month: month_name(locale, year, month),
-        header: company_header(db).await,
+        header: company_header(db, locale).await?,
         currency: tenant_currency(db).await,
         fleet,
         smrp,
@@ -660,6 +669,19 @@ mod tests {
             .expect("xlsx");
         assert!(doc.file_name.starts_with("monthly-report-") && doc.file_name.ends_with(".xlsx"));
         assert!(doc.bytes.len() > 1000);
+
+        // A stored header the editor's rules refuse is not printed; the report says so.
+        db.execute_unprepared(
+            "UPDATE app_settings SET setting_value_json = '{\"version\":1,\"html\":\"<script>x</script>\"}' \
+             WHERE setting_key = 'documents.default_header' AND setting_scope = 'tenant'",
+        )
+        .await
+        .expect("corrupt header");
+        let data = gather(&db, ReportLocale::En, Utc::now()).await.expect("gather");
+        assert_eq!(
+            data.header,
+            ["[Invalid document header: fix it in Settings › Documents]"]
+        );
     }
 
     #[test]

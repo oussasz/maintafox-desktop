@@ -1,4 +1,7 @@
 {
+  "criticalityReview": {
+    "hint": "Criticality taken from the old criticality list: a planner should set it in the Criticality tab."
+  },
   "recommission": {
     "action": "Recommission",
     "title": "Return the asset to service?",

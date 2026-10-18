@@ -309,7 +309,9 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                   label={t("permitRequirement.short")}
                   value={
                     wo.requires_permit
-                      ? t("permitRequirement.required")
+                      ? wo.permit_rule_code != null && wo.permit_rule_cleared_at == null
+                        ? t("permitRule.requiredShort", { rule: wo.permit_rule_code })
+                        : t("permitRequirement.required")
                       : t("permitRequirement.notRequired")
                   }
                 />

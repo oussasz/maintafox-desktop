@@ -15,6 +15,7 @@
 //!   family_code          → equipment.equipment_family_ref_id → EQUIPMENT.FAMILY
 //!   subfamily_code       → equipment.equipment_subfamily_ref_id → EQUIPMENT.SUBFAMILY
 //!   criticality_code     → COALESCE(reference EQUIPMENT.CRITICALITY, lookup_values via legacy FK)
+//!   criticality_to_review→ only the legacy FK gives the criticality (`CRITICALITY_TO_REVIEW_SQL`)
 //!   status_code          → COALESCE(reference EQUIPMENT.STATUS, equipment.lifecycle_status)
 //!   org_node_id          → equipment.installed_at_node_id
 //!   commissioned_at      → equipment.commissioning_date
@@ -50,6 +51,10 @@ pub struct Asset {
     pub subfamily_name: Option<String>,
     pub criticality_value_id: Option<i64>,
     pub criticality_code: Option<String>,
+    /// The criticality comes only from the legacy criticality list (no `EQUIPMENT.CRITICALITY`
+    /// value yet): it is read through that link and should be set by a planner.
+    #[serde(default)]
+    pub criticality_to_review: bool,
     pub status_code: String,
     pub manufacturer: Option<String>,
     pub model: Option<String>,
@@ -166,6 +171,7 @@ pub(crate) const ASSET_SELECT: &str = r"
     rs_sub.label       AS subfamily_name,
     e.criticality_value_id,
     COALESCE(rs_crit.code, lv.code) AS criticality_code,
+    (e.equipment_criticality_ref_id IS NULL AND e.criticality_value_id IS NOT NULL) AS criticality_to_review,
     COALESCE(rs_stat.code, e.lifecycle_status) AS status_code,
     e.manufacturer,
     e.model,
@@ -247,6 +253,9 @@ pub(crate) fn map_asset(row: &QueryResult) -> AppResult<Asset> {
         criticality_code: row
             .try_get::<Option<String>>("", "criticality_code")
             .map_err(|e| decode_err("criticality_code", e))?,
+        criticality_to_review: row
+            .try_get::<bool>("", "criticality_to_review")
+            .map_err(|e| decode_err("criticality_to_review", e))?,
         status_code: row
             .try_get::<String>("", "status_code")
             .map_err(|e| decode_err("status_code", e))?,

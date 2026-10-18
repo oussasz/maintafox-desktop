@@ -22,6 +22,7 @@ function asset(id: number, code: string, parent_asset_id: number | null = null):
     subfamily_code: null,
     subfamily_name: null,
     criticality_code: null,
+    criticality_to_review: false,
     status_code: "ACTIVE",
     org_node_id: null,
     org_node_name: null,

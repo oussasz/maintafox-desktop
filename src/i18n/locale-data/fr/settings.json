@@ -127,6 +127,21 @@
     "search": "Rechercher…"
   },
   "policy": {
+    "test": {
+      "POLICY_TEST_SCHEMA_INVALID": "Le brouillon n'est pas une politique « {{domain}} » lisible : {{detail}}",
+      "POLICY_TEST_IN_RANGE": "{{field}} : {{value}} est dans les limites ({{min}} à {{max}}).",
+      "POLICY_TEST_OUT_OF_RANGE": "{{field}} : {{value}} est hors limites ({{min}} à {{max}}).",
+      "POLICY_TEST_IDLE_WITHIN_ABSOLUTE": "Le délai d'inactivité ({{idle}} min) tient dans la durée de session ({{absolute}} min).",
+      "POLICY_TEST_IDLE_EXCEEDS_ABSOLUTE": "Le délai d'inactivité ({{idle}} min) dépasse la durée de session ({{absolute}} min).",
+      "POLICY_TEST_SCHEDULE_EMPTY": "La planification des sauvegardes est vide.",
+      "POLICY_TEST_SCHEDULE_INVALID": "La planification « {{schedule}} » est illisible : {{detail}}",
+      "POLICY_TEST_SCHEDULE_VALID": "La planification « {{schedule}} » est valide.",
+      "POLICY_TEST_INCLUDE_PHOTOS": "Photos incluses dans les sauvegardes : {{value}}.",
+      "POLICY_TEST_PASSWORD_ELSEWHERE": "La politique de mot de passe se règle dans son propre panneau.",
+      "POLICY_TEST_DOMAIN_UNSUPPORTED": "Domaine de politique inconnu : {{domain}}.",
+      "yes": "oui",
+      "no": "non"
+    },
     "governedTitle": "Paramètre réglementé",
     "governedDescription": "Ce paramètre utilise le workflow Brouillon → Test → Activation.",
     "active": "Actif",

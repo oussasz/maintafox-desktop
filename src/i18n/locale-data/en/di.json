@@ -406,6 +406,17 @@
     "colClosed": "Closed"
   },
   "woConversion": {
+    "permit": {
+      "required": "Permit required for {{code}}",
+      "byRule": "The rule {{rule}} calls for a {{permitType}} permit: the work order will not start without an active permit.",
+      "byRuleNoType": "The rule {{rule}} calls for a permit: the work order will not start without an active permit.",
+      "bySafetyFlag": "The request was flagged as a safety risk: the work order will not start without an active permit.",
+      "noMatch": "No permit requirement rule applies to {{code}}.",
+      "noneConfigured": "No permit requirement rule is configured",
+      "noneConfiguredHint": "Only a request's safety flag can call for a permit. Rules are set in Reference data › Permit requirement rules.",
+      "unreadableTitle": "Unreadable permit rules",
+      "unreadable": "These rules could not be read and were not applied to {{code}}: {{codes}}. Check whether {{code}} needs a permit, then fix the rules in Reference data › Permit requirement rules."
+    },
     "checkAsset": "Asset confirmed",
     "checkClassif": "Classification set",
     "checkUrgency": "Urgency validated",

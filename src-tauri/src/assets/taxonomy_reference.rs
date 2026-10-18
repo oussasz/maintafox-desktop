@@ -73,13 +73,64 @@ pub const STATUS_RETIRED_SQL: &str = status_tag_sql!("retired");
 /// Sub-select (no bind): the codes of the published `EQUIPMENT.STATUS` list tagged `retired`.
 pub const RETIRED_STATUS_CODES_SQL: &str = published_codes_sql!("EQUIPMENT.STATUS", " AND rv.semantic_tag = 'retired'");
 
+/// SQL expression (alias `e`, no bind): the criticality code of equipment linked only through the
+/// legacy criticality list (`criticality_value_id` → `lookup_values`), read with the system
+/// correspondence of `assets::identity::normalize_criticality_to_canon` (CRITIQUE → A, IMPORTANT →
+/// B, STANDARD → C, NON_CRITIQUE → D). Any other legacy code reads as no criticality (NULL): it is
+/// not guessed, and the equipment is listed for review (`CRITICALITY_TO_REVIEW_SQL`). Nothing is
+/// rewritten: the equipment keeps its legacy link until a planner sets its criticality.
+macro_rules! legacy_criticality_code_sql {
+    () => {
+        "(SELECT CASE UPPER(TRIM(lv.code)) \
+                   WHEN 'A' THEN 'A' WHEN 'CRITIQUE' THEN 'A' \
+                   WHEN 'B' THEN 'B' WHEN 'IMPORTANT' THEN 'B' \
+                   WHEN 'C' THEN 'C' WHEN 'STANDARD' THEN 'C' \
+                   WHEN 'D' THEN 'D' WHEN 'NON_CRITIQUE' THEN 'D' WHEN 'NON-CRITIQUE' THEN 'D' \
+                 END \
+            FROM lookup_values lv WHERE lv.id = e.criticality_value_id)"
+    };
+}
+
+/// SQL expression (alias `e`, no bind): the equipment's criticality code — its `EQUIPMENT.CRITICALITY`
+/// reference value, else what its legacy link reads as (`legacy_criticality_code_sql!`). NULL when
+/// neither gives one.
+macro_rules! criticality_code_sql {
+    () => {
+        concat!(
+            "COALESCE((SELECT c.code FROM reference_values c WHERE c.id = e.equipment_criticality_ref_id), ",
+            legacy_criticality_code_sql!(),
+            ")"
+        )
+    };
+}
+
+/// SQL expression (alias `e`, no bind): the equipment's criticality code (reference value, else
+/// the legacy link read with the system correspondence). NULL when neither gives one.
+pub const CRITICALITY_CODE_SQL: &str = criticality_code_sql!();
+
+/// SQL predicate (alias `e`, no bind; usable in `concat!`): the equipment has no
+/// `EQUIPMENT.CRITICALITY` reference value but a legacy criticality link — its criticality is read
+/// through that link (or not at all, for a legacy code with no correspondence) and should be set
+/// by a planner.
+macro_rules! criticality_to_review_sql {
+    () => {
+        "(e.equipment_criticality_ref_id IS NULL AND e.criticality_value_id IS NOT NULL)"
+    };
+}
+pub(crate) use criticality_to_review_sql;
+
+/// SQL predicate (alias `e`, no bind): see `criticality_to_review_sql!`.
+pub const CRITICALITY_TO_REVIEW_SQL: &str = criticality_to_review_sql!();
+
 /// SQL predicate (alias `e`, no bind): the equipment is at the most critical level of the published
-/// `EQUIPMENT.CRITICALITY` list (lowest `sort_order`). Never NULL.
+/// `EQUIPMENT.CRITICALITY` list (lowest `sort_order`), read from its reference value or, failing
+/// that, its legacy link (`criticality_code_sql!`). Never NULL.
 macro_rules! most_critical_sql {
     () => {
         concat!(
-            "COALESCE((SELECT c.code FROM reference_values c WHERE c.id = e.equipment_criticality_ref_id), '') \
-             = COALESCE((",
+            "COALESCE(",
+            criticality_code_sql!(),
+            ", '') = COALESCE((",
             published_codes_sql!(
                 "EQUIPMENT.CRITICALITY",
                 " ORDER BY rv.sort_order ASC, rv.id ASC LIMIT 1"

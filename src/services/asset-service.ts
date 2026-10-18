@@ -34,6 +34,7 @@ export const AssetSchema = z.object({
   subfamily_name: z.string().nullable(),
   criticality_value_id: z.number().nullable(),
   criticality_code: z.string().nullable(),
+  criticality_to_review: z.boolean(),
   status_code: z.string(),
   manufacturer: z.string().nullable(),
   model: z.string().nullable(),

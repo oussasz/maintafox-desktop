@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
+import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark";
 import { EquipmentTreeCell } from "@/components/assets/tree/EquipmentTreeCell";
 import { EquipmentTreeToolbar } from "@/components/assets/tree/EquipmentTreeToolbar";
 import { useEquipmentTree } from "@/components/assets/tree/use-equipment-tree";
@@ -177,7 +178,10 @@ export function AssetResultTable() {
                     {asset.org_node_name ?? "—"}
                   </TableCell>
                   <TableCell>
-                    <CriticalityBadge criticality={asset.criticality_code} compact />
+                    <span className="inline-flex items-center gap-1">
+                      <CriticalityBadge criticality={asset.criticality_code} compact />
+                      {asset.criticality_to_review ? <CriticalityReviewMark /> : null}
+                    </span>
                   </TableCell>
                 </TableRow>
               );

@@ -107,4 +107,50 @@ describe("ReferenceImportWizard", () => {
     expect(within(message).getByText(enReference.import.messageDetail)).toBeInTheDocument();
     expect(message).toHaveTextContent("parent 'X' introuvable");
   });
+
+  it("says a coded problem in the user's language, without the server text", async () => {
+    svc.getRefImportPreview.mockResolvedValue({
+      batch,
+      rows: [
+        {
+          id: 1,
+          batch_id: 3,
+          row_no: 1,
+          raw_json: "{}",
+          normalized_code: "PUMP",
+          validation_status: "error",
+          proposed_action: null,
+          messages: [
+            {
+              category: "InvalidParent",
+              severity: "error",
+              code: "REF_IMPORT_INVALID_PARENT",
+              params: { row: "1", parentCode: "X", parentDomain: "EQUIPMENT.FAMILY" },
+              message: "Ligne 1: parent 'X' introuvable dans 'EQUIPMENT.FAMILY'.",
+            },
+          ],
+        },
+      ],
+    });
+    render(<ReferenceImportWizard domainId={7} targetSetId={9} open onOpenChange={vi.fn()} />);
+    const dialog = await screen.findByRole("dialog");
+    const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["code,label,parent_code\nPUMP,Pump,X"], "values.csv", {
+      type: "text/csv",
+    });
+    Object.defineProperty(file, "text", {
+      value: () => Promise.resolve("code,label,parent_code\nPUMP,Pump,X"),
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(await within(dialog).findByRole("button", { name: enReference.import.next }));
+    fireEvent.click(
+      await within(dialog).findByRole("button", { name: enReference.import.runValidation }),
+    );
+
+    const message = await within(dialog).findByTestId("import-message");
+    // (this test's t() shows the text as written, without filling the values)
+    expect(message).toHaveTextContent(enReference.import.problem.REF_IMPORT_INVALID_PARENT);
+    expect(within(message).queryByText(enReference.import.messageDetail)).toBeNull();
+    expect(message).not.toHaveTextContent("introuvable");
+  });
 });
