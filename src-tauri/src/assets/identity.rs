@@ -1257,15 +1257,6 @@ pub async fn update_asset_identity(
         binds.push(normalized.clone().into());
         sets.push("equipment_status_ref_id = ?".to_string());
         binds.push(status_ref.into());
-
-        // Auto-set decommissioned_at if transitioning to DECOMMISSIONED
-        if normalized == "DECOMMISSIONED" {
-            let has_explicit_decom = matches!(payload.decommissioned_at, Some(Some(_)));
-            if !has_explicit_decom {
-                sets.push("decommissioned_at = ?".to_string());
-                binds.push(Utc::now().to_rfc3339().into());
-            }
-        }
     }
 
     if let Some(ref mfg) = payload.manufacturer {

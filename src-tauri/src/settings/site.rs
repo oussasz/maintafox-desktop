@@ -341,6 +341,26 @@ async fn holds_settings_right<C: ConnectionTrait>(conn: &C, user_id: i64) -> App
         .is_some())
 }
 
+/// Clock difference tolerated between devices for a received change of a site rule. Desktop
+/// clocks without time synchronisation drift by seconds to a few minutes; ten minutes covers
+/// that, while an event dated further ahead could otherwise stay the "latest" change for ever
+/// and block every later legitimate change of the rule.
+pub(crate) const MAX_CLOCK_SKEW_MINUTES: i64 = 10;
+
+/// A timestamp as a UTC instant (RFC 3339 with `Z`, an offset, or fractional seconds; or the
+/// SQLite `YYYY-MM-DD HH:MM:SS` form, read as UTC). `None` when unreadable.
+pub(crate) fn instant(raw: &str) -> Option<chrono::DateTime<Utc>> {
+    let raw = raw.trim();
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .map(|d| d.with_timezone(&Utc))
+        .ok()
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(|n| n.and_utc())
+        })
+}
+
 fn bool_of(raw: Option<&str>) -> Option<bool> {
     raw.and_then(|v| serde_json::from_str::<bool>(v.trim()).ok())
 }
@@ -374,21 +394,34 @@ pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
     if !value {
         return Ok(None);
     }
-    let changed_at = text(payload, "updated_at").unwrap_or_default();
-    // The rule's latest audited change at this site: an older "on" replayed after a later "off"
-    // (or any change that is not the latest) is refused.
-    let latest = conn
-        .query_one(Statement::from_sql_and_values(
+    let Some(changed_at) = text(payload, "updated_at").and_then(instant) else {
+        return Ok(Some(InboundVerdict::Conflict {
+            code: "SITE_SETTING_INVALID",
+            message: format!("site rule '{key}': the time of the change cannot be read"),
+        }));
+    };
+    // The rule's latest audited change at this site, compared as instants (formats differ
+    // between devices): an older "on" replayed after a later "off" is refused.
+    let events = conn
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT changed_by_id, new_value_json, required_step_up, reason, changed_at FROM site_setting_events \
-              WHERE site_node_id = ? AND setting_key = ? \
-              ORDER BY changed_at DESC, id DESC LIMIT 1",
+            "SELECT id, changed_by_id, new_value_json, required_step_up, reason, changed_at FROM site_setting_events \
+              WHERE site_node_id = ? AND setting_key = ?",
             [site.into(), key.into()],
         ))
         .await?;
-    if let Some(event) = &latest {
-        let event_at: String = get(event, "changed_at")?;
-        if event_at.as_str() >= changed_at {
+    let mut latest: Option<(chrono::DateTime<Utc>, i64, &QueryResult)> = None;
+    for e in &events {
+        let Some(at) = instant(&get::<String>(e, "changed_at")?) else {
+            continue;
+        };
+        let id: i64 = get(e, "id")?;
+        if latest.as_ref().is_none_or(|(l_at, l_id, _)| (at, id) > (*l_at, *l_id)) {
+            latest = Some((at, id, e));
+        }
+    }
+    if let Some((event_at, _, event)) = latest {
+        if event_at >= changed_at {
             let by: Option<i64> = get(event, "changed_by_id")?;
             let reason: String = get(event, "reason")?;
             let audited_on = event_at == changed_at
@@ -412,18 +445,22 @@ pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
         }
     }
     // The audit event may still be waiting in the inbox (same batch or an earlier one).
-    let pending = conn
-        .query_one(Statement::from_sql_and_values(
+    let waiting = conn
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT 1 AS waiting FROM sync_inbox \
+            "SELECT json_extract(payload_json, '$.changed_at') AS changed_at FROM sync_inbox \
               WHERE entity_type = 'site_setting_events' AND apply_status IN ('pending', 'deferred') \
                 AND json_extract(payload_json, '$.site_node_sync_id') = ? \
-                AND json_extract(payload_json, '$.setting_key') = ? \
-                AND json_extract(payload_json, '$.changed_at') = ?",
-            [site_sync.unwrap_or_default().into(), key.into(), changed_at.into()],
+                AND json_extract(payload_json, '$.setting_key') = ?",
+            [site_sync.unwrap_or_default().into(), key.into()],
         ))
-        .await?
-        .is_some();
+        .await?;
+    let mut pending = false;
+    for w in &waiting {
+        if get::<Option<String>>(w, "changed_at")?.as_deref().and_then(instant) == Some(changed_at) {
+            pending = true;
+        }
+    }
     Ok(Some(if pending {
         InboundVerdict::Defer("audit event of the site rule not applied yet".into())
     } else {
@@ -463,6 +500,12 @@ pub(crate) async fn inbound_site_setting_event_check(
         == Some(1);
     if !reason_ok || (new_value && !step_up) {
         return conflict(format!("site rule '{key}': change without a reason or without step-up"));
+    }
+    let Some(at) = text(payload, "changed_at").and_then(instant) else {
+        return conflict(format!("site rule '{key}': the time of the change cannot be read"));
+    };
+    if at > Utc::now() + chrono::Duration::minutes(MAX_CLOCK_SKEW_MINUTES) {
+        return conflict(format!("site rule '{key}': change dated in the future ({at})"));
     }
     Ok(None)
 }

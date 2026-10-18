@@ -2190,3 +2190,82 @@ async fn a_received_site_rule_is_applied_only_with_its_latest_audited_change() {
         1
     );
 }
+
+#[tokio::test]
+async fn site_rule_times_are_instants_and_never_in_the_future() {
+    use crate::settings::site::{inbound_site_setting_event_check, InboundVerdict};
+    let f = setup().await;
+    make_site(&f, 1).await;
+    let site_sync = text(&f, "SELECT entity_sync_id FROM org_nodes WHERE id = 1").await;
+    let admin_sync = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM user_accounts WHERE id = {}", f.admin),
+    )
+    .await;
+    let event = |at: &str| {
+        serde_json::json!({
+            "site_node_sync_id": site_sync,
+            "setting_key": SELF_APPROVAL_SETTING,
+            "old_value_json": "false",
+            "new_value_json": "true",
+            "reason": "Single reliability engineer on this site",
+            "changed_by_sync_id": admin_sync,
+            "required_step_up": 1,
+            "changed_at": at,
+        })
+        .as_object()
+        .cloned()
+        .expect("object")
+    };
+    // An event dated far ahead would stay "latest" for ever: refused.
+    assert!(matches!(
+        inbound_site_setting_event_check(&event("2099-01-01T00:00:00Z"))
+            .await
+            .expect("check"),
+        Some(InboundVerdict::Conflict { .. })
+    ));
+    // Within the tolerated clock difference, and any RFC 3339 form: accepted.
+    let soon = (chrono::Utc::now() + chrono::Duration::minutes(2)).to_rfc3339();
+    assert!(inbound_site_setting_event_check(&event(&soon))
+        .await
+        .expect("check")
+        .is_none());
+    assert!(
+        inbound_site_setting_event_check(&event("2026-10-17T11:00:00.000+00:00"))
+            .await
+            .expect("check")
+            .is_none()
+    );
+
+    // The audited change stored as "+00:00" with fractions matches a rule sent with "Z".
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO site_setting_events (entity_sync_id, site_node_id, setting_key, old_value_json, \
+             new_value_json, reason, changed_by_id, required_step_up, changed_at) VALUES ('sse-fmt', 1, \
+             '{SELF_APPROVAL_SETTING}', 'false', 'true', 'Single reliability engineer on this site', {}, 1, \
+             '2026-10-17T11:00:00.000+00:00')",
+            f.admin
+        ),
+    )
+    .await;
+    let rule = serde_json::json!({
+        "site_node_sync_id": site_sync,
+        "setting_key": SELF_APPROVAL_SETTING,
+        "value_json": "true",
+        "updated_by_sync_id": admin_sync,
+        "updated_at": "2026-10-17T11:00:00Z",
+        "_sync_format": "row.v1",
+    })
+    .as_object()
+    .cloned()
+    .expect("object");
+    let outcome = apply_wire(&f, "site_settings", "ss-fmt", "upsert", &rule).await;
+    assert_eq!(conflict_code(&outcome), None, "{outcome:?}");
+    assert_eq!(
+        crate::settings::site::site_setting(&f.db, 1, SELF_APPROVAL_SETTING)
+            .await
+            .expect("read"),
+        Some(true)
+    );
+}

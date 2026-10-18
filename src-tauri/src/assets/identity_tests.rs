@@ -429,6 +429,34 @@ mod tests {
             matches!(back, Err(AppError::ValidationFailed(ref m)) if m[0] == identity::RECOMMISSION_REQUIRED),
             "{back:?}"
         );
+        let retired = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        // Clearing the end-of-life date is a return to service: refused.
+        let cleared =
+            identity::update_asset_identity(&db, asset.id, payload(None, Some(None)), retired.row_version, 1).await;
+        assert!(
+            matches!(cleared, Err(AppError::ValidationFailed(ref m)) if m[0] == identity::RECOMMISSION_REQUIRED),
+            "{cleared:?}"
+        );
+        // The same day in another format is no change; an edit of the name keeps the date as it is.
+        let mut same_day = payload(Some("DECOMMISSIONED"), Some(Some("2026-10-01")));
+        same_day.asset_name = Some("Pompe déclassée".into());
+        let kept = identity::update_asset_identity(&db, asset.id, same_day, retired.row_version, 1)
+            .await
+            .expect("same day, other format");
+        assert_eq!(kept.decommissioned_at.as_deref(), Some("2026-10-01T00:00:00Z"));
+        // Another day: refused (the end-of-life date belongs to Déclasser).
+        let moved = identity::update_asset_identity(
+            &db,
+            asset.id,
+            payload(None, Some(Some("2026-11-01"))),
+            kept.row_version,
+            1,
+        )
+        .await;
+        assert!(
+            matches!(moved, Err(AppError::ValidationFailed(ref m)) if m[0] == identity::RETIRE_THROUGH_DECOMMISSION),
+            "{moved:?}"
+        );
     }
 
     #[tokio::test]
