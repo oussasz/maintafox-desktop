@@ -14,10 +14,16 @@ export interface AccessAt {
   can: (permission: string) => boolean;
 }
 
+/** A loaded answer, tagged with the node and reload it was loaded for. */
+interface Loaded {
+  node: number;
+  version: number;
+  /** null: every permission (administrator). */
+  granted: Set<string> | null;
+}
+
 export function useAccessAt(orgNodeId: number | null | undefined): AccessAt {
-  // null: every permission (administrator); undefined: not loaded (or no node).
-  const [granted, setGranted] = useState<Set<string> | null | undefined>(undefined);
-  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState<Loaded | undefined>(undefined);
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
@@ -35,33 +41,29 @@ export function useAccessAt(orgNodeId: number | null | undefined): AccessAt {
   }, []);
 
   useEffect(() => {
-    // Never answer for the previous node while the new one loads.
-    setGranted(undefined);
-    if (orgNodeId == null) {
-      // A cancelled load never clears `loading` itself.
-      setLoading(false);
-      return;
-    }
+    if (orgNodeId == null) return;
     let cancelled = false;
-    setLoading(true);
+    const done = (granted: Set<string> | null) => {
+      if (!cancelled) setLoaded({ node: orgNodeId, version, granted });
+    };
     void getMyAccessAt(orgNodeId)
-      .then((perms) => {
-        if (!cancelled) setGranted(perms === null ? null : new Set(perms));
-      })
-      .catch(() => {
-        if (!cancelled) setGranted(new Set());
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      .then((perms) => done(perms === null ? null : new Set(perms)))
+      .catch(() => done(new Set()));
     return () => {
       cancelled = true;
     };
   }, [orgNodeId, version]);
 
+  // Only an answer for this very node and reload counts, so a render never shows the previous
+  // node's rights (or rights from before a role change) while the next answer loads.
+  const current =
+    orgNodeId != null && loaded?.node === orgNodeId && loaded.version === version
+      ? loaded
+      : undefined;
   const can = useCallback(
-    (permission: string) => (granted === null ? true : (granted?.has(permission) ?? false)),
-    [granted],
+    (permission: string) =>
+      current === undefined ? false : current.granted === null || current.granted.has(permission),
+    [current],
   );
-  return { loading, can };
+  return { loading: orgNodeId != null && current === undefined, can };
 }

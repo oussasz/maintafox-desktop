@@ -51,6 +51,29 @@ describe("useAccessAt", () => {
     expect(result.current.can("anything")).toBe(false);
   });
 
+  it("never renders the previous node's rights, not even for one frame", async () => {
+    getMyAccessAt.mockImplementation((node) =>
+      node === 1 ? Promise.resolve([P.OT_VIEW]) : new Promise(() => undefined),
+    );
+    const frames: { node: number | null; can: boolean; loading: boolean }[] = [];
+    const { result, rerender } = renderHook(
+      ({ node }) => {
+        const access = useAccessAt(node);
+        frames.push({ node, can: access.can(P.OT_VIEW), loading: access.loading });
+        return access;
+      },
+      { initialProps: { node: 1 as number | null } },
+    );
+    await waitFor(() => expect(result.current.can(P.OT_VIEW)).toBe(true));
+    const from = frames.length;
+    rerender({ node: 2 });
+    const after = frames.slice(from);
+    expect(after.length).toBeGreaterThan(0);
+    for (const f of after) {
+      expect(f).toEqual({ node: 2, can: false, loading: true });
+    }
+  });
+
   it("stops loading when the node is cleared while a load is pending", async () => {
     getMyAccessAt.mockImplementation(() => new Promise(() => undefined));
     const { result, rerender } = renderHook(({ node }) => useAccessAt(node), {
