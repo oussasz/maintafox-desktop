@@ -78,8 +78,11 @@ impl MaintenanceNature {
         }
     }
 
+    /// The nature named by a stored tag, read with [`NATURE_TAG_TRIM`] — the same characters the
+    /// SQL readers strip (`trimmed_tag!`), so a tag is a nature for every reader or for none.
     pub fn parse(raw: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|n| n.as_str() == raw.trim())
+        let tag = raw.trim_matches(NATURE_TAG_TRIM);
+        Self::ALL.into_iter().find(|n| n.as_str() == tag)
     }
 
     /// The work follows a failure or a fault (failure coding and RAMS apply).
@@ -103,6 +106,17 @@ impl MaintenanceNature {
     pub const fn is_emergency(self) -> bool {
         matches!(self, Self::CorrectiveImmediate)
     }
+}
+
+/// Characters stripped around a stored nature tag, in Rust ([`MaintenanceNature::parse`]) and in
+/// SQL (`trimmed_tag!`): space, tab, line feed, carriage return.
+pub const NATURE_TAG_TRIM: &[char] = &[' ', '\t', '\n', '\r'];
+
+/// SQL expression (literal, usable in `concat!`): column `$col` trimmed of [`NATURE_TAG_TRIM`].
+macro_rules! trimmed_tag {
+    ($col:literal) => {
+        concat!("TRIM(", $col, ", ' ' || char(9) || char(10) || char(13))")
+    };
 }
 
 /// SQL list literal of nature codes (`'a', 'b'`) for `semantic_tag IN (…)`. The codes are
@@ -383,14 +397,18 @@ pub struct WorkOrderTypeOption {
     pub is_active: bool,
 }
 
-const TYPE_SELECT: &str = "SELECT t.id, t.code, t.label, t.semantic_tag, t.is_active, t.metadata_json, \
+const TYPE_SELECT: &str = concat!(
+    "SELECT t.id, t.code, t.label, t.semantic_tag, t.is_active, t.metadata_json, \
             n.label AS nature_label, n.metadata_json AS nature_metadata \
        FROM reference_values t \
        JOIN reference_sets rs ON rs.id = t.set_id AND rs.status = 'published' \
        JOIN reference_domains d ON d.id = rs.domain_id AND UPPER(TRIM(d.code)) = 'WORK.ORDER_TYPES' \
-       LEFT JOIN reference_values n ON n.code = t.semantic_tag AND n.set_id IN ( \
+       LEFT JOIN reference_values n ON n.code = ",
+    trimmed_tag!("t.semantic_tag"),
+    " AND n.set_id IN ( \
             SELECT nrs.id FROM reference_sets nrs JOIN reference_domains nd ON nd.id = nrs.domain_id \
-             WHERE UPPER(TRIM(nd.code)) = 'WORK.MAINTENANCE_NATURES' AND nrs.status = 'published')";
+             WHERE UPPER(TRIM(nd.code)) = 'WORK.MAINTENANCE_NATURES' AND nrs.status = 'published')"
+);
 
 fn decode(e: sea_orm::DbErr) -> AppError {
     AppError::Internal(anyhow::anyhow!("WORK.ORDER_TYPES row decode: {e}"))
@@ -409,7 +427,8 @@ fn map_type(row: &QueryResult) -> AppResult<WorkOrderTypeOption> {
     let nature: Option<String> = row
         .try_get::<Option<String>>("", "semantic_tag")
         .map_err(decode)?
-        .filter(|t| MaintenanceNature::parse(t).is_some());
+        .and_then(|t| MaintenanceNature::parse(&t))
+        .map(|n| n.as_str().to_string());
     Ok(WorkOrderTypeOption {
         id: row.try_get("", "id").map_err(decode)?,
         code: row.try_get("", "code").map_err(decode)?,
@@ -429,7 +448,7 @@ fn map_type(row: &QueryResult) -> AppResult<WorkOrderTypeOption> {
 /// counts in no work mix (planned / reactive / emergency) and is listed for review.
 pub fn without_nature_sql() -> String {
     format!(
-        "COALESCE(TRIM(t.semantic_tag), '') NOT IN ({})",
+        concat!("COALESCE(", trimmed_tag!("t.semantic_tag"), ", '') NOT IN ({})"),
         nature_sql_list(&MaintenanceNature::ALL)
     )
 }

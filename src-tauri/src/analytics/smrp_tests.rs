@@ -1066,3 +1066,69 @@ async fn the_nature_is_read_trimmed_and_a_stale_review_flag_is_removed() {
         0
     );
 }
+
+/// A tag with a tab or a line break around it is the nature it names for every reader: the work
+/// mix, the review list, the flag, the nature command and the type list (with its label).
+#[tokio::test]
+async fn a_tag_with_a_tab_or_a_line_break_is_its_nature_everywhere() {
+    use crate::wo::types::{nature_codes as nc, set_work_order_type_nature, SetWorkOrderTypeNatureInput};
+    let db = setup().await;
+    let now = fixed_now();
+    let admin = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let tab = plant_type(&db, "TABBED", Some("improvement\t"), "{}").await;
+    let line = plant_type(&db, "LINED", Some("\r\ncorrective_deferred\n"), "{}").await;
+    insert_wo(
+        &db,
+        "W1",
+        "TABBED",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -5, 0),
+    )
+    .await;
+    insert_wo(
+        &db,
+        "W2",
+        "LINED",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -4, 0),
+    )
+    .await;
+
+    let m = smrp::work_mix(&db, SmrpWindow::last_days(now, 30), None).await.unwrap();
+    assert_eq!(m.without_nature, 0);
+    assert_eq!((m.planned.current.numerator, m.reactive.current.numerator), (1.0, 1.0));
+    let review = crate::wo::types::list_types_without_nature(&db).await.expect("review");
+    assert!(
+        review.iter().all(|t| t.id != tab && t.id != line),
+        "not stuck on the review list"
+    );
+    assert_eq!(
+        crate::wo::types::flag_types_without_nature(&db).await.expect("flags"),
+        0
+    );
+
+    let err = set_work_order_type_nature(
+        &db,
+        SetWorkOrderTypeNatureInput {
+            type_id: tab,
+            nature: "corrective_deferred".into(),
+            reason: "Plant type is planned maintenance".into(),
+        },
+        admin,
+    )
+    .await
+    .expect_err("already a nature");
+    assert_eq!(refusal(err), nc::ALREADY_SET);
+
+    let types = crate::wo::types::list_work_order_types(&db).await.expect("types");
+    let tabbed = types.iter().find(|t| t.id == tab).expect("tabbed");
+    assert_eq!(tabbed.nature.as_deref(), Some("improvement"), "returned trimmed");
+    assert!(tabbed.nature_label.is_some(), "the nature label is found");
+    let lined = types.iter().find(|t| t.id == line).expect("lined");
+    assert_eq!(lined.nature.as_deref(), Some("corrective_deferred"));
+    assert!(lined.nature_label.is_some());
+}
