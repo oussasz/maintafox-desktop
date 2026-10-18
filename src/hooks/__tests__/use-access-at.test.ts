@@ -11,6 +11,7 @@ vi.mock("@/services/rbac-service", () => ({
 }));
 
 import { useAccessAt } from "@/hooks/use-access-at";
+import { P } from "@shared/rbac/permissions.generated";
 
 describe("useAccessAt", () => {
   beforeEach(() => getMyAccessAt.mockReset());
@@ -19,7 +20,7 @@ describe("useAccessAt", () => {
     let releaseB: (perms: string[]) => void = () => undefined;
     getMyAccessAt.mockImplementation((node) =>
       node === 1
-        ? Promise.resolve(["ot.view"])
+        ? Promise.resolve([P.OT_VIEW])
         : new Promise((resolve) => {
             releaseB = resolve;
           }),
@@ -27,13 +28,13 @@ describe("useAccessAt", () => {
     const { result, rerender } = renderHook(({ node }) => useAccessAt(node), {
       initialProps: { node: 1 as number | null },
     });
-    await waitFor(() => expect(result.current.can("ot.view")).toBe(true));
+    await waitFor(() => expect(result.current.can(P.OT_VIEW)).toBe(true));
 
     rerender({ node: 2 });
-    expect(result.current.can("ot.view")).toBe(false);
+    expect(result.current.can(P.OT_VIEW)).toBe(false);
     releaseB([]);
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.can("ot.view")).toBe(false);
+    expect(result.current.can(P.OT_VIEW)).toBe(false);
   });
 
   it("treats an administrator as holding every permission, and no node as nothing", async () => {

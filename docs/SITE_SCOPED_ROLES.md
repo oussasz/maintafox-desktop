@@ -93,7 +93,13 @@ Cross-cutting surfaces:
 1. `auth::scope` resolver + `require_permission_at!` + `scope_filter_sql` + `get_my_access` / `can(perm, node)`; login rule (O1); tests on the org tree (subtree, sibling, no anchor, plant-wide).
 2. Modules in risk order: **DI, WO, permits/LOTO**, PM, planning, equipment, inspections, personnel, finance, inventory (after O2). Each: list SQL filter + hidden-rows banner, action checks at anchor, tests (site user sees own site, not sibling; no-anchor refused visibly; plant user unchanged).
 3. Analytics, home, reports, exports, scheduled reports.
-4. Sync arrival re-validation (after O4).
+4. Sync arrival re-validation (after O4): the actor travels in the envelope; on arrival the
+   actor's right is re-checked at the record's anchor, with the permit/LOTO and qualification
+   gates (Step 7). A refusal becomes a sync conflict for review. Covered explicitly:
+   - attachment deletes (work-order, request and asset photos): today a paired device can delete
+     them through sync with no rights check — the actor's delete right is re-checked on arrival;
+   - site-setting and opt-out audit events of the four-eyes flows: re-checked against the actor's
+     right the same way.
 
 ## 6. Needs an owner decision / changes stored data
 

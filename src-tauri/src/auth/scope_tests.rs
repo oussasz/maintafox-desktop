@@ -31,15 +31,39 @@ struct Tree {
     site_b: i64,
 }
 
+/// An active structure model with one node type (the seeded test database has no org tree).
+async fn ensure_node_type(db: &DatabaseConnection) {
+    exec(
+        db,
+        &format!(
+            "INSERT OR IGNORE INTO org_structure_models (entity_sync_id, version_number, status, description, created_at, updated_at)
+             VALUES ('scope-structure', 1, 'active', 'scope test structure', '{NOW}', '{NOW}')"
+        ),
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "INSERT OR IGNORE INTO org_node_types (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+                can_carry_cost_center, can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at)
+             SELECT 'scope-node-type', id, 'SCOPE', 'Scope node', 1, 1, 1, 1, 1, 1, 1, '{NOW}', '{NOW}'
+               FROM org_structure_models WHERE entity_sync_id = 'scope-structure'"
+        ),
+    )
+    .await;
+}
+
 async fn node(db: &DatabaseConnection, code: &str, parent: Option<i64>) -> i64 {
+    ensure_node_type(db).await;
     let parent_sql = parent.map_or_else(|| "NULL".to_string(), |p| p.to_string());
     exec(
         db,
         &format!(
             "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
                 created_at, updated_at, row_version, structure_model_id)
-             SELECT 'scope-{code}', 'SC-{code}', 'Node {code}', node_type_id, {parent_sql}, '/', 0, 'active',
-                    '{NOW}', '{NOW}', 1, structure_model_id FROM org_nodes ORDER BY id LIMIT 1"
+             SELECT 'scope-{code}', 'SC-{code}', 'Node {code}', t.id, {parent_sql}, '/', 0, 'active',
+                    '{NOW}', '{NOW}', 1, t.structure_model_id
+               FROM org_node_types t WHERE t.entity_sync_id = 'scope-node-type'"
         ),
     )
     .await;
@@ -288,7 +312,11 @@ async fn only_live_node_roles_grant_and_let_a_site_only_user_sign_in() {
     // no sign-in.
     let ended = user(&db, "edge_ended").await;
     assign(&db, ended, r, "org_node", Some(t.site_a)).await;
-    exec(&db, &format!("UPDATE user_scope_assignments SET valid_to = '2020-01-01T00:00:00Z' WHERE user_id = {ended}")).await;
+    exec(
+        &db,
+        &format!("UPDATE user_scope_assignments SET valid_to = '2020-01-01T00:00:00Z' WHERE user_id = {ended}"),
+    )
+    .await;
     let lapsed = user(&db, "edge_lapsed").await;
     assign(&db, lapsed, r, "org_node", Some(t.site_a)).await;
     exec(
@@ -303,12 +331,26 @@ async fn only_live_node_roles_grant_and_let_a_site_only_user_sign_in() {
     assign(&db, team, r, "team", Some(1)).await;
     let malformed = user(&db, "edge_malformed").await;
     assign(&db, malformed, r, "org_node", Some(t.site_a)).await;
-    exec(&db, &format!("UPDATE user_scope_assignments SET scope_reference = 'abc' WHERE user_id = {malformed}")).await;
+    exec(
+        &db,
+        &format!("UPDATE user_scope_assignments SET scope_reference = 'abc' WHERE user_id = {malformed}"),
+    )
+    .await;
     let gone = node(&db, "GONE", Some(t.plant)).await;
     let on_gone = user(&db, "edge_gone").await;
     assign(&db, on_gone, r, "org_node", Some(gone)).await;
-    exec(&db, &format!("UPDATE org_nodes SET deleted_at = '{NOW}' WHERE id = {gone}")).await;
-    for (label, u) in [("ended", ended), ("lapsed emergency", lapsed), ("team", team), ("malformed", malformed), ("deleted node", on_gone)] {
+    exec(
+        &db,
+        &format!("UPDATE org_nodes SET deleted_at = '{NOW}' WHERE id = {gone}"),
+    )
+    .await;
+    for (label, u) in [
+        ("ended", ended),
+        ("lapsed emergency", lapsed),
+        ("team", team),
+        ("malformed", malformed),
+        ("deleted node", on_gone),
+    ] {
         let s = scope::access_scope(&db, u, EQ_VIEW).await.expect("scope");
         assert!(!s.is_anywhere(), "{label}: grants nothing, got {s:?}");
         assert!(!sign_in(u).await, "{label}: no sign-in");
@@ -344,7 +386,10 @@ async fn only_live_node_roles_grant_and_let_a_site_only_user_sign_in() {
     let both = user(&db, "edge_both").await;
     assign(&db, both, r, "org_node", Some(t.site_a)).await;
     assign(&db, both, r2, "tenant", None).await;
-    assert_eq!(scope::access_scope(&db, both, EQ_VIEW).await.expect("scope"), AccessScope::Everywhere);
+    assert_eq!(
+        scope::access_scope(&db, both, EQ_VIEW).await.expect("scope"),
+        AccessScope::Everywhere
+    );
 
     // A plant-wide role tied to another tenant keeps refusing sign-in, even with a site role here.
     let other_tenant = user(&db, "edge_other_tenant").await;

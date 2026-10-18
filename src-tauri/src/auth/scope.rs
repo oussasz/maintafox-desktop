@@ -150,14 +150,12 @@ pub async fn access_map_cached(
         return Ok(map.clone());
     }
     let map = load_access_map(db, user_id).await?;
-    let valid_until = match next_assignment_change(db, uid).await? {
-        None => None,
-        Some(at) => Some(
-            chrono::DateTime::parse_from_rfc3339(&at)
-                .map(|t| t.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-        ),
-    };
+    // An unreadable bound: the map is not kept at all.
+    let valid_until = next_assignment_change(db, uid).await?.map(|at| {
+        chrono::DateTime::parse_from_rfc3339(&at)
+            .map(|t| t.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now())
+    });
     cache.write().await.put_access(uid, map.clone(), valid_until);
     Ok(map)
 }

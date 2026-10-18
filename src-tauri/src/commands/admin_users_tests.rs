@@ -1808,14 +1808,32 @@ async fn a_user_created_on_a_site_gets_only_that_site_and_administrators_stay_pl
     let caller = admin_caller(&db).await;
     let readonly = role_id(&db, "Readonly").await;
     let administrator = role_id(&db, "Administrator").await;
+    // A site of its own (the seeded test database has no org tree).
+    for sql in [
+        "INSERT INTO org_structure_models (entity_sync_id, version_number, status, description, created_at, updated_at)
+         VALUES ('scoped-user-structure', 1, 'active', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        "INSERT INTO org_node_types (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+            can_carry_cost_center, can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at)
+         SELECT 'scoped-user-type', id, 'SITE', 'Site', 1, 1, 1, 1, 1, 1, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+           FROM org_structure_models WHERE entity_sync_id = 'scoped-user-structure'",
+        "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+            created_at, updated_at, row_version, structure_model_id)
+         SELECT 'scoped-user-site', 'SITE-SU', 'Site SU', t.id, NULL, '/', 0, 'active',
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, t.structure_model_id
+           FROM org_node_types t WHERE t.entity_sync_id = 'scoped-user-type'",
+    ] {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect(sql);
+    }
     let site: i64 = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id FROM org_nodes WHERE deleted_at IS NULL ORDER BY id LIMIT 1".to_string(),
+            "SELECT id FROM org_nodes WHERE entity_sync_id = 'scoped-user-site'".to_string(),
         ))
         .await
         .expect("query")
-        .expect("a node")
+        .expect("the site")
         .try_get("", "id")
         .expect("id");
     let input = |name: &str, role: i64, node: Option<i64>| CreateUserInput {
