@@ -588,12 +588,57 @@ fn map_settings_change_event(row: QueryResult) -> AppResult<SettingsChangeEvent>
     })
 }
 
-/// Validation outcome for a policy draft rule.
+/// Validation outcome for a policy draft rule. `code` + `params` let the screen say it in the
+/// user's language (`POLICY_TEST_*`); `message` is the server's English text, kept as a fallback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyTestResult {
     pub rule_name: String,
     pub severity: String,
+    pub code: String,
+    pub params: std::collections::BTreeMap<String, String>,
     pub message: String,
+}
+
+/// Stable codes of the policy draft test results (`PolicyTestResult::code`).
+pub mod policy_test_codes {
+    /// The draft is not a valid policy document. Params: `domain`, `detail`.
+    pub const SCHEMA_INVALID: &str = "POLICY_TEST_SCHEMA_INVALID";
+    /// A value is within its range. Params: `field`, `value`, `min`, `max`.
+    pub const IN_RANGE: &str = "POLICY_TEST_IN_RANGE";
+    /// A value is outside its range. Params: `field`, `value`, `min`, `max`.
+    pub const OUT_OF_RANGE: &str = "POLICY_TEST_OUT_OF_RANGE";
+    /// The idle timeout fits in the session length. Params: `idle`, `absolute`.
+    pub const IDLE_WITHIN_ABSOLUTE: &str = "POLICY_TEST_IDLE_WITHIN_ABSOLUTE";
+    /// The idle timeout exceeds the session length. Params: `idle`, `absolute`.
+    pub const IDLE_EXCEEDS_ABSOLUTE: &str = "POLICY_TEST_IDLE_EXCEEDS_ABSOLUTE";
+    /// The backup schedule is empty. No params.
+    pub const SCHEDULE_EMPTY: &str = "POLICY_TEST_SCHEDULE_EMPTY";
+    /// The backup schedule cannot be read. Params: `schedule`, `detail`.
+    pub const SCHEDULE_INVALID: &str = "POLICY_TEST_SCHEDULE_INVALID";
+    /// The backup schedule is valid. Params: `schedule`.
+    pub const SCHEDULE_VALID: &str = "POLICY_TEST_SCHEDULE_VALID";
+    /// Whether photos are included in backups (information). Params: `value` (`true` / `false`).
+    pub const INCLUDE_PHOTOS: &str = "POLICY_TEST_INCLUDE_PHOTOS";
+    /// The password policy is edited in its own panel. No params.
+    pub const PASSWORD_ELSEWHERE: &str = "POLICY_TEST_PASSWORD_ELSEWHERE";
+    /// The policy domain is not known. Params: `domain`.
+    pub const DOMAIN_UNSUPPORTED: &str = "POLICY_TEST_DOMAIN_UNSUPPORTED";
+}
+
+fn policy_result(
+    rule_name: &str,
+    severity: &str,
+    code: &str,
+    params: &[(&str, String)],
+    message: String,
+) -> PolicyTestResult {
+    PolicyTestResult {
+        rule_name: rule_name.into(),
+        severity: severity.into(),
+        code: code.into(),
+        params: params.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect(),
+        message,
+    }
 }
 
 /// Read-only connection profile row for the Integrations tab.
@@ -782,15 +827,18 @@ pub async fn test_policy_draft(db: &DatabaseConnection, domain: &str) -> AppResu
 }
 
 fn validate_policy_json(domain: &str, snapshot_json: &str) -> Vec<PolicyTestResult> {
+    use policy_test_codes as c;
     let mut results = Vec::new();
 
     match domain {
         "session" => match serde_json::from_str::<SessionPolicy>(snapshot_json) {
-            Err(e) => results.push(PolicyTestResult {
-                rule_name: "schema".into(),
-                severity: "fail".into(),
-                message: format!("Session policy JSON is invalid: {e}"),
-            }),
+            Err(e) => results.push(policy_result(
+                "schema",
+                "fail",
+                c::SCHEMA_INVALID,
+                &[("domain", domain.to_string()), ("detail", e.to_string())],
+                format!("Session policy JSON is invalid: {e}"),
+            )),
             Ok(p) => {
                 results.push(range_rule("idle_timeout_minutes", p.idle_timeout_minutes, 1, 480));
                 results.push(range_rule(
@@ -803,84 +851,116 @@ fn validate_policy_json(domain: &str, snapshot_json: &str) -> Vec<PolicyTestResu
                 results.push(range_rule("step_up_window_minutes", p.step_up_window_minutes, 1, 30));
                 results.push(range_rule("max_failed_attempts", p.max_failed_attempts, 1, 20));
                 results.push(range_rule("lockout_minutes", p.lockout_minutes, 1, 1440));
+                let params = [
+                    ("idle", p.idle_timeout_minutes.to_string()),
+                    ("absolute", p.absolute_session_minutes.to_string()),
+                ];
                 if p.idle_timeout_minutes > p.absolute_session_minutes {
-                    results.push(PolicyTestResult {
-                        rule_name: "idle_vs_absolute".into(),
-                        severity: "fail".into(),
-                        message: "Idle timeout must not exceed absolute session length".into(),
-                    });
+                    results.push(policy_result(
+                        "idle_vs_absolute",
+                        "fail",
+                        c::IDLE_EXCEEDS_ABSOLUTE,
+                        &params,
+                        "Idle timeout must not exceed absolute session length".into(),
+                    ));
                 } else {
-                    results.push(PolicyTestResult {
-                        rule_name: "idle_vs_absolute".into(),
-                        severity: "pass".into(),
-                        message: "Idle timeout is within absolute session length".into(),
-                    });
+                    results.push(policy_result(
+                        "idle_vs_absolute",
+                        "pass",
+                        c::IDLE_WITHIN_ABSOLUTE,
+                        &params,
+                        "Idle timeout is within absolute session length".into(),
+                    ));
                 }
             }
         },
         "backup" => match serde_json::from_str::<BackupPolicy>(snapshot_json) {
-            Err(e) => results.push(PolicyTestResult {
-                rule_name: "schema".into(),
-                severity: "fail".into(),
-                message: format!("Backup policy JSON is invalid: {e}"),
-            }),
+            Err(e) => results.push(policy_result(
+                "schema",
+                "fail",
+                c::SCHEMA_INVALID,
+                &[("domain", domain.to_string()), ("detail", e.to_string())],
+                format!("Backup policy JSON is invalid: {e}"),
+            )),
             Ok(p) => {
                 if p.schedule_cron.trim().is_empty() {
-                    results.push(PolicyTestResult {
-                        rule_name: "schedule_cron".into(),
-                        severity: "fail".into(),
-                        message: "Backup schedule cron must not be empty".into(),
-                    });
+                    results.push(policy_result(
+                        "schedule_cron",
+                        "fail",
+                        c::SCHEDULE_EMPTY,
+                        &[],
+                        "Backup schedule cron must not be empty".into(),
+                    ));
                 } else if let Err(e) = crate::backup::scheduler::parse_backup_schedule(&p.schedule_cron) {
-                    results.push(PolicyTestResult {
-                        rule_name: "schedule_cron".into(),
-                        severity: "fail".into(),
-                        message: e,
-                    });
+                    results.push(policy_result(
+                        "schedule_cron",
+                        "fail",
+                        c::SCHEDULE_INVALID,
+                        &[("schedule", p.schedule_cron.clone()), ("detail", e.clone())],
+                        e,
+                    ));
                 } else {
-                    results.push(PolicyTestResult {
-                        rule_name: "schedule_cron".into(),
-                        severity: "pass".into(),
-                        message: "Backup schedule cron is valid".into(),
-                    });
+                    results.push(policy_result(
+                        "schedule_cron",
+                        "pass",
+                        c::SCHEDULE_VALID,
+                        &[("schedule", p.schedule_cron.clone())],
+                        "Backup schedule cron is valid".into(),
+                    ));
                 }
                 results.push(range_rule("retention_days", p.retention_days, 1, 3650));
                 results.push(range_rule("compression_level", p.compression_level, 0, 9));
-                results.push(PolicyTestResult {
-                    rule_name: "include_photos".into(),
-                    severity: "pass".into(),
-                    message: format!("include_photos={}", p.include_photos),
-                });
+                results.push(policy_result(
+                    "include_photos",
+                    "pass",
+                    c::INCLUDE_PHOTOS,
+                    &[("value", p.include_photos.to_string())],
+                    format!("include_photos={}", p.include_photos),
+                ));
             }
         },
-        "password" => results.push(PolicyTestResult {
-            rule_name: "password_ssot".into(),
-            severity: "warn".into(),
-            message: "Password policy is managed via RBAC settings; use PasswordPolicyPanel".into(),
-        }),
-        other => results.push(PolicyTestResult {
-            rule_name: "domain".into(),
-            severity: "fail".into(),
-            message: format!("Unsupported policy domain '{other}'"),
-        }),
+        "password" => results.push(policy_result(
+            "password_ssot",
+            "warn",
+            c::PASSWORD_ELSEWHERE,
+            &[],
+            "Password policy is managed via RBAC settings; use PasswordPolicyPanel".into(),
+        )),
+        other => results.push(policy_result(
+            "domain",
+            "fail",
+            c::DOMAIN_UNSUPPORTED,
+            &[("domain", other.to_string())],
+            format!("Unsupported policy domain '{other}'"),
+        )),
     }
 
     results
 }
 
 fn range_rule(name: &str, value: u32, min: u32, max: u32) -> PolicyTestResult {
+    let params = [
+        ("field", name.to_string()),
+        ("value", value.to_string()),
+        ("min", min.to_string()),
+        ("max", max.to_string()),
+    ];
     if value < min || value > max {
-        PolicyTestResult {
-            rule_name: name.into(),
-            severity: "fail".into(),
-            message: format!("{name}={value} is outside allowed range [{min}, {max}]"),
-        }
+        policy_result(
+            name,
+            "fail",
+            policy_test_codes::OUT_OF_RANGE,
+            &params,
+            format!("{name}={value} is outside allowed range [{min}, {max}]"),
+        )
     } else {
-        PolicyTestResult {
-            rule_name: name.into(),
-            severity: "pass".into(),
-            message: format!("{name}={value} is within [{min}, {max}]"),
-        }
+        policy_result(
+            name,
+            "pass",
+            policy_test_codes::IN_RANGE,
+            &params,
+            format!("{name}={value} is within [{min}, {max}]"),
+        )
     }
 }
 
@@ -1063,6 +1143,43 @@ pub async fn list_connection_profiles(db: &DatabaseConnection) -> AppResult<Vec<
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod policy_test_code_tests {
+    use super::{policy_test_codes as c, validate_policy_json};
+
+    /// Every test result carries a code and the params its translation needs; the English
+    /// message stays as the fallback.
+    #[test]
+    fn policy_test_results_are_coded() {
+        let session = validate_policy_json(
+            "session",
+            &serde_json::to_string(&super::SessionPolicy {
+                idle_timeout_minutes: 600,
+                ..super::SessionPolicy::default()
+            })
+            .expect("json"),
+        );
+        let idle = session
+            .iter()
+            .find(|r| r.rule_name == "idle_timeout_minutes")
+            .expect("idle");
+        assert_eq!(idle.code, c::OUT_OF_RANGE);
+        assert_eq!(idle.params["field"], "idle_timeout_minutes");
+        assert_eq!(idle.params["value"], "600");
+        assert_eq!((idle.params["min"].as_str(), idle.params["max"].as_str()), ("1", "480"));
+        assert!(!idle.message.is_empty(), "the server text stays as a fallback");
+        assert!(session.iter().all(|r| r.code.starts_with("POLICY_TEST_")));
+
+        let bad = validate_policy_json("backup", "{");
+        assert_eq!(bad[0].code, c::SCHEMA_INVALID);
+        assert_eq!(bad[0].params["domain"], "backup");
+        let other = validate_policy_json("nope", "{}");
+        assert_eq!(other[0].code, c::DOMAIN_UNSUPPORTED);
+        assert_eq!(other[0].params["domain"], "nope");
+        assert_eq!(validate_policy_json("password", "{}")[0].code, c::PASSWORD_ELSEWHERE);
+    }
 }
 
 #[cfg(test)]
