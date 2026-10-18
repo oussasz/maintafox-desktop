@@ -842,3 +842,227 @@ async fn pm_due_windows_at_an_instant() {
         "THEN"
     );
 }
+
+/// A plant type of the published OT type list, with an optional raw tag and metadata.
+async fn plant_type(db: &DatabaseConnection, code: &str, tag: Option<&str>, meta: &str) -> i64 {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active, semantic_tag, metadata_json) \
+         SELECT rs.id, ?, ?, 99, 1, ?, ? FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'WORK.ORDER_TYPES' AND rs.status = 'published'",
+        [code.into(), code.into(), tag.map(str::to_string).into(), meta.into()],
+    ))
+    .await
+    .expect("plant type");
+    id_of(db, &format!("SELECT id FROM reference_values WHERE code = '{code}'")).await
+}
+
+fn refusal(e: crate::errors::AppError) -> String {
+    match e {
+        crate::errors::AppError::OrgValidationFailed(i) => i.first().map(|x| x.code.clone()).unwrap_or_default(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// The nature is written by compare-and-set: a nature written by someone else between the read
+/// and the write is never overwritten, the whole change is rolled back (no audit row).
+#[tokio::test]
+async fn a_nature_written_meanwhile_is_never_overwritten_and_nothing_is_recorded() {
+    use crate::wo::types::{
+        nature_codes as nc, set_work_order_type_nature, write_nature_if_unset, MaintenanceNature,
+        SetWorkOrderTypeNatureInput, CONCURRENT_NATURE_WRITE_FOR,
+    };
+    let db = setup().await;
+    let admin = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let raced = plant_type(&db, "RACED", None, "{\"nature_review_required\":true}").await;
+
+    *CONCURRENT_NATURE_WRITE_FOR.lock().expect("seam") = Some("RACED");
+    let err = set_work_order_type_nature(
+        &db,
+        SetWorkOrderTypeNatureInput {
+            type_id: raced,
+            nature: "preventive_predetermined".into(),
+            reason: "Plant type is planned maintenance".into(),
+        },
+        admin,
+    )
+    .await
+    .expect_err("refused by the compare-and-set");
+    *CONCURRENT_NATURE_WRITE_FOR.lock().expect("seam") = None;
+    assert_eq!(refusal(err), nc::ALREADY_SET);
+    assert_eq!(
+        id_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM reference_values WHERE id = {raced} AND semantic_tag IS NULL")
+        )
+        .await,
+        1,
+        "rolled back: neither nature written"
+    );
+    assert_eq!(
+        id_of(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' AND target_id = '{raced}'"
+            )
+        )
+        .await,
+        0,
+        "a refused change leaves no audit row"
+    );
+
+    // The write itself refuses a type that has a nature by then.
+    exec(
+        &db,
+        &format!("UPDATE reference_values SET semantic_tag = 'improvement' WHERE id = {raced}"),
+    )
+    .await;
+    assert!(
+        !write_nature_if_unset(&db, raced, MaintenanceNature::PreventivePredictive)
+            .await
+            .expect("write")
+    );
+    assert_eq!(
+        id_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM reference_values WHERE id = {raced} AND semantic_tag = 'improvement'")
+        )
+        .await,
+        1
+    );
+}
+
+/// Unknown type refused; a person (not an administrator) holding the reference-data manage right
+/// may set it.
+#[tokio::test]
+async fn the_reference_manage_right_sets_a_nature_and_an_unknown_type_is_refused() {
+    use crate::wo::types::{nature_codes as nc, set_work_order_type_nature, SetWorkOrderTypeNatureInput};
+    let db = setup().await;
+    let admin = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let why = "Plant type is planned maintenance";
+    let err = set_work_order_type_nature(
+        &db,
+        SetWorkOrderTypeNatureInput {
+            type_id: 987_654,
+            nature: "improvement".into(),
+            reason: why.into(),
+        },
+        admin,
+    )
+    .await
+    .expect_err("unknown type");
+    assert_eq!(refusal(err), nc::TYPE_NOT_FOUND);
+
+    let own = plant_type(&db, "REF_MANAGER_TYPE", None, "{}").await;
+    let now = "2026-01-01T00:00:00Z";
+    for sql in [
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+         force_password_change, created_at, updated_at) VALUES ('rm-user', 'refmgr', 'Ref manager', 'local', 1, 0, 0, \
+         datetime('now'), datetime('now'))"
+            .to_string(),
+        format!(
+            "INSERT INTO roles (entity_sync_id, name, role_type, status, is_system, created_at, updated_at, row_version) \
+             VALUES ('rm-role', 'ref-manager', 'custom', 'active', 0, '{now}', '{now}', 1)"
+        ),
+        format!(
+            "INSERT INTO role_permissions (role_id, permission_id, granted_at) \
+             SELECT r.id, p.id, '{now}' FROM roles r, permissions p WHERE r.name = 'ref-manager' AND p.name = 'ref.manage'"
+        ),
+        format!(
+            "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at, row_version) \
+             SELECT 'rm-usa', u.id, r.id, 'tenant', '{now}', '{now}', 1 FROM user_accounts u, roles r \
+              WHERE u.username = 'refmgr' AND r.name = 'ref-manager'"
+        ),
+    ] {
+        exec(&db, &sql).await;
+    }
+    let manager = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'refmgr'").await;
+    let set = set_work_order_type_nature(
+        &db,
+        SetWorkOrderTypeNatureInput {
+            type_id: own,
+            nature: "corrective_deferred".into(),
+            reason: why.into(),
+        },
+        manager,
+    )
+    .await
+    .expect("ref.manage may set it");
+    assert_eq!(set.nature.as_deref(), Some("corrective_deferred"));
+    assert_eq!(
+        id_of(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' \
+                 AND target_id = '{own}' AND actor_id = {manager}"
+            )
+        )
+        .await,
+        1
+    );
+}
+
+/// One reading of the nature: a tag with spaces is the nature it names everywhere (not "without
+/// nature", not to review); a flag left on a type that now has a nature is removed.
+#[tokio::test]
+async fn the_nature_is_read_trimmed_and_a_stale_review_flag_is_removed() {
+    let db = setup().await;
+    let now = fixed_now();
+    let spaced = plant_type(&db, "SPACED", Some(" improvement "), "{}").await;
+    let stale = plant_type(
+        &db,
+        "STALE_FLAG",
+        Some("corrective_deferred"),
+        "{\"origin\":\"migrated\",\"nature_review_required\":true}",
+    )
+    .await;
+    insert_wo(
+        &db,
+        "T1",
+        "SPACED",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -5, 0),
+    )
+    .await;
+
+    let m = smrp::work_mix(&db, SmrpWindow::last_days(now, 30), None).await.unwrap();
+    assert_eq!(m.without_nature, 0, "the spaced tag is a nature");
+    assert_eq!(m.planned.current.numerator, 1.0);
+    let review = crate::wo::types::list_types_without_nature(&db).await.expect("review");
+    assert!(review.iter().all(|t| t.id != spaced && t.id != stale));
+
+    assert_eq!(
+        crate::wo::types::flag_types_without_nature(&db)
+            .await
+            .expect("sync flags"),
+        1
+    );
+    assert_eq!(
+        id_of(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM reference_values WHERE id = {stale} \
+                 AND json_extract(metadata_json, '$.nature_review_required') IS NULL \
+                 AND json_extract(metadata_json, '$.origin') = 'migrated'"
+            )
+        )
+        .await,
+        1,
+        "stale flag removed, the rest kept"
+    );
+    assert_eq!(
+        id_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM reference_values WHERE id = {spaced} AND metadata_json = '{{}}'")
+        )
+        .await,
+        1,
+        "the spaced type is never flagged"
+    );
+    assert_eq!(
+        crate::wo::types::flag_types_without_nature(&db).await.expect("again"),
+        0
+    );
+}

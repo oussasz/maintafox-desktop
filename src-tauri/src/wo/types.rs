@@ -424,11 +424,12 @@ fn map_type(row: &QueryResult) -> AppResult<WorkOrderTypeOption> {
 }
 
 /// SQL predicate (alias `t` = a `WORK.ORDER_TYPES` value, no bind): the type carries no
-/// maintenance nature the program knows. Such a type counts in no work mix (planned / reactive /
-/// emergency) and is listed for review.
+/// maintenance nature the program knows — read like [`MaintenanceNature::parse`] (the tag
+/// trimmed), so a type is "without nature" here exactly when the readers find none. Such a type
+/// counts in no work mix (planned / reactive / emergency) and is listed for review.
 pub fn without_nature_sql() -> String {
     format!(
-        "COALESCE(t.semantic_tag, '') NOT IN ({})",
+        "COALESCE(TRIM(t.semantic_tag), '') NOT IN ({})",
         nature_sql_list(&MaintenanceNature::ALL)
     )
 }
@@ -475,10 +476,28 @@ pub async fn list_types_without_nature(conn: &impl ConnectionTrait) -> AppResult
         .collect()
 }
 
-/// Flag every OT type without a nature "to review" (`metadata_json.nature_review_required`), as
-/// migration 198 did for the types it carried over — also those received later by sync. Only the
-/// flag is added: no code, label, nature or work order is changed. Idempotent (integrity pass).
+/// Keep the "to review" flag (`metadata_json.nature_review_required`) in step with the nature:
+/// set on every OT type without a nature (as migration 198 did for the types it carried over —
+/// also those received later by sync), removed from a type that now has one (given through the
+/// nature command, the reference editor or another PC). Only the flag changes: no code, label,
+/// nature or work order. Idempotent (integrity pass). Returns the number of types changed.
 pub async fn flag_types_without_nature(conn: &impl ConnectionTrait) -> AppResult<u64> {
+    let cleared = conn
+        .execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE reference_values AS t \
+                    SET metadata_json = json_remove(t.metadata_json, '$.nature_review_required') \
+                  WHERE t.set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+                                      WHERE UPPER(TRIM(d.code)) = 'WORK.ORDER_TYPES') \
+                    AND NOT ({}) \
+                    AND json_valid(t.metadata_json) \
+                    AND json_extract(t.metadata_json, '$.nature_review_required') IS NOT NULL",
+                without_nature_sql()
+            ),
+        ))
+        .await?
+        .rows_affected();
     let result = conn
         .execute(Statement::from_string(
             DbBackend::Sqlite,
@@ -495,8 +514,39 @@ pub async fn flag_types_without_nature(conn: &impl ConnectionTrait) -> AppResult
             ),
         ))
         .await?;
-    Ok(result.rows_affected())
+    Ok(result.rows_affected() + cleared)
 }
+
+/// Writes the nature of type `type_id` only while it still has none (compare-and-set: the
+/// condition is in the UPDATE itself), clearing its review flag. `false` when the type has a
+/// nature by then — never overwritten.
+pub(crate) async fn write_nature_if_unset(
+    conn: &impl ConnectionTrait,
+    type_id: i64,
+    nature: MaintenanceNature,
+) -> AppResult<bool> {
+    let updated = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE reference_values AS t \
+                    SET semantic_tag = ?, \
+                        metadata_json = json_remove(CASE WHEN json_valid(t.metadata_json) THEN t.metadata_json \
+                                                         ELSE '{{}}' END, '$.nature_review_required') \
+                  WHERE t.id = ? AND {}",
+                without_nature_sql()
+            ),
+            [nature.as_str().into(), type_id.into()],
+        ))
+        .await?;
+    Ok(updated.rows_affected() == 1)
+}
+
+/// Test seam: a nature written by "someone else" between the read and the write of
+/// [`set_work_order_type_nature`] (only for the type code stored here; codes, not ids, because
+/// every test database numbers its rows the same way).
+#[cfg(test)]
+pub(crate) static CONCURRENT_NATURE_WRITE_FOR: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
 
 /// Stable codes of the nature-setting refusals.
 pub mod nature_codes {
@@ -590,22 +640,21 @@ pub async fn set_work_order_type_nature(
             params(&[("code", code)]),
         ));
     }
-    // Only while it still has none: a concurrent change is refused, never overwritten.
-    let updated = txn
-        .execute(Statement::from_sql_and_values(
+    #[cfg(test)]
+    if *CONCURRENT_NATURE_WRITE_FOR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        == Some(code.as_str())
+    {
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!(
-                "UPDATE reference_values AS t \
-                    SET semantic_tag = ?, \
-                        metadata_json = json_remove(CASE WHEN json_valid(t.metadata_json) THEN t.metadata_json \
-                                                         ELSE '{{}}' END, '$.nature_review_required') \
-                  WHERE t.id = ? AND {}",
-                without_nature_sql()
-            ),
-            [nature.as_str().into(), input.type_id.into()],
+            "UPDATE reference_values SET semantic_tag = 'improvement' WHERE id = ?",
+            [input.type_id.into()],
         ))
         .await?;
-    if updated.rows_affected() != 1 {
+    }
+    // Only while it still has none: a concurrent change is refused, never overwritten.
+    if !write_nature_if_unset(&txn, input.type_id, nature).await? {
         return Err(crate::errors::org_validation_failed(
             nature_codes::ALREADY_SET,
             format!("'{code}' already has a nature."),
