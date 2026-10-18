@@ -81,6 +81,7 @@ const AnalyticsExecutiveDashboardSchema = z.object({
   org_node_id: z.number().nullable(),
   open_dis: AnalyticsKpiValueSchema,
   open_wos: AnalyticsKpiValueSchema,
+  open_wos_rule: z.string(),
   total_assets: AnalyticsKpiValueSchema,
   overdue_items: AnalyticsKpiValueSchema,
   pm_overdue: AnalyticsKpiValueSchema,

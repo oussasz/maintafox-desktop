@@ -1,4 +1,13 @@
 {
+  "woOpenRule": {
+    "figure": "Work orders — {{rule}}",
+    "open_work_to_do": "Open (work to do)",
+    "not_yet_closed": "Not yet closed",
+    "hint": {
+      "open_work_to_do": "Work orders from draft to on hold: the work is still to do.",
+      "not_yet_closed": "Every work order except closed or cancelled ones, including finished work awaiting close-out."
+    }
+  },
   "listAccess": {
     "people": "Reading people requires the personnel view right.",
     "teams": "Reading teams requires the personnel view right.",

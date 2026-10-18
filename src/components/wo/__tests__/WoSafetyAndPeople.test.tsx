@@ -1,9 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import enOt from "@/i18n/locale-data/en/ot.json";
-import type { WorkOrder } from "@shared/ipc-types";
+import type { WoListFilter, WorkOrder } from "@shared/ipc-types";
 
 import { WoKanbanView } from "../WoKanbanView";
 import { WoPermitRequirementField } from "../WoPermitRequirementField";
@@ -24,6 +24,11 @@ vi.mock("react-i18next", () => ({
     i18n: { language: "en" },
   }),
 }));
+
+const woSvc = vi.hoisted(() => ({ listWos: vi.fn() }));
+vi.mock("@/services/wo-service", () => woSvc);
+
+const BOARD_FILTER: WoListFilter = { limit: 100, offset: 0 };
 
 vi.mock("@/lib/app-error", () => ({
   describeAppError: (err: unknown) => ({
@@ -114,7 +119,7 @@ describe("WO people options (personnel register)", () => {
 });
 
 describe("WoKanbanView", () => {
-  it("does not offer drag-and-drop and says where status changes happen", () => {
+  it("does not offer drag-and-drop and says where status changes happen", async () => {
     const wo = {
       id: 1,
       code: "OT-0001",
@@ -127,15 +132,57 @@ describe("WoKanbanView", () => {
       planned_end: null,
     } as unknown as WorkOrder;
     const onOpen = vi.fn();
+    woSvc.listWos.mockImplementation(({ status_codes }: WoListFilter) =>
+      Promise.resolve(
+        status_codes?.includes("planning") ? { items: [wo], total: 1 } : { items: [], total: 0 },
+      ),
+    );
     render(
       <MemoryRouter>
-        <WoKanbanView items={[wo]} onCardClick={onOpen} />
+        <WoKanbanView filter={BOARD_FILTER} onCardClick={onOpen} />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId("wo-kanban-drag-hint")).toHaveTextContent(
+    expect(await screen.findByTestId("wo-kanban-drag-hint")).toHaveTextContent(
       enOt.kanban.statusFromDetailHint,
     );
     const card = screen.getByText("Replace bearing").closest("[draggable]");
     expect(card?.getAttribute("draggable")).not.toBe("true");
+  });
+
+  it("loads a lane's next page from the server and counts the lane's real total", async () => {
+    const page = (from: number, n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: from + i,
+        code: `OT-${from + i}`,
+        title: `Ready job ${from + i}`,
+        status_code: "ready",
+      })) as unknown as WorkOrder[];
+    woSvc.listWos.mockReset();
+    woSvc.listWos.mockImplementation(({ status_codes, offset }: WoListFilter) =>
+      Promise.resolve(
+        status_codes?.includes("ready")
+          ? { items: offset === 0 ? page(1, 20) : page(21, 5), total: 25 }
+          : { items: [], total: 0 },
+      ),
+    );
+    render(
+      <MemoryRouter>
+        <WoKanbanView filter={{ ...BOARD_FILTER, search: "pump" }} onCardClick={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Ready job 20")).toBeInTheDocument();
+    expect(screen.getByText("25")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Load more/ }));
+    expect(await screen.findByText("Ready job 25")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(woSvc.listWos).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          offset: 20,
+          search: "pump",
+          status_codes: expect.arrayContaining(["ready"]),
+        }),
+      ),
+    );
+    expect(screen.queryByRole("button", { name: /Load more/ })).not.toBeInTheDocument();
   });
 });

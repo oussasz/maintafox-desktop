@@ -16,6 +16,7 @@ import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { DomainBrowserPanel } from "@/components/lookups/DomainBrowserPanel";
 import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor";
+import { FmecaRatingScalesHost } from "@/components/lookups/adapters/FmecaRatingScalesHost";
 import { InventoryArticleFamilyHost } from "@/components/lookups/adapters/InventoryArticleFamilyHost";
 import { InventoryTaxCategoryHost } from "@/components/lookups/adapters/InventoryTaxCategoryHost";
 import { NotificationRulesHost } from "@/components/lookups/adapters/NotificationRulesHost";
@@ -40,6 +41,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { LIST_PARAM, textParam, withoutParams } from "@/lib/list-links";
 import { createDraftReferenceSet } from "@/services/reference-service";
 import {
+  FMECA_RATING_SCALES_DOMAIN_ID,
   INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
   INVENTORY_TAX_CATEGORY_DOMAIN_ID,
   NOTIFICATION_RULES_DOMAIN_ID,
@@ -65,6 +67,8 @@ function SyntheticDomainHost({ domainId }: { domainId: number }) {
       return <WorkOrderStatusesHost />;
     case NOTIFICATION_RULES_DOMAIN_ID:
       return <NotificationRulesHost />;
+    case FMECA_RATING_SCALES_DOMAIN_ID:
+      return <FmecaRatingScalesHost />;
     case PERMIT_TYPES_DOMAIN_ID:
       return <PermitTypesHost />;
     default:

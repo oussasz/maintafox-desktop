@@ -27,7 +27,10 @@ pub struct AssetBindingSummary {
     pub linked_iot_signal_count: DomainBindingEntry,
     pub linked_erp_mapping_count: DomainBindingEntry,
     pub open_di_count: DomainBindingEntry,
+    /// OTs on the asset not yet closed (`wo::backlog::NOT_CLOSED_SQL`).
     pub open_wo_count: DomainBindingEntry,
+    /// `wo::backlog::RULE_NOT_YET_CLOSED`: which "open OT" rule `open_wo_count` counts.
+    pub open_wo_rule: String,
 }
 
 fn available_count(n: i64) -> DomainBindingEntry {
@@ -53,15 +56,16 @@ pub async fn count_open_di(db: &DatabaseConnection, asset_id: i64) -> AppResult<
     Ok(row.try_get::<i64>("", "cnt").unwrap_or(0))
 }
 
-/// Open WO = not closed and not cancelled.
+/// OTs on the asset not yet closed (`wo::backlog::NOT_CLOSED_SQL`).
 pub async fn count_open_wo(db: &DatabaseConnection, asset_id: i64) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM work_orders \
-             WHERE equipment_id = ? \
-               AND closed_at IS NULL \
-               AND cancelled_at IS NULL",
+            format!(
+                "SELECT COUNT(*) AS cnt FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+                 WHERE wo.equipment_id = ? AND {}",
+                crate::wo::backlog::NOT_CLOSED_SQL
+            ),
             [asset_id.into()],
         ))
         .await?
@@ -97,10 +101,8 @@ pub async fn get_asset_binding_summary(db: &DatabaseConnection, asset_id: i64) -
                 (SELECT COUNT(*) FROM failure_events WHERE equipment_id = ?) AS fe_cnt,
                 (SELECT COUNT(*) FROM intervention_requests ir
                  WHERE ir.equipment_id = ? AND {di_open}) AS open_di_cnt,
-                (SELECT COUNT(*) FROM work_orders
-                 WHERE equipment_id = ?
-                   AND closed_at IS NULL
-                   AND cancelled_at IS NULL) AS open_wo_cnt,
+                (SELECT COUNT(*) FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id
+                 WHERE wo.equipment_id = ? AND {wo_not_closed}) AS open_wo_cnt,
                 COALESCE(
                   (SELECT CASE WHEN iot_asset_id IS NOT NULL AND TRIM(iot_asset_id) != '' THEN 1 ELSE 0 END
                    FROM equipment WHERE id = ?),
@@ -113,7 +115,8 @@ pub async fn get_asset_binding_summary(db: &DatabaseConnection, asset_id: i64) -
                    FROM equipment WHERE id = ?),
                   0
                 ) AS erp_cnt",
-                di_open = crate::di::stats::OPEN_SQL
+                di_open = crate::di::stats::OPEN_SQL,
+                wo_not_closed = crate::wo::backlog::NOT_CLOSED_SQL
             ),
             [
                 asset_id.into(),
@@ -149,5 +152,6 @@ pub async fn get_asset_binding_summary(db: &DatabaseConnection, asset_id: i64) -
         linked_erp_mapping_count: available_count(erp_cnt),
         open_di_count: available_count(open_di_cnt),
         open_wo_count: available_count(open_wo_cnt),
+        open_wo_rule: crate::wo::backlog::RULE_NOT_YET_CLOSED.to_string(),
     })
 }

@@ -127,6 +127,7 @@ describe("maintenance profile", () => {
       asset_count: 3,
       work_order_count: 4,
       open_work_order_count: 1,
+      open_work_order_rule: "not_yet_closed",
       failure_work_order_count: 2,
       planned_work_order_count: 2,
       downtime_hours: 6.5,

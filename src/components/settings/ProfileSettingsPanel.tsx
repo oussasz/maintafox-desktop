@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { mfAlert, mfInput, mfTable } from "@/design-system/tokens";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
+import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { clearPin, setPin } from "@/services/auth-service";
 import {
   declareOwnSkill,
@@ -69,6 +70,7 @@ function formatDuration(seconds: number | null): string {
  */
 export function ProfileSettingsPanel() {
   const { t } = useTranslation("admin");
+  const woOpenRuleText = useWoOpenRuleText();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [sessions, setSessions] = useState<SessionHistoryEntry[]>([]);
@@ -400,11 +402,14 @@ export function ProfileSettingsPanel() {
                   {t("profile.workloadSummary", "Workload summary")}
                 </div>
                 <div className="text-sm text-text-primary">
-                  {t("profile.openWo", "Open WO")}: {workload?.open_work_orders ?? 0}
+                  {woOpenRuleText(workload?.open_work_orders_rule)?.figure ??
+                    t("profile.openWo", "Open WO")}
+                  : {workload?.open_work_orders ?? 0}
                 </div>
                 <div className="text-sm text-text-primary">
-                  {t("profile.inProgressWo", "In progress WO")}:{" "}
-                  {workload?.in_progress_work_orders ?? 0}
+                  {woOpenRuleText(workload?.in_progress_work_orders_rule)?.figure ??
+                    t("profile.inProgressWo", "In progress WO")}
+                  : {workload?.in_progress_work_orders ?? 0}
                 </div>
                 <div className="text-sm text-text-primary">
                   {t("profile.pendingDi", "Pending DI")}: {workload?.pending_interventions ?? 0}

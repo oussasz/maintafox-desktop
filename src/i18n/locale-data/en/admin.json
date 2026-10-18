@@ -741,6 +741,7 @@
       "facetsLoadError": "The log filter choices could not be loaded: the filters are disabled."
     },
     "roleEditor": {
+      "unsavedLeaveBody": "The role \"{{name}}\" has unsaved changes (permissions or description). They are lost if you leave this tab or page.",
       "unsavedTitle": "Discard the changes?",
       "unsavedBody": "The role \"{{name}}\" has unsaved changes (permissions or description). They are lost if you open another role.",
       "discardChanges": "Discard changes",

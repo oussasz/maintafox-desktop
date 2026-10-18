@@ -97,6 +97,16 @@ export function moduleLabel(t: TFunction, code: string | null | undefined): stri
   return translated(t, `labels.module.${canonical}`, code);
 }
 
+/**
+ * Name of an event or audit action ("login.success" → "Signed in"). Known codes are translated;
+ * a code this version does not know keeps the readable fallback ("sync repair execute"), never a
+ * blank. Keys replace the code's dots with "__" (dots separate i18n key levels).
+ */
+export function eventLabel(t: TFunction, code: string | null | undefined): string {
+  if (!code) return String(t("labels.module.none"));
+  return translated(t, `labels.event.${code.replace(/\./g, "__")}`, code);
+}
+
 export function severityLabel(t: TFunction, code: string): string {
   return translated(t, `labels.severity.${code}`, code);
 }

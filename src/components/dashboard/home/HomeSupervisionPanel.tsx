@@ -12,6 +12,7 @@ import { useVisibleDiQueues } from "@/components/di/DiQueueBar";
 import { useWoTypeLabels, woNatureLabel } from "@/components/wo/use-wo-type-labels";
 import { useFormatters } from "@/hooks/use-formatters";
 import { listLinks } from "@/lib/list-links";
+import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { type HomePeriod, getHomeSupervision } from "@/services/home-service";
 import type { HomeSupervision, HomeSupervisionWorkOrders } from "@shared/ipc-types";
 
@@ -341,6 +342,8 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
 
 function WoBacklogSection({ wo }: { wo: HomeSupervisionWorkOrders }) {
   const { t } = useTranslation("dashboard");
+  // The backlog counts one named "open OT" rule; its figures say which and open the same list.
+  const openRule = useWoOpenRuleText()(wo.open_rule);
   const { formatNumber } = useFormatters();
   const { levels, labelOf: urgencyLabel } = useUrgencyScale();
   const { types, language } = useWoTypeLabels();
@@ -376,7 +379,10 @@ function WoBacklogSection({ wo }: { wo: HomeSupervisionWorkOrders }) {
     <HomeSection
       title={t("home.supervision.wo.title")}
       definitions={[
-        { label: t("home.supervision.wo.open"), text: t("home.def.backlogOpen") },
+        {
+          label: t("home.supervision.wo.open"),
+          text: openRule ? `${openRule.label} — ${openRule.hint}` : t("home.def.backlogOpen"),
+        },
         { label: t("home.supervision.wo.overdue"), text: t("home.def.woOverdueAll") },
         { label: t("home.supervision.wo.planned"), text: t("home.def.planned") },
         { label: t("home.supervision.wo.reactive"), text: t("home.def.reactive") },
@@ -389,7 +395,9 @@ function WoBacklogSection({ wo }: { wo: HomeSupervisionWorkOrders }) {
         <HomeFigure
           label={t("home.supervision.wo.open")}
           value={formatNumber(wo.open)}
-          to={listLinks.workOrders({ scope: "open" })}
+          {...(openRule
+            ? { hint: openRule.label, to: listLinks.workOrders({ scope: openRule.scope }) }
+            : {})}
         />
         <HomeFigure
           label={t("home.supervision.wo.overdue")}
@@ -400,18 +408,24 @@ function WoBacklogSection({ wo }: { wo: HomeSupervisionWorkOrders }) {
         <HomeFigure
           label={t("home.supervision.wo.planned")}
           value={formatNumber(wo.planned)}
-          to={listLinks.workOrders({ scope: "open", mix: "planned" })}
+          to={
+            openRule ? listLinks.workOrders({ scope: openRule.scope, mix: "planned" }) : undefined
+          }
         />
         <HomeFigure
           label={t("home.supervision.wo.reactive")}
           value={formatNumber(wo.reactive)}
-          to={listLinks.workOrders({ scope: "open", mix: "reactive" })}
+          to={
+            openRule ? listLinks.workOrders({ scope: openRule.scope, mix: "reactive" }) : undefined
+          }
         />
         <HomeFigure
           label={t("home.supervision.wo.emergency")}
           value={formatNumber(wo.emergency)}
           tone={wo.emergency > 0 ? "attention" : undefined}
-          to={listLinks.workOrders({ scope: "open", mix: "emergency" })}
+          to={
+            openRule ? listLinks.workOrders({ scope: openRule.scope, mix: "emergency" }) : undefined
+          }
         />
       </div>
       {wo.cells.length === 0 ? (

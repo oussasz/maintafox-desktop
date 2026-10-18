@@ -18,14 +18,54 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
 
-/// Statuses whose work is still ahead (not finished, not abandoned).
-pub const OPEN_STATUS_SQL: &str = "('draft', 'planning', 'ready', 'in_progress', 'on_hold')";
+// ── The two "open work order" rules (owner decision: keep both, name them) ──────────────────
+//
+// - "Open (work to do)" ([`RULE_OPEN_WORK_TO_DO`]): status in [`OPEN_STATUS_SQL`] — draft to on
+//   hold, the work still ahead. Home, backlog, OT lists, asset figures, workload.
+// - "Not yet closed" ([`RULE_NOT_YET_CLOSED`]): status not in [`CLOSED_STATUS_SQL`] — also counts
+//   the completed OTs waiting for close-out. Reports and the analytics as-of counts.
+//
+// Every SQL predicate on an OT's open state uses one of the two lists (`{alias}.code IN
+// {OPEN_STATUS_SQL}` / `{alias}.code NOT IN {CLOSED_STATUS_SQL}`); none is written by hand.
+
+/// [`OPEN_STATUS_SQL`] as a literal, for `concat!` in `const` SQL.
+#[macro_export]
+macro_rules! wo_open_statuses_sql {
+    () => {
+        "('draft', 'planning', 'ready', 'in_progress', 'on_hold')"
+    };
+}
+
+/// [`CLOSED_STATUS_SQL`] as a literal, for `concat!` in `const` SQL.
+#[macro_export]
+macro_rules! wo_closed_statuses_sql {
+    () => {
+        "('closed', 'cancelled')"
+    };
+}
+
+/// Statuses whose work is still ahead (not finished, not abandoned): "Open (work to do)".
+pub const OPEN_STATUS_SQL: &str = wo_open_statuses_sql!();
+
+/// Statuses that end an OT (closed or cancelled). Not in this list = "Not yet closed".
+pub const CLOSED_STATUS_SQL: &str = wo_closed_statuses_sql!();
+
+/// SQL predicate (status alias `s`): the OT is not yet closed ([`CLOSED_STATUS_SQL`]).
+pub const NOT_CLOSED_SQL: &str = concat!("(s.code NOT IN ", wo_closed_statuses_sql!(), ")");
+
+/// Rule code of a figure counting "Open (work to do)" OTs ([`OPEN_STATUS_SQL`]).
+pub const RULE_OPEN_WORK_TO_DO: &str = "open_work_to_do";
+/// Rule code of a figure counting "Not yet closed" OTs ([`NOT_CLOSED_SQL`]).
+pub const RULE_NOT_YET_CLOSED: &str = "not_yet_closed";
 
 /// SQL predicate (aliases `wo` and its status `s`, one bind: now, RFC 3339): an OT whose work is
 /// still ahead ([`OPEN_STATUS_SQL`]) and whose planned end is past — the one "overdue" rule (OT
 /// dashboard, home page, `analytics::as_of::wo_overdue_at` at now), so overdue is part of open.
-pub const WO_OVERDUE_SQL: &str = "(s.code IN ('draft', 'planning', 'ready', 'in_progress', 'on_hold') \
-     AND wo.planned_end IS NOT NULL AND datetime(wo.planned_end) < datetime(?))";
+pub const WO_OVERDUE_SQL: &str = concat!(
+    "(s.code IN ",
+    wo_open_statuses_sql!(),
+    " AND wo.planned_end IS NOT NULL AND datetime(wo.planned_end) < datetime(?))"
+);
 pub const MAX_WEEKS: i64 = 12;
 
 #[derive(Debug, Clone, Deserialize)]

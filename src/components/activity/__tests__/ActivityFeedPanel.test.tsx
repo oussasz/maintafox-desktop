@@ -51,6 +51,9 @@ vi.mock("@/services/activity-service", () => ({
     activityMocks.getEventChain(eventId, rootTable),
 }));
 
+const org = vi.hoisted(() => ({ listOrgTree: vi.fn() }));
+vi.mock("@/services/org-node-service", () => org);
+
 function renderPanel() {
   return render(
     <PermissionProvider>
@@ -75,6 +78,32 @@ describe("ActivityFeedPanel accessibility and saved views", () => {
     mockGetMyPermissions.mockResolvedValue([permission(P.LOG_VIEW)]);
     activityMocks.listActivityEvents.mockClear();
     activityMocks.listSavedActivityFilters.mockClear();
+    org.listOrgTree.mockReset();
+    org.listOrgTree.mockResolvedValue([
+      { node: { id: 4, code: "PL1", name: "Plant 1", depth: 0 } },
+      { node: { id: 7, code: "UT", name: "Utilities", depth: 1 } },
+    ]);
+  });
+
+  it("offers the organisation units from the tree, not a number field", async () => {
+    mockGetMyPermissions.mockResolvedValue([permission(P.LOG_VIEW), permission(P.ORG_VIEW)]);
+    renderPanel();
+    await waitFor(() => expect(org.listOrgTree).toHaveBeenCalled());
+    const unit = await screen.findByLabelText(/filters\.orgUnit$|^Organisation unit$/);
+    fireEvent.keyDown(unit, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: /UT — Utilities/ }));
+    fireEvent.click(screen.getByRole("button", { name: /filters\.apply|Apply/ }));
+    await waitFor(() =>
+      expect(activityMocks.listActivityEvents).toHaveBeenLastCalledWith(
+        expect.objectContaining({ entity_scope_id: 7 }),
+      ),
+    );
+  });
+
+  it("names the missing right instead of a unit list without the organisation view", async () => {
+    renderPanel();
+    expect(await screen.findByTestId("list-access-orgNodes")).toBeInTheDocument();
+    expect(org.listOrgTree).not.toHaveBeenCalled();
   });
 
   it("exposes readable filter labels (no column names) and applies a saved view", async () => {

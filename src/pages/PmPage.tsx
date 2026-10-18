@@ -65,7 +65,7 @@ import { useFormatters } from "@/hooks/use-formatters";
 import { LIST_PARAM, dueWindowParam, withoutParams } from "@/lib/list-links";
 import { type PmOccurrenceRow, getPmOccurrence } from "@/services/pm-service";
 import { pushAppToast } from "@/store/app-toast-store";
-import { usePmStore } from "@/stores/pm-store";
+import { type PmCalendarRange, usePmStore } from "@/stores/pm-store";
 import type { PmPlanVersion } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -121,6 +121,20 @@ export function PmPage() {
   const error = usePmStore((s) => s.error);
   const detailError = usePmStore((s) => s.detailError);
   const loadWorkspace = usePmStore((s) => s.loadWorkspace);
+  const loadCalendarOccurrences = usePmStore((s) => s.loadCalendarOccurrences);
+  // The calendar reads only the dates it shows; a failed read is shown on the calendar.
+  const [calendarError, setCalendarError] = useState<unknown>(null);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const loadCalendarRange = useCallback(
+    (range?: PmCalendarRange) => {
+      setCalendarError(null);
+      setCalendarLoading(true);
+      loadCalendarOccurrences(range)
+        .catch((err: unknown) => setCalendarError(err))
+        .finally(() => setCalendarLoading(false));
+    },
+    [loadCalendarOccurrences],
+  );
   const openPlan = usePmStore((s) => s.openPlan);
   const closePlan = usePmStore((s) => s.closePlan);
   const createPlan = usePmStore((s) => s.createPlan);
@@ -571,11 +585,21 @@ export function PmPage() {
               onOpenPlan={(id) => void openPlan(id)}
             />
           ) : view === "calendar" ? (
-            <PmCalendarView
-              occurrences={filteredCalendar}
-              loading={loading}
-              onChipClick={(occ) => void openPlan(occ.pm_plan_id)}
-            />
+            <>
+              {calendarError != null ? (
+                <ErrorState
+                  className="mb-3 py-4"
+                  error={calendarError}
+                  onRetry={() => loadCalendarRange()}
+                />
+              ) : null}
+              <PmCalendarView
+                occurrences={filteredCalendar}
+                loading={loading || calendarLoading}
+                onChipClick={(occ) => void openPlan(occ.pm_plan_id)}
+                onVisibleRangeChange={loadCalendarRange}
+              />
+            </>
           ) : (
             <PmDueQueueView
               occurrences={filteredDue}

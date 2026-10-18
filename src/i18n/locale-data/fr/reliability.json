@@ -1260,7 +1260,15 @@
       "perYear": "{{value}} par an",
       "hidden": "Cachée",
       "evident": "Évidente",
-      "save": "Enregistrer les grilles"
+      "save": "Enregistrer les grilles",
+      "loadError": "Les grilles de cotation AMDEC n'ont pas pu être chargées",
+      "hostHint": "Définitions des cotations AMDEC utilisées par toutes les études du site. Les notes (1–10) et les zones sont fixes ; leurs définitions et attributs sont ceux du site.",
+      "whoEdits": "Modifiables par les titulaires du droit de gestion fiabilité (ram.manage).",
+      "readOnly": "Lecture seule : la modification demande le droit de gestion fiabilité (ram.manage).",
+      "edit": "Modifier les grilles",
+      "view": "Consulter les grilles",
+      "managedInReference": "Ces grilles se modifient dans Données de référence › Échelles AMDEC.",
+      "reviewFormerUnreadable": "À revoir : les anciennes grilles de cotation étaient illisibles, les grilles Maintafox sont en place. Vérifiez chaque grille puis enregistrez."
     },
     "rcm": {
       "emptyTitle": "Aucun mode à décider",
@@ -1673,6 +1681,8 @@
     "STUDY_TIME_BASIS_INVALID": "Base de temps inconnue.",
     "STUDY_TOO_MANY_ASSETS": "L'étude dépasse le nombre d'équipements autorisé.",
     "SYSTEM_MISSION_INVALID": "La durée de mission doit être un nombre positif.",
-    "SYSTEM_MODEL_INCOMPLETE": "Le modèle système est incomplet : corrigez les blocs signalés dans le diagramme."
+    "SYSTEM_MODEL_INCOMPLETE": "Le modèle système est incomplet : corrigez les blocs signalés dans le diagramme.",
+    "RATING_SCALE_SCORES": "Chaque grille doit coter chaque note de 1 à 10 une seule fois.",
+    "RATING_SCALE_LABEL": "Chaque cotation doit avoir une définition en français et en anglais."
   }
 }

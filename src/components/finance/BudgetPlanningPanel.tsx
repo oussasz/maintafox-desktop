@@ -25,6 +25,7 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -39,6 +40,7 @@ import { toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
+import { useCanReadList } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import {
   createBudgetLine,
@@ -262,7 +264,7 @@ function CostCentersSection({
   );
 }
 
-function CostCenterDialog({
+export function CostCenterDialog({
   center,
   centers,
   onClose,
@@ -282,10 +284,14 @@ function CostCenterDialog({
   );
   const [active, setActive] = useState(center ? center.is_active === 1 : true);
   const [nodes, setNodes] = useState<{ id: number; label: string }[]>([]);
+  // Organisation nodes: without the organisation view right they are not requested (a refused
+  // request used to show as an error in this dialog); the field says which right is missing.
+  const canReadOrg = useCanReadList("orgNodes");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
+    if (!canReadOrg) return;
     listOrgTree()
       .then((rows) =>
         setNodes(
@@ -295,7 +301,7 @@ function CostCenterDialog({
         ),
       )
       .catch((err: unknown) => setError(err));
-  }, []);
+  }, [canReadOrg]);
 
   const valid = code.trim().length > 0 && name.trim().length > 0;
   const submit = async () => {
@@ -357,7 +363,7 @@ function CostCenterDialog({
           </div>
           <div className="space-y-1">
             <Label htmlFor="cc-node">{t("planning.col.orgNode")}</Label>
-            <Select value={entity} onValueChange={setEntity}>
+            <Select value={entity} onValueChange={setEntity} disabled={!canReadOrg}>
               <SelectTrigger id="cc-node">
                 <SelectValue />
               </SelectTrigger>
@@ -370,7 +376,11 @@ function CostCenterDialog({
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-text-muted">{t("planning.orgNodeHint")}</p>
+            {canReadOrg ? (
+              <p className="text-xs text-text-muted">{t("planning.orgNodeHint")}</p>
+            ) : (
+              <ListAccessNote list="orgNodes" />
+            )}
           </div>
           <div className="space-y-1">
             <Label htmlFor="cc-parent">{t("planning.col.parent")}</Label>

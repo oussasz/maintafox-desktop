@@ -1,4 +1,13 @@
 {
+  "woOpenRule": {
+    "figure": "OT — {{rule}}",
+    "open_work_to_do": "Ouverts (travail à faire)",
+    "not_yet_closed": "Pas encore clôturés",
+    "hint": {
+      "open_work_to_do": "OT de brouillon à en attente : le travail reste à faire.",
+      "not_yet_closed": "Tous les OT sauf clôturés ou annulés, y compris ceux terminés en attente de clôture."
+    }
+  },
   "listAccess": {
     "people": "Lire la liste du personnel demande le droit de consultation du personnel.",
     "teams": "Lire les équipes demande le droit de consultation du personnel.",

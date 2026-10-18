@@ -117,6 +117,12 @@ export interface KanbanBoardProps<T = KanbanCard> {
       ) => KanbanMoveOutcome | Promise<KanbanMoveOutcome>)
     | undefined;
   pageSize?: number | undefined;
+  /**
+   * Lanes read from the server page by page (`useServerColumns`): each lane's count is its server
+   * total and "load more" asks the server for that lane's next page. Without it the board pages
+   * through the cards it was given.
+   */
+  serverPaging?: KanbanServerPaging | undefined;
   /** Already-localized load-more text builder (defaults to common.kanban.showMore). */
   loadMoreLabel?: ((remaining: number) => string) | undefined;
   /**
@@ -128,4 +134,11 @@ export interface KanbanBoardProps<T = KanbanCard> {
   empty?: ReactNode | undefined;
   className?: string | undefined;
   "aria-label"?: string | undefined;
+}
+
+export interface KanbanServerPaging {
+  /** Server total of each lane (by column id). */
+  totals: Record<string, number>;
+  onLoadMore: (columnId: string) => void;
+  loadingMore?: Record<string, boolean> | undefined;
 }

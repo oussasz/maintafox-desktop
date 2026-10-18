@@ -117,6 +117,7 @@ export function RequestsPage() {
   const dateLocale = intlLocaleForLanguage(i18n.language);
   const [searchParams, setSearchParams] = useSearchParams();
   const items = useDiStore((s) => s.items);
+  const listFilter = useDiStore((s) => s.filter);
   const total = useDiStore((s) => s.total);
   const loading = useDiStore((s) => s.loading);
   const loadingMore = useDiStore((s) => s.loadingMore);
@@ -855,7 +856,11 @@ export function RequestsPage() {
         </div>
       )}
       {view === "kanban" && !showListError && !showEmpty && (
-        <DiKanbanBoard items={items} onCardClick={(di) => void openDi(di.id)} />
+        <DiKanbanBoard
+          filter={listFilter}
+          reloadSignal={items}
+          onCardClick={(di) => void openDi(di.id)}
+        />
       )}
       {view === "calendar" && !showListError && !showEmpty && (
         <DiCalendarView items={items} onChipClick={(di) => void openDi(di.id)} />

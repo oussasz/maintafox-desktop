@@ -1086,9 +1086,10 @@ mod tests {
             .await
             .expect_err("third wrong pin should disable pin mode");
         assert!(
-            third.to_string().contains("PIN désactivé"),
-            "third attempt should disable pin mode: {third}"
+            matches!(third, crate::errors::AppError::PinDisabled),
+            "third attempt should disable pin mode with its own code: {third}"
         );
+        assert_eq!(serde_json::to_value(&third).expect("ipc json")["code"], "PIN_DISABLED");
 
         // Password unlock remains available after PIN disable.
         let user_row = session_manager::find_active_user(&db, "t19_user")

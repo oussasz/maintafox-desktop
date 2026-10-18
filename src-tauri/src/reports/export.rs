@@ -117,7 +117,9 @@ fn dashboard_summary_rows(locale: ReportLocale, f: &DashboardSummaryFigures) -> 
             f.open_di.to_string(),
         ),
         (
-            locale.pick("Ordres de travail ouverts", "Open work orders").to_string(),
+            locale
+                .pick("Ordres de travail non clôturés", "Work orders not yet closed")
+                .to_string(),
             f.open_wo.to_string(),
         ),
         (locale.pick("Équipements", "Assets").to_string(), f.assets.to_string()),
@@ -242,8 +244,8 @@ async fn export_open_work_orders(
             .map(|(st, n)| (wo_status_label(locale, st), n.to_string()))
             .collect();
         let title = locale.pick(
-            "Maintafox — Ordres de travail ouverts par statut",
-            "Maintafox — Open work orders by status",
+            "Maintafox — Ordres de travail non clôturés par statut",
+            "Maintafox — Work orders not yet closed, by status",
         );
         let bytes = key_value_pdf(locale, title, &pairs, headers)?;
         return Ok(ExportedBinaryDocument {
@@ -297,7 +299,7 @@ mod tests {
         assert_eq!(fr[4].1, "87,5 %");
         assert_eq!(fr[5].1, "412,3 h");
         let en = dashboard_summary_rows(ReportLocale::En, &figures);
-        assert_eq!(en[1], ("Open work orders".to_string(), "7".to_string()));
+        assert_eq!(en[1], ("Work orders not yet closed".to_string(), "7".to_string()));
         assert_eq!(en[4].1, "87.5%");
         assert_eq!(en[5].1, "412.3 h");
 

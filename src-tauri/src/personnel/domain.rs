@@ -112,8 +112,16 @@ pub struct PersonnelWorkHistoryEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonnelWorkloadSummary {
+    /// OTs of the person not yet closed (`wo::backlog::NOT_CLOSED_SQL`).
     pub open_work_orders: i64,
+    /// `wo::backlog::RULE_NOT_YET_CLOSED`.
+    #[serde(default)]
+    pub open_work_orders_rule: String,
+    /// OTs of the person with work still to do (`wo::backlog::OPEN_STATUS_SQL`).
     pub in_progress_work_orders: i64,
+    /// `wo::backlog::RULE_OPEN_WORK_TO_DO`.
+    #[serde(default)]
+    pub in_progress_work_orders_rule: String,
     pub pending_interventions: i64,
     pub interventions_last_30d: i64,
 }

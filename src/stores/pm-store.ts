@@ -72,12 +72,23 @@ export const PM_COMPLIANCE_DEFAULT_DAYS = 30;
 /** Upper bound of readiness candidates loaded for one plan (backend maximum is 1000). */
 const PM_READINESS_LIMIT = 200;
 
+/** Dates shown by the PM calendar, as the server's due-date filter (UTC text, inclusive). */
+export interface PmCalendarRange {
+  from: string;
+  to: string;
+}
+
 interface PmStoreState {
   plans: PmPlanRow[];
   versions: PmPlanVersion[];
   occurrences: PmOccurrenceRow[];
   dueOccurrences: PmOccurrenceRow[];
   calendarOccurrences: PmOccurrenceRow[];
+  /**
+   * Dates the calendar shows (`due_from` / `due_to`). Only those occurrences are read; null until
+   * the calendar is on screen, and then nothing is read for it.
+   */
+  calendarRange: PmCalendarRange | null;
   executions: PmExecutionRow[];
   findingsByExecutionId: Record<number, PmFinding[]>;
   recurringFindings: PmRecurringFinding[];
@@ -100,7 +111,8 @@ interface PmStoreState {
   openPlan: (planId: number) => Promise<void>;
   closePlan: () => void;
   loadDueOccurrences: () => Promise<void>;
-  loadCalendarOccurrences: () => Promise<void>;
+  /** Reads the calendar's occurrences for `range` (or the range on screen, if any). */
+  loadCalendarOccurrences: (range?: PmCalendarRange) => Promise<void>;
   loadOccurrences: (filter?: PmOccurrenceFilter) => Promise<void>;
   loadDueMetrics: () => Promise<void>;
   loadGenerationStatus: () => Promise<void>;
@@ -189,6 +201,7 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
   occurrences: [],
   dueOccurrences: [],
   calendarOccurrences: [],
+  calendarRange: null,
   executions: [],
   findingsByExecutionId: {},
   recurringFindings: [],
@@ -264,8 +277,18 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
     set({ dueOccurrences });
   },
 
-  loadCalendarOccurrences: async () => {
-    const calendarOccurrences = await listPmOccurrences({ include_completed: true });
+  loadCalendarOccurrences: async (range) => {
+    if (range) set({ calendarRange: range });
+    const visible = range ?? get().calendarRange;
+    if (!visible) return;
+    const calendarOccurrences = await listPmOccurrences({
+      include_completed: true,
+      due_from: visible.from,
+      due_to: visible.to,
+    });
+    // A later navigation may have moved the calendar: keep only the current range's answer.
+    const current = get().calendarRange;
+    if (current && (current.from !== visible.from || current.to !== visible.to)) return;
     set({ calendarOccurrences });
   },
 

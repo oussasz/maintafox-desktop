@@ -58,6 +58,7 @@
     "PERMISSION_DENIED": "Permission denied.",
     "LICENSE_DENIED": "License denied.",
     "STEP_UP_REQUIRED": "Step-up verification required.",
+    "PIN_DISABLED": "PIN unlock is disabled after too many wrong PINs. Unlock with your password.",
     "ACCOUNT_LOCKED": "Account locked.",
     "SESSION_LOCKED": "Session locked due to inactivity.",
     "INTERNAL_ERROR": "An internal error occurred."

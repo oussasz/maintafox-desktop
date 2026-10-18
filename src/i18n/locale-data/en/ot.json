@@ -59,6 +59,7 @@
       "closedAt": "Closed on"
     },
     "filters": {
+      "scopeNotClosed": "Not yet closed",
       "scopeOverdue": "Overdue (open, planned end passed)",
       "mix": "Work mix",
       "mixValue": {
@@ -67,7 +68,7 @@
         "emergency": "Emergency (immediate corrective)"
       },
       "scope": "Scope",
-      "scopeOpen": "Open (work still ahead)",
+      "scopeOpen": "Open (work to do)",
       "equipment": "Equipment",
       "lifecycle": "Lifecycle",
       "status": "Status",
