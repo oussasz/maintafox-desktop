@@ -648,11 +648,12 @@ describe("BudgetCockpitView", () => {
           />
         </MemoryRouter>,
       );
-      await screen.findByText("CC-MNT-PMP");
-      await waitFor(() => {
-        fireEvent.click(screen.getByText("CC-MNT-PMP"));
-        expect(svc.getBudgetCockpitDrilldown).toHaveBeenCalled();
-      });
+      // One click, on the row as it first appears: the row is not re-mounted when the
+      // catalogues load, so the click is not lost.
+      fireEvent.click(await screen.findByText("CC-MNT-PMP"));
+      await waitFor(() => expect(svc.getBudgetCockpitDrilldown).toHaveBeenCalledTimes(1));
+      // The category label follows the catalogue once loaded (not the raw code).
+      expect(screen.getAllByText("Contractors and services").length).toBeGreaterThan(0);
       // 200 table rows take a moment to render under the full suite.
       expect(
         await screen.findByText("250 actual entries", undefined, { timeout: 8000 }),
