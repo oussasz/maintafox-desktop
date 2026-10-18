@@ -678,15 +678,15 @@ pub(crate) fn delete_payload(layout: &EntityLayout, natural_key: Option<&Map<Str
     payload
 }
 
-/// Outcome of resolving an inbound reference.
-/// The first required (not soft) reference of `payload` that is not applied here yet: its entity
-/// type and sync id. Used by the safety re-checks (`permit::sync_check`) to count a row still
-/// waiting in the inbox only when it can actually be applied.
-pub(crate) async fn first_missing_ref(
+/// The required (not soft) references of `payload` that are not applied here yet: their entity type
+/// and sync id. The safety re-checks (`permit::sync_check`) count a row still waiting in the inbox
+/// only when everything it refers to is here (its own parent excepted, applied with it).
+pub(crate) async fn missing_refs(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
     payload: &Map<String, Value>,
-) -> AppResult<Option<(&'static str, String)>> {
+) -> AppResult<Vec<(&'static str, String)>> {
+    let mut missing = Vec::new();
     for column in &layout.columns {
         let Role::Ref {
             key,
@@ -703,12 +703,13 @@ pub(crate) async fn first_missing_ref(
         if let Resolved::Missing { target_entity, sync_id } =
             inbound_ref(conn, layout, column, target, v, payload).await?
         {
-            return Ok(Some((target_entity, sync_id)));
+            missing.push((target_entity, sync_id));
         }
     }
-    Ok(None)
+    Ok(missing)
 }
 
+/// Outcome of resolving an inbound reference.
 enum Resolved {
     Local(SqlValue),
     /// Target not here yet.
@@ -971,6 +972,7 @@ pub(crate) async fn apply_row(
     {
         return Ok(outcome);
     }
+    let group = crate::sync::apply_hooks::upsert_group(conn, layout, entity_sync_id, &payload).await?;
 
     let mut assignments: Vec<(String, SqlValue)> = Vec::new();
     let mut unresolved_soft: Vec<(String, &'static str, String)> = Vec::new();
@@ -1105,6 +1107,11 @@ pub(crate) async fn apply_row(
     }
     complete_pending_refs_to(conn, layout.def.entity_type, entity_sync_id).await?;
     crate::sync::apply_hooks::after_upsert(conn, layout, &local_row, inserted).await?;
+    if let Some(group) = group {
+        if let Some(outcome) = crate::sync::apply_hooks::after_upsert_group(conn, group).await? {
+            return Ok(outcome);
+        }
+    }
     Ok(ApplyOutcome::Applied)
 }
 

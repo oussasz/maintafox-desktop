@@ -12,27 +12,32 @@
 //!   log; `suspended` / `revalidation_required` has an open suspension;
 //! - a permit never leaves `closed`, `handed_back`, `cancelled` or `expired` except along the lifecycle
 //!   (`closed` → `handed_back`, `handed_back` → `cancelled`);
-//! - an isolation (`isolation_rule_breach`, shared with the counting of waiting isolations): verified
-//!   after it was applied and by someone other than the person who applied it; its lock removal
-//!   verified after verification and by someone other than the applier. It never moves to another
-//!   permit; it is applied or verified only while its permit is being prepared or suspended (not after
-//!   the permit started protecting the work), and its lock removal is verified only once the permit
-//!   was active (`ISOLATION_SETUP_STATUSES`, `ISOLATION_REMOVAL_STATUSES` of `permit::queries`);
-//! - a permit past draft, and an isolation or suspension of a permit still protecting work, are never
-//!   deleted (this device never deletes them);
+//! - an isolation (`isolation_rule_breach`): verified after it was applied and by someone other than
+//!   the person who applied it; its lock removal verified after verification and by someone other
+//!   than the applier. It never moves to another permit; it is added, applied or verified (and its
+//!   people never change) only while its permit is prepared or suspended — when that change reaches
+//!   a permit protecting the work, it must date from before the permit started protecting it; its
+//!   lock removal is verified only once the permit was active (`ISOLATION_SETUP_STATUSES` and
+//!   `ISOLATION_REMOVAL_STATUSES` of `permit::queries`);
 //! - a work order entering `in_progress` passes the permit gate (`permit::wo_gate`) at the time it
-//!   started or resumed: a permit when it requires one, every permit live at that time active, not
-//!   suspended, not expired, with its isolations ready.
+//!   started, resumed or was reopened: a permit when it requires one, every permit live at that time
+//!   active, not suspended, not expired, with its isolations ready;
+//! - deletes (this device never deletes them): a permit only while draft, an isolation or suspension
+//!   only of a draft or finished permit, a qualification requirement never (it is deactivated).
 //!
 //! Judged on the state, not the path (an offline device may send several steps as one row), and at the
-//! times written in the rows, never with this device's clock (it only bounds times in the future). A
-//! row already held here in the same status passes. Rows still waiting in the sync inbox count, laid
-//! over the local ones — a permit and its isolations created on another device arrive together, the
-//! isolations after the permit they name — but only a waiting row that is newer than the local one,
-//! can be applied (its references are here or waiting too) and, for an isolation, keeps the
-//! isolation rules. A referenced row that is neither here nor waiting (permit type, work-order
-//! status, the permits of a work order requiring one) makes the row wait; a rule that fails is a sync
-//! conflict for a person to decide, with nothing written.
+//! times written in the rows, never with this device's clock (it only rejects times in the future).
+//! A row already held here in the same status passes.
+//!
+//! Rows that arrive together are applied together. A permit's change is judged with its isolations,
+//! suspensions and handover logs still waiting in the inbox, and a work order's start with its
+//! waiting permits, waits and status changes — the children arrive after the row they name, so
+//! waiting for them would never end. Such a waiting child counts only when it is pending, newer than
+//! the local copy and everything it refers to (its parent excepted) is applied here; otherwise the
+//! parent waits. The counted children are then applied in the same transaction as the parent, each
+//! with its own full checks (`apply_group`): if any is refused, nothing of the group is written and
+//! the parent is a sync conflict. A rule that fails is a sync conflict for a person to decide, with
+//! nothing written.
 
 use std::collections::BTreeMap;
 
@@ -56,6 +61,14 @@ const ISOLATION_SETUP: &[&str] = &[
     "suspended",
     "revalidation_required",
 ];
+/// Permit statuses whose arrival is judged (and applied with the children it was judged on).
+const JUDGED_STATUSES: &[&str] = &["active", "closed", "handed_back", "suspended", "revalidation_required"];
+
+tokio::task_local! {
+    /// While the children counted for a permit's change are applied with it (`apply_group`): that
+    /// permit and its status before the change (`None`: new here).
+    static GROUP_PARENT: (String, Option<String>);
+}
 
 /// A non-empty text field of a payload.
 pub(crate) fn field<'a>(p: &'a Payload, key: &str) -> Option<&'a str> {
@@ -77,9 +90,9 @@ fn time(p: &Payload, key: &str) -> Option<DateTime<Utc>> {
     field(p, key).and_then(instant)
 }
 
-/// Clock difference tolerated between the devices that wrote two times being compared.
-fn skew() -> Duration {
-    Duration::minutes(MAX_CLOCK_SKEW_MINUTES)
+/// Latest time a received row may carry: this device's clock plus the tolerated difference.
+fn future_bound() -> DateTime<Utc> {
+    Utc::now() + Duration::minutes(MAX_CLOCK_SKEW_MINUTES)
 }
 
 pub(crate) fn conflict(code: &'static str, message: String) -> AppResult<Option<InboundVerdict>> {
@@ -120,7 +133,7 @@ pub(crate) fn overlay(local: Option<&Payload>, received: &Payload) -> Payload {
 }
 
 /// The isolation rule a state of an isolation breaks, if any (`permit::queries`: verify and verify
-/// removal). The received-isolation check and the counting of waiting isolations both use it.
+/// removal).
 pub(crate) fn isolation_rule_breach(iso: &Payload) -> Option<(&'static str, String)> {
     let point = field(iso, "isolation_point").unwrap_or("?");
     let applier = field(iso, "applied_by_sync_id");
@@ -171,37 +184,44 @@ async fn local_row_version(conn: &impl ConnectionTrait, table: &str, sync_id: &s
     .transpose()
 }
 
-/// Whether a waiting inbox row can be applied: each required reference is here, or waiting in the
-/// inbox itself.
-async fn references_available(conn: &impl ConnectionTrait, table: &str, received: &Payload) -> AppResult<bool> {
-    let layout = crate::sync::row_layout::layout(conn, table).await?;
-    let Some((entity_type, sync_id)) = crate::sync::row_codec::first_missing_ref(conn, &layout, received).await? else {
-        return Ok(true);
-    };
-    Ok(conn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT 1 AS w FROM sync_inbox WHERE entity_type = ? AND entity_sync_id = ? \
-              AND apply_status = 'pending' AND operation NOT IN ('delete', 'archive')",
-            [entity_type.into(), sync_id.into()],
-        ))
-        .await?
-        .is_some())
+/// A waiting inbox row applied together with the row it belongs to.
+#[derive(Debug, Clone)]
+pub(crate) struct GroupRow {
+    entity_type: &'static str,
+    sync_id: String,
+    payload_json: String,
 }
 
-/// Rows of `table` naming the parent `parent_sync_id` (local column `parent_col`, payload key
-/// `parent_key`): the local ones, with the latest waiting version of each laid over them. A waiting
-/// row counts only when it is pending (a deferred row waits for something that may never come),
-/// newer than the local row, applicable (`references_available`) and, for an isolation, within the
-/// isolation rules. A row moved to another parent by its waiting version no longer counts.
+/// Rows applied in the same transaction as a received permit or work order (`apply_group`).
+#[derive(Debug, Clone)]
+pub(crate) struct Group {
+    parent_sync_id: String,
+    previous_status: Option<String>,
+    rows: Vec<GroupRow>,
+}
+
+/// The rows of one table naming a parent: the local ones with the counted waiting versions laid over
+/// them, the counted waiting rows themselves, and why a waiting row cannot be counted yet.
+struct Children {
+    rows: Vec<(String, Payload)>,
+    counted: Vec<GroupRow>,
+    blocked: Option<String>,
+}
+
+/// Rows of `table` naming the parent `parent_sync_id` (a row of `parent_table`; local column
+/// `parent_col`, payload key `parent_key`). A waiting inbox row counts when it is pending (a deferred
+/// row waits for something that may never come), newer than the local row, everything it refers to
+/// other than this parent is applied here (otherwise: `blocked`), and, for an isolation, within the
+/// isolation rules (otherwise it is left to be refused on its own). A row moved to another parent by
+/// its waiting version no longer counts.
 async fn children(
     conn: &impl ConnectionTrait,
-    table: &str,
+    table: &'static str,
     parent_table: &str,
     parent_col: &str,
     parent_key: &str,
     parent_sync_id: &str,
-) -> AppResult<Vec<(String, Payload)>> {
+) -> AppResult<Children> {
     let mut rows: BTreeMap<String, Payload> = BTreeMap::new();
     let local = conn
         .query_all(Statement::from_sql_and_values(
@@ -222,6 +242,7 @@ async fn children(
             rows.insert(sid, p);
         }
     }
+    let layout = crate::sync::row_layout::layout(conn, table).await?;
     let waiting = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -235,6 +256,8 @@ async fn children(
             [table.into(), parent_sync_id.into()],
         ))
         .await?;
+    let mut counted = Vec::new();
+    let mut blocked = None;
     for r in waiting {
         let sid: String = r.try_get("", "sid").map_err(sync_err)?;
         let json: String = r.try_get("", "payload_json").map_err(sync_err)?;
@@ -248,23 +271,42 @@ async fn children(
         {
             continue;
         }
-        if !references_available(conn, table, &received).await? {
+        let missing: Vec<(&'static str, String)> = crate::sync::row_codec::missing_refs(conn, &layout, &received)
+            .await?
+            .into_iter()
+            .filter(|(entity, id)| !(*entity == parent_table && id == parent_sync_id))
+            .collect();
+        if let Some((entity, id)) = missing.first() {
+            blocked = Some(format!("{table} {sid} waits for {entity} {id}"));
             continue;
         }
         let merged = overlay(rows.get(&sid), &received);
         if table == "permit_isolations" && isolation_rule_breach(&merged).is_some() {
             continue;
         }
-        rows.insert(sid, merged);
+        rows.insert(sid.clone(), merged);
+        counted.push(GroupRow {
+            entity_type: table,
+            sync_id: sid,
+            payload_json: json,
+        });
     }
-    Ok(rows
-        .into_iter()
-        .filter(|(_, p)| field(p, parent_key) == Some(parent_sync_id))
-        .collect())
+    Ok(Children {
+        rows: rows
+            .into_iter()
+            .filter(|(_, p)| field(p, parent_key) == Some(parent_sync_id))
+            .collect(),
+        counted,
+        blocked,
+    })
 }
 
-async fn permit_children(conn: &impl ConnectionTrait, table: &str, permit_sync_id: &str) -> AppResult<Vec<Payload>> {
-    Ok(children(
+async fn permit_children(
+    conn: &impl ConnectionTrait,
+    table: &'static str,
+    permit_sync_id: &str,
+) -> AppResult<Children> {
+    children(
         conn,
         table,
         "work_permits",
@@ -272,10 +314,11 @@ async fn permit_children(conn: &impl ConnectionTrait, table: &str, permit_sync_i
         "permit_sync_id",
         permit_sync_id,
     )
-    .await?
-    .into_iter()
-    .map(|(_, p)| p)
-    .collect())
+    .await
+}
+
+fn payloads(c: &Children) -> Vec<&Payload> {
+    c.rows.iter().map(|(_, p)| p).collect()
 }
 
 /// Whether permits of the type named by the payload need energy isolation; `None` when the type is
@@ -299,26 +342,21 @@ async fn type_requires_isolation(conn: &impl ConnectionTrait, permit: &Payload) 
 /// The moment a permit (last) started protecting the work: its activation, or its last
 /// reinstatement when later. Reinstatements dated after the permit's own close or in the future are
 /// ignored. `None` without a readable activation time.
-async fn protection_start(
-    conn: &impl ConnectionTrait,
-    permit_sync_id: &str,
-    permit: &Payload,
-) -> AppResult<Option<DateTime<Utc>>> {
-    let Some(activated) = time(permit, "activated_at") else {
-        return Ok(None);
-    };
+fn protection_start(permit: &Payload, suspensions: &[&Payload]) -> Option<DateTime<Utc>> {
+    let activated = time(permit, "activated_at")?;
     let bound = [time(permit, "closed_at"), time(permit, "handed_back_at")]
         .into_iter()
         .flatten()
         .min()
-        .unwrap_or_else(|| Utc::now() + skew());
+        .unwrap_or_else(future_bound)
+        .min(future_bound());
     let mut at = activated;
-    for s in permit_children(conn, "permit_suspensions", permit_sync_id).await? {
-        if let Some(t) = time(&s, "reinstated_at").filter(|t| *t <= bound) {
+    for s in suspensions {
+        if let Some(t) = time(s, "reinstated_at").filter(|t| *t <= bound) {
             at = at.max(t);
         }
     }
-    Ok(Some(at))
+    Some(at)
 }
 
 /// A lock removal verified before `at` (an unreadable time counts as removed, as locally any removal
@@ -327,9 +365,7 @@ fn removed_before(iso: &Payload, at: DateTime<Utc>) -> bool {
     field(iso, "removal_verified_at").is_some_and(|t| instant(t).is_none_or(|t| t < at))
 }
 
-/// The isolations of a permit ready to protect work from `at` (`permit::queries::activation_ready`):
-/// every isolation it holds counts (none can be added while it protects work). Waiting isolations
-/// already passed `isolation_rule_breach`; local ones are checked again.
+/// The isolations of a permit ready to protect work from `at` (`permit::queries::activation_ready`).
 fn isolations_ready(
     permit_code: &str,
     needs_isolation: bool,
@@ -364,14 +400,25 @@ fn isolations_ready(
     None
 }
 
+/// The local status of a permit and the received one, when the received row changes it into a
+/// status that is judged.
+async fn permit_transition(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<(Option<Payload>, Payload)> {
+    let local = local_wire(conn, "work_permits", entity_sync_id).await?;
+    let permit = overlay(local.as_ref(), received);
+    Ok((local, permit))
+}
+
 /// Re-check of a permit received by synchronisation (see the module documentation).
 pub(crate) async fn inbound_permit_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
-    let local = local_wire(conn, "work_permits", entity_sync_id).await?;
-    let permit = overlay(local.as_ref(), received);
+    let (local, permit) = permit_transition(conn, entity_sync_id, received).await?;
     let to = field(&permit, "status").unwrap_or_default();
     let from = local.as_ref().and_then(|l| field(l, "status"));
     if from == Some(to) {
@@ -387,14 +434,32 @@ pub(crate) async fn inbound_permit_check(
             );
         }
     }
+    if !JUDGED_STATUSES.contains(&to) {
+        return Ok(None);
+    }
+    let isolations = permit_children(conn, "permit_isolations", entity_sync_id).await?;
+    let suspensions = permit_children(conn, "permit_suspensions", entity_sync_id).await?;
+    let handovers = permit_children(conn, "permit_handover_logs", entity_sync_id).await?;
+    if let Some(why) = [&isolations, &suspensions, &handovers]
+        .iter()
+        .find_map(|c| c.blocked.clone())
+    {
+        return wait(format!("permit {code}: {why}"));
+    }
     match to {
         "active" => {
-            let Some(at) = protection_start(conn, entity_sync_id, &permit).await? else {
+            let Some(at) = protection_start(&permit, &payloads(&suspensions)) else {
                 return conflict(
                     "SYNC_STATE_TIME_MISSING",
                     format!("permit {code} is active but its activation time is missing or unreadable"),
                 );
             };
+            if at > future_bound() {
+                return conflict(
+                    "SYNC_TIME_INCONSISTENT",
+                    format!("permit {code} is dated in the future ({at})"),
+                );
+            }
             let Some(expiry) = field(&permit, "expires_at") else {
                 return conflict(
                     "PERMIT_EXPIRY_MISSING",
@@ -410,14 +475,12 @@ pub(crate) async fn inbound_permit_check(
             let Some(needs) = type_requires_isolation(conn, &permit).await? else {
                 return wait(format!("permit {code}: its permit type is not applied yet"));
             };
-            let isolations = permit_children(conn, "permit_isolations", entity_sync_id).await?;
-            if let Some((c, m)) = isolations_ready(&code, needs, &isolations.iter().collect::<Vec<_>>(), at) {
+            if let Some((c, m)) = isolations_ready(&code, needs, &payloads(&isolations), at) {
                 return conflict(c, m);
             }
         }
         "closed" | "handed_back" => {
-            let pending = permit_children(conn, "permit_isolations", entity_sync_id)
-                .await?
+            let pending = payloads(&isolations)
                 .iter()
                 .filter(|i| field(i, "removal_verified_at").is_none())
                 .count();
@@ -427,20 +490,15 @@ pub(crate) async fn inbound_permit_check(
                     format!("permit {code} is {to} with {pending} lock removal(s) not verified"),
                 );
             }
-            if to == "handed_back"
-                && permit_children(conn, "permit_handover_logs", entity_sync_id)
-                    .await?
-                    .is_empty()
-            {
+            if to == "handed_back" && handovers.rows.is_empty() {
                 return conflict(
                     "PERMIT_HANDOVER_REQUIRED",
                     format!("permit {code} is handed back without a handover log"),
                 );
             }
         }
-        "suspended" | "revalidation_required" => {
-            if !permit_children(conn, "permit_suspensions", entity_sync_id)
-                .await?
+        _ => {
+            if !payloads(&suspensions)
                 .iter()
                 .any(|s| field(s, "reinstated_at").is_none())
             {
@@ -450,12 +508,69 @@ pub(crate) async fn inbound_permit_check(
                 );
             }
         }
-        _ => {}
     }
     Ok(None)
 }
 
-/// The application / verification fields of an isolation, and its permit.
+/// The waiting children a received permit's change was judged on, to apply with it.
+pub(crate) async fn permit_group(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<Option<Group>> {
+    let (local, permit) = permit_transition(conn, entity_sync_id, received).await?;
+    let to = field(&permit, "status").unwrap_or_default();
+    let from = local.as_ref().and_then(|l| field(l, "status")).map(str::to_string);
+    if from.as_deref() == Some(to) || !JUDGED_STATUSES.contains(&to) {
+        return Ok(None);
+    }
+    let mut rows = Vec::new();
+    for table in ["permit_isolations", "permit_suspensions", "permit_handover_logs"] {
+        rows.extend(permit_children(conn, table, entity_sync_id).await?.counted);
+    }
+    Ok((!rows.is_empty()).then(|| Group {
+        parent_sync_id: entity_sync_id.to_string(),
+        previous_status: from,
+        rows,
+    }))
+}
+
+/// Applies the children a row was judged on, after the row itself, in its transaction. Each one goes
+/// through the full apply (its own checks); if one is not applied, the caller's transaction is rolled
+/// back and the row becomes a conflict.
+pub(crate) async fn apply_group(conn: &impl ConnectionTrait, group: Group) -> AppResult<Option<InboundVerdict>> {
+    for row in group.rows {
+        let layout = crate::sync::row_layout::layout(conn, row.entity_type).await?;
+        let outcome = GROUP_PARENT
+            .scope(
+                (group.parent_sync_id.clone(), group.previous_status.clone()),
+                Box::pin(crate::sync::row_codec::apply_row(
+                    conn,
+                    &layout,
+                    &row.sync_id,
+                    "upsert",
+                    &row.payload_json,
+                )),
+            )
+            .await?;
+        use crate::sync::materialize::ApplyOutcome;
+        match outcome {
+            ApplyOutcome::Applied | ApplyOutcome::Unchanged => {}
+            ApplyOutcome::Conflict { code, message } | ApplyOutcome::Deferred { code, message } => {
+                return conflict(
+                    "SYNC_GROUP_REFUSED",
+                    format!(
+                        "{} {} received with it was refused ({code}: {message})",
+                        row.entity_type, row.sync_id
+                    ),
+                );
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// The people and times of an isolation's actions, and its permit.
 fn isolation_actions(p: &Payload) -> [Option<&str>; 7] {
     [
         field(p, "permit_sync_id"),
@@ -501,42 +616,88 @@ pub(crate) async fn inbound_isolation_check(
     let Some(permit) = local_wire(conn, "work_permits", permit_sync).await? else {
         return Ok(None);
     };
-    let status = field(&permit, "status").unwrap_or_default();
+    let current = field(&permit, "status").unwrap_or_default().to_string();
+    let code = field(&permit, "code").unwrap_or(permit_sync).to_string();
+    // Applied with its permit's change: judged against the permit as it was before that change.
+    let judged = GROUP_PARENT
+        .try_with(|(parent, previous)| (parent == permit_sync).then(|| previous.clone()))
+        .ok()
+        .flatten()
+        .map_or_else(
+            || current.clone(),
+            |previous| previous.unwrap_or_else(|| "draft".into()),
+        );
+    let wrong = |what: &str| {
+        conflict(
+            "PERMIT_ISOLATION_WRONG_STATUS",
+            format!("isolation '{point}': {what} while permit {code} protects the work"),
+        )
+    };
+    if local.is_none() && !ISOLATION_SETUP.contains(&judged.as_str()) {
+        return wrong("added");
+    }
+    let swapped = |key: &str| {
+        local
+            .as_ref()
+            .is_some_and(|l| field(l, key).is_some() && field(l, key) != field(&iso, key))
+    };
+    if (swapped("applied_by_sync_id") || swapped("verified_by_sync_id")) && !ISOLATION_SETUP.contains(&judged.as_str())
+    {
+        return wrong("its fitter or verifier changed");
+    }
+    if swapped("removal_verified_by_sync_id") {
+        return wrong("its removal verifier changed");
+    }
     let changed =
         |key: &str| field(&iso, key).is_some() && local.as_ref().is_none_or(|l| field(l, key) != field(&iso, key));
-    let code = field(&permit, "code").unwrap_or(permit_sync).to_string();
-    // Applied or verified only while the permit was being prepared or suspended: a permit that
-    // protects (or protected) the work had it before it started, or before its last reinstatement.
-    if (changed("applied_at") || changed("verified_at")) && !ISOLATION_SETUP.contains(&status) {
-        if let Some(start) = protection_start(conn, permit_sync, &permit).await? {
+    // Fitted or verified only while the permit was prepared or suspended: when that reaches a permit
+    // that protects (or protected) the work, it dates from before the permit started protecting it.
+    if (changed("applied_at") || changed("verified_at")) && !ISOLATION_SETUP.contains(&current.as_str()) {
+        let suspensions = permit_children(conn, "permit_suspensions", permit_sync).await?;
+        if let Some(start) = protection_start(&permit, &payloads(&suspensions)) {
             for key in ["applied_at", "verified_at"] {
-                if changed(key) && time(&iso, key).is_none_or(|t| t > start + skew()) {
-                    return conflict(
-                        "PERMIT_ISOLATION_WRONG_STATUS",
-                        format!("isolation '{point}' was changed after permit {code} started protecting the work"),
-                    );
+                if changed(key) && time(&iso, key).is_none_or(|t| t > start) {
+                    return wrong("fitted or verified after the permit started protecting the work");
                 }
             }
         }
     }
-    // A lock removal is verified only once the permit was active (never while it is prepared or
-    // suspended).
-    if changed("removal_verified_at") && ISOLATION_SETUP.contains(&status) {
+    // A lock removal is verified only once the permit was active.
+    if changed("removal_verified_at") && ISOLATION_SETUP.contains(&current.as_str()) {
         return conflict(
             "PERMIT_ISOLATION_WRONG_STATUS",
-            format!("isolation '{point}': lock removal verified while permit {code} is '{status}'"),
+            format!("isolation '{point}': lock removal verified while permit {code} is '{current}'"),
         );
     }
     Ok(None)
 }
 
-/// Re-check of a delete received by synchronisation: this device never deletes a permit past draft,
-/// nor an isolation or suspension of a permit that still protects (or will protect) work.
+/// Re-check of a delete received by synchronisation. This device never deletes these rows: a
+/// permit may go only while draft, an isolation or suspension only with a draft or finished permit,
+/// and a qualification requirement never (it is deactivated, which keeps its history).
 pub(crate) async fn inbound_delete_check(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
 ) -> AppResult<Option<InboundVerdict>> {
+    if entity_type == "qualification_requirements" {
+        let held = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS h FROM qualification_requirements WHERE entity_sync_id = ?",
+                [entity_sync_id.into()],
+            ))
+            .await?
+            .is_some();
+        return if held {
+            conflict(
+                "QUALIFICATION_REQUIREMENT_DELETE_REFUSED",
+                "a qualification requirement is deactivated, never deleted, by synchronisation".into(),
+            )
+        } else {
+            Ok(None)
+        };
+    }
     let sql = match entity_type {
         "work_permits" => "SELECT status, code FROM work_permits WHERE entity_sync_id = ?",
         "permit_isolations" => {
@@ -561,15 +722,14 @@ pub(crate) async fn inbound_delete_check(
     };
     let status: String = row.try_get("", "status").map_err(sync_err)?;
     let code: String = row.try_get("", "code").map_err(sync_err)?;
-    let refused = if entity_type == "work_permits" {
-        status != "draft"
-    } else {
-        !TERMINAL.contains(&status.as_str())
-    };
-    if refused {
+    let allowed = status == "draft" || (entity_type != "work_permits" && TERMINAL.contains(&status.as_str()));
+    if !allowed {
         return conflict(
             "PERMIT_DELETE_REFUSED",
-            format!("{entity_type} of permit {code} ('{status}') cannot be deleted by synchronisation"),
+            format!(
+                "{entity_type} of permit {code} ('{status}') cannot be deleted by synchronisation: only a draft \
+                 permit, or the isolations and suspensions of a draft or finished permit"
+            ),
         );
     }
     Ok(None)
@@ -587,37 +747,101 @@ async fn status_code(conn: &impl ConnectionTrait, status_sync_id: &str) -> AppRe
     .transpose()
 }
 
-/// When a work order last entered `in_progress`: the latest of its start, the end of its last wait
-/// (resume) and its last recorded change to in progress (reopen), never later than the row itself was
-/// written.
-async fn work_started_at(
+/// The received work order, when it enters `in_progress` here (otherwise `None`), with its local copy.
+async fn work_order_start(
     conn: &impl ConnectionTrait,
-    wo_sync_id: &str,
-    wo: &Payload,
-    started: DateTime<Utc>,
-) -> AppResult<DateTime<Utc>> {
-    let mut at = started;
-    for (_, s) in children(
-        conn,
-        "work_order_delay_segments",
-        "work_orders",
-        "work_order_id",
-        "work_order_sync_id",
-        wo_sync_id,
-    )
-    .await?
-    {
-        if let Some(t) = time(&s, "ended_at") {
-            at = at.max(t);
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<Result<Option<Payload>, String>> {
+    let local = local_wire(conn, "work_orders", entity_sync_id).await?;
+    let wo = overlay(local.as_ref(), received);
+    let Some(status_sync) = field(&wo, "status_sync_id") else {
+        return Ok(Ok(None));
+    };
+    let Some(to) = status_code(conn, status_sync).await? else {
+        return Ok(Err(format!("work-order status {status_sync} is not applied yet")));
+    };
+    if to != "in_progress" {
+        return Ok(Ok(None));
+    }
+    if let Some(from_sync) = local.as_ref().and_then(|l| field(l, "status_sync_id")) {
+        if status_code(conn, from_sync).await?.as_deref() == Some("in_progress") {
+            return Ok(Ok(None));
         }
     }
-    // Local changes to in progress (recorded rows may have no sync identity), then waiting ones.
+    Ok(Ok(Some(wo)))
+}
+
+async fn wo_children(
+    conn: &impl ConnectionTrait,
+    table: &'static str,
+    key: &str,
+    col: &str,
+    wo_sync: &str,
+) -> AppResult<Children> {
+    children(conn, table, "work_orders", col, key, wo_sync).await
+}
+
+/// Re-check of a work order received by synchronisation as it enters `in_progress`: the permit gate
+/// (`permit::wo_gate`) at the time the work started, resumed or was reopened. A permit is judged in
+/// the state it had at that time (its activation, close, suspensions and expiry are dated), so a later
+/// version of it (suspended or closed since) does not refuse a start that was valid.
+pub(crate) async fn inbound_work_order_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<Option<InboundVerdict>> {
+    let wo = match work_order_start(conn, entity_sync_id, received).await? {
+        Err(why) => return wait(why),
+        Ok(None) => return Ok(None),
+        Ok(Some(wo)) => wo,
+    };
+    let code = field(&wo, "code").unwrap_or(entity_sync_id).to_string();
+    let Some(started) = time(&wo, "actual_start") else {
+        return conflict(
+            "SYNC_STATE_TIME_MISSING",
+            format!("work order {code} is in progress but its start time is missing or unreadable"),
+        );
+    };
+    let segments = wo_children(
+        conn,
+        "work_order_delay_segments",
+        "work_order_sync_id",
+        "work_order_id",
+        entity_sync_id,
+    )
+    .await?;
+    let transitions = wo_children(conn, "wo_state_transition_log", "wo_sync_id", "wo_id", entity_sync_id).await?;
+    let permits = wo_children(
+        conn,
+        "work_permits",
+        "linked_work_order_sync_id",
+        "linked_work_order_id",
+        entity_sync_id,
+    )
+    .await?;
+    if let Some(why) = [&segments, &transitions, &permits]
+        .iter()
+        .find_map(|c| c.blocked.clone())
+    {
+        return wait(format!("work order {code}: {why}"));
+    }
+    // When it last entered in progress: its start, the end of its last wait (resume), its last
+    // recorded change to in progress (reopen; local rows may have no sync identity).
+    let mut moments = vec![started];
+    moments.extend(payloads(&segments).iter().filter_map(|s| time(s, "ended_at")));
+    moments.extend(
+        payloads(&transitions)
+            .iter()
+            .filter(|t| field(t, "to_status") == Some("in_progress"))
+            .filter_map(|t| time(t, "acted_at")),
+    );
     for r in conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT t.acted_at AS at FROM wo_state_transition_log t JOIN work_orders w ON w.id = t.wo_id \
              WHERE w.entity_sync_id = ? AND t.to_status = 'in_progress'",
-            [wo_sync_id.into()],
+            [entity_sync_id.into()],
         ))
         .await?
     {
@@ -627,80 +851,31 @@ async fn work_started_at(
             .as_deref()
             .and_then(instant)
         {
-            at = at.max(acted);
+            moments.push(acted);
         }
     }
-    for (_, t) in children(
-        conn,
-        "wo_state_transition_log",
-        "work_orders",
-        "wo_id",
-        "wo_sync_id",
-        wo_sync_id,
-    )
-    .await?
+    // The row was written when it last entered in progress: a wait or status change dated after it,
+    // or any time in the future, is not consistent.
+    let written = time(&wo, "updated_at");
+    if let Some(bad) = moments
+        .iter()
+        .enumerate()
+        .find(|(n, t)| **t > future_bound() || (*n > 0 && written.is_some_and(|w| **t > w)))
+        .map(|(_, t)| *t)
     {
-        if field(&t, "to_status") == Some("in_progress") {
-            if let Some(acted) = time(&t, "acted_at") {
-                at = at.max(acted);
-            }
-        }
-    }
-    if let Some(written) = time(wo, "updated_at") {
-        at = at.min(written.max(started));
-    }
-    Ok(at)
-}
-
-/// Re-check of a work order received by synchronisation as it enters `in_progress`: the permit gate
-/// (`permit::wo_gate`) at the time the work started or resumed. A permit is judged in the state it
-/// had at that time (its activation, close, suspensions and expiry are dated), so a later version of
-/// it (suspended or closed since) does not refuse a start that was valid.
-pub(crate) async fn inbound_work_order_check(
-    conn: &impl ConnectionTrait,
-    entity_sync_id: &str,
-    received: &Payload,
-) -> AppResult<Option<InboundVerdict>> {
-    let local = local_wire(conn, "work_orders", entity_sync_id).await?;
-    let wo = overlay(local.as_ref(), received);
-    let Some(status_sync) = field(&wo, "status_sync_id") else {
-        return Ok(None);
-    };
-    let Some(to) = status_code(conn, status_sync).await? else {
-        return wait(format!("work-order status {status_sync} is not applied yet"));
-    };
-    if to != "in_progress" {
-        return Ok(None);
-    }
-    if let Some(from_sync) = local.as_ref().and_then(|l| field(l, "status_sync_id")) {
-        if status_code(conn, from_sync).await?.as_deref() == Some("in_progress") {
-            return Ok(None);
-        }
-    }
-    let code = field(&wo, "code").unwrap_or(entity_sync_id).to_string();
-    let Some(started) = time(&wo, "actual_start") else {
         return conflict(
-            "SYNC_STATE_TIME_MISSING",
-            format!("work order {code} is in progress but its start time is missing or unreadable"),
+            "SYNC_TIME_INCONSISTENT",
+            format!("work order {code}: a start or resume time ({bad}) is later than the row itself or in the future"),
         );
-    };
-    let at = work_started_at(conn, entity_sync_id, &wo, started).await?;
-    let permits = children(
-        conn,
-        "work_permits",
-        "work_orders",
-        "linked_work_order_id",
-        "linked_work_order_sync_id",
-        entity_sync_id,
-    )
-    .await?;
-    if permits.is_empty() && flag(&wo, "requires_permit") {
+    }
+    let at = moments.into_iter().max().unwrap_or(started);
+    if permits.rows.is_empty() && flag(&wo, "requires_permit") {
         return wait(format!(
             "work order {code} requires a work permit and none has been received yet"
         ));
     }
     let mut live_at_start = 0;
-    for (permit_sync, p) in &permits {
+    for (permit_sync, p) in &permits.rows {
         let pcode = field(p, "code").unwrap_or_default();
         let status = field(p, "status").unwrap_or_default();
         // Cancelled or expired: not live (as locally). Closed or handed back before the start: no
@@ -716,14 +891,18 @@ pub(crate) async fn inbound_work_order_check(
             continue;
         }
         live_at_start += 1;
-        if time(p, "activated_at").is_none_or(|a| a > at + skew()) {
+        if time(p, "activated_at").is_none_or(|a| a > at) {
             return conflict(
                 "PERMIT_NOT_ACTIVE",
                 format!("work order {code} started at {at} while permit {pcode} was not active yet"),
             );
         }
+        let isolations = permit_children(conn, "permit_isolations", permit_sync).await?;
         let suspensions = permit_children(conn, "permit_suspensions", permit_sync).await?;
-        let suspended = suspensions.iter().any(|s| {
+        if let Some(why) = [&isolations, &suspensions].iter().find_map(|c| c.blocked.clone()) {
+            return wait(format!("work order {code}: permit {pcode}: {why}"));
+        }
+        let suspended = payloads(&suspensions).iter().any(|s| {
             time(s, "suspended_at").is_some_and(|t| t <= at) && time(s, "reinstated_at").is_none_or(|r| r > at)
         });
         if suspended {
@@ -743,17 +922,15 @@ pub(crate) async fn inbound_work_order_check(
         let Some(needs) = type_requires_isolation(conn, p).await? else {
             return wait(format!("permit {pcode}: its permit type is not applied yet"));
         };
-        // The isolations the permit held at the start: applied by then (one applied later, while it
-        // was suspended again, does not count against a start that was valid).
-        let isolations = permit_children(conn, "permit_isolations", permit_sync).await?;
-        let held: Vec<&Payload> = isolations
+        // The isolations the permit held at the start: fitted by then (one fitted later, while it
+        // was suspended again, does not count against a start that was valid); each verified by then.
+        let all = payloads(&isolations);
+        let held: Vec<&Payload> = all
             .iter()
-            .filter(|i| field(i, "applied_at").is_some_and(|t| instant(t).is_none_or(|t| t <= at + skew())))
+            .copied()
+            .filter(|i| field(i, "applied_at").is_some_and(|t| instant(t).is_none_or(|t| t <= at)))
             .collect();
-        let late_verified = held
-            .iter()
-            .any(|i| time(i, "verified_at").is_some_and(|v| v > at + skew()));
-        if late_verified {
+        if held.iter().any(|i| time(i, "verified_at").is_some_and(|v| v > at)) {
             return conflict(
                 "LOTO_NOT_VERIFIED",
                 format!("work order {code} started at {at} before an isolation of permit {pcode} was verified"),
@@ -770,4 +947,29 @@ pub(crate) async fn inbound_work_order_check(
         );
     }
     Ok(None)
+}
+
+/// The waiting permits, waits and status changes a received work-order start was judged on, to
+/// apply with it (each permit then applies its own children with itself).
+pub(crate) async fn work_order_group(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<Option<Group>> {
+    if !matches!(work_order_start(conn, entity_sync_id, received).await?, Ok(Some(_))) {
+        return Ok(None);
+    }
+    let mut rows = Vec::new();
+    for (table, key, col) in [
+        ("work_permits", "linked_work_order_sync_id", "linked_work_order_id"),
+        ("work_order_delay_segments", "work_order_sync_id", "work_order_id"),
+        ("wo_state_transition_log", "wo_sync_id", "wo_id"),
+    ] {
+        rows.extend(wo_children(conn, table, key, col, entity_sync_id).await?.counted);
+    }
+    Ok((!rows.is_empty()).then(|| Group {
+        parent_sync_id: entity_sync_id.to_string(),
+        previous_status: None,
+        rows,
+    }))
 }

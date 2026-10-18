@@ -94,6 +94,9 @@
       "PERMIT_ISOLATION_WRONG_STATUS": "An isolation changed while its permit did not allow it",
       "PERMIT_DELETE_REFUSED": "A permit, isolation or suspension still protecting work was deleted elsewhere",
       "QUALIFICATION_OVERRIDE_USE_PERSON": "A qualification override on a login that has a personnel record",
+      "SYNC_GROUP_REFUSED": "A change arrived with rows it depends on, and one of them breaks a rule",
+      "SYNC_TIME_INCONSISTENT": "A received change carries times that do not fit together (or are in the future)",
+      "QUALIFICATION_REQUIREMENT_DELETE_REFUSED": "A qualification requirement was deleted elsewhere (it is deactivated, never deleted)",
       "other": "Needs review"
     },
     "history": {

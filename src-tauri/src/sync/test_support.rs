@@ -337,6 +337,10 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // The approver of an override must hold the certification right on the receiving device
     // (`qualification::sync_check`): generic accounts (administrators, `is_*` = 1) are not deleted.
     ("user_accounts", "deleted_at", "NULL"),
+    // A received permit is judged on its status (`permit::sync_check`): the generic permit is
+    // active (its generic times are in order: fitted, verified, activated, lock removed, expiry),
+    // so its generic isolations arrive with it as a valid group.
+    ("work_permits", "status", "'active'"),
     // A calendar day, not a timestamp.
     ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
     // A planned crew is 1–50 people (migration 207 triggers).

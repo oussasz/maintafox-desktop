@@ -42,17 +42,28 @@ async fn wire(db: &DatabaseConnection, entity_type: &str, sync_id: &str) -> Payl
         .expect("row")
 }
 
+/// Applies a received row as the inbox pass does: in a transaction kept only when the row is
+/// applied (a refused row, or a refused row of its group, leaves nothing behind).
 async fn apply(db: &DatabaseConnection, entity_type: &str, sync_id: &str, payload: &Payload) -> ApplyOutcome {
+    use sea_orm::TransactionTrait;
     let layout = crate::sync::row_layout::layout(db, entity_type).await.expect("layout");
-    crate::sync::row_codec::apply_row(
-        db,
+    let tx = db.begin().await.expect("begin");
+    let outcome = crate::sync::row_codec::apply_row(
+        &tx,
         &layout,
         sync_id,
         "upsert",
         &serde_json::to_string(payload).expect("json"),
     )
     .await
-    .expect("apply")
+    .expect("apply");
+    if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged) {
+        tx.commit().await.expect("commit");
+    } else {
+        tx.rollback().await.expect("rollback");
+    }
+    crate::sync::row_codec::clear_ref_cache();
+    outcome
 }
 
 fn code(outcome: &ApplyOutcome) -> Option<&str> {
@@ -107,9 +118,19 @@ async fn a_received_activation_is_rechecked_on_its_isolations_and_times() {
     let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &no_time).await;
     assert_eq!(code(&outcome), Some("SYNC_STATE_TIME_MISSING"), "{outcome:?}");
     // Activated after its expiry (judged at the activation time written in the row).
-    let late = with(active.clone(), &[("activated_at", json!("2999-01-01T00:00:00Z"))]);
+    let late = with(
+        active.clone(),
+        &[
+            ("activated_at", json!("2021-01-01T00:00:00Z")),
+            ("expires_at", json!("2020-12-31T00:00:00Z")),
+        ],
+    );
     let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &late).await;
     assert_eq!(code(&outcome), Some("PERMIT_EXPIRED"), "{outcome:?}");
+    // Dated in the future: not consistent.
+    let future = with(active.clone(), &[("activated_at", json!("2999-01-01T00:00:00Z"))]);
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &future).await;
+    assert_eq!(code(&outcome), Some("SYNC_TIME_INCONSISTENT"), "{outcome:?}");
     assert_eq!(permit_status(&db, &wp).await, "issued");
 
     // Every isolation verified by a second person: applied.
@@ -419,13 +440,17 @@ async fn inbox(
 }
 
 async fn delete(db: &DatabaseConnection, entity_type: &str, sync_id: &str) -> ApplyOutcome {
+    delete_as(db, entity_type, sync_id, "delete").await
+}
+
+async fn delete_as(db: &DatabaseConnection, entity_type: &str, sync_id: &str, operation: &str) -> ApplyOutcome {
     let layout = crate::sync::row_layout::layout(db, entity_type).await.expect("layout");
     let payload = crate::sync::row_codec::delete_payload(&layout, None);
     crate::sync::row_codec::apply_row(
         db,
         &layout,
         sync_id,
-        "delete",
+        operation,
         &serde_json::to_string(&payload).expect("json"),
     )
     .await
@@ -581,10 +606,23 @@ async fn permits_isolations_and_suspensions_are_not_deleted_by_sync_while_they_p
         );
         assert!(count(entity_type, sid).await, "{entity_type} kept");
     }
+    // An archive is a delete: refused the same way.
+    let outcome = delete_as(&db, "permit_isolations", &iso.entity_sync_id, "archive").await;
+    assert_eq!(code(&outcome), Some("PERMIT_DELETE_REFUSED"), "{outcome:?}");
     // A draft permit (never protected anything) may be deleted.
     let draft = create_permit(&db, "loto", asset).await;
     let outcome = delete(&db, "work_permits", &draft.entity_sync_id).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // The isolations of a finished permit may go; the permit itself stays.
+    exec(
+        &db,
+        &format!("UPDATE work_permits SET status = 'cancelled' WHERE id = {}", wp.id),
+    )
+    .await;
+    let outcome = delete(&db, "permit_isolations", &iso.entity_sync_id).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let outcome = delete(&db, "work_permits", &wp.entity_sync_id).await;
+    assert_eq!(code(&outcome), Some("PERMIT_DELETE_REFUSED"), "{outcome:?}");
 }
 
 #[tokio::test]
@@ -904,4 +942,189 @@ async fn an_override_on_a_login_with_a_personnel_record_is_refused() {
     .expect("object");
     let outcome = apply(&db, "qualification_overrides", "qo-12", &account_override).await;
     assert_eq!(code(&outcome), Some("QUALIFICATION_OVERRIDE_USE_PERSON"), "{outcome:?}");
+}
+
+/// The isolations a permit's activation is judged on are applied with it: one refused by its own
+/// checks (verified an hour after the activation) refuses the activation too, and nothing is kept.
+#[tokio::test]
+async fn an_activation_and_its_waiting_isolations_are_applied_together_or_not_at_all() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-13").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let iso = apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-13 breaker").await).await;
+    let late = (chrono::Utc::now() + chrono::Duration::minutes(5))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let verified_late = with(
+        wire(&db, "permit_isolations", &iso.entity_sync_id).await,
+        &[("verified_at", json!(late))],
+    );
+    exec(&db, &format!("DELETE FROM permit_isolations WHERE id = {}", iso.id)).await;
+    inbox(
+        &db,
+        "permit_isolations",
+        &iso.entity_sync_id,
+        3,
+        "pending",
+        &verified_late,
+    )
+    .await;
+    let active = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("active")), ("activated_at", json!(now()))],
+    );
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &active).await;
+    assert_eq!(code(&outcome), Some("SYNC_GROUP_REFUSED"), "{outcome:?}");
+    assert_eq!(permit_status(&db, &wp).await, "issued");
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT entity_sync_id FROM permit_isolations WHERE entity_sync_id = '{}'",
+                iso.entity_sync_id
+            )
+        )
+        .await,
+        None
+    );
+
+    // Verified before the activation: both applied.
+    exec(&db, "DELETE FROM sync_inbox").await;
+    let verified = with(verified_late, &[("verified_at", json!("2026-01-01T00:00:00Z"))]);
+    let verified = with(verified, &[("applied_at", json!("2025-12-31T23:00:00Z"))]);
+    inbox(&db, "permit_isolations", &iso.entity_sync_id, 3, "pending", &verified).await;
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &active).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(permit_status(&db, &wp).await, "active");
+    assert!(text(
+        &db,
+        &format!(
+            "SELECT verified_at FROM permit_isolations WHERE entity_sync_id = '{}'",
+            iso.entity_sync_id
+        )
+    )
+    .await
+    .is_some());
+}
+
+/// A waiting isolation whose fitter is not applied here (only waiting itself) is not counted: the
+/// activation waits for it rather than trusting a row that may never be applied.
+#[tokio::test]
+async fn an_activation_waits_for_the_people_named_by_its_isolations() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-14").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let iso = apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-14 breaker").await).await;
+    let foreign = with(
+        wire(&db, "permit_isolations", &iso.entity_sync_id).await,
+        &[("applied_by_sync_id", json!("user-only-in-inbox"))],
+    );
+    exec(&db, &format!("DELETE FROM permit_isolations WHERE id = {}", iso.id)).await;
+    inbox(&db, "permit_isolations", &iso.entity_sync_id, 3, "pending", &foreign).await;
+    let ghost = json!({ "username": "ghost", "_sync_format": "row.v1" })
+        .as_object()
+        .cloned()
+        .expect("object");
+    inbox(&db, "user_accounts", "user-only-in-inbox", 1, "pending", &ghost).await;
+    let active = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("active")), ("activated_at", json!(now()))],
+    );
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &active).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    assert_eq!(permit_status(&db, &wp).await, "issued");
+}
+
+/// Once a permit protects the work, no isolation is added to it and nobody's name on an isolation
+/// changes (outside the activation it was judged on).
+#[tokio::test]
+async fn no_isolation_is_added_or_reassigned_under_a_protecting_permit() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-15").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let iso = apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-15 breaker").await).await;
+    let spare = add_isolation(&db, wp.id, "Valve V-15").await;
+    let spare = apply_and_verify(&db, &spare).await;
+    let spare_wire = wire(&db, "permit_isolations", &spare.entity_sync_id).await;
+    exec(&db, &format!("DELETE FROM permit_isolations WHERE id = {}", spare.id)).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+
+    let outcome = apply(&db, "permit_isolations", &spare.entity_sync_id, &spare_wire).await;
+    assert_eq!(code(&outcome), Some("PERMIT_ISOLATION_WRONG_STATUS"), "{outcome:?}");
+
+    let admin = user_sync(&db, 1).await;
+    let swapped = with(
+        wire(&db, "permit_isolations", &iso.entity_sync_id).await,
+        &[
+            ("verified_by_sync_id", json!(admin)),
+            ("applied_by_sync_id", json!(user_sync(&db, VERIFIER).await)),
+        ],
+    );
+    let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &swapped).await;
+    assert_eq!(code(&outcome), Some("PERMIT_ISOLATION_WRONG_STATUS"), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn a_start_time_later_than_its_work_order_row_is_refused() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-16").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let in_progress = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'in_progress'",
+    )
+    .await
+    .expect("status sync id");
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-16 breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let written = now();
+    let started = with(
+        wire(&db, "work_orders", &wo_sync).await,
+        &[
+            ("status_sync_id", json!(in_progress)),
+            ("actual_start", json!(written)),
+            ("updated_at", json!(written)),
+        ],
+    );
+    // A resume dated an hour after the row was written.
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO wo_state_transition_log (wo_id, from_status, to_status, action, actor_id, acted_at, lifecycle_state) \
+             VALUES ({wo_id}, 'on_hold', 'in_progress', 'resume', 1, '{}', 'in_progress')",
+            (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%dT%H:%M:%SZ")
+        ),
+    )
+    .await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &started).await;
+    assert_eq!(code(&outcome), Some("SYNC_TIME_INCONSISTENT"), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn a_qualification_requirement_is_never_deleted_by_sync() {
+    let db = setup().await;
+    exec(
+        &db,
+        "INSERT INTO qualification_requirements (entity_sync_id, target_kind, target_code, skill_reference_value_id,          coverage, created_at, updated_at)          SELECT 'req-sync-loto', 'loto_role', 'isolation_apply', rv.id, 'each', '2026-01-01T00:00:00Z',                 '2026-01-01T00:00:00Z'            FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id            JOIN reference_domains d ON d.id = rs.domain_id           WHERE d.code = 'PERSONNEL.SKILLS' ORDER BY rv.id LIMIT 1",
+    )
+    .await;
+    let req = text(
+        &db,
+        "SELECT entity_sync_id FROM qualification_requirements WHERE entity_sync_id = 'req-sync-loto'",
+    )
+    .await
+    .expect("requirement");
+    let outcome = delete(&db, "qualification_requirements", &req).await;
+    assert_eq!(
+        code(&outcome),
+        Some("QUALIFICATION_REQUIREMENT_DELETE_REFUSED"),
+        "{outcome:?}"
+    );
 }

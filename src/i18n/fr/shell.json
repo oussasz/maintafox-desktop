@@ -94,6 +94,9 @@
       "PERMIT_ISOLATION_WRONG_STATUS": "Un isolement modifié alors que son permis ne le permettait pas",
       "PERMIT_DELETE_REFUSED": "Un permis, isolement ou suspension qui protège encore le travail a été supprimé ailleurs",
       "QUALIFICATION_OVERRIDE_USE_PERSON": "Une dérogation de qualification sur un compte relié à une fiche personnel",
+      "SYNC_GROUP_REFUSED": "Une modification est arrivée avec des lignes dont elle dépend, et l'une d'elles enfreint une règle",
+      "SYNC_TIME_INCONSISTENT": "Une modification reçue porte des dates incohérentes (ou dans le futur)",
+      "QUALIFICATION_REQUIREMENT_DELETE_REFUSED": "Une exigence de qualification a été supprimée ailleurs (elle se désactive, elle ne se supprime pas)",
       "other": "À examiner"
     },
     "history": {

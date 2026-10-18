@@ -150,6 +150,42 @@ pub(crate) async fn before_upsert_checked(
     }
 }
 
+/// Rows waiting in the inbox that a received permit or work-order start was judged on
+/// (`permit::sync_check`): applied right after it, in its transaction (`after_upsert_group`).
+pub(crate) async fn upsert_group(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<crate::permit::sync_check::Group>> {
+    match layout.def.entity_type {
+        "work_permits" => crate::permit::sync_check::permit_group(conn, entity_sync_id, payload).await,
+        "work_orders" => crate::permit::sync_check::work_order_group(conn, entity_sync_id, payload).await,
+        _ => Ok(None),
+    }
+}
+
+/// Applies a group (`upsert_group`) after its row was written; `Some` (a conflict) makes the caller
+/// roll the whole transaction back: nothing of the group is kept.
+pub(crate) async fn after_upsert_group(
+    conn: &impl ConnectionTrait,
+    group: crate::permit::sync_check::Group,
+) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
+    use crate::sync::materialize::ApplyOutcome;
+    Ok(crate::permit::sync_check::apply_group(conn, group)
+        .await?
+        .map(|v| match v {
+            crate::settings::site::InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
+                code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+                message,
+            },
+            crate::settings::site::InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
+                code: code.into(),
+                message,
+            },
+        }))
+}
+
 /// Checks of an inbound delete before it is applied; `Some` stops it with that outcome. A permit
 /// past draft, and an isolation or suspension of a permit still protecting work, are never deleted
 /// on this device: such a delete received by sync is a conflict (`permit::sync_check`).
@@ -160,7 +196,7 @@ pub(crate) async fn before_delete_checked(
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
     use crate::sync::materialize::ApplyOutcome;
     let verdict = match layout.def.entity_type {
-        "work_permits" | "permit_isolations" | "permit_suspensions" => {
+        "work_permits" | "permit_isolations" | "permit_suspensions" | "qualification_requirements" => {
             crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?
         }
         _ => None,
