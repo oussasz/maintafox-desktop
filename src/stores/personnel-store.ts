@@ -4,6 +4,7 @@
 
 import { create } from "zustand";
 
+import { appErrorText } from "@/lib/app-error";
 import {
   createPersonnel,
   deactivatePersonnel,
@@ -162,7 +163,8 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
         set({ activePersonnel: detail });
       }
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      // A refusal (open work orders) is coded: shown in the user's language.
+      set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });

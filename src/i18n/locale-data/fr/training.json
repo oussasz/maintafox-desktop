@@ -348,6 +348,7 @@
     "SKILL_LEVEL_RANGE": "Choisissez un niveau de 1 (notions) à 5 (expert).",
     "SKILL_VALID_TO_INVALID": "Saisissez une date de fin de validité correcte.",
     "SKILL_VALIDATOR_NOT_LINKED": "Seul un utilisateur relié à une fiche personnel peut valider une compétence.",
+    "PERSONNEL_DEACTIVATION_OPEN_WORK": "Cette personne est affectée à des ordres de travail en cours ({{work_orders}}) : réaffectez-les avant de la désactiver.",
     "COMPANY_NAME_REQUIRED": "Le nom de l'entreprise est obligatoire.",
     "COMPANY_STATUS_UNKNOWN": "État de référencement ou d'assurance inconnu.",
     "COMPANY_CONTRACT_DATES": "La fin du contrat précède son début.",

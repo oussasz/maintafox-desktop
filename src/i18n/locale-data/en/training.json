@@ -348,6 +348,7 @@
     "SKILL_LEVEL_RANGE": "Choose a level from 1 (notions) to 5 (expert).",
     "SKILL_VALID_TO_INVALID": "Enter a valid end-of-validity date.",
     "SKILL_VALIDATOR_NOT_LINKED": "Only a user linked to a personnel record can validate a skill.",
+    "PERSONNEL_DEACTIVATION_OPEN_WORK": "This person is on open work orders ({{work_orders}}): reassign them before deactivating.",
     "COMPANY_NAME_REQUIRED": "The company name is required.",
     "COMPANY_STATUS_UNKNOWN": "Unknown onboarding or insurance status.",
     "COMPANY_CONTRACT_DATES": "The contract end is before its start.",
