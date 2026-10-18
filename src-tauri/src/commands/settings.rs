@@ -404,6 +404,16 @@ mod tests {
     }
 }
 
+/// The letterhead prints use, checked with the Settings panel's rules: `valid` (with its HTML),
+/// `absent`, or `invalid` (`DOC_HEADER_INVALID`) so the print can warn. Any session (prints).
+#[tauri::command]
+pub async fn get_print_document_header(
+    state: State<'_, AppState>,
+) -> AppResult<settings::branding::PrintDocumentHeader> {
+    let _user = require_session!(state);
+    settings::branding::print_document_header(&state.db).await
+}
+
 /// Upload / replace the tenant document branding logo. Requires `adm.settings`.
 #[tauri::command]
 pub async fn upload_document_branding_logo(

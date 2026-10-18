@@ -241,6 +241,7 @@ pub fn run() {
             commands::settings::upload_document_branding_logo,
             commands::settings::clear_document_branding_logo,
             commands::settings::read_document_branding_logo_preview,
+            commands::settings::get_print_document_header,
             commands::settings::list_site_settings,
             commands::settings::set_site_setting,
             commands::settings::list_site_setting_events,
