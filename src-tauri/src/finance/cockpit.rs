@@ -19,7 +19,7 @@ use chrono::Utc;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 use crate::finance::fiscal;
 use crate::finance::settlement::posting_budget_version;
 use crate::finance::wo_costing::{decode, resolve_wo_cost_center, round_money, BUCKET_PARTS, BUCKET_SERVICES};
@@ -113,7 +113,17 @@ pub struct BudgetCockpitDrilldownFilter {
     pub cost_center_id: i64,
     pub bucket: Option<String>,
     pub period_month: Option<i64>,
+    /// Page of actual lines (1..=[`DRILLDOWN_PAGE_MAX`]; [`DRILLDOWN_PAGE_DEFAULT`] when absent).
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
 }
+
+/// Lines per drill-down page when the caller does not say.
+pub const DRILLDOWN_PAGE_DEFAULT: i64 = 200;
+/// Largest drill-down page.
+pub const DRILLDOWN_PAGE_MAX: i64 = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DrilldownActual {
@@ -149,7 +159,15 @@ pub struct DrilldownCommitment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetCockpitDrilldown {
+    /// One page of the actual lines, newest first.
     pub actuals: Vec<DrilldownActual>,
+    /// Every actual line matching the filter (not only this page).
+    pub actuals_total: i64,
+    /// Sum of the amounts of every matching actual line (tenant currency), so the drill-down's
+    /// total equals the cockpit figure whatever the page.
+    pub actuals_amount: f64,
+    pub limit: i64,
+    pub offset: i64,
     pub commitments: Vec<DrilldownCommitment>,
 }
 
@@ -622,13 +640,51 @@ pub async fn get_budget_cockpit_drilldown<C: ConnectionTrait>(
     db: &C,
     filter: BudgetCockpitDrilldownFilter,
 ) -> AppResult<BudgetCockpitDrilldown> {
+    let limit = filter
+        .limit
+        .unwrap_or(DRILLDOWN_PAGE_DEFAULT)
+        .clamp(1, DRILLDOWN_PAGE_MAX);
+    let offset = filter.offset.unwrap_or(0).max(0);
     let Some(version) = load_version(db, filter.fiscal_year, filter.budget_version_id).await? else {
         return Ok(BudgetCockpitDrilldown {
             actuals: Vec::new(),
+            actuals_total: 0,
+            actuals_amount: 0.0,
+            limit,
+            offset,
             commitments: Vec::new(),
         });
     };
     let bucket = filter.bucket.clone().filter(|b| !b.trim().is_empty());
+    let scope_binds = || -> Vec<sea_orm::Value> {
+        vec![
+            version.id.into(),
+            filter.cost_center_id.into(),
+            bucket.clone().into(),
+            bucket.clone().into(),
+            filter.period_month.into(),
+            filter.period_month.into(),
+        ]
+    };
+    const SCOPE: &str = "FROM budget_actuals ba
+             WHERE ba.budget_version_id = ? AND ba.cost_center_id = ?
+               AND ba.posting_status IN ('posted', 'reversed')
+               AND (? IS NULL OR ba.budget_bucket = ?)
+               AND (? IS NULL OR ba.period_month = ?)";
+    // Count and sum over every matching line: the page never hides the total.
+    let totals = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT COUNT(*) AS n, COALESCE(SUM(ba.amount_base), 0.0) AS amount {SCOPE}"),
+            scope_binds(),
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("drill-down total returned no row")))?;
+    let actuals_total: i64 = decode(&totals, "n")?;
+    let actuals_amount: f64 = decode(&totals, "amount")?;
+    let mut page_binds = scope_binds();
+    page_binds.push(limit.into());
+    page_binds.push(offset.into());
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -643,15 +699,8 @@ pub async fn get_budget_cockpit_drilldown<C: ConnectionTrait>(
                AND (? IS NULL OR ba.budget_bucket = ?)
                AND (? IS NULL OR ba.period_month = ?)
              ORDER BY COALESCE(ba.event_at, ba.created_at) DESC, ba.id DESC
-             LIMIT 2000",
-            [
-                version.id.into(),
-                filter.cost_center_id.into(),
-                bucket.clone().into(),
-                bucket.clone().into(),
-                filter.period_month.into(),
-                filter.period_month.into(),
-            ],
+             LIMIT ? OFFSET ?",
+            page_binds,
         ))
         .await?;
     let mut actuals = Vec::with_capacity(rows.len());
@@ -729,5 +778,12 @@ pub async fn get_budget_cockpit_drilldown<C: ConnectionTrait>(
             }
         }
     }
-    Ok(BudgetCockpitDrilldown { actuals, commitments })
+    Ok(BudgetCockpitDrilldown {
+        actuals,
+        actuals_total,
+        actuals_amount: round_money(actuals_amount),
+        limit,
+        offset,
+        commitments,
+    })
 }
