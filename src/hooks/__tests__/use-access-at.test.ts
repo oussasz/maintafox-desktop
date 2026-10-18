@@ -1,10 +1,16 @@
 import { renderHook, waitFor } from "@testing-library/react";
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getMyAccessAt = vi.fn<(node: number) => Promise<string[] | null>>();
+// The `rbac-changed` handlers the hook registered, so a test can announce a role change.
+const rbacChanged = vi.hoisted(() => [] as (() => void)[]);
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(() => Promise.resolve(() => undefined)),
+  listen: vi.fn((_event: string, handler: () => void) => {
+    rbacChanged.push(handler);
+    return Promise.resolve(() => undefined);
+  }),
 }));
 vi.mock("@/services/rbac-service", () => ({
   getMyAccessAt: (node: number) => getMyAccessAt(node),
@@ -72,6 +78,46 @@ describe("useAccessAt", () => {
     for (const f of after) {
       expect(f).toEqual({ node: 2, can: false, loading: true });
     }
+  });
+
+  it("ignores a late answer for a node left and then returned to", async () => {
+    const pending: ((perms: string[]) => void)[] = [];
+    getMyAccessAt.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          pending.push(resolve);
+        }),
+    );
+    const { result, rerender } = renderHook(({ node }) => useAccessAt(node), {
+      initialProps: { node: 1 as number | null },
+    });
+    rerender({ node: 2 });
+    rerender({ node: 1 });
+    await waitFor(() => expect(pending).toHaveLength(3));
+    // The first request for node 1 (left before it answered) grants; it must not count.
+    await act(async () => pending[0]?.([P.OT_VIEW]));
+    expect(result.current.can(P.OT_VIEW)).toBe(false);
+    expect(result.current.loading).toBe(true);
+    await act(async () => pending[2]?.([]));
+    expect(result.current.loading).toBe(false);
+    expect(result.current.can(P.OT_VIEW)).toBe(false);
+  });
+
+  it("drops the answer at once when roles change, until the new one arrives", async () => {
+    rbacChanged.length = 0;
+    let release: (perms: string[]) => void = () => undefined;
+    getMyAccessAt
+      .mockResolvedValueOnce([P.OT_VIEW])
+      .mockImplementationOnce(() => new Promise((resolve) => (release = resolve)));
+    const { result } = renderHook(() => useAccessAt(7));
+    await waitFor(() => expect(result.current.can(P.OT_VIEW)).toBe(true));
+    await waitFor(() => expect(rbacChanged.length).toBeGreaterThan(0));
+    act(() => rbacChanged.forEach((h) => h()));
+    expect(result.current.can(P.OT_VIEW)).toBe(false);
+    expect(result.current.loading).toBe(true);
+    await act(async () => release([]));
+    expect(result.current.loading).toBe(false);
+    expect(result.current.can(P.OT_VIEW)).toBe(false);
   });
 
   it("stops loading when the node is cleared while a load is pending", async () => {

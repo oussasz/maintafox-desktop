@@ -55,7 +55,9 @@ export function useAccessAt(orgNodeId: number | null | undefined): AccessAt {
   }, [orgNodeId, version]);
 
   // Only an answer for this very node and reload counts, so a render never shows the previous
-  // node's rights (or rights from before a role change) while the next answer loads.
+  // node's rights (or rights from before a role change) while the next answer loads. Coming back
+  // to a node at the same version reuses its answer while it refreshes: every role change bumps
+  // the version first, so the same node and version means the same rights.
   const current =
     orgNodeId != null && loaded?.node === orgNodeId && loaded.version === version
       ? loaded
