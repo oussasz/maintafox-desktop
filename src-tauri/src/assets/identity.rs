@@ -944,6 +944,10 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     // ── Status validation (normalized string + reference FK) ──────────────
     let status_code = normalize_status_code_for_reference(&payload.status_code)?;
     validate_status_code(&txn, &status_code).await?;
+    // A new asset is never created retired: retirement is recorded by Déclasser.
+    if is_retired_status_code(&txn, &status_code).await? {
+        return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]));
+    }
     let status_ref_id = resolve_status_ref_id(&txn, &status_code).await?;
 
     // ── Decommission date guard ──────────────────────────────────────────
@@ -1042,9 +1046,12 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
 
 /// Refusal code: an asset is retired only through Déclasser (`decommission_asset`).
 pub const RETIRE_THROUGH_DECOMMISSION: &str = "ASSET_RETIRE_THROUGH_DECOMMISSION";
+/// Refusal code: a retired asset returns to service only through a recommission lifecycle event
+/// (`RECOMMISSIONED`, which records who and why and clears the end-of-life date).
+pub const RECOMMISSION_REQUIRED: &str = "ASSET_RECOMMISSION_REQUIRED";
 
 /// Whether `code` is a retired status (tag `retired` in the published `EQUIPMENT.STATUS` list).
-async fn is_retired_status_code<C: ConnectionTrait>(db: &C, code: &str) -> AppResult<bool> {
+pub(crate) async fn is_retired_status_code<C: ConnectionTrait>(db: &C, code: &str) -> AppResult<bool> {
     Ok(db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1113,6 +1120,9 @@ pub async fn update_asset_identity(
         let normalized = normalize_status_code_for_reference(raw_status)?;
         if normalized != current_status && is_retired_status_code(&txn, &normalized).await? {
             return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]));
+        }
+        if normalized != current_status && is_retired_status_code(&txn, &current_status).await? {
+            return Err(AppError::ValidationFailed(vec![RECOMMISSION_REQUIRED.into()]));
         }
     }
     if let Some(ref decom_at) = payload.decommissioned_at {

@@ -5,6 +5,15 @@
 //! set it there; without a row the rule's strict default applies (`SiteSettingDefinition::default`).
 //! Every change is audited in `site_setting_events` — who, when, old → new and the reason — and is
 //! made under step-up with a reason of at least [`super::catalog::MIN_REASON_CHARS`] characters.
+//!
+//! By synchronisation, a rule that RELAXES a site (value `true`) is applied only when its audit
+//! event is here: a `site_setting_events` row for that site, rule, value and moment, made under
+//! step-up, with a reason, by someone holding `adm.settings`. While that event is still in the
+//! inbox the rule waits for it; without one it is a sync conflict for a person to decide — never
+//! applied silently ([`inbound_site_setting_check`], [`inbound_site_setting_event_check`]).
+//!
+//! A stored value that cannot be read never breaks the screens using it: the rule reads as its
+//! strict default and the Settings screen shows the value as unreadable.
 
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
@@ -43,7 +52,8 @@ fn get<T: sea_orm::TryGetable>(r: &QueryResult, col: &str) -> AppResult<T> {
     r.try_get("", col).map_err(|e| decode_err(col, e))
 }
 
-/// The value of `key` at `site` (`None`: never set there).
+/// The value of `key` at `site` (`None`: never set there). An unreadable stored value reads as
+/// `None` (the strict default applies) and is logged; the Settings screen flags it.
 pub async fn site_setting<C: ConnectionTrait>(db: &C, site_node_id: i64, key: &str) -> AppResult<Option<bool>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -52,11 +62,15 @@ pub async fn site_setting<C: ConnectionTrait>(db: &C, site_node_id: i64, key: &s
             [site_node_id.into(), key.into()],
         ))
         .await?;
-    row.map(|r| {
-        let v: String = get(&r, "value_json")?;
-        serde_json::from_str::<bool>(v.trim()).map_err(|e| decode_err("value_json", e))
+    let Some(r) = row else { return Ok(None) };
+    let v: String = get(&r, "value_json")?;
+    Ok(match serde_json::from_str::<bool>(v.trim()) {
+        Ok(b) => Some(b),
+        Err(_) => {
+            tracing::error!(site_node_id, key, "site rule value unreadable: strict default applies");
+            None
+        }
     })
-    .transpose()
 }
 
 /// A rule at one planning site, for the Settings screen.
@@ -65,8 +79,10 @@ pub struct SiteSettingView {
     pub site_node_id: i64,
     pub site_code: String,
     pub site_name: String,
-    /// `None`: never set at this site (the default applies).
+    /// `None`: never set at this site, or unreadable (the default applies).
     pub value: Option<bool>,
+    /// The stored value cannot be read: the default applies until someone sets the rule again.
+    pub value_unreadable: bool,
     pub default_value: bool,
     pub updated_by_name: Option<String>,
     pub updated_at: Option<String>,
@@ -93,13 +109,15 @@ pub async fn list_site_settings(db: &DatabaseConnection, key: &str) -> AppResult
     rows.iter()
         .map(|r| {
             let value_json: Option<String> = get(r, "value_json")?;
+            let parsed = value_json
+                .as_deref()
+                .map(|v| serde_json::from_str::<bool>(v.trim()).ok());
             Ok(SiteSettingView {
                 site_node_id: get(r, "site_node_id")?,
                 site_code: get(r, "site_code")?,
                 site_name: get(r, "site_name")?,
-                value: value_json
-                    .map(|v| serde_json::from_str::<bool>(v.trim()).map_err(|e| decode_err("value_json", e)))
-                    .transpose()?,
+                value: parsed.flatten(),
+                value_unreadable: matches!(parsed, Some(None)),
                 default_value: def.default,
                 updated_by_name: get(r, "updated_by_name")?,
                 updated_at: get(r, "updated_at")?,
@@ -251,8 +269,7 @@ pub async fn list_site_setting_events(
         ))
         .await?;
     let flag = |v: Option<String>| -> AppResult<Option<bool>> {
-        v.map(|s| serde_json::from_str::<bool>(s.trim()).map_err(|e| decode_err("value_json", e)))
-            .transpose()
+        Ok(v.and_then(|s| serde_json::from_str::<bool>(s.trim()).ok()))
     };
     rows.iter()
         .map(|r| {
@@ -267,4 +284,183 @@ pub async fn list_site_setting_events(
             })
         })
         .collect()
+}
+
+// ── Arrival by synchronisation ─────────────────────────────────────────────────────────
+
+/// What to do with a received row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InboundVerdict {
+    /// Wait (a parent row or its audit event has not been applied yet).
+    Defer(String),
+    /// Refuse: a sync conflict for a person to decide.
+    Conflict { code: &'static str, message: String },
+}
+
+fn text<'a>(payload: &'a serde_json::Map<String, serde_json::Value>, key: &str) -> Option<&'a str> {
+    payload.get(key).and_then(serde_json::Value::as_str)
+}
+
+/// Local id of a row referenced by its sync id in a payload.
+async fn local_id<C: ConnectionTrait>(conn: &C, table: &str, sync_id: Option<&str>) -> AppResult<Option<i64>> {
+    let Some(sync_id) = sync_id else { return Ok(None) };
+    conn.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        format!("SELECT id FROM {table} WHERE entity_sync_id = ?"),
+        [sync_id.into()],
+    ))
+    .await?
+    .map(|r| get::<i64>(&r, "id"))
+    .transpose()
+}
+
+/// Whether `user_id` holds `adm.settings` tenant-wide (or is an administrator).
+async fn holds_settings_right<C: ConnectionTrait>(conn: &C, user_id: i64) -> AppResult<bool> {
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM user_accounts ua \
+              WHERE ua.id = ? AND ua.is_active = 1 AND ua.deleted_at IS NULL AND (ua.is_admin = 1 OR EXISTS ( \
+                SELECT 1 FROM user_scope_assignments usa \
+                  JOIN role_permissions rp ON rp.role_id = usa.role_id \
+                  JOIN permissions p ON p.id = rp.permission_id \
+                 WHERE usa.user_id = ua.id AND usa.deleted_at IS NULL AND usa.scope_type = 'tenant' \
+                   AND usa.is_emergency = 0 \
+                   AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
+                   AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
+                   AND p.name = ?))",
+            [
+                user_id.into(),
+                now.clone().into(),
+                now.into(),
+                crate::rbac::permissions::ADM_SETTINGS.into(),
+            ],
+        ))
+        .await?
+        .is_some())
+}
+
+fn bool_of(raw: Option<&str>) -> Option<bool> {
+    raw.and_then(|v| serde_json::from_str::<bool>(v.trim()).ok())
+}
+
+/// A per-site rule received by synchronisation (`site_settings`). Unknown rule or unreadable
+/// value: conflict. Turning a rule OFF (the strict side) is applied. Turning it ON is applied only
+/// with its audit event here (same site, rule, value and moment; step-up; a reason; made by a
+/// holder of `adm.settings`); while that event waits in the inbox the rule waits too; without
+/// one it is a conflict.
+pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
+    conn: &C,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<InboundVerdict>> {
+    let key = text(payload, "setting_key").unwrap_or_default();
+    if site_definition(key).is_none() {
+        return Ok(Some(InboundVerdict::Conflict {
+            code: "SITE_SETTING_UNKNOWN",
+            message: format!("unknown site rule '{key}'"),
+        }));
+    }
+    let Some(value) = bool_of(text(payload, "value_json")) else {
+        return Ok(Some(InboundVerdict::Conflict {
+            code: "SITE_SETTING_INVALID",
+            message: format!("site rule '{key}': value is not true or false"),
+        }));
+    };
+    let site_sync = text(payload, "site_node_sync_id");
+    let Some(site) = local_id(conn, "org_nodes", site_sync).await? else {
+        return Ok(Some(InboundVerdict::Defer("site not applied yet".into())));
+    };
+    if !value {
+        return Ok(None);
+    }
+    let changed_at = text(payload, "updated_at").unwrap_or_default();
+    let audited = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT changed_by_id FROM site_setting_events \
+              WHERE site_node_id = ? AND setting_key = ? AND TRIM(new_value_json) = 'true' \
+                AND required_step_up = 1 AND changed_at = ? \
+                AND LENGTH(TRIM(reason)) >= ? \
+              ORDER BY id DESC LIMIT 1",
+            [
+                site.into(),
+                key.into(),
+                changed_at.into(),
+                i64::try_from(super::catalog::MIN_REASON_CHARS).unwrap_or(10).into(),
+            ],
+        ))
+        .await?;
+    if let Some(event) = audited {
+        let by: Option<i64> = get(&event, "changed_by_id")?;
+        let updated_by = local_id(conn, "user_accounts", text(payload, "updated_by_sync_id")).await?;
+        let by_holder = match by {
+            Some(u) => holds_settings_right(conn, u).await?,
+            None => false,
+        };
+        if by.is_some() && by == updated_by && by_holder {
+            return Ok(None);
+        }
+        return Ok(Some(InboundVerdict::Conflict {
+            code: "SITE_SETTING_UNAUDITED",
+            message: format!(
+                "site rule '{key}' turned on by someone without the settings right, or not by the person in its audit event"
+            ),
+        }));
+    }
+    // The audit event may still be waiting in the inbox (same batch or an earlier one).
+    let pending = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS waiting FROM sync_inbox \
+              WHERE entity_type = 'site_setting_events' AND apply_status IN ('pending', 'deferred') \
+                AND json_extract(payload_json, '$.site_node_sync_id') = ? \
+                AND json_extract(payload_json, '$.setting_key') = ? \
+                AND json_extract(payload_json, '$.changed_at') = ?",
+            [site_sync.unwrap_or_default().into(), key.into(), changed_at.into()],
+        ))
+        .await?
+        .is_some();
+    Ok(Some(if pending {
+        InboundVerdict::Defer("audit event of the site rule not applied yet".into())
+    } else {
+        InboundVerdict::Conflict {
+            code: "SITE_SETTING_UNAUDITED",
+            message: format!("site rule '{key}' turned on without an audited change (step-up, reason, settings right)"),
+        }
+    }))
+}
+
+/// An audit event of a per-site rule received by synchronisation (`site_setting_events`): known
+/// rule, readable values, a reason, and step-up when it relaxes the site.
+pub(crate) async fn inbound_site_setting_event_check<C: ConnectionTrait>(
+    _conn: &C,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<InboundVerdict>> {
+    let key = text(payload, "setting_key").unwrap_or_default();
+    let conflict = |message: String| {
+        Ok(Some(InboundVerdict::Conflict {
+            code: "SITE_SETTING_EVENT_INVALID",
+            message,
+        }))
+    };
+    if site_definition(key).is_none() {
+        return conflict(format!("unknown site rule '{key}'"));
+    }
+    let Some(new_value) = bool_of(text(payload, "new_value_json")) else {
+        return conflict(format!("site rule '{key}': new value is not true or false"));
+    };
+    if text(payload, "old_value_json").is_some() && bool_of(text(payload, "old_value_json")).is_none() {
+        return conflict(format!("site rule '{key}': old value is not true or false"));
+    }
+    let reason_ok =
+        text(payload, "reason").is_some_and(|r| r.trim().chars().count() >= super::catalog::MIN_REASON_CHARS);
+    let step_up = payload
+        .get("required_step_up")
+        .and_then(|v| v.as_i64().or_else(|| v.as_bool().map(i64::from)))
+        == Some(1);
+    if !reason_ok || (new_value && !step_up) {
+        return conflict(format!("site rule '{key}': change without a reason or without step-up"));
+    }
+    Ok(None)
 }

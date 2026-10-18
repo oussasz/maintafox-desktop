@@ -477,6 +477,53 @@ const rcm: RcmWorksheet = {
   rows_to_review: 0,
 };
 
+describe("substitute FMECA grids", () => {
+  it("warns in the FMECA and RCM steps while the plant grids are to review", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_study_fmeca")
+        return { ...fmeca, scales: { ...fmeca.scales, review: "former_grids_unreadable" } };
+      if (cmd === "get_reliability_study_rcm")
+        return { ...rcm, grids_review: "former_grids_unreadable" };
+      throw new Error(`unexpected ${cmd}`);
+    });
+    const { unmount } = render(<StudyFmecaStep study={study} editable onGoRcm={() => undefined} />);
+    expect(
+      await screen.findByText("Maintafox grids in place, plant grids to review"),
+    ).toBeInTheDocument();
+    unmount();
+    render(
+      <StudyRcmStep
+        study={study}
+        editable
+        onDecide={() => undefined}
+        onGoFmeca={() => undefined}
+      />,
+    );
+    expect(
+      await screen.findByText("Maintafox grids in place, plant grids to review"),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing when the plant grids are in place", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_study_rcm") return rcm;
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <StudyRcmStep
+        study={study}
+        editable
+        onDecide={() => undefined}
+        onGoFmeca={() => undefined}
+      />,
+    );
+    expect((await screen.findAllByText(/Bearing seizure/)).length).toBeGreaterThan(0);
+    expect(
+      screen.queryByText("Maintafox grids in place, plant grids to review"),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("StudyRcmStep", () => {
   it("prefills the SAE JA1011 answers from the FMECA row and the fit, then records the tactic", async () => {
     const saved: RcmWorksheet = {

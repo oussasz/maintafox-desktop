@@ -75,7 +75,18 @@ pub struct RecordLifecycleEventPayload {
     pub reason_code: Option<String>,
     pub notes: Option<String>,
     pub approved_by_id: Option<i64>,
+    /// The asset's row version the person saw (required to recommission: a concurrent edit is
+    /// refused instead of overwritten).
+    #[serde(default)]
+    pub expected_row_version: Option<i64>,
 }
+
+/// Refusal codes of a recommission (translated under `equipment:errors`).
+pub const RECOMMISSION_NOT_RETIRED: &str = "ASSET_RECOMMISSION_NOT_RETIRED";
+pub const RECOMMISSION_REASON_REQUIRED: &str = "ASSET_RECOMMISSION_REASON_REQUIRED";
+pub const RECOMMISSION_TARGET_RETIRED: &str = "ASSET_RECOMMISSION_TARGET_RETIRED";
+pub const RECOMMISSION_VERSION_REQUIRED: &str = "ASSET_RECOMMISSION_VERSION_REQUIRED";
+pub const ASSET_STALE_VERSION: &str = "ASSET_STALE_VERSION";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -382,25 +393,45 @@ pub async fn record_lifecycle_event(
             .await?;
         }
         "RECOMMISSIONED" => {
+            // A return to service: only a retired asset, with a reason, to a status in service,
+            // on the version the person saw.
+            let refuse = |code: &str| AppError::ValidationFailed(vec![code.to_string()]);
+            if !crate::assets::identity::is_retired_status_code(&txn, &current_status).await? {
+                return Err(refuse(RECOMMISSION_NOT_RETIRED));
+            }
+            if payload.notes.as_deref().map(str::trim).unwrap_or_default().is_empty() {
+                return Err(refuse(RECOMMISSION_REASON_REQUIRED));
+            }
+            let expected = payload
+                .expected_row_version
+                .ok_or_else(|| refuse(RECOMMISSION_VERSION_REQUIRED))?;
             let target_status = payload.to_status_code.as_deref().unwrap_or("ACTIVE_IN_SERVICE");
             let normalized = crate::assets::identity::normalize_status_code_for_reference(target_status)?;
+            if crate::assets::identity::is_retired_status_code(&txn, &normalized).await? {
+                return Err(refuse(RECOMMISSION_TARGET_RETIRED));
+            }
             let status_ref_id = crate::assets::identity::resolve_status_ref_id(&txn, &normalized).await?;
             payload.to_status_code = Some(normalized.clone());
-            txn.execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE equipment SET lifecycle_status = ?, \
-                 equipment_status_ref_id = ?, \
-                 decommissioned_at = NULL, updated_at = ?, \
-                 row_version = row_version + 1 \
-                 WHERE id = ?",
-                [
-                    normalized.into(),
-                    status_ref_id.into(),
-                    now.clone().into(),
-                    payload.asset_id.into(),
-                ],
-            ))
-            .await?;
+            let updated = txn
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE equipment SET lifecycle_status = ?, \
+                     equipment_status_ref_id = ?, \
+                     decommissioned_at = NULL, updated_at = ?, \
+                     row_version = row_version + 1 \
+                     WHERE id = ? AND row_version = ?",
+                    [
+                        normalized.into(),
+                        status_ref_id.into(),
+                        now.clone().into(),
+                        payload.asset_id.into(),
+                        expected.into(),
+                    ],
+                ))
+                .await?;
+            if updated.rows_affected() == 0 {
+                return Err(refuse(ASSET_STALE_VERSION));
+            }
         }
         "MOVED" => {
             // Update installed_at_node_id to reflect the move.

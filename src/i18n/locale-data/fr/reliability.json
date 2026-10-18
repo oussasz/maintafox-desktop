@@ -1272,7 +1272,9 @@
       "edit": "Modifier les grilles",
       "view": "Consulter les grilles",
       "managedInReference": "Ces grilles se modifient dans Données de référence › Échelles AMDEC.",
-      "reviewFormerUnreadable": "À revoir : les anciennes grilles de cotation étaient illisibles, les grilles Maintafox sont en place. Vérifiez chaque grille puis enregistrez."
+      "reviewFormerUnreadable": "À revoir : les anciennes grilles de cotation étaient illisibles, les grilles Maintafox sont en place. Vérifiez chaque grille puis enregistrez.",
+      "substituteTitle": "Grilles Maintafox en place, grilles du site à revoir",
+      "substituteBody": "Les grilles de cotation du site étaient illisibles : les cotations, l'IPR, les zones de risque et les conséquences RCM affichées ici utilisent les grilles Maintafox. Demandez à un responsable fiabilité de revoir et d'enregistrer les grilles dans Données de référence › Échelles AMDEC avant de vous fier à ce classement."
     },
     "rcm": {
       "emptyTitle": "Aucun mode à décider",

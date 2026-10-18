@@ -142,7 +142,12 @@ export function SiteRulesPanel({
                       {t("siteRules.selfApproval.help")}
                     </p>
                     <p className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
-                      {site.value == null ? (
+                      {site.value_unreadable ? (
+                        <StatusChip
+                          tone="danger"
+                          label={t("siteRules.unreadable", { value: onOff(site.default_value) })}
+                        />
+                      ) : site.value == null ? (
                         <span>{t("siteRules.notSet", { value: onOff(site.default_value) })}</span>
                       ) : (
                         <span>

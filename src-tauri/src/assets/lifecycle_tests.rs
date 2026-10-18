@@ -227,6 +227,7 @@ mod tests {
                 reason_code: None,
                 notes: Some("Transfert vers site 2".to_string()),
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -281,6 +282,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -321,6 +323,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -360,6 +363,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -405,6 +409,7 @@ mod tests {
                 reason_code: None,
                 notes: Some("Remplacement pompe usee".to_string()),
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -457,6 +462,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -499,6 +505,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -544,6 +551,7 @@ mod tests {
                 reason_code: None,
                 notes: Some("Fin de vie".to_string()),
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -599,6 +607,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -623,6 +632,9 @@ mod tests {
         let db = setup().await;
         let node_id = setup_org_node(&db).await;
         setup_equipment_class(&db).await;
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
 
         let asset = create_test_asset(&db, "REC-A", node_id).await;
 
@@ -643,6 +655,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -671,6 +684,7 @@ mod tests {
                 reason_code: None,
                 notes: Some("Remise en service apres revision".to_string()),
                 approved_by_id: None,
+                expected_row_version: Some(decom.row_version),
             },
             1,
         )
@@ -689,6 +703,137 @@ mod tests {
             restored.decommissioned_at.is_none(),
             "decommissioned_at must be cleared after recommission"
         );
+    }
+
+    #[tokio::test]
+    async fn recommission_needs_a_retired_asset_a_reason_a_service_status_and_the_current_version() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
+        let asset = create_test_asset(&db, "REC-G", node_id).await;
+        let event = |event_type: &str, to: Option<&str>, notes: Option<&str>, version: Option<i64>| {
+            RecordLifecycleEventPayload {
+                asset_id: asset.id,
+                event_type: event_type.to_string(),
+                event_at: None,
+                from_org_node_id: None,
+                to_org_node_id: None,
+                from_status_code: None,
+                to_status_code: to.map(str::to_string),
+                from_class_code: None,
+                to_class_code: None,
+                related_asset_id: None,
+                reason_code: None,
+                notes: notes.map(str::to_string),
+                approved_by_id: None,
+                expected_row_version: version,
+            }
+        };
+        let code = |r: Result<lifecycle::AssetLifecycleEvent, AppError>| match r {
+            Err(AppError::ValidationFailed(m)) => m[0].clone(),
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+        let reason = Some("Back after overhaul");
+
+        // In service: nothing to recommission.
+        assert_eq!(
+            code(
+                lifecycle::record_lifecycle_event(
+                    &db,
+                    event(
+                        "RECOMMISSIONED",
+                        Some("ACTIVE_IN_SERVICE"),
+                        reason,
+                        Some(asset.row_version)
+                    ),
+                    1
+                )
+                .await
+            ),
+            lifecycle::RECOMMISSION_NOT_RETIRED
+        );
+
+        lifecycle::record_lifecycle_event(&db, event("DECOMMISSIONED", Some("DECOMMISSIONED"), None, None), 1)
+            .await
+            .expect("decommission");
+        let retired = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+
+        assert_eq!(
+            code(
+                lifecycle::record_lifecycle_event(
+                    &db,
+                    event(
+                        "RECOMMISSIONED",
+                        Some("ACTIVE_IN_SERVICE"),
+                        Some("  "),
+                        Some(retired.row_version)
+                    ),
+                    1
+                )
+                .await
+            ),
+            lifecycle::RECOMMISSION_REASON_REQUIRED
+        );
+        assert_eq!(
+            code(
+                lifecycle::record_lifecycle_event(
+                    &db,
+                    event("RECOMMISSIONED", Some("SCRAPPED"), reason, Some(retired.row_version)),
+                    1
+                )
+                .await
+            ),
+            lifecycle::RECOMMISSION_TARGET_RETIRED
+        );
+        assert_eq!(
+            code(
+                lifecycle::record_lifecycle_event(
+                    &db,
+                    event("RECOMMISSIONED", Some("ACTIVE_IN_SERVICE"), reason, None),
+                    1
+                )
+                .await
+            ),
+            lifecycle::RECOMMISSION_VERSION_REQUIRED
+        );
+        // Someone changed the asset meanwhile: refused, nothing written.
+        assert_eq!(
+            code(
+                lifecycle::record_lifecycle_event(
+                    &db,
+                    event(
+                        "RECOMMISSIONED",
+                        Some("ACTIVE_IN_SERVICE"),
+                        reason,
+                        Some(retired.row_version - 1)
+                    ),
+                    1
+                )
+                .await
+            ),
+            lifecycle::ASSET_STALE_VERSION
+        );
+        let still = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        assert_eq!(still.status_code, "DECOMMISSIONED");
+
+        lifecycle::record_lifecycle_event(
+            &db,
+            event(
+                "RECOMMISSIONED",
+                Some("ACTIVE_IN_SERVICE"),
+                reason,
+                Some(retired.row_version),
+            ),
+            1,
+        )
+        .await
+        .expect("recommission");
+        let back = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        assert_eq!(back.status_code, "ACTIVE_IN_SERVICE");
+        assert!(back.decommissioned_at.is_none());
     }
 
     // ── Additional: event type governance ─────────────────────────────────
@@ -717,6 +862,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -768,6 +914,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -808,6 +955,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -853,6 +1001,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -875,6 +1024,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )

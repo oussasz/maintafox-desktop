@@ -344,8 +344,10 @@ const SiteSettingViewSchema = z.object({
   site_node_id: z.number(),
   site_code: z.string(),
   site_name: z.string(),
-  /** `null`: never set at this site (the default applies). */
+  /** `null`: never set at this site, or unreadable (the default applies). */
   value: z.boolean().nullable(),
+  /** The stored value cannot be read: the default applies until the rule is set again. */
+  value_unreadable: z.boolean(),
   default_value: z.boolean(),
   updated_by_name: z.string().nullable(),
   updated_at: z.string().nullable(),

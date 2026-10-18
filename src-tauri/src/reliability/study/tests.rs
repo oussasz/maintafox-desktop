@@ -2,12 +2,12 @@
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
-use crate::errors::AppError;
+use crate::errors::{AppError, AppResult};
 use crate::pm::domain::{CreatePmPlanInput, CreatePmPlanVersionInput};
 use crate::reliability::study::analysis::life_analysis;
 use crate::reliability::study::decisions::{
-    apply_decision, approve_decision, create_decision, inbound_self_approval_conflict, list_decisions, reject_decision,
-    SELF_APPROVAL_SETTING,
+    apply_decision, approve_decision, create_decision, inbound_self_approval_check, list_decisions, reject_decision,
+    InboundDecisionVerdict, SELF_APPROVAL_SETTING,
 };
 use crate::reliability::study::domain::{
     CreateDecisionInput, CreateStudyInput, DecideDecisionInput, FleetViewFilter, LifeAnalysisRequest,
@@ -619,6 +619,8 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
     let candidate = a.pm_plans.iter().find(|p| p.pm_plan_id == plan.id).expect("candidate");
     close(candidate.interval_hours.expect("interval"), 36.0 * 168.0, 1e-9);
 
+    // The pumps' node is a planning site: the decision stores it when proposed.
+    make_site(&f, 1).await;
     let decision = create_decision(
         &f.db,
         CreateDecisionInput {
@@ -668,7 +670,8 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
         Err(AppError::ValidationFailed(m)) => m[0].clone(),
         other => panic!("expected a refusal, got {other:?}"),
     };
-    // Without a planning site for the equipment, four-eyes applies and the refusal says why.
+    // The equipment loses its planning site after the proposal: four-eyes applies and the
+    // refusal says why (the stricter of the stored and the current site).
     exec(&f.db, "UPDATE org_node_types SET can_own_work = 0").await;
     assert_eq!(
         refusal(approve_decision(&f.db, own_input(), f.admin).await),
@@ -844,10 +847,10 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
             "entity_sync_id": "rsd-remote-1",
             "title": "Contrôle d'alignement",
             "status": "approved",
-            "study_id": study,
-            "equipment_id": pump_sync,
-            "proposed_by_id": "user-a",
-            "decided_by_id": decider,
+            "study_sync_id": study,
+            "equipment_sync_id": pump_sync,
+            "proposed_by_sync_id": "user-a",
+            "decided_by_sync_id": decider,
         })
         .as_object()
         .cloned()
@@ -855,8 +858,17 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
     };
     let db = &f.db;
     let inbound = |p: serde_json::Map<String, serde_json::Value>| async move {
-        inbound_self_approval_conflict(db, &p).await.expect("check")
+        inbound_self_approval_check(
+            db,
+            p.get("entity_sync_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+            &p,
+        )
+        .await
+        .expect("check")
     };
+    let is_conflict = |v: &Option<InboundDecisionVerdict>, needle: &str| matches!(v, Some(InboundDecisionVerdict::Conflict(m)) if m.contains(needle));
     assert!(
         inbound(payload("user-a", &study_sync)).await.is_none(),
         "site opted out"
@@ -899,19 +911,383 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
     .await;
     assert!(matches!(stale, Err(AppError::ValidationFailed(m)) if m[0] == "SITE_SETTING_STALE"));
 
-    assert!(inbound(payload("user-a", &study_sync))
-        .await
-        .is_some_and(|m| m.contains("four-eyes")));
+    assert!(is_conflict(&inbound(payload("user-a", &study_sync)).await, "four-eyes"));
     assert!(
         inbound(payload("user-b", &study_sync)).await.is_none(),
         "approved by a second person"
     );
-    assert!(inbound(payload("user-a", "unknown-study"))
-        .await
-        .is_some_and(|m| m.contains("cannot be resolved")));
+    // A study not applied here yet: the row waits (missing parent), it is not judged.
+    assert!(matches!(
+        inbound(payload("user-a", "unknown-study")).await,
+        Some(InboundDecisionVerdict::Defer(_))
+    ));
+    // A local id instead of a sync id is not trusted.
+    let mut numeric = payload("user-a", &study_sync);
+    numeric.insert("study_sync_id".into(), serde_json::json!(study_id));
+    assert!(matches!(inbound(numeric).await, Some(InboundDecisionVerdict::Defer(_))));
+    // Still proposed but naming its proposer as decider: refused.
     let mut proposed = payload("user-a", &study_sync);
     proposed.insert("status".into(), "proposed".into());
-    assert!(inbound(proposed).await.is_none());
+    assert!(is_conflict(&inbound(proposed).await, "still proposed"));
+    // Rejected by its proposer (a withdrawal): accepted, as on this device.
+    let mut withdrawn = payload("user-a", &study_sync);
+    withdrawn.insert("status".into(), "rejected".into());
+    assert!(inbound(withdrawn).await.is_none());
+
+    // "Already held": the self-approval stored here before (under the opt-out) comes back.
+    let mine_sync = text(
+        &f,
+        &format!(
+            "SELECT entity_sync_id FROM reliability_study_decisions WHERE id = {}",
+            mine.id
+        ),
+    )
+    .await;
+    let admin_sync = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM user_accounts WHERE id = {}", f.admin),
+    )
+    .await;
+    let held = |status: &str, equipment: &str| {
+        serde_json::json!({
+            "entity_sync_id": mine_sync,
+            "title": "Contrôle d'alignement",
+            "status": status,
+            "study_sync_id": study_sync,
+            "equipment_sync_id": equipment,
+            "proposed_by_sync_id": admin_sync,
+            "decided_by_sync_id": admin_sync,
+        })
+        .as_object()
+        .cloned()
+        .expect("object")
+    };
+    assert!(
+        inbound(held("approved", &pump_sync)).await.is_none(),
+        "same approval, same parties"
+    );
+    assert!(inbound(held("applied", &pump_sync)).await.is_none(), "further along");
+    let other_pump = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM equipment WHERE id = {}", f.p102),
+    )
+    .await;
+    assert!(
+        is_conflict(&inbound(held("approved", &other_pump)).await, "four-eyes"),
+        "a held approval does not cover another equipment"
+    );
+    // Parties left out of the payload are taken from the local row.
+    let mut partial = held("approved", &other_pump);
+    partial.remove("proposed_by_sync_id");
+    partial.remove("decided_by_sync_id");
+    assert!(is_conflict(&inbound(partial).await, "four-eyes"));
+
+    // The real wire format, through the materializer: the stored self-approval as this device
+    // would send it comes back unchanged; the same row naming another equipment is a conflict.
+    let layout = crate::sync::row_layout::layout(&f.db, "reliability_study_decisions")
+        .await
+        .expect("layout");
+    let wire = crate::sync::row_codec::load_row_payload(
+        &f.db,
+        &layout,
+        &crate::sync::row_codec::RowLocator::Identity(mine_sync.clone()),
+    )
+    .await
+    .expect("payload")
+    .expect("row");
+    assert!(wire.payload.contains_key("proposed_by_sync_id") && wire.payload.contains_key("study_sync_id"));
+    let replayed = crate::sync::row_codec::apply_row(
+        &f.db,
+        &layout,
+        &wire.entity_sync_id,
+        "upsert",
+        &wire.payload_json().expect("json"),
+    )
+    .await
+    .expect("apply");
+    assert!(
+        !matches!(replayed, crate::sync::materialize::ApplyOutcome::Conflict { .. }),
+        "a held self-approval replayed is not refused: {replayed:?}"
+    );
+    let mut moved = wire.payload.clone();
+    moved.insert("equipment_sync_id".into(), other_pump.clone().into());
+    let refused = crate::sync::row_codec::apply_row(
+        &f.db,
+        &layout,
+        &wire.entity_sync_id,
+        "upsert",
+        &serde_json::to_string(&moved).expect("json"),
+    )
+    .await
+    .expect("apply");
+    assert!(
+        matches!(refused, crate::sync::materialize::ApplyOutcome::Conflict { ref code, .. } if code == "DECISION_SELF_APPROVAL"),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_decision_site_comes_from_the_resolved_equipment_and_the_strictest_site_applies() {
+    let f = setup().await;
+    let study_id = scenario(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.admin).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    set_opt_out(&f, 1, true, None).await;
+    // P-102 leaves every site: a work order on P-101 still resolves to site 1 (no false
+    // "site unknown" for a study spanning equipment without a site).
+    exec(
+        &f.db,
+        &format!("UPDATE equipment SET installed_at_node_id = NULL WHERE id = {}", f.p102),
+    )
+    .await;
+    let input = |equipment: i64| CreateDecisionInput {
+        study_id,
+        title: "Contrôle".into(),
+        action_kind: "one_off_wo".into(),
+        equipment_id: Some(equipment),
+        pm_plan_id: None,
+        proposed_interval_hours: None,
+        wo_type_code: Some("corrective".into()),
+        approver_id: Some(f.admin),
+        fmeca_item_id: None,
+        rcm_decision_id: None,
+        justification: None,
+        planned_cost: None,
+        failure_cost: None,
+    };
+    let d = create_decision(&f.db, input(f.p101), f.admin)
+        .await
+        .expect("self-designated at site 1");
+    assert!(d.site_allows_self_approval);
+    let on_p102 = create_decision(&f.db, input(f.p102), f.admin).await;
+    assert!(
+        matches!(on_p102, Err(AppError::ValidationFailed(ref m)) if m[0] == "DECISION_SELF_APPROVAL_SITE_UNKNOWN"),
+        "{on_p102:?}"
+    );
+    // Moving P-101 out of its site after the proposal does not lift four-eyes: the strictest of
+    // the stored site (1, opted out) and the current one (none) applies.
+    exec(
+        &f.db,
+        &format!("UPDATE equipment SET installed_at_node_id = NULL WHERE id = {}", f.p101),
+    )
+    .await;
+    let refused = approve_decision(
+        &f.db,
+        DecideDecisionInput {
+            decision_id: d.id,
+            expected_row_version: d.row_version,
+            note: None,
+        },
+        f.admin,
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(AppError::ValidationFailed(ref m)) if m[0] == "DECISION_SELF_APPROVAL_SITE_UNKNOWN"),
+        "{refused:?}"
+    );
+    let stored: i64 = scalar(
+        &f.db,
+        &format!(
+            "SELECT site_recorded FROM reliability_study_decisions WHERE id = {}",
+            d.id
+        ),
+    )
+    .await;
+    assert_eq!(stored, 1);
+}
+
+#[tokio::test]
+async fn site_rules_are_validated_audited_and_fail_safe() {
+    let f = setup().await;
+    make_site(&f, 1).await;
+    let set = |site: i64, key: &str, reason: &str| crate::settings::site::SetSiteSettingInput {
+        site_node_id: site,
+        key: key.into(),
+        value: true,
+        reason: reason.into(),
+        expected_row_version: None,
+    };
+    let code = |r: AppResult<()>| match r {
+        Err(AppError::ValidationFailed(m)) => m[0].clone(),
+        other => panic!("expected a refusal, got {other:?}"),
+    };
+    let admin = i32::try_from(f.admin).expect("id");
+    let reason = "Single reliability engineer on this site";
+    assert_eq!(
+        code(
+            crate::settings::site::set_site_setting(&f.db, &set(1, SELF_APPROVAL_SETTING, "short"), admin, true).await
+        ),
+        "SETTING_REASON_REQUIRED"
+    );
+    assert_eq!(
+        code(crate::settings::site::set_site_setting(&f.db, &set(1, "no.such.rule", reason), admin, true).await),
+        "SITE_SETTING_UNKNOWN"
+    );
+    assert_eq!(
+        code(
+            crate::settings::site::set_site_setting(&f.db, &set(999_999, SELF_APPROVAL_SETTING, reason), admin, true)
+                .await
+        ),
+        "SITE_SETTING_NOT_A_SITE"
+    );
+
+    // An unreadable stored value reads as four-eyes and is flagged, it never breaks the screens.
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO site_settings (entity_sync_id, site_node_id, setting_key, value_json) \
+             VALUES ('ss-bad', 1, '{SELF_APPROVAL_SETTING}', 'yes please')"
+        ),
+    )
+    .await;
+    assert_eq!(
+        crate::settings::site::site_setting(&f.db, 1, SELF_APPROVAL_SETTING)
+            .await
+            .expect("read"),
+        None
+    );
+    let views = crate::settings::site::list_site_settings(&f.db, SELF_APPROVAL_SETTING)
+        .await
+        .expect("list");
+    assert!(views
+        .iter()
+        .any(|v| v.site_node_id == 1 && v.value_unreadable && v.value.is_none()));
+    exec(&f.db, "DELETE FROM site_settings WHERE entity_sync_id = 'ss-bad'").await;
+}
+
+#[tokio::test]
+async fn a_synced_site_opt_out_needs_its_audited_change() {
+    use crate::settings::site::{inbound_site_setting_check, inbound_site_setting_event_check, InboundVerdict};
+    let f = setup().await;
+    make_site(&f, 1).await;
+    let site_sync = text(&f, "SELECT entity_sync_id FROM org_nodes WHERE id = 1").await;
+    let admin_sync = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM user_accounts WHERE id = {}", f.admin),
+    )
+    .await;
+    let rule = |value: &str, at: &str, by: &str| {
+        serde_json::json!({
+            "entity_sync_id": "ss-remote",
+            "site_node_sync_id": site_sync,
+            "setting_key": SELF_APPROVAL_SETTING,
+            "value_json": value,
+            "updated_by_sync_id": by,
+            "updated_at": at,
+        })
+        .as_object()
+        .cloned()
+        .expect("object")
+    };
+    let verdict = |p: serde_json::Map<String, serde_json::Value>| {
+        let db = &f.db;
+        async move { inbound_site_setting_check(db, &p).await.expect("check") }
+    };
+    let conflict_code = |v: &Option<InboundVerdict>| match v {
+        Some(InboundVerdict::Conflict { code, .. }) => *code,
+        other => panic!("expected a conflict, got {other:?}"),
+    };
+    // Turned on with no audit trail anywhere: conflict, never applied.
+    assert_eq!(
+        conflict_code(&verdict(rule("true", "2026-10-17T10:00:00Z", &admin_sync)).await),
+        "SITE_SETTING_UNAUDITED"
+    );
+    // Turning it off (the strict side) is applied.
+    assert!(verdict(rule("false", "2026-10-17T10:00:00Z", &admin_sync))
+        .await
+        .is_none());
+    // Unknown rule or unreadable value: conflict.
+    let mut unknown = rule("true", "2026-10-17T10:00:00Z", &admin_sync);
+    unknown.insert("setting_key".into(), "no.such.rule".into());
+    assert_eq!(conflict_code(&verdict(unknown).await), "SITE_SETTING_UNKNOWN");
+    assert_eq!(
+        conflict_code(&verdict(rule("\"yes\"", "2026-10-17T10:00:00Z", &admin_sync)).await),
+        "SITE_SETTING_INVALID"
+    );
+    // The audit event still in the inbox: the rule waits for it.
+    let event_payload = serde_json::json!({
+        "entity_sync_id": "sse-remote",
+        "site_node_sync_id": site_sync,
+        "setting_key": SELF_APPROVAL_SETTING,
+        "old_value_json": null,
+        "new_value_json": "true",
+        "reason": "Single reliability engineer on this site",
+        "changed_by_sync_id": admin_sync,
+        "required_step_up": 1,
+        "changed_at": "2026-10-17T10:00:00Z",
+    });
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
+             row_version, payload_json, payload_hash) VALUES ('b1', 'c1', 'site_setting_events', 'sse-remote', \
+             'upsert', 1, '{}', 'h1')",
+            event_payload.to_string().replace('\'', "''")
+        ),
+    )
+    .await;
+    assert!(matches!(
+        verdict(rule("true", "2026-10-17T10:00:00Z", &admin_sync)).await,
+        Some(InboundVerdict::Defer(_))
+    ));
+    // The audit event checks: a relaxing change without step-up or without a reason is refused.
+    let mut no_step_up = event_payload.as_object().cloned().expect("object");
+    no_step_up.insert("required_step_up".into(), serde_json::json!(0));
+    assert!(matches!(
+        inbound_site_setting_event_check(&f.db, &no_step_up)
+            .await
+            .expect("check"),
+        Some(InboundVerdict::Conflict { .. })
+    ));
+    let mut no_reason = event_payload.as_object().cloned().expect("object");
+    no_reason.insert("reason".into(), "ok".into());
+    assert!(matches!(
+        inbound_site_setting_event_check(&f.db, &no_reason)
+            .await
+            .expect("check"),
+        Some(InboundVerdict::Conflict { .. })
+    ));
+    assert!(
+        inbound_site_setting_event_check(&f.db, event_payload.as_object().expect("object"))
+            .await
+            .expect("check")
+            .is_none()
+    );
+    // With its audited change here (made under step-up by a settings administrator): applied.
+    crate::settings::site::set_site_setting(
+        &f.db,
+        &crate::settings::site::SetSiteSettingInput {
+            site_node_id: 1,
+            key: SELF_APPROVAL_SETTING.into(),
+            value: true,
+            reason: "Single reliability engineer on this site".into(),
+            expected_row_version: None,
+        },
+        i32::try_from(f.admin).expect("id"),
+        true,
+    )
+    .await
+    .expect("local audited change");
+    let at = text(
+        &f,
+        &format!("SELECT changed_at FROM site_setting_events WHERE setting_key = '{SELF_APPROVAL_SETTING}' ORDER BY id DESC LIMIT 1"),
+    )
+    .await;
+    assert!(
+        verdict(rule("true", &at, &admin_sync)).await.is_none(),
+        "audited by an administrator"
+    );
+    // The same change claimed by someone else than its audited author: conflict.
+    let reviewer_sync = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM user_accounts WHERE id = {}", f.reviewer),
+    )
+    .await;
+    assert_eq!(
+        conflict_code(&verdict(rule("true", &at, &reviewer_sync)).await),
+        "SITE_SETTING_UNAUDITED"
+    );
 }
 
 /// Makes `node`'s type able to own work: the node is a planning site.

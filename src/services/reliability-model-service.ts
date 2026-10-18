@@ -242,6 +242,8 @@ const RcmWorksheetSchema = z.object({
   time_basis: z.string(),
   /** FMECA rows still to review: not offered for an RCM decision. */
   rows_to_review: num,
+  /** Set while the plant's FMECA grids must be reviewed (Maintafox grids standing in). */
+  grids_review: z.string().nullable().optional(),
 });
 
 export type RcmRow = z.infer<typeof RcmRowSchema>;

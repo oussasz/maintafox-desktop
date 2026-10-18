@@ -1733,7 +1733,8 @@
         "work_orders",
         "user_accounts",
         "fmeca_items",
-        "rcm_decisions"
+        "rcm_decisions",
+        "org_nodes"
       ],
       "sync_status": "synced"
     },

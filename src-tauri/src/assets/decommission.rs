@@ -98,6 +98,7 @@ pub async fn decommission_asset(
             reason_code: None,
             notes: Some(notes),
             approved_by_id: None,
+            expected_row_version: None,
         },
         actor_id,
     )

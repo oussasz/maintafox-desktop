@@ -401,6 +401,34 @@ mod tests {
         .await
         .expect("in-service status change");
         assert_eq!(updated.status_code, "UNDER_MAINTENANCE");
+
+        // Never created retired.
+        let mut retired = valid_payload(org_node_id);
+        retired.asset_code = "PMP-1002".into();
+        retired.status_code = "SCRAPPED".into();
+        assert!(refused(identity::create_asset(&db, retired, 1).await));
+
+        // Leaving a retired status is a recommission event, not an identity edit.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED', decommissioned_at = '2026-10-01T00:00:00Z' \
+             WHERE id = ?",
+            [asset.id.into()],
+        ))
+        .await
+        .expect("retire for the test");
+        let back = identity::update_asset_identity(
+            &db,
+            asset.id,
+            payload(Some("ACTIVE_IN_SERVICE"), None),
+            updated.row_version,
+            1,
+        )
+        .await;
+        assert!(
+            matches!(back, Err(AppError::ValidationFailed(ref m)) if m[0] == identity::RECOMMISSION_REQUIRED),
+            "{back:?}"
+        );
     }
 
     #[tokio::test]

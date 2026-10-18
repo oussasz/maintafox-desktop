@@ -472,7 +472,8 @@
     "confirm": "Change the rule",
     "reason": "Reason for the change",
     "reasonHint": "At least {{min}} characters; kept in the history with your name and the time.",
-    "saved": "Site rule changed"
+    "saved": "Site rule changed",
+    "unreadable": "The stored rule cannot be read: {{value}} (default) applies until it is set again."
   },
   "errors": {
     "SETTING_REASON_REQUIRED": "Give the reason for this change (at least 10 characters): it is kept in the history.",

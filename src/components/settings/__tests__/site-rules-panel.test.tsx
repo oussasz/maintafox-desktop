@@ -63,6 +63,7 @@ const SITES = [
     site_code: "ORAN",
     site_name: "Usine d'Oran",
     value: null,
+    value_unreadable: false,
     default_value: false,
     updated_by_name: null,
     updated_at: null,
@@ -127,6 +128,14 @@ describe("SiteRulesPanel", () => {
     fireEvent.click(within(ask).getByRole("button", { name: "siteRules.confirm" }));
     await waitFor(() => expect(svc.setSiteSetting).toHaveBeenCalled());
     expect(screen.getByRole("dialog", { name: "siteRules.confirmTitle" })).toBeInTheDocument();
+  });
+
+  it("says when the stored rule cannot be read (the default applies)", async () => {
+    svc.listSiteSettings.mockResolvedValueOnce([{ ...SITES[0], value_unreadable: true }]);
+    render(<SiteRulesPanel onToast={() => undefined} />);
+    fireEvent.change(await screen.findByLabelText("siteRules.site"), { target: { value: "7" } });
+    expect(await screen.findByText("siteRules.unreadable")).toBeInTheDocument();
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false");
   });
 
   it("shows a failed load with a retry", async () => {

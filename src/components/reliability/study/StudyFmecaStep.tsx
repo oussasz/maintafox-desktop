@@ -174,6 +174,12 @@ export function StudyFmecaStep({
   const classes = ws.scales.matrix.classes;
   return (
     <div className="grid gap-4">
+      {ws.scales.review ? (
+        // RPN, zones and criticality below come from substitute grids until they are reviewed.
+        <RamsCallout tone="attention" title={t("rams.scales.substituteTitle")}>
+          {t("rams.scales.substituteBody")}
+        </RamsCallout>
+      ) : null}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <RamsCard
           title={t("rams.fmeca.title", {

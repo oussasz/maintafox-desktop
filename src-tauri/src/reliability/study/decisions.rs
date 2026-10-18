@@ -10,7 +10,7 @@
 //! reason and audited). The site is the planning site of the decision's equipment (or of every
 //! equipment of its study); when it cannot be resolved to one site, four-eyes applies. A decision
 //! approved by its own proposer is flagged `self_approved` wherever it is listed, and the same rule
-//! is checked when a decision arrives by synchronisation (`inbound_self_approval_conflict`).
+//! is checked when a decision arrives by synchronisation (`inbound_self_approval_check`).
 
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
@@ -96,13 +96,9 @@ async fn decision_site<C: ConnectionTrait>(db: &C, study_id: i64, equipment_id: 
     Ok(site)
 }
 
-/// Four-eyes or the site's opt-out, for a decision of `study_id` on `equipment_id`.
-pub async fn self_approval_rule<C: ConnectionTrait>(
-    db: &C,
-    study_id: i64,
-    equipment_id: Option<i64>,
-) -> AppResult<SelfApprovalRule> {
-    let Some(site) = decision_site(db, study_id, equipment_id).await? else {
+/// Rule of a site already resolved (`None`: unresolved).
+async fn site_rule<C: ConnectionTrait>(db: &C, site: Option<i64>) -> AppResult<SelfApprovalRule> {
+    let Some(site) = site else {
         return Ok(SelfApprovalRule::SiteUnresolved);
     };
     Ok(
@@ -112,6 +108,43 @@ pub async fn self_approval_rule<C: ConnectionTrait>(
             SelfApprovalRule::FourEyes
         },
     )
+}
+
+/// The stricter of two rules: the proposer may approve only when both allow it.
+fn strictest(a: SelfApprovalRule, b: SelfApprovalRule) -> SelfApprovalRule {
+    use SelfApprovalRule::{Allowed, FourEyes, SiteUnresolved};
+    match (a, b) {
+        (Allowed, Allowed) => Allowed,
+        (SiteUnresolved, _) | (_, SiteUnresolved) => SiteUnresolved,
+        _ => FourEyes,
+    }
+}
+
+/// Rule for a recorded decision: the strictest of the site stored when it was proposed and the
+/// site its equipment belongs to now (moving equipment to an opted-out site never lifts
+/// four-eyes on a decision already proposed). A decision recorded before the site was stored
+/// is judged on its current site.
+async fn recorded_decision_rule<C: ConnectionTrait>(
+    db: &C,
+    stored_site: Option<i64>,
+    study_id: i64,
+    equipment_id: Option<i64>,
+    has_stored_site: bool,
+) -> AppResult<SelfApprovalRule> {
+    let live = self_approval_rule(db, study_id, equipment_id).await?;
+    if !has_stored_site {
+        return Ok(live);
+    }
+    Ok(strictest(site_rule(db, stored_site).await?, live))
+}
+
+/// Four-eyes or the site's opt-out, for a decision of `study_id` on `equipment_id`.
+pub async fn self_approval_rule<C: ConnectionTrait>(
+    db: &C,
+    study_id: i64,
+    equipment_id: Option<i64>,
+) -> AppResult<SelfApprovalRule> {
+    site_rule(db, decision_site(db, study_id, equipment_id).await?).await
 }
 
 /// Someone other than `actor_id` who may approve reliability decisions.
@@ -261,10 +294,24 @@ pub async fn get_decision(db: &DatabaseConnection, id: i64) -> AppResult<StudyDe
     with_site_rule(db, map_decision(&r, effect)?).await
 }
 
-/// Fills `site_allows_self_approval` from the decision's site rule.
+/// Fills `site_allows_self_approval` from the decision's rule (stored and current site).
 async fn with_site_rule(db: &DatabaseConnection, mut d: StudyDecision) -> AppResult<StudyDecision> {
+    let stored = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT site_node_id, site_recorded FROM reliability_study_decisions WHERE id = ?",
+            [d.id.into()],
+        ))
+        .await?;
+    let (site, recorded) = match stored {
+        Some(r) => (
+            get::<Option<i64>>(&r, "site_node_id")?,
+            get::<i64>(&r, "site_recorded")? != 0,
+        ),
+        None => (None, false),
+    };
     d.site_allows_self_approval =
-        self_approval_rule(db, d.study_id, d.equipment_id).await? == SelfApprovalRule::Allowed;
+        recorded_decision_rule(db, site, d.study_id, d.equipment_id, recorded).await? == SelfApprovalRule::Allowed;
     Ok(d)
 }
 
@@ -446,9 +493,12 @@ pub async fn create_decision(
             return Err(invalid("DECISION_RCM_NOT_IN_STUDY"));
         }
     }
+    // The site the decision applies to, from the equipment it was resolved to (a PM plan's
+    // equipment, or the work order's): stored with the decision.
+    let decision_site_id = decision_site(db, input.study_id, equipment_id).await?;
     if let Some(a) = input.approver_id {
         if a == actor_id {
-            match self_approval_rule(db, input.study_id, input.equipment_id).await? {
+            match site_rule(db, decision_site_id).await? {
                 SelfApprovalRule::Allowed => {}
                 SelfApprovalRule::FourEyes => return Err(invalid("DECISION_SELF_APPROVER")),
                 SelfApprovalRule::SiteUnresolved => return Err(invalid("DECISION_SELF_APPROVAL_SITE_UNKNOWN")),
@@ -507,8 +557,9 @@ pub async fn create_decision(
         "INSERT INTO reliability_study_decisions (entity_sync_id, study_id, title, action_kind, equipment_id,
             pm_plan_id, proposed_interval_hours, proposed_trigger_definition_json, wo_type_code, justification,
             evidence_json, baseline_mtbf_hours, baseline_failures, baseline_exposure_hours, status, approver_id,
-            proposed_by_id, proposed_at, fmeca_item_id, rcm_decision_id, row_version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, 1, ?, ?)",
+            proposed_by_id, proposed_at, fmeca_item_id, rcm_decision_id, site_node_id, site_recorded,
+            row_version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)",
         [
             sync_id.clone().into(),
             input.study_id.into(),
@@ -529,6 +580,7 @@ pub async fn create_decision(
             ts.clone().into(),
             opt_i64(input.fmeca_item_id),
             opt_i64(input.rcm_decision_id),
+            opt_i64(decision_site_id),
             ts.clone().into(),
             ts.into(),
         ],
@@ -595,7 +647,8 @@ async fn designated_approver_check(
     let r = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT approver_id, proposed_by_id, study_id, equipment_id FROM reliability_study_decisions WHERE id = ?",
+            "SELECT approver_id, proposed_by_id, study_id, equipment_id, site_node_id, site_recorded \
+             FROM reliability_study_decisions WHERE id = ?",
             [decision_id.into()],
         ))
         .await?
@@ -611,6 +664,8 @@ async fn designated_approver_check(
         proposer: get(&r, "proposed_by_id")?,
         study_id: get(&r, "study_id")?,
         equipment_id: get(&r, "equipment_id")?,
+        site: get(&r, "site_node_id")?,
+        site_recorded: get::<i64>(&r, "site_recorded")? != 0,
     })
 }
 
@@ -619,6 +674,9 @@ struct DecisionParties {
     proposer: Option<i64>,
     study_id: i64,
     equipment_id: Option<i64>,
+    /// Site stored when the decision was proposed (`site_recorded`), `None` if unresolved then.
+    site: Option<i64>,
+    site_recorded: bool,
 }
 
 pub async fn approve_decision(
@@ -630,7 +688,14 @@ pub async fn approve_decision(
     // decision. Rejecting it stays open to them (it withdraws the proposal).
     let parties = designated_approver_check(db, input.decision_id, actor_id).await?;
     if parties.proposer == Some(actor_id) {
-        let rule = self_approval_rule(db, parties.study_id, parties.equipment_id).await?;
+        let rule = recorded_decision_rule(
+            db,
+            parties.site,
+            parties.study_id,
+            parties.equipment_id,
+            parties.site_recorded,
+        )
+        .await?;
         if rule != SelfApprovalRule::Allowed {
             return Err(self_approval_refusal(db, rule, actor_id).await?);
         }
@@ -717,13 +782,22 @@ pub async fn apply_decision(
     get_decision(db, d.id).await
 }
 
-/// Local id of a referenced row in an inbound payload (sync id string, or a local id number).
+/// What to do with a decision received by synchronisation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InboundDecisionVerdict {
+    /// A parent (study, equipment, site, person) is not applied here yet: wait.
+    Defer(String),
+    /// Refused: a sync conflict for a person to decide.
+    Conflict(String),
+}
+
+/// Local id of a row referenced by its sync id in a payload (`Err(())`: named but not here).
 async fn payload_ref<C: ConnectionTrait>(
     conn: &C,
     payload: &serde_json::Map<String, serde_json::Value>,
     column: &str,
     table: &str,
-) -> AppResult<Option<i64>> {
+) -> AppResult<Result<Option<i64>, ()>> {
     match payload.get(column) {
         Some(serde_json::Value::String(sync_id)) => Ok(conn
             .query_one(Statement::from_sql_and_values(
@@ -733,66 +807,143 @@ async fn payload_ref<C: ConnectionTrait>(
             ))
             .await?
             .map(|r| get::<i64>(&r, "id"))
-            .transpose()?),
-        Some(serde_json::Value::Number(n)) => Ok(n.as_i64()),
-        _ => Ok(None),
+            .transpose()?
+            .map_or(Err(()), |id| Ok(Some(id)))),
+        None | Some(serde_json::Value::Null) => Ok(Ok(None)),
+        // Payloads name rows by sync id; anything else is not trusted as a local id.
+        Some(_) => Ok(Err(())),
     }
 }
 
-/// Four-eyes on a decision received by synchronisation: an approval (or applied decision) whose
-/// approver is its proposer is refused as a sync conflict unless the decision's site opted out here,
-/// or this device already holds that approval (a record accepted before). `Some` = the conflict.
-pub(crate) async fn inbound_self_approval_conflict<C: ConnectionTrait>(
+const STATUS_RANK: [(&str, i64); 4] = [
+    (STATUS_PROPOSED, 0),
+    (STATUS_APPROVED, 1),
+    (STATUS_APPLIED, 2),
+    (STATUS_REJECTED, 1),
+];
+
+fn status_rank(status: &str) -> Option<i64> {
+    STATUS_RANK.iter().find(|(s, _)| *s == status).map(|(_, r)| *r)
+}
+
+/// The local row of a received decision, its references expressed as sync ids.
+struct LocalDecision {
+    status: String,
+    study: Option<String>,
+    equipment: Option<String>,
+    proposer: Option<String>,
+    decider: Option<String>,
+}
+
+async fn local_decision<C: ConnectionTrait>(conn: &C, sync_id: &str) -> AppResult<Option<LocalDecision>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.status, s.entity_sync_id AS study, e.entity_sync_id AS equipment, \
+                    pb.entity_sync_id AS proposer, db.entity_sync_id AS decider \
+             FROM reliability_study_decisions d \
+             LEFT JOIN reliability_studies s ON s.id = d.study_id \
+             LEFT JOIN equipment e ON e.id = d.equipment_id \
+             LEFT JOIN user_accounts pb ON pb.id = d.proposed_by_id \
+             LEFT JOIN user_accounts db ON db.id = d.decided_by_id \
+             WHERE d.entity_sync_id = ?",
+            [sync_id.into()],
+        ))
+        .await?;
+    row.map(|r| {
+        Ok(LocalDecision {
+            status: get(&r, "status")?,
+            study: get(&r, "study")?,
+            equipment: get(&r, "equipment")?,
+            proposer: get(&r, "proposer")?,
+            decider: get(&r, "decider")?,
+        })
+    })
+    .transpose()
+}
+
+/// Four-eyes on a decision received by synchronisation (`before_upsert_checked`):
+/// - the proposer and decider are taken from the payload, or from the local row when the payload
+///   leaves them out;
+/// - a decision still `proposed` never names its proposer as decider;
+/// - an approval (or applied decision) by its own proposer is refused as a sync conflict unless
+///   the decision's site allows it here — the strictest of the site stored with the decision and
+///   its equipment's current site — or this device already holds exactly that approval (same
+///   study, equipment, proposer and decider; status the same or further along);
+/// - a study, equipment, site or person not applied here yet makes the row wait.
+pub(crate) async fn inbound_self_approval_check<C: ConnectionTrait>(
     conn: &C,
+    entity_sync_id: &str,
     payload: &serde_json::Map<String, serde_json::Value>,
-) -> AppResult<Option<String>> {
+) -> AppResult<Option<InboundDecisionVerdict>> {
     let status = payload
         .get("status")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    if status != STATUS_APPROVED && status != STATUS_APPLIED {
-        return Ok(None);
-    }
-    let (Some(proposer), Some(decider)) = (payload.get("proposed_by_id"), payload.get("decided_by_id")) else {
-        return Ok(None);
-    };
-    if proposer.is_null() || proposer != decider {
-        return Ok(None);
-    }
-    if let Some(sync_id) = payload.get("entity_sync_id").and_then(serde_json::Value::as_str) {
-        let held = conn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT 1 AS held FROM reliability_study_decisions
-                  WHERE entity_sync_id = ? AND status IN (?, ?)
-                    AND decided_by_id IS NOT NULL AND decided_by_id = proposed_by_id",
-                [sync_id.into(), STATUS_APPROVED.into(), STATUS_APPLIED.into()],
-            ))
-            .await?
-            .is_some();
-        if held {
-            return Ok(None);
+    let local = local_decision(conn, entity_sync_id).await?;
+    let party = |key: &str, local_value: Option<&String>| -> Option<String> {
+        match payload.get(key) {
+            Some(serde_json::Value::String(v)) => Some(v.clone()),
+            Some(serde_json::Value::Null) => None,
+            Some(_) => None,
+            None => local_value.cloned(),
         }
-    }
-    let study = payload_ref(conn, payload, "study_id", "reliability_studies").await?;
-    let equipment = payload_ref(conn, payload, "equipment_id", "equipment").await?;
-    let rule = match study {
-        Some(study_id) => self_approval_rule(conn, study_id, equipment).await?,
-        None => SelfApprovalRule::SiteUnresolved,
     };
+    let proposer = party("proposed_by_sync_id", local.as_ref().and_then(|l| l.proposer.as_ref()));
+    let decider = party("decided_by_sync_id", local.as_ref().and_then(|l| l.decider.as_ref()));
     let title = payload
         .get("title")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
+    let self_decided = proposer.is_some() && proposer == decider;
+    if !self_decided {
+        return Ok(None);
+    }
+    if status == STATUS_PROPOSED {
+        return Ok(Some(InboundDecisionVerdict::Conflict(format!(
+            "decision '{title}' is still proposed but names its proposer as the person who decided it"
+        ))));
+    }
+    // Rejecting one's own proposal withdraws it: allowed, as on this device.
+    if status != STATUS_APPROVED && status != STATUS_APPLIED {
+        return Ok(None);
+    }
+    let study_sync = payload.get("study_sync_id").and_then(serde_json::Value::as_str);
+    let equipment_sync = payload.get("equipment_sync_id").and_then(serde_json::Value::as_str);
+    if let Some(l) = &local {
+        let advances = matches!((status_rank(&l.status), status_rank(status)), (Some(a), Some(b)) if b >= a);
+        let same_parties = l.study.as_deref() == study_sync
+            && l.equipment.as_deref() == equipment_sync
+            && l.proposer == proposer
+            && l.decider == decider;
+        let held_approval = (l.status == STATUS_APPROVED || l.status == STATUS_APPLIED) && l.proposer == l.decider;
+        if held_approval && same_parties && advances {
+            return Ok(None);
+        }
+    }
+    let Ok(Some(study)) = payload_ref(conn, payload, "study_sync_id", "reliability_studies").await? else {
+        return Ok(Some(InboundDecisionVerdict::Defer("study not applied yet".into())));
+    };
+    let Ok(equipment) = payload_ref(conn, payload, "equipment_sync_id", "equipment").await? else {
+        return Ok(Some(InboundDecisionVerdict::Defer("equipment not applied yet".into())));
+    };
+    let has_stored_site = payload
+        .get("site_recorded")
+        .and_then(|v| v.as_i64().or_else(|| v.as_bool().map(i64::from)))
+        == Some(1);
+    let Ok(site) = payload_ref(conn, payload, "site_node_sync_id", "org_nodes").await? else {
+        return Ok(Some(InboundDecisionVerdict::Defer("site not applied yet".into())));
+    };
+    let rule = recorded_decision_rule(conn, site, study, equipment, has_stored_site).await?;
     Ok(match rule {
         SelfApprovalRule::Allowed => None,
-        SelfApprovalRule::FourEyes => Some(format!(
+        SelfApprovalRule::FourEyes => Some(InboundDecisionVerdict::Conflict(format!(
             "decision '{title}' was approved by the person who proposed it; its site requires a second \
              person (four-eyes)"
-        )),
-        SelfApprovalRule::SiteUnresolved => Some(format!(
+        ))),
+        SelfApprovalRule::SiteUnresolved => Some(InboundDecisionVerdict::Conflict(format!(
             "decision '{title}' was approved by the person who proposed it; its site cannot be resolved \
              here, so four-eyes applies"
-        )),
+        ))),
     })
 }

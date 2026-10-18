@@ -924,7 +924,9 @@ pub(crate) async fn apply_row(
     if let Some(outcome) = crate::sync::apply_hooks::before_upsert(layout, &payload) {
         return Ok(outcome);
     }
-    if let Some(outcome) = crate::sync::apply_hooks::before_upsert_checked(conn, layout, &payload).await? {
+    if let Some(outcome) =
+        crate::sync::apply_hooks::before_upsert_checked(conn, layout, entity_sync_id, &payload).await?
+    {
         return Ok(outcome);
     }
 

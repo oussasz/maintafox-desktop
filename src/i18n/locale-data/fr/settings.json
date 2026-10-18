@@ -472,7 +472,8 @@
     "confirm": "Modifier la règle",
     "reason": "Motif du changement",
     "reasonHint": "Au moins {{min}} caractères ; conservé dans l'historique avec votre nom et l'heure.",
-    "saved": "Règle du site modifiée"
+    "saved": "Règle du site modifiée",
+    "unreadable": "La règle enregistrée est illisible : {{value}} (par défaut) s'applique jusqu'à ce qu'elle soit définie à nouveau."
   },
   "errors": {
     "SETTING_REASON_REQUIRED": "Indiquez le motif de ce changement (au moins 10 caractères) : il est conservé dans l'historique.",
