@@ -19,13 +19,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { mfInput } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -54,11 +47,11 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { PersonnelListSelect } from "./PersonnelListSelect";
 import { clearableChanges } from "./personnel-update";
+import { usePersonnelLists } from "./use-personnel-lists";
 
-const EMPLOYMENT_TYPES = ["employee", "contractor", "temp", "vendor"] as const;
 const EMPLOYMENT_ORIGINS = ["internal", "external"] as const;
-const EMPLOYMENT_STATUSES = ["active", "inactive", "suspended", "terminated"] as const;
 
 type SkillRow = {
   key: string;
@@ -96,7 +89,9 @@ export function PersonnelCreateDialog() {
   // ── Identity ──────────────────────────────────────────────────────────────
   const [fullName, setFullName] = useState("");
   const [employeeCode, setEmployeeCode] = useState("");
-  const [employmentType, setEmploymentType] = useState<string>("employee");
+  // Employment type and status are values of the plant's lists (Données de référence).
+  const lists = usePersonnelLists();
+  const [employmentType, setEmploymentType] = useState<string>("");
   const [positionId, setPositionId] = useState<number | null>(null);
 
   // ── Origin & Contract ─────────────────────────────────────────────────────
@@ -111,7 +106,7 @@ export function PersonnelCreateDialog() {
   const [teamId, setTeamId] = useState<number | null>(null);
   const [homeScheduleRefId, setHomeScheduleRefId] = useState<string | null>(null);
   const [supervisorId, setSupervisorId] = useState<number | null>(null);
-  const [employmentStatus, setEmploymentStatus] = useState<string>("active");
+  const [employmentStatus, setEmploymentStatus] = useState<string>("");
   const [hireDate, setHireDate] = useState("");
 
   // ── Photo ─────────────────────────────────────────────────────────────────
@@ -202,7 +197,7 @@ export function PersonnelCreateDialog() {
   const resetForm = useCallback(() => {
     setFullName("");
     setEmployeeCode("");
-    setEmploymentType("employee");
+    setEmploymentType("");
     setPositionId(null);
     setEmploymentOrigin("internal");
     setExternalCompanyId(null);
@@ -213,7 +208,7 @@ export function PersonnelCreateDialog() {
     setTeamId(null);
     setHomeScheduleRefId(null);
     setSupervisorId(null);
-    setEmploymentStatus("active");
+    setEmploymentStatus("");
     setHireDate("");
     setPhotoItems([]);
     setSkills([]);
@@ -226,6 +221,15 @@ export function PersonnelCreateDialog() {
     setNotes("");
     setLocalError(null);
   }, []);
+
+  // A new person starts on the first value of each list (the plant's order), once read.
+  useEffect(() => {
+    if (!showCreateForm || isEdit) return;
+    const firstType = lists.values("employment_types").find((v) => !v.review_required);
+    const firstStatus = lists.values("employment_statuses").find((v) => !v.review_required);
+    if (!employmentType && firstType) setEmploymentType(firstType.code);
+    if (!employmentStatus && firstStatus) setEmploymentStatus(firstStatus.code);
+  }, [showCreateForm, isEdit, lists, employmentType, employmentStatus]);
 
   useEffect(() => {
     if (!showCreateForm) return;
@@ -249,7 +253,7 @@ export function PersonnelCreateDialog() {
           : null,
       );
       setSupervisorId(editing.supervisor_id);
-      setEmploymentStatus(editing.employment_status || "active");
+      setEmploymentStatus(editing.employment_status);
       setHireDate(editing.hire_date ?? "");
       setEmail(editing.email ?? "");
       setPhone(editing.phone ?? "");
@@ -384,6 +388,8 @@ export function PersonnelCreateDialog() {
     if (!code) errors.push(t("validation.codeRequired", "Employee code is required"));
     if (!positionId) errors.push(t("validation.positionRequired", "Position is required"));
     if (!entityId) errors.push(t("validation.entityRequired", "Entity is required"));
+    if (!employmentType) errors.push(t("validation.employmentTypeRequired"));
+    if (!employmentStatus) errors.push(t("validation.employmentStatusRequired"));
     if (!teamId) errors.push(t("validation.teamRequired", "Crew is required"));
     if (entityId && teamId && !crewsLoading && crewOptions.length === 0) {
       errors.push(t("validation.noCrewsForEntity"));
@@ -619,18 +625,12 @@ export function PersonnelCreateDialog() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>{t("field.employmentType")} *</Label>
-                <Select value={employmentType} onValueChange={setEmploymentType}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EMPLOYMENT_TYPES.map((et) => (
-                      <SelectItem key={et} value={et}>
-                        {t(`employmentType.${et}`)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <PersonnelListSelect
+                  list="employment_types"
+                  lists={lists}
+                  value={employmentType}
+                  onChange={setEmploymentType}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>{t("field.position")} *</Label>
@@ -808,18 +808,12 @@ export function PersonnelCreateDialog() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>{t("field.employmentStatus", "Employment status")} *</Label>
-                <Select value={employmentStatus} onValueChange={setEmploymentStatus}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EMPLOYMENT_STATUSES.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {t(`employmentStatus.${s}`, s)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <PersonnelListSelect
+                  list="employment_statuses"
+                  lists={lists}
+                  value={employmentStatus}
+                  onChange={setEmploymentStatus}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="per-hire-date">{t("field.hireDate")}</Label>

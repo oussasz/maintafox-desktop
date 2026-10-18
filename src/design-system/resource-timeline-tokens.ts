@@ -17,12 +17,16 @@ export type ResourceTimelineState =
   | "restriction"
   | "training";
 
-/** Block types drawn as chronology bars (legend for ResourceTimeline items). */
+/**
+ * States of absence bars (legend for ResourceTimeline items). An absence is drawn by the
+ * behaviour tag of its type in the plant's list (Données de référence), never by its code:
+ * see `absenceTimelineState`.
+ */
 export const RESOURCE_TIMELINE_BLOCK_LEGEND_STATES = [
   "leave",
-  "medical",
-  "restriction",
+  "critical",
   "training",
+  "blocked",
 ] as const satisfies ReadonlyArray<ResourceTimelineState>;
 
 /** Horizon length presets (inclusive day counts). Single config — no magic numbers in UI. */
@@ -110,16 +114,18 @@ export function resourceTimelineItemStateClass(state: ResourceTimelineState): st
   return `mf-rt-item mf-rt-item--${state}`;
 }
 
-export function blockTypeToTimelineState(
-  blockType: string,
+/**
+ * Bar state of an absence from the behaviour tag of its type (`leave`, `critical`, `training`
+ * in the plant's absence list) and the absence's own critical flag. A critical absence is always
+ * drawn as critical; an absence whose type is unknown or untagged is drawn as a plain blocking
+ * absence.
+ */
+export function absenceTimelineState(
+  tag: string | null | undefined,
   isCritical: boolean,
 ): ResourceTimelineState {
-  if (isCritical || blockType === "medical" || blockType === "restriction") {
-    if (blockType === "medical") return "medical";
-    if (blockType === "restriction") return "restriction";
-    return "critical";
-  }
-  if (blockType === "leave") return "leave";
-  if (blockType === "training") return "training";
+  if (isCritical || tag === "critical") return "critical";
+  if (tag === "leave") return "leave";
+  if (tag === "training") return "training";
   return "blocked";
 }

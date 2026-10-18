@@ -25,6 +25,7 @@ import { PersonnelCreateDialog } from "@/components/personnel/PersonnelCreateDia
 import { PersonnelDetailWorkspace } from "@/components/personnel/PersonnelDetailWorkspace";
 import { PersonnelExportMenu } from "@/components/personnel/PersonnelExportMenu";
 import { PersonnelImportWizard } from "@/components/personnel/PersonnelImportWizard";
+import { PersonnelStatusReviewNotice } from "@/components/personnel/PersonnelStatusReviewNotice";
 import {
   TeamCapacityBoard,
   type TeamCapacityBoardHandle,
@@ -32,8 +33,10 @@ import {
 import { WorkCalendarPanel } from "@/components/personnel/WorkCalendarPanel";
 import { WorkforceReportPanel } from "@/components/personnel/WorkforceReportPanel";
 import type { AvailabilityViewMode } from "@/components/personnel/availability-model";
+import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { Button } from "@/components/ui/button";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
+import { ReviewMark } from "@/components/ui/review-mark";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
@@ -58,9 +61,7 @@ const AVAILABILITY_CODES = [
   "inactive",
 ] as const;
 
-const EMPLOYMENT_CODES = ["employee", "contractor", "temp", "vendor"] as const;
 const EMPLOYMENT_ORIGIN_CODES = ["internal", "external"] as const;
-const EMPLOYMENT_STATUS_CODES = ["active", "inactive", "suspended", "terminated"] as const;
 
 const VIEW_STORAGE_KEY = "personnel-view-mode";
 
@@ -116,6 +117,8 @@ export function PersonnelPage() {
   const teamsRef = useRef<TeamCapacityBoardHandle>(null);
 
   const { can } = usePermissions();
+  // Employment types and statuses come from the plant's lists (Données de référence).
+  const lists = usePersonnelLists();
   // The position filter is offered only to users who may read positions (per.position.view).
   const canViewPositions = can(P.PER_POSITION_VIEW);
   const [positions, setPositions] = useState<{ id: number; code: string; name: string }[]>([]);
@@ -294,9 +297,11 @@ export function PersonnelPage() {
         id: "employment",
         kind: "multi-select",
         label: t("filters.employmentType"),
-        options: EMPLOYMENT_CODES.map((code) => ({
-          value: code,
-          label: t(`employmentType.${code}`),
+        options: lists.values("employment_types").map((v) => ({
+          value: v.code,
+          label: v.review_required
+            ? `${lists.text("employment_types", v.code)} · ${t("common:listValue.review")}`
+            : lists.text("employment_types", v.code),
         })),
         value: selectedEmployment,
         onChange: handleEmploymentMulti,
@@ -316,9 +321,11 @@ export function PersonnelPage() {
         id: "empStatus",
         kind: "multi-select",
         label: t("filters.employmentStatus", "Status"),
-        options: EMPLOYMENT_STATUS_CODES.map((code) => ({
-          value: code,
-          label: t(`employmentStatus.${code}`, code),
+        options: lists.values("employment_statuses").map((v) => ({
+          value: v.code,
+          label: v.review_required
+            ? `${lists.text("employment_statuses", v.code)} · ${t("common:listValue.review")}`
+            : lists.text("employment_statuses", v.code),
         })),
         value: selectedEmpStatus,
         onChange: handleEmpStatusMulti,
@@ -326,6 +333,7 @@ export function PersonnelPage() {
     ],
     [
       t,
+      lists,
       canViewPositions,
       entityNodes,
       positions,
@@ -391,8 +399,16 @@ export function PersonnelPage() {
         accessorKey: "employment_type",
         header: t("list.columns.employmentType"),
         cell: ({ row }) => {
-          const et = row.original.employment_type as "employee" | "contractor" | "temp" | "vendor";
-          return <span className="text-xs text-text-muted">{t(`employmentType.${et}`)}</span>;
+          const code = row.original.employment_type;
+          const value = lists.option("employment_types", code);
+          return (
+            <span className="inline-flex items-center gap-1 text-xs text-text-muted">
+              {lists.text("employment_types", code)}
+              {lists.canRead && !lists.loading && (value == null || value.review_required) ? (
+                <ReviewMark />
+              ) : null}
+            </span>
+          );
         },
       },
       {
@@ -403,7 +419,7 @@ export function PersonnelPage() {
         ),
       },
     ],
-    [t],
+    [t, lists],
   );
 
   /** One refresh button: it reloads what the open tab shows. */
@@ -513,6 +529,19 @@ export function PersonnelPage() {
                   resultCount={total}
                   onReset={clearAllFilters}
                 />
+                <PersonnelStatusReviewNotice
+                  className="mx-3 mb-2"
+                  refreshKey={items}
+                  onOpenPersonnel={(id) => void openPersonnel(id)}
+                />
+                {lists.error != null ? (
+                  <ErrorState
+                    className="mx-3 mb-2"
+                    error={lists.error}
+                    title={t("page.listsLoadError")}
+                    onRetry={() => void lists.reload()}
+                  />
+                ) : null}
                 {lookupError != null ? (
                   <ErrorState
                     className="mx-3 mb-2"

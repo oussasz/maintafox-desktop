@@ -19,6 +19,7 @@ import { PersonScheduleExceptions } from "@/components/personnel/PersonScheduleE
 import { PersonnelPortrait } from "@/components/personnel/PersonnelPortrait";
 import { PersonCapacityDays } from "@/components/personnel/TeamCapacityDays";
 import { PersonQualificationSheet } from "@/components/personnel/qualification/PersonQualificationSheet";
+import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { Timeline, type TimelineEntry } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ReviewMark } from "@/components/ui/review-mark";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
@@ -123,6 +125,8 @@ type TabDataKey = "teams" | "availability" | "history" | "assignment" | "workloa
 
 export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspaceProps) {
   const { t } = useTranslation("personnel");
+  // Employment statuses and absence types come from the plant's lists (Données de référence).
+  const lists = usePersonnelLists();
   const woOpenRuleText = useWoOpenRuleText();
   const { formatCurrency } = useFormatters();
   const { can } = usePermissions();
@@ -133,6 +137,12 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
   const deactivate = usePersonnelStore((s) => s.deactivate);
 
   const p = detail.personnel;
+  const statusValue = lists.option("employment_statuses", p.employment_status);
+  const statusToReview =
+    !!p.employment_status &&
+    lists.canRead &&
+    !lists.loading &&
+    (statusValue == null || statusValue.review_required);
   /** Server withheld per.sensitiveview fields; show them as restricted, never as empty. */
   const restricted = p.sensitive_masked === true;
   const sensitive = (value: string | null | undefined): string | null =>
@@ -280,11 +290,10 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
                 ? t(`employmentOrigin.${p.employment_origin}`, p.employment_origin)
                 : "—"}
             </Badge>
-            <Badge variant="outline" className="text-[10px] capitalize">
-              {p.employment_status
-                ? t(`employmentStatus.${p.employment_status}`, p.employment_status)
-                : "—"}
+            <Badge variant="outline" className="text-[10px]">
+              {p.employment_status ? lists.text("employment_statuses", p.employment_status) : "—"}
             </Badge>
+            {statusToReview ? <ReviewMark /> : null}
           </div>
         }
         qrSlot={
@@ -371,7 +380,12 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
           <DetailFieldRow label={t("field.schedule")} value={p.schedule_name} />
           <DetailFieldRow label={t("field.supervisor")} value={p.supervisor_name} />
           <DetailFieldRow label={t("field.employmentOrigin")} value={p.employment_origin} />
-          <DetailFieldRow label={t("field.employmentStatus")} value={p.employment_status} />
+          <DetailFieldRow
+            label={t("field.employmentStatus")}
+            value={
+              p.employment_status ? lists.text("employment_statuses", p.employment_status) : null
+            }
+          />
           <DetailFieldRow label={t("field.hireDate")} value={fmt(p.hire_date)} />
           {isExternal ? (
             <>
@@ -425,9 +439,7 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
           {blocks.map((b) => (
             <div key={b.id} className="rounded border border-surface-border p-2 text-sm">
               <span className="font-medium">
-                {restricted
-                  ? t("capacityDays.absence")
-                  : t(`availability.form.types.${b.block_type}`, { defaultValue: b.block_type })}
+                {restricted ? t("capacityDays.absence") : lists.text("absence_types", b.block_type)}
               </span>{" "}
               · {fmt(b.start_at)} → {fmt(b.end_at)}
             </div>

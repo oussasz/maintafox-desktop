@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import { StatusChip } from "@/components/ui/status-chip";
@@ -282,6 +283,8 @@ function FragmentRow({
 
 export function PersonCapacityDays({ personnelId }: { personnelId: number }) {
   const { t, i18n } = useTranslation("personnel");
+  // Absence types are named from the plant's list (Données de référence), by exact code.
+  const lists = usePersonnelLists();
   const dayFmt = useDayFormatter();
   const from = todayIso();
   const to = plusDays(from, DEFAULT_CAPACITY_DAYS - 1);
@@ -342,9 +345,7 @@ export function PersonCapacityDays({ personnelId }: { personnelId: number }) {
             ) : null}
             {d.absence_types.length > 0 ? (
               <span className="ml-2 text-xs text-text-muted">
-                {d.absence_types
-                  .map((a) => t(`availability.form.types.${a}`, { defaultValue: a }))
-                  .join(", ")}
+                {d.absence_types.map((a) => lists.text("absence_types", a)).join(", ")}
               </span>
             ) : null}
           </span>

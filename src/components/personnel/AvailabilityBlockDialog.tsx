@@ -21,6 +21,9 @@ import {
 import type { PersonnelAvailabilityBlock } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { PersonnelListSelect } from "./PersonnelListSelect";
+import { usePersonnelLists } from "./use-personnel-lists";
+
 export interface AvailabilityBlockPersonOption {
   id: number;
   label: string;
@@ -45,8 +48,6 @@ function toDatetimeLocalValue(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const FORCED_CRITICAL_TYPES = new Set(["medical", "restriction"]);
-
 export function AvailabilityBlockDialog({
   open,
   onOpenChange,
@@ -59,8 +60,11 @@ export function AvailabilityBlockDialog({
   onSaved,
 }: AvailabilityBlockDialogProps) {
   const { t } = useTranslation("personnel");
+  // Absence types come from the plant's list (Données de référence); a type tagged "critical"
+  // always makes the absence critical (the server applies the same rule).
+  const lists = usePersonnelLists();
   const [personnelId, setPersonnelId] = useState<number | null>(null);
-  const [blockType, setBlockType] = useState("leave");
+  const [blockType, setBlockType] = useState("");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [reason, setReason] = useState("");
@@ -69,7 +73,7 @@ export function AvailabilityBlockDialog({
   const [overlapConfirmPending, setOverlapConfirmPending] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const forcedCritical = FORCED_CRITICAL_TYPES.has(blockType);
+  const forcedCritical = lists.option("absence_types", blockType)?.tag === "critical";
 
   // Latest props for the reset below, read without making them reset triggers: the parent
   // rebuilds `personOptions` on every render, which used to wipe the form while typing.
@@ -106,7 +110,7 @@ export function AvailabilityBlockDialog({
       return;
     }
     setPersonnelId(init.initialPersonnelId ?? init.personOptions[0]?.id ?? null);
-    setBlockType("leave");
+    setBlockType("");
     setStartAt(init.initialStartLocal ?? "");
     setEndAt(init.initialEndLocal ?? "");
     setReason("");
@@ -117,6 +121,14 @@ export function AvailabilityBlockDialog({
     if (forcedCritical) setIsCritical(true);
   }, [forcedCritical]);
 
+  // A new absence starts on the first usable type of the list, once the list is read.
+  const absenceTypes = lists.values("absence_types");
+  useEffect(() => {
+    if (resetKey == null || mode !== "create" || blockType !== "") return;
+    const first = absenceTypes.find((v) => !v.review_required);
+    if (first) setBlockType(first.code);
+  }, [resetKey, mode, blockType, absenceTypes]);
+
   const title = useMemo(
     () => (mode === "edit" ? t("availability.form.editTitle") : t("availability.form.title")),
     [mode, t],
@@ -125,6 +137,10 @@ export function AvailabilityBlockDialog({
   const submit = async (confirmOverlap: boolean) => {
     if (mode === "create" && personnelId == null) {
       setError(t("availability.form.errors.personnelRequired"));
+      return;
+    }
+    if (!blockType) {
+      setError(t("availability.form.errors.typeRequired"));
       return;
     }
     if (!startAt || !endAt) {
@@ -205,19 +221,18 @@ export function AvailabilityBlockDialog({
             </label>
           ) : null}
 
-          <label className="text-sm">
-            <span className="mb-1 block text-text-muted">{t("availability.form.blockType")}</span>
-            <select
-              className={mfInput.nativeSelect}
+          <div className="text-sm">
+            <span id="availability-block-type" className="mb-1 block text-text-muted">
+              {t("availability.form.blockType")}
+            </span>
+            <PersonnelListSelect
+              list="absence_types"
+              lists={lists}
               value={blockType}
-              onChange={(e) => setBlockType(e.target.value)}
-            >
-              <option value="medical">{t("availability.form.types.medical")}</option>
-              <option value="restriction">{t("availability.form.types.restriction")}</option>
-              <option value="leave">{t("availability.form.types.leave")}</option>
-              <option value="training">{t("availability.form.types.training")}</option>
-            </select>
-          </label>
+              onChange={setBlockType}
+              ariaLabel={t("availability.form.blockType")}
+            />
+          </div>
 
           <label className="text-sm">
             <span className="mb-1 block text-text-muted">{t("availability.form.startAt")}</span>

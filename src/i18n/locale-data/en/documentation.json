@@ -1,30 +1,11 @@
 {
   "module": {
     "title": "Document library",
-    "subtitle": "Technical manuals, SOPs, safety protocols, and compliance certificates",
-    "navAria": "Document categories"
-  },
-  "categories": {
-    "technical-manuals": {
-      "label": "Technical manuals",
-      "heading": "Technical manuals",
-      "description": "Equipment manuals, drawings, and OEM documentation."
-    },
-    "sops": {
-      "label": "SOPs",
-      "heading": "Standard operating procedures",
-      "description": "Step-by-step procedures for operations and maintenance."
-    },
-    "safety-protocols": {
-      "label": "Safety protocols",
-      "heading": "Safety protocols",
-      "description": "LOTO, confined space, hot work, and related safety documents."
-    },
-    "compliance-certificates": {
-      "label": "Compliance certificates",
-      "heading": "Compliance certificates",
-      "description": "Inspection certificates, calibrations, and regulatory records."
-    }
+    "subtitle": "Documents filed under the plant's categories (Reference data)",
+    "navAria": "Document categories",
+    "categoriesLoadError": "Could not read the document categories",
+    "noCategories": "No document category",
+    "noCategoriesHint": "Add the document categories in Reference data to organise the library."
   },
   "upload": {
     "title": "Add a document",
@@ -89,5 +70,8 @@
     "bytes": "{{value}} B",
     "kb": "{{value}} KB",
     "mb": "{{value}} MB"
+  },
+  "category": {
+    "description": "Documents in the “{{name}}” category."
   }
 }

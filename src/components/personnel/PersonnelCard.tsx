@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { ReviewMark } from "@/components/ui/review-mark";
 import { mfInput } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import type { Personnel } from "@shared/ipc-types";
@@ -13,6 +14,7 @@ import {
   personnelAvailabilityBadgeClass,
   personnelAvailabilityDotClass,
 } from "./personnel-status-styles";
+import { usePersonnelLists } from "./use-personnel-lists";
 
 export interface PersonnelCardProps {
   personnel: Personnel;
@@ -22,10 +24,11 @@ export interface PersonnelCardProps {
 export function PersonnelCard({ personnel, onViewDetails }: PersonnelCardProps) {
   const { t } = useTranslation("personnel");
 
-  const empKey = personnel.employment_type as "employee" | "contractor" | "temp" | "vendor";
-  const employmentLabel = t(`employmentType.${empKey}`, {
-    defaultValue: personnel.employment_type,
-  });
+  const lists = usePersonnelLists();
+  const employmentLabel = lists.text("employment_types", personnel.employment_type);
+  const employmentValue = lists.option("employment_types", personnel.employment_type);
+  const employmentToReview =
+    lists.canRead && !lists.loading && (employmentValue == null || employmentValue.review_required);
 
   return (
     <Card className="flex flex-col overflow-hidden border-surface-border shadow-sm">
@@ -76,6 +79,7 @@ export function PersonnelCard({ personnel, onViewDetails }: PersonnelCardProps) 
         <div className="text-sm">
           <span className="text-muted-foreground">{t("field.employmentType")}: </span>
           <span>{employmentLabel}</span>
+          {employmentToReview ? <ReviewMark className="ml-1" /> : null}
         </div>
         {personnel.company_name ? (
           <div className="text-sm">

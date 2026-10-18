@@ -1,4 +1,8 @@
 {
+  "listValue": {
+    "review": "To review",
+    "reviewHint": "Legacy value, or a value missing from the plant's list: check it in Reference data."
+  },
   "woOpenRule": {
     "figure": "Work orders — {{rule}}",
     "open_work_to_do": "Open (work to do)",
@@ -9,6 +13,7 @@
     }
   },
   "listAccess": {
+    "documentCategories": "Reading the document categories requires the documentation view right.",
     "people": "Reading people requires the personnel view right.",
     "teams": "Reading teams requires the personnel view right.",
     "companies": "Reading contractor companies requires the personnel view right.",

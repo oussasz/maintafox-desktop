@@ -2298,12 +2298,20 @@ export interface UpsertDocumentLinkPayload {
   valid_from?: string | null;
 }
 
-/** Tenant document library — `library_documents.category` (PRD §6.15). */
-export type LibraryDocumentCategory =
-  | "technical_manuals"
-  | "sops"
-  | "safety_protocols"
-  | "compliance_certificates";
+/**
+ * Tenant document library category code (`library_documents.category`). The categories are the
+ * plant's list `DOCUMENT.CATEGORIES` in Données de référence (`list_document_categories`).
+ */
+export type LibraryDocumentCategory = string;
+
+/** One document category (`list_document_categories`). */
+export interface DocumentCategoryOption {
+  code: string;
+  label: string;
+  label_en: string | null;
+  /** A category found on stored documents that is not in the list: kept, flagged "à revoir". */
+  review_required: boolean;
+}
 
 /** Row from `library_documents` (+ equipment join). */
 export interface LibraryDocument {
@@ -6509,6 +6517,32 @@ export interface PersonnelCreateInput {
   assignment_reason?: string | null;
   skills?: PersonnelSkillDraft[];
   certifications?: PersonnelCertDraft[];
+}
+
+/** One value of a personnel list (Données de référence; `list_personnel_reference_options`). */
+export interface PersonnelOption {
+  code: string;
+  label: string;
+  label_en: string | null;
+  /** Absence types only: `leave` / `critical` / `training` — drives the display and blocking. */
+  tag: string | null;
+  /** A value found in stored data that is not in the list: kept, flagged "à revoir". */
+  review_required: boolean;
+}
+
+export interface PersonnelReferenceOptions {
+  employment_statuses: PersonnelOption[];
+  employment_types: PersonnelOption[];
+  absence_types: PersonnelOption[];
+  position_categories: PersonnelOption[];
+}
+
+/** A person whose stored employment status is not in the plant's list (`list_personnel_status_review`). */
+export interface PersonnelStatusReview {
+  personnel_id: number;
+  employee_code: string;
+  full_name: string;
+  stored_status: string;
 }
 
 export interface PersonnelUpdateInput {

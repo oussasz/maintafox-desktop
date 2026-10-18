@@ -1,8 +1,9 @@
 /**
  * Absence dialog: what the user types survives parent re-renders (a new `personOptions` array
- * on every render used to reset the form while typing).
+ * on every render used to reset the form while typing); absence types come from the plant's list,
+ * and a type tagged "critical" makes the absence critical.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -17,11 +18,30 @@ vi.mock("@/components/PermissionGate", () => ({
   PermissionGate: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
-vi.mock("@/services/personnel-service", () => ({
+const svc = vi.hoisted(() => ({
   createAvailabilityBlock: vi.fn(),
   updateAvailabilityBlock: vi.fn(),
   isAvailabilityOverlapConfirmError: () => false,
+  listPersonnelReferenceOptions: vi.fn(),
 }));
+vi.mock("@/services/personnel-service", () => svc);
+
+import { usePersonnelListsStore } from "@/stores/personnel-lists-store";
+import type { PersonnelOption } from "@shared/ipc-types";
+
+function opt(code: string, label: string, extra: Partial<PersonnelOption> = {}): PersonnelOption {
+  return { code, label, label_en: null, tag: null, review_required: false, ...extra };
+}
+
+function withAbsenceTypes(absence_types: PersonnelOption[]) {
+  usePersonnelListsStore.setState({ options: null, loading: false, error: null });
+  svc.listPersonnelReferenceOptions.mockResolvedValue({
+    employment_statuses: [],
+    employment_types: [],
+    absence_types,
+    position_categories: [],
+  });
+}
 
 import { AvailabilityBlockDialog } from "../AvailabilityBlockDialog";
 
@@ -38,7 +58,33 @@ function dialog(people: { id: number; label: string }[]) {
 }
 
 describe("AvailabilityBlockDialog", () => {
+  it("starts a new absence on the first type of the list that is not under review", async () => {
+    withAbsenceTypes([
+      opt("Conge", "Congé", { tag: "leave", review_required: true }),
+      opt("medical", "Médical", { tag: "critical" }),
+    ]);
+    render(dialog([{ id: 1, label: "Amine" }]));
+    const critical = screen.getByRole("checkbox");
+    // "medical" is tagged critical: the absence is critical and the box cannot be unticked.
+    await waitFor(() => expect(critical).toBeChecked());
+    expect(critical).toBeDisabled();
+  });
+
+  it("leaves the critical box free for a type that is not tagged critical", async () => {
+    withAbsenceTypes([opt("leave", "Congé", { tag: "leave" })]);
+    render(dialog([{ id: 1, label: "Amine" }]));
+    await waitFor(() => expect(svc.listPersonnelReferenceOptions).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "availability.form.blockType" }),
+      ).toHaveTextContent("Congé"),
+    );
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    expect(screen.getByRole("checkbox")).toBeEnabled();
+  });
+
   it("keeps the typed reason when the parent re-renders with a new people list", () => {
+    withAbsenceTypes([opt("leave", "Congé", { tag: "leave" })]);
     const { rerender } = render(dialog([{ id: 1, label: "Amine" }]));
     const reason = screen.getByLabelText("availability.form.reason");
     fireEvent.change(reason, { target: { value: "Congé annuel" } });
