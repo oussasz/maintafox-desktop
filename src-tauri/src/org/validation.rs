@@ -73,6 +73,10 @@ struct DraftNodeInfo {
 
 /// Analyze the draft model's relationship-rule graph for reachability and cycles.
 ///
+/// A rule from a type to itself (an area inside an area) is nesting, not a loop: the node tree
+/// itself stays a tree (moves under a descendant are refused), so it is left out of the cycle
+/// check. A loop between different types (A under B and B under A) is still a cycle.
+///
 /// Returns (set of type codes reachable from the root, whether a cycle exists).
 fn analyze_type_graph(
     root_code: &str,
@@ -100,7 +104,7 @@ fn analyze_type_graph(
 
     for (parent, children) in edges {
         if in_degree.contains_key(parent) {
-            for child in children {
+            for child in children.iter().filter(|c| *c != parent) {
                 if let Some(deg) = in_degree.get_mut(child) {
                     *deg += 1;
                 }
@@ -118,7 +122,7 @@ fn analyze_type_graph(
     while let Some(node) = topo_queue.pop_front() {
         processed += 1;
         if let Some(children) = edges.get(&node) {
-            for child in children {
+            for child in children.iter().filter(|c| **c != node) {
                 if let Some(deg) = in_degree.get_mut(child) {
                     *deg = deg.saturating_sub(1);
                     if *deg == 0 {
