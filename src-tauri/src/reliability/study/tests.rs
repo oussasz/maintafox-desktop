@@ -1287,6 +1287,79 @@ async fn a_synced_site_opt_out_needs_its_audited_change() {
     );
 }
 
+/// Received site rule times are compared as instants, whatever their format: an older "on"
+/// replayed after a later "off" written in another format does not win, and a rule whose time
+/// cannot be read is refused as invalid.
+#[tokio::test]
+async fn a_received_site_rule_time_is_read_as_an_instant_in_any_format() {
+    use crate::settings::site::{inbound_site_setting_check, InboundVerdict};
+    let f = setup().await;
+    make_site(&f, 1).await;
+    let site_sync = text(&f, "SELECT entity_sync_id FROM org_nodes WHERE id = 1").await;
+    let admin_sync = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM user_accounts WHERE id = {}", f.admin),
+    )
+    .await;
+    let rule = |at: &str| {
+        serde_json::json!({
+            "entity_sync_id": "ss-formats",
+            "site_node_sync_id": site_sync,
+            "setting_key": SELF_APPROVAL_SETTING,
+            "value_json": "true",
+            "updated_by_sync_id": admin_sync,
+            "updated_at": at,
+        })
+        .as_object()
+        .cloned()
+        .expect("object")
+    };
+    let conflict_code = |v: Option<InboundVerdict>| match v {
+        Some(InboundVerdict::Conflict { code, .. }) => code,
+        other => panic!("expected a conflict, got {other:?}"),
+    };
+    // "On" at 09:00 UTC written in the SQLite form, then "off" at 10:00 UTC written with an offset
+    // (08:00-02:00): as text the "off" reads earlier than a 09:00 UTC replay, so only an instant
+    // comparison sees that the "off" is the latest change.
+    for (id, old, new, reason, at) in [
+        (
+            "sse-fmt-on",
+            "false",
+            "true",
+            "Single reliability engineer on this site",
+            "2026-10-18 09:00:00",
+        ),
+        (
+            "sse-fmt-off",
+            "true",
+            "false",
+            "Second engineer joined the site",
+            "2026-10-18T08:00:00-02:00",
+        ),
+    ] {
+        exec(
+            &f.db,
+            &format!(
+                "INSERT INTO site_setting_events (entity_sync_id, site_node_id, setting_key, old_value_json, \
+                 new_value_json, reason, changed_by_id, required_step_up, changed_at) VALUES \
+                 ('{id}', 1, '{SELF_APPROVAL_SETTING}', '{old}', '{new}', '{reason}', {}, 1, '{at}')",
+                f.admin
+            ),
+        )
+        .await;
+    }
+    // The 09:00 "on" replayed, in a third format (fractional seconds, `Z`): the later "off" wins.
+    let replay = inbound_site_setting_check(&f.db, &rule("2026-10-18T09:00:00.000Z"))
+        .await
+        .expect("check");
+    assert_eq!(conflict_code(replay), "SITE_SETTING_UNAUDITED");
+    // A rule whose time of change cannot be read: invalid, never applied.
+    let unreadable = inbound_site_setting_check(&f.db, &rule("yesterday morning"))
+        .await
+        .expect("check");
+    assert_eq!(conflict_code(unreadable), "SITE_SETTING_INVALID");
+}
+
 /// Makes `node`'s type able to own work: the node is a planning site.
 async fn make_site(f: &Fixture, node: i64) {
     exec(
