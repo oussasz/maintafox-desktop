@@ -15,6 +15,7 @@ import { type Tone, mfTone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { listLinks } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
+import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import type { SmrpKpis, SmrpMetric } from "@/services/analytics-dashboard-service";
 
 /** Change below this many percentage points reads "stable". */
@@ -148,6 +149,7 @@ function SmrpTile({
 export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
   const { t } = useTranslation("reports");
   const navigate = useNavigate();
+  const woOpenRuleText = useWoOpenRuleText();
   const { formatPercent, formatDecimal, formatNumber, formatDate, formatCurrency } =
     useFormatters();
 
@@ -268,6 +270,8 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
     const weeks = (v: number | null) =>
       v == null ? "—" : t("smrp.backlog.weeksValue", { value: formatDecimal(v, 1) });
     const change = b.weeks != null && b.previous_weeks != null ? b.weeks - b.previous_weeks : null;
+    // The backlog counts one named "open OT" rule: the tile says which and opens the same list.
+    const backlogRule = woOpenRuleText(b.open_work_orders_rule);
     tiles.push(
       <SmrpTile
         key="backlog"
@@ -283,6 +287,12 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
               count: b.open_work_orders,
               ready: weeks(b.ready_weeks),
             })}
+            {backlogRule ? (
+              <>
+                <br />
+                <span title={backlogRule.hint}>{backlogRule.figure}</span>
+              </>
+            ) : null}
             <br />
             {t("smrp.backlog.capacity", {
               hours: hours(b.weekly_capacity_hours),
@@ -317,7 +327,9 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.backlog.formula")}
         unit={t("smrp.backlog.unit")}
         period={t("smrp.backlog.period")}
-        onOpen={() => navigate(listLinks.workOrders({ scope: "open" }))}
+        {...(backlogRule
+          ? { onOpen: () => navigate(listLinks.workOrders({ scope: backlogRule.scope })) }
+          : {})}
       />,
     );
   }
