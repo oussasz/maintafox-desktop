@@ -443,6 +443,7 @@ export const PersonnelAvailabilityStateSchema = z.object({
   status: z.string(),
   blocked_override: z.boolean(),
   reasons: z.array(z.string()),
+  open_work_order_count: z.number().nullable(),
   as_of: z.string(),
 });
 

@@ -556,6 +556,12 @@
         "status": "Status",
         "noReasons": "No active constraint reasons."
       },
+      "reason": {
+        "employment_terminated": "Employment terminated.",
+        "blocked_override": "Blocked by manual override.",
+        "open_work_orders_one": "On {{count}} open work order (responsible or booked labour).",
+        "open_work_orders_other": "On {{count}} open work orders (responsible or booked labour)."
+      },
       "horizon": {
         "title": "Day strip",
         "hint": "Click a day to seed a new block for that date."

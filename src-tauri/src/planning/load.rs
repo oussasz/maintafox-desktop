@@ -363,9 +363,15 @@ pub fn wo_not_committed_sql(assigned_only: bool) -> String {
     )
 }
 
-/// SQL predicate: the work order (alias `wo`) is still to do.
-pub const WO_OPEN_SQL: &str =
-    "wo.mechanically_completed_at IS NULL AND wo.closed_at IS NULL AND wo.cancelled_at IS NULL";
+/// SQL predicate: the work order (alias `wo`) is still to do — the shared "Open (work to do)" rule
+/// (`wo::backlog::OPEN_STATUS_SQL`, read on the OT's status), so planning load, the person's load
+/// and every other open figure agree. A completed OT awaiting close-out is no longer load, even when
+/// its mechanical-completion time is missing.
+pub const WO_OPEN_SQL: &str = concat!(
+    "wo.status_id IN (SELECT wos_open.id FROM work_order_statuses wos_open WHERE wos_open.code IN ",
+    crate::wo_open_statuses_sql!(),
+    ")"
+);
 
 /// SQL predicate: the work order's planned dates (alias `wo`) may touch `[?, ?]` (end, start bounds,
 /// a day of margin for typed local dates) — or cannot be read by SQLite, so the caller reads them.

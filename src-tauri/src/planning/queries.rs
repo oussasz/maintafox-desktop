@@ -44,9 +44,9 @@ const CONFLICT_COLS: &str =
 const WO_SCHEDULE_CANDIDATE_STATUS_SQL: &str =
     "'planning','ready','planned','ready_to_schedule','assigned','waiting_for_prerequisite','awaiting_approval'";
 
-/// Open WO statuses counted as concurrent assignee load during readiness evaluation.
-const WO_OPEN_ASSIGNMENT_STATUS_SQL: &str =
-    "'planning','ready','planned','ready_to_schedule','assigned','waiting_for_prerequisite','awaiting_approval','in_progress','on_hold'";
+/// OTs counted as concurrent assignee load during readiness evaluation: the shared "Open (work to
+/// do)" rule (`wo::backlog::OPEN_STATUS_SQL`), the same as the person's workload and availability.
+const WO_OPEN_ASSIGNMENT_STATUS_SQL: &str = crate::wo::backlog::OPEN_STATUS_SQL;
 
 #[derive(Debug, Clone)]
 struct EvaluatedConflict {
@@ -1007,7 +1007,7 @@ pub(crate) async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: 
                      JOIN user_accounts ua ON ua.id = wo.primary_responsible_id
                       AND ua.deleted_at IS NULL
                       AND ua.personnel_id = ?
-                     WHERE wos.code IN ({WO_OPEN_ASSIGNMENT_STATUS_SQL})
+                     WHERE wos.code IN {WO_OPEN_ASSIGNMENT_STATUS_SQL}
                        AND wo.id != (
                          CASE WHEN ? = 'work_order' THEN ? ELSE -1 END
                        )
@@ -1062,7 +1062,7 @@ pub(crate) async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: 
                      JOIN user_accounts ua ON ua.id = wo.primary_responsible_id
                       AND ua.deleted_at IS NULL
                       AND ua.personnel_id = ?
-                     WHERE wos.code IN ({WO_OPEN_ASSIGNMENT_STATUS_SQL})"
+                     WHERE wos.code IN {WO_OPEN_ASSIGNMENT_STATUS_SQL}"
                 ),
                 [personnel_id.into()],
             ))

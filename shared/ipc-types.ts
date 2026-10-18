@@ -6692,7 +6692,10 @@ export interface PersonnelAvailabilityState {
   personnel_id: number;
   status: string;
   blocked_override: boolean;
+  /** Reason codes (shown through `availability.inspector.reason.<code>`) or absence type codes. */
   reasons: string[];
+  /** Open work orders the person is on; null when an earlier rule decided the state. */
+  open_work_order_count: number | null;
   as_of: string;
 }
 

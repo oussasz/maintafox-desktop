@@ -1001,3 +1001,41 @@ async fn a_person_with_planning_ready_and_on_hold_work_is_busy() {
         .expect("availability");
     assert_eq!(state.status, "assigned");
 }
+
+/// A person booked only as labour (intervener) on an in-progress OT, with someone else
+/// responsible, is not free: availability uses the same "person on the OT" rule as the workload.
+#[tokio::test]
+async fn a_person_booked_only_as_intervener_on_in_progress_work_is_not_free() {
+    let db = setup().await;
+    exec(
+        &db,
+        "INSERT INTO personnel (employee_code, full_name, availability_status) VALUES ('HM-P2', 'Crew Member', 'available')",
+    )
+    .await;
+    let person = scalar(&db, "SELECT id FROM personnel WHERE employee_code = 'HM-P2'").await;
+    let me = admin_id(&db).await;
+    // The admin is responsible; the person (no login) is booked as labour.
+    let wo = work_order(&db, "P-CREW", "corrective", "in_progress", me, None, "NULL", "NULL").await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO work_order_interveners (work_order_id, personnel_id, hours_worked) VALUES ({wo}, {person}, 0)"
+        ),
+    )
+    .await;
+
+    let w = crate::personnel::queries::get_personnel_workload_summary(&db, person)
+        .await
+        .expect("workload");
+    assert_eq!(w.in_progress_work_orders, 1);
+
+    let state = crate::personnel::availability::compute_personnel_availability_state(&db, person)
+        .await
+        .expect("availability");
+    assert_eq!(state.status, "assigned", "booked labour is not free");
+    assert_eq!(
+        state.reasons,
+        vec![crate::personnel::availability::REASON_OPEN_WORK_ORDERS.to_string()]
+    );
+    assert_eq!(state.open_work_order_count, Some(1));
+}
