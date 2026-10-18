@@ -1057,6 +1057,10 @@ export interface PolicySnapshot {
 export interface PolicyTestResult {
   rule_name: string;
   severity: "pass" | "warn" | "fail";
+  /** Stable code (`POLICY_TEST_*`) the screen translates with `params`. */
+  code: string;
+  params: Record<string, string>;
+  /** The server's English text: shown only for a code this version does not know. */
   message: string;
 }
 

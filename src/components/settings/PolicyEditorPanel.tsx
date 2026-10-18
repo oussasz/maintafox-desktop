@@ -50,6 +50,8 @@ import {
 import { useSettingsStore } from "@/stores/settings-store";
 import type { AppSetting, PolicySnapshot } from "@shared/ipc-types";
 
+import { policyTestText } from "./policy-test-text";
+
 // ── Governed setting domains ────────────────────────────────────────────────
 
 /** Map a setting key to its policy domain. Returns null if not governed. */
@@ -160,6 +162,7 @@ export function PolicyEditorPanel({
   onToast,
 }: PolicyEditorPanelProps) {
   const { t } = useTranslation("settings");
+  const tText = t as unknown as (key: string, options?: Record<string, unknown>) => string;
   // Session and password policies need a recent re-authentication (the backend requires it):
   // the step-up dialog opens when it is missing, then the activation runs.
   const { withStepUp, StepUpDialogElement } = useStepUp();
@@ -670,7 +673,7 @@ export function PolicyEditorPanel({
                 {result.severity === "fail" && (
                   <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                 )}
-                <span>{result.message}</span>
+                <span>{policyTestText(result, tText)}</span>
               </div>
             ))}
           </div>

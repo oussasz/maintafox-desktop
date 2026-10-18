@@ -127,6 +127,21 @@
     "search": "Search categories…"
   },
   "policy": {
+    "test": {
+      "POLICY_TEST_SCHEMA_INVALID": "The draft is not a readable “{{domain}}” policy: {{detail}}",
+      "POLICY_TEST_IN_RANGE": "{{field}}: {{value}} is within range ({{min}} to {{max}}).",
+      "POLICY_TEST_OUT_OF_RANGE": "{{field}}: {{value}} is out of range ({{min}} to {{max}}).",
+      "POLICY_TEST_IDLE_WITHIN_ABSOLUTE": "The idle timeout ({{idle}} min) fits in the session length ({{absolute}} min).",
+      "POLICY_TEST_IDLE_EXCEEDS_ABSOLUTE": "The idle timeout ({{idle}} min) exceeds the session length ({{absolute}} min).",
+      "POLICY_TEST_SCHEDULE_EMPTY": "The backup schedule is empty.",
+      "POLICY_TEST_SCHEDULE_INVALID": "The schedule “{{schedule}}” cannot be read: {{detail}}",
+      "POLICY_TEST_SCHEDULE_VALID": "The schedule “{{schedule}}” is valid.",
+      "POLICY_TEST_INCLUDE_PHOTOS": "Photos included in backups: {{value}}.",
+      "POLICY_TEST_PASSWORD_ELSEWHERE": "The password policy is set in its own panel.",
+      "POLICY_TEST_DOMAIN_UNSUPPORTED": "Unknown policy domain: {{domain}}.",
+      "yes": "yes",
+      "no": "no"
+    },
     "governedTitle": "Governed Setting",
     "governedDescription": "This setting uses the Draft → Test → Activate workflow.",
     "active": "Active",
