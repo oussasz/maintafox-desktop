@@ -93,8 +93,12 @@ pub struct SetUserActiveInput {
 pub struct CreateUserInput {
     pub username: String,
     pub identity_mode: String,
-    /// Tenant-scoped role assigned at creation (required — no implicit default).
+    /// Role assigned at creation (required — no implicit default).
     pub role_id: i64,
+    /// Where that role applies: `None` plant-wide, `Some(node)` on that org node and below
+    /// (a site-only user, step 6). Administrator roles are plant-wide only.
+    #[serde(default)]
+    pub scope_node_id: Option<i64>,
     pub personnel_id: Option<i64>,
     pub initial_password: Option<String>,
     pub force_password_change: Option<bool>,
@@ -779,6 +783,16 @@ pub(crate) async fn create_user_impl(
     }
 
     ensure_assignable_role_id(&tx, role_id).await?;
+    // Plant-wide, or on the org node the administrator chose (a site-only user).
+    let (scope_type, scope_reference): (&str, Option<String>) = match input.scope_node_id {
+        None => ("tenant", activated_tenant_id.clone()),
+        Some(node) => {
+            let reference = node.to_string();
+            validate_assignment_scope(&tx, "org_node", Some(&reference)).await?;
+            ensure_role_allowed_at_scope(&tx, role_id, "org_node").await?;
+            ("org_node", Some(reference))
+        }
+    };
 
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -811,22 +825,22 @@ pub(crate) async fn create_user_impl(
 
     let new_id: i64 = id_row.try_get("", "id")?;
 
-    // Tenant-scoped assignment: explicit role chosen by the administrator (no implicit default).
+    // The role and the scope chosen by the administrator (no implicit default, no added plant-wide
+    // role for a site-only user).
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_scope_assignments \
             (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
              valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version) \
-         VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, ?, ?, ?, ?, 1)",
+         VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 1)",
         vec![
             assignment_sync_id.into(),
             new_id.into(),
             role_id.into(),
-            activated_tenant_id
-                .clone()
-                .map_or(sea_orm::Value::String(None), |tid| tid.into()),
+            scope_type.into(),
+            scope_reference.map_or(sea_orm::Value::String(None), Into::into),
             i64::from(caller.user_id).into(),
-            "Initial tenant-scoped role assignment (selected at user creation).".into(),
+            "Initial role assignment (selected at user creation).".into(),
             now.clone().into(),
             now.clone().into(),
         ],
@@ -840,12 +854,14 @@ pub(crate) async fn create_user_impl(
             action: "user_created",
             target_user_id: Some(new_id),
             target_role_id: Some(role_id),
-            scope_type: Some("tenant"),
+            scope_type: Some(scope_type),
             summary: Some(format!("User account '{username}' created")),
             diff: Some(serde_json::json!({
                 "username": username,
                 "identity_mode": identity_mode,
                 "role_id": role_id,
+                "scope_type": scope_type,
+                "scope_node_id": input.scope_node_id,
                 "force_password_change": force_pw,
             })),
             ..Default::default()
@@ -1460,6 +1476,37 @@ pub(crate) fn normalize_validity(
 /// Shared implementation for [`assign_role_scope`]. When `emit_frontend` is true and `app` is
 /// `Some`, emits `rbac-changed` to the webview; integration tests pass `false` / `None` because
 /// `AppHandle<MockRuntime>` is not compatible with production `AppHandle`.
+/// Administrator roles are plant-wide only (step 6): on an org node they would not elevate and
+/// would look like an administrator limited to a site, which does not exist.
+pub(crate) async fn ensure_role_allowed_at_scope<C: ConnectionTrait>(
+    conn: &C,
+    role_id: i64,
+    scope_type: &str,
+) -> AppResult<()> {
+    if scope_type == "tenant" {
+        return Ok(());
+    }
+    let role_name: Option<String> = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT name FROM roles WHERE id = ? AND deleted_at IS NULL",
+            [role_id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get("", "name").ok());
+    if role_name
+        .as_deref()
+        .is_some_and(|name| ADMIN_ROLE_NAMES.contains(&name))
+    {
+        return Err(crate::errors::org_validation_failed(
+            "SCOPE_ADMIN_ROLE_PLANT_WIDE",
+            "Administrator roles are plant-wide only: they cannot be limited to a site.",
+            HashMap::from([("role".to_string(), role_name.unwrap_or_default())]),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) async fn assign_role_scope_impl(
     state: &AppState,
     caller: &AuthenticatedUser,
@@ -1468,6 +1515,7 @@ pub(crate) async fn assign_role_scope_impl(
     app: Option<&AppHandle>,
 ) -> AppResult<IdPayload> {
     validate_assignment_scope(&state.db, &input.scope_type, input.scope_reference.as_deref()).await?;
+    ensure_role_allowed_at_scope(&state.db, input.role_id, &input.scope_type).await?;
     let (valid_from, valid_to) = normalize_validity(input.valid_from.as_deref(), input.valid_to.as_deref())?;
     ensure_may_grant_role(&state.db, caller, input.role_id, Some(input.user_id)).await?;
     ensure_may_manage_account(&state.db, caller, input.user_id).await?;
@@ -2614,6 +2662,8 @@ pub(crate) async fn grant_emergency_elevation_impl(
     ensure_may_manage_account(&state.db, caller, input.user_id).await?;
     let expires_text = expires.format("%Y-%m-%dT%H:%M:%SZ").to_string();
     validate_assignment_scope(&state.db, &input.scope_type, input.scope_reference.as_deref()).await?;
+    // Emergency access follows the same rule: no administrator role limited to a site.
+    ensure_role_allowed_at_scope(&state.db, input.role_id, &input.scope_type).await?;
     let scope_reference = if input.scope_type == "tenant" {
         None
     } else {
@@ -3239,10 +3289,11 @@ async fn list_missing_tenant_scope_users(db: &sea_orm::DatabaseConnection) -> Ap
                AND NOT EXISTS ( \
                  SELECT 1 FROM user_scope_assignments usa \
                  WHERE usa.user_id = ua.id \
-                   AND usa.scope_type = 'tenant' \
+                   AND (usa.scope_type = 'tenant' OR ({})) \
                    AND {} \
                ) \
              ORDER BY ua.username ASC",
+                crate::auth::scope::LIVE_NODE_ASSIGNMENT_SQL,
                 resolver::ASSIGNMENT_IN_FORCE_SQL
             ),
             resolver::in_force_binds(&resolver::assignment_clock()).to_vec(),
