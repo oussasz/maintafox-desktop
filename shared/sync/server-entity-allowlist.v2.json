@@ -780,6 +780,14 @@
       "scope": "tenant"
     },
     {
+      "entity_type": "site_setting_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "site_settings",
+      "scope": "tenant"
+    },
+    {
       "entity_type": "user_analytics_dashboard_layouts",
       "scope": "user"
     },

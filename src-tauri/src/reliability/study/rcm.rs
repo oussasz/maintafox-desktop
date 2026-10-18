@@ -93,6 +93,10 @@ pub struct RcmWorksheet {
     pub time_basis: String,
     /// FMECA rows still to review (ratings nobody chose): not offered for an RCM decision.
     pub rows_to_review: i64,
+    /// Set while the plant's FMECA grids must be reviewed (`scales::RatingScales::review`): the
+    /// consequences and ratings read here come from the Maintafox grids standing in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grids_review: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -317,6 +321,7 @@ pub async fn get_worksheet(db: &DatabaseConnection, study_id: i64) -> AppResult<
         editable: study.status == STUDY_ACTIVE,
         time_basis,
         rows_to_review,
+        grids_review: scales.review.clone(),
     })
 }
 

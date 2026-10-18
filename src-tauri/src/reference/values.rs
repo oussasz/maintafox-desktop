@@ -328,6 +328,10 @@ pub(crate) async fn checked_semantic_tag(
         // The tag of a unit is its physical dimension (`reference::units`).
         return crate::reference::units::checked_dimension_tag(db, tag).await;
     }
+    if crate::personnel::reference_lists::is_absence_types_domain(domain_code) {
+        // Every absence type names the behaviour the program applies to it (required, no default).
+        return crate::personnel::reference_lists::checked_absence_tag("", tag).map(Some);
+    }
     let tag = tag.map(str::trim).filter(|t| !t.is_empty());
     if !is_nature_tagged_domain(domain_code) {
         return Ok(tag.map(str::to_string));

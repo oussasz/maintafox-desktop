@@ -556,13 +556,13 @@ async fn validate_row(
     }
 
     if let Some(kind) = normalized.employment_type.as_deref() {
-        let allowed = ["employee", "contractor", "temp", "vendor"];
-        if !allowed.contains(&kind) {
+        // A value of the plant's PERSONNEL.EMPLOYMENT_TYPES list (`personnel::reference_lists`).
+        if super::reference_lists::checked_employment_type(db, kind).await.is_err() {
             push_message(
                 &mut messages,
                 "FieldRule.CreateAndUpdate",
                 "error",
-                "employment_type must be one of employee/contractor/temp/vendor.",
+                "employment_type must be an active value of the employment types list (Données de référence).",
             );
         }
     }

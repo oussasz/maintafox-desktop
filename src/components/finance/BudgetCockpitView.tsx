@@ -6,7 +6,7 @@
  */
 import type { ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, Download, Scale, TrendingUp } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DataTable } from "@/components/data/DataTable";
@@ -109,6 +109,28 @@ export function BudgetCockpitView({
   const money = useCallback((v: number) => formatCurrency(v, currency), [formatCurrency, currency]);
   const { categoryLabel: bucketLabel, reasonLabel } = useFinanceCatalogs();
 
+  // Values the cells read, kept current on every render. The columns themselves stay the same
+  // object while catalogues, permissions or the cockpit load: new column functions would make the
+  // table re-mount every row, and a click landing during that swap was lost.
+  const live = useRef({
+    money,
+    bucketLabel,
+    reasonLabel,
+    formatPercent,
+    can,
+    cockpit,
+    onAnalyseVariance,
+  });
+  live.current = {
+    money,
+    bucketLabel,
+    reasonLabel,
+    formatPercent,
+    can,
+    cockpit,
+    onAnalyseVariance,
+  };
+
   const columns = useMemo<ColumnDef<BudgetCockpitRow>[]>(
     () => [
       {
@@ -125,7 +147,10 @@ export function BudgetCockpitView({
       {
         id: "bucket",
         header: t("cockpit.col.category"),
-        accessorFn: (r) => bucketLabel(r.bucket),
+        accessorFn: (r) => live.current.bucketLabel(r.bucket),
+        // The table caches accessor values: the cell reads the label live, so it follows the
+        // catalogue once it has loaded.
+        cell: ({ row }) => live.current.bucketLabel(row.original.bucket),
       },
       ...(["budget", "committed", "actual", "forecast"] as const).map(
         (key): ColumnDef<BudgetCockpitRow> => ({
@@ -141,7 +166,7 @@ export function BudgetCockpitView({
               <span
                 className={cn("block text-end font-mono tabular-nums", tone && mfTone[tone].text)}
               >
-                {money(row.original[key])}
+                {live.current.money(row.original[key])}
               </span>
             );
           },
@@ -160,7 +185,7 @@ export function BudgetCockpitView({
                 v < -0.005 ? mfTone.danger.text : "text-text-secondary",
               )}
             >
-              {money(v)}
+              {live.current.money(v)}
             </span>
           );
         },
@@ -173,7 +198,7 @@ export function BudgetCockpitView({
           <ConsumptionBar
             pct={row.original.consumed_pct}
             label={t("cockpit.consumedAria")}
-            formatPercent={formatPercent}
+            formatPercent={live.current.formatPercent}
           />
         ),
       },
@@ -183,7 +208,7 @@ export function BudgetCockpitView({
         enableSorting: false,
         cell: ({ row }) => {
           const r = row.original;
-          const canReview = can(P.FIN_BUDGET) || can(P.FIN_MANAGE);
+          const canReview = live.current.can(P.FIN_BUDGET) || live.current.can(P.FIN_MANAGE);
           return (
             <div className="flex items-center gap-2">
               {r.open_reviews > 0 ? (
@@ -191,16 +216,19 @@ export function BudgetCockpitView({
                   {t("cockpit.openReviews", { count: r.open_reviews })}
                 </span>
               ) : r.latest_driver_code ? (
-                <span className="text-xs text-text-muted">{reasonLabel(r.latest_driver_code)}</span>
+                <span className="text-xs text-text-muted">
+                  {live.current.reasonLabel(r.latest_driver_code)}
+                </span>
               ) : null}
-              {canReview && r.variance < -0.005 && r.open_reviews === 0 && cockpit ? (
+              {canReview && r.variance < -0.005 && r.open_reviews === 0 && live.current.cockpit ? (
                 <Button
                   size="sm"
                   variant="outline"
                   className="h-7 text-xs"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onAnalyseVariance(r, cockpit);
+                    const current = live.current.cockpit;
+                    if (current) live.current.onAnalyseVariance(r, current);
                   }}
                 >
                   {t("cockpit.analyse")}
@@ -211,7 +239,8 @@ export function BudgetCockpitView({
         },
       },
     ],
-    [t, money, bucketLabel, reasonLabel, formatPercent, can, cockpit, onAnalyseVariance],
+    // Only the language changes the columns: everything else is read live (see `live`).
+    [t],
   );
 
   const exportCsv = async () => {

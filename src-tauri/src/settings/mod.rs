@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 
 pub mod branding;
 pub mod catalog;
+pub mod site;
 #[cfg(test)]
 mod sync_tests;
 

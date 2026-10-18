@@ -287,6 +287,27 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("report_schedules", "cron_expr", "'0 0 8 * * *'"),
     // Only tenant settings are synchronised (device settings stay on the device).
     ("app_settings", "setting_scope", "'tenant'"),
+    // Per-site rules: a known rule; relaxing a site needs its audited change, so the generic
+    // row turns the rule off (the strict side), and its event carries a reason.
+    (
+        "site_settings",
+        "setting_key",
+        "'reliability.decisions.allow_self_approval'",
+    ),
+    ("site_settings", "value_json", "'false'"),
+    (
+        "site_setting_events",
+        "setting_key",
+        "'reliability.decisions.allow_self_approval'",
+    ),
+    ("site_setting_events", "old_value_json", "'true'"),
+    ("site_setting_events", "new_value_json", "'false'"),
+    (
+        "site_setting_events",
+        "reason",
+        "'Single reliability engineer on this site'",
+    ),
+    ("site_setting_events", "required_step_up", "1"),
     // Notification categories are referenced by code (seeded on every device).
     (
         "notification_preferences",

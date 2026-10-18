@@ -25,6 +25,10 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | Planning windows saved with the old window dialog (before planning step C) lost their site and apply to the whole plant until a planner re-enters the site ("Site to re-enter"). A locked one blocks commitments everywhere over its dates until then. | Data | Release |
 | Units, symptoms, LOTO energy/isolation texts that could not be matched during upgrade were kept as "to review" values; an administrator must review them (filter "à revoir"). | Data | Release |
 | Placeholder FMECA rows created by the old Ishikawa promotion (S=O=D=5) are flagged "à revoir" and excluded from risk rankings until a person reviews them. | Data | Release |
+| New synced record types: the per-site rules (site settings and their change history) must be in the server sync allowlist before PCs upgrade. The desktop copy of the allowlist already has them; the server's original must be updated at release. | Data | Release |
+| Per-site self-approval rule: the sync server must accept site rules and their change history only from users who hold the settings-administration right. The desktop checks that every change carries a complete, consistent, latest audit trail, but cannot prove who really sent it, so a device with valid credentials could otherwise forge one. | Safety | Release (sync server) |
+| Photos and attachments are the one kind of history that sync may delete (so a removal on one PC applies everywhere): the sync server must accept such a delete only from a user allowed to remove that attachment (its work order, request or equipment right, or the person who added it). Otherwise a paired PC with valid credentials could erase work-order, request or equipment photos everywhere. Inspection evidence and all other history cannot be deleted by sync. | Safety | Release (sync server) |
+| Personnel and document list values found in existing data but not in the new lists are kept exactly as stored, added to their list and flagged "à revoir"; an administrator must review them (filter "à revoir"). People whose stored employment status is not a known status are listed for review. | Data | Release |
 | QR labels printed before this version must be reprinted: they carried a local database id, which identifies a different asset on another device. Scanning one is refused with "Label to reprint"; reprint from each asset record (no bulk reprint from the asset list yet). | Data | Release |
 
 ## Owner-approved items for Step 7 (validation)
@@ -39,8 +43,14 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 
 ## Work orders and requests (standards step: urgency, EN 13306 natures, ISO 14224 symptoms)
 
+**Glossary (owner decision 2026-10-17): two named meanings of an open work order.**
+"Open (work to do)" = not yet mechanically completed: home, backlog, work-order lists.
+"Not yet closed" = not closed and not cancelled, including work done but awaiting closure: monthly report, analytics "as of".
+Each figure says which one it shows, and its list link applies the same rule.
+
 | Limit | Impact | Handled in |
 |---|---|---|
+| Every "open work order" count uses one of the two shared rules and its figure shows the rule name, with a list link using the same rule. The SMRP backlog figure is being aligned. | Data | Step 5 |
 | Devices on the previous version must upgrade together with this one: they would still send the old urgency and type references. | Data | Release |
 | The 4 h estimated duration once used for DI planning candidates was removed; DIs are "not estimated" until converted and estimated. | UX | Accepted |
 | Planned labour per technician on a work order does not exist (labour lines hold actuals only), so planning counts only the named assignee per commitment ("+N crew members not named"). Naming every crew member is proposed for later. | Data | Owner decision |
@@ -62,7 +72,6 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | Requests (DI) have no permit field; permit readiness is checked for work orders and PM only. | Safety | Step 7 |
 | LOTO hand-over roles are free text. | Data | After pilot |
 | Permits created before expiry became required (none set) are left unchanged: they cannot be activated or edited until someone sets an expiry (refused with "Permit … has no expiry"); permits already active keep running until closed. | Safety | Release (review open permits) |
-| Planning's permit readiness check still uses the old rule (type code 'loto' needs an isolation) instead of the new 'requires energy isolation' flag. It gives the same result for the shipped LOTO type, but a plant type flagged later isn't checked in planning. | Safety | Planning follow-up PR right after step E (switches to the flag). |
 
 ## Preventive maintenance
 
@@ -71,7 +80,6 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | A PM follow-up work order is deferred corrective (EN 13306) and keeps its PM link; follow-ups created before the change were re-tagged only where the link was unambiguous. | Data | Accepted |
 | PM / request qualification gaps cannot be overridden before the work order exists (overrides are recorded on work orders). | UX | Accepted |
 | The PM auto-pilot is set as a daily run time; a non-daily schedule set elsewhere is kept and shown as "custom", and can only be changed by switching back to daily. | UX | Accepted |
-| The PM calendar loads every occurrence, not only the visible dates; large plans load slower. | UX | Step 7 |
 | Parts on PM plans are chosen by article-code search. | UX | After pilot |
 | Deferral, miss and cancel reasons are now a site reference list; reasons stored before keep their old upper-case codes and new ones are stored in lower case. Screens match either form; no stored reason is rewritten. | Data | Accepted |
 
@@ -84,7 +92,6 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | Part quantities on work-order / PM lines carry no unit; they are taken in stock units. | Data | After pilot |
 | Cycle-count tolerance (5 units / 0.01) is shown pre-filled in the count dialog instead of coming from a site setting; the counter can change it. | Data | Step 7 |
 | The stock-balance "low stock only" option (used by no screen today) still applies the old per-location rule, not the shared low-stock rule. | Data | Step 7 |
-| The late purchase-order filter compares against the PC clock; the backend's late rule uses UTC, so an order can differ by a few hours around midnight. | Data | Step 7 |
 
 ## Planning and scheduling (steps A–E)
 
@@ -115,8 +122,6 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | Teams without a Classe horaire have 0 h capacity (never an assumed day); migrated teams carry a "Standard 8 h (migrated)" class flagged to review. | Data | Release (review) |
 | A Classe horaire version can be edited in place only before it is in force; planned work orders keep their shift-window snapshot and show "Timetable changed since planning". | Data | Accepted |
 | A member whose shift window is unknown counts in full on the days a slot touches. | Data | Accepted |
-| Editing a person cannot clear a field once set (an emptied field is read as "no change"); skills and certifications are edited only in the Qualifications tab. | Data | Step 7 |
-| Employment types and statuses, absence types and position categories are fixed lists in the program, not reference lists an administrator can edit. | Data | Step 7 |
 
 ## Notifications
 
@@ -133,10 +138,11 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | A password change arriving by sync does not end sessions started up to 2 minutes before it (clock-skew tolerance); local resets end them at once. | Safety | Accepted |
 | Printouts with an invalid stored document header print without a letterhead, with no warning on the print path. | UX | Step 5 |
 | Roles limited to a site grant nothing in the modules yet (only plant-wide roles count); approved as its own step. | Data | Step 6 |
-| A picker that is empty because the user lacks the right to read its list says so only on the training and qualification screens; other modules' pickers have not been checked for this case yet. | UX | Step 6 (with site-scoped roles) |
+| A picker or filter whose list the user may not read now says which right is needed and never requests the list (all modules audited). The access rules themselves are unchanged. | UX | Accepted |
+| Choosing an unfreeze or break-in approver on the planning page reads the user list, which needs the user-administration right; planners without it see a note instead of the list, so they cannot name an approver where one is required. Decide in the roles step whether planners may read approver names (planning-scoped list). | UX | Step 6 (roles) |
+| The weekly schedule is per site and the site list comes from the organisation tree: a planner without the organisation view right cannot use it (the screen says why). | UX | Step 6 (roles) |
+| Creating or moving an asset needs a location from the organisation tree, which needs the organisation view right: a user allowed to manage assets but not to view the organisation cannot create one (the screen says why). Decide in the roles step whether asset managers may read the location list. | UX | Step 6 (roles) |
 | No separation-of-duties pairs are defined in the permission registry, so none are warned. | Safety | After pilot |
-| The role editor warns before discarding unsaved changes when switching role or closing the app, but not when switching to another Administration tab. | UX | Step 7 |
-| Settings shows its confirmations through its own message area, not the app-wide one. | UX | Step 7 |
 
 ## Home dashboard
 
@@ -147,6 +153,18 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | "My rounds" counts rounds assigned to me personally, not to my team; "My PM" means PM whose work order is mine. | Data | Accepted |
 | The planning backlog panel reads at most 2,000 jobs, with a notice. | UX | Accepted |
 | Very old equipment linked only through the legacy criticality list is not counted as critical. | Data | Step 7 |
+
+## Reliability decisions (four-eyes, owner decision 2026-10-17)
+
+| Limit | Impact | Handled in |
+|---|---|---|
+| A decision's site is the planning site of its equipment. A decision on equipment with no such site, or a study spanning several sites, always needs a second approver (the refusal says why). | Safety | Accepted |
+| A self-approval recorded before this rule that arrives by sync on a new PC becomes a conflict to review (no plant data yet). | Data | Accepted |
+| A site's self-approval rule can be switched off but not deleted; every change is audited with who, when, before/after and reason. | UX | Accepted |
+| A record received by sync that waits for something not yet received (a decision whose study or site is missing, a site rule whose audit trail has not arrived) keeps waiting; it never becomes a conflict by itself. The safe rule (four-eyes) stays in force meanwhile; the sync status shows these as deferred. | Data | After pilot |
+| Retirement and recommission rules are checked on the PC where the action is taken; such an event received by sync from another PC is applied as recorded there, not re-checked. | Data | Accepted |
+| A person whose stored employment status is unknown keeps being read as before (not active, neither ended nor inactive) until reviewed. | Data | Accepted |
+| The asset identity edit refuses a retired status or end-of-life date from any path; retirement goes only through Déclasser. | Data | Accepted |
 
 ## Analytics and finance
 
@@ -161,35 +179,37 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 |---|---|---|
 | The equipment tree reads each branch from the database when opened. It follows active hierarchy links only; equipment with several active parents appears under each; "Expand all" opens only branches already loaded. | UX | Accepted |
 | IoT and ERP "linked records" are yes/no flags, not counts. | UX | After pilot |
-| The asset edit form no longer offers a retired status or an end-of-life date (retirement goes through Déclasser), but the server still accepts them on an identity update from another path. Server check being added. | Data | Step 5 |
 
 ## App frame, sync centre, documents, organisation, budget
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| The program's health check does not really query the database, so the status bar shows no database state (the old always-green dot was removed). | UX | Step 7 |
 | There is no search across all record types; the top-bar box opens modules (Ctrl K). | UX | After pilot |
-| Document categories are a fixed list in the program, not a reference list. | Data | Step 7 |
 | An organisation unit's cost centre is free text, not picked from finance cost centres (needs a decision on which permission may set it). | Data | Owner decision |
 | A node type cannot be placed under a node of the same type (the publish check treats it as a cycle), e.g. area inside area. | UX | Step 7 |
-| Budget drill-down lists at most 2,000 lines and gives no total. | Data | Step 7 |
 | The sync centre names about 40 record types; others show as "Other record" with their number. | UX | Accepted |
-| The lock screen recognises a disabled PIN from the server's message text, not a code. | UX | Step 7 |
-| In Reference data, when the publish-readiness check cannot load, the error box shows the most recent reference-data error, which may come from another action on the same screen. | UX | Step 7 |
+| Import wizards (reference data, personnel) show each problem's category translated, but the detail line (row, code, parent) is the server's sentence in one language (French for reference data, English for personnel). | UX | Step 7 (needs coded details from the server) |
+| The access-policy editor's "test" results show the server's rule messages untranslated. | UX | Step 7 |
+
+## In progress (program side done, screens being wired)
+
+| Limit | Impact | Handled in |
+|---|---|---|
+| The program now provides personnel and document lists from Données de référence; until the screens are switched over (in progress), they still show the old fixed lists. | Data | Step 5 |
+| A person's skills and certifications are edited only in the Qualifications tab, not in the person form (which points there). | UX | Accepted |
 
 ## Activity feed and audit log
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| Event and action names arrive as English codes and are shown made readable ("status changed") with the translated module name, not as fully translated sentences. | UX | Step 7 |
-| The organisation-unit filter of the activity feed takes a number, not a pick from the organisation tree. | UX | Step 7 |
+| Activity events are shown with translated names (every event code the program writes today is covered); event names added to the program later show in a readable form until their translation is added. | UX | Accepted |
 
 ## Step 5 (old-layout screens) — in progress
 
 | Limit | Impact | Handled in |
 |---|---|---|
 | Work-order and request boards are read-only: each status change needs its own dialog (urgency, reason, permit checks). Purchasing boards allow submit/approve by drag, menu or keyboard through the same server step. | UX | Accepted |
-| A board's "load more" shows only cards already loaded; the list's page notice covers the rest. | UX | Step 7 |
+| Work-order and request boards load each lane from the server with its own count and "load more"; opening a board sends one request per lane (7 or 6, in parallel). | UX | Accepted |
 | Screens still old or mixed (in progress): training, analytics "Customise", asset import wizard, diagnostics page, permit types dialog (to move under Données de référence), permit hand-over form, and the remaining reliability tools (Ishikawa, decision log, rating scales). | UX | Step 5 |
 
 ## Modules delivered before this register

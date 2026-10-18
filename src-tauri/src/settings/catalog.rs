@@ -55,6 +55,10 @@ pub struct SettingDefinition {
 
 const LANGUAGES: &[&str] = &["fr", "en"];
 
+/// Shortest reason accepted for a high-risk setting change or a site rule change (it is the audit
+/// trail's "why").
+pub const MIN_REASON_CHARS: usize = 10;
+
 /// Every setting row the application ships. Order = display order inside a section.
 pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
     // ── Localisation & finance calendar ────────────────────────────────────────────────────

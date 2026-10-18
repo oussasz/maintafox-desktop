@@ -360,7 +360,14 @@
     },
     "currencyLoadError": "The currency list (Reference data › Currencies) could not be loaded: the currency cannot be changed.",
     "currencyLoading": "Loading currencies…",
-    "historyLoadError": "The history of this setting could not be loaded."
+    "historyLoadError": "The history of this setting could not be loaded.",
+    "highRisk": {
+      "title": "Change \"{{setting}}\"?",
+      "body": "From {{from}} to {{to}}. This change is recorded with your name, the time and your reason, and asks you to confirm your identity.",
+      "confirm": "Change the setting",
+      "reason": "Reason for the change",
+      "reasonHint": "At least {{min}} characters; kept in the setting history."
+    }
   },
   "license": {
     "title": "Licence",
@@ -436,5 +443,42 @@
         "noEnvelope": "No signed licence is active: there is no signing key to declare compromised."
       }
     }
+  },
+  "siteRules": {
+    "title": "Rules per site",
+    "hint": "A planning site may relax a rule for itself only. A site without a rule keeps the strict default. Each change asks for a reason and your identity, and is kept in the history.",
+    "loadError": "The sites could not be loaded",
+    "noSites": "No planning site",
+    "noSitesHint": "A site is an organisation node whose type can own work (Organisation).",
+    "site": "Site",
+    "pickSite": "Choose a site",
+    "on": "On",
+    "off": "Off",
+    "unset": "not set",
+    "notSet": "Not set at this site: {{value}} (default).",
+    "lastChange": "Last change by {{who}}, {{when}}",
+    "unknownUser": "Unknown user",
+    "history": "History",
+    "historyError": "The history could not be loaded",
+    "noHistory": "No change at this site.",
+    "selfApproval": {
+      "label": "Allow self-approval of reliability decisions",
+      "help": "Off (recommended): a second person approves every reliability decision of this site (four-eyes). Turn on only for a site where one person both proposes and approves; such approvals are labelled \"Self-approved\".",
+      "active": "Four-eyes lifted at this site"
+    },
+    "confirmTitle": "Change the rule for {{site}}?",
+    "confirmOnBody": "The person who proposes a reliability decision at {{site}} will be able to approve it. Other sites keep four-eyes.",
+    "confirmOffBody": "Reliability decisions at {{site}} will again need a second person to approve them.",
+    "confirm": "Change the rule",
+    "reason": "Reason for the change",
+    "reasonHint": "At least {{min}} characters; kept in the history with your name and the time.",
+    "saved": "Site rule changed",
+    "unreadable": "The stored rule cannot be read: {{value}} (default) applies until it is set again."
+  },
+  "errors": {
+    "SETTING_REASON_REQUIRED": "Give the reason for this change (at least 10 characters): it is kept in the history.",
+    "SITE_SETTING_STALE": "Someone changed this site's rule meanwhile. Reload and try again.",
+    "SITE_SETTING_NOT_A_SITE": "This organisation node is not a planning site (its type cannot own work).",
+    "SITE_SETTING_UNKNOWN": "Unknown site rule."
   }
 }

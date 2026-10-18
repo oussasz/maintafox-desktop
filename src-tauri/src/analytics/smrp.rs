@@ -101,7 +101,11 @@ pub struct SmrpBacklog {
     pub previous_backlog_hours: f64,
     /// Planned hours of work orders in status `ready`.
     pub ready_backlog_hours: f64,
+    /// OTs with work still to do (`wo::backlog::OPEN_STATUS_SQL`, the SMRP backlog: work
+    /// identified and not yet completed); the OT list's `open_only` filter lists them.
     pub open_work_orders: i64,
+    /// `wo::backlog::RULE_OPEN_WORK_TO_DO`: which "open OT" rule `open_work_orders` counts.
+    pub open_work_orders_rule: String,
     /// Open work orders without an estimate (counted as 0 h).
     pub work_orders_without_estimate: i64,
     /// Weekly crew hours used as capacity.
@@ -384,12 +388,15 @@ pub async fn backlog(
     let previous_backlog_hours = as_of::wo_backlog_hours_at(db, window.from, org).await?;
     let row = one_row(
         db,
-        "SELECT COUNT(*) AS n, \
+        &format!(
+            "SELECT COUNT(*) AS n, \
                 COALESCE(SUM(CASE WHEN COALESCE(wo.expected_duration_hours, 0) <= 0 THEN 1 ELSE 0 END), 0) AS no_estimate, \
                 COALESCE(SUM(CASE WHEN s.code = 'ready' THEN COALESCE(wo.expected_duration_hours, 0) END), 0) AS ready \
-         FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
-         WHERE s.code NOT IN ('completed','closed','cancelled','mechanically_complete','technically_verified') \
-           AND (? IS NULL OR wo.entity_id = ?)",
+             FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+             WHERE s.code IN {open} \
+               AND (? IS NULL OR wo.entity_id = ?)",
+            open = crate::wo::backlog::OPEN_STATUS_SQL
+        ),
         vec![org.into(), org.into()],
     )
     .await?;
@@ -401,6 +408,7 @@ pub async fn backlog(
         previous_backlog_hours,
         ready_backlog_hours: ready,
         open_work_orders: f(&row, "n")? as i64,
+        open_work_orders_rule: crate::wo::backlog::RULE_OPEN_WORK_TO_DO.to_string(),
         work_orders_without_estimate: f(&row, "no_estimate")? as i64,
         weekly_capacity_hours: capacity,
         people_counted: counted,

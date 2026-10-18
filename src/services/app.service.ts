@@ -9,6 +9,8 @@ export const HealthCheckResponseSchema = z.object({
   status: z.enum(["ok", "degraded"]),
   version: z.string().min(1),
   db_connected: z.boolean(),
+  db_latency_ms: z.number().nullable().optional(),
+  db_error_code: z.enum(["DB_TIMEOUT", "DB_ERROR"]).nullable().optional(),
   locale: z.string().min(2),
 });
 

@@ -1146,6 +1146,8 @@
       "effectDetail": "MTBF before {{before}} h, since the decision {{after}} h ({{failures}} failure(s))",
       "approve": "Approve",
       "reject": "Reject",
+      "ownProposal": "You proposed it: another person approves.",
+      "awaitingApprover": "Awaiting {{name}}",
       "apply": "Apply",
       "applyTitle": "Apply the decision",
       "applyPm": "A new draft version of plan {{plan}} is created with the new interval. It is published through the normal PM review.",
@@ -1156,7 +1158,9 @@
       "rejectReason": "Reason for rejection (required)",
       "rejectAction": "Reject the decision",
       "approveTitle": "Approve this decision?",
-      "approveBody": "\"{{title}}\" becomes approved and can then be applied (PM revision or work order)."
+      "approveBody": "\"{{title}}\" becomes approved and can then be applied (PM revision or work order).",
+      "selfApproved": "Self-approved",
+      "selfApprovedHint": "Approved by the person who proposed it."
     },
     "backToModule": "Fleet and studies",
     "fmeca": {
@@ -1268,7 +1272,9 @@
       "edit": "Edit the grids",
       "view": "View the grids",
       "managedInReference": "These grids are edited in Données de référence › Échelles AMDEC.",
-      "reviewFormerUnreadable": "To review: the former rating grids could not be read, so the Maintafox grids are in place. Check each grid and save it."
+      "reviewFormerUnreadable": "To review: the former rating grids could not be read, so the Maintafox grids are in place. Check each grid and save it.",
+      "substituteTitle": "Maintafox grids in place, plant grids to review",
+      "substituteBody": "The plant's rating grids could not be read, so ratings, RPN, risk zones and RCM consequences here use the Maintafox grids. Ask a reliability manager to review and save the grids in Données de référence › Échelles AMDEC before relying on this ranking."
     },
     "rcm": {
       "emptyTitle": "No mode to decide",
@@ -1682,6 +1688,8 @@
     "STUDY_TOO_MANY_ASSETS": "The study has more equipment than allowed.",
     "SYSTEM_MISSION_INVALID": "The mission time must be a positive number.",
     "SYSTEM_MODEL_INCOMPLETE": "The system model is incomplete: fix the blocks flagged in the diagram.",
+    "DECISION_NO_SECOND_APPROVER": "Nobody else can approve this decision, and its site requires a second person (four-eyes). Ask an administrator to give the reliability approve right (ram.manage) to another person, or to allow self-approval for this site in Settings › General › Rules per site.",
+    "DECISION_SELF_APPROVAL_SITE_UNKNOWN": "Four-eyes applies: the site of this decision cannot be determined (an equipment has no planning site, or the study spans several sites). Another person must approve it.",
     "RATING_SCALE_SCORES": "Each grid must rate every score from 1 to 10 exactly once.",
     "RATING_SCALE_LABEL": "Every rating needs a definition in French and in English."
   }

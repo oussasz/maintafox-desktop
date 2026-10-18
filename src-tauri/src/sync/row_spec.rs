@@ -962,6 +962,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
         row_filter: Some("{row}.changed_by_id IS NOT NULL"),
         ..spec("settings_change_events", &[hist("changed_by_id", USER)])
     },
+    // Per-site rules and their audit trail (`settings::site`).
+    spec("site_settings", &[]),
+    spec("site_setting_events", &[]),
     // ── Notifications ───────────────────────────────────────────────────────────────────────
     spec("notification_categories", &[]),
     spec("notification_escalation_policies", &[]),

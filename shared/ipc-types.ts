@@ -3,9 +3,15 @@ import type { P } from "@shared/rbac/permissions.generated";
 // Types defined here must be kept in sync with Rust structs in src-tauri/src/.
 
 export interface HealthCheckResponse {
+  /** `ok` when the database answered the health probe, `degraded` otherwise. */
   status: "ok" | "degraded";
   version: string;
+  /** The database answered a `SELECT 1` within 2 s. */
   db_connected: boolean;
+  /** Round trip of that probe (ms), when it answered. */
+  db_latency_ms?: number | null;
+  /** Why it did not answer: `DB_TIMEOUT` or `DB_ERROR`. */
+  db_error_code?: "DB_TIMEOUT" | "DB_ERROR" | null;
   locale: string;
 }
 
@@ -2213,6 +2219,8 @@ export interface RecordLifecycleEventPayload {
   reason_code?: string | null;
   notes?: string | null;
   approved_by_id?: number | null;
+  /** Row version the person saw (required by a recommission; refused when the asset changed). */
+  expected_row_version?: number | null;
 }
 
 export interface AssetMeter {

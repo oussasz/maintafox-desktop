@@ -11,7 +11,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
@@ -69,6 +69,28 @@ function SkeletonRow({ colCount }: { colCount: number }) {
 }
 
 // ─── DataTable ────────────────────────────────────────────────────
+
+/**
+ * Renders a header or cell definition. A render function is called, not mounted as a component:
+ * screens rebuild their column definitions when labels, catalogues, permissions or formatters
+ * arrive, and `flexRender` would treat each new function as a new component type and re-mount
+ * every row — a click landing during that swap was lost and focus jumped. Strings and real
+ * components (memo / forwardRef objects) still go through `flexRender`.
+ *
+ * Rule for column authors: a cell or header that needs hooks returns a component element
+ * (`cell: (ctx) => <StatusCell row={ctx.row.original} />`), never calls hooks itself — the
+ * element keeps its own hook state when rows come and go. (Hooks in a plain `cell` function are
+ * also refused by the rules-of-hooks lint.)
+ */
+function renderPart<TProps extends object>(
+  part: string | ((props: TProps) => ReactNode) | ReactNode | undefined,
+  props: TProps,
+): ReactNode {
+  if (typeof part === "function" && !(part.prototype && part.prototype.isReactComponent)) {
+    return (part as (p: TProps) => ReactNode)(props);
+  }
+  return flexRender(part as Parameters<typeof flexRender>[0], props);
+}
 
 export function DataTable<TData, TValue>({
   columns,
@@ -141,7 +163,7 @@ export function DataTable<TData, TValue>({
                     >
                       {header.isPlaceholder ? null : (
                         <span className="inline-flex items-center">
-                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          {renderPart(header.column.columnDef.header, header.getContext())}
                           {canSort && <SortIndicator direction={header.column.getIsSorted()} />}
                         </span>
                       )}
@@ -169,7 +191,7 @@ export function DataTable<TData, TValue>({
                   >
                     {row.getVisibleCells().map((cell) => (
                       <TableCell key={cell.id}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        {renderPart(cell.column.columnDef.cell, cell.getContext())}
                       </TableCell>
                     ))}
                   </TableRow>

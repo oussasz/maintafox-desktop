@@ -799,6 +799,18 @@ pub struct PersonnelCreateInput {
     pub certifications: Vec<PersonnelCertDraft>,
 }
 
+/// A field that is present (possibly `null`) deserialises to `Some(value)`; an absent one stays
+/// `None` — so an update can tell "leave unchanged" (absent) from "clear" (`null`).
+fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
+/// Update of a person. Required fields: absent = unchanged. Optional fields (`Option<Option<_>>`):
+/// absent = unchanged, `null` (or an empty text) = cleared, a value = set.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonnelUpdateInput {
     pub id: i64,
@@ -810,19 +822,29 @@ pub struct PersonnelUpdateInput {
     pub position_id: Option<i64>,
     pub primary_entity_id: Option<i64>,
     pub primary_team_id: Option<i64>,
-    pub supervisor_id: Option<i64>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub supervisor_id: Option<Option<i64>>,
     pub home_schedule_reference_value_id: Option<i64>,
     pub availability_status: Option<String>,
     pub blocked_override: Option<bool>,
-    pub hire_date: Option<String>,
-    pub termination_date: Option<String>,
-    pub email: Option<String>,
-    pub phone: Option<String>,
-    pub external_company_id: Option<i64>,
-    pub contract_number: Option<String>,
-    pub contract_start_date: Option<String>,
-    pub contract_end_date: Option<String>,
-    pub notes: Option<String>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub hire_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub termination_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub email: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub phone: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub external_company_id: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub contract_number: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub contract_start_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub contract_end_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub notes: Option<Option<String>>,
     pub assignment_reason: Option<String>,
     /// Privileged path only — omitted for normal updates.
     pub employee_code: Option<String>,

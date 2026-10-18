@@ -348,6 +348,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retiring_through_the_identity_form_is_refused() {
+        let db = setup().await;
+        let org_node_id = setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        // Tags the published statuses (retired: decommissioned, scrapped).
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
+        let asset = identity::create_asset(&db, valid_payload(org_node_id), 1)
+            .await
+            .expect("create");
+        let payload = |status: Option<&str>, decom: Option<Option<&str>>| identity::UpdateAssetIdentityPayload {
+            asset_name: None,
+            class_code: None,
+            family_code: None,
+            subfamily_code: None,
+            criticality_code: None,
+            status_code: status.map(str::to_string),
+            manufacturer: None,
+            model: None,
+            serial_number: None,
+            maintainable_boundary: None,
+            rams_schedule_reference_value_id: None,
+            rams_utilization_factor: None,
+            commissioned_at: None,
+            decommissioned_at: decom.map(|d| d.map(str::to_string)),
+        };
+        let refused = |r: Result<_, AppError>| matches!(r, Err(AppError::ValidationFailed(m)) if m[0] == identity::RETIRE_THROUGH_DECOMMISSION);
+        for status in ["DECOMMISSIONED", "SCRAPPED"] {
+            let r =
+                identity::update_asset_identity(&db, asset.id, payload(Some(status), None), asset.row_version, 1).await;
+            assert!(refused(r), "{status} is set by Déclasser");
+        }
+        let r = identity::update_asset_identity(
+            &db,
+            asset.id,
+            payload(None, Some(Some("2026-10-01T00:00:00Z"))),
+            asset.row_version,
+            1,
+        )
+        .await;
+        assert!(refused(r), "the end-of-life date is set by Déclasser");
+        // Another in-service status, and the unchanged (empty) end-of-life date, are accepted.
+        let updated = identity::update_asset_identity(
+            &db,
+            asset.id,
+            payload(Some("UNDER_MAINTENANCE"), Some(None)),
+            asset.row_version,
+            1,
+        )
+        .await
+        .expect("in-service status change");
+        assert_eq!(updated.status_code, "UNDER_MAINTENANCE");
+
+        // Never created retired.
+        let mut retired = valid_payload(org_node_id);
+        retired.asset_code = "PMP-1002".into();
+        retired.status_code = "SCRAPPED".into();
+        assert!(refused(identity::create_asset(&db, retired, 1).await));
+
+        // Leaving a retired status is a recommission event, not an identity edit.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED', decommissioned_at = '2026-10-01T00:00:00Z' \
+             WHERE id = ?",
+            [asset.id.into()],
+        ))
+        .await
+        .expect("retire for the test");
+        let back = identity::update_asset_identity(
+            &db,
+            asset.id,
+            payload(Some("ACTIVE_IN_SERVICE"), None),
+            updated.row_version,
+            1,
+        )
+        .await;
+        assert!(
+            matches!(back, Err(AppError::ValidationFailed(ref m)) if m[0] == identity::RECOMMISSION_REQUIRED),
+            "{back:?}"
+        );
+        let retired = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        // Clearing the end-of-life date is a return to service: refused.
+        let cleared =
+            identity::update_asset_identity(&db, asset.id, payload(None, Some(None)), retired.row_version, 1).await;
+        assert!(
+            matches!(cleared, Err(AppError::ValidationFailed(ref m)) if m[0] == identity::RECOMMISSION_REQUIRED),
+            "{cleared:?}"
+        );
+        // The same day in another format is no change; an edit of the name keeps the date as it is.
+        let mut same_day = payload(Some("DECOMMISSIONED"), Some(Some("2026-10-01")));
+        same_day.asset_name = Some("Pompe déclassée".into());
+        let kept = identity::update_asset_identity(&db, asset.id, same_day, retired.row_version, 1)
+            .await
+            .expect("same day, other format");
+        assert_eq!(kept.decommissioned_at.as_deref(), Some("2026-10-01T00:00:00Z"));
+        // Another day: refused (the end-of-life date belongs to Déclasser).
+        let moved = identity::update_asset_identity(
+            &db,
+            asset.id,
+            payload(None, Some(Some("2026-11-01"))),
+            kept.row_version,
+            1,
+        )
+        .await;
+        assert!(
+            matches!(moved, Err(AppError::ValidationFailed(ref m)) if m[0] == identity::RETIRE_THROUGH_DECOMMISSION),
+            "{moved:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn v3_valid_lookup_codes_succeed() {
         let db = setup().await;
         let org_node_id = setup_org_node(&db).await;

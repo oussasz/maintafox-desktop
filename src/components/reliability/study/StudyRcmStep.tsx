@@ -94,9 +94,16 @@ export function StudyRcmStep({
         {t("rams.rcm.rowsToReviewBody")}
       </RamsCallout>
     ) : null;
+  // Ratings and consequences come from substitute grids until the plant's grids are reviewed.
+  const gridsReview = ws.grids_review ? (
+    <RamsCallout tone="attention" title={t("rams.scales.substituteTitle")}>
+      {t("rams.scales.substituteBody")}
+    </RamsCallout>
+  ) : null;
   if (ws.rows.length === 0)
     return (
       <div className="grid gap-4">
+        {gridsReview}
         {toReview}
         <EmptyState
           title={t("rams.rcm.emptyTitle")}
@@ -110,6 +117,7 @@ export function StudyRcmStep({
   if (!row) return null;
   return (
     <div className="grid gap-4">
+      {gridsReview}
       {toReview}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,16rem)_minmax(0,1.4fr)_minmax(0,1fr)]">
         <RamsCard title={t("rams.rcm.modesTitle")}>

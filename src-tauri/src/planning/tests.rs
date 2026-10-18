@@ -4429,48 +4429,103 @@ async fn two_devices_freezing_the_same_week_offline_make_the_same_rows() {
     }
 }
 
+/// The week as it travels: its real sync payload (`sync::row_codec`, the site reference under
+/// `entity_sync_id`) with the status / baseline a peer would send, applied through the real
+/// inbound path (`row_codec::apply_row` via `apply_inbound_payload`). A step back in the
+/// lifecycle is a WEEK_LIFECYCLE_BACKWARDS conflict and nothing is written; a step forward applies.
 #[tokio::test]
 async fn a_received_week_never_goes_back_in_its_lifecycle() {
+    use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
     let db = setup_db().await;
     let (site, _team) = weekly_site(&db, "L").await;
     crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
         .await
         .expect("frozen");
-    let payload = |status: &str, baseline: i64| {
-        serde_json::json!({
-            "entity_id": "wk-node-L",
-            "week_start": "2026-05-03",
-            "status": status,
-            "baseline_no": baseline,
-        })
-        .as_object()
-        .cloned()
-        .expect("object")
-    };
-    let check = |status: &'static str, baseline: i64| {
+    let week_sync: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM weekly_schedules WHERE entity_id = ?",
+            [site.into()],
+        ))
+        .await
+        .expect("q")
+        .expect("week row")
+        .try_get("", "entity_sync_id")
+        .expect("sync id");
+    let real = crate::sync::test_support::current_payload(&db, "weekly_schedules", &week_sync, &Default::default())
+        .await
+        .expect("payload")
+        .expect("row");
+    assert_eq!(
+        real.get("entity_sync_id").and_then(serde_json::Value::as_str),
+        Some("wk-node-L"),
+        "the site travels as entity_sync_id"
+    );
+    assert!(real.get("entity_id").is_none(), "never as entity_id");
+
+    let send = |status: &'static str, baseline: i64| {
         let db = db.clone();
-        let p = payload(status, baseline);
+        let mut p = real.clone();
+        let week_sync = week_sync.clone();
         async move {
-            crate::planning::weekly_schedule::inbound_lifecycle_conflict(&db, &p)
-                .await
-                .expect("check")
+            p.insert("status".into(), status.into());
+            p.insert("baseline_no".into(), baseline.into());
+            let rv = p.get("row_version").and_then(serde_json::Value::as_i64).unwrap_or(1) + 1;
+            p.insert("row_version".into(), rv.into());
+            apply_inbound_payload(
+                &db,
+                "weekly_schedules",
+                &week_sync,
+                "upsert",
+                rv,
+                &serde_json::Value::Object(p).to_string(),
+            )
+            .await
+            .expect("apply")
         }
     };
+    let backwards =
+        |o: &ApplyOutcome| matches!(o, ApplyOutcome::Conflict { code, .. } if code == "WEEK_LIFECYCLE_BACKWARDS");
+    let status_here = || {
+        let db = db.clone();
+        async move {
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT status FROM weekly_schedules WHERE entity_id = ?",
+                [site.into()],
+            ))
+            .await
+            .expect("q")
+            .expect("row")
+            .try_get::<String>("", "status")
+            .expect("status")
+        }
+    };
+
     assert!(
-        check("draft", 0).await.is_some(),
+        backwards(&send("draft", 0).await),
         "frozen here, draft received: refused"
     );
+    assert_eq!(status_here().await, "frozen", "nothing written");
     assert!(
-        check("approved", 0).await.is_some(),
+        backwards(&send("approved", 0).await),
         "frozen here, approved received: refused"
     );
-    assert!(check("frozen", 1).await.is_none(), "the same state");
-    assert!(check("published", 1).await.is_none(), "published after the freeze");
+    let forward = send("published", 1).await;
+    assert!(!backwards(&forward), "published after the freeze applies: {forward:?}");
+    assert_eq!(status_here().await, "published");
+
+    // Direct check on the same real payload keys (same site and week under another identity).
+    let mut other = real.clone();
+    other.insert("status".into(), "draft".into());
+    other.insert("baseline_no".into(), 0.into());
     assert!(
-        check("approved", 1).await.is_none(),
-        "unfrozen after the freeze (four-eyes)"
+        crate::planning::weekly_schedule::inbound_lifecycle_conflict(&db, "another-identity", &other)
+            .await
+            .expect("check")
+            .is_some(),
+        "found by site and week when the identity differs"
     );
-    assert!(check("frozen", 2).await.is_none(), "frozen again");
 }
 
 #[tokio::test]

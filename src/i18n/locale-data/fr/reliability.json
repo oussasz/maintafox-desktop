@@ -1146,6 +1146,8 @@
       "effectDetail": "MTBF avant {{before}} h, depuis la décision {{after}} h ({{failures}} défaillance(s))",
       "approve": "Approuver",
       "reject": "Refuser",
+      "ownProposal": "Vous l'avez proposée : une autre personne approuve.",
+      "awaitingApprover": "En attente de {{name}}",
       "apply": "Appliquer",
       "applyTitle": "Appliquer la décision",
       "applyPm": "Une nouvelle version brouillon du plan {{plan}} est créée avec le nouvel intervalle. Elle sera publiée par la revue normale du module MP.",
@@ -1156,7 +1158,9 @@
       "rejectReason": "Motif du refus (obligatoire)",
       "rejectAction": "Refuser la décision",
       "approveTitle": "Approuver cette décision ?",
-      "approveBody": "« {{title}} » devient approuvée et peut ensuite être appliquée (révision de PM ou OT)."
+      "approveBody": "« {{title}} » devient approuvée et peut ensuite être appliquée (révision de PM ou OT).",
+      "selfApproved": "Auto-approuvée",
+      "selfApprovedHint": "Approuvée par la personne qui l'a proposée."
     },
     "backToModule": "Parc et études",
     "fmeca": {
@@ -1268,7 +1272,9 @@
       "edit": "Modifier les grilles",
       "view": "Consulter les grilles",
       "managedInReference": "Ces grilles se modifient dans Données de référence › Échelles AMDEC.",
-      "reviewFormerUnreadable": "À revoir : les anciennes grilles de cotation étaient illisibles, les grilles Maintafox sont en place. Vérifiez chaque grille puis enregistrez."
+      "reviewFormerUnreadable": "À revoir : les anciennes grilles de cotation étaient illisibles, les grilles Maintafox sont en place. Vérifiez chaque grille puis enregistrez.",
+      "substituteTitle": "Grilles Maintafox en place, grilles du site à revoir",
+      "substituteBody": "Les grilles de cotation du site étaient illisibles : les cotations, l'IPR, les zones de risque et les conséquences RCM affichées ici utilisent les grilles Maintafox. Demandez à un responsable fiabilité de revoir et d'enregistrer les grilles dans Données de référence › Échelles AMDEC avant de vous fier à ce classement."
     },
     "rcm": {
       "emptyTitle": "Aucun mode à décider",
@@ -1682,6 +1688,8 @@
     "STUDY_TOO_MANY_ASSETS": "L'étude dépasse le nombre d'équipements autorisé.",
     "SYSTEM_MISSION_INVALID": "La durée de mission doit être un nombre positif.",
     "SYSTEM_MODEL_INCOMPLETE": "Le modèle système est incomplet : corrigez les blocs signalés dans le diagramme.",
+    "DECISION_NO_SECOND_APPROVER": "Personne d'autre ne peut approuver cette décision, et son site exige une deuxième personne (quatre yeux). Demandez à un administrateur de donner le droit d'approbation fiabilité (ram.manage) à une autre personne, ou d'autoriser l'auto-approbation pour ce site dans Paramètres › Général › Règles par site.",
+    "DECISION_SELF_APPROVAL_SITE_UNKNOWN": "Les quatre yeux s'appliquent : le site de cette décision ne peut pas être déterminé (un équipement n'a pas de site de planification, ou l'étude couvre plusieurs sites). Une autre personne doit l'approuver.",
     "RATING_SCALE_SCORES": "Chaque grille doit coter chaque note de 1 à 10 une seule fois.",
     "RATING_SCALE_LABEL": "Chaque cotation doit avoir une définition en français et en anglais."
   }

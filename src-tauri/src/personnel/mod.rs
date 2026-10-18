@@ -11,6 +11,7 @@ pub mod domain;
 pub mod import;
 pub mod photos;
 pub mod queries;
+pub mod reference_lists;
 pub mod reports;
 pub mod skills;
 pub mod teams;
@@ -21,6 +22,12 @@ mod capacity_tests;
 #[cfg(test)]
 mod e2e_tests;
 #[cfg(test)]
+mod legacy_values_tests;
+#[cfg(test)]
 mod migration_tests;
 #[cfg(test)]
+mod reference_lists_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod update_clear_tests;

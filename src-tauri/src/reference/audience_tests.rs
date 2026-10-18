@@ -31,6 +31,8 @@ const SYSTEM_CODES_211: &[&str] = &["PLANNING.WINDOW_TYPES"];
 const SYSTEM_CODES_225: &[&str] = &["PERMIT.ENERGY_TYPES"];
 /// PM finding severities (migration 226).
 const SYSTEM_CODES_226: &[&str] = &["PM.FINDING_SEVERITY"];
+/// Employment statuses (migration 228).
+const SYSTEM_CODES_228: &[&str] = &["PERSONNEL.EMPLOYMENT_STATUSES"];
 
 fn assert_gate<T: std::fmt::Debug>(result: Result<T, AppError>, what: &str) {
     match result {
@@ -133,6 +135,7 @@ async fn backfill_marks_only_the_maintafox_lists_system() {
             .chain(SYSTEM_CODES_211)
             .chain(SYSTEM_CODES_225)
             .chain(SYSTEM_CODES_226)
+            .chain(SYSTEM_CODES_228)
             .copied()
             .collect::<BTreeSet<_>>()
     );

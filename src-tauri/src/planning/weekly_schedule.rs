@@ -1157,12 +1157,17 @@ pub(crate) fn lifecycle_rank(status: &str, baseline_no: i64) -> i64 {
     }
 }
 
-/// A received weekly schedule (sync payload: `entity_id` the site's sync id, `week_start`,
-/// `status`, `baseline_no`) that would move the local week backwards in its lifecycle — frozen
+/// A received weekly schedule that would move the local week backwards in its lifecycle — frozen
 /// back to draft, or a later baseline back to an earlier one — is not applied silently: the reason
 /// is returned and the sync apply records it as a conflict for a person to decide.
+///
+/// The row is the one with the received `entity_sync_id` (the envelope's identity, not in the
+/// payload); failing that, the same site and week under another identity. The payload uses the
+/// sync keys (`sync::row_layout::ref_payload_key`): the site reference `entity_id` travels as
+/// `entity_sync_id` (the site's sync id), never as `entity_id`.
 pub(crate) async fn inbound_lifecycle_conflict(
     conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
     payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<Option<String>> {
     let text = |k: &str| payload.get(k).and_then(serde_json::Value::as_str);
@@ -1172,24 +1177,20 @@ pub(crate) async fn inbound_lifecycle_conflict(
     let Some(baseline_no) = payload.get("baseline_no").and_then(serde_json::Value::as_i64) else {
         return Ok(None);
     };
-    let site_filter = match payload.get("entity_id") {
-        Some(serde_json::Value::String(sync_id)) => (
-            "entity_id = (SELECT id FROM org_nodes WHERE entity_sync_id = ?)",
-            sea_orm::Value::from(sync_id.clone()),
-        ),
-        Some(serde_json::Value::Number(n)) if n.as_i64().is_some() => {
-            ("entity_id = ?", sea_orm::Value::from(n.as_i64()))
-        }
-        _ => return Ok(None),
-    };
+    let site_sync_id = text(&crate::sync::row_layout::ref_payload_key("entity_id"));
     let local = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!(
-                "SELECT status, baseline_no FROM weekly_schedules WHERE {} AND week_start = ?",
-                site_filter.0
-            ),
-            [site_filter.1, week_start.into()],
+            "SELECT status, baseline_no FROM weekly_schedules \
+              WHERE entity_sync_id = ? \
+                 OR (week_start = ? AND entity_id = (SELECT id FROM org_nodes WHERE entity_sync_id = ?)) \
+              ORDER BY (entity_sync_id = ?) DESC LIMIT 1",
+            [
+                entity_sync_id.into(),
+                week_start.into(),
+                site_sync_id.map(str::to_string).into(),
+                entity_sync_id.into(),
+            ],
         ))
         .await?;
     let Some(local) = local else {

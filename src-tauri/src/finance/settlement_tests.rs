@@ -875,11 +875,41 @@ async fn s5_cockpit_compares_budget_commitment_actual_and_drills_to_documents() 
             cost_center_id: cc,
             bucket: Some("parts".into()),
             period_month: None,
+            limit: None,
+            offset: None,
         },
     )
     .await
     .expect("drilldown");
     assert!(drill.actuals.iter().any(|a| a.work_order_id == Some(wo_id)));
+    // The drill-down's total is the cockpit figure, whatever the page shows.
+    assert_eq!(drill.actuals_total, i64::try_from(drill.actuals.len()).unwrap());
+    assert!(
+        close_to(drill.actuals_amount, parts.actual),
+        "{} vs {}",
+        drill.actuals_amount,
+        parts.actual
+    );
+    let first_page = cockpit::get_budget_cockpit_drilldown(
+        &db,
+        BudgetCockpitDrilldownFilter {
+            fiscal_year: this_year(),
+            budget_version_id: None,
+            cost_center_id: cc,
+            bucket: Some("parts".into()),
+            period_month: None,
+            limit: Some(1),
+            offset: Some(0),
+        },
+    )
+    .await
+    .expect("page");
+    assert_eq!(first_page.actuals.len(), 1.min(drill.actuals.len()));
+    assert_eq!(
+        first_page.actuals_total, drill.actuals_total,
+        "the total does not depend on the page"
+    );
+    assert!(close_to(first_page.actuals_amount, drill.actuals_amount));
     assert!(drill
         .commitments
         .iter()
