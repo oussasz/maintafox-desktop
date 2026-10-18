@@ -37,7 +37,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { usePermissions } from "@/hooks/use-permissions";
+import { useAccessAt } from "@/hooks/use-access-at";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
 import { describeAppError } from "@/lib/app-error";
@@ -185,7 +185,8 @@ export function DiApprovalDialog() {
   const approve = useDiReviewStore((s) => s.approve);
   const saving = useDiReviewStore((s) => s.saving);
   const storeError = useDiReviewStore((s) => s.error);
-  const { can } = usePermissions();
+  // Rights at this request's site; converting also creates the work order there.
+  const { can } = useAccessAt(di?.org_node_id);
   const { info } = useSession();
 
   const [note, setNote] = useState("");
@@ -591,17 +592,20 @@ export function DiApprovalDialog() {
                   {t("action.approve")}
                 </Button>
               )}
-              {di.status === "approved" && can(P.DI_CONVERT) && di.converted_to_wo_id == null && (
-                <Button
-                  size="sm"
-                  onClick={handleConvertClick}
-                  disabled={saving}
-                  className="gap-1.5"
-                >
-                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {t("review.convertToWo")}
-                </Button>
-              )}
+              {di.status === "approved" &&
+                can(P.DI_CONVERT) &&
+                can(P.OT_CREATE) &&
+                di.converted_to_wo_id == null && (
+                  <Button
+                    size="sm"
+                    onClick={handleConvertClick}
+                    disabled={saving}
+                    className="gap-1.5"
+                  >
+                    {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {t("review.convertToWo")}
+                  </Button>
+                )}
               {(di.status === "awaiting_approval" || di.status === "approved") && (
                 <Button size="sm" variant="outline" onClick={handleCloseRequest}>
                   {t("action.closeRequest")}

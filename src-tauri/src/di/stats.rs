@@ -203,8 +203,21 @@ fn row_f64(row: &QueryResult, col: &str) -> AppResult<f64> {
 }
 
 pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> AppResult<DiStatsPayload> {
-    let binds = scope_binds(&filter);
-    let base_where = base_scope_sql();
+    get_di_stats_in_scope(db, filter, &super::access::ScopeSql::everywhere()).await
+}
+
+/// [`get_di_stats`] over the requests of the reader's scope (rule §2.8: a site user's figures
+/// cover their sites only; the explicit site filter is intersected with it).
+pub async fn get_di_stats_in_scope(
+    db: &DatabaseConnection,
+    filter: DiStatsFilter,
+    scope: &super::access::ScopeSql,
+) -> AppResult<DiStatsPayload> {
+    // The scope predicate follows the period / site predicate, and its binds follow theirs; no
+    // placeholder comes after it in any query below.
+    let mut binds = scope_binds(&filter).to_vec();
+    binds.extend(scope.binds.iter().cloned());
+    let base_where = format!("{} AND ({})", base_scope_sql(), scope.predicate);
 
     let total = scalar_i64(
         db,
@@ -552,14 +565,14 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
             .collect::<AppResult<Vec<_>>>()?
     };
 
-    let closing = sla_closing_outcome(db, &filter).await?;
+    let closing = sla_closing_outcome_in_scope(db, &filter, scope).await?;
     let (sla_met_count, sla_breached_count, sla_total) = (closing.met, closing.breached, closing.total);
 
-    let backlog_by_status = open_backlog_by_status(db, filter.entity_id).await?;
+    let backlog_by_status = open_backlog_by_status_in_scope(db, filter.entity_id, scope).await?;
 
-    let sla_open = sla_open_split(db, filter.entity_id).await?;
+    let sla_open = sla_open_split_in_scope(db, filter.entity_id, scope).await?;
 
-    let finished = event_scope_sql("ir.closed_at");
+    let finished = format!("{} AND ({})", event_scope_sql("ir.closed_at"), scope.predicate);
     let (closed_in_period, converted_count) = {
         let row = db
             .query_one(Statement::from_sql_and_values(
@@ -588,7 +601,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
              FROM intervention_requests ir
              WHERE {screened} AND ir.screened_at IS NOT NULL",
             elapsed = super::sla::SLA_RESPONSE_ELAPSED_SQL,
-            screened = event_scope_sql("ir.screened_at"),
+            screened = format!("{} AND ({})", event_scope_sql("ir.screened_at"), scope.predicate),
         ),
         binds.to_vec(),
     )
@@ -601,7 +614,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
              FROM intervention_requests ir
              WHERE {converted} AND ir.converted_at IS NOT NULL",
             elapsed = super::sla::SLA_RESOLUTION_ELAPSED_SQL,
-            converted = event_scope_sql("ir.converted_at"),
+            converted = format!("{} AND ({})", event_scope_sql("ir.converted_at"), scope.predicate),
         ),
         binds.to_vec(),
     )
@@ -650,7 +663,18 @@ pub struct DiSlaClosingOutcome {
 /// the request is screened / converted, or when it is closed without them; paused time is not
 /// counted. Requests without a frozen target are left out.
 pub async fn sla_closing_outcome(db: &DatabaseConnection, filter: &DiStatsFilter) -> AppResult<DiSlaClosingOutcome> {
-    let finished = event_scope_sql("ir.closed_at");
+    sla_closing_outcome_in_scope(db, filter, &super::access::ScopeSql::everywhere()).await
+}
+
+/// [`sla_closing_outcome`] over the requests of the reader's scope.
+pub async fn sla_closing_outcome_in_scope(
+    db: &DatabaseConnection,
+    filter: &DiStatsFilter,
+    scope: &super::access::ScopeSql,
+) -> AppResult<DiSlaClosingOutcome> {
+    let finished = format!("{} AND ({})", event_scope_sql("ir.closed_at"), scope.predicate);
+    let mut binds = scope_binds(filter).to_vec();
+    binds.extend(scope.binds.iter().cloned());
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -665,7 +689,7 @@ pub async fn sla_closing_outcome(db: &DatabaseConnection, filter: &DiStatsFilter
                    AND ir.sla_response_deadline IS NOT NULL",
                 late = super::sla::SLA_LATE_SQL,
             ),
-            scope_binds(filter).to_vec(),
+            binds,
         ))
         .await?;
     let (breached, met) = match row {
@@ -685,7 +709,18 @@ pub async fn open_backlog_by_status(
     db: &DatabaseConnection,
     entity_id: Option<i64>,
 ) -> AppResult<Vec<DiBacklogStatus>> {
-    let entity = entity_scope_sql();
+    open_backlog_by_status_in_scope(db, entity_id, &super::access::ScopeSql::everywhere()).await
+}
+
+/// [`open_backlog_by_status`] over the requests of the reader's scope.
+pub async fn open_backlog_by_status_in_scope(
+    db: &DatabaseConnection,
+    entity_id: Option<i64>,
+    scope: &super::access::ScopeSql,
+) -> AppResult<Vec<DiBacklogStatus>> {
+    let entity = format!("{} AND ({})", entity_scope_sql(), scope.predicate);
+    let mut binds = entity_binds(entity_id);
+    binds.extend(scope.binds.iter().cloned());
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -698,7 +733,7 @@ pub async fn open_backlog_by_status(
                   GROUP BY ir.status
                   ORDER BY count DESC"
             ),
-            entity_binds(entity_id),
+            binds,
         ))
         .await?;
     rows.into_iter()
@@ -717,7 +752,18 @@ pub async fn open_backlog_by_status(
 /// rule as the lists (`sla::SLA_BREACHED_SQL`, `sla::SLA_AT_RISK_OR_BREACHED_SQL`; a paused
 /// request is never at risk or breached). Current state; only the site scope applies.
 pub async fn sla_open_split(db: &DatabaseConnection, entity_id: Option<i64>) -> AppResult<DiSlaOpenSplit> {
-    let entity = entity_scope_sql();
+    sla_open_split_in_scope(db, entity_id, &super::access::ScopeSql::everywhere()).await
+}
+
+/// [`sla_open_split`] over the requests of the reader's scope.
+pub async fn sla_open_split_in_scope(
+    db: &DatabaseConnection,
+    entity_id: Option<i64>,
+    scope: &super::access::ScopeSql,
+) -> AppResult<DiSlaOpenSplit> {
+    let entity = format!("{} AND ({})", entity_scope_sql(), scope.predicate);
+    let mut binds = entity_binds(entity_id);
+    binds.extend(scope.binds.iter().cloned());
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -737,7 +783,7 @@ pub async fn sla_open_split(db: &DatabaseConnection, entity_id: Option<i64>) -> 
                 breached = super::sla::SLA_BREACHED_SQL,
                 risk = super::sla::SLA_AT_RISK_OR_BREACHED_SQL,
             ),
-            entity_binds(entity_id),
+            binds,
         ))
         .await?;
     Ok(match row {

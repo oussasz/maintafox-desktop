@@ -1,4 +1,11 @@
 {
+  "errors": {
+    "DI_ORG_NODE_REQUIRED": "Une demande doit être rattachée à un site : choisissez un équipement installé sur un nœud de l'organisation."
+  },
+  "noSite": {
+    "badge": "À revoir : sans site",
+    "hint": "Demande enregistrée sans site (avant que le site soit obligatoire). Seuls les utilisateurs ayant un rôle valable pour toute l'usine la voient et peuvent agir dessus."
+  },
   "page": {
     "title": "Demandes d'intervention",
     "titleDetail": "Détail de la demande",
@@ -11,6 +18,13 @@
     "filterSettings": "Paramètres des filtres"
   },
   "list": {
+    "hidden": {
+      "outsideScope_one": "{{count}} demande n'est pas affichée : hors de vos sites.",
+      "outsideScope_other": "{{count}} demandes ne sont pas affichées : hors de vos sites.",
+      "withoutSite_one": "{{count}} demande n'est pas affichée : elle n'a pas de site.",
+      "withoutSite_other": "{{count}} demandes ne sont pas affichées : elles n'ont pas de site.",
+      "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l'usine pour les voir."
+    },
     "columns": {
       "number": "N°",
       "subject": "Objet",

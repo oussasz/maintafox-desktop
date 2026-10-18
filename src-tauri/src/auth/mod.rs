@@ -21,7 +21,7 @@ pub mod session_manager;
 #[cfg(test)]
 mod auth_integration_tests;
 #[cfg(test)]
-mod scope_tests;
+pub(crate) mod scope_tests;
 
 /// Short-circuit an IPC command if there is no active authenticated session.
 ///

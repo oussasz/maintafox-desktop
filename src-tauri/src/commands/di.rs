@@ -12,10 +12,17 @@
 //!   di.approve      — approve, defer, reactivate, close from awaiting_approval/approved
 //!   di.convert      — convert DI to WO (confirmed in a dialog; no step-up)
 //!   di.admin        — SLA rule management, delete attachment records
+//!
+//! Site scope (step 6, `docs/SITE_SCOPED_ROLES.md`): every request is checked at its org node
+//! (`di::access`). Lists, queue counts, statistics and the audit log are limited in SQL to where
+//! the user holds the right; the list says how many requests it leaves out and why. A plant-wide
+//! role sees and acts everywhere, as before. SLA rules stay plant-wide objects.
 
 use tauri::{Manager, State};
 
 use crate::auth::rbac::PermissionScope;
+use crate::auth::scope::Anchor;
+use crate::di::access;
 use crate::di::attachments;
 use crate::di::audit;
 use crate::di::conversion;
@@ -25,9 +32,42 @@ use crate::di::sla;
 use crate::di::stats;
 use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
-use crate::{require_permission, require_session};
+use crate::{require_permission, require_permission_at, require_session};
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Site-scope checks shared by the commands (`di::access`)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// `di.screen` or `di.review` at the request's org node (triage and screening).
+async fn require_screen_or_review(state: &AppState, user_id: i32, di_id: i64, denied_message: &str) -> AppResult<()> {
+    access::require_any_on_di(
+        &state.db,
+        &state.permission_cache,
+        user_id,
+        &[crate::rbac::permissions::DI_SCREEN, crate::rbac::permissions::DI_REVIEW],
+        di_id,
+        denied_message,
+    )
+    .await
+}
+
+/// The requester with `di.create.own`, or anyone with `di.review`, at the request's org node
+/// (edit the draft, add an attachment).
+async fn require_own_or_review(
+    state: &AppState,
+    user_id: i32,
+    di: &crate::di::domain::InterventionRequest,
+) -> AppResult<()> {
+    access::require_own_or_review(&state.db, &state.permission_cache, user_id, di).await
+}
+
+/// `permission` on the request `di_id` (held nowhere: refused as before; no such request: not
+/// found; else checked at its org node).
+async fn require_on_di(state: &AppState, user_id: i32, permission: &str, di_id: i64) -> AppResult<Anchor> {
+    access::require_on_di(&state.db, &state.permission_cache, user_id, permission, di_id).await
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Composite response for get_di detail view
@@ -49,12 +89,19 @@ pub struct DiGetResponse {
 #[tauri::command]
 pub async fn list_di(mut filter: queries::DiListFilter, state: State<'_, AppState>) -> AppResult<queries::DiListPage> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
+    let scope = access::require_anywhere(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+    )
+    .await?;
     // "My requests" is always the signed-in user's, whatever submitter the caller sent.
     if filter.queue.as_deref().map(str::trim) == Some("mine") {
         filter.submitter_id = Some(i64::from(user.user_id));
     }
-    queries::list_intervention_requests(&state.db, filter).await
+    // Where the user holds di.view, in SQL before paging; the page counts what it leaves out.
+    queries::list_intervention_requests_in_scope(&state.db, filter, &scope).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -64,8 +111,14 @@ pub async fn list_di(mut filter: queries::DiListFilter, state: State<'_, AppStat
 #[tauri::command]
 pub async fn get_di_queue_counts(state: State<'_, AppState>) -> AppResult<queries::DiQueueCounts> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
-    queries::count_di_queues(&state.db, i64::from(user.user_id)).await
+    let scope = access::require_anywhere(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+    )
+    .await?;
+    queries::count_di_queues_in_scope(&state.db, i64::from(user.user_id), &access::ScopeSql::of(&scope)).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -75,7 +128,13 @@ pub async fn get_di_queue_counts(state: State<'_, AppState>) -> AppResult<querie
 #[tauri::command]
 pub async fn get_di(id: i64, state: State<'_, AppState>) -> AppResult<DiGetResponse> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
+    let scope = access::require_anywhere(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+    )
+    .await?;
 
     let di = queries::get_intervention_request(&state.db, id)
         .await?
@@ -83,9 +142,18 @@ pub async fn get_di(id: i64, state: State<'_, AppState>) -> AppResult<DiGetRespo
             entity: "InterventionRequest".into(),
             id: id.to_string(),
         })?;
+    crate::auth::scope::check_anchor(
+        &state.db,
+        &scope,
+        crate::rbac::permissions::DI_VIEW,
+        Anchor::of(Some(di.org_node_id)),
+    )
+    .await?;
 
     let transitions = queries::get_di_transition_log(&state.db, id).await?;
-    let similar = queries::get_recent_similar_dis(&state.db, di.equipment_id, di.symptom_code_id, 30).await?;
+    // Only the similar requests the user may open.
+    let similar =
+        queries::get_recent_similar_dis_in_scope(&state.db, di.equipment_id, di.symptom_code_id, 30, &scope).await?;
 
     Ok(DiGetResponse {
         di,
@@ -105,22 +173,16 @@ pub async fn create_di(
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
 
-    let has_global = crate::auth::rbac::check_permission(
+    // Decision O7 (an org node is required, for everyone), then di.create or di.create.own at the
+    // new request's org node and at its equipment's node (rule §2.6).
+    access::require_create_at(
         &state.db,
+        &state.permission_cache,
         user.user_id,
-        crate::rbac::permissions::DI_CREATE,
-        &PermissionScope::Global,
+        input.org_node_id,
+        input.equipment_id,
     )
     .await?;
-
-    if !has_global {
-        require_permission!(
-            state,
-            &user,
-            crate::rbac::permissions::DI_CREATE_OWN,
-            PermissionScope::Global
-        );
-    }
 
     let mut errors: Vec<String> = Vec::new();
 
@@ -207,26 +269,13 @@ pub async fn triage_submitted_di(
     let user = require_session!(state);
     let uid = i64::from(user.user_id);
 
-    let has_screen = crate::auth::rbac::check_permission(
-        &state.db,
+    require_screen_or_review(
+        &state,
         user.user_id,
-        crate::rbac::permissions::DI_SCREEN,
-        &PermissionScope::Global,
+        input.di_id,
+        "Tri des demandes : permission di.screen ou di.review requise.",
     )
     .await?;
-    let has_review = crate::auth::rbac::check_permission(
-        &state.db,
-        user.user_id,
-        crate::rbac::permissions::DI_REVIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-
-    if !has_screen && !has_review {
-        return Err(AppError::PermissionDenied(
-            "Tri des demandes : permission di.screen ou di.review requise.".into(),
-        ));
-    }
 
     let di = queries::triage_submitted_di(&state.db, input, uid).await?;
     audit::record_di_change_event(
@@ -263,32 +312,9 @@ pub async fn update_di_draft(
             id: input.id.to_string(),
         })?;
 
-    let is_owner = current_di.submitter_id == i64::from(user.user_id);
-
-    if is_owner {
-        let has_own = crate::auth::rbac::check_permission(
-            &state.db,
-            user.user_id,
-            crate::rbac::permissions::DI_CREATE_OWN,
-            &PermissionScope::Global,
-        )
-        .await?;
-        if !has_own {
-            require_permission!(
-                state,
-                &user,
-                crate::rbac::permissions::DI_REVIEW,
-                PermissionScope::Global
-            );
-        }
-    } else {
-        require_permission!(
-            state,
-            &user,
-            crate::rbac::permissions::DI_REVIEW,
-            PermissionScope::Global
-        );
-    }
+    // The draft fields do not include the org node or the equipment: the request stays where it
+    // is, so its own anchor is the only one to check (no move, rule §2.7 does not apply).
+    require_own_or_review(&state, user.user_id, &current_di).await?;
 
     queries::update_di_draft_fields(&state.db, input).await
 }
@@ -304,25 +330,13 @@ pub async fn screen_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    let has_screen = crate::auth::rbac::check_permission(
-        &state.db,
+    require_screen_or_review(
+        &state,
         user.user_id,
-        crate::rbac::permissions::DI_SCREEN,
-        &PermissionScope::Global,
+        input.di_id,
+        "Examen de la demande : permission di.screen ou di.review requise.",
     )
     .await?;
-    let has_review = crate::auth::rbac::check_permission(
-        &state.db,
-        user.user_id,
-        crate::rbac::permissions::DI_REVIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    if !has_screen && !has_review {
-        return Err(AppError::PermissionDenied(
-            "Examen de la demande : permission di.screen ou di.review requise.".into(),
-        ));
-    }
     input.actor_id = i64::from(user.user_id);
     let di = review::screen_di(&state.db, input).await?;
     audit::record_di_change_event(
@@ -352,12 +366,7 @@ pub async fn return_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::DI_REVIEW,
-        PermissionScope::Global
-    );
+    require_on_di(&state, user.user_id, crate::rbac::permissions::DI_REVIEW, input.di_id).await?;
     input.actor_id = i64::from(user.user_id);
     let di = review::return_di_for_clarification(&state.db, input).await?;
     audit::record_di_change_event(
@@ -387,12 +396,13 @@ pub async fn resubmit_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
+    require_on_di(
+        &state,
+        user.user_id,
         crate::rbac::permissions::DI_CREATE_OWN,
-        PermissionScope::Global
-    );
+        input.di_id,
+    )
+    .await?;
     input.actor_id = i64::from(user.user_id);
     let di = review::resubmit_returned_di(&state.db, input).await?;
     audit::record_di_change_event(
@@ -434,19 +444,19 @@ pub async fn close_di(
 
     match current_di.status.as_str() {
         "in_review" => {
-            require_permission!(
+            require_permission_at!(
                 state,
                 &user,
                 crate::rbac::permissions::DI_REVIEW,
-                PermissionScope::Global
+                Anchor::of(Some(current_di.org_node_id))
             );
         }
         "awaiting_approval" | "approved" => {
-            require_permission!(
+            require_permission_at!(
                 state,
                 &user,
                 crate::rbac::permissions::DI_APPROVE,
-                PermissionScope::Global
+                Anchor::of(Some(current_di.org_node_id))
             );
         }
         other => {
@@ -490,12 +500,13 @@ pub async fn cancel_own_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
+    require_on_di(
+        &state,
+        user.user_id,
         crate::rbac::permissions::DI_CREATE_OWN,
-        PermissionScope::Global
-    );
+        input.di_id,
+    )
+    .await?;
     input.actor_id = i64::from(user.user_id);
     let di = review::cancel_own_di(&state.db, input).await?;
     audit::record_di_change_event(
@@ -524,12 +535,7 @@ pub async fn reject_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::DI_REVIEW,
-        PermissionScope::Global
-    );
+    require_on_di(&state, user.user_id, crate::rbac::permissions::DI_REVIEW, input.di_id).await?;
     input.actor_id = i64::from(user.user_id);
     let di = review::reject_di(&state.db, input).await?;
     audit::record_di_change_event(
@@ -561,12 +567,7 @@ pub async fn close_di_as_non_executable(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::DI_APPROVE,
-        PermissionScope::Global
-    );
+    require_on_di(&state, user.user_id, crate::rbac::permissions::DI_APPROVE, input.di_id).await?;
     input.actor_id = i64::from(user.user_id);
     let di = review::close_di_as_non_executable(&state.db, input).await?;
     audit::record_di_change_event(
@@ -596,12 +597,7 @@ pub async fn approve_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::DI_APPROVE,
-        PermissionScope::Global
-    );
+    require_on_di(&state, user.user_id, crate::rbac::permissions::DI_APPROVE, input.di_id).await?;
 
     input.actor_id = i64::from(user.user_id);
     let di = review::approve_di(&state.db, input).await?;
@@ -631,12 +627,7 @@ pub async fn defer_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::DI_APPROVE,
-        PermissionScope::Global
-    );
+    require_on_di(&state, user.user_id, crate::rbac::permissions::DI_APPROVE, input.di_id).await?;
     input.actor_id = i64::from(user.user_id);
     let di = review::defer_di(&state.db, input).await?;
     audit::record_di_change_event(
@@ -665,12 +656,7 @@ pub async fn reactivate_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::DI_APPROVE,
-        PermissionScope::Global
-    );
+    require_on_di(&state, user.user_id, crate::rbac::permissions::DI_APPROVE, input.di_id).await?;
     input.actor_id = i64::from(user.user_id);
     let di = review::reactivate_deferred_di(&state.db, input).await?;
     audit::record_di_change_event(
@@ -699,12 +685,7 @@ pub async fn archive_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::DI_APPROVE,
-        PermissionScope::Global
-    );
+    require_on_di(&state, user.user_id, crate::rbac::permissions::DI_APPROVE, input.di_id).await?;
     input.actor_id = i64::from(user.user_id);
     let di = review::archive_di(&state.db, input).await?;
     audit::record_di_change_event(
@@ -730,7 +711,14 @@ pub async fn archive_di(
 #[tauri::command]
 pub async fn get_di_review_events(di_id: i64, state: State<'_, AppState>) -> AppResult<Vec<review::DiReviewEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
+    access::require_on_di_records(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+        di_id,
+    )
+    .await?;
     review::get_review_events(&state.db, di_id).await
 }
 
@@ -758,32 +746,7 @@ pub async fn upload_di_attachment(
             id: di_id.to_string(),
         })?;
 
-    let is_owner = current_di.submitter_id == i64::from(user.user_id);
-
-    if is_owner {
-        let has_own = crate::auth::rbac::check_permission(
-            &state.db,
-            user.user_id,
-            crate::rbac::permissions::DI_CREATE_OWN,
-            &PermissionScope::Global,
-        )
-        .await?;
-        if !has_own {
-            require_permission!(
-                state,
-                &user,
-                crate::rbac::permissions::DI_REVIEW,
-                PermissionScope::Global
-            );
-        }
-    } else {
-        require_permission!(
-            state,
-            &user,
-            crate::rbac::permissions::DI_REVIEW,
-            PermissionScope::Global
-        );
-    }
+    require_own_or_review(&state, user.user_id, &current_di).await?;
 
     let app_data_dir = app
         .path()
@@ -821,31 +784,7 @@ pub async fn upload_di_attachment_from_path(
             id: di_id.to_string(),
         })?;
 
-    let is_owner = current_di.submitter_id == i64::from(user.user_id);
-    if is_owner {
-        let has_own = crate::auth::rbac::check_permission(
-            &state.db,
-            user.user_id,
-            crate::rbac::permissions::DI_CREATE_OWN,
-            &PermissionScope::Global,
-        )
-        .await?;
-        if !has_own {
-            require_permission!(
-                state,
-                &user,
-                crate::rbac::permissions::DI_REVIEW,
-                PermissionScope::Global
-            );
-        }
-    } else {
-        require_permission!(
-            state,
-            &user,
-            crate::rbac::permissions::DI_REVIEW,
-            PermissionScope::Global
-        );
-    }
+    require_own_or_review(&state, user.user_id, &current_di).await?;
 
     let app_data_dir = app
         .path()
@@ -871,7 +810,14 @@ pub async fn read_di_attachment_preview(
     state: State<'_, AppState>,
 ) -> AppResult<attachments::DiAttachmentPreview> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
+    access::require_on_attachment(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+        attachment_id,
+    )
+    .await?;
 
     let app_data_dir = app
         .path()
@@ -888,7 +834,14 @@ pub async fn read_di_attachment_preview(
 #[tauri::command]
 pub async fn list_di_attachments(di_id: i64, state: State<'_, AppState>) -> AppResult<Vec<attachments::DiAttachment>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
+    access::require_on_di_records(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+        di_id,
+    )
+    .await?;
     attachments::list_di_attachments(&state.db, di_id).await
 }
 
@@ -899,12 +852,14 @@ pub async fn list_di_attachments(di_id: i64, state: State<'_, AppState>) -> AppR
 #[tauri::command]
 pub async fn delete_di_attachment(attachment_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
+    access::require_on_attachment(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
         crate::rbac::permissions::DI_ADMIN,
-        PermissionScope::Global
-    );
+        attachment_id,
+    )
+    .await?;
     attachments::delete_di_attachment_record(&state.db, attachment_id).await
 }
 
@@ -919,12 +874,9 @@ pub async fn convert_di_to_wo(
     state: State<'_, AppState>,
 ) -> AppResult<conversion::WoConversionResult> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::DI_CONVERT,
-        PermissionScope::Global
-    );
+    // di.convert on the request, and the work-order create right where the new work order is
+    // anchored (`conversion` copies the request's org node into `work_orders.entity_id`).
+    access::require_convert(&state.db, &state.permission_cache, user.user_id, input.di_id).await?;
 
     input.actor_id = i64::from(user.user_id);
     let result = conversion::convert_di_to_work_order(&state.db, input).await?;
@@ -957,7 +909,7 @@ pub async fn convert_di_to_wo(
 #[tauri::command]
 pub async fn get_sla_status(di_id: i64, state: State<'_, AppState>) -> AppResult<sla::DiSlaStatus> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
+    require_on_di(&state, user.user_id, crate::rbac::permissions::DI_VIEW, di_id).await?;
 
     let di = queries::get_intervention_request(&state.db, di_id)
         .await?
@@ -976,6 +928,7 @@ pub async fn get_sla_status(di_id: i64, state: State<'_, AppState>) -> AppResult
 #[tauri::command]
 pub async fn list_sla_rules(state: State<'_, AppState>) -> AppResult<Vec<sla::DiSlaRule>> {
     let user = require_session!(state);
+    // SLA rules are plant-wide reference settings: plant-wide right (step 6 §2.9).
     require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
     sla::list_sla_rules(&state.db).await
 }
@@ -987,6 +940,7 @@ pub async fn list_sla_rules(state: State<'_, AppState>) -> AppResult<Vec<sla::Di
 #[tauri::command]
 pub async fn update_sla_rule(input: sla::SlaRuleUpdateInput, state: State<'_, AppState>) -> AppResult<sla::DiSlaRule> {
     let user = require_session!(state);
+    // SLA rules are plant-wide reference settings: plant-wide right (step 6 §2.9).
     require_permission!(
         state,
         &user,
@@ -1007,7 +961,14 @@ pub async fn list_di_change_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<audit::DiChangeEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
+    access::require_on_di_records(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+        di_id,
+    )
+    .await?;
     audit::list_di_change_events(&state.db, di_id, limit.unwrap_or(50)).await
 }
 
@@ -1021,13 +982,15 @@ pub async fn list_all_di_change_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<audit::DiChangeEvent>> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
+    // The audit log of the requests where the user holds di.admin.
+    let scope = access::require_anywhere(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
         crate::rbac::permissions::DI_ADMIN,
-        PermissionScope::Global
-    );
-    audit::list_all_change_events(&state.db, filter).await
+    )
+    .await?;
+    audit::list_all_change_events(&state.db, filter, &access::ScopeSql::of(&scope)).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1040,8 +1003,14 @@ pub async fn get_di_stats(
     state: State<'_, AppState>,
 ) -> AppResult<stats::DiStatsPayload> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
-    stats::get_di_stats(&state.db, filter).await
+    let scope = access::require_anywhere(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+    )
+    .await?;
+    stats::get_di_stats_in_scope(&state.db, filter, &access::ScopeSql::of(&scope)).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
