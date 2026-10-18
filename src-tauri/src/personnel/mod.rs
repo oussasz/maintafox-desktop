@@ -22,6 +22,8 @@ mod capacity_tests;
 #[cfg(test)]
 mod e2e_tests;
 #[cfg(test)]
+mod legacy_values_tests;
+#[cfg(test)]
 mod migration_tests;
 #[cfg(test)]
 mod reference_lists_tests;

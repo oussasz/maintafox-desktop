@@ -755,7 +755,10 @@ pub async fn update_personnel(
     }
 
     // Validate enums
+    // Only a change is checked against the list: a record whose stored value was retired or
+    // flagged stays editable while the field is left as it is.
     let employment_type = match input.employment_type.as_deref() {
+        Some(t) if t == current.employment_type => None,
         Some(t) => Some(super::reference_lists::checked_employment_type(db, t).await?),
         None => None,
     };
@@ -763,6 +766,7 @@ pub async fn update_personnel(
         EmploymentOrigin::try_from(o.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     }
     let employment_status = match input.employment_status.as_deref() {
+        Some(s) if s == current.employment_status => None,
         Some(s) => Some(super::reference_lists::checked_employment_status(db, s).await?),
         None => None,
     };
@@ -1187,7 +1191,25 @@ pub async fn upsert_position(
     input: PositionUpsertInput,
     actor_id: Option<i64>,
 ) -> AppResult<Position> {
-    let category = super::reference_lists::checked_position_category(db, &input.category).await?;
+    // Only a change is checked against the list: an existing position keeps a retired or flagged
+    // category while it is left as it is.
+    let stored_category: Option<String> = match input.id {
+        Some(id) => db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT category FROM positions WHERE id = ?",
+                [id.into()],
+            ))
+            .await?
+            .map(|r| r.try_get::<String>("", "category"))
+            .transpose()?,
+        None => None,
+    };
+    let category = if stored_category.as_deref() == Some(input.category.as_str()) {
+        input.category.clone()
+    } else {
+        super::reference_lists::checked_position_category(db, &input.category).await?
+    };
 
     if input.code.trim().is_empty() || input.name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![

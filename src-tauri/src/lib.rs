@@ -438,6 +438,7 @@ pub fn run() {
             commands::personnel::list_personnel_work_history,
             commands::personnel::get_personnel_workload_summary,
             commands::personnel::list_personnel_reference_options,
+            commands::personnel::list_personnel_status_review,
             commands::personnel::scan_succession_risk,
             commands::personnel::declare_own_skill,
             commands::personnel::list_personnel_skill_reference_values,

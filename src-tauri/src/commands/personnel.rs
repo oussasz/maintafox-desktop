@@ -1520,3 +1520,19 @@ pub async fn list_personnel_reference_options(
     }
     crate::personnel::reference_lists::list_personnel_reference_options(&state.db).await
 }
+
+/// People whose stored employment status is not in the SYSTEM list (older data or sync): listed
+/// with their stored value for review; read as before (not active). Requires per.view.
+#[tauri::command]
+pub async fn list_personnel_status_review(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::personnel::reference_lists::PersonnelStatusReview>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_VIEW,
+        PermissionScope::Global
+    );
+    crate::personnel::reference_lists::list_personnel_status_review(&state.db).await
+}

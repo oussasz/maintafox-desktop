@@ -84,6 +84,24 @@ pub struct DocumentCategoryOption {
     pub code: String,
     pub label: String,
     pub label_en: Option<String>,
+    /// A category found on stored documents that was not in the list (e.g. received by sync),
+    /// kept with its exact code and flagged "à revoir".
+    #[serde(default)]
+    pub review_required: bool,
+}
+
+/// Adopts the categories stored on documents that are not in the list (flagged "à revoir", exact
+/// code kept; migration 229 and the integrity pass, so a document received by sync with a
+/// category unknown here is never lost nor hidden).
+pub async fn adopt_stored_document_categories(db: &impl ConnectionTrait) -> AppResult<Vec<String>> {
+    crate::personnel::reference_lists::adopt_stored_values(
+        db,
+        DOCUMENT_CATEGORIES_DOMAIN,
+        "library_documents",
+        "category",
+        None,
+    )
+    .await
 }
 
 /// The active document categories, in the list order.
@@ -108,10 +126,16 @@ pub async fn list_document_categories(db: &impl ConnectionTrait) -> AppResult<Ve
                 .as_deref()
                 .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
                 .and_then(|v| v.get("label_en").and_then(|l| l.as_str()).map(str::to_string));
+            let review_required = meta
+                .as_deref()
+                .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+                .and_then(|v| v.get("review_required").and_then(serde_json::Value::as_bool))
+                .unwrap_or(false);
             Ok(DocumentCategoryOption {
                 code: r.try_get("", "code")?,
                 label: r.try_get("", "label")?,
                 label_en,
+                review_required,
             })
         })
         .collect::<Result<Vec<_>, sea_orm::DbErr>>()

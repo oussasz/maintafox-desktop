@@ -367,9 +367,23 @@ pub async fn update_availability_block(
             "start_at must be before end_at.".to_string()
         ]));
     }
-    let (block_type, tag) = super::reference_lists::checked_absence_type(db, &input.block_type).await?;
-
     let existing = fetch_block_by_id(db, input.id).await?;
+    // Only a change of type is checked against the list: a block whose stored type was retired
+    // or flagged stays editable and keeps that type's behaviour.
+    let (block_type, tag) = if input.block_type == existing.block_type {
+        let tag = super::reference_lists::stored_absence_tag(db, &existing.block_type)
+            .await?
+            .unwrap_or_else(|| {
+                if existing.is_critical {
+                    super::reference_lists::ABSENCE_TAG_CRITICAL.to_string()
+                } else {
+                    super::reference_lists::ABSENCE_TAG_LEAVE.to_string()
+                }
+            });
+        (existing.block_type.clone(), tag)
+    } else {
+        super::reference_lists::checked_absence_type(db, &input.block_type).await?
+    };
     assert_no_overlapping_blocks(
         db,
         existing.personnel_id,
