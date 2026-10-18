@@ -918,6 +918,7 @@ pub fn run() {
             commands::permit::list_permit_suspensions,
             commands::permit::list_permit_handover_logs,
             commands::permit::list_permit_handover_roles,
+            commands::permit::list_permit_handover_receivers,
             commands::permit::get_loto_card_view,
             commands::permit::record_loto_card_print,
             commands::permit::list_open_permits_report,

@@ -1501,6 +1501,87 @@ pub async fn list_permit_suspensions(db: &impl ConnectionTrait, permit_id: i64) 
     Ok(out)
 }
 
+/// A person who may receive a permit hand-over: an active user account, by name only.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct HandoverReceiver {
+    pub id: i64,
+    /// The account's display name (its login name only when no display name was ever given).
+    pub display_name: String,
+}
+
+/// One page of hand-over receivers with the total that match, so a screen never shows a cut list
+/// as complete.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct HandoverReceiverPage {
+    pub items: Vec<HandoverReceiver>,
+    pub total: i64,
+}
+
+/// Largest page of hand-over receivers.
+pub const HANDOVER_RECEIVERS_PAGE_MAX: u64 = 200;
+
+/// Active, non-deleted accounts that may receive a hand-over, excluding the person asking (who
+/// signs it), optionally filtered by name, ordered by name, paged. The person asking holds
+/// `ptw.close` (checked here as well as by the command).
+pub async fn list_handover_receivers(
+    db: &impl ConnectionTrait,
+    actor_id: i64,
+    search: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+) -> AppResult<HandoverReceiverPage> {
+    if !crate::settings::site::holds_tenant_right(db, actor_id, crate::rbac::permissions::PTW_CLOSE).await? {
+        return Err(AppError::PermissionDenied(
+            "Listing hand-over receivers needs the permit close right.".into(),
+        ));
+    }
+    let name = "COALESCE(NULLIF(TRIM(ua.display_name), ''), ua.username)";
+    let filter = format!(
+        "ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? \
+         AND (? IS NULL OR LOWER({name}) LIKE '%' || LOWER(?) || '%')"
+    );
+    let search = search.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let binds = || -> Vec<sea_orm::Value> { vec![actor_id.into(), search.clone().into(), search.clone().into()] };
+    let total: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT COUNT(*) AS n FROM user_accounts ua WHERE {filter}"),
+            binds(),
+        ))
+        .await?
+        .map(|r| r.try_get::<i64>("", "n"))
+        .transpose()?
+        .unwrap_or(0);
+    let limit = limit
+        .unwrap_or(HANDOVER_RECEIVERS_PAGE_MAX)
+        .clamp(1, HANDOVER_RECEIVERS_PAGE_MAX);
+    let mut values = binds();
+    values.push(i64::try_from(limit).unwrap_or(200).into());
+    values.push(i64::try_from(offset.unwrap_or(0)).unwrap_or(0).into());
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT ua.id, {name} AS display_name FROM user_accounts ua WHERE {filter} \
+                 ORDER BY LOWER({name}) ASC, ua.id ASC LIMIT ? OFFSET ?"
+            ),
+            values,
+        ))
+        .await?;
+    let items = rows
+        .iter()
+        .map(|r| {
+            Ok(HandoverReceiver {
+                id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
+                display_name: r
+                    .try_get("", "display_name")
+                    .map_err(|e| decode_err("display_name", e))?,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    Ok(HandoverReceiverPage { items, total })
+}
+
 pub async fn list_permit_handover_logs(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<Vec<PermitHandoverLog>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(

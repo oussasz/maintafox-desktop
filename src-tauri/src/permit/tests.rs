@@ -1343,3 +1343,63 @@ async fn editing_a_permit_cannot_link_a_second_open_permit_to_a_work_order() {
     assert_validation(set_status(&db, &other, "draft").await, "PERMIT_STATUS_UNCHANGED");
     assert_validation(set_status(&db, &other, "active").await, "PERMIT_TRANSITION_NOT_ALLOWED");
 }
+
+/// Hand-over receivers: refused without the permit close right; active accounts only, never the
+/// person asking; names only; paged with the real total.
+#[tokio::test]
+async fn handover_receivers_are_other_active_accounts_by_name() {
+    let db = setup().await;
+    for (sync, user, name, active) in [
+        ("rcv-1", "op.ali", "Ali Operations", 1),
+        ("rcv-2", "op.bea", "Béa Operations", 1),
+        ("rcv-3", "op.old", "Old Operator", 0),
+        ("rcv-4", "noname", "", 1),
+    ] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+             force_password_change, created_at, updated_at) VALUES (?, ?, ?, 'local', ?, 0, 0, datetime('now'), datetime('now'))",
+            [sync.into(), user.into(), name.into(), i64::from(active).into()],
+        ))
+        .await
+        .expect("user");
+    }
+    let ali: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE username = 'op.ali'".to_string(),
+        ))
+        .await
+        .expect("q")
+        .expect("row")
+        .try_get_by_index(0)
+        .expect("id");
+
+    // Ali holds no permit right.
+    let err = queries::list_handover_receivers(&db, ali, None, None, None)
+        .await
+        .expect_err("no ptw.close");
+    assert!(matches!(err, AppError::PermissionDenied(_)), "{err:?}");
+
+    // The administrator (APPLIER) asks: everyone active but himself.
+    let page = queries::list_handover_receivers(&db, APPLIER, None, None, None)
+        .await
+        .expect("list");
+    let names: Vec<&str> = page.items.iter().map(|r| r.display_name.as_str()).collect();
+    assert!(page.items.iter().all(|r| r.id != APPLIER), "the signer is excluded");
+    assert!(names.contains(&"Ali Operations") && names.contains(&"Béa Operations"));
+    assert!(!names.contains(&"Old Operator"), "inactive accounts are excluded");
+    assert!(names.contains(&"noname"), "no display name: the login name stands in");
+    assert_eq!(page.total, i64::try_from(page.items.len()).expect("len"));
+
+    let first = queries::list_handover_receivers(&db, APPLIER, Some("operations".into()), Some(1), None)
+        .await
+        .expect("page 1");
+    assert_eq!(first.total, 2, "the total counts every match, not the page");
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.items[0].display_name, "Ali Operations");
+    let second = queries::list_handover_receivers(&db, APPLIER, Some("operations".into()), Some(1), Some(1))
+        .await
+        .expect("page 2");
+    assert_eq!(second.items[0].display_name, "Béa Operations");
+}

@@ -266,6 +266,25 @@ pub async fn append_permit_handover_log(
     queries::append_permit_handover_log(&state.db, input, i64::from(user.user_id)).await
 }
 
+/// Who may receive a permit hand-over: active accounts by name (never the person asking), paged
+/// with the total. Requires `ptw.close`.
+#[tauri::command]
+pub async fn list_permit_handover_receivers(
+    search: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+    state: State<'_, AppState>,
+) -> AppResult<queries::HandoverReceiverPage> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PTW_CLOSE,
+        PermissionScope::Global
+    );
+    queries::list_handover_receivers(&state.db, i64::from(user.user_id), search, limit, offset).await
+}
+
 /// The plant's hand-over roles (Données de référence › `PERMIT.HANDOVER_ROLES`). Requires `ptw.view`.
 #[tauri::command]
 pub async fn list_permit_handover_roles(
