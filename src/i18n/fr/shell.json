@@ -97,6 +97,9 @@
       "SYNC_GROUP_REFUSED": "Une modification est arrivée avec des lignes dont elle dépend, et l'une d'elles enfreint une règle",
       "SYNC_TIME_INCONSISTENT": "Une modification reçue porte des dates incohérentes (ou dans le futur)",
       "QUALIFICATION_REQUIREMENT_DELETE_REFUSED": "Une exigence de qualification a été supprimée ailleurs (elle se désactive, elle ne se supprime pas)",
+      "WO_PERMIT_RULE_CLEAR_INVALID": "Un permis exigé par une règle de l'usine a été levé sans qui, quand ou pourquoi (ou après le début des travaux)",
+      "WO_PERMIT_RULE_CLEAR_UNAUTHORISED": "Un permis exigé par une règle de l'usine a été levé par une personne sans le droit de délivrer des permis",
+      "PERMIT_TYPE_REQUIRED_TO_START": "Un ordre de travail démarré sans permis du type exigé par une règle de l'usine",
       "other": "À examiner"
     },
     "history": {

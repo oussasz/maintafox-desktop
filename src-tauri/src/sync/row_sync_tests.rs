@@ -479,7 +479,7 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
 
     // History rows are never deleted (append-only; sync refuses such deletes, see
     // `append_only_rows_are_never_deleted_by_sync`); media attachments are the exception. Permits
-    // past draft, the isolations and suspensions of a live permit and qualification requirements
+    // past draft with its isolations and suspensions, permit types and qualification requirements
     // are not deleted either (`permit::sync_check::inbound_delete_check`; the generic rows carry no
     // real permit status).
     let created: Vec<_> = created
@@ -490,6 +490,7 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
                 "work_permits",
                 "permit_isolations",
                 "permit_suspensions",
+                "permit_types",
                 "qualification_requirements",
             ]
             .contains(&row.entity_type)

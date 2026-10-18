@@ -245,9 +245,59 @@ async fn a_permit_and_its_isolation_received_together_are_judged_together() {
             )
             .await;
         }
-        crate::sync::materialize::materialize_inbox_batch(&db, None)
+        let result = crate::sync::materialize::materialize_inbox_batch(&db, None)
             .await
             .expect("materialize");
+        let inbox_status = |sid: String| {
+            let db = &db;
+            async move {
+                text(
+                    db,
+                    &format!("SELECT apply_status FROM sync_inbox WHERE entity_sync_id = '{sid}'"),
+                )
+                .await
+            }
+        };
+        let synced = |sid: String| {
+            let db = &db;
+            async move {
+                text(
+                    db,
+                    &format!(
+                        "SELECT CAST(synced_row_version AS TEXT) FROM sync_entity_state WHERE entity_sync_id = '{sid}'"
+                    ),
+                )
+                .await
+            }
+        };
+        if verified {
+            // Applied once (with the permit), recorded, then skipped when its own turn came.
+            assert_eq!(
+                (result.applied, result.skipped, result.conflicts),
+                (1, 1, 0),
+                "{result:?}"
+            );
+            assert_eq!(
+                inbox_status(wp.entity_sync_id.clone()).await.as_deref(),
+                Some("applied")
+            );
+            assert_eq!(
+                inbox_status(iso.entity_sync_id.clone()).await.as_deref(),
+                Some("applied")
+            );
+            assert_eq!(synced(iso.entity_sync_id.clone()).await.as_deref(), Some("2"));
+        } else {
+            // The permit is a conflict; the isolation was judged on its own and waits for it.
+            assert_eq!(
+                inbox_status(wp.entity_sync_id.clone()).await.as_deref(),
+                Some("conflict")
+            );
+            assert_eq!(
+                inbox_status(iso.entity_sync_id.clone()).await.as_deref(),
+                Some("deferred")
+            );
+            assert_eq!(synced(iso.entity_sync_id.clone()).await, None);
+        }
         let status = text(
             &db,
             &format!(
@@ -327,8 +377,10 @@ async fn a_work_order_started_elsewhere_passes_the_permit_gate() {
     let outcome = apply(&db, "work_orders", &wo_sync, &started).await;
     assert_eq!(code(&outcome), Some("PERMIT_NOT_ACTIVE"), "{outcome:?}");
 
-    // Active, not expired at the start, isolations verified: applied.
+    // Active, not expired at the start, isolations verified: applied (started after the activation;
+    // times are compared exactly).
     set_status(&db, &wp, "active").await.expect("activate");
+    let started = with(started, &[("actual_start", json!(now()))]);
     let outcome = apply(&db, "work_orders", &wo_sync, &started).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     assert_eq!(status_of().await.as_deref(), Some("in_progress"));
@@ -457,17 +509,6 @@ async fn delete_as(db: &DatabaseConnection, entity_type: &str, sync_id: &str, op
     .expect("apply")
 }
 
-async fn row_version(db: &DatabaseConnection, table: &str, sync_id: &str) -> i64 {
-    db.query_one(Statement::from_string(
-        DbBackend::Sqlite,
-        format!("SELECT row_version FROM {table} WHERE entity_sync_id = '{sync_id}'"),
-    ))
-    .await
-    .expect("query")
-    .and_then(|r| r.try_get_by_index::<i64>(0).ok())
-    .expect("row_version")
-}
-
 /// Waiting isolations count toward an activation only when they keep the isolation rules, are
 /// pending (not deferred) and newer than the local row.
 #[tokio::test]
@@ -505,11 +546,35 @@ async fn only_valid_newer_pending_isolations_count_toward_an_activation() {
     assert_eq!(code(&outcome), Some("LOTO_NO_ISOLATION"), "{outcome:?}");
     exec(&db, "DELETE FROM sync_inbox").await;
 
-    // Valid but deferred (waiting for something that may never come): not counted.
+    // Valid but deferred for another reason (waiting for something that may never come): not
+    // counted.
     inbox(&db, "permit_isolations", &iso.entity_sync_id, 3, "deferred", &verified).await;
+    exec(&db, "UPDATE sync_inbox SET rejection_code = 'MISSING_FIELD'").await;
     let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &active).await;
     assert_eq!(code(&outcome), Some("LOTO_NO_ISOLATION"), "{outcome:?}");
+    // Deferred only because it arrived before its permit: counted, and applied with it.
+    exec(&db, "UPDATE sync_inbox SET rejection_code = 'MISSING_PARENT'").await;
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &active).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(&db, "SELECT apply_status FROM sync_inbox").await.as_deref(),
+        Some("applied")
+    );
     exec(&db, "DELETE FROM sync_inbox").await;
+    exec(
+        &db,
+        &format!("UPDATE work_permits SET status = 'issued' WHERE id = {}", wp.id),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "DELETE FROM permit_isolations WHERE entity_sync_id = '{}'",
+            iso.entity_sync_id
+        ),
+    )
+    .await;
+    exec(&db, "DELETE FROM sync_entity_state").await;
 
     // Valid, pending: counted.
     inbox(&db, "permit_isolations", &iso.entity_sync_id, 3, "pending", &verified).await;
@@ -534,7 +599,16 @@ async fn an_older_waiting_isolation_does_not_hide_the_local_one() {
         ),
     )
     .await;
-    let local_version = row_version(&db, "permit_isolations", &iso.entity_sync_id).await;
+    // This PC applied version 10 of it from the server before.
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO sync_entity_state (entity_type, entity_sync_id, synced_row_version, synced_payload_hash,              source, updated_at) VALUES ('permit_isolations', '{}', 10, 'h-local', 'inbound_apply', '2026-01-01T00:00:00Z')",
+            iso.entity_sync_id
+        ),
+    )
+    .await;
+    let local_version = 9;
     let active = with(
         wire(&db, "work_permits", &wp.entity_sync_id).await,
         &[("status", json!("active")), ("activated_at", json!(now()))],
@@ -554,7 +628,7 @@ async fn an_older_waiting_isolation_does_not_hide_the_local_one() {
         &db,
         "permit_isolations",
         &iso.entity_sync_id,
-        local_version + 1,
+        local_version + 2,
         "pending",
         &verified,
     )
@@ -613,14 +687,20 @@ async fn permits_isolations_and_suspensions_are_not_deleted_by_sync_while_they_p
     let draft = create_permit(&db, "loto", asset).await;
     let outcome = delete(&db, "work_permits", &draft.entity_sync_id).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
-    // The isolations of a finished permit may go; the permit itself stays.
+    // The isolations of a finished permit are its LOTO history: kept too.
     exec(
         &db,
         &format!("UPDATE work_permits SET status = 'cancelled' WHERE id = {}", wp.id),
     )
     .await;
     let outcome = delete(&db, "permit_isolations", &iso.entity_sync_id).await;
-    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(code(&outcome), Some("PERMIT_DELETE_REFUSED"), "{outcome:?}");
+    // A permit type is edited, never deleted.
+    let type_sync = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'loto'")
+        .await
+        .expect("type");
+    let outcome = delete(&db, "permit_types", &type_sync).await;
+    assert_eq!(code(&outcome), Some("PERMIT_DELETE_REFUSED"), "{outcome:?}");
     let outcome = delete(&db, "work_permits", &wp.entity_sync_id).await;
     assert_eq!(code(&outcome), Some("PERMIT_DELETE_REFUSED"), "{outcome:?}");
 }
@@ -1126,5 +1206,296 @@ async fn a_qualification_requirement_is_never_deleted_by_sync() {
         code(&outcome),
         Some("QUALIFICATION_REQUIREMENT_DELETE_REFUSED"),
         "{outcome:?}"
+    );
+}
+
+/// A received work order whose permit flag set by a plant rule is cleared says who cleared it (with
+/// the permit-issue right here), when and why.
+#[tokio::test]
+async fn a_cleared_rule_permit_flag_is_rechecked() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-17").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET permit_rule_code = 'rule-elec', requires_permit = 1 WHERE id = {wo_id}"),
+    )
+    .await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let flagged = wire(&db, "work_orders", &wo_sync).await;
+    let cleared = |by: Value, reason: Value| {
+        with(
+            flagged.clone(),
+            &[
+                ("requires_permit", json!(0)),
+                ("permit_rule_cleared_by_sync_id", by),
+                ("permit_rule_cleared_at", json!(now())),
+                ("permit_rule_clear_reason", reason),
+            ],
+        )
+    };
+    let admin = json!(user_sync(&db, APPLIER).await);
+    let requires = || {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT CAST(requires_permit AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+            )
+            .await
+        }
+    };
+
+    let outcome = apply(&db, "work_orders", &wo_sync, &cleared(admin.clone(), json!("court"))).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(Value::Null, json!("Consignation faite par l'exploitant")),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(
+            json!(user_sync(&db, VERIFIER).await),
+            json!("Consignation faite par l'exploitant"),
+        ),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!("user-not-here"), json!("Consignation faite par l'exploitant")),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    assert_eq!(requires().await.as_deref(), Some("1"));
+
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(admin, json!("Consignation faite par l'exploitant")),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(requires().await.as_deref(), Some("0"));
+}
+
+/// A waiting isolation of a row edited here and not sent yet is a concurrent change: it is not
+/// counted (its own apply would be a conflict), and the activation is judged on the local row.
+#[tokio::test]
+async fn a_waiting_isolation_with_an_unsent_local_change_is_not_counted() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-18").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let iso = add_isolation(&db, wp.id, "MCC-18 breaker").await;
+    let iso = apply_and_verify(&db, &iso).await;
+    let verified = wire(&db, "permit_isolations", &iso.entity_sync_id).await;
+    // Here, the verification was withdrawn and that change is not sent yet.
+    exec(
+        &db,
+        &format!(
+            "UPDATE permit_isolations SET verified_at = NULL, verified_by_id = NULL WHERE id = {}",
+            iso.id
+        ),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO sync_outbox (idempotency_key, entity_type, entity_sync_id, operation, row_version,              payload_json, payload_hash, status) VALUES ('k-unsent', 'permit_isolations', '{}', 'upsert', 3, '{{}}',              'h-unsent', 'pending')",
+            iso.entity_sync_id
+        ),
+    )
+    .await;
+    inbox(&db, "permit_isolations", &iso.entity_sync_id, 50, "pending", &verified).await;
+    let active = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("active")), ("activated_at", json!(now()))],
+    );
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &active).await;
+    assert_eq!(code(&outcome), Some("LOTO_NOT_VERIFIED"), "{outcome:?}");
+}
+
+/// A suspended permit may receive a new isolation, judged on its new status.
+#[tokio::test]
+async fn a_suspension_arrives_with_the_isolation_added_during_it() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-19").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-19 breaker").await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let active = wire(&db, "work_permits", &wp.entity_sync_id).await;
+    let (_, suspension) = queries::suspend_work_permit(
+        &db,
+        crate::permit::domain::PermitSuspendInput {
+            permit_id: wp.id,
+            expected_row_version: wp.row_version,
+            reason: "Gas detected".into(),
+            reactivation_conditions: None,
+        },
+        APPLIER,
+    )
+    .await
+    .expect("suspend");
+    let added = apply_and_verify(&db, &add_isolation(&db, wp.id, "Valve V-19").await).await;
+    let suspended = wire(&db, "work_permits", &wp.entity_sync_id).await;
+    let suspension_wire = wire(&db, "permit_suspensions", &suspension.entity_sync_id).await;
+    let added_wire = wire(&db, "permit_isolations", &added.entity_sync_id).await;
+    // This PC still has the permit active, without the suspension and the new isolation.
+    exec(&db, &format!("DELETE FROM permit_isolations WHERE id = {}", added.id)).await;
+    exec(
+        &db,
+        &format!("DELETE FROM permit_suspensions WHERE id = {}", suspension.id),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_permits SET status = 'active', row_version = row_version WHERE id = {}",
+            wp.id
+        ),
+    )
+    .await;
+    let _ = active;
+    inbox(
+        &db,
+        "permit_suspensions",
+        &suspension.entity_sync_id,
+        2,
+        "pending",
+        &suspension_wire,
+    )
+    .await;
+    inbox(
+        &db,
+        "permit_isolations",
+        &added.entity_sync_id,
+        2,
+        "pending",
+        &added_wire,
+    )
+    .await;
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &suspended).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(permit_status(&db, &wp).await, "suspended");
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT apply_status FROM sync_inbox WHERE entity_sync_id = '{}'",
+                added.entity_sync_id
+            )
+        )
+        .await
+        .as_deref(),
+        Some("applied")
+    );
+}
+
+/// A work order flagged by a plant rule starts only with a live permit of the rule's type, as here.
+#[tokio::test]
+async fn a_rule_flagged_start_needs_a_permit_of_the_rule_type() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-20").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let in_progress = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'in_progress'",
+    )
+    .await
+    .expect("status sync id");
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-20 breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let start = |rule_type: &str| {
+        let db = &db;
+        let (wo_sync, in_progress, rule_type) = (wo_sync.clone(), in_progress.clone(), rule_type.to_string());
+        async move {
+            exec(
+                db,
+                &format!(
+                    "UPDATE work_orders SET permit_rule_code = 'rule-1', permit_rule_permit_type = '{rule_type}' \
+                     WHERE id = {wo_id}"
+                ),
+            )
+            .await;
+            with(
+                wire(db, "work_orders", &wo_sync).await,
+                &[("status_sync_id", json!(in_progress)), ("actual_start", json!(now()))],
+            )
+        }
+    };
+    let other_type = start("hot_work").await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &other_type).await;
+    assert_eq!(code(&outcome), Some("PERMIT_TYPE_REQUIRED_TO_START"), "{outcome:?}");
+    let loto = start("loto").await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &loto).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// The isolations a received start was judged on are applied with it, also those of a permit
+/// already on this PC.
+#[tokio::test]
+async fn a_started_work_order_applies_the_waiting_isolations_it_was_judged_on() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-21").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let in_progress = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'in_progress'",
+    )
+    .await
+    .expect("status sync id");
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    let iso = apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-21 breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let relabelled = with(
+        wire(&db, "permit_isolations", &iso.entity_sync_id).await,
+        &[("lock_number", json!("L-0021"))],
+    );
+    inbox(&db, "permit_isolations", &iso.entity_sync_id, 4, "pending", &relabelled).await;
+    let started = with(
+        wire(&db, "work_orders", &wo_sync).await,
+        &[("status_sync_id", json!(in_progress)), ("actual_start", json!(now()))],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(&db, "SELECT apply_status FROM sync_inbox").await.as_deref(),
+        Some("applied")
+    );
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT lock_number FROM permit_isolations WHERE id = {}", iso.id)
+        )
+        .await
+        .as_deref(),
+        Some("L-0021")
     );
 }

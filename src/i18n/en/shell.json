@@ -97,6 +97,9 @@
       "SYNC_GROUP_REFUSED": "A change arrived with rows it depends on, and one of them breaks a rule",
       "SYNC_TIME_INCONSISTENT": "A received change carries times that do not fit together (or are in the future)",
       "QUALIFICATION_REQUIREMENT_DELETE_REFUSED": "A qualification requirement was deleted elsewhere (it is deactivated, never deleted)",
+      "WO_PERMIT_RULE_CLEAR_INVALID": "A permit required by a plant rule was cleared without who, when or why (or after the work started)",
+      "WO_PERMIT_RULE_CLEAR_UNAUTHORISED": "A permit required by a plant rule was cleared by someone without the permit-issue right",
+      "PERMIT_TYPE_REQUIRED_TO_START": "A work order started without a permit of the type a plant rule requires",
       "other": "Needs review"
     },
     "history": {

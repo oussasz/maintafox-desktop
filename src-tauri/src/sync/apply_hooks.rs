@@ -27,6 +27,8 @@
 //!   close, hand-back, suspension, two-person verification, the work-order start gate) are checked
 //!   again on the received state; a failed rule is a conflict, a permit type or status not applied
 //!   yet makes the row wait (`permit::sync_check`);
+//!   A work order whose permit flag set by a plant rule is cleared names who cleared it (holding the
+//!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`);
 //! - `qualification_overrides`: reason, subject, context, no self-override and the approver's
 //!   certification right (`qualification::sync_check`);
 //! - `media_attachments`: the file is queued for download from object storage
@@ -95,9 +97,12 @@ pub(crate) async fn before_upsert_checked(
         "permit_isolations" => {
             Some(crate::permit::sync_check::inbound_isolation_check(conn, entity_sync_id, payload).await?)
         }
-        "work_orders" => {
-            Some(crate::permit::sync_check::inbound_work_order_check(conn, entity_sync_id, payload).await?)
-        }
+        "work_orders" => Some(
+            match crate::permit::sync_check::inbound_permit_rule_check(conn, entity_sync_id, payload).await? {
+                Some(verdict) => Some(verdict),
+                None => crate::permit::sync_check::inbound_work_order_check(conn, entity_sync_id, payload).await?,
+            },
+        ),
         "qualification_overrides" => {
             Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)
         }
@@ -171,24 +176,13 @@ pub(crate) async fn after_upsert_group(
     conn: &impl ConnectionTrait,
     group: crate::permit::sync_check::Group,
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
-    use crate::sync::materialize::ApplyOutcome;
-    Ok(crate::permit::sync_check::apply_group(conn, group)
-        .await?
-        .map(|v| match v {
-            crate::settings::site::InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
-                code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
-                message,
-            },
-            crate::settings::site::InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
-                code: code.into(),
-                message,
-            },
-        }))
+    crate::permit::sync_check::apply_group(conn, group).await
 }
 
 /// Checks of an inbound delete before it is applied; `Some` stops it with that outcome. A permit
-/// past draft, and an isolation or suspension of a permit still protecting work, are never deleted
-/// on this device: such a delete received by sync is a conflict (`permit::sync_check`).
+/// past draft with its isolations and suspensions, a permit type and a qualification requirement
+/// are never deleted on this device: such a delete received by sync is a conflict
+/// (`permit::sync_check::inbound_delete_check`).
 pub(crate) async fn before_delete_checked(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
@@ -196,7 +190,7 @@ pub(crate) async fn before_delete_checked(
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
     use crate::sync::materialize::ApplyOutcome;
     let verdict = match layout.def.entity_type {
-        "work_permits" | "permit_isolations" | "permit_suspensions" | "qualification_requirements" => {
+        "work_permits" | "permit_isolations" | "permit_suspensions" | "permit_types" | "qualification_requirements" => {
             crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?
         }
         _ => None,
