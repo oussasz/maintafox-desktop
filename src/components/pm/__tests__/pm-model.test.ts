@@ -9,6 +9,7 @@ import {
   canLogExecution,
   matchesDueWindow,
   parseRequiredParts,
+  partsWithoutNecessity,
   parseTriggerJson,
   requiredPartsJson,
 } from "@/components/pm/pm-model";
@@ -85,12 +86,21 @@ describe("pm-model", () => {
   });
 
   it("keeps quantities of structured required parts and plain codes of older versions", () => {
-    const parts = parseRequiredParts('[{"article_code":"FLT-10","quantity":2},"GRAISSE"]');
+    const parts = parseRequiredParts(
+      '[{"article_code":"FLT-10","quantity":2,"required":true},{"code":"JOINT","required":false},"GRAISSE"]',
+    );
     expect(parts).toEqual([
-      { articleCode: "FLT-10", quantity: 2 },
-      { articleCode: "GRAISSE", quantity: null },
+      { articleCode: "FLT-10", quantity: 2, required: true },
+      { articleCode: "JOINT", quantity: null, required: false },
+      // An entry that never said: unanswered, the planner must choose before saving.
+      { articleCode: "GRAISSE", quantity: null, required: null },
     ]);
-    expect(requiredPartsJson(parts)).toBe('[{"article_code":"FLT-10","quantity":2},"GRAISSE"]');
+    expect(partsWithoutNecessity(parts)).toEqual(["GRAISSE"]);
+    const answered = parts.map((p) => ({ ...p, required: p.required ?? true }));
+    expect(partsWithoutNecessity(answered)).toEqual([]);
+    expect(requiredPartsJson(answered)).toBe(
+      '[{"article_code":"FLT-10","quantity":2,"required":true},{"article_code":"JOINT","required":false},{"article_code":"GRAISSE","required":true}]',
+    );
     expect(requiredPartsJson([])).toBeNull();
   });
 

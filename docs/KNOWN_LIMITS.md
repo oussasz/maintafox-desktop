@@ -28,6 +28,7 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | New synced record types: the per-site rules (site settings and their change history) must be in the server sync allowlist before PCs upgrade. The desktop copy of the allowlist already has them; the server's original must be updated at release. | Data | Release |
 | Per-site self-approval rule: the sync server must accept site rules and their change history only from users who hold the settings-administration right. The desktop checks that every change carries a complete, consistent, latest audit trail, but cannot prove who really sent it, so a device with valid credentials could otherwise forge one. | Safety | Release (sync server) |
 | Photos and attachments are the one kind of history that sync may delete (so a removal on one PC applies everywhere): the sync server must accept such a delete only from a user allowed to remove that attachment (its work order, request or equipment right, or the person who added it). Otherwise a paired PC with valid credentials could erase work-order, request or equipment photos everywhere. Inspection evidence and all other history cannot be deleted by sync. | Safety | Release (sync server) |
+| The licence server does not sign the activation details it returns (tenant, licence, PC, demo data, expiry); only the entitlement envelope is signed. The desktop therefore cannot prove a licence change came from the server, so a change of plant, licence or PC needs a signed-in administrator once the plant has one (and demo data always does). The server must sign the activation details (or include them in the signed envelope) so the desktop can refuse unsigned ones. | Safety | Release (licence server) |
 | Personnel and document list values found in existing data but not in the new lists are kept exactly as stored, added to their list and flagged "à revoir"; an administrator must review them (filter "à revoir"). People whose stored employment status is not a known status are listed for review. | Data | Release |
 | QR labels printed before this version must be reprinted: they carried a local database id, which identifies a different asset on another device. Scanning one is refused with "Label to reprint"; reprint from each asset record (no bulk reprint from the asset list yet). | Data | Release |
 
@@ -35,9 +36,9 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| A corrective work order cannot be flagged "needs shutdown"; only PM plans carry it, so corrective work is never checked against shutdown windows. Approved: add the flag and the check. | Safety | Step 7 |
+| A corrective work order can be flagged "needs shutdown" (planning panel, with confirmation) and is checked against shutdown windows like PM plans. The badge shows on the work-order list, board and detail; the planning backlog shows the shutdown warning but not the badge. | UX | Accepted |
 | A status change arriving by sync from another PC is trusted as it was checked there (permits/LOTO, qualifications). Approved: re-validate on arrival; a refused change becomes a sync conflict for review. | Safety | Step 7 |
-| Work-order and PM part lines have no "required / optional" flag, so every short planned part blocks the plan. | UX | Step 7 |
+| Work-order and PM part lines are marked required or optional (existing lines became required, today's behaviour; every new line must be answered, nothing preselected); only a short required part blocks the plan, a short optional part warns. A saved work-order part line cannot switch between required and optional: remove and add it again. | UX | Accepted |
 | Two first-start actions (licence reconciliation, creating the first administrator) work without a signed-in session (needed at first start, but sensitive). | Safety | Step 7 (with site-scoped roles, step 6) |
 | About 60 semi-transparent colour styles that never rendered now do (design-system fix, checked by an automated test). Tints now appear on the lock overlay, licence details, error boxes, table hover/selection, KPI and module cards and import rows; they have not yet been looked at in the running app. | UX | Step 7 (visual check) |
 
@@ -51,7 +52,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Limit | Impact | Handled in |
 |---|---|---|
 | Every "open work order" count uses one of the two shared rules and its figure shows the rule name, with a list link using the same rule. The SMRP backlog figure is being aligned. | Data | Step 5 |
-| Devices on the previous version must upgrade together with this one: they would still send the old urgency and type references. | Data | Release |
+| Devices on the previous version must upgrade together with this one: they would still send the old urgency and type references, and an edit from an old PC turns a part line marked optional back to required (the safe direction). | Data | Release |
 | The 4 h estimated duration once used for DI planning candidates was removed; DIs are "not estimated" until converted and estimated. | UX | Accepted |
 | Planned labour per technician on a work order does not exist (labour lines hold actuals only), so planning counts only the named assignee per commitment ("+N crew members not named"). Naming every crew member is proposed for later. | Data | Owner decision |
 
@@ -90,8 +91,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Purchase-order lines are ordered in the stock unit; only receipts and issues take another unit. | UX | After pilot |
 | Stock checks for planning use stock available over all locations (reservations netted); other jobs' planned-but-unreserved needs are not subtracted. | Data | After pilot |
 | Part quantities on work-order / PM lines carry no unit; they are taken in stock units. | Data | After pilot |
-| Cycle-count tolerance (5 units / 0.01) is shown pre-filled in the count dialog instead of coming from a site setting; the counter can change it. | Data | Step 7 |
-| The stock-balance "low stock only" option (used by no screen today) still applies the old per-location rule, not the shared low-stock rule. | Data | Step 7 |
+| Cycle-count and reconciliation tolerances are tenant settings (Settings › Inventory), seeded with the former values (5 units / 0.01) and checked server-side; each count session keeps the tolerance it was opened with. | Data | Accepted |
 
 ## Planning and scheduling (steps A–E)
 
@@ -195,7 +195,8 @@ Each figure says which one it shows, and its list link applies the same rule.
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| The program now provides personnel and document lists from Données de référence; until the screens are switched over (in progress), they still show the old fixed lists. | Data | Step 5 |
+| Personnel and document list screens follow Données de référence: an edit there shows at once; a change received by sync shows when a screen opens and its copy is more than 5 minutes old. | UX | Accepted |
+| A planner without the personnel view right sees absence codes (not names) on the planning board, coloured only as critical or plain. | UX | Step 6 (roles) |
 | A person's skills and certifications are edited only in the Qualifications tab, not in the person form (which points there). | UX | Accepted |
 
 ## Activity feed and audit log

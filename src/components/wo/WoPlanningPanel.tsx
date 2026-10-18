@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { PartNecessityChoice, PartOptionalChip } from "@/components/common/PartNecessityChoice";
 import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import { Button } from "@/components/ui/button";
@@ -46,10 +47,12 @@ import {
 } from "@/services/wo-execution-service";
 import {
   PERMIT_REQUIREMENT_EDITABLE_STATUSES,
+  SHUTDOWN_FLAG_EDITABLE_STATUSES,
   emergencyReassignWo,
   evaluateWoReadiness,
   planWo,
   setWoPermitRequirement,
+  setWoRequiresShutdown,
 } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import type {
@@ -68,6 +71,7 @@ import { P } from "@shared/rbac/permissions.generated";
 
 import { WoPermitRequirementField } from "./WoPermitRequirementField";
 import { WoShiftSelect } from "./WoShiftSelect";
+import { WoShutdownRequirementField } from "./WoShutdownRequirementField";
 import { useWoPeopleOptions } from "./use-wo-people";
 import { useWoTypeLabels } from "./use-wo-type-labels";
 import { shiftSaveFields } from "./wo-shift-plan";
@@ -102,6 +106,8 @@ interface PartDraft {
   quantity_planned: string;
   unit_cost: string;
   reservation_id: number | null;
+  /** Required or optional; null until the planner answers (no preselected answer). */
+  is_required: boolean | null;
   persisted: boolean;
 }
 
@@ -170,6 +176,7 @@ function toPartDraft(part: WoExecPart): PartDraft {
     quantity_planned: String(part.quantity_planned),
     unit_cost: part.unit_cost != null ? String(part.unit_cost) : "",
     reservation_id: part.reservation_id ?? null,
+    is_required: part.is_required,
     persisted: true,
   };
 }
@@ -222,6 +229,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [urgencyId, setUrgencyId] = useState<string>(wo.urgency_code ?? "");
     const [requiresPermit, setRequiresPermit] = useState<boolean>(Boolean(wo.requires_permit));
     const [permitBusy, setPermitBusy] = useState(false);
+    const [requiresShutdown, setRequiresShutdown] = useState<boolean>(
+      Boolean(wo.requires_shutdown),
+    );
 
     const [assignedTeamId, setAssignedTeamId] = useState(
       wo.assigned_team_id != null ? String(wo.assigned_team_id) : "",
@@ -276,6 +286,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       );
       setUrgencyId(wo.urgency_code ?? "");
       setRequiresPermit(Boolean(wo.requires_permit));
+      setRequiresShutdown(Boolean(wo.requires_shutdown));
       setAssignedTeamId(wo.assigned_team_id != null ? String(wo.assigned_team_id) : "");
       setPrimaryResponsibleId(
         wo.primary_responsible_id != null ? String(wo.primary_responsible_id) : "",
@@ -717,6 +728,43 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       />
     );
 
+    const shutdownFlagEditable =
+      canEdit && SHUTDOWN_FLAG_EDITABLE_STATUSES.has(statusCode) && !busy && !permitBusy;
+    const shutdownFlagReason = !canEdit
+      ? t("shutdownRequirement.noPermission")
+      : SHUTDOWN_FLAG_EDITABLE_STATUSES.has(statusCode)
+        ? null
+        : t("shutdownRequirement.frozen");
+
+    /** Saved at once after confirmation: planning reads it for its shutdown-window checks. */
+    const handleShutdownFlagChange = useCallback(
+      async (next: boolean) => {
+        if (!shutdownFlagEditable) return;
+        const saved = await setWoRequiresShutdown({
+          woId: wo.id,
+          requiresShutdown: next,
+          expectedRowVersion: rowVersion,
+        });
+        setRequiresShutdown(Boolean(saved.requires_shutdown));
+        setRowVersion(saved.row_version);
+        await refreshActiveWo();
+        if ((saved.status_code ?? statusCode) === "planning") {
+          await loadReadiness();
+        }
+      },
+      [shutdownFlagEditable, wo.id, rowVersion, refreshActiveWo, statusCode, loadReadiness],
+    );
+
+    const shutdownRequirementControl = (
+      <WoShutdownRequirementField
+        woCode={wo.code}
+        checked={requiresShutdown}
+        onConfirmChange={handleShutdownFlagChange}
+        disabled={!shutdownFlagEditable}
+        disabledReason={busy || permitBusy ? null : shutdownFlagReason}
+      />
+    );
+
     const handleEmergencyReassign = useCallback(
       async (reason: string) => {
         if (!assignReady || !requireActor) return;
@@ -831,6 +879,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           quantity_planned: "",
           unit_cost: "",
           reservation_id: null,
+          is_required: null,
           persisted: false,
         },
       ]);
@@ -863,6 +912,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           setError(t("planning.error.addPart"));
           return;
         }
+        if (row.is_required === null) {
+          setError(t("common:partNecessity.choose"));
+          return;
+        }
 
         setBusy(true);
         setError(null);
@@ -876,6 +929,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             stock_location_id: row.stock_location_id,
             auto_reserve: true,
             notes: null,
+            is_required: row.is_required,
           });
 
           setParts((prev) =>
@@ -922,6 +976,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">{t("planning.draftSubmitHint")}</p>
           {permitRequirementControl}
+          {shutdownRequirementControl}
           <div className="rounded-md border p-3 grid gap-2 text-sm sm:grid-cols-2">
             <div>
               <span className="text-muted-foreground">{t("planning.draftIdentification")}: </span>
@@ -973,6 +1028,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         <section className="space-y-2" aria-label={t("permitRequirement.sectionTitle")}>
           <h3 className="text-sm font-semibold">{t("permitRequirement.sectionTitle")}</h3>
           {permitRequirementControl}
+        </section>
+
+        <section className="space-y-2" aria-label={t("shutdownRequirement.sectionTitle")}>
+          <h3 className="text-sm font-semibold">{t("shutdownRequirement.sectionTitle")}</h3>
+          {shutdownRequirementControl}
         </section>
 
         <section className="space-y-3">
@@ -1506,6 +1566,22 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       >
                         {t("planning.removePart")}
                       </Button>
+                    )}
+                  </div>
+                  <div className="space-y-1 md:col-span-6">
+                    {part.persisted ? (
+                      part.is_required === false ? (
+                        <PartOptionalChip />
+                      ) : null
+                    ) : (
+                      <PartNecessityChoice
+                        value={part.is_required}
+                        onChange={(required) =>
+                          updatePartRow(part.localId, { is_required: required })
+                        }
+                        disabled={tasksPartsDisabled}
+                        partLabel={part.article_query || t("planning.partReference")}
+                      />
                     )}
                   </div>
                 </div>

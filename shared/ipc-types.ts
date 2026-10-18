@@ -1101,8 +1101,9 @@ export interface SettingDefinitionView {
   key: string;
   category: string;
   scope: string;
-  kind: "choice" | "integer" | "currency" | "month" | "document_header" | "module";
+  kind: "choice" | "integer" | "decimal" | "currency" | "month" | "document_header" | "module";
   options: string[];
+  /** Bounds of an `integer`, `decimal` or `month` value (a decimal's bounds may be fractional). */
   min: number | null;
   max: number | null;
   /** Value shipped with the application ("Valeur livrée"). */
@@ -2298,12 +2299,20 @@ export interface UpsertDocumentLinkPayload {
   valid_from?: string | null;
 }
 
-/** Tenant document library — `library_documents.category` (PRD §6.15). */
-export type LibraryDocumentCategory =
-  | "technical_manuals"
-  | "sops"
-  | "safety_protocols"
-  | "compliance_certificates";
+/**
+ * Tenant document library category code (`library_documents.category`). The categories are the
+ * plant's list `DOCUMENT.CATEGORIES` in Données de référence (`list_document_categories`).
+ */
+export type LibraryDocumentCategory = string;
+
+/** One document category (`list_document_categories`). */
+export interface DocumentCategoryOption {
+  code: string;
+  label: string;
+  label_en: string | null;
+  /** A category found on stored documents that is not in the list: kept, flagged "à revoir". */
+  review_required: boolean;
+}
 
 /** Row from `library_documents` (+ equipment join). */
 export interface LibraryDocument {
@@ -3222,6 +3231,7 @@ export interface InventoryCountSession {
   warehouse_id: number;
   location_id: number | null;
   status: string;
+  /** Critical variance this session was opened with (Settings › Inventory at its creation). */
   critical_abs_threshold: number;
   submitted_by_id: number | null;
   submitted_at: string | null;
@@ -3263,7 +3273,6 @@ export interface InventoryCountLine {
 export interface CreateInventoryCountSessionInput {
   warehouse_id: number;
   location_id?: number | null;
-  critical_abs_threshold?: number;
   actor_id?: number | null;
 }
 
@@ -3334,7 +3343,6 @@ export interface InventoryReconciliationFinding {
 
 export interface RunInventoryReconciliationInput {
   actor_id?: number | null;
-  drift_break_threshold?: number;
 }
 
 // ── Supplier management ──────────────────────────────────────────────────────
@@ -5087,6 +5095,8 @@ export interface WorkOrder {
   total_waiting_hours: number | null;
   downtime_hours: number | null;
   planned_downtime_hours: number | null;
+  /** The job needs the equipment stopped: planning checks it against shutdown windows. */
+  requires_shutdown: boolean;
   // Cost accumulators
   labor_cost: number | null;
   parts_cost: number | null;
@@ -5633,6 +5643,8 @@ export interface WoExecPart {
   not_used_comment?: string | null;
   /** Enriched label for the not-used reason (JOIN from reference_values) */
   not_used_reason_label?: string | null;
+  /** Required for the job (short: blocks the plan) or optional (short: only warns). */
+  is_required: boolean;
 }
 
 // ── Plan vs Actual adherence ──────────────────────────────────────────────────
@@ -6509,6 +6521,32 @@ export interface PersonnelCreateInput {
   assignment_reason?: string | null;
   skills?: PersonnelSkillDraft[];
   certifications?: PersonnelCertDraft[];
+}
+
+/** One value of a personnel list (Données de référence; `list_personnel_reference_options`). */
+export interface PersonnelOption {
+  code: string;
+  label: string;
+  label_en: string | null;
+  /** Absence types only: `leave` / `critical` / `training` — drives the display and blocking. */
+  tag: string | null;
+  /** A value found in stored data that is not in the list: kept, flagged "à revoir". */
+  review_required: boolean;
+}
+
+export interface PersonnelReferenceOptions {
+  employment_statuses: PersonnelOption[];
+  employment_types: PersonnelOption[];
+  absence_types: PersonnelOption[];
+  position_categories: PersonnelOption[];
+}
+
+/** A person whose stored employment status is not in the plant's list (`list_personnel_status_review`). */
+export interface PersonnelStatusReview {
+  personnel_id: number;
+  employee_code: string;
+  full_name: string;
+  stored_status: string;
 }
 
 export interface PersonnelUpdateInput {

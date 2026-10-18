@@ -4,7 +4,8 @@
     "filterLookupError": "The position and organisation filter lists could not be loaded",
     "title": "Personnel",
     "titleNew": "New Personnel",
-    "titleEdit": "Edit Personnel"
+    "titleEdit": "Edit Personnel",
+    "listsLoadError": "Could not read the personnel lists (Reference data)"
   },
   "action": {
     "create": "New",
@@ -269,21 +270,9 @@
     "blocked": "Blocked",
     "inactive": "Inactive"
   },
-  "employmentType": {
-    "employee": "Employee",
-    "contractor": "Contractor",
-    "temp": "Temporary",
-    "vendor": "Vendor"
-  },
   "employmentOrigin": {
     "internal": "Internal",
     "external": "External"
-  },
-  "employmentStatus": {
-    "active": "Active",
-    "inactive": "Inactive",
-    "suspended": "Suspended",
-    "terminated": "Terminated"
   },
   "validation": {
     "nameRequired": "Name is required",
@@ -298,7 +287,8 @@
     "companyRequired": "External company is required",
     "laborRateRequiredForOvertime": "Hourly labor rate is required when overtime rate is set",
     "laborRateInvalid": "Hourly labor rate must be a number ≥ 0",
-    "overtimeRateInvalid": "Overtime rate must be a number ≥ 0"
+    "overtimeRateInvalid": "Overtime rate must be a number ≥ 0",
+    "employmentStatusRequired": "Employment status is required"
   },
   "crews": {
     "loadError": "The teams and their capacity could not be loaded",
@@ -413,7 +403,8 @@
     },
     "validation": {
       "codeRequired": "Position code is required",
-      "nameRequired": "Position name is required"
+      "nameRequired": "Position name is required",
+      "categoryRequired": "Position category is required"
     },
     "panel": {
       "title": "Positions",
@@ -440,18 +431,6 @@
       "submit": "Create",
       "cancel": "Cancel",
       "error": "Failed to create position"
-    },
-    "category": {
-      "contractor": "Contractor",
-      "storekeeper": "Storekeeper",
-      "hse": "HSE",
-      "technician": "Technician",
-      "engineer": "Engineer",
-      "supervisor": "Supervisor",
-      "planner": "Planner",
-      "inspector": "Inspector",
-      "operator": "Operator",
-      "other": "Other"
     },
     "columns": {
       "code": "Code",
@@ -608,18 +587,19 @@
       "save": "Save",
       "cancel": "Cancel",
       "confirmOverlap": "Confirm overlap",
-      "types": {
-        "medical": "Medical",
-        "restriction": "Restriction",
-        "leave": "Leave",
-        "training": "Training"
-      },
       "errors": {
         "personnelRequired": "Select personnel.",
         "timeRequired": "Start and end are required.",
         "invalidRange": "End must be after start.",
-        "overlapConfirm": "This block overlaps an existing one. Confirm to save anyway."
+        "overlapConfirm": "This block overlaps an existing one. Confirm to save anyway.",
+        "typeRequired": "Choose the absence type."
       }
+    },
+    "legend": {
+      "leave": "Leave",
+      "critical": "Critical absence",
+      "training": "Training",
+      "blocked": "Other absence"
     }
   },
   "capacity": {
@@ -964,5 +944,11 @@
     "cancel": "Cancel",
     "created": "Overtime ceiling added",
     "saved": "Overtime ceiling saved"
+  },
+  "statusReview": {
+    "title": "Statuses to review ({{count}})",
+    "hint": "The stored status of these people is not a usable value of the plant's list. Open the record to choose a status, or fix the list in Reference data.",
+    "stored": "Stored status:",
+    "loadError": "Could not read the statuses to review"
   }
 }

@@ -73,7 +73,10 @@ describe("pickers fed by the inventory, without the inventory view right", () =>
   it("the PM parts picker does not search and names the missing right", () => {
     render(
       <PermissionContext.Provider value={withoutInventory}>
-        <PmPartsPicker value={[{ articleCode: "BRG-01", quantity: 2 }]} onChange={vi.fn()} />
+        <PmPartsPicker
+          value={[{ articleCode: "BRG-01", quantity: 2, required: true }]}
+          onChange={vi.fn()}
+        />
       </PermissionContext.Provider>,
     );
     expect(screen.getByLabelText("fields.addPart")).toBeDisabled();

@@ -4,7 +4,8 @@
     "filterLookupError": "Impossible de charger les listes de filtres (postes, organisation)",
     "title": "Personnel",
     "titleNew": "Nouveau personnel",
-    "titleEdit": "Modifier personnel"
+    "titleEdit": "Modifier personnel",
+    "listsLoadError": "Impossible de lire les listes du personnel (Données de référence)"
   },
   "action": {
     "create": "Nouveau",
@@ -269,21 +270,9 @@
     "blocked": "Bloqué",
     "inactive": "Inactif"
   },
-  "employmentType": {
-    "employee": "Employé",
-    "contractor": "Sous-traitant",
-    "temp": "Intérimaire",
-    "vendor": "Fournisseur"
-  },
   "employmentOrigin": {
     "internal": "Interne",
     "external": "Externe"
-  },
-  "employmentStatus": {
-    "active": "Actif",
-    "inactive": "Inactif",
-    "suspended": "Suspendu",
-    "terminated": "Terminé"
   },
   "validation": {
     "nameRequired": "Le nom est requis",
@@ -298,7 +287,8 @@
     "companyRequired": "La société externe est requise",
     "laborRateRequiredForOvertime": "Le taux horaire est requis lorsque le taux heures sup. est renseigné",
     "laborRateInvalid": "Le taux horaire doit être un nombre ≥ 0",
-    "overtimeRateInvalid": "Le taux heures sup. doit être un nombre ≥ 0"
+    "overtimeRateInvalid": "Le taux heures sup. doit être un nombre ≥ 0",
+    "employmentStatusRequired": "Le statut RH est requis"
   },
   "crews": {
     "loadError": "Impossible de charger les équipes et leur capacité",
@@ -413,7 +403,8 @@
     },
     "validation": {
       "codeRequired": "Le code du poste est obligatoire",
-      "nameRequired": "Le nom du poste est obligatoire"
+      "nameRequired": "Le nom du poste est obligatoire",
+      "categoryRequired": "La catégorie du poste est obligatoire"
     },
     "panel": {
       "title": "Postes",
@@ -440,18 +431,6 @@
       "submit": "Créer",
       "cancel": "Annuler",
       "error": "Échec de la création du poste"
-    },
-    "category": {
-      "contractor": "Sous-traitant",
-      "storekeeper": "Magasinier",
-      "hse": "HSE",
-      "technician": "Technicien",
-      "engineer": "Ingénieur",
-      "supervisor": "Superviseur",
-      "planner": "Planificateur",
-      "inspector": "Inspecteur",
-      "operator": "Opérateur",
-      "other": "Autre"
     },
     "columns": {
       "code": "Code",
@@ -608,18 +587,19 @@
       "save": "Enregistrer",
       "cancel": "Annuler",
       "confirmOverlap": "Confirmer le chevauchement",
-      "types": {
-        "medical": "Médical",
-        "restriction": "Restriction",
-        "leave": "Congé",
-        "training": "Formation"
-      },
       "errors": {
         "personnelRequired": "Sélectionnez un personnel.",
         "timeRequired": "Début et fin sont obligatoires.",
         "invalidRange": "La fin doit être après le début.",
-        "overlapConfirm": "Ce bloc chevauche un bloc existant. Confirmez pour enregistrer quand même."
+        "overlapConfirm": "Ce bloc chevauche un bloc existant. Confirmez pour enregistrer quand même.",
+        "typeRequired": "Choisissez le type d'absence."
       }
+    },
+    "legend": {
+      "leave": "Congé",
+      "critical": "Absence critique",
+      "training": "Formation",
+      "blocked": "Autre absence"
     }
   },
   "capacity": {
@@ -964,5 +944,11 @@
     "cancel": "Annuler",
     "created": "Plafond d'heures supplémentaires ajouté",
     "saved": "Plafond d'heures supplémentaires enregistré"
+  },
+  "statusReview": {
+    "title": "Statuts à revoir ({{count}})",
+    "hint": "Le statut enregistré de ces personnes n'est pas une valeur utilisable de la liste de l'usine. Ouvrez la fiche pour choisir un statut, ou corrigez la liste dans Données de référence.",
+    "stored": "Statut enregistré :",
+    "loadError": "Impossible de lire les statuts à revoir"
   }
 }

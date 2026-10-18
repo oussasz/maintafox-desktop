@@ -359,6 +359,7 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
                     wo.expected_duration_hours,
                     wo.planned_crew_size,
                     wo.urgency_id,
+                    wo.requires_shutdown,
                     wos.code AS status_code
                  FROM work_orders wo
                  JOIN work_order_statuses wos ON wos.id = wo.status_id
@@ -397,6 +398,11 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
             .try_get("", "status_code")
             .map_err(|e| decode_err("status_code", e))?;
         let urgency_id: Option<i64> = row.try_get("", "urgency_id").map_err(|e| decode_err("urgency_id", e))?;
+        // "Needs shutdown" on the work order: the same requirement as a PM plan's.
+        let requires_shutdown: i64 = row
+            .try_get("", "requires_shutdown")
+            .map_err(|e| decode_err("requires_shutdown", e))?;
+        let shutdown_requirement = (requires_shutdown == 1).then(|| "required".to_string());
 
         let prerequisite_status = if status_code == "waiting_for_prerequisite" {
             "blocked"
@@ -410,9 +416,10 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
                 "INSERT INTO schedule_candidates
                     (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, priority_id, planned_crew_size)
                  VALUES
-                    (?, 'work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, ?, ?)
+                    (?, 'work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?, ?)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
+                    shutdown_requirement = excluded.shutdown_requirement,
                     priority_id = excluded.priority_id,
                     assigned_personnel_id = excluded.assigned_personnel_id,
                     assigned_team_id = excluded.assigned_team_id,
@@ -433,6 +440,7 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
                     window_end.into(),
                     estimated_duration_hours.into(),
                     prerequisite_status.to_string().into(),
+                    shutdown_requirement.into(),
                     urgency_id.into(),
                     planned_crew_size.into(),
                 ],
@@ -721,7 +729,7 @@ pub(crate) async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: 
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT wos.code AS status_code
+                "SELECT wos.code AS status_code, wo.requires_shutdown
                  FROM work_orders wo
                  JOIN work_order_statuses wos ON wos.id = wo.status_id
                  WHERE wo.id = ?",
@@ -735,6 +743,21 @@ pub(crate) async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: 
             if status_code == "waiting_for_prerequisite" {
                 prerequisite_blocked = true;
             }
+            // Read live from the work order, and kept on the candidate for the commit gate
+            // (`scheduling::enforce_shutdown_window`).
+            let requires_shutdown: i64 = row
+                .try_get("", "requires_shutdown")
+                .map_err(|e| decode_err("requires_shutdown", e))?;
+            shutdown_required = requires_shutdown == 1;
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE schedule_candidates SET shutdown_requirement = ? WHERE id = ?",
+                [
+                    shutdown_required.then(|| "required".to_string()).into(),
+                    candidate_id.into(),
+                ],
+            ))
+            .await?;
         }
     } else if candidate.source_type == "pm_occurrence" {
         let row = db

@@ -13,19 +13,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { mfInput } from "@/design-system/tokens";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { upsertPosition } from "@/services/personnel-service";
 import { listCertificationTypes } from "@/services/qualification-service";
 import type { CertificationType, Position, PositionUpsertInput } from "@shared/ipc-types";
+
+import { PersonnelListSelect } from "./PersonnelListSelect";
+import { usePersonnelLists } from "./use-personnel-lists";
 
 interface PositionCreateDialogProps {
   open: boolean;
@@ -46,13 +42,22 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
 
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
-  const [category, setCategory] = useState("technician");
+  // Position categories come from the plant's list (Données de référence).
+  const lists = usePersonnelLists();
+  const [category, setCategory] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [certs, setCerts] = useState<CertEntry[]>([]);
   const [certTypes, setCertTypes] = useState<CertificationType[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const categories = lists.values("position_categories");
+  useEffect(() => {
+    if (!open || category !== "") return;
+    const first = categories.find((v) => !v.review_required);
+    if (first) setCategory(first.code);
+  }, [open, category, categories]);
 
   const loadCertTypes = useCallback(async () => {
     try {
@@ -67,7 +72,7 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
     if (!open) return;
     setCode("");
     setName("");
-    setCategory("technician");
+    setCategory("");
     setIsActive(true);
     setSkills([]);
     setCerts([]);
@@ -111,6 +116,10 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
     }
     if (!nameTrimmed) {
       setError(t("position.validation.nameRequired", "Position name is required"));
+      return;
+    }
+    if (!category) {
+      setError(t("position.validation.categoryRequired"));
       return;
     }
 
@@ -170,29 +179,13 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="pos-category">{t("position.field.category", "Category")}</Label>
-              <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger id="pos-category">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(
-                    [
-                      "technician",
-                      "supervisor",
-                      "engineer",
-                      "operator",
-                      "contractor",
-                      "planner",
-                      "storekeeper",
-                      "hse",
-                    ] as const
-                  ).map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {t(`position.category.${cat}`, cat)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <PersonnelListSelect
+                id="pos-category"
+                list="position_categories"
+                lists={lists}
+                value={category}
+                onChange={setCategory}
+              />
             </div>
           </div>
 

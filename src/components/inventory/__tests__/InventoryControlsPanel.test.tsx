@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import i18next from "i18next";
 import type { ReactNode } from "react";
 import { initReactI18next } from "react-i18next";
+import { MemoryRouter } from "react-router-dom";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
@@ -97,6 +98,15 @@ async function selectSession(label: string) {
   fireEvent.click(await screen.findByText(label));
 }
 
+/** The panel links to Settings › Inventory: it lives inside the app's router. */
+function renderPanel() {
+  return render(
+    <MemoryRouter>
+      <InventoryControlsPanel />
+    </MemoryRouter>,
+  );
+}
+
 describe("InventoryControlsPanel", () => {
   beforeAll(async () => {
     // Radix Select scrolls the selected option into view; jsdom has no layout.
@@ -149,24 +159,52 @@ describe("InventoryControlsPanel", () => {
     mocks.approveInventoryCountLine.mockResolvedValue(countLine());
   });
 
-  it("creates a count session with the chosen scope and critical threshold", async () => {
-    render(<InventoryControlsPanel />);
+  it("creates a count session with the chosen scope; the tolerance comes from the settings", async () => {
+    renderPanel();
     await waitFor(() => expect(mocks.listInventoryWarehouses).toHaveBeenCalled());
 
     fireEvent.click(screen.getByLabelText("Warehouse"));
     fireEvent.click(await screen.findByText("MAIN - Main"));
     fireEvent.click(screen.getByLabelText("Location (optional)"));
     fireEvent.click(await screen.findByText("MAIN/BIN"));
-    fireEvent.change(screen.getByLabelText("Critical variance (quantity)"), {
-      target: { value: "3" },
-    });
+    // No tolerance is typed on this screen: it is a plant setting.
+    expect(screen.queryByLabelText(/critical variance/i)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Settings › Inventory" })[0]).toHaveAttribute(
+      "href",
+      "/settings?tab=general",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Create count session" }));
 
     await waitFor(() => {
       expect(mocks.createInventoryCountSession).toHaveBeenCalledWith(
-        expect.objectContaining({ warehouse_id: 1, location_id: 10, critical_abs_threshold: 3 }),
+        expect.objectContaining({ warehouse_id: 1, location_id: 10 }),
       );
     });
+    expect(mocks.createInventoryCountSession.mock.calls[0]?.[0]).not.toHaveProperty(
+      "critical_abs_threshold",
+    );
+  });
+
+  it("shows the critical variance the selected session was opened with, read-only", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ critical_abs_threshold: 2.5 })]);
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Draft)");
+    expect(await screen.findByTestId("inv-cc-session-threshold")).toHaveTextContent(
+      // Number formatted in the plant's locale (the formatter's locale here is French).
+      /This session's critical variance: 2[.,]5$/,
+    );
+  });
+
+  it("runs the reconciliation without sending a tolerance", async () => {
+    mocks.runInventoryReconciliation.mockResolvedValue({});
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryWarehouses).toHaveBeenCalled());
+    expect(screen.queryByLabelText(/break threshold/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run reconciliation" }));
+    await waitFor(() =>
+      expect(mocks.runInventoryReconciliation).toHaveBeenCalledWith({ actor_id: 7 }),
+    );
   });
 
   it("approves the variance line the user chose, not the first pending one", async () => {
@@ -176,7 +214,7 @@ describe("InventoryControlsPanel", () => {
       countLine({ id: 2, article_code: "A-22", article_name: "Seal", location_code: "BIN-2" }),
     ]);
 
-    render(<InventoryControlsPanel />);
+    renderPanel();
     await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
     await selectSession("CC-100 (Submitted)");
 
@@ -211,7 +249,7 @@ describe("InventoryControlsPanel", () => {
       }),
     ]);
 
-    render(<InventoryControlsPanel />);
+    renderPanel();
     await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
     await selectSession("CC-100 (Approved)");
 
@@ -223,7 +261,7 @@ describe("InventoryControlsPanel", () => {
     mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "posted" })]);
     mocks.reverseInventoryCountSession.mockResolvedValue(session({ status: "reversed" }));
 
-    render(<InventoryControlsPanel />);
+    renderPanel();
     await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
     await selectSession("CC-100 (Posted)");
 
@@ -246,7 +284,7 @@ describe("InventoryControlsPanel", () => {
   it("replaces the panel with an error and a retry when loading fails", async () => {
     mocks.listInventoryCountSessions.mockRejectedValueOnce(new Error("database locked"));
 
-    render(<InventoryControlsPanel />);
+    renderPanel();
 
     expect(await screen.findByRole("alert")).toHaveTextContent("database locked");
     fireEvent.click(screen.getByRole("button", { name: enCommon.ds.state.retry }));

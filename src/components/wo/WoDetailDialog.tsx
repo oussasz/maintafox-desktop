@@ -56,6 +56,7 @@ import {
 } from "@/components/wo/WoExecutionControls";
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
+import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { formatWoShift } from "@/components/wo/wo-shift-label";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -247,6 +248,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                     {t(`lifecycle.${wo.lifecycle_state}`)}
                   </Badge>
                 ) : null}
+                {wo.requires_shutdown ? <WoShutdownBadge /> : null}
                 <UrgencyBadge code={wo.urgency_code} size="md" />
               </div>
             </div>
@@ -309,6 +311,14 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                     wo.requires_permit
                       ? t("permitRequirement.required")
                       : t("permitRequirement.notRequired")
+                  }
+                />
+                <InfoRow
+                  label={t("shutdownRequirement.short")}
+                  value={
+                    wo.requires_shutdown
+                      ? t("shutdownRequirement.required")
+                      : t("shutdownRequirement.notRequired")
                   }
                 />
                 <InfoRow

@@ -50,6 +50,10 @@ const COMMON_TOP_KEYS = [
   "listAccess",
   // Names of the two "open OT" rules (src/lib/wo-open-rule.ts).
   "woOpenRule",
+  // "À revoir" marker of list values found in data but not in the list (src/components/ui/review-mark.tsx).
+  "listValue",
+  // Required / optional part lines (src/components/common/PartNecessityChoice.tsx).
+  "partNecessity",
 ];
 const AUTH_TOP_KEYS = [
   "activation",

@@ -397,6 +397,8 @@
     "PERSONNEL_CODE_NOT_IN_LIST": "“{{code}}” is not an active value of its list ({{field}}) in Reference data.",
     "PERSONNEL_ABSENCE_TAG_REQUIRED": "Every absence type needs a behaviour: leave (plain absence), critical (always a critical block) or training (shown as in training).",
     "DOCUMENT_CATEGORY_NOT_IN_LIST": "“{{code}}” is not an active document category in Reference data.",
+    "WO_SHUTDOWN_FLAG_NOT_EDITABLE": "“Needs shutdown” can only be changed while the work order is being prepared (draft, planning or ready); it is {{status}}.",
+    "PM_PART_REQUIRED_FLAG_MISSING": "Part line “{{code}}” must say whether it is required or optional.",
     "PERMIT_WO_NO_EQUIPMENT": "The work order has no equipment: the permit cannot be aligned with it.",
     "PERMIT_REMOVAL_PENDING": "{{pending}} isolation(s) still need their lock removal verified before the permit can be closed.",
     "PERMIT_STATUS_UNCHANGED": "The permit already has this status.",

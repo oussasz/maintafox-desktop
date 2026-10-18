@@ -1,20 +1,23 @@
 /**
- * Document library category page — states, explicit upload, confirmed delete.
+ * Document library category page — states, explicit upload, confirmed delete; categories come
+ * from the plant's list (Données de référence), matched by exact code, older dashed links kept.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockList = vi.fn();
 const mockUpload = vi.fn();
 const mockDelete = vi.fn();
+const mockCategories = vi.fn();
 
 vi.mock("@/services/documentation-service", () => ({
   MAX_LIBRARY_DOCUMENT_BYTES: 25 * 1024 * 1024,
   listLibraryDocuments: (...a: unknown[]) => mockList(...a),
   uploadLibraryDocument: (...a: unknown[]) => mockUpload(...a),
   deleteLibraryDocument: (...a: unknown[]) => mockDelete(...a),
+  listDocumentCategories: () => mockCategories(),
   updateLibraryDocument: vi.fn(),
   getLibraryDocumentFile: vi.fn(),
   fileToNumberArray: vi.fn().mockResolvedValue([1, 2, 3]),
@@ -49,7 +52,13 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+import { useDocumentCategoriesStore } from "@/stores/document-categories-store";
+
 import { DocumentationCategoryPage } from "../DocumentationCategoryPage";
+import {
+  DocumentationIndexRedirect,
+  DocumentationModuleLayout,
+} from "../DocumentationModuleLayout";
 
 const doc = {
   id: 7,
@@ -67,18 +76,39 @@ const doc = {
   notes: null,
 };
 
-function renderPage() {
+const CATEGORIES = [
+  {
+    code: "technical_manuals",
+    label: "Manuels techniques",
+    label_en: null,
+    review_required: false,
+  },
+  { code: "sops", label: "Modes opératoires", label_en: null, review_required: false },
+  { code: "Plans", label: "Plans", label_en: null, review_required: true },
+];
+
+function Where() {
+  return <p data-testid="where">{useLocation().pathname}</p>;
+}
+
+function renderPage(path = "/documentation/sops") {
   return render(
-    <MemoryRouter initialEntries={["/documentation/sops"]}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/documentation/:categorySlug" element={<DocumentationCategoryPage />} />
+        <Route path="/documentation" element={<DocumentationModuleLayout />}>
+          <Route index element={<DocumentationIndexRedirect />} />
+          <Route path=":categorySlug" element={<DocumentationCategoryPage />} />
+        </Route>
       </Routes>
+      <Where />
     </MemoryRouter>,
   );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useDocumentCategoriesStore.setState({ categories: null, loading: false, error: null });
+  mockCategories.mockResolvedValue(CATEGORIES);
 });
 
 describe("DocumentationCategoryPage", () => {
@@ -132,5 +162,61 @@ describe("DocumentationCategoryPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "confirm.deleteAction" }));
     await waitFor(() => expect(mockDelete).toHaveBeenCalledWith(7));
+  });
+
+  it("lists the plant's categories, the one under review marked", async () => {
+    mockList.mockResolvedValue([]);
+    renderPage();
+    const nav = await screen.findByRole("navigation", { name: "module.navAria" });
+    expect(nav).toHaveTextContent("Manuels techniques");
+    expect(nav).toHaveTextContent("Modes opératoires");
+    expect(screen.getByRole("link", { name: /Plans/ })).toHaveTextContent("listValue.review");
+    expect(screen.getByRole("link", { name: "Modes opératoires" })).toHaveAttribute(
+      "href",
+      "/documentation/sops",
+    );
+  });
+
+  it("opens the first category not under review", async () => {
+    mockList.mockResolvedValue([]);
+    renderPage("/documentation");
+    await waitFor(() =>
+      expect(screen.getByTestId("where")).toHaveTextContent("/documentation/technical_manuals"),
+    );
+    expect(mockList).toHaveBeenLastCalledWith("technical_manuals", null);
+  });
+
+  it("keeps older dashed links working", async () => {
+    mockList.mockResolvedValue([]);
+    renderPage("/documentation/technical-manuals");
+    await waitFor(() =>
+      expect(screen.getByTestId("where")).toHaveTextContent("/documentation/technical_manuals"),
+    );
+  });
+
+  it("matches the category code exactly", async () => {
+    mockList.mockResolvedValue([]);
+    renderPage("/documentation/SOPS");
+    // "SOPS" is not the code "sops": back to the library's first category.
+    await waitFor(() =>
+      expect(screen.getByTestId("where")).toHaveTextContent("/documentation/technical_manuals"),
+    );
+    expect(mockList).not.toHaveBeenCalledWith("SOPS", null);
+  });
+
+  it("says when the categories cannot be read, with a retry", async () => {
+    mockCategories.mockRejectedValueOnce({ code: "DB", message: "down" });
+    renderPage();
+    expect(await screen.findByText("module.categoriesLoadError")).toBeInTheDocument();
+    expect(mockList).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "ds.state.retry" }));
+    expect(await screen.findByRole("link", { name: "Modes opératoires" })).toBeInTheDocument();
+  });
+
+  it("says there is no category rather than an empty library", async () => {
+    mockCategories.mockResolvedValue([]);
+    renderPage("/documentation");
+    expect(await screen.findAllByText("module.noCategories")).not.toHaveLength(0);
+    expect(screen.getByText("module.noCategoriesHint")).toBeInTheDocument();
   });
 });

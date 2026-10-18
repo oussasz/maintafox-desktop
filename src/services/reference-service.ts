@@ -3,6 +3,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { notifyReferenceDataChanged } from "@/lib/reference-data-events";
 import type {
   ReferenceDomain,
   CreateReferenceDomainPayload,
@@ -221,7 +222,9 @@ export async function validateReferenceSet(setId: number): Promise<ReferenceSet>
 
 export async function publishReferenceSet(setId: number): Promise<ReferenceSet> {
   const raw = await invoke<unknown>("publish_reference_set", { setId });
-  return ReferenceSetSchema.parse(raw);
+  const result = ReferenceSetSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 // â”€â”€ Value commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -240,7 +243,9 @@ export async function createReferenceValue(
   payload: CreateReferenceValuePayload,
 ): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("create_reference_value", { payload });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 /**
@@ -251,7 +256,9 @@ export async function createOperationalReferenceValue(
   payload: CreateOperationalReferenceValuePayload,
 ): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("create_operational_reference_value", { payload });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function updateReferenceValue(
@@ -259,17 +266,23 @@ export async function updateReferenceValue(
   payload: UpdateReferenceValuePayload,
 ): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("update_reference_value", { valueId, payload });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function deactivateReferenceValue(valueId: number): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("deactivate_reference_value", { valueId });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function reactivateReferenceValue(valueId: number): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("reactivate_reference_value", { valueId });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function moveReferenceValueParent(
@@ -277,7 +290,9 @@ export async function moveReferenceValueParent(
   newParentId: number | null,
 ): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("move_reference_value_parent", { valueId, newParentId });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 // â”€â”€ Migration commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -292,7 +307,9 @@ export async function mergeReferenceValues(
     fromValueId,
     toValueId,
   });
-  return ReferenceUsageMigrationResultSchema.parse(raw);
+  const result = ReferenceUsageMigrationResultSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function migrateReferenceUsage(
@@ -305,7 +322,9 @@ export async function migrateReferenceUsage(
     fromValueId,
     toValueId,
   });
-  return ReferenceUsageMigrationResultSchema.parse(raw);
+  const result = ReferenceUsageMigrationResultSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function listReferenceMigrations(
@@ -446,7 +465,9 @@ export async function applyRefImportBatch(
   policy: RefImportApplyPolicy,
 ): Promise<RefImportApplyResult> {
   const raw = await invoke<unknown>("apply_ref_import_batch", { batchId, policy });
-  return RefImportApplyResultSchema.parse(raw);
+  const result = RefImportApplyResultSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function getRefImportPreview(batchId: number): Promise<RefImportPreview> {
@@ -565,7 +586,9 @@ export async function governedPublishReferenceSet(setId: number): Promise<Refere
   const raw = await invoke<unknown>("governed_publish_reference_set", {
     setId,
   });
-  return ReferencePublishResultSchema.parse(raw);
+  const result = ReferencePublishResultSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 const ScheduleDayPatternSchema = z.object({

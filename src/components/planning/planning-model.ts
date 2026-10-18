@@ -8,7 +8,7 @@ import { PERMIT_QUERY_CREATE_FOR_WO, PERMIT_QUERY_SELECT } from "@/components/pe
 import type { ResourceTimelineState } from "@/design-system/resource-timeline-tokens";
 import {
   RESOURCE_TIMELINE_HORIZON_PRESETS,
-  blockTypeToTimelineState,
+  absenceTimelineState,
 } from "@/design-system/resource-timeline-tokens";
 import type {
   ConflictReason,
@@ -511,7 +511,8 @@ export function parseBlockedIntervals(json: string | null | undefined): BlockedI
         return {
           start_at,
           end_at,
-          block_type: typeof rec["block_type"] === "string" ? rec["block_type"] : "leave",
+          // A missing type stays empty (drawn as a plain absence), never assumed to be leave.
+          block_type: typeof rec["block_type"] === "string" ? rec["block_type"] : "",
           critical: Boolean(rec["critical"]),
         };
       })
@@ -584,13 +585,21 @@ export function buildPlanningTimelineLanes(
   return lanes;
 }
 
-/** Commitment bars + availability blocks for ResourceTimeline. */
+/** Name and behaviour tag of an absence type of the plant's list, by exact code. */
+export type AbsenceTypeLookup = (code: string) => { text: string; tag: string | null } | null;
+
+/**
+ * Commitment bars + availability blocks for ResourceTimeline. Absence bars are named and drawn
+ * from the plant's absence list when `absenceType` can read it; otherwise they show their code
+ * and are drawn from their critical flag only.
+ */
 export function buildPlanningTimelineItems(input: {
   commitments: ScheduleCommitment[];
   gantt: PlanningGanttSnapshot | null | undefined;
   canDrag?: boolean;
+  absenceType?: AbsenceTypeLookup;
 }): PlanningTimelineItemData[] {
-  const { commitments, gantt, canDrag = false } = input;
+  const { commitments, gantt, canDrag = false, absenceType } = input;
   const next: PlanningTimelineItemData[] = [];
 
   for (const commitment of commitments) {
@@ -624,10 +633,10 @@ export function buildPlanningTimelineItems(input: {
       next.push({
         id: blockItemId(lane.personnel_id, index),
         groupId: String(lane.personnel_id),
-        title: interval.block_type,
+        title: absenceType?.(interval.block_type)?.text ?? interval.block_type,
         startMs: start,
         endMs: end,
-        state: blockTypeToTimelineState(interval.block_type, interval.critical),
+        state: absenceTimelineState(absenceType?.(interval.block_type)?.tag, interval.critical),
         canMove: false,
       });
     });

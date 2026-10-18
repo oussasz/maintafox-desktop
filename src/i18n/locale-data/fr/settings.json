@@ -18,7 +18,8 @@
     "backup": "Sauvegarde",
     "reliability": "Fiabilité",
     "documents": "Documents et identité visuelle",
-    "work_orders": "Ordres de travail"
+    "work_orders": "Ordres de travail",
+    "inventory": "Inventaire"
   },
   "table": {
     "key": "Clé",
@@ -72,6 +73,8 @@
     "ram.fmeca_rpn_critical_threshold": "Seuil RPN critique FMECA",
     "documents.default_header": "En-tête de document par défaut",
     "wo.reopen_window_days": "Délai de réouverture après clôture (jours)",
+    "inventory.count_critical_variance": "Écart critique d'un comptage d'inventaire",
+    "inventory.reconciliation_drift_break": "Écart de rupture du rapprochement de stock",
     "locale.fiscal_year_start_month": "Début de l'exercice comptable"
   },
   "documentHeader": {
@@ -342,6 +345,8 @@
       "locale.currency_code": "Devise de valorisation du stock, des achats et des coûts (code ISO 4217).",
       "locale.fiscal_year_start_month": "Mois de début de l'exercice : périodes budgétaires, imputations, clôtures.",
       "wo.reopen_window_days": "Nombre de jours après clôture pendant lesquels un OT clôturé peut être rouvert (0 = jamais).",
+      "inventory.count_critical_variance": "Une ligne comptée dont l'écart atteint cette quantité (dans l'unité de l'article) est critique et doit être approuvée. Chaque session d'inventaire garde la valeur du jour de sa création.",
+      "inventory.reconciliation_drift_break": "Un écart entre le journal des mouvements et le solde de stock qui atteint cette quantité (dans l'unité de l'article) est une rupture. Doit être supérieur à zéro.",
       "ram.fmeca_rpn_critical_threshold": "À partir de cet indice de priorité de risque (G × O × D), un mode de défaillance AMDEC est critique.",
       "backup.retention_daily": "Nombre de sauvegardes planifiées quotidiennes conservées (au moins une).",
       "backup.retention_weekly": "Nombre de sauvegardes hebdomadaires conservées en plus.",
@@ -350,6 +355,8 @@
     "units": {
       "wo.reopen_window_days_one": "{{count}} jour",
       "wo.reopen_window_days_other": "{{count}} jours",
+      "inventory.count_critical_variance": "{{value, number(maximumFractionDigits: 6)}} (unité de l'article)",
+      "inventory.reconciliation_drift_break": "{{value, number(maximumFractionDigits: 6)}} (unité de l'article)",
       "ram.fmeca_rpn_critical_threshold": "{{count}}",
       "backup.retention_daily_one": "{{count}} sauvegarde",
       "backup.retention_daily_other": "{{count}} sauvegardes",

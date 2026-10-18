@@ -30,6 +30,8 @@ export const LIST_READ_RIGHT = {
   orgNodes: P.ORG_VIEW,
   /** `list_users` */
   users: P.ADM_USERS,
+  /** `list_document_categories` */
+  documentCategories: P.DOC_VIEW,
   /** `list_work_order_types`: reference view, work-order view or work-order creation. */
   woTypes: [P.REF_VIEW, P.OT_VIEW, P.OT_CREATE],
 } as const satisfies Record<string, PermissionName | readonly PermissionName[]>;

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useAbsenceTypeLookup } from "@/components/personnel/use-personnel-lists";
 import {
   buildPlanningTimelineItems,
   buildPlanningTimelineLanes,
@@ -84,6 +85,7 @@ export function PlanningBoard({
   maxZoom,
 }: PlanningBoardProps) {
   const { t } = useTranslation("planning");
+  const absenceType = useAbsenceTypeLookup();
 
   const groups = useMemo<ResourceTimelineGroup[]>(() => {
     if (laneMode === "crew") {
@@ -161,7 +163,7 @@ export function PlanningBoard({
       return next;
     }
 
-    return buildPlanningTimelineItems({ commitments, gantt, canDrag }).map((row) => ({
+    return buildPlanningTimelineItems({ commitments, gantt, canDrag, absenceType }).map((row) => ({
       id: row.id,
       group: row.groupId,
       title: row.title,
@@ -171,7 +173,7 @@ export function PlanningBoard({
       canMove: row.canMove,
       tooltip: timelineItemTooltip(row, t),
     }));
-  }, [commitments, gantt, canDrag, laneMode, t]);
+  }, [commitments, gantt, canDrag, laneMode, t, absenceType]);
 
   const highlights = useMemo<ResourceTimelineTimeRangeHighlight[]>(
     () => buildPlanningWindowHighlights(lockedWindows),

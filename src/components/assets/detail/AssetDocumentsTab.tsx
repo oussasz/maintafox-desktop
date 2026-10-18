@@ -4,18 +4,25 @@
  */
 
 import { Download, FileText, Upload } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { AssetPhotoGallery } from "@/components/assets/AssetPhotoGallery";
 import { useLoad } from "@/components/assets/detail/use-load";
 import { DetailSectionCard } from "@/components/detail";
+import {
+  type DocumentCategories,
+  defaultDocumentCategory,
+  useDocumentCategories,
+} from "@/components/documentation/use-document-categories";
 import { EntityFormDialog, EntityFormFooter } from "@/components/entity-form";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
+import { ListAccessNote } from "@/components/ui/list-access-note";
+import { ReviewMark } from "@/components/ui/review-mark";
 import {
   Select,
   SelectContent,
@@ -38,15 +45,6 @@ import { pushAppToast } from "@/store/app-toast-store";
 import type { Asset, LibraryDocument, LibraryDocumentCategory } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-/** Library categories (`library_documents::LIBRARY_CATEGORIES`) → `documentation:categories.*` key. */
-const CATEGORY_KEY: Record<LibraryDocumentCategory, string> = {
-  technical_manuals: "technical-manuals",
-  sops: "sops",
-  safety_protocols: "safety-protocols",
-  compliance_certificates: "compliance-certificates",
-};
-const CATEGORIES = Object.keys(CATEGORY_KEY) as LibraryDocumentCategory[];
-
 function toast(title: string, variant: "success" | "destructive", description?: string | null) {
   pushAppToast({ title, variant, ...(description ? { description } : {}) });
 }
@@ -62,11 +60,8 @@ export function AssetDocumentsTab({ asset }: { asset: Asset }) {
   );
   const { data, error, loading, reload } = useLoad<LibraryDocument[]>(load, String(asset.id));
   const [uploadOpen, setUploadOpen] = useState(false);
-
-  const categoryLabel = (c: string) =>
-    c in CATEGORY_KEY
-      ? t(`documentation:categories.${CATEGORY_KEY[c as LibraryDocumentCategory]}.label`)
-      : c;
+  // Document categories come from the plant's list (Données de référence), by exact code.
+  const categories = useDocumentCategories();
 
   const download = async (doc: LibraryDocument) => {
     try {
@@ -103,7 +98,12 @@ export function AssetDocumentsTab({ asset }: { asset: Asset }) {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{doc.title}</p>
                   <p className="text-xs text-text-muted">
-                    {categoryLabel(doc.category)} · {doc.fileName} ·{" "}
+                    {categories.text(doc.category)}
+                    {categories.loaded &&
+                    (categories.option(doc.category)?.review_required ?? true) ? (
+                      <ReviewMark className="ms-1" />
+                    ) : null}{" "}
+                    · {doc.fileName} ·{" "}
                     {t("documents.size", { kb: formatNumber(Math.ceil(doc.sizeBytes / 1024)) })} ·{" "}
                     {formatDate(doc.uploadedAt)}
                   </p>
@@ -141,7 +141,7 @@ export function AssetDocumentsTab({ asset }: { asset: Asset }) {
       {uploadOpen ? (
         <UploadDialog
           asset={asset}
-          categoryLabel={categoryLabel}
+          categories={categories}
           onClose={() => setUploadOpen(false)}
           onSaved={() => {
             setUploadOpen(false);
@@ -155,23 +155,30 @@ export function AssetDocumentsTab({ asset }: { asset: Asset }) {
 
 function UploadDialog({
   asset,
-  categoryLabel,
+  categories,
   onClose,
   onSaved,
 }: {
   asset: Asset;
-  categoryLabel: (c: string) => string;
+  categories: DocumentCategories;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const { t } = useTranslation("equipment");
+  const { t } = useTranslation(["equipment", "documentation"]);
   const formId = useId();
-  const [category, setCategory] = useState<LibraryDocumentCategory>("technical_manuals");
+  // New documents go under a category of the list that is not under review.
+  const choices = categories.values.filter((c) => !c.review_required);
+  const [category, setCategory] = useState<LibraryDocumentCategory>(
+    () => defaultDocumentCategory(choices)?.code ?? "",
+  );
+  useEffect(() => {
+    if (category === "" && choices[0]) setCategory(choices[0].code);
+  }, [category, choices]);
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const tooBig = file != null && file.size > MAX_LIBRARY_DOCUMENT_BYTES;
-  const invalid = !file || tooBig || !title.trim();
+  const invalid = !file || tooBig || !title.trim() || !category;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -215,18 +222,31 @@ function UploadDialog({
     >
       <form id={formId} onSubmit={(e) => void submit(e)} className="grid gap-4">
         <FormField name={`${formId}-cat`} label={t("documents.category")} required>
-          <Select value={category} onValueChange={(v) => setCategory(v as LibraryDocumentCategory)}>
-            <SelectTrigger id={`${formId}-cat`} className="h-10">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CATEGORIES.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {categoryLabel(c)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {!categories.canRead ? (
+            <ListAccessNote list="documentCategories" />
+          ) : categories.error != null ? (
+            <ErrorState
+              className="py-3"
+              error={categories.error}
+              title={t("documentation:module.categoriesLoadError")}
+              onRetry={() => void categories.reload()}
+            />
+          ) : categories.loaded && choices.length === 0 ? (
+            <p className="text-sm text-text-muted">{t("documentation:module.noCategoriesHint")}</p>
+          ) : (
+            <Select value={category} onValueChange={setCategory} disabled={!categories.loaded}>
+              <SelectTrigger id={`${formId}-cat`} className="h-10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {choices.map((c) => (
+                  <SelectItem key={c.code} value={c.code}>
+                    {categories.text(c.code)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </FormField>
         <FormField
           name={`${formId}-file`}

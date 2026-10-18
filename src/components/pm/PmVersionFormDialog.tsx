@@ -44,6 +44,7 @@ import {
   buildTriggerJson,
   parseCodeList,
   parseRequiredParts,
+  partsWithoutNecessity,
   parseTriggerJson,
   requiredPartsJson,
 } from "./pm-model";
@@ -239,6 +240,11 @@ export function PmVersionFormDialog({
         : null;
     if (meterError) {
       setError(meterError);
+      return;
+    }
+    const unanswered = partsWithoutNecessity(parts);
+    if (unanswered.length > 0) {
+      setError(t("hints.partNecessityMissing", { codes: unanswered.join(", ") }));
       return;
     }
     const crew = readCrewSize(crewSize);

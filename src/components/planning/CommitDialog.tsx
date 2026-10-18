@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { useAbsenceTypeLookup } from "@/components/personnel/use-personnel-lists";
 import {
   AssigneeCapacityDetails,
   assigneeOptionSuffix,
@@ -123,6 +124,7 @@ export function CommitDialog({
   approvers,
 }: CommitDialogProps) {
   const { t } = useTranslation("planning");
+  const absenceType = useAbsenceTypeLookup();
   const { formatCurrency } = useFormatters();
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
@@ -444,6 +446,7 @@ export function CommitDialog({
         commitments,
         gantt,
         canDrag: false,
+        absenceType,
       }).map((row) => ({
         id: row.id,
         group: row.groupId,
@@ -482,7 +485,18 @@ export function CommitDialog({
       canMove: false,
     });
     return base;
-  }, [commitments, gantt, start, end, personnelId, code, t, laneMode, effectiveTeamId]);
+  }, [
+    commitments,
+    gantt,
+    start,
+    end,
+    personnelId,
+    code,
+    t,
+    laneMode,
+    effectiveTeamId,
+    absenceType,
+  ]);
 
   const highlights = useMemo(() => buildPlanningWindowHighlights(lockedWindows), [lockedWindows]);
 

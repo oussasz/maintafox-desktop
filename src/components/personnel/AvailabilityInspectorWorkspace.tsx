@@ -23,6 +23,7 @@ import {
   type AvailabilityCellState,
   type AvailabilityPersonRow,
 } from "@/components/personnel/availability-model";
+import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -102,6 +103,8 @@ export function AvailabilityInspectorWorkspace({
 }: AvailabilityInspectorWorkspaceProps) {
   const { t } = useTranslation("personnel");
   const woOpenRuleText = useWoOpenRuleText();
+  // Absence types are named from the plant's list (Données de référence), by exact code.
+  const lists = usePersonnelLists();
   const [tab, setTab] = useState("overview");
   const [availabilityState, setAvailabilityState] = useState<PersonnelAvailabilityState | null>(
     null,
@@ -400,12 +403,7 @@ export function AvailabilityInspectorWorkspace({
 
         <TabsContent value="constraint" className="mt-3 space-y-3">
           {selectedBlock ? (
-            <DetailSectionCard
-              title={t(
-                `availability.form.types.${selectedBlock.block_type}`,
-                selectedBlock.block_type,
-              )}
-            >
+            <DetailSectionCard title={lists.text("absence_types", selectedBlock.block_type)}>
               <DetailFieldRow
                 label={t("availability.form.startAt")}
                 value={formatHorizonInstant(selectedBlock.start_at)}
@@ -482,9 +480,7 @@ export function AvailabilityInspectorWorkspace({
                       )}
                       onClick={() => onSelectBlock(b.id)}
                     >
-                      <div className="font-medium">
-                        {t(`availability.form.types.${b.block_type}`, b.block_type)}
-                      </div>
+                      <div className="font-medium">{lists.text("absence_types", b.block_type)}</div>
                       <div className="text-xs text-text-muted">
                         {formatHorizonInstant(b.start_at)} → {formatHorizonInstant(b.end_at)}
                       </div>
