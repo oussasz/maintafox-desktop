@@ -102,7 +102,7 @@ pub(crate) async fn before_upsert_checked(
     }
     if layout.def.entity_type == "weekly_schedules" {
         return Ok(
-            crate::planning::weekly_schedule::inbound_lifecycle_conflict(conn, payload)
+            crate::planning::weekly_schedule::inbound_lifecycle_conflict(conn, entity_sync_id, payload)
                 .await?
                 .map(|message| ApplyOutcome::Conflict {
                     code: "WEEK_LIFECYCLE_BACKWARDS".into(),
