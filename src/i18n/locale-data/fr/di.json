@@ -406,6 +406,17 @@
     "colClosed": "Clôturées"
   },
   "woConversion": {
+    "permit": {
+      "required": "Permis requis pour {{code}}",
+      "byRule": "La règle {{rule}} demande un permis de type {{permitType}} : l'OT ne démarrera pas sans permis actif.",
+      "byRuleNoType": "La règle {{rule}} demande un permis : l'OT ne démarrera pas sans permis actif.",
+      "bySafetyFlag": "La demande signalait un risque sécurité : l'OT ne démarrera pas sans permis actif.",
+      "noMatch": "Aucune règle d'exigence de permis ne s'applique à {{code}}.",
+      "noneConfigured": "Aucune règle d'exigence de permis n'est configurée",
+      "noneConfiguredHint": "Seul le signalement sécurité d'une demande peut exiger un permis. Les règles se définissent dans Données de référence › Règles d'exigence de permis.",
+      "unreadableTitle": "Règles de permis illisibles",
+      "unreadable": "Ces règles sont illisibles et n'ont pas été appliquées à {{code}} : {{codes}}. Vérifiez si {{code}} doit avoir un permis, puis corrigez les règles dans Données de référence › Règles d'exigence de permis."
+    },
     "checkAsset": "Actif confirmé",
     "checkClassif": "Classification définie",
     "checkUrgency": "Urgence validée",

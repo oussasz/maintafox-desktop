@@ -1,4 +1,7 @@
 {
+  "toast": {
+    "dismiss": "Fermer le message"
+  },
   "partNecessity": {
     "legend": "Pièce obligatoire ou optionnelle",
     "legendFor": "{{part}} : obligatoire ou optionnelle",
@@ -22,6 +25,7 @@
     }
   },
   "listAccess": {
+    "permitTypes": "Lire les types de permis demande le droit de consultation des permis.",
     "documentCategories": "Lire les catégories de documents demande le droit de consultation de la documentation.",
     "people": "Lire la liste du personnel demande le droit de consultation du personnel.",
     "teams": "Lire les équipes demande le droit de consultation du personnel.",

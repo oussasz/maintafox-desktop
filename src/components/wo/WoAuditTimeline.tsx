@@ -59,6 +59,7 @@ const KNOWN_ACTIONS = new Set([
   "permit_requirement_changed",
   "shutdown_required_set",
   "shutdown_required_cleared",
+  "permit_rule_flag_cleared",
 ]);
 
 function actionIcon(action: string) {

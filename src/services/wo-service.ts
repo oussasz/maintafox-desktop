@@ -118,6 +118,11 @@ export const WorkOrderSchema = z.object({
   reopen_count: z.number(),
   last_closed_at: z.string().nullable(),
   requires_permit: z.boolean(),
+  permit_rule_code: z.string().nullable(),
+  permit_rule_permit_type: z.string().nullable(),
+  permit_rule_cleared_by_id: z.number().nullable(),
+  permit_rule_cleared_at: z.string().nullable(),
+  permit_rule_clear_reason: z.string().nullable(),
   entity_sync_id: z.string().nullable().optional(),
   closeout_validation_profile_id: z.number().nullable().optional(),
   closeout_validation_passed: z.boolean().optional(),
@@ -425,6 +430,26 @@ export const PERMIT_REQUIREMENT_EDITABLE_STATUSES: ReadonlySet<string> = new Set
   "planning",
   "ready",
 ]);
+
+export interface WoPermitRuleClearInput {
+  wo_id: number;
+  expected_row_version: number;
+  /** Why the plant rule does not apply here (10 characters or more). */
+  reason: string;
+}
+
+/**
+ * Clears the permit flag a plant rule set at conversion (`ptw.issue`, a reason, before execution
+ * starts); kept on the work order and in its audit trail.
+ */
+export async function clearWoPermitRuleFlag(input: WoPermitRuleClearInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("clear_wo_permit_rule_flag", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
 
 export async function setWoPermitRequirement(input: WoPermitRequirementInput): Promise<WorkOrder> {
   try {

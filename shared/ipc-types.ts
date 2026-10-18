@@ -4549,10 +4549,25 @@ export interface WoConversionInput {
   conversion_notes?: string | null;
 }
 
+/** Why the new work order needs a permit, or not (the plant's permit rules and the safety flag). */
+export interface PermitFlagOutcome {
+  requires_permit: boolean;
+  /** `PERMIT_RULE_MATCHED` | `PERMIT_RULES_NO_MATCH` | `PERMIT_RULES_NONE_CONFIGURED` */
+  reason_code: string;
+  /** The rule that matched, and the permit type it calls for. */
+  rule_code: string | null;
+  permit_type_code: string | null;
+  /** The request was flagged as a safety risk (flags the work order on its own). */
+  safety_flag: boolean;
+  /** Published rules that do not read (ignored, to fix in Données de référence). */
+  unreadable_rule_codes: string[];
+}
+
 export interface WoConversionResult {
   di: InterventionRequest;
   wo_id: number;
   wo_code: string;
+  permit_flag: PermitFlagOutcome;
 }
 
 // Frontend invokes via: invoke("shutdown_app")
@@ -5131,6 +5146,16 @@ export interface WorkOrder {
   reopen_count: number;
   last_closed_at: string | null;
   requires_permit: boolean;
+  /**
+   * The plant rule (Règles d'exigence de permis) that flagged this work order "permit required"
+   * when it was converted from a request, and the permit type it calls for.
+   */
+  permit_rule_code: string | null;
+  permit_rule_permit_type: string | null;
+  /** Who cleared that flag (permit-issue right), when and why. */
+  permit_rule_cleared_by_id: number | null;
+  permit_rule_cleared_at: string | null;
+  permit_rule_clear_reason: string | null;
   entity_sync_id?: string | null;
   closeout_validation_profile_id?: number | null;
   closeout_validation_passed?: boolean;

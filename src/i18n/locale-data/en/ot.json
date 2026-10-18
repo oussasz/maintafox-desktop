@@ -1,4 +1,18 @@
 {
+  "permitRule": {
+    "requiredBy": "Permit required by rule {{rule}} (permit type {{permitType}}).",
+    "requiredByNoType": "Permit required by rule {{rule}}.",
+    "requiredShort": "Required (rule {{rule}})",
+    "clearHint": "Only a person allowed to issue permits can clear this requirement, with a reason, before the work starts.",
+    "checkboxLocked": "Required by rule {{rule}}: cleared with “Clear the requirement” below.",
+    "clear": "Clear the requirement",
+    "clearTitle": "Clear the permit requirement?",
+    "clearBody": "{{code}} will be able to start without a permit despite the rule {{rule}}. The reason, date and your name are kept on the work order and in its history.",
+    "clearConfirm": "Clear the requirement",
+    "reason": "Reason",
+    "reasonHint": "At least {{min}} characters: why the rule does not apply to this job.",
+    "cleared": "Requirement of rule {{rule}} cleared on {{date}}: {{reason}}"
+  },
   "shutdownRequirement": {
     "sectionTitle": "Equipment shutdown",
     "label": "Needs shutdown",
@@ -728,6 +742,7 @@
     "permitRequired": "Permit / lockout now required",
     "permitNotRequired": "Permit / lockout no longer required",
     "actions": {
+      "permit_rule_flag_cleared": "Permit requirement (rule) cleared",
       "shutdown_required_set": "Flagged as needing a shutdown",
       "shutdown_required_cleared": "“Needs shutdown” removed",
       "created": "Work order created",

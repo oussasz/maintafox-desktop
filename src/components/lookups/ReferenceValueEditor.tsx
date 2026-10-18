@@ -45,6 +45,18 @@ import {
   parsePositiveNumber,
   useMeasureDimensions,
 } from "@/components/lookups/MeasureUnitPicker";
+import {
+  EMPTY_PERMIT_RULE_EDIT,
+  type PermitRuleEditState,
+  PermitRuleEditCells,
+  PermitRuleHeadCells,
+  PermitRuleReadCells,
+  buildPermitRuleMetadata,
+  permitRuleComplete,
+  permitRuleStateFrom,
+  unusablePermitRules,
+  usePermitRuleOptions,
+} from "@/components/lookups/PermitRuleColumns";
 import { PublishReadinessPanel } from "@/components/lookups/PublishReadinessPanel";
 import { ReferenceAliasPanel } from "@/components/lookups/ReferenceAliasPanel";
 import { ReferenceColorSwatchHex } from "@/components/lookups/ReferenceColorSwatchHex";
@@ -78,6 +90,7 @@ import {
 import { resolveReferenceValueColumns } from "@/components/lookups/reference-value-columns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
@@ -219,9 +232,19 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     showSchedule,
     showNature,
     showUnit,
+    showPermitRule,
     crossDomainParentCode,
     sameSetHierarchy,
   } = columnFlags;
+  // Permit requirement rules (PERMIT.REQUIREMENT_RULES): class / work type → permit type.
+  const permitRuleOptions = usePermitRuleOptions(showPermitRule);
+  const [editRule, setEditRule] = useState<PermitRuleEditState>(EMPTY_PERMIT_RULE_EDIT);
+  const [newRule, setNewRule] = useState<PermitRuleEditState>(EMPTY_PERMIT_RULE_EDIT);
+  /** Rules the conversion cannot use (not applied when a request becomes a work order). */
+  const unusableRules = useMemo(
+    () => (showPermitRule ? unusablePermitRules(values, permitRuleOptions) : []),
+    [showPermitRule, values, permitRuleOptions],
+  );
   const natures = useMaintenanceNatures(showNature);
   // Units of measure (MEASURE.UNITS): unit fields of the row being edited / created, the bases a
   // plant unit may name (standard units of this version) and the "to review" filter.
@@ -325,12 +348,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         natureTag: v.semantic_tag ?? null,
       });
       if (showUnit) setEditUnit(unitEditStateFrom(v));
+      if (showPermitRule) setEditRule(permitRuleStateFrom(v));
       setAliasValueId(null);
       if (showSchedule) {
         setPatternValueId(v.id);
       }
     },
-    [setEditingValueId, showSchedule, showUnit],
+    [setEditingValueId, showSchedule, showUnit, showPermitRule],
   );
 
   const cancelEdit = useCallback(() => {
@@ -342,6 +366,15 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     async (valueId: number) => {
       const existing = values.find((v) => v.id === valueId);
       try {
+        if (showPermitRule && existing) {
+          if (!permitRuleComplete(editRule)) return;
+          await saveValue(valueId, {
+            label: editRow.label,
+            description: editRow.description || null,
+            metadata_json: buildPermitRuleMetadata(existing.metadata_json, editRule),
+          });
+          return;
+        }
         if (showUnit && existing) {
           // A plant unit: its base first (the server checks base and factor together on save),
           // then the labels, symbol and factor.
@@ -381,13 +414,24 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         // The store keeps the translated error (shown above the table) and the row stays in edit.
       }
     },
-    [saveValue, editRow, values, showParent, showNature, showUnit, editUnit],
+    [
+      saveValue,
+      editRow,
+      values,
+      showParent,
+      showNature,
+      showUnit,
+      editUnit,
+      showPermitRule,
+      editRule,
+    ],
   );
 
   const startNewRow = useCallback(() => {
     setNewValueDraft({});
     setNewRow({ code: "", label: "", description: "", parentId: null, natureTag: null });
     setNewUnit(EMPTY_UNIT_EDIT);
+    setNewRule(EMPTY_PERMIT_RULE_EDIT);
   }, [setNewValueDraft]);
 
   const cancelNewRow = useCallback(() => {
@@ -396,6 +440,17 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
 
   const commitNewRow = useCallback(async () => {
     if (!newRow.code.trim() || !newRow.label.trim()) return;
+    if (showPermitRule) {
+      if (!permitRuleComplete(newRule)) return;
+      await addValue({
+        set_id: setId,
+        code: newRow.code.trim(),
+        label: newRow.label.trim(),
+        description: newRow.description.trim() || null,
+        metadata_json: buildPermitRuleMetadata(null, newRule),
+      });
+      return;
+    }
     if (showUnit) {
       // A plant unit: base standard unit (same set) and factor; the dimension is the base's.
       const factor = parsePositiveNumber(newUnit.factor);
@@ -423,7 +478,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       ...(showNature && newRow.natureTag ? { semantic_tag: newRow.natureTag } : {}),
     };
     await addValue(payload);
-  }, [addValue, setId, newRow, showNature, showUnit, newUnit]);
+  }, [addValue, setId, newRow, showNature, showUnit, newUnit, showPermitRule, newRule]);
 
   const confirmDeactivate = useCallback(async () => {
     if (!deleteTarget) return;
@@ -662,14 +717,38 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         onRetry={() => void loadValues(setId)}
         error={valuesError ? null : error}
         aboveHeader={
-          showPublishPanel && refSet ? (
-            <PublishReadinessPanel
-              setId={setId}
-              setStatus={refSet.status}
-              isProtected={isAnalyticalProtected}
-              onPublished={handlePublished}
-            />
-          ) : null
+          <>
+            {showPermitRule ? (
+              <p className="px-1 pb-2 text-xs text-text-secondary">{t("permitRules.intro")}</p>
+            ) : null}
+            {showPermitRule && unusableRules.length > 0 ? (
+              <p
+                role="alert"
+                className="mb-2 rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
+              >
+                {t("permitRules.unusableBanner", {
+                  count: unusableRules.length,
+                  codes: unusableRules.map((v) => v.code).join(", "),
+                })}
+              </p>
+            ) : null}
+            {showPermitRule && permitRuleOptions.error != null ? (
+              <ErrorState
+                className="mb-2 py-4"
+                error={permitRuleOptions.error}
+                title={t("permitRules.optionsLoadError")}
+                onRetry={permitRuleOptions.reload}
+              />
+            ) : null}
+            {showPublishPanel && refSet ? (
+              <PublishReadinessPanel
+                setId={setId}
+                setStatus={refSet.status}
+                isProtected={isAnalyticalProtected}
+                onPublished={handlePublished}
+              />
+            ) : null}
+          </>
         }
         title={
           <>
@@ -848,6 +927,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                 {t("editor.colDescription")}
               </ReferenceValueTableHeadCell>
               {showUnit ? <UnitHeadCells /> : null}
+              {showPermitRule ? <PermitRuleHeadCells /> : null}
               {showSchedule ? (
                 <ReferenceValueTableHeadCell>
                   {t("schedulePattern.column")}
@@ -919,6 +999,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                     onKeyDown={handleNewKeyDown}
                   />
                 ) : null}
+                {showPermitRule ? (
+                  <PermitRuleEditCells
+                    state={newRule}
+                    onChange={setNewRule}
+                    options={permitRuleOptions}
+                  />
+                ) : null}
                 {showSchedule ? (
                   <ReferenceValueTableCell className="text-xs text-text-muted">
                     {t("schedulePattern.afterCreate")}
@@ -973,7 +1060,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         savingValue ||
                         !newRow.code.trim() ||
                         !newRow.label.trim() ||
-                        (showUnit && !unitEditComplete(newUnit))
+                        (showUnit && !unitEditComplete(newUnit)) ||
+                        (showPermitRule && !permitRuleComplete(newRule))
                       }
                     >
                       <Check className="h-4 w-4 text-status-success" aria-hidden />
@@ -1102,6 +1190,17 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                       <UnitReadCells value={v} values={values} dimensions={dimensions} />
                     )
                   ) : null}
+                  {showPermitRule ? (
+                    isEditing ? (
+                      <PermitRuleEditCells
+                        state={editRule}
+                        onChange={setEditRule}
+                        options={permitRuleOptions}
+                      />
+                    ) : (
+                      <PermitRuleReadCells value={v} options={permitRuleOptions} />
+                    )
+                  ) : null}
                   {showSchedule ? (
                     <ReferenceValueTableCell className="text-xs text-text-muted">
                       <button
@@ -1185,7 +1284,11 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                           aria-label={t("editor.save")}
                           title={t("editor.save")}
                           onClick={() => void commitEdit(v.id)}
-                          disabled={savingValue || (showUnit && !unitEditComplete(editUnit))}
+                          disabled={
+                            savingValue ||
+                            (showUnit && !unitEditComplete(editUnit)) ||
+                            (showPermitRule && !permitRuleComplete(editRule))
+                          }
                         >
                           <Check className="h-4 w-4 text-status-success" aria-hidden />
                         </Button>

@@ -43,11 +43,14 @@ import { i18n } from "@/i18n";
 import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel, formatOrgNodeLabel, formatPersonLabel } from "@/lib/display";
 import { convertDiToWo } from "@/services/di-conversion-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { intlLocaleForLanguage } from "@/utils/format-date";
-import type { InterventionRequest } from "@shared/ipc-types";
+import type { InterventionRequest, WoConversionResult } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
+
+import { permitFlagMessages } from "./permit-flag-text";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -213,6 +216,22 @@ export function DiApprovalDialog() {
     [closeApproval, navigate],
   );
 
+  /** What the conversion decided about the new work order's permit (rules, safety flag). */
+  const announcePermitFlag = useCallback(
+    (result: WoConversionResult) => {
+      const tText = t as unknown as (key: string, options?: Record<string, unknown>) => string;
+      for (const message of permitFlagMessages(result.permit_flag, result.wo_code, tText)) {
+        pushAppToast({
+          title: message.title,
+          variant: message.variant,
+          ...(message.description ? { description: message.description } : {}),
+          ...(message.persistent ? { persistent: true } : {}),
+        });
+      }
+    },
+    [t],
+  );
+
   const handleApproveClick = useCallback(() => {
     setConfirmMode("approve");
     setConfirmOpen(true);
@@ -255,6 +274,7 @@ export function DiApprovalDialog() {
         ...(note ? { conversionNotes: note } : {}),
       });
       void loadDis();
+      announcePermitFlag(result);
       if (result.wo_id > 0) {
         handoffToWorkOrder(result.wo_id);
         return;
@@ -275,7 +295,18 @@ export function DiApprovalDialog() {
         conversionError: describeAppError(err).title,
       });
     }
-  }, [di, approve, info, note, handoffToWorkOrder, loadDis, confirmMode, retryRowVersion, t]);
+  }, [
+    di,
+    approve,
+    info,
+    note,
+    handoffToWorkOrder,
+    announcePermitFlag,
+    loadDis,
+    confirmMode,
+    retryRowVersion,
+    t,
+  ]);
 
   const handleRetryConversion = useCallback(async () => {
     if (!di || retryRowVersion == null) return;
@@ -286,6 +317,7 @@ export function DiApprovalDialog() {
         ...(note ? { conversionNotes: note } : {}),
       });
       void loadDis();
+      announcePermitFlag(result);
       if (result.wo_id > 0) {
         handoffToWorkOrder(result.wo_id);
         return;
@@ -303,7 +335,7 @@ export function DiApprovalDialog() {
         conversionError: describeAppError(err).title,
       });
     }
-  }, [di, handoffToWorkOrder, loadDis, note, retryRowVersion]);
+  }, [di, handoffToWorkOrder, announcePermitFlag, loadDis, note, retryRowVersion]);
 
   const handlePrint = useCallback(() => {
     if (!di) return;

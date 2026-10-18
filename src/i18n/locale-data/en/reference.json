@@ -1,4 +1,24 @@
 {
+  "permitRules": {
+    "unusable": "Not usable",
+    "problem": {
+      "unknownClass": "Class “{{code}}” is not in the published class list.",
+      "unknownWorkType": "Work type “{{code}}” is not in the published list.",
+      "unknownPermitType": "Unknown permit type “{{code}}”."
+    },
+    "unusableBanner_one": "{{count}} rule cannot be applied ({{codes}}): it is ignored when a request becomes a work order. Fix it.",
+    "unusableBanner_other": "{{count}} rules cannot be applied ({{codes}}): they are ignored when a request becomes a work order. Fix them.",
+    "intro": "Each rule names an equipment class and / or a work type, and the permit type it calls for. When a request becomes a matching work order, the work order is flagged “permit required”.",
+    "colClass": "Equipment class",
+    "colWorkType": "Work type",
+    "colPermitType": "Permit type required",
+    "anyClass": "Any class",
+    "anyWorkType": "Any work type",
+    "choosePermitType": "Choose a permit type",
+    "incomplete": "Incomplete rule",
+    "incompleteHint": "A rule names a permit type and at least an equipment class or a work type.",
+    "optionsLoadError": "The classes, work types or permit types could not be read"
+  },
   "page": {
     "title": "Reference Data",
     "refresh": "Refresh",
