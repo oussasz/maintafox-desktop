@@ -230,15 +230,24 @@ export function SiteRulesPanel({
         confirmDisabled={reason.trim().length < MIN_REASON_CHARS}
         onConfirm={async () => {
           if (pending == null || site == null) return;
-          await withStepUp(() =>
-            setSiteSetting({
-              site_node_id: site.site_node_id,
-              key: SELF_APPROVAL_SITE_RULE,
-              value: pending,
-              reason: reason.trim(),
-              expected_row_version: site.row_version,
-            }),
-          );
+          try {
+            await withStepUp(() =>
+              setSiteSetting({
+                site_node_id: site.site_node_id,
+                key: SELF_APPROVAL_SITE_RULE,
+                value: pending,
+                reason: reason.trim(),
+                expected_row_version: site.row_version,
+              }),
+            );
+          } catch (err) {
+            // The rule may have changed meanwhile (SITE_SETTING_STALE asks to reload): read the
+            // sites and the history again so a retry is sent with the current version. The
+            // dialog stays open and the global toast reports the refusal.
+            await load();
+            await loadEvents(site.site_node_id);
+            throw err;
+          }
           onToast({ title: t("siteRules.saved"), variant: "success" });
           await load();
           await loadEvents(site.site_node_id);
