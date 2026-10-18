@@ -1,7 +1,7 @@
 /**
  * Absence dialog: what the user types survives parent re-renders (a new `personOptions` array
  * on every render used to reset the form while typing); absence types come from the plant's list,
- * and a type tagged "critical" makes the absence critical.
+ * nothing is chosen for the planner, and a type tagged "critical" makes the absence critical.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -57,14 +57,44 @@ function dialog(people: { id: number; label: string }[]) {
   );
 }
 
+async function chooseType(label: string) {
+  const type = screen.getByRole("combobox", { name: "availability.form.blockType" });
+  await waitFor(() => expect(type).toBeEnabled());
+  fireEvent.keyDown(type, { key: "Enter" });
+  fireEvent.click(await screen.findByRole("option", { name: label }));
+}
+
 describe("AvailabilityBlockDialog", () => {
-  it("starts a new absence on the first type of the list that is not under review", async () => {
+  it("proposes no person and no absence type: saving says what is missing", async () => {
+    withAbsenceTypes([opt("leave", "Congé", { tag: "leave" })]);
+    render(dialog([{ id: 1, label: "Amine" }]));
+    await waitFor(() => expect(svc.listPersonnelReferenceOptions).toHaveBeenCalled());
+    const type = screen.getByRole("combobox", { name: "availability.form.blockType" });
+    await waitFor(() => expect(type).toHaveTextContent("ds.state.choose"));
+    expect(screen.getByRole("combobox", { name: /availability\.form\.personnel/ })).toHaveValue("");
+
+    fireEvent.click(screen.getByRole("button", { name: "availability.form.submit" }));
+    expect(
+      await screen.findByText("availability.form.errors.personnelRequired"),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: /availability\.form\.personnel/ }), {
+      target: { value: "1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "availability.form.submit" }));
+    expect(await screen.findByText("availability.form.errors.typeRequired")).toBeInTheDocument();
+    expect(svc.createAvailabilityBlock).not.toHaveBeenCalled();
+  });
+
+  it("a chosen type tagged critical makes the absence critical", async () => {
     withAbsenceTypes([
       opt("Conge", "Congé", { tag: "leave", review_required: true }),
       opt("medical", "Médical", { tag: "critical" }),
     ]);
     render(dialog([{ id: 1, label: "Amine" }]));
     const critical = screen.getByRole("checkbox");
+    expect(critical).not.toBeChecked();
+    await chooseType("Médical");
     // "medical" is tagged critical: the absence is critical and the box cannot be unticked.
     await waitFor(() => expect(critical).toBeChecked());
     expect(critical).toBeDisabled();
@@ -73,11 +103,9 @@ describe("AvailabilityBlockDialog", () => {
   it("leaves the critical box free for a type that is not tagged critical", async () => {
     withAbsenceTypes([opt("leave", "Congé", { tag: "leave" })]);
     render(dialog([{ id: 1, label: "Amine" }]));
-    await waitFor(() => expect(svc.listPersonnelReferenceOptions).toHaveBeenCalled());
-    await waitFor(() =>
-      expect(
-        screen.getByRole("combobox", { name: "availability.form.blockType" }),
-      ).toHaveTextContent("Congé"),
+    await chooseType("Congé");
+    expect(screen.getByRole("combobox", { name: "availability.form.blockType" })).toHaveTextContent(
+      "Congé",
     );
     expect(screen.getByRole("checkbox")).not.toBeChecked();
     expect(screen.getByRole("checkbox")).toBeEnabled();

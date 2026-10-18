@@ -4,7 +4,7 @@
  */
 
 import { Download, FileText, Upload } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
@@ -13,7 +13,6 @@ import { useLoad } from "@/components/assets/detail/use-load";
 import { DetailSectionCard } from "@/components/detail";
 import {
   type DocumentCategories,
-  defaultDocumentCategory,
   useDocumentCategories,
 } from "@/components/documentation/use-document-categories";
 import { EntityFormDialog, EntityFormFooter } from "@/components/entity-form";
@@ -166,19 +165,17 @@ function UploadDialog({
 }) {
   const { t } = useTranslation(["equipment", "documentation"]);
   const formId = useId();
-  // New documents go under a category of the list that is not under review.
+  // New documents go under a category of the list that is not under review, chosen by the
+  // person: nothing is proposed for them.
   const choices = categories.values.filter((c) => !c.review_required);
-  const [category, setCategory] = useState<LibraryDocumentCategory>(
-    () => defaultDocumentCategory(choices)?.code ?? "",
-  );
-  useEffect(() => {
-    if (category === "" && choices[0]) setCategory(choices[0].code);
-  }, [category, choices]);
+  const [category, setCategory] = useState<LibraryDocumentCategory>("");
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const tooBig = file != null && file.size > MAX_LIBRARY_DOCUMENT_BYTES;
   const invalid = !file || tooBig || !title.trim() || !category;
+  // Once the person has started filling the form, say why it cannot be sent yet.
+  const categoryMissing = !category && (file != null || title.trim() !== "");
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -221,7 +218,12 @@ function UploadDialog({
       }
     >
       <form id={formId} onSubmit={(e) => void submit(e)} className="grid gap-4">
-        <FormField name={`${formId}-cat`} label={t("documents.category")} required>
+        <FormField
+          name={`${formId}-cat`}
+          label={t("documents.category")}
+          required
+          error={categoryMissing ? t("documents.categoryRequired") : undefined}
+        >
           {!categories.canRead ? (
             <ListAccessNote list="documentCategories" />
           ) : categories.error != null ? (
@@ -236,7 +238,7 @@ function UploadDialog({
           ) : (
             <Select value={category} onValueChange={setCategory} disabled={!categories.loaded}>
               <SelectTrigger id={`${formId}-cat`} className="h-10">
-                <SelectValue />
+                <SelectValue placeholder={t("documents.categoryPlaceholder")} />
               </SelectTrigger>
               <SelectContent>
                 {choices.map((c) => (

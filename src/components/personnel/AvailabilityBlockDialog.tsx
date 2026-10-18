@@ -109,7 +109,8 @@ export function AvailabilityBlockDialog({
       setIsCritical(b.is_critical);
       return;
     }
-    setPersonnelId(init.initialPersonnelId ?? init.personOptions[0]?.id ?? null);
+    // Opened from a person, the absence is theirs; otherwise the planner chooses the person.
+    setPersonnelId(init.initialPersonnelId ?? null);
     setBlockType("");
     setStartAt(init.initialStartLocal ?? "");
     setEndAt(init.initialEndLocal ?? "");
@@ -120,14 +121,6 @@ export function AvailabilityBlockDialog({
   useEffect(() => {
     if (forcedCritical) setIsCritical(true);
   }, [forcedCritical]);
-
-  // A new absence starts on the first usable type of the list, once the list is read.
-  const absenceTypes = lists.values("absence_types");
-  useEffect(() => {
-    if (resetKey == null || mode !== "create" || blockType !== "") return;
-    const first = absenceTypes.find((v) => !v.review_required);
-    if (first) setBlockType(first.code);
-  }, [resetKey, mode, blockType, absenceTypes]);
 
   const title = useMemo(
     () => (mode === "edit" ? t("availability.form.editTitle") : t("availability.form.title")),
@@ -210,8 +203,13 @@ export function AvailabilityBlockDialog({
               <select
                 className={mfInput.nativeSelect}
                 value={personnelId ?? ""}
-                onChange={(e) => setPersonnelId(Number(e.target.value))}
+                onChange={(e) =>
+                  setPersonnelId(e.target.value === "" ? null : Number(e.target.value))
+                }
               >
+                <option value="" disabled>
+                  {t("availability.form.personnelPlaceholder")}
+                </option>
                 {personOptions.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}

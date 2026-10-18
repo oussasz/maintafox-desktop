@@ -261,6 +261,7 @@
       "retry": "Réessayer",
       "technicalDetails": "Détails techniques",
       "truncated": "Affichage de {{shown}} sur {{total}}.",
+      "choose": "Choisir…",
       "loadMore": "Charger la suite"
     },
     "view": {

@@ -4,6 +4,8 @@
     "title": "Remettre l'équipement en service ?",
     "description": "{{code}} reprend le statut choisi et sa date de fin de vie est effacée. Le retour est enregistré dans l'historique de l'équipement avec son motif.",
     "status": "Statut après la remise en service",
+    "statusPlaceholder": "Choisir le statut",
+    "statusRequired": "Choisissez le statut que reprend l'équipement.",
     "noStatus": "Aucun statut hors « retiré » n'est publié dans les données de référence.",
     "reason": "Motif",
     "reasonRequired": "Indiquez pourquoi l'équipement revient en service.",
@@ -799,6 +801,8 @@
     "upload": "Ajouter un document",
     "uploadTitle": "Nouveau document — {{code}}",
     "category": "Catégorie",
+    "categoryPlaceholder": "Choisir la catégorie",
+    "categoryRequired": "Choisissez la catégorie du document.",
     "file": "Fichier",
     "tooBig": "Le fichier dépasse {{mb}} Mo.",
     "docTitle": "Titre"
