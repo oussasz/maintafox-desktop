@@ -30,6 +30,9 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     // FMECA rating grids (severity, occurrence, detection, criticality zones).
     crate::reliability::study::scales::ensure_fmeca_rating_scales(db).await?;
     crate::wo::types::ensure_work_order_type_catalog(db).await?;
+    // OT types without a maintenance nature (a plant's own type, also received by sync) are
+    // flagged "to review"; nothing else about them is changed.
+    crate::wo::types::flag_types_without_nature(db).await?;
     // Units of measure (COMPANY list) and their physical dimensions (SYSTEM list).
     crate::reference::units::ensure_unit_catalog(db).await?;
     // Finance cost categories and variance reasons.

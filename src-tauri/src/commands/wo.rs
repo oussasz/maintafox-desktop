@@ -155,6 +155,26 @@ pub async fn list_work_order_types(state: State<'_, AppState>) -> AppResult<Vec<
     types::list_work_order_types(&state.db).await
 }
 
+/// OT types without a maintenance nature, with how many work orders use each (they count in no
+/// work mix). Same reading rights as the OT type list.
+#[tauri::command]
+pub async fn list_work_order_types_to_review(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<types::WorkOrderTypeToReview>> {
+    let user = require_session!(state);
+    let has_ref_view = crate::auth::rbac::check_permission(
+        &state.db,
+        user.user_id,
+        crate::rbac::permissions::REF_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    if !has_ref_view {
+        require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    }
+    types::list_types_without_nature(&state.db).await
+}
+
 /// The shift windows a work order can be planned on: its assigned team's — or `team_id`'s, the
 /// team being assigned — Classes horaires at `planned_start` (local `YYYY-MM-DDTHH:MM` as typed,
 /// or a stored instant; default: its planned start). Empty, with the reason, when there is no

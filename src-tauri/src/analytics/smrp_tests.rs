@@ -467,6 +467,86 @@ async fn work_mix_by_labour_hours() {
     assert_eq!(m.reactive.current.numerator, 7.0);
     assert_eq!(m.emergency.current.numerator, 2.0);
     assert_eq!(m.planned.previous.value_pct, Some(100.0));
+    assert_eq!(m.without_nature, 0);
+}
+
+/// A plant's own OT type without a maintenance nature (as migration 198 carried it over): its
+/// work orders count in the total but in no share, and the figure says how many; the type is
+/// listed for review with its use and flagged "to review" without any other change.
+#[tokio::test]
+async fn work_mix_counts_work_orders_whose_type_has_no_nature() {
+    let db = setup().await;
+    let now = fixed_now();
+    exec(
+        &db,
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active, semantic_tag, metadata_json) \
+         SELECT rs.id, 'PLANT_OWN', 'Type maison', 99, 1, NULL, '{\"origin\":\"migrated\"}' \
+           FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'WORK.ORDER_TYPES' AND rs.status = 'published'",
+    )
+    .await;
+    insert_wo(
+        &db,
+        "N1",
+        "corrective",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -5, 0),
+    )
+    .await;
+    insert_wo(
+        &db,
+        "N2",
+        "PLANT_OWN",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -4, 0),
+    )
+    .await;
+    insert_wo(&db, "N3", "PLANT_OWN", "planning", &ts(now, -2, 0), "", "").await;
+
+    let m = smrp::work_mix(&db, SmrpWindow::last_days(now, 30), None).await.unwrap();
+    assert_eq!(m.basis, "count");
+    assert_eq!(m.work_orders, 2);
+    assert_eq!(m.without_nature, 1, "N2 counts in no share");
+    assert_eq!(m.reactive.current.numerator, 1.0);
+    assert_eq!(m.planned.current.numerator, 0.0);
+
+    let review = crate::wo::types::list_types_without_nature(&db).await.expect("review");
+    assert_eq!(review.len(), 1);
+    assert_eq!(review[0].code, "PLANT_OWN");
+    assert_eq!(review[0].work_order_count, 2);
+
+    assert_eq!(crate::wo::types::flag_types_without_nature(&db).await.expect("flag"), 1);
+    assert_eq!(
+        crate::wo::types::flag_types_without_nature(&db).await.expect("again"),
+        0,
+        "idempotent"
+    );
+    let meta: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT metadata_json FROM reference_values WHERE code = 'PLANT_OWN'".to_string(),
+        ))
+        .await
+        .expect("q")
+        .expect("row")
+        .try_get_by_index(0)
+        .expect("meta");
+    let meta: serde_json::Value = serde_json::from_str(&meta).expect("json");
+    assert_eq!(meta["nature_review_required"], true);
+    assert_eq!(meta["origin"], "migrated", "the rest is kept");
+    assert_eq!(
+        id_of(
+            &db,
+            "SELECT COUNT(*) FROM reference_values WHERE code = 'PLANT_OWN' AND semantic_tag IS NULL AND label = 'Type maison'"
+        )
+        .await,
+        1,
+        "nature and label not rewritten"
+    );
 }
 
 // ── Backlog ────────────────────────────────────────────────────────────────────────────────

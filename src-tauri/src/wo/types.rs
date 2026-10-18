@@ -423,6 +423,81 @@ fn map_type(row: &QueryResult) -> AppResult<WorkOrderTypeOption> {
     })
 }
 
+/// SQL predicate (alias `t` = a `WORK.ORDER_TYPES` value, no bind): the type carries no
+/// maintenance nature the program knows. Such a type counts in no work mix (planned / reactive /
+/// emergency) and is listed for review.
+pub fn without_nature_sql() -> String {
+    format!(
+        "COALESCE(t.semantic_tag, '') NOT IN ({})",
+        nature_sql_list(&MaintenanceNature::ALL)
+    )
+}
+
+/// An OT type without a maintenance nature, with how many work orders use it.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct WorkOrderTypeToReview {
+    pub id: i64,
+    pub code: String,
+    pub label: String,
+    pub is_active: bool,
+    /// Work orders of this type (any status).
+    pub work_order_count: i64,
+}
+
+/// OT types of the published list that carry no maintenance nature (a plant's own type carried
+/// over by migration 198, or received from a PC that has it), with their use. Read only.
+pub async fn list_types_without_nature(conn: &impl ConnectionTrait) -> AppResult<Vec<WorkOrderTypeToReview>> {
+    let rows = conn
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT t.id, t.code, t.label, t.is_active, \
+                        (SELECT COUNT(*) FROM work_orders wo WHERE wo.type_id = t.id) AS n \
+                   FROM reference_values t \
+                   JOIN reference_sets rs ON rs.id = t.set_id AND rs.status = 'published' \
+                   JOIN reference_domains d ON d.id = rs.domain_id AND UPPER(TRIM(d.code)) = 'WORK.ORDER_TYPES' \
+                  WHERE {} \
+                  ORDER BY t.sort_order ASC, t.code ASC",
+                without_nature_sql()
+            ),
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(WorkOrderTypeToReview {
+                id: r.try_get("", "id").map_err(decode)?,
+                code: r.try_get("", "code").map_err(decode)?,
+                label: r.try_get("", "label").map_err(decode)?,
+                is_active: r.try_get::<i64>("", "is_active").map_err(decode)? != 0,
+                work_order_count: r.try_get("", "n").map_err(decode)?,
+            })
+        })
+        .collect()
+}
+
+/// Flag every OT type without a nature "to review" (`metadata_json.nature_review_required`), as
+/// migration 198 did for the types it carried over — also those received later by sync. Only the
+/// flag is added: no code, label, nature or work order is changed. Idempotent (integrity pass).
+pub async fn flag_types_without_nature(conn: &impl ConnectionTrait) -> AppResult<u64> {
+    let result = conn
+        .execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE reference_values AS t \
+                    SET metadata_json = json_set(CASE WHEN json_valid(t.metadata_json) THEN t.metadata_json \
+                                                      ELSE '{{}}' END, '$.nature_review_required', json('true')) \
+                  WHERE t.set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+                                      WHERE UPPER(TRIM(d.code)) = 'WORK.ORDER_TYPES') \
+                    AND {} \
+                    AND COALESCE(CASE WHEN json_valid(t.metadata_json) \
+                                      THEN json_extract(t.metadata_json, '$.nature_review_required') END, 0) <> 1",
+                without_nature_sql()
+            ),
+        ))
+        .await?;
+    Ok(result.rows_affected())
+}
+
 /// Every OT type (active and inactive), in the product order.
 pub async fn list_work_order_types(conn: &impl ConnectionTrait) -> AppResult<Vec<WorkOrderTypeOption>> {
     let rows = conn
