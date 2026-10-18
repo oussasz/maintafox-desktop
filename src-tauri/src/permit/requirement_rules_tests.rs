@@ -314,3 +314,46 @@ async fn a_rule_must_name_what_it_matches_and_an_existing_permit_type() {
         assert_eq!(code_of(&err), rules::CODE_RULE_INVALID, "{bad}");
     }
 }
+
+/// A work order flagged by a rule starts only under a permit of the rule's type: an active, ready
+/// permit of another type does not protect the hazard the rule is about.
+#[tokio::test]
+async fn a_rule_flag_needs_a_permit_of_the_rule_type_to_start() {
+    use crate::permit::tests::{advance_to_issued, create_from_wo, set_status};
+    let db = setup().await;
+    let actor = admin(&db).await;
+    add_rule(
+        &db,
+        "PUMPS_HOT_WORK",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "hot_work" }),
+    )
+    .await;
+
+    // Another type, active and ready: refused, naming the type the rule asks for.
+    let wrong = convert(&db, actor).await;
+    let wp = create_from_wo(&db, "cold_work", wrong.wo_id).await.expect("cold work permit");
+    set_status(&db, &advance_to_issued(&db, wp).await, "active")
+        .await
+        .expect("activate");
+    let err = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wrong.wo_id)
+        .await
+        .expect_err("a cold work permit does not cover a hot work rule");
+    assert_eq!(code_of(&err), "PERMIT_TYPE_REQUIRED_TO_START");
+    match &err {
+        AppError::OrgValidationFailed(issues) => assert_eq!(
+            issues[0].params.get("permit_type").map(String::as_str),
+            Some("hot_work")
+        ),
+        other => panic!("{other:?}"),
+    }
+
+    // The rule's type, active and ready: the work can start.
+    let right = convert(&db, actor).await;
+    let wp = create_from_wo(&db, "hot_work", right.wo_id).await.expect("hot work permit");
+    set_status(&db, &advance_to_issued(&db, wp).await, "active")
+        .await
+        .expect("activate");
+    crate::permit::wo_gate::assert_in_progress_permit_gate(&db, right.wo_id)
+        .await
+        .expect("a permit of the rule's type lets the work start");
+}

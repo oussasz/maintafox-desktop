@@ -389,6 +389,7 @@
     "QUALIFICATION_OVERRIDE_SELF": "You cannot override your own qualification gap: another authorised supervisor must do it.",
     "LABOR_PERSON_INACTIVE": "This person is no longer active: labour cannot be booked to them.",
     "PERMIT_REQUIRED_TO_START": "This work order requires a work permit: link an active permit before starting or resuming it.",
+    "PERMIT_TYPE_REQUIRED_TO_START": "A permit rule requires a {{permit_type_name}} permit for this work order: link an active permit of that type before starting or resuming it.",
     "PERMIT_SUSPENDED": "Permit {{permit}} is suspended: revalidate it before starting or resuming the work.",
     "PERMIT_NOT_ACTIVE": "Permit {{permit}} is not active yet ({{status}}): activate it before the work starts or resumes.",
     "PERMIT_EXPIRED": "Permit {{permit}} has expired: it can no longer be activated or used to start work.",
