@@ -176,6 +176,24 @@ mod tests {
             .messages
             .iter()
             .any(|m| m.category == "DuplicateInBatch"));
+
+        // Coded detail (row, code, first row) for the screen; the sentence stays as fallback.
+        let dup = preview.rows[1]
+            .messages
+            .iter()
+            .find(|m| m.code == "REF_IMPORT_DUPLICATE_IN_BATCH")
+            .expect("coded duplicate");
+        assert_eq!(dup.params["row"], preview.rows[1].row_no.to_string());
+        assert_eq!(dup.params["code"], "DUP_CODE");
+        assert_eq!(dup.params["firstRow"], preview.rows[0].row_no.to_string());
+        assert!(!dup.message.is_empty());
+
+        // A message stored before the codes existed still reads (no code, no params).
+        let old: imports::ImportRowMessage = serde_json::from_str(
+            r#"{"category":"MissingLabel","severity":"error","message":"Ligne 2: libelle manquant."}"#,
+        )
+        .expect("old message");
+        assert!(old.code.is_empty() && old.params.is_empty());
     }
 
     #[tokio::test]
