@@ -37,16 +37,101 @@ pub(crate) const DEFER_MISSING_FIELD: &str = "MISSING_FIELD";
 pub(crate) const DEFER_UNKNOWN_ENTITY_TYPE: &str = "UNKNOWN_ENTITY_TYPE";
 
 #[derive(Debug, Clone)]
-struct InboxRow {
-    id: i64,
+pub(crate) struct InboxRow {
+    pub(crate) id: i64,
     server_batch_id: String,
     checkpoint_token: String,
-    entity_type: String,
-    entity_sync_id: String,
+    pub(crate) entity_type: String,
+    pub(crate) entity_sync_id: String,
     operation: String,
     row_version: i64,
-    payload_json: String,
+    pub(crate) payload_json: String,
     payload_hash: String,
+}
+
+const INBOX_COLUMNS: &str = "id, server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                   row_version, payload_json, payload_hash";
+
+fn inbox_row_from(row: &sea_orm::QueryResult) -> AppResult<InboxRow> {
+    Ok(InboxRow {
+        id: row.try_get("", "id").map_err(|e| decode("id", e))?,
+        server_batch_id: row
+            .try_get("", "server_batch_id")
+            .map_err(|e| decode("server_batch_id", e))?,
+        checkpoint_token: row
+            .try_get("", "checkpoint_token")
+            .map_err(|e| decode("checkpoint_token", e))?,
+        entity_type: row.try_get("", "entity_type").map_err(|e| decode("entity_type", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode("entity_sync_id", e))?,
+        operation: row.try_get("", "operation").map_err(|e| decode("operation", e))?,
+        row_version: row.try_get("", "row_version").map_err(|e| decode("row_version", e))?,
+        payload_json: row.try_get("", "payload_json").map_err(|e| decode("payload_json", e))?,
+        payload_hash: row.try_get("", "payload_hash").map_err(|e| decode("payload_hash", e))?,
+    })
+}
+
+/// One inbox row by its id.
+pub(crate) async fn load_inbox_row(conn: &impl ConnectionTrait, id: i64) -> AppResult<Option<InboxRow>> {
+    conn.query_one(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        format!("SELECT {INBOX_COLUMNS} FROM sync_inbox WHERE id = ?"),
+        [id.into()],
+    ))
+    .await?
+    .as_ref()
+    .map(inbox_row_from)
+    .transpose()
+}
+
+/// Whether an inbox row would pass the checks that come before its apply: not this device's own
+/// change sent back, no unsent local change of the row, not older than (or diverging from) the
+/// version applied here, no code clash. The safety re-checks (`permit::sync_check`) count a
+/// waiting row only then.
+pub(crate) async fn inbox_row_admissible(conn: &impl ConnectionTrait, item: &InboxRow) -> AppResult<bool> {
+    let Some(def) = registry::entity(&item.entity_type) else {
+        return Ok(false);
+    };
+    if !def.has_materializer || concurrency_check(conn, def, item).await?.is_some() {
+        return Ok(false);
+    }
+    Ok(crate::sync::code_clash::check_inbound(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
+        &item.operation,
+        &item.payload_json,
+    )
+    .await?
+    .is_none())
+}
+
+/// Applies an inbox row inside the caller's transaction, through the same checks as the inbox pass
+/// (concurrency, code clash, apply), and records it as applied (inbox status, closed clashes, synced
+/// version) when it is. Used for the rows applied together with the row they belong to; the caller
+/// rolls everything back when one of them is not applied.
+pub(crate) async fn apply_inbox_row_in(tx: &impl ConnectionTrait, item: &InboxRow) -> AppResult<ApplyOutcome> {
+    let outcome = Box::pin(evaluate_and_apply(tx, item)).await?;
+    if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged) {
+        record_applied(tx, item).await?;
+    }
+    Ok(outcome)
+}
+
+async fn record_applied(tx: &impl ConnectionTrait, item: &InboxRow) -> AppResult<()> {
+    mark_inbox(tx, item.id, "applied", None, None).await?;
+    crate::sync::code_clash::close_outdated_clashes(tx, &item.entity_type, &item.entity_sync_id, item.row_version)
+        .await?;
+    record_synced_state(
+        tx,
+        &item.entity_type,
+        &item.entity_sync_id,
+        item.row_version,
+        &item.payload_hash,
+        "inbound_apply",
+    )
+    .await
 }
 
 fn decode(field: &str, e: impl std::fmt::Display) -> AppError {
@@ -208,8 +293,7 @@ async fn materialize_pass(
 ) -> AppResult<MaterializeInboxResult> {
     let lim = limit.clamp(1, 2000);
     let materializable = serde_json::to_string(&registry::materializable_entity_types())?;
-    let columns = "id, server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
-                   row_version, payload_json, payload_hash";
+    let columns = INBOX_COLUMNS;
     let statement = match selection {
         Selection::Ids { status, ids } => Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -242,23 +326,7 @@ async fn materialize_pass(
 
     let mut items = Vec::with_capacity(rows.len());
     for row in &rows {
-        items.push(InboxRow {
-            id: row.try_get("", "id").map_err(|e| decode("id", e))?,
-            server_batch_id: row
-                .try_get("", "server_batch_id")
-                .map_err(|e| decode("server_batch_id", e))?,
-            checkpoint_token: row
-                .try_get("", "checkpoint_token")
-                .map_err(|e| decode("checkpoint_token", e))?,
-            entity_type: row.try_get("", "entity_type").map_err(|e| decode("entity_type", e))?,
-            entity_sync_id: row
-                .try_get("", "entity_sync_id")
-                .map_err(|e| decode("entity_sync_id", e))?,
-            operation: row.try_get("", "operation").map_err(|e| decode("operation", e))?,
-            row_version: row.try_get("", "row_version").map_err(|e| decode("row_version", e))?,
-            payload_json: row.try_get("", "payload_json").map_err(|e| decode("payload_json", e))?,
-            payload_hash: row.try_get("", "payload_hash").map_err(|e| decode("payload_hash", e))?,
-        });
+        items.push(inbox_row_from(row)?);
     }
     // Creates and updates go parents first; deletes go after them, children first, so a parent
     // is never removed while a row received in the same run still points to it.
@@ -365,29 +433,29 @@ fn is_delete_operation(operation: &str) -> bool {
 
 /// Apply one inbox row in its own transaction and record the outcome.
 async fn apply_inbox_row<C: ConnectionTrait + TransactionTrait>(db: &C, item: &InboxRow) -> AppResult<ApplyOutcome> {
+    // Applied meanwhile with the row it belongs to (`permit::sync_check::apply_group`): nothing more.
+    let status = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT apply_status FROM sync_inbox WHERE id = ?",
+            [item.id.into()],
+        ))
+        .await?
+        .map(|r| {
+            r.try_get::<String>("", "apply_status")
+                .map_err(|e| decode("apply_status", e))
+        })
+        .transpose()?;
+    if status.as_deref() == Some("applied") {
+        return Ok(ApplyOutcome::Unchanged);
+    }
     let tx = db.begin().await?;
     // Local changes captured since the last drain must be in the outbox before the conflict check.
     crate::sync::capture::drain_capture_journal(&tx).await?;
     let evaluated = evaluate_and_apply(&tx, item).await;
     let outcome = match evaluated {
         Ok(outcome @ (ApplyOutcome::Applied | ApplyOutcome::Unchanged)) => {
-            mark_inbox(&tx, item.id, "applied", None, None).await?;
-            crate::sync::code_clash::close_outdated_clashes(
-                &tx,
-                &item.entity_type,
-                &item.entity_sync_id,
-                item.row_version,
-            )
-            .await?;
-            record_synced_state(
-                &tx,
-                &item.entity_type,
-                &item.entity_sync_id,
-                item.row_version,
-                &item.payload_hash,
-                "inbound_apply",
-            )
-            .await?;
+            record_applied(&tx, item).await?;
             tx.commit().await?;
             return Ok(outcome);
         }

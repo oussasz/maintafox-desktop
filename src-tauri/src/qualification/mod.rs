@@ -6,6 +6,7 @@ pub mod matrix;
 pub mod queries;
 pub mod readiness;
 pub mod requirements;
+pub(crate) mod sync_check;
 pub mod training;
 
 #[cfg(test)]
