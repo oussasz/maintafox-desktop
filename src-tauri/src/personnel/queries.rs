@@ -6,14 +6,13 @@ use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
 use super::domain::{
-    AuthorizationType, AvailabilityStatus, CompanyListFilter, EmploymentOrigin, EmploymentStatus, EmploymentType,
-    ExternalCompany, ExternalCompanyContact, Personnel, PersonnelAuthorization, PersonnelAvailabilityBlock,
-    PersonnelCertDraft, PersonnelCreateInput, PersonnelDetailPayload, PersonnelListFilter, PersonnelListPage,
-    PersonnelRateCard, PersonnelSkillDraft, PersonnelSkillReferenceValue, PersonnelTeamAssignment,
-    PersonnelUpdateInput, PersonnelWorkHistoryEntry, PersonnelWorkloadSummary, Position, PositionCategory,
-    PositionChangeEvent, PositionDetailPayload, PositionListFilter, PositionRequirementProfileInput,
-    PositionRequirementSeed, PositionUpsertInput, ScheduleClass, ScheduleClassWithDetails, ScheduleDetail,
-    SuccessionRiskRow,
+    AuthorizationType, AvailabilityStatus, CompanyListFilter, EmploymentOrigin, ExternalCompany,
+    ExternalCompanyContact, Personnel, PersonnelAuthorization, PersonnelAvailabilityBlock, PersonnelCertDraft,
+    PersonnelCreateInput, PersonnelDetailPayload, PersonnelListFilter, PersonnelListPage, PersonnelRateCard,
+    PersonnelSkillDraft, PersonnelSkillReferenceValue, PersonnelTeamAssignment, PersonnelUpdateInput,
+    PersonnelWorkHistoryEntry, PersonnelWorkloadSummary, Position, PositionChangeEvent, PositionDetailPayload,
+    PositionListFilter, PositionRequirementProfileInput, PositionRequirementSeed, PositionUpsertInput, ScheduleClass,
+    ScheduleClassWithDetails, ScheduleDetail, SuccessionRiskRow,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -559,11 +558,13 @@ pub async fn create_personnel(
     input: PersonnelCreateInput,
     actor_id: i64,
 ) -> AppResult<Personnel> {
-    EmploymentType::try_from(input.employment_type.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    // Employment type and status: values of their reference lists (`personnel::reference_lists`).
+    let employment_type = super::reference_lists::checked_employment_type(db, &input.employment_type).await?;
     EmploymentOrigin::try_from(input.employment_origin.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let emp_status = input.employment_status.as_deref().unwrap_or("active");
-    EmploymentStatus::try_from(emp_status).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    let emp_status =
+        super::reference_lists::checked_employment_status(db, input.employment_status.as_deref().unwrap_or("active"))
+            .await?;
 
     if input.employment_origin == "external" && input.external_company_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
@@ -643,9 +644,9 @@ pub async fn create_personnel(
             entity_sync_id.into(),
             code.clone().into(),
             input.full_name.clone().into(),
-            input.employment_type.clone().into(),
+            employment_type.into(),
             input.employment_origin.clone().into(),
-            emp_status.to_string().into(),
+            emp_status.clone().into(),
             (if blocked_override { 1_i64 } else { 0_i64 }).into(),
             input.position_id.into(),
             input.primary_entity_id.into(),
@@ -754,15 +755,17 @@ pub async fn update_personnel(
     }
 
     // Validate enums
-    if let Some(ref t) = input.employment_type {
-        EmploymentType::try_from(t.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    }
+    let employment_type = match input.employment_type.as_deref() {
+        Some(t) => Some(super::reference_lists::checked_employment_type(db, t).await?),
+        None => None,
+    };
     if let Some(ref o) = input.employment_origin {
         EmploymentOrigin::try_from(o.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     }
-    if let Some(ref s) = input.employment_status {
-        EmploymentStatus::try_from(s.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    }
+    let employment_status = match input.employment_status.as_deref() {
+        Some(s) => Some(super::reference_lists::checked_employment_status(db, s).await?),
+        None => None,
+    };
     if let Some(ref s) = input.availability_status {
         AvailabilityStatus::try_from(s.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     }
@@ -822,7 +825,7 @@ pub async fn update_personnel(
         sets.push("full_name = ?".into());
         values.push(n.clone().into());
     }
-    if let Some(ref e) = input.employment_type {
+    if let Some(ref e) = employment_type {
         sets.push("employment_type = ?".into());
         values.push(e.clone().into());
     }
@@ -830,7 +833,7 @@ pub async fn update_personnel(
         sets.push("employment_origin = ?".into());
         values.push(o.clone().into());
     }
-    if let Some(ref s) = input.employment_status {
+    if let Some(ref s) = employment_status {
         sets.push("employment_status = ?".into());
         values.push(s.clone().into());
     }
@@ -1163,7 +1166,7 @@ pub async fn upsert_position(
     input: PositionUpsertInput,
     actor_id: Option<i64>,
 ) -> AppResult<Position> {
-    PositionCategory::try_from(input.category.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    let category = super::reference_lists::checked_position_category(db, &input.category).await?;
 
     if input.code.trim().is_empty() || input.name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -1211,7 +1214,7 @@ pub async fn upsert_position(
             [
                 input.code.clone().into(),
                 input.name.clone().into(),
-                input.category.clone().into(),
+                category.clone().into(),
                 (if input.is_active.unwrap_or(true) { 1_i64 } else { 0_i64 }).into(),
                 now.clone().into(),
                 id.into(),
@@ -1242,7 +1245,7 @@ pub async fn upsert_position(
             [
                 input.code.clone().into(),
                 input.name.clone().into(),
-                input.category.clone().into(),
+                category.clone().into(),
                 now.clone().into(),
                 now.clone().into(),
             ],

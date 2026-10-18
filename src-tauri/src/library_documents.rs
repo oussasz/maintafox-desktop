@@ -12,13 +12,111 @@ use uuid::Uuid;
 
 const MAX_FILE_SIZE_BYTES: usize = 25 * 1024 * 1024;
 
-/// Valid `library_documents.category` values.
-pub const LIBRARY_CATEGORIES: &[&str] = &[
-    "technical_manuals",
-    "sops",
-    "safety_protocols",
-    "compliance_certificates",
+/// Document categories: the plant's COMPANY reference list (migration 228). It is seeded with the
+/// four codes the library used to fix in a CHECK constraint, so stored documents keep their
+/// category; every write checks the code against the active values of the list.
+pub const DOCUMENT_CATEGORIES_DOMAIN: &str = "DOCUMENT.CATEGORIES";
+
+/// Stable code of the refusal (translated in `training:errors`).
+pub const CODE_CATEGORY_NOT_IN_LIST: &str = "DOCUMENT_CATEGORY_NOT_IN_LIST";
+
+/// Seeded categories: (code, label FR, label EN).
+pub const LIBRARY_CATEGORIES: &[(&str, &str, &str)] = &[
+    ("technical_manuals", "Manuels techniques", "Technical manuals"),
+    ("sops", "Modes opératoires", "Standard operating procedures"),
+    ("safety_protocols", "Protocoles de sécurité", "Safety protocols"),
+    (
+        "compliance_certificates",
+        "Certificats de conformité",
+        "Compliance certificates",
+    ),
 ];
+
+/// The list with its seeded values. Idempotent (integrity pass and migration 228).
+pub async fn ensure_document_categories(db: &impl ConnectionTrait) -> AppResult<()> {
+    use crate::reference::system_catalog_integrity::{ensure_domain, ensure_published_set};
+    ensure_domain(
+        db,
+        DOCUMENT_CATEGORIES_DOMAIN,
+        "Catégories de documents",
+        "flat",
+        "tenant_managed",
+        1,
+        crate::reference::audience::DomainAudience::Company,
+    )
+    .await?;
+    ensure_published_set(db, DOCUMENT_CATEGORIES_DOMAIN).await?;
+    for (i, (code, label_fr, label_en)) in LIBRARY_CATEGORIES.iter().enumerate() {
+        let sync_id = crate::sync::identity::seeded_entity_sync_id(
+            "reference_values",
+            &format!("{DOCUMENT_CATEGORIES_DOMAIN}:{code}"),
+        );
+        let meta = serde_json::json!({ "origin": "system", "label_en": label_en });
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, parent_id, code, label, \
+                description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, \
+                metadata_json) \
+             SELECT ?, rs.id, NULL, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, 1, ? \
+               FROM reference_domains d \
+               JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published' \
+              WHERE UPPER(TRIM(d.code)) = ? \
+                AND NOT EXISTS (SELECT 1 FROM reference_values rv WHERE rv.entity_sync_id = ?) \
+              ORDER BY rs.version_no DESC LIMIT 1",
+            [
+                sync_id.clone().into(),
+                (*code).into(),
+                (*label_fr).into(),
+                (i64::try_from(i).unwrap_or(0) + 1).into(),
+                meta.to_string().into(),
+                DOCUMENT_CATEGORIES_DOMAIN.into(),
+                sync_id.into(),
+            ],
+        ))
+        .await?;
+    }
+    Ok(())
+}
+
+/// One category of the library (active value of the latest published set).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DocumentCategoryOption {
+    pub code: String,
+    pub label: String,
+    pub label_en: Option<String>,
+}
+
+/// The active document categories, in the list order.
+pub async fn list_document_categories(db: &impl ConnectionTrait) -> AppResult<Vec<DocumentCategoryOption>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.code, rv.label, rv.metadata_json FROM reference_values rv \
+              WHERE rv.is_active = 1 AND rv.set_id = ( \
+                    SELECT rs.id FROM reference_sets rs \
+                      JOIN reference_domains d ON d.id = rs.domain_id \
+                     WHERE UPPER(TRIM(d.code)) = ? AND rs.status = 'published' \
+                     ORDER BY rs.version_no DESC LIMIT 1) \
+              ORDER BY rv.sort_order, rv.label",
+            [DOCUMENT_CATEGORIES_DOMAIN.into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            let meta: Option<String> = r.try_get("", "metadata_json")?;
+            let label_en = meta
+                .as_deref()
+                .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+                .and_then(|v| v.get("label_en").and_then(|l| l.as_str()).map(str::to_string));
+            Ok(DocumentCategoryOption {
+                code: r.try_get("", "code")?,
+                label: r.try_get("", "label")?,
+                label_en,
+            })
+        })
+        .collect::<Result<Vec<_>, sea_orm::DbErr>>()
+        .map_err(AppError::from)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,14 +182,28 @@ fn map_row(row: &QueryResult) -> AppResult<LibraryDocumentRow> {
     })
 }
 
-fn validate_category(cat: &str) -> AppResult<()> {
-    if LIBRARY_CATEGORIES.contains(&cat) {
-        Ok(())
-    } else {
-        Err(AppError::ValidationFailed(vec![format!(
-            "Invalid document category: {cat}"
-        )]))
-    }
+/// A document category: an active value of `DOCUMENT.CATEGORIES` (its list code). Replaces the
+/// former CHECK constraint, so a document never carries a category outside the list.
+pub async fn checked_category(db: &impl ConnectionTrait, cat: &str) -> AppResult<String> {
+    let wanted = cat.trim();
+    list_document_categories(db)
+        .await?
+        .into_iter()
+        .find(|c| c.code.eq_ignore_ascii_case(wanted))
+        .map(|c| c.code)
+        .ok_or_else(|| {
+            crate::errors::org_validation_failed(
+                CODE_CATEGORY_NOT_IN_LIST,
+                format!("Document category '{wanted}' is not an active value of {DOCUMENT_CATEGORIES_DOMAIN}."),
+                std::collections::HashMap::from([("code".to_string(), wanted.to_string())]),
+            )
+        })
+}
+
+/// Storage folder of a category: its code with dots replaced, so a code can never name a parent
+/// directory.
+fn category_folder(code: &str) -> String {
+    code.replace('.', "_")
 }
 
 /// List library documents with optional filters.
@@ -111,7 +223,7 @@ pub async fn list_library_documents(
     let mut params: Vec<sea_orm::Value> = Vec::new();
 
     if let Some(ref c) = category {
-        validate_category(c)?;
+        // A filter may name a retired category (its documents stay listed); bound, never spliced.
         sql.push_str(" AND ld.category = ?");
         params.push(c.clone().into());
     }
@@ -144,7 +256,7 @@ pub async fn save_library_document(
     app_data_dir: &Path,
     input: LibraryDocumentUploadInput,
 ) -> AppResult<LibraryDocumentRow> {
-    validate_category(&input.category)?;
+    let category = checked_category(db, &input.category).await?;
     if input.file_bytes.is_empty() {
         return Err(AppError::ValidationFailed(vec!["The file is empty.".into()]));
     }
@@ -188,7 +300,12 @@ pub async fn save_library_document(
     }
 
     let uuid = Uuid::new_v4();
-    let relative_path = format!("library_documents/{}/{}-{}", input.category, uuid, sanitized_name);
+    let relative_path = format!(
+        "library_documents/{}/{}-{}",
+        category_folder(&category),
+        uuid,
+        sanitized_name
+    );
 
     let absolute_path: PathBuf = app_data_dir.join(&relative_path);
     if let Some(parent) = absolute_path.parent() {
@@ -214,7 +331,7 @@ pub async fn save_library_document(
              uploaded_by_id, uploaded_at, notes, entity_sync_id) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            input.category.into(),
+            category.clone().into(),
             input
                 .equipment_id
                 .map(sea_orm::Value::from)

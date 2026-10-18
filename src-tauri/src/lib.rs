@@ -246,6 +246,7 @@ pub fn run() {
             commands::settings::list_site_setting_events,
             // ── Document library (PRD §6.15) ──
             commands::library_documents::list_library_documents,
+            commands::library_documents::list_document_categories,
             commands::library_documents::upload_library_document,
             commands::library_documents::get_library_document_file,
             commands::library_documents::delete_library_document,
@@ -436,6 +437,7 @@ pub fn run() {
             commands::personnel::list_personnel_availability_blocks,
             commands::personnel::list_personnel_work_history,
             commands::personnel::get_personnel_workload_summary,
+            commands::personnel::list_personnel_reference_options,
             commands::personnel::scan_succession_risk,
             commands::personnel::declare_own_skill,
             commands::personnel::list_personnel_skill_reference_values,

@@ -1498,3 +1498,25 @@ mod skills_self_access_tests {
         );
     }
 }
+
+/// The personnel lists of Données de référence (employment statuses and types, absence types with
+/// their behaviour tag, position categories). Holders of per.view, or anyone whose account is
+/// linked to a personnel record (the self-service screens read the same lists).
+#[tauri::command]
+pub async fn list_personnel_reference_options(
+    state: State<'_, AppState>,
+) -> AppResult<crate::personnel::reference_lists::PersonnelReferenceOptions> {
+    let user = require_session!(state);
+    let has_global = crate::auth::rbac::check_permission_cached(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::PER_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    if !has_global && linked_personnel_id_in(&state.db, user.user_id).await?.is_none() {
+        return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
+    }
+    crate::personnel::reference_lists::list_personnel_reference_options(&state.db).await
+}
