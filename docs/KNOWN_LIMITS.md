@@ -120,6 +120,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 
 | Limit | Impact | Handled in |
 |---|---|---|
+| A new person's origin (internal / external) starts as "internal"; the person can change it before saving. Owner decision 2026-10-18: "Keep 'internal'". Every list value from Données de référence (employment type and status, position category, absence type, document category) starts empty and must be chosen. | UX | Accepted (owner decision) |
 | Teams without a Classe horaire have 0 h capacity (never an assumed day); migrated teams carry a "Standard 8 h (migrated)" class flagged to review. | Data | Release (review) |
 | A Classe horaire version can be edited in place only before it is in force; planned work orders keep their shift-window snapshot and show "Timetable changed since planning". | Data | Accepted |
 | A member whose shift window is unknown counts in full on the days a slot touches. | Data | Accepted |
