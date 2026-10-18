@@ -54,6 +54,8 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { clearableChanges } from "./personnel-update";
+
 const EMPLOYMENT_TYPES = ["employee", "contractor", "temp", "vendor"] as const;
 const EMPLOYMENT_ORIGINS = ["internal", "external"] as const;
 const EMPLOYMENT_STATUSES = ["active", "inactive", "suspended", "terminated"] as const;
@@ -480,15 +482,19 @@ export function PersonnelCreateDialog() {
           primary_entity_id: entityId,
           primary_team_id: teamId,
           home_schedule_reference_value_id: Number(homeScheduleRefId),
-          supervisor_id: supervisorId ?? null,
-          hire_date: hireDate || null,
-          email: email.trim() || null,
-          phone: phone.trim() || null,
-          external_company_id: isExternal ? (externalCompanyId ?? null) : null,
-          contract_number: isExternal && contractNumber.trim() ? contractNumber.trim() : null,
-          contract_start_date: isExternal && contractStart ? contractStart : null,
-          contract_end_date: isExternal && contractEnd ? contractEnd : null,
-          notes: notes.trim() || null,
+          // Optional fields: sent only when changed — an emptied field is sent as null (cleared),
+          // an untouched one is left out (unchanged).
+          ...clearableChanges(editingPersonnel, {
+            supervisor_id: supervisorId ?? null,
+            hire_date: hireDate || null,
+            email: email.trim() || null,
+            phone: phone.trim() || null,
+            external_company_id: isExternal ? (externalCompanyId ?? null) : null,
+            contract_number: isExternal && contractNumber.trim() ? contractNumber.trim() : null,
+            contract_start_date: isExternal && contractStart ? contractStart : null,
+            contract_end_date: isExternal && contractEnd ? contractEnd : null,
+            notes: notes.trim() || null,
+          }),
         };
         await updateExisting(update);
         try {
