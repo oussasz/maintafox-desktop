@@ -9,7 +9,11 @@
 //!   least one isolation; every isolation verified by a second person and no lock removed before that
 //!   moment;
 //! - a permit `closed` or `handed_back` has every lock removal verified; `handed_back` has a handover
-//!   log; `suspended` / `revalidation_required` has an open suspension;
+//!   log that keeps the hand-over rule; `suspended` / `revalidation_required` has an open suspension;
+//! - a handover log (`handover_rule_breach`): the person receiving the permit is not the person who
+//!   signed the hand-over. A log without a signer or receiver passes (devices before signers were
+//!   recorded send none); a log naming a person not applied here yet waits for that person (the
+//!   generic apply);
 //! - a permit never leaves `closed`, `handed_back`, `cancelled` or `expired` except along the lifecycle
 //!   (`closed` → `handed_back`, `handed_back` → `cancelled`);
 //! - an isolation (`isolation_rule_breach`): verified after it was applied and by someone other than
@@ -175,6 +179,44 @@ pub(crate) fn isolation_rule_breach(iso: &Payload) -> Option<(&'static str, Stri
     None
 }
 
+/// The hand-over rule a state of a handover log breaks, if any (`permit::queries`: append a
+/// handover log): the person receiving the permit is not the person who signed the hand-over. A log
+/// without a signer or a receiver keeps the rule (nobody is invented for older logs).
+pub(crate) fn handover_rule_breach(log: &Payload) -> Option<(&'static str, String)> {
+    let signer = field(log, "signed_by_sync_id")?;
+    if field(log, "received_by_sync_id") != Some(signer) {
+        return None;
+    }
+    let roles = format!(
+        "{} -> {}",
+        field(log, "handed_from_role").unwrap_or("?"),
+        field(log, "handed_to_role").unwrap_or("?")
+    );
+    Some((
+        "PERMIT_HANDOVER_RECEIVER_IS_SIGNER",
+        format!("hand-over '{roles}' is received by the person who signed it"),
+    ))
+}
+
+/// Re-check of a handover log received by synchronisation: refused when its receiver is its
+/// signer. A log already held here is never rewritten (append-only), so it is not judged again.
+pub(crate) async fn inbound_handover_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<Option<InboundVerdict>> {
+    if local_wire(conn, "permit_handover_logs", entity_sync_id)
+        .await?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    match handover_rule_breach(received) {
+        Some((c, m)) => conflict(c, m),
+        None => Ok(None),
+    }
+}
+
 /// A waiting inbox row applied together with the row it belongs to.
 #[derive(Debug, Clone)]
 pub(crate) struct GroupRow {
@@ -203,8 +245,9 @@ struct Children {
 /// only for a missing parent (it arrived before its parent); when it passes the checks before an apply
 /// (`sync::materialize::inbox_row_admissible`: not stale, no unsent local change, no code clash);
 /// when everything it refers to other than this parent is applied here (otherwise: `blocked`); and,
-/// for an isolation, when it keeps the isolation rules (otherwise it is left to be refused on its
-/// own). A row moved to another parent by its waiting version no longer counts.
+/// for an isolation or a handover log, when it keeps the isolation or hand-over rules (otherwise it
+/// is left to be refused on its own). A row moved to another parent by its waiting version no longer
+/// counts.
 async fn children(
     conn: &impl ConnectionTrait,
     table: &'static str,
@@ -277,6 +320,9 @@ async fn children(
         }
         let merged = overlay(rows.get(&sid), &received);
         if table == "permit_isolations" && isolation_rule_breach(&merged).is_some() {
+            continue;
+        }
+        if table == "permit_handover_logs" && handover_rule_breach(&merged).is_some() {
             continue;
         }
         rows.insert(sid.clone(), merged);
@@ -484,10 +530,11 @@ pub(crate) async fn inbound_permit_check(
                     format!("permit {code} is {to} with {pending} lock removal(s) not verified"),
                 );
             }
-            if to == "handed_back" && handovers.rows.is_empty() {
+            // A log received by the person who signed it does not count.
+            if to == "handed_back" && payloads(&handovers).iter().all(|h| handover_rule_breach(h).is_some()) {
                 return conflict(
                     "PERMIT_HANDOVER_REQUIRED",
-                    format!("permit {code} is handed back without a handover log"),
+                    format!("permit {code} is handed back without a valid handover log"),
                 );
             }
         }

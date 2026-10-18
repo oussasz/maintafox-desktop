@@ -1,5 +1,6 @@
 pub mod domain;
 pub mod energy_reference;
+pub mod handover_roles;
 pub mod queries;
 pub mod requirement_rules;
 pub(crate) mod sync_check;

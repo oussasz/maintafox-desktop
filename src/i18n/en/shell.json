@@ -77,7 +77,7 @@
       "LOTO_NOT_VERIFIED": "A permit activated with isolations not verified by a second person",
       "LOTO_ISOLATION_REMOVED": "A permit activated with a lock already removed",
       "PERMIT_REMOVAL_PENDING": "A permit closed with locks still in place",
-      "PERMIT_HANDOVER_REQUIRED": "A permit handed back without a handover log",
+      "PERMIT_HANDOVER_REQUIRED": "A permit handed back without a valid handover log",
       "PERMIT_SUSPENSION_MISSING": "A permit suspended without a recorded suspension",
       "PERMIT_ISOLATION_NOT_APPLIED": "An isolation verified before it was applied",
       "PERMIT_TWO_PERSON_VERIFY": "An isolation verified by the person who applied it (two-person rule)",
@@ -101,6 +101,7 @@
       "WO_PERMIT_RULE_CLEAR_UNAUTHORISED": "A permit required by a plant rule was cleared by someone without the permit-issue right",
       "PERMIT_TYPE_REQUIRED_TO_START": "A work order started without a permit of the type a plant rule requires",
       "WO_PERMIT_RULE_CHANGED": "The plant rule that requires a work order's permit was removed or changed elsewhere",
+      "PERMIT_HANDOVER_RECEIVER_IS_SIGNER": "A permit hand-over received by the person who signed it",
       "other": "Needs review"
     },
     "history": {

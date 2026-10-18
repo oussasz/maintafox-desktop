@@ -29,6 +29,8 @@
 //!   yet makes the row wait (`permit::sync_check`);
 //!   A work order whose permit flag set by a plant rule is cleared names who cleared it (holding the
 //!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`);
+//! - `permit_handover_logs`: a hand-over received by the person who signed it is refused as a
+//!   conflict (`permit::sync_check::inbound_handover_check`); one without a signer is accepted;
 //! - `qualification_overrides`: reason, subject, context, no self-override and the approver's
 //!   certification right (`qualification::sync_check`);
 //! - `media_attachments`: the file is queued for download from object storage
@@ -96,6 +98,9 @@ pub(crate) async fn before_upsert_checked(
         "work_permits" => Some(crate::permit::sync_check::inbound_permit_check(conn, entity_sync_id, payload).await?),
         "permit_isolations" => {
             Some(crate::permit::sync_check::inbound_isolation_check(conn, entity_sync_id, payload).await?)
+        }
+        "permit_handover_logs" => {
+            Some(crate::permit::sync_check::inbound_handover_check(conn, entity_sync_id, payload).await?)
         }
         "work_orders" => Some(
             match crate::permit::sync_check::inbound_permit_rule_check(conn, entity_sync_id, payload).await? {

@@ -251,6 +251,8 @@ async fn full_lifecycle_to_handed_back_stamps_timestamps() {
     assert!(wp.closed_at.is_some());
 
     assert_validation(set_status(&db, &wp, "handed_back").await, "handover");
+    add_handover_role(&db, "Maintenance").await;
+    add_handover_role(&db, "Operations").await;
     queries::append_permit_handover_log(
         &db,
         PermitHandoverLogInput {
@@ -258,12 +260,219 @@ async fn full_lifecycle_to_handed_back_stamps_timestamps() {
             handed_from_role: "Maintenance".into(),
             handed_to_role: "Operations".into(),
             confirmation_note: "Area clean".into(),
+            received_by_id: None,
         },
+        APPLIER,
     )
     .await
     .expect("handover log");
     let wp = set_status(&db, &wp, "handed_back").await.expect("hand back");
     assert!(wp.handed_back_at.is_some());
+}
+
+/// A role of the plant's hand-over list (`PERMIT.HANDOVER_ROLES`), as Données de référence adds it.
+pub(super) async fn add_handover_role(db: &DatabaseConnection, code: &str) {
+    crate::permit::handover_roles::ensure_handover_roles(db)
+        .await
+        .expect("list");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active) \
+         SELECT rs.id, ?, ?, 1, 1 FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'PERMIT.HANDOVER_ROLES' AND rs.status = 'published' \
+            AND NOT EXISTS (SELECT 1 FROM reference_values v WHERE v.set_id = rs.id AND v.code = ?) \
+          ORDER BY rs.version_no DESC LIMIT 1",
+        [code.into(), code.into(), code.into()],
+    ))
+    .await
+    .expect("role");
+}
+
+fn refusal_code(err: AppError) -> String {
+    match err {
+        AppError::OrgValidationFailed(issues) => issues.first().map(|i| i.code.clone()).unwrap_or_default(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// A hand-over is signed by the session user (never from the screen), names roles of the plant's
+/// list and a note of 10 characters or more; the receiving person, when named, is another active
+/// account.
+#[tokio::test]
+async fn a_handover_is_signed_from_the_session_with_listed_roles_and_a_note() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-HO").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let wp = set_status(&db, &wp, "closed").await.expect("close");
+    let input = |from: &str, to: &str, note: &str, receiver: Option<i64>| PermitHandoverLogInput {
+        permit_id: wp.id,
+        handed_from_role: from.into(),
+        handed_to_role: to.into(),
+        confirmation_note: note.into(),
+        received_by_id: receiver,
+    };
+
+    // The list ships empty: no role is accepted until the plant adds its own.
+    let err = queries::append_permit_handover_log(
+        &db,
+        input("Maintenance", "Operations", "Zone left clean", None),
+        APPLIER,
+    )
+    .await
+    .expect_err("empty list");
+    assert_eq!(refusal_code(err), crate::permit::handover_roles::CODE_ROLE_NOT_IN_LIST);
+
+    add_handover_role(&db, "Maintenance").await;
+    add_handover_role(&db, "Operations").await;
+    let err = queries::append_permit_handover_log(&db, input("Maintenance", "Operations", "ok", None), APPLIER)
+        .await
+        .expect_err("short note");
+    assert_eq!(refusal_code(err), "PERMIT_HANDOVER_NOTE_TOO_SHORT");
+    let err = queries::append_permit_handover_log(
+        &db,
+        input("Maintenance", "Operations", "Zone left clean", Some(APPLIER)),
+        APPLIER,
+    )
+    .await
+    .expect_err("receiver is signer");
+    assert_eq!(refusal_code(err), "PERMIT_HANDOVER_RECEIVER_IS_SIGNER");
+    let err = queries::append_permit_handover_log(
+        &db,
+        input("Maintenance", "Operations", "Zone left clean", Some(999_999)),
+        APPLIER,
+    )
+    .await
+    .expect_err("unknown receiver");
+    assert_eq!(refusal_code(err), "PERMIT_HANDOVER_RECEIVER_UNKNOWN");
+
+    let log = queries::append_permit_handover_log(
+        &db,
+        input("maintenance", "Operations", "  Zone left clean  ", Some(VERIFIER)),
+        APPLIER,
+    )
+    .await
+    .expect("handover");
+    assert_eq!(log.handed_from_role, "Maintenance", "stored as the list code");
+    assert_eq!(log.confirmation_note, "Zone left clean");
+    assert_eq!(log.signed_by_id, Some(APPLIER));
+    assert!(log.signed_by_name.is_some());
+    assert_eq!(log.received_by_id, Some(VERIFIER));
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (listed[0].id, listed[0].signed_by_id, listed[0].received_by_id),
+        (log.id, Some(APPLIER), Some(VERIFIER))
+    );
+}
+
+/// The receiving person must be an active, non-deleted account; a signer or receiver whose display
+/// name is empty or blank is shown on the stored hand-over under the login name, as in the receiver
+/// list (never as nobody).
+#[tokio::test]
+async fn a_handover_refuses_inactive_receivers_and_never_shows_a_blank_name() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-HO3").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let wp = set_status(&db, &wp, "closed").await.expect("close");
+    add_handover_role(&db, "Maintenance").await;
+    add_handover_role(&db, "Operations").await;
+    for (sync, user, name, active, deleted) in [
+        ("ho3-inactive", "op.inactive", "Inactive Operator", 0, false),
+        ("ho3-deleted", "op.deleted", "Deleted Operator", 1, true),
+        ("ho3-empty", "op.empty", "", 1, false),
+        ("ho3-blank", "op.blank", "   ", 1, false),
+    ] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+             force_password_change, created_at, updated_at, deleted_at) VALUES (?, ?, ?, 'local', ?, 0, 0, \
+             datetime('now'), datetime('now'), CASE WHEN ? THEN datetime('now') END)",
+            [
+                sync.into(),
+                user.into(),
+                name.into(),
+                i64::from(active).into(),
+                i64::from(deleted).into(),
+            ],
+        ))
+        .await
+        .expect("user");
+    }
+    let id_of = |user: &'static str| {
+        let db = &db;
+        async move { scalar_i64(db, &format!("SELECT id FROM user_accounts WHERE username = '{user}'")).await }
+    };
+    let input = |receiver: i64| PermitHandoverLogInput {
+        permit_id: wp.id,
+        handed_from_role: "Maintenance".into(),
+        handed_to_role: "Operations".into(),
+        confirmation_note: "Zone left clean".into(),
+        received_by_id: Some(receiver),
+    };
+
+    for user in ["op.inactive", "op.deleted"] {
+        let err = queries::append_permit_handover_log(&db, input(id_of(user).await), APPLIER)
+            .await
+            .expect_err("receiver not active");
+        assert_eq!(refusal_code(err), "PERMIT_HANDOVER_RECEIVER_UNKNOWN", "{user}");
+    }
+
+    // Signed by an account with an empty display name, received by one with a blank one.
+    let log = queries::append_permit_handover_log(&db, input(id_of("op.blank").await), id_of("op.empty").await)
+        .await
+        .expect("handover");
+    assert_eq!(log.signed_by_name.as_deref(), Some("op.empty"));
+    assert_eq!(log.received_by_name.as_deref(), Some("op.blank"));
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    assert_eq!(
+        (
+            listed[0].signed_by_name.as_deref(),
+            listed[0].received_by_name.as_deref()
+        ),
+        (Some("op.empty"), Some("op.blank"))
+    );
+    // The receiver list shows the same name for the same person.
+    let page = queries::list_handover_receivers(&db, APPLIER, Some("op.blank".into()), None, None)
+        .await
+        .expect("receivers");
+    assert_eq!(
+        page.items.iter().map(|r| r.display_name.as_str()).collect::<Vec<_>>(),
+        ["op.blank"]
+    );
+}
+
+/// Free texts stored before the list existed are adopted with their exact text, flagged
+/// "à revoir"; the stored hand-over and its (unknown) signer are left as they were.
+#[tokio::test]
+async fn stored_handover_roles_are_adopted_and_flagged_without_rewrite() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-HO2").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+         confirmation_note, signed_at, row_version) VALUES ('ho-old', ?, 'Équipe nuit', 'Exploitation', '', \
+         '2026-01-01T00:00:00Z', 1)",
+        [wp.id.into()],
+    ))
+    .await
+    .expect("old log");
+    crate::permit::handover_roles::adopt_stored_roles(&db)
+        .await
+        .expect("adopt");
+    crate::permit::handover_roles::adopt_stored_roles(&db)
+        .await
+        .expect("again");
+    let roles = crate::permit::handover_roles::list_handover_roles(&db)
+        .await
+        .expect("roles");
+    let codes: Vec<_> = roles.iter().map(|r| (r.code.as_str(), r.review_required)).collect();
+    assert_eq!(codes, [("Exploitation", true), ("Équipe nuit", true)]);
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    assert_eq!(listed[0].handed_from_role, "Équipe nuit");
+    assert_eq!(listed[0].signed_by_id, None, "no signer invented");
 }
 
 #[tokio::test]
@@ -1210,4 +1419,64 @@ async fn editing_a_permit_cannot_link_a_second_open_permit_to_a_work_order() {
     // Lifecycle refusals carry their code.
     assert_validation(set_status(&db, &other, "draft").await, "PERMIT_STATUS_UNCHANGED");
     assert_validation(set_status(&db, &other, "active").await, "PERMIT_TRANSITION_NOT_ALLOWED");
+}
+
+/// Hand-over receivers: refused without the permit close right; active accounts only, never the
+/// person asking; names only; paged with the real total.
+#[tokio::test]
+async fn handover_receivers_are_other_active_accounts_by_name() {
+    let db = setup().await;
+    for (sync, user, name, active) in [
+        ("rcv-1", "op.ali", "Ali Operations", 1),
+        ("rcv-2", "op.bea", "Béa Operations", 1),
+        ("rcv-3", "op.old", "Old Operator", 0),
+        ("rcv-4", "noname", "", 1),
+    ] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+             force_password_change, created_at, updated_at) VALUES (?, ?, ?, 'local', ?, 0, 0, datetime('now'), datetime('now'))",
+            [sync.into(), user.into(), name.into(), i64::from(active).into()],
+        ))
+        .await
+        .expect("user");
+    }
+    let ali: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE username = 'op.ali'".to_string(),
+        ))
+        .await
+        .expect("q")
+        .expect("row")
+        .try_get_by_index(0)
+        .expect("id");
+
+    // Ali holds no permit right.
+    let err = queries::list_handover_receivers(&db, ali, None, None, None)
+        .await
+        .expect_err("no ptw.close");
+    assert!(matches!(err, AppError::PermissionDenied(_)), "{err:?}");
+
+    // The administrator (APPLIER) asks: everyone active but himself.
+    let page = queries::list_handover_receivers(&db, APPLIER, None, None, None)
+        .await
+        .expect("list");
+    let names: Vec<&str> = page.items.iter().map(|r| r.display_name.as_str()).collect();
+    assert!(page.items.iter().all(|r| r.id != APPLIER), "the signer is excluded");
+    assert!(names.contains(&"Ali Operations") && names.contains(&"Béa Operations"));
+    assert!(!names.contains(&"Old Operator"), "inactive accounts are excluded");
+    assert!(names.contains(&"noname"), "no display name: the login name stands in");
+    assert_eq!(page.total, i64::try_from(page.items.len()).expect("len"));
+
+    let first = queries::list_handover_receivers(&db, APPLIER, Some("operations".into()), Some(1), None)
+        .await
+        .expect("page 1");
+    assert_eq!(first.total, 2, "the total counts every match, not the page");
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.items[0].display_name, "Ali Operations");
+    let second = queries::list_handover_receivers(&db, APPLIER, Some("operations".into()), Some(1), Some(1))
+        .await
+        .expect("page 2");
+    assert_eq!(second.items[0].display_name, "Béa Operations");
 }
