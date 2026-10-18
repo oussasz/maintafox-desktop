@@ -1,4 +1,21 @@
 {
+  "shutdownRequirement": {
+    "sectionTitle": "Equipment shutdown",
+    "label": "Needs shutdown",
+    "short": "Shutdown",
+    "badge": "Needs shutdown",
+    "required": "Needed",
+    "notRequired": "Not needed",
+    "help": "When ticked, planning checks the work order against shutdown windows like a PM plan: a warning without a shutdown window, and committing needs an open shutdown window.",
+    "frozen": "Can only be changed while the work order is being prepared (draft, planning or ready).",
+    "noPermission": "You may not edit this work order.",
+    "confirmOnTitle": "Flag the work order as needing a shutdown?",
+    "confirmOnBody": "{{code}} can then only be committed in an open shutdown window. The change is kept in the work order's history.",
+    "confirmOffTitle": "Remove “Needs shutdown”?",
+    "confirmOffBody": "{{code}} will no longer be checked against shutdown windows. The change is kept in the work order's history.",
+    "confirmOn": "Flag",
+    "confirmOff": "Remove"
+  },
   "permitRequirement": {
     "sectionTitle": "Safety",
     "label": "Work permit / lockout (LOTO) required",
@@ -711,6 +728,8 @@
     "permitRequired": "Permit / lockout now required",
     "permitNotRequired": "Permit / lockout no longer required",
     "actions": {
+      "shutdown_required_set": "Flagged as needing a shutdown",
+      "shutdown_required_cleared": "“Needs shutdown” removed",
       "created": "Work order created",
       "submitted": "Submitted to planning",
       "planned": "Planned",

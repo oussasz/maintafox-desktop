@@ -3,6 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RatingScalesDialog } from "@/components/reliability/study/RatingScalesDialog";
+import { StudyDecisionsStep } from "@/components/reliability/study/StudyDecisionsStep";
 import { StudyFmecaStep } from "@/components/reliability/study/StudyFmecaStep";
 import { StudyRcmStep } from "@/components/reliability/study/StudyRcmStep";
 import { StudySystemStep } from "@/components/reliability/study/StudySystemStep";
@@ -53,6 +54,8 @@ vi.mock("react-i18next", () => ({
     i18n: { language: "en", resolvedLanguage: "en" },
   }),
 }));
+// Signed in as user 3.
+vi.mock("@/hooks/use-session", () => ({ useSession: () => ({ info: { user_id: 3 } }) }));
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
 }));
@@ -474,6 +477,53 @@ const rcm: RcmWorksheet = {
   rows_to_review: 0,
 };
 
+describe("substitute FMECA grids", () => {
+  it("warns in the FMECA and RCM steps while the plant grids are to review", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_study_fmeca")
+        return { ...fmeca, scales: { ...fmeca.scales, review: "former_grids_unreadable" } };
+      if (cmd === "get_reliability_study_rcm")
+        return { ...rcm, grids_review: "former_grids_unreadable" };
+      throw new Error(`unexpected ${cmd}`);
+    });
+    const { unmount } = render(<StudyFmecaStep study={study} editable onGoRcm={() => undefined} />);
+    expect(
+      await screen.findByText("Maintafox grids in place, plant grids to review"),
+    ).toBeInTheDocument();
+    unmount();
+    render(
+      <StudyRcmStep
+        study={study}
+        editable
+        onDecide={() => undefined}
+        onGoFmeca={() => undefined}
+      />,
+    );
+    expect(
+      await screen.findByText("Maintafox grids in place, plant grids to review"),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing when the plant grids are in place", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_study_rcm") return rcm;
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <StudyRcmStep
+        study={study}
+        editable
+        onDecide={() => undefined}
+        onGoFmeca={() => undefined}
+      />,
+    );
+    expect((await screen.findAllByText(/Bearing seizure/)).length).toBeGreaterThan(0);
+    expect(
+      screen.queryByText("Maintafox grids in place, plant grids to review"),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("StudyRcmStep", () => {
   it("prefills the SAE JA1011 answers from the FMECA row and the fit, then records the tactic", async () => {
     const saved: RcmWorksheet = {
@@ -768,6 +818,145 @@ describe("RamsDataQualityPage", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+});
+
+describe("StudyDecisionsStep", () => {
+  const decision = (over: Record<string, unknown>) => ({
+    id: 1,
+    study_id: 7,
+    title: "Decision",
+    action_kind: "one_off_wo",
+    equipment_id: 10,
+    asset_code: "P-101",
+    pm_plan_id: null,
+    pm_plan_code: null,
+    proposed_interval_hours: null,
+    proposed_trigger_interval_value: null,
+    proposed_trigger_interval_unit: null,
+    wo_type_code: "corrective",
+    justification: "",
+    fmeca_item_id: null,
+    rcm_decision_id: null,
+    evidence: {
+      time_basis: "calendar",
+      n_failures: 3,
+      n_suspensions: 0,
+      beta: null,
+      eta: null,
+      beta_lower: null,
+      beta_upper: null,
+      b10: null,
+      mean_life: null,
+      rho: null,
+      pattern: null,
+      optimal_interval: null,
+      current_interval: null,
+      proposed_cost_rate: null,
+      current_cost_rate: null,
+      run_to_failure_cost_rate: null,
+      annual_saving_vs_current: null,
+      planned_cost: null,
+      failure_cost: null,
+      currency_code: null,
+      operating_ratio: null,
+      study_period_start: TS,
+      study_period_end: TS,
+      fmeca_mode_label: null,
+      rpn: null,
+      rcm_tactic: null,
+    },
+    status: "proposed",
+    approver_id: null,
+    approver_name: null,
+    proposed_by_id: 9,
+    proposed_by_name: "B. Planner",
+    decided_by_id: null,
+    self_approved: false,
+    site_allows_self_approval: false,
+    proposed_at: TS,
+    decided_by_name: null,
+    decided_at: null,
+    decision_note: null,
+    applied_at: null,
+    linked_pm_plan_id: null,
+    linked_pm_plan_version_id: null,
+    linked_pm_version_no: null,
+    linked_work_order_id: null,
+    linked_work_order_code: null,
+    effect: {
+      state: "not_applied",
+      mtbf_before: null,
+      mtbf_after: null,
+      after_is_lower_bound: false,
+      change: null,
+      failures_after: 0,
+      hours_after: 0,
+    },
+    row_version: 1,
+    ...over,
+  });
+
+  it("never offers the proposer, or someone other than the designated approver, to approve", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_reliability_study_decisions")
+        return [
+          decision({ id: 1, title: "Mine", proposed_by_id: 3 }),
+          decision({ id: 2, title: "For J. Lead", approver_id: 8, approver_name: "J. Lead" }),
+          decision({ id: 3, title: "Open to me" }),
+          decision({
+            id: 4,
+            title: "Old self-approval",
+            status: "approved",
+            proposed_by_id: 9,
+            decided_by_id: 9,
+            self_approved: true,
+          }),
+        ];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(<StudyDecisionsStep study={study} version={0} onRecord={() => undefined} />);
+
+    const rowOf = async (title: string) => {
+      const row = (await screen.findByText(title)).closest("tr");
+      if (!row) throw new Error(`row ${title} missing`);
+      return within(row);
+    };
+    const mine = await rowOf("Mine");
+    expect(mine.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(mine.getByText("You proposed it: another person approves.")).toBeInTheDocument();
+    expect(mine.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+
+    const forLead = await rowOf("For J. Lead");
+    expect(forLead.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(forLead.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    expect(forLead.getByText("Awaiting J. Lead")).toBeInTheDocument();
+
+    const open = await rowOf("Open to me");
+    expect(open.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(open.queryByText("Self-approved")).not.toBeInTheDocument();
+
+    const old = await rowOf("Old self-approval");
+    expect(old.getByTitle("Approved by the person who proposed it.")).toHaveTextContent(
+      "Self-approved",
+    );
+  });
+
+  it("lets the proposer approve when the decision's site opted out of four-eyes", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_reliability_study_decisions")
+        return [
+          decision({ id: 1, title: "Mine", proposed_by_id: 3, site_allows_self_approval: true }),
+        ];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(<StudyDecisionsStep study={study} version={0} onRecord={() => undefined} />);
+    const row = (await screen.findByText("Mine")).closest("tr");
+    if (!row) throw new Error("row missing");
+    expect(within(row).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(
+      within(row).queryByText("You proposed it: another person approves."),
+    ).not.toBeInTheDocument();
   });
 });
 

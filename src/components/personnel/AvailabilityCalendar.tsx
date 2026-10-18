@@ -28,6 +28,7 @@ import {
   toLocalIsoDate,
   type AvailabilityViewMode,
 } from "@/components/personnel/availability-model";
+import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import {
   ResourceTimeline,
   type ResourceTimelineGroup,
@@ -38,7 +39,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import {
-  blockTypeToTimelineState,
+  absenceTimelineState,
   RESOURCE_TIMELINE_BLOCK_LEGEND_STATES,
   RESOURCE_TIMELINE_STATE_CLASS,
 } from "@/design-system/resource-timeline-tokens";
@@ -75,7 +76,6 @@ interface AvailabilityCalendarProps {
 
 type CertWarning = "expired" | "expiring";
 
-const BLOCK_TYPES = ["medical", "restriction", "leave", "training"] as const;
 const CRITICAL_FILTER_VALUE = "critical";
 const CERT_LOOKAHEAD_DAYS = 30;
 /** Blocks read per person: the backend maximum (`list_personnel_availability_blocks`, newest first). */
@@ -111,6 +111,8 @@ export const AvailabilityCalendar = forwardRef<
   ref,
 ) {
   const { t } = useTranslation("personnel");
+  // Absence types (and their behaviour tag) come from the plant's list (Données de référence).
+  const lists = usePersonnelLists();
 
   const [dateFrom, setDateFrom] = useState(() => toLocalIsoDate(new Date()));
   const [dateTo, setDateTo] = useState(() =>
@@ -469,14 +471,17 @@ export const AvailabilityCalendar = forwardRef<
         return {
           id: b.id,
           group: b.personnel_id,
-          title: t(`availability.form.types.${b.block_type}`, b.block_type),
+          title: lists.text("absence_types", b.block_type),
           start_time: start,
           end_time: Math.max(end, start + 30 * 60 * 1000),
-          state: blockTypeToTimelineState(b.block_type, b.is_critical),
+          state: absenceTimelineState(
+            lists.option("absence_types", b.block_type)?.tag,
+            b.is_critical,
+          ),
         };
       });
     return [...unknownBars, ...blockBars];
-  }, [allBlocks, peopleForView, filterBlockType, unknownPeople, dateFrom, dateTo, t]);
+  }, [allBlocks, peopleForView, filterBlockType, unknownPeople, dateFrom, dateTo, t, lists]);
 
   const applyHorizonPreset = (days: number) => {
     const from = toLocalIsoDate(new Date());
@@ -531,9 +536,11 @@ export const AvailabilityCalendar = forwardRef<
         kind: "select",
         label: t("availability.filters.blockType"),
         value: filterBlockType,
-        options: BLOCK_TYPES.map((bt) => ({
-          value: bt,
-          label: t(`availability.form.types.${bt}`),
+        options: lists.values("absence_types").map((v) => ({
+          value: v.code,
+          label: v.review_required
+            ? `${lists.text("absence_types", v.code)} · ${t("common:listValue.review")}`
+            : lists.text("absence_types", v.code),
         })),
         onChange: (v) => setFilterBlockType(v || null),
       },
@@ -548,6 +555,7 @@ export const AvailabilityCalendar = forwardRef<
     ],
     [
       t,
+      lists,
       filterEntityId,
       filterTeamId,
       filterPersonId,
@@ -612,7 +620,7 @@ export const AvailabilityCalendar = forwardRef<
                   RESOURCE_TIMELINE_STATE_CLASS[state],
                 )}
               >
-                {t(`availability.form.types.${state}`)}
+                {t(`availability.legend.${state}`)}
               </span>
             ))
           : (Object.keys(CELL_STATE_CLASS) as Array<keyof typeof CELL_STATE_CLASS>).map((state) => (

@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { woTypeLabel } from "@/components/wo/use-wo-type-labels";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useSession } from "@/hooks/use-session";
 import {
   type DecisionKind,
   type PmPlanCandidate,
@@ -62,6 +63,8 @@ export function DecisionDialog({
 }) {
   const { t, i18n } = useTranslation("reliability");
   const { formatNumber } = useFormatters();
+  const { info } = useSession();
+  const me = info?.user_id ?? null;
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState<DecisionKind>("pm_interval");
   const [plans, setPlans] = useState<PmPlanCandidate[]>([]);
@@ -266,11 +269,14 @@ export function DecisionDialog({
               onChange={(e) => setApprover(e.target.value ? Number(e.target.value) : null)}
             >
               <option value="">{t("rams.decision.anyApprover")}</option>
-              {approvers.map((a) => (
-                <option key={a.user_id} value={a.user_id}>
-                  {a.display_name}
-                </option>
-              ))}
+              {/* The proposer cannot approve their own decision: they are not offered. */}
+              {approvers
+                .filter((a) => a.user_id !== me)
+                .map((a) => (
+                  <option key={a.user_id} value={a.user_id}>
+                    {a.display_name}
+                  </option>
+                ))}
             </select>
           </label>
           <label className={field}>

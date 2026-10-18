@@ -347,13 +347,18 @@ export function parseTriggerJson(strategy: string, json: string): PmTriggerField
   return start;
 }
 
-/** One structured required part of a version (`required_parts_json` entry). */
+/** One structured part of a version (`required_parts_json` entry). */
 export interface PmRequiredPart {
   articleCode: string;
   quantity: number | null;
+  /**
+   * Required for the job (short: blocks the plan) or optional (short: only warns); null while
+   * not answered — a line is never saved without an answer.
+   */
+  required: boolean | null;
 }
 
-/** Plain codes (older versions) and `{article_code, quantity}` entries. */
+/** Plain codes (older versions) and `{article_code, quantity, required}` entries. */
 export function parseRequiredParts(raw: string | null | undefined): PmRequiredPart[] {
   if (!raw) return [];
   try {
@@ -361,12 +366,19 @@ export function parseRequiredParts(raw: string | null | undefined): PmRequiredPa
     if (!Array.isArray(parsed)) return [];
     return parsed.flatMap((item: unknown): PmRequiredPart[] => {
       if (typeof item === "string" && item.trim())
-        return [{ articleCode: item.trim(), quantity: null }];
+        return [{ articleCode: item.trim(), quantity: null, required: null }];
       if (item && typeof item === "object") {
         const o = item as Record<string, unknown>;
         const code = o["article_code"] ?? o["code"];
         if (typeof code === "string" && code.trim()) {
-          return [{ articleCode: code.trim(), quantity: finiteOrNull(o["quantity"] ?? o["qty"]) }];
+          const required = o["required"];
+          return [
+            {
+              articleCode: code.trim(),
+              quantity: finiteOrNull(o["quantity"] ?? o["qty"]),
+              required: typeof required === "boolean" ? required : null,
+            },
+          ];
         }
       }
       return [];
@@ -376,14 +388,24 @@ export function parseRequiredParts(raw: string | null | undefined): PmRequiredPa
   }
 }
 
+/** Codes of the lines that do not yet say whether they are required. */
+export function partsWithoutNecessity(parts: PmRequiredPart[]): string[] {
+  return parts.filter((p) => p.articleCode.trim() && p.required === null).map((p) => p.articleCode);
+}
+
+/**
+ * `required_parts_json` of a version: one object per line with its code, its quantity when
+ * known and whether it is required. A line without an answer is written without `required`, which
+ * the backend refuses; the form refuses it first (`partsWithoutNecessity`).
+ */
 export function requiredPartsJson(parts: PmRequiredPart[]): string | null {
   const rows = parts
     .filter((p) => p.articleCode.trim())
-    .map((p) =>
-      p.quantity != null && p.quantity > 0
-        ? { article_code: p.articleCode.trim(), quantity: p.quantity }
-        : p.articleCode.trim(),
-    );
+    .map((p) => ({
+      article_code: p.articleCode.trim(),
+      ...(p.quantity != null && p.quantity > 0 ? { quantity: p.quantity } : {}),
+      ...(p.required !== null ? { required: p.required } : {}),
+    }));
   return rows.length > 0 ? JSON.stringify(rows) : null;
 }
 

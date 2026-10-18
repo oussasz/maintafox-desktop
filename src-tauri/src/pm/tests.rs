@@ -850,7 +850,7 @@ async fn planning_readiness_projection_returns_blockers_without_scheduler_side_e
             effective_to: None,
             trigger_definition_json: r#"{"interval_unit":"day","interval_value":1}"#.to_string(),
             task_package_json: None,
-            required_parts_json: Some(r#"[{"part":"BRG-001"}]"#.to_string()),
+            required_parts_json: Some(r#"[{"code":"BRG-001","required":true}]"#.to_string()),
             required_skills_json: None,
             required_tools_json: None,
             estimated_duration_hours: None,
@@ -1638,7 +1638,10 @@ async fn occurrence_with_generated_wo(db: &DatabaseConnection, code: &str) -> cr
             effective_to: None,
             trigger_definition_json: r#"{"interval_unit":"day","interval_value":1}"#.to_string(),
             task_package_json: Some(r#"{"steps":["Graisser le palier","Contrôler l'étanchéité"]}"#.to_string()),
-            required_parts_json: Some(r#"[{"article_code":"BRG-6204","quantity":2},"Graisse EP2"]"#.to_string()),
+            required_parts_json: Some(
+                r#"[{"article_code":"BRG-6204","quantity":2,"required":true},{"code":"Graisse EP2","required":true}]"#
+                    .to_string(),
+            ),
             required_skills_json: Some("[]".to_string()),
             required_tools_json: Some(r#"["Pompe à graisse"]"#.to_string()),
             estimated_duration_hours: Some(1.5),

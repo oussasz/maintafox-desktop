@@ -1733,7 +1733,8 @@
         "work_orders",
         "user_accounts",
         "fmeca_items",
-        "rcm_decisions"
+        "rcm_decisions",
+        "org_nodes"
       ],
       "sync_status": "synced"
     },
@@ -1947,6 +1948,29 @@
       "apply_priority": 0,
       "parents": [],
       "sync_status": "synced"
+    },
+    {
+      "entity_type": "site_setting_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 4,
+      "parents": [
+        "org_nodes",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "site_settings",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "org_nodes",
+        "user_accounts"
+      ],
+      "sync_status": "synced",
+      "note": "Per-site rules (settings::site); no row = the rule's strict default."
     },
     {
       "entity_type": "skill_categories",

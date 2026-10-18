@@ -219,6 +219,12 @@
     }
   },
   "status": {
+    "dbOk": "Database: OK",
+    "dbOkLatency": "Database: OK ({{ms}} ms)",
+    "dbTimeout": "Database: not answering in time",
+    "dbError": "Database: error",
+    "dbUnknown": "Database: state unknown",
+    "dbChecking": "Database: checking…",
     "online": "Online",
     "offline": "Offline",
     "db": "DB",

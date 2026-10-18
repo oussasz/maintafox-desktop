@@ -2967,8 +2967,9 @@ mod tests {
         assert_eq!(
             crate::settings::catalog::SETTINGS_CATALOG.len(),
             // +locale.currency_code, +ram.fmeca_rpn_critical_threshold, +wo.reopen_window_days,
-            // +ram.fmeca_rating_scales, +locale.fiscal_year_start_month
-            20,
+            // +ram.fmeca_rating_scales, +locale.fiscal_year_start_month,
+            // +inventory.count_critical_variance, +inventory.reconciliation_drift_break (migration 232)
+            22,
             "Default settings count changed; update migration and verification checks"
         );
     }

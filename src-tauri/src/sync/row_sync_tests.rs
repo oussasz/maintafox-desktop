@@ -247,6 +247,8 @@ pub(crate) const CONFIG_NOTIFICATION_TYPES: &[&str] = &[
     "audit_events",
     "admin_change_events",
     "settings_change_events",
+    "site_settings",
+    "site_setting_events",
     "notification_categories",
     "notification_escalation_policies",
     "notification_rules",
@@ -475,9 +477,15 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
         compare(&a, &b, row, "after update", &mut problems).await;
     }
 
+    // History rows are never deleted (append-only; sync refuses such deletes, see
+    // `append_only_rows_are_never_deleted_by_sync`); media attachments are the exception.
     let created: Vec<_> = created
         .into_iter()
         .filter(|row| !SINGLETON_TYPES.contains(&row.entity_type))
+        .filter(|row| {
+            row.entity_type == "media_attachments"
+                || registry::entity(row.entity_type).is_none_or(|d| d.conflict_policy != ConflictPolicy::AppendOnly)
+        })
         .collect();
     for row in created.iter().rev() {
         let table = row_layout::layout(&a, row.entity_type).await.expect("layout").table();

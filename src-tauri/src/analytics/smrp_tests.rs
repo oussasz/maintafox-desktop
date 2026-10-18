@@ -548,6 +548,20 @@ async fn backlog_weeks_from_crew_schedules() {
     assert!((b.backlog_hours - 20.0).abs() < 1e-9, "{b:?}");
     assert!((b.ready_backlog_hours - 6.0).abs() < 1e-9);
     assert_eq!((b.open_work_orders, b.work_orders_without_estimate), (4, 1));
+    // The backlog figure is "open (work to do)": the OT list's `open_only` filter lists it.
+    assert_eq!(b.open_work_orders_rule, crate::wo::backlog::RULE_OPEN_WORK_TO_DO);
+    let listed = crate::wo::queries::list_work_orders(
+        &db,
+        crate::wo::queries::WoListFilter {
+            open_only: Some(true),
+            limit: 200,
+            offset: 0,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("open list");
+    assert_eq!(listed.total, b.open_work_orders);
     assert!((b.weekly_capacity_hours - 64.0).abs() < 1e-9, "{b:?}");
     assert_eq!((b.people_counted, b.people_without_schedule), (2, 1));
     assert!((b.weeks.unwrap() - 20.0 / 64.0).abs() < 1e-9);

@@ -236,7 +236,10 @@ pub async fn create_pm_revision_from_finding(db: &DatabaseConnection, finding_id
             effective_to: None,
             trigger_definition_json: base.trigger_definition_json.clone(),
             task_package_json: base.task_package_json.clone(),
-            required_parts_json: base.required_parts_json.clone(),
+            // Copied as it is read: flag-less lines are required, free text stays free text.
+            required_parts_json: crate::pm::wo_content::normalized_required_parts_json(
+                base.required_parts_json.as_deref(),
+            ),
             required_skills_json: base.required_skills_json.clone(),
             required_tools_json: base.required_tools_json.clone(),
             estimated_duration_hours: base.estimated_duration_hours,

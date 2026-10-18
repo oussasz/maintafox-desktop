@@ -1,4 +1,16 @@
 {
+  "recommission": {
+    "action": "Recommission",
+    "title": "Return the asset to service?",
+    "description": "{{code}} takes the chosen status and its end-of-life date is cleared. The return is recorded in the asset's history with its reason.",
+    "status": "Status after recommission",
+    "noStatus": "No status other than a retired one is published in Reference data.",
+    "reason": "Reason",
+    "reasonRequired": "Say why the asset returns to service.",
+    "cancel": "Cancel",
+    "confirm": "Recommission",
+    "done": "{{code}} is back in service ({{status}})."
+  },
   "page": {
     "title": "Equipment",
     "titleDetail": "Equipment detail",
@@ -836,6 +848,12 @@
     "ASSET_SPARE_POSITION_TOO_LONG": "The position is limited to {{max}} characters.",
     "ASSET_SPARE_NOTES_TOO_LONG": "Notes are limited to {{max}} characters.",
     "ASSET_SPARE_ARTICLE_INACTIVE": "Article {{code}} is inactive.",
-    "ASSET_SPARE_DUPLICATE": "Article {{code}} is already in this asset's spare parts."
+    "ASSET_SPARE_DUPLICATE": "Article {{code}} is already in this asset's spare parts.",
+    "ASSET_RETIRE_THROUGH_DECOMMISSION": "An asset is retired only with Decommission: it checks open work and records the reason. Use Decommission on the asset page.",
+    "ASSET_RECOMMISSION_REQUIRED": "A retired asset returns to service by a recommission (recorded with who and why), not by editing its status.",
+    "ASSET_RECOMMISSION_NOT_RETIRED": "Only a retired (decommissioned or scrapped) asset can be returned to service.",
+    "ASSET_RECOMMISSION_REASON_REQUIRED": "Give the reason for returning the asset to service.",
+    "ASSET_RECOMMISSION_TARGET_RETIRED": "Choose a status in service: a retired status is not a return to service.",
+    "ASSET_RECOMMISSION_VERSION_REQUIRED": "Reload the asset before returning it to service."
   }
 }

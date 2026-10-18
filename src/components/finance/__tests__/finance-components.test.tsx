@@ -558,6 +558,10 @@ describe("BudgetCockpitView", () => {
         },
       ],
       commitments: [],
+      actuals_total: 1,
+      actuals_amount: 300,
+      limit: 200,
+      offset: 0,
     });
     const onNavigate = vi.fn();
     const onAnalyse = vi.fn();
@@ -585,10 +589,87 @@ describe("BudgetCockpitView", () => {
         budget_version_id: 7,
         cost_center_id: 3,
         bucket: "services",
+        limit: 200,
+        offset: 0,
       }),
     );
     expect(await screen.findByText("1 actual entry")).toBeInTheDocument();
   });
+
+  it(
+    "pages the drill-down's lines from the server and states the total of every line",
+    {
+      timeout: 20_000,
+    },
+    async () => {
+      perms.granted = new Set([P.FIN_BUDGET]);
+      svc.getBudgetCockpit.mockResolvedValue(cockpit());
+      const line = (id: number) => ({
+        actual_id: id,
+        period_month: 10,
+        bucket: "services",
+        amount: 10,
+        posting_status: "posted",
+        source_type: "manual",
+        source_id: `m:${id}`,
+        rate_card_lane: null,
+        work_order_id: null,
+        work_order_code: null,
+        work_order_title: null,
+        equipment_code: null,
+        event_at: "2026-10-10T10:00:00Z",
+        is_reversal: false,
+      });
+      svc.getBudgetCockpitDrilldown.mockReset();
+      svc.getBudgetCockpitDrilldown
+        .mockResolvedValueOnce({
+          actuals: Array.from({ length: 200 }, (_, i) => line(i + 1)),
+          commitments: [],
+          actuals_total: 250,
+          actuals_amount: 2500,
+          limit: 200,
+          offset: 0,
+        })
+        .mockResolvedValueOnce({
+          actuals: Array.from({ length: 50 }, (_, i) => line(i + 201)),
+          commitments: [],
+          actuals_total: 250,
+          actuals_amount: 2500,
+          limit: 200,
+          offset: 200,
+        });
+      render(
+        <MemoryRouter>
+          <BudgetCockpitView
+            fiscalYear={2026}
+            budgetVersionId={7}
+            onNavigate={vi.fn()}
+            onAnalyseVariance={vi.fn()}
+          />
+        </MemoryRouter>,
+      );
+      // One click, on the row as it first appears: the row is not re-mounted when the
+      // catalogues load, so the click is not lost.
+      fireEvent.click(await screen.findByText("CC-MNT-PMP"));
+      await waitFor(() => expect(svc.getBudgetCockpitDrilldown).toHaveBeenCalledTimes(1));
+      // The category label follows the catalogue once loaded (not the raw code).
+      expect(screen.getAllByText("Contractors and services").length).toBeGreaterThan(0);
+      // 200 table rows take a moment to render under the full suite.
+      expect(
+        await screen.findByText("250 actual entries", undefined, { timeout: 8000 }),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("drill-actuals-total").textContent).toContain(money(2500, "DZD"));
+      fireEvent.click(screen.getByRole("button", { name: enCommon.ds.state.loadMore }));
+      await waitFor(() =>
+        expect(svc.getBudgetCockpitDrilldown).toHaveBeenLastCalledWith(
+          expect.objectContaining({ limit: 200, offset: 200 }),
+        ),
+      );
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: enCommon.ds.state.loadMore })).toBeNull(),
+      );
+    },
+  );
 
   it("explains what to set up when there is no cost centre", async () => {
     perms.granted = new Set([P.FIN_BUDGET]);

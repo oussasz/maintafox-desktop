@@ -13,7 +13,7 @@
  * lane's next page, not only the cards the list page happened to hold.
  */
 
-import { Calendar as CalendarIcon, User } from "lucide-react";
+import { Calendar as CalendarIcon, Power, User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -141,6 +141,9 @@ export function WoKanbanView({ filter, reloadSignal, onCardClick }: WoKanbanView
       const badges: KanbanBadge[] = [];
       if (wo.urgency_code && urgency) {
         badges.push({ label: urgencyLabel(wo.urgency_code), tone: urgency });
+      }
+      if (wo.requires_shutdown) {
+        badges.push({ label: t("shutdownRequirement.badge"), tone: "warning", icon: Power });
       }
 
       return {

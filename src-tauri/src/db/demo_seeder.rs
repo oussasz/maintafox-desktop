@@ -1313,8 +1313,8 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
                 db.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "INSERT INTO work_order_parts \
-                     (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
-                     VALUES (?, ?, ?, ?, ?, ?)",
+                     (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes, is_required) \
+                     VALUES (?, ?, ?, ?, ?, ?, 1)",
                     [
                         wo_id.into(),
                         ref_code.into(),
@@ -1385,8 +1385,8 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO work_order_parts \
-                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
-                 VALUES (?, 'GARNITURE-DN100', 1.0, 1.0, 125.00, 'Garniture PTFE vanne papillon DN100')",
+                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes, is_required) \
+                 VALUES (?, 'GARNITURE-DN100', 1.0, 1.0, 125.00, 'Garniture PTFE vanne papillon DN100', 1)",
                 [wo_id.into()],
             ))
             .await?;
@@ -1419,16 +1419,16 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO work_order_parts \
-                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
-                 VALUES (?, 'HUILE-BITZER-BSE32', 5.0, 4.5, 18.00, 'Huile synthétique Bitzer BSE32')",
+                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes, is_required) \
+                 VALUES (?, 'HUILE-BITZER-BSE32', 5.0, 4.5, 18.00, 'Huile synthétique Bitzer BSE32', 1)",
                 [wo_id.into()],
             ))
             .await?;
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO work_order_parts \
-                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
-                 VALUES (?, 'FILTRE-BITZER-362104', 1.0, 1.0, 42.00, 'Filtre huile compresseur')",
+                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes, is_required) \
+                 VALUES (?, 'FILTRE-BITZER-362104', 1.0, 1.0, 42.00, 'Filtre huile compresseur', 1)",
                 [wo_id.into()],
             ))
             .await?;

@@ -19,6 +19,7 @@ const OTHER_NAMESPACE_KEY_PREFIXES = [
   "reference:errors",
   "training:errors",
   "reliability:errors",
+  "settings:errors",
 ] as const;
 
 function issueKeys(code: string, orgNs: string): string[] {

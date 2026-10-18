@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { SmrpIndicatorsSection, pointsTrend } from "@/components/analytics/SmrpIndicatorsSection";
@@ -42,6 +42,7 @@ const SMRP: SmrpKpis = {
     previous_backlog_hours: 0,
     ready_backlog_hours: 6,
     open_work_orders: 4,
+    open_work_orders_rule: "open_work_to_do",
     work_orders_without_estimate: 1,
     weekly_capacity_hours: 64,
     people_counted: 2,
@@ -113,6 +114,27 @@ describe("SmrpIndicatorsSection", () => {
     );
     expect(screen.getByText("smrp.schedule.formula")).toBeInTheDocument();
     expect(screen.getByText("smrp.unitPercent")).toBeInTheDocument();
+  });
+
+  it("names the backlog's open-OT rule and opens the list on that rule", () => {
+    function ListLocation() {
+      const location = useLocation();
+      return <p data-testid="list-location">{`${location.pathname}${location.search}`}</p>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/analytics"]}>
+        <Routes>
+          <Route path="/analytics" element={<SmrpIndicatorsSection smrp={SMRP} />} />
+          <Route path="/work-orders" element={<ListLocation />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const backlog = screen.getByTestId("smrp-backlog");
+    expect(
+      within(backlog).getByText("woOpenRule.figure[rule=woOpenRule.open_work_to_do]"),
+    ).toBeInTheDocument();
+    fireEvent.click(within(backlog).getAllByRole("button").at(-1) as HTMLElement);
+    expect(screen.getByTestId("list-location")).toHaveTextContent("/work-orders?scope=open");
   });
 
   it("renders nothing without data", () => {

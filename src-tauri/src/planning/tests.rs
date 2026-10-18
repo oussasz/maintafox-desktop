@@ -4429,48 +4429,103 @@ async fn two_devices_freezing_the_same_week_offline_make_the_same_rows() {
     }
 }
 
+/// The week as it travels: its real sync payload (`sync::row_codec`, the site reference under
+/// `entity_sync_id`) with the status / baseline a peer would send, applied through the real
+/// inbound path (`row_codec::apply_row` via `apply_inbound_payload`). A step back in the
+/// lifecycle is a WEEK_LIFECYCLE_BACKWARDS conflict and nothing is written; a step forward applies.
 #[tokio::test]
 async fn a_received_week_never_goes_back_in_its_lifecycle() {
+    use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
     let db = setup_db().await;
     let (site, _team) = weekly_site(&db, "L").await;
     crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
         .await
         .expect("frozen");
-    let payload = |status: &str, baseline: i64| {
-        serde_json::json!({
-            "entity_id": "wk-node-L",
-            "week_start": "2026-05-03",
-            "status": status,
-            "baseline_no": baseline,
-        })
-        .as_object()
-        .cloned()
-        .expect("object")
-    };
-    let check = |status: &'static str, baseline: i64| {
+    let week_sync: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM weekly_schedules WHERE entity_id = ?",
+            [site.into()],
+        ))
+        .await
+        .expect("q")
+        .expect("week row")
+        .try_get("", "entity_sync_id")
+        .expect("sync id");
+    let real = crate::sync::test_support::current_payload(&db, "weekly_schedules", &week_sync, &Default::default())
+        .await
+        .expect("payload")
+        .expect("row");
+    assert_eq!(
+        real.get("entity_sync_id").and_then(serde_json::Value::as_str),
+        Some("wk-node-L"),
+        "the site travels as entity_sync_id"
+    );
+    assert!(real.get("entity_id").is_none(), "never as entity_id");
+
+    let send = |status: &'static str, baseline: i64| {
         let db = db.clone();
-        let p = payload(status, baseline);
+        let mut p = real.clone();
+        let week_sync = week_sync.clone();
         async move {
-            crate::planning::weekly_schedule::inbound_lifecycle_conflict(&db, &p)
-                .await
-                .expect("check")
+            p.insert("status".into(), status.into());
+            p.insert("baseline_no".into(), baseline.into());
+            let rv = p.get("row_version").and_then(serde_json::Value::as_i64).unwrap_or(1) + 1;
+            p.insert("row_version".into(), rv.into());
+            apply_inbound_payload(
+                &db,
+                "weekly_schedules",
+                &week_sync,
+                "upsert",
+                rv,
+                &serde_json::Value::Object(p).to_string(),
+            )
+            .await
+            .expect("apply")
         }
     };
+    let backwards =
+        |o: &ApplyOutcome| matches!(o, ApplyOutcome::Conflict { code, .. } if code == "WEEK_LIFECYCLE_BACKWARDS");
+    let status_here = || {
+        let db = db.clone();
+        async move {
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT status FROM weekly_schedules WHERE entity_id = ?",
+                [site.into()],
+            ))
+            .await
+            .expect("q")
+            .expect("row")
+            .try_get::<String>("", "status")
+            .expect("status")
+        }
+    };
+
     assert!(
-        check("draft", 0).await.is_some(),
+        backwards(&send("draft", 0).await),
         "frozen here, draft received: refused"
     );
+    assert_eq!(status_here().await, "frozen", "nothing written");
     assert!(
-        check("approved", 0).await.is_some(),
+        backwards(&send("approved", 0).await),
         "frozen here, approved received: refused"
     );
-    assert!(check("frozen", 1).await.is_none(), "the same state");
-    assert!(check("published", 1).await.is_none(), "published after the freeze");
+    let forward = send("published", 1).await;
+    assert!(!backwards(&forward), "published after the freeze applies: {forward:?}");
+    assert_eq!(status_here().await, "published");
+
+    // Direct check on the same real payload keys (same site and week under another identity).
+    let mut other = real.clone();
+    other.insert("status".into(), "draft".into());
+    other.insert("baseline_no".into(), 0.into());
     assert!(
-        check("approved", 1).await.is_none(),
-        "unfrozen after the freeze (four-eyes)"
+        crate::planning::weekly_schedule::inbound_lifecycle_conflict(&db, "another-identity", &other)
+            .await
+            .expect("check")
+            .is_some(),
+        "found by site and week when the identity differs"
     );
-    assert!(check("frozen", 2).await.is_none(), "frozen again");
 }
 
 #[tokio::test]
@@ -5432,4 +5487,163 @@ async fn planning_requires_an_isolation_for_every_permit_type_flagged_for_energy
         "never read as a type without isolation: {after:?}"
     );
     assert_eq!(readiness_of(&db, candidate).await, "blocked");
+}
+
+/// A corrective work order flagged "needs shutdown" is checked against the shutdown windows like
+/// a PM plan (same NO_FEASIBLE_WINDOW warning); unflagged, it is not. The flag is read live from
+/// the work order, so clearing it lifts the warning at the next evaluation.
+#[tokio::test]
+async fn a_corrective_work_order_needing_a_shutdown_is_checked_against_windows() {
+    let db = setup_db().await;
+    let (wo_id, actor) = create_planning_wo(&db, "Shutdown job").await;
+    let refresh = || async {
+        queries::refresh_schedule_candidates(
+            &db,
+            RefreshScheduleCandidatesInput {
+                include_work_orders: Some(true),
+                include_pm_occurrences: Some(false),
+                include_approved_di: Some(false),
+                limit_per_source: Some(50),
+            },
+        )
+        .await
+        .expect("refresh");
+    };
+    let no_window = |db: &DatabaseConnection| {
+        let db = db.clone();
+        async move {
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM scheduling_conflicts c
+                   JOIN schedule_candidates sc ON sc.id = c.candidate_id
+                  WHERE sc.source_type = 'work_order' AND sc.source_id = ?
+                    AND c.reason_code = 'NO_FEASIBLE_WINDOW' AND c.resolved_at IS NULL",
+                [wo_id.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<i64>("", "c")
+            .expect("count")
+        }
+    };
+    let row_version = |db: &DatabaseConnection| {
+        let db = db.clone();
+        async move {
+            crate::wo::queries::get_work_order(&db, wo_id)
+                .await
+                .expect("read")
+                .expect("wo")
+                .row_version
+        }
+    };
+
+    refresh().await;
+    assert_eq!(no_window(&db).await, 0, "not flagged: no shutdown check");
+
+    let wo = crate::wo::workflow::actions::schedule::save_shutdown_requirement(
+        &db,
+        wo_id,
+        true,
+        row_version(&db).await,
+        actor,
+    )
+    .await
+    .expect("flag");
+    assert!(wo.requires_shutdown);
+    refresh().await;
+    assert_eq!(no_window(&db).await, 1, "flagged and no open shutdown window: warned");
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO planning_windows (window_type, start_datetime, end_datetime, is_locked) VALUES ('shutdown', ?, ?, 0)",
+        ["2026-10-01T06:00:00Z".into(), "2026-10-01T18:00:00Z".into()],
+    ))
+    .await
+    .expect("window");
+    refresh().await;
+    assert_eq!(no_window(&db).await, 0, "the shutdown window covers the work");
+
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "DELETE FROM planning_windows WHERE window_type = 'shutdown'".to_string(),
+    ))
+    .await
+    .expect("no window again");
+    crate::wo::workflow::actions::schedule::save_shutdown_requirement(&db, wo_id, false, row_version(&db).await, actor)
+        .await
+        .expect("unflag");
+    refresh().await;
+    assert_eq!(no_window(&db).await, 0, "unflagged: no shutdown check");
+}
+
+/// Only a short REQUIRED part blocks the plan; a short OPTIONAL part warns (owner-approved Step 7).
+#[tokio::test]
+async fn a_short_optional_part_warns_and_only_a_short_required_part_blocks() {
+    let db = setup_db().await;
+    let (wo_id, _actor) = create_planning_wo(&db, "Optional parts WO").await;
+    let candidate = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    for code in ["PLN-OPT", "PLN-REQ"] {
+        exec_sql(
+            &db,
+            &format!(
+                "INSERT INTO articles (article_code, article_name, unit_value_id, is_active)
+                 SELECT '{code}', 'Article {code}', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id
+                        JOIN reference_domains d ON d.id = s.domain_id
+                       WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'U'), 1"
+            ),
+        )
+        .await;
+    }
+    let optional = scalar(&db, "SELECT id FROM articles WHERE article_code = 'PLN-OPT'").await;
+    let required = scalar(&db, "SELECT id FROM articles WHERE article_code = 'PLN-REQ'").await;
+    // Neither article has stock: an optional line first.
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO work_order_parts (work_order_id, article_id, quantity_planned, is_required)
+             VALUES ({wo_id}, {optional}, 2, 0)"
+        ),
+    )
+    .await;
+    re_evaluate(&db).await;
+    assert_eq!(
+        open_conflicts(&db, candidate).await,
+        vec![("PARTS_SHORT_OPTIONAL".to_string(), "warning".to_string())]
+    );
+    assert_eq!(
+        readiness_of(&db, candidate).await,
+        "ready",
+        "an optional part never blocks"
+    );
+
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO work_order_parts (work_order_id, article_id, quantity_planned, is_required)
+             VALUES ({wo_id}, {required}, 1, 1)"
+        ),
+    )
+    .await;
+    re_evaluate(&db).await;
+    let conflicts = open_conflicts(&db, candidate).await;
+    assert!(
+        conflicts.contains(&("PARTS_SHORT".to_string(), "blocking".to_string())),
+        "{conflicts:?}"
+    );
+    assert!(conflicts.contains(&("PARTS_SHORT_OPTIONAL".to_string(), "warning".to_string())));
+    assert_eq!(readiness_of(&db, candidate).await, "blocked");
+}
+
+/// No hidden default: a new part line must say whether it is required.
+#[test]
+fn a_new_part_line_must_say_whether_it_is_required() {
+    let without: Result<crate::wo::parts::AddPartInput, _> = serde_json::from_value(serde_json::json!({
+        "wo_id": 1, "article_id": 2, "article_ref": null, "quantity_planned": 1.0, "unit_cost": null,
+        "stock_location_id": null, "auto_reserve": false, "notes": null, "origin": null
+    }));
+    assert!(without.is_err(), "is_required is mandatory");
+    assert!(crate::pm::wo_content::validate_required_parts_json(Some(r#"[{"code":"X"}]"#)).is_err());
+    assert!(crate::pm::wo_content::validate_required_parts_json(Some(r#"["X"]"#)).is_err());
+    assert!(crate::pm::wo_content::validate_required_parts_json(Some(r#"[{"code":"X","required":false}]"#)).is_ok());
 }

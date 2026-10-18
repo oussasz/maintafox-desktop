@@ -66,8 +66,9 @@ const SettingDefinitionViewSchema = z.object({
   key: z.string(),
   category: z.string(),
   scope: z.string(),
-  kind: z.enum(["choice", "integer", "currency", "month", "document_header", "module"]),
+  kind: z.enum(["choice", "integer", "decimal", "currency", "month", "document_header", "module"]),
   options: z.array(z.string()),
+  /** Bounds of an `integer`, `decimal` or `month` value (a decimal's bounds may be fractional). */
   min: z.number().nullable(),
   max: z.number().nullable(),
   shipped_value_json: z.string(),
@@ -336,4 +337,62 @@ export async function readDocumentBrandingLogoPreview(): Promise<DocumentBrandin
   const raw = await invoke<unknown>("read_document_branding_logo_preview");
   if (raw === null) return null;
   return DocumentBrandingLogoPreviewSchema.parse(raw);
+}
+
+// ── Per-site rules (Settings › Général › Règles par site) ─────────────────────────────────
+
+const SiteSettingViewSchema = z.object({
+  site_node_id: z.number(),
+  site_code: z.string(),
+  site_name: z.string(),
+  /** `null`: never set at this site, or unreadable (the default applies). */
+  value: z.boolean().nullable(),
+  /** The stored value cannot be read: the default applies until the rule is set again. */
+  value_unreadable: z.boolean(),
+  default_value: z.boolean(),
+  updated_by_name: z.string().nullable(),
+  updated_at: z.string().nullable(),
+  row_version: z.number().nullable(),
+});
+export type SiteSettingView = z.infer<typeof SiteSettingViewSchema>;
+
+const SiteSettingEventSchema = z.object({
+  id: z.number(),
+  old_value: z.boolean().nullable(),
+  new_value: z.boolean(),
+  reason: z.string(),
+  changed_by_name: z.string().nullable(),
+  required_step_up: z.boolean(),
+  changed_at: z.string(),
+});
+export type SiteSettingEvent = z.infer<typeof SiteSettingEventSchema>;
+
+/** A per-site rule at every planning site. */
+export async function listSiteSettings(key: string): Promise<SiteSettingView[]> {
+  const raw = await invoke<unknown>("list_site_settings", { key });
+  return z.array(SiteSettingViewSchema).parse(raw);
+}
+
+export interface SetSiteSettingInput {
+  site_node_id: number;
+  key: string;
+  value: boolean;
+  /** Why (audited), at least 10 characters. */
+  reason: string;
+  /** Row version read (`null`: the site had no rule). */
+  expected_row_version: number | null;
+}
+
+/** Sets a per-site rule (step-up; the reason is audited). */
+export async function setSiteSetting(input: SetSiteSettingInput): Promise<void> {
+  await invoke<void>("set_site_setting", { input });
+}
+
+/** The audited changes of a per-site rule at one site, newest first. */
+export async function listSiteSettingEvents(
+  siteNodeId: number,
+  key: string,
+): Promise<SiteSettingEvent[]> {
+  const raw = await invoke<unknown>("list_site_setting_events", { siteNodeId, key });
+  return z.array(SiteSettingEventSchema).parse(raw);
 }

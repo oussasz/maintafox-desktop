@@ -18,6 +18,9 @@ pub enum SettingKind {
     Choice(&'static [&'static str]),
     /// A JSON integer within `min..=max`.
     Integer { min: i64, max: i64 },
+    /// A JSON number within `min..=max`, kept to 6 decimals. The bounds are in millionths
+    /// (`1_000_000` = 1) so the catalog stays exact and comparable.
+    Decimal { min_millionths: i64, max_millionths: i64 },
     /// An ISO 4217 code (three letters) as a JSON string.
     CurrencyCode,
     /// A month 1..=12 as a JSON integer.
@@ -54,6 +57,10 @@ pub struct SettingDefinition {
 }
 
 const LANGUAGES: &[&str] = &["fr", "en"];
+
+/// Shortest reason accepted for a high-risk setting change or a site rule change (it is the audit
+/// trail's "why").
+pub const MIN_REASON_CHARS: usize = 10;
 
 /// Every setting row the application ships. Order = display order inside a section.
 pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
@@ -103,6 +110,37 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         scope: "tenant",
         shipped_value_json: r"30",
         kind: SettingKind::Integer { min: 0, max: 3650 },
+        editor: SettingEditor::Section,
+        risk: "low",
+    },
+    // ── Inventory ───────────────────────────────────────────────────────────────────────────
+    // A counted line whose variance (in the article's unit) is at least this much is critical and
+    // needs approval. Shipped 5, the value the count screen used (migration 232).
+    SettingDefinition {
+        key: crate::inventory::controls::SETTING_COUNT_CRITICAL_VARIANCE,
+        category: "inventory",
+        scope: "tenant",
+        shipped_value_json: r"5",
+        kind: SettingKind::Decimal {
+            min_millionths: 1_000,
+            max_millionths: 1_000_000_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "low",
+    },
+    // Stock reconciliation: a gap between the stock ledger and the stored balance that is at
+    // least this much (in the article's unit) is a break. Shipped 0.01, the value the
+    // reconciliation screen used (migration 232). Above zero: a zero tolerance would make every
+    // line a break.
+    SettingDefinition {
+        key: crate::inventory::controls::SETTING_RECONCILIATION_DRIFT_BREAK,
+        category: "inventory",
+        scope: "tenant",
+        shipped_value_json: r"0.01",
+        kind: SettingKind::Decimal {
+            min_millionths: 1,
+            max_millionths: 1_000_000_000,
+        },
         editor: SettingEditor::Section,
         risk: "low",
     },
@@ -385,6 +423,26 @@ pub fn validate_value(def: &SettingDefinition, value_json: &str) -> AppResult<St
             }
             Ok(n.to_string())
         }
+        SettingKind::Decimal {
+            min_millionths,
+            max_millionths,
+        } => {
+            let n = decimal_of(&value).ok_or_else(|| invalid(def.key, "expected a number"))?;
+            let millionths = (n * 1_000_000.0).round();
+            #[allow(clippy::cast_precision_loss)]
+            let (lo, hi) = (min_millionths as f64, max_millionths as f64);
+            if !(lo..=hi).contains(&millionths) {
+                return Err(invalid(
+                    def.key,
+                    format!(
+                        "must be between {} and {} (got {n})",
+                        lo / 1_000_000.0,
+                        hi / 1_000_000.0
+                    ),
+                ));
+            }
+            Ok(serde_json::to_string(&(millionths / 1_000_000.0))?)
+        }
         SettingKind::Month => {
             let n = integer_of(&value).ok_or_else(|| invalid(def.key, "expected a month number"))?;
             if !(1..=12).contains(&n) {
@@ -421,6 +479,35 @@ pub fn validate_value(def: &SettingDefinition, value_json: &str) -> AppResult<St
             },
         )),
     }
+}
+
+/// A finite number given as a JSON number or a numeric string.
+fn decimal_of(value: &serde_json::Value) -> Option<f64> {
+    match value {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+    .filter(|f: &f64| f.is_finite())
+}
+
+/// A decimal setting's value, checked against its catalog bounds. A missing or out-of-bounds
+/// value is an error: nothing is computed on a guessed tolerance.
+pub async fn decimal_setting<C: ConnectionTrait>(db: &C, key: &str) -> AppResult<f64> {
+    let def = definition(key)
+        .filter(|d| matches!(d.kind, SettingKind::Decimal { .. }))
+        .ok_or_else(|| invalid(key, "not a decimal setting of the catalog"))?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT setting_value_json FROM app_settings WHERE setting_key = ? AND setting_scope = ?",
+            [def.key.into(), def.scope.into()],
+        ))
+        .await?
+        .ok_or_else(|| invalid(key, "the setting is missing"))?;
+    let raw: String = row.try_get("", "setting_value_json")?;
+    let canonical = validate_value(def, &raw)?;
+    serde_json::from_str(&canonical).map_err(|_| invalid(key, "expected a number"))
 }
 
 fn integer_of(value: &serde_json::Value) -> Option<i64> {
@@ -495,11 +582,12 @@ pub struct SettingDefinitionView {
     pub key: String,
     pub category: String,
     pub scope: String,
-    /// `choice` | `integer` | `currency` | `month` | `document_header` | `module`
+    /// `choice` | `integer` | `decimal` | `currency` | `month` | `document_header` | `module`
     pub kind: String,
     pub options: Vec<String>,
-    pub min: Option<i64>,
-    pub max: Option<i64>,
+    /// Bounds of an `integer`, `decimal` or `month` value.
+    pub min: Option<f64>,
+    pub max: Option<f64>,
     pub shipped_value_json: String,
     pub current_value_json: Option<String>,
     pub differs_from_shipped: bool,
@@ -519,12 +607,22 @@ pub struct SettingsOverview {
     pub roles_allowed_to_change: Vec<String>,
 }
 
-fn kind_view(kind: SettingKind) -> (&'static str, Vec<String>, Option<i64>, Option<i64>) {
+#[allow(clippy::cast_precision_loss)]
+fn kind_view(kind: SettingKind) -> (&'static str, Vec<String>, Option<f64>, Option<f64>) {
     match kind {
         SettingKind::Choice(options) => ("choice", options.iter().map(|s| (*s).to_string()).collect(), None, None),
-        SettingKind::Integer { min, max } => ("integer", Vec::new(), Some(min), Some(max)),
+        SettingKind::Integer { min, max } => ("integer", Vec::new(), Some(min as f64), Some(max as f64)),
+        SettingKind::Decimal {
+            min_millionths,
+            max_millionths,
+        } => (
+            "decimal",
+            Vec::new(),
+            Some(min_millionths as f64 / 1_000_000.0),
+            Some(max_millionths as f64 / 1_000_000.0),
+        ),
         SettingKind::CurrencyCode => ("currency", Vec::new(), None, None),
-        SettingKind::Month => ("month", Vec::new(), Some(1), Some(12)),
+        SettingKind::Month => ("month", Vec::new(), Some(1.0), Some(12.0)),
         SettingKind::DocumentHeader => ("document_header", Vec::new(), None, None),
         SettingKind::ModuleManaged => ("module", Vec::new(), None, None),
     }
@@ -625,6 +723,24 @@ mod tests {
         let month = definition("locale.fiscal_year_start_month").expect("defined");
         assert_eq!(validate_value(month, "\"7\"").unwrap(), "7");
         assert!(validate_value(month, "13").is_err());
+
+        let critical = definition("inventory.count_critical_variance").expect("defined");
+        assert_eq!(validate_value(critical, "5").unwrap(), "5.0");
+        assert_eq!(validate_value(critical, "\"2.5\"").unwrap(), "2.5");
+        assert!(validate_value(critical, "0").is_err(), "below the minimum");
+        assert!(validate_value(critical, "\"abc\"").is_err());
+        let drift = definition("inventory.reconciliation_drift_break").expect("defined");
+        assert_eq!(validate_value(drift, "0.01").unwrap(), "0.01");
+        assert_eq!(
+            validate_value(drift, "0.0100004").unwrap(),
+            "0.01",
+            "kept to 6 decimals"
+        );
+        assert!(
+            validate_value(drift, "0").is_err(),
+            "zero would make every line a break"
+        );
+        assert!(validate_value(drift, "1001").is_err(), "above the maximum");
 
         let daily = definition("backup.retention_daily").expect("defined");
         assert!(validate_value(daily, "0").is_err(), "at least one daily backup is kept");

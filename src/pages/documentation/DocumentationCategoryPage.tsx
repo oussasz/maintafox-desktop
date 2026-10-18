@@ -1,5 +1,5 @@
 /**
- * Document library — one category (technical manuals, SOPs, safety protocols, certificates).
+ * Document library — one category of the plant's list (Données de référence, `DOCUMENT.CATEGORIES`).
  *
  * OT/DI pattern: header (title · count · [Add document] [Refresh]), one search box, DataTable,
  * LoadingState / ErrorState with retry / EmptyState. Adding a document is an explicit dialog
@@ -15,6 +15,11 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { PermissionGate } from "@/components/PermissionGate";
 import { AssetPicker } from "@/components/assets/AssetPicker";
 import { DataTable } from "@/components/data/DataTable";
+import {
+  categoryFromSlug,
+  documentCategoryPath,
+  useDocumentCategories,
+} from "@/components/documentation/use-document-categories";
 import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import {
   MediaFileStateBadge,
@@ -36,6 +41,7 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ReviewMark } from "@/components/ui/review-mark";
 import { mfLayout } from "@/design-system/tokens";
 import { saveBlobWithDialog } from "@/export/download";
 import { isExportCancelled } from "@/export/types";
@@ -60,8 +66,6 @@ import type {
   LibraryDocumentCategory,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
-
-import { SLUG_TO_CATEGORY, isDocumentationCategorySlug } from "./documentation-slugs";
 
 const MAX_MB = Math.floor(MAX_LIBRARY_DOCUMENT_BYTES / (1024 * 1024));
 
@@ -357,11 +361,14 @@ export function DocumentationCategoryPage() {
   const { formatDateTime, formatDecimal, formatNumber } = useFormatters();
   const { categorySlug } = useParams<{ categorySlug: string }>();
   const { can } = usePermissions();
+  const categories = useDocumentCategories();
 
-  const category = useMemo((): LibraryDocumentCategory | null => {
-    if (!isDocumentationCategorySlug(categorySlug)) return null;
-    return SLUG_TO_CATEGORY[categorySlug];
-  }, [categorySlug]);
+  // The URL names the category by its exact code (older links: the code written with dashes).
+  const categoryOption = useMemo(
+    () => categoryFromSlug(categories.values, categorySlug),
+    [categories.values, categorySlug],
+  );
+  const category: LibraryDocumentCategory | null = categoryOption?.code ?? null;
 
   const canManage = can(P.DOC_MANAGE);
 
@@ -567,8 +574,15 @@ export function DocumentationCategoryPage() {
     ],
   );
 
-  if (!category || !categorySlug || !isDocumentationCategorySlug(categorySlug)) {
-    return <Navigate to="/documentation/technical-manuals" replace />;
+  // Without the right, or while the list fails, the library's side panel says why.
+  if (!categories.canRead || categories.error != null) return null;
+  if (!categories.loaded) return <LoadingState />;
+  if (!category) {
+    // A category no longer in the list (or a mistyped link): back to the library's first one.
+    return <Navigate to="/documentation" replace />;
+  }
+  if (categorySlug !== category) {
+    return <Navigate to={documentCategoryPath(category)} replace />;
   }
 
   return (
@@ -576,9 +590,8 @@ export function DocumentationCategoryPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 max-w-3xl">
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold text-text-primary">
-              {t(`categories.${categorySlug}.heading`)}
-            </h2>
+            <h2 className="text-lg font-semibold text-text-primary">{categories.text(category)}</h2>
+            {categoryOption?.review_required ? <ReviewMark /> : null}
             {!loading && loadError == null ? (
               <Badge variant="secondary" className={mfLayout.moduleCount}>
                 {formatNumber(docs.length)}
@@ -586,7 +599,7 @@ export function DocumentationCategoryPage() {
             ) : null}
           </div>
           <p className="mt-0.5 text-sm text-text-muted">
-            {t(`categories.${categorySlug}.description`)}
+            {t("category.description", { name: categories.text(category) })}
           </p>
         </div>
         <div className={mfLayout.moduleHeaderActions}>

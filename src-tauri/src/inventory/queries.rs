@@ -1696,9 +1696,9 @@ pub async fn list_stock_balances(
         sql.push_str(" AND sb.warehouse_id = ?");
         values.push(warehouse_id.into());
     }
-    if filter.low_stock_only.unwrap_or(false) {
-        sql.push_str(" AND a.reorder_point > 0 AND sb.available_qty <= a.reorder_point");
-    }
+    // "Low stock only" is the one low-stock rule (`evaluate_reorder`: per article and store, on
+    // the store's available quantity against the reorder point or the minimum stock), applied to
+    // the rows below — not a per-location comparison of its own.
     sql.push_str(" ORDER BY a.article_code ASC, w.code ASC, sl.code ASC");
 
     let rows = if values.is_empty() {
@@ -1788,9 +1788,6 @@ pub async fn list_stock_balances(
         syn_sql.push_str(" AND sl.warehouse_id = ?");
         syn_values.push(warehouse_id.into());
     }
-    if filter.low_stock_only.unwrap_or(false) {
-        syn_sql.push_str(" AND a.reorder_point > 0");
-    }
 
     let syn_rows = if syn_values.is_empty() {
         db.query_all(Statement::from_string(DbBackend::Sqlite, syn_sql)).await?
@@ -1817,6 +1814,15 @@ pub async fn list_stock_balances(
             moving_avg_unit_cost: row.try_get("", "moving_avg_unit_cost").ok().flatten(),
             updated_at: row.try_get("", "updated_at")?,
         });
+    }
+
+    if filter.low_stock_only.unwrap_or(false) {
+        let short: std::collections::HashSet<(i64, i64)> = evaluate_reorder(db, filter.warehouse_id)
+            .await?
+            .into_iter()
+            .map(|r| (r.article_id, r.warehouse_id))
+            .collect();
+        balances.retain(|b| short.contains(&(b.article_id, b.warehouse_id)));
     }
 
     balances.sort_by(|a, b| {

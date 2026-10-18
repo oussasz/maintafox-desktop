@@ -1,4 +1,16 @@
 {
+  "recommission": {
+    "action": "Remettre en service",
+    "title": "Remettre l'équipement en service ?",
+    "description": "{{code}} reprend le statut choisi et sa date de fin de vie est effacée. Le retour est enregistré dans l'historique de l'équipement avec son motif.",
+    "status": "Statut après la remise en service",
+    "noStatus": "Aucun statut hors « retiré » n'est publié dans les données de référence.",
+    "reason": "Motif",
+    "reasonRequired": "Indiquez pourquoi l'équipement revient en service.",
+    "cancel": "Annuler",
+    "confirm": "Remettre en service",
+    "done": "{{code}} est de nouveau en service ({{status}})."
+  },
   "page": {
     "title": "Équipements",
     "titleDetail": "Détail de l'équipement",
@@ -836,6 +848,12 @@
     "ASSET_SPARE_POSITION_TOO_LONG": "La position est limitée à {{max}} caractères.",
     "ASSET_SPARE_NOTES_TOO_LONG": "Les notes sont limitées à {{max}} caractères.",
     "ASSET_SPARE_ARTICLE_INACTIVE": "L’article {{code}} est inactif.",
-    "ASSET_SPARE_DUPLICATE": "L’article {{code}} est déjà dans les pièces de rechange de cet équipement."
+    "ASSET_SPARE_DUPLICATE": "L’article {{code}} est déjà dans les pièces de rechange de cet équipement.",
+    "ASSET_RETIRE_THROUGH_DECOMMISSION": "Un équipement ne se retire qu'avec Déclasser : le déclassement vérifie les travaux ouverts et enregistre le motif. Utilisez Déclasser depuis la fiche de l'équipement.",
+    "ASSET_RECOMMISSION_REQUIRED": "Un équipement retiré revient en service par une remise en service (enregistrée avec l'auteur et le motif), pas en modifiant son statut.",
+    "ASSET_RECOMMISSION_NOT_RETIRED": "Seul un équipement retiré (déclassé ou mis au rebut) peut être remis en service.",
+    "ASSET_RECOMMISSION_REASON_REQUIRED": "Indiquez le motif de la remise en service.",
+    "ASSET_RECOMMISSION_TARGET_RETIRED": "Choisissez un statut en service : un statut retiré n'est pas une remise en service.",
+    "ASSET_RECOMMISSION_VERSION_REQUIRED": "Rechargez l'équipement avant de le remettre en service."
   }
 }

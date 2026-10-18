@@ -96,7 +96,9 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         // LOTO energy sources (ISO 14118 / OSHA 1910.147), `permit::energy_reference`.
         | "PERMIT.ENERGY_TYPES"
         // Severity of a PM finding: mapped to the follow-up urgency (`pm::reason_catalog`).
-        | "PM.FINDING_SEVERITY" => Some(GovernanceCategory::SystemCatalog),
+        | "PM.FINDING_SEVERITY"
+        // Employment statuses: `active` / `terminated` drive availability and locking.
+        | "PERSONNEL.EMPLOYMENT_STATUSES" => Some(GovernanceCategory::SystemCatalog),
 
         "EQUIPMENT.FAMILY"
         | "EQUIPMENT.SUBFAMILY"
@@ -112,7 +114,13 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         // How a plant isolates an energy for LOTO (`permit::energy_reference`).
         | "PERMIT.ISOLATION_METHODS"
         // Why a PM is deferred, missed or cancelled (`pm::reason_catalog`).
-        | "PM.DEFERRAL_REASONS" => Some(GovernanceCategory::OperationalDictionary),
+        | "PM.DEFERRAL_REASONS"
+        // Personnel and document lists of each plant (`personnel::reference_lists`,
+        // `library_documents`); absence types carry a required behaviour tag.
+        | "PERSONNEL.EMPLOYMENT_TYPES"
+        | "PERSONNEL.ABSENCE_TYPES"
+        | "PERSONNEL.POSITION_CATEGORIES"
+        | "DOCUMENT.CATEGORIES" => Some(GovernanceCategory::OperationalDictionary),
 
         // Equipment classes (ISO 14224 taxonomy): the product seeds the baseline classes, each plant
         // adds its own (presses, boilers, transformers, packaging lines, …) through draft → publish.

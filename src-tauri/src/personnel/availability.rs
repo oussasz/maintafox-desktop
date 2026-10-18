@@ -315,9 +315,8 @@ pub async fn create_availability_block(
             "start_at must be before end_at.".to_string()
         ]));
     }
-    if input.block_type.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["block_type is required.".to_string()]));
-    }
+    // A value of the plant's absence-type list; its tag decides whether it is always critical.
+    let (block_type, tag) = super::reference_lists::checked_absence_type(db, &input.block_type).await?;
 
     assert_no_overlapping_blocks(
         db,
@@ -329,8 +328,7 @@ pub async fn create_availability_block(
     )
     .await?;
 
-    let is_critical =
-        input.is_critical.unwrap_or(false) || matches!(input.block_type.as_str(), "medical" | "restriction");
+    let is_critical = input.is_critical.unwrap_or(false) || tag == super::reference_lists::ABSENCE_TAG_CRITICAL;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -339,7 +337,7 @@ pub async fn create_availability_block(
          VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             input.personnel_id.into(),
-            input.block_type.clone().into(),
+            block_type.into(),
             input.start_at.clone().into(),
             input.end_at.clone().into(),
             input.reason_note.clone().into(),
@@ -369,11 +367,22 @@ pub async fn update_availability_block(
             "start_at must be before end_at.".to_string()
         ]));
     }
-    if input.block_type.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["block_type is required.".to_string()]));
-    }
-
     let existing = fetch_block_by_id(db, input.id).await?;
+    // Only a change of type is checked against the list: a block whose stored type was retired
+    // or flagged stays editable and keeps that type's behaviour.
+    // Unchanged type: the stored critical flag is kept (a legacy type adopted "à revoir" never
+    // forces it, so a note edit cannot flip an old block); only a shipped or plant type tagged
+    // critical forces it, as on creation.
+    let (block_type, forced_critical, keep_critical) = if input.block_type == existing.block_type {
+        let forced = matches!(
+            super::reference_lists::stored_absence_type(db, &existing.block_type).await?,
+            Some((Some(ref tag), false)) if tag == super::reference_lists::ABSENCE_TAG_CRITICAL
+        );
+        (existing.block_type.clone(), forced, existing.is_critical)
+    } else {
+        let (code, tag) = super::reference_lists::checked_absence_type(db, &input.block_type).await?;
+        (code, tag == super::reference_lists::ABSENCE_TAG_CRITICAL, false)
+    };
     assert_no_overlapping_blocks(
         db,
         existing.personnel_id,
@@ -384,8 +393,7 @@ pub async fn update_availability_block(
     )
     .await?;
 
-    let is_critical =
-        input.is_critical.unwrap_or(false) || matches!(input.block_type.as_str(), "medical" | "restriction");
+    let is_critical = forced_critical || input.is_critical.unwrap_or(keep_critical);
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -393,7 +401,7 @@ pub async fn update_availability_block(
          SET block_type = ?, start_at = ?, end_at = ?, reason_note = ?, is_critical = ?
          WHERE id = ?",
         [
-            input.block_type.clone().into(),
+            block_type.into(),
             input.start_at.clone().into(),
             input.end_at.clone().into(),
             input.reason_note.clone().into(),
@@ -518,28 +526,34 @@ pub async fn compute_personnel_availability_state(
     }
 
     // Check active blocks
+    // The status follows the behaviour tag of each block's absence type
+    // (`personnel::reference_lists`, PERSONNEL.ABSENCE_TYPES): training -> in training, leave -> on
+    // leave, otherwise (critical, or a type no longer in the list) blocked.
     let block_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT block_type FROM personnel_availability_blocks \
-             WHERE personnel_id = ? AND start_at <= ? AND end_at > ? \
-             ORDER BY is_critical DESC, id ASC LIMIT 10",
+            format!(
+                "SELECT b.block_type, {tag} AS tag FROM personnel_availability_blocks b \
+                 WHERE b.personnel_id = ? AND b.start_at <= ? AND b.end_at > ? \
+                 ORDER BY b.is_critical DESC, b.id ASC LIMIT 10",
+                tag = super::reference_lists::BLOCK_TAG_SQL
+            ),
             [personnel_id.into(), as_of.clone().into(), as_of.clone().into()],
         ))
         .await?;
 
     if !block_rows.is_empty() {
-        let block_types: Vec<String> = block_rows
-            .iter()
-            .filter_map(|r| r.try_get::<String>("", "block_type").ok())
-            .collect();
+        let mut block_types: Vec<String> = Vec::with_capacity(block_rows.len());
+        let mut tags: Vec<Option<String>> = Vec::with_capacity(block_rows.len());
+        for r in &block_rows {
+            block_types.push(r.try_get("", "block_type")?);
+            tags.push(r.try_get("", "tag")?);
+        }
+        let has = |wanted: &str| tags.iter().any(|t| t.as_deref() == Some(wanted));
 
-        let status = if block_types.iter().any(|t| t == "training") {
+        let status = if has(super::reference_lists::ABSENCE_TAG_TRAINING) {
             "in_training"
-        } else if block_types
-            .iter()
-            .any(|t| matches!(t.as_str(), "leave" | "vacation" | "sick"))
-        {
+        } else if has(super::reference_lists::ABSENCE_TAG_LEAVE) {
             "on_leave"
         } else {
             "blocked"

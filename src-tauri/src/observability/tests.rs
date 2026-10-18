@@ -387,6 +387,7 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
             auto_reserve: Some(false),
             notes: None,
             origin: None,
+            is_required: true,
         },
     )
     .await
@@ -1332,6 +1333,7 @@ async fn test_obs_12_full_observability_chain() {
             auto_reserve: Some(false),
             notes: None,
             origin: None,
+            is_required: true,
         },
     )
     .await

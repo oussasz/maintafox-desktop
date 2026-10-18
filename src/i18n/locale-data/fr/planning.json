@@ -317,6 +317,7 @@
     "PREREQUISITE_BLOCKED": "En attente d'un préalable (reporté, ou en attente d'un autre travail).",
     "NO_FEASIBLE_WINDOW": "Exige l'arrêt de l'équipement : aucune fenêtre de maintenance ou d'arrêt ouverte de son site ou de son équipement sur ses échéances.",
     "ASSIGNEE_UNAVAILABLE": "L'intervenant est absent ou pris sur d'autres travaux pendant les échéances ({{availability_conflict_count}}).",
+    "PARTS_SHORT_OPTIONAL": "Pièces optionnelles en rupture : {{articles}}. Le travail peut être engagé sans elles.",
     "PARTS_SHORT": "Pièces en rupture de stock : {{articles}}. Commandez-les ou transférez-les avant d'engager.",
     "PART_NOT_IN_CATALOGUE": "Pièces hors catalogue articles (stock non vérifiable) : {{articles}}.",
     "PART_QUANTITY_MISSING": "Pièces sans quantité (stock non vérifiable) : {{articles}}.",

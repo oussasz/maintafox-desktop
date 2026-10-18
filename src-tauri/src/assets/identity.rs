@@ -944,6 +944,10 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     // ── Status validation (normalized string + reference FK) ──────────────
     let status_code = normalize_status_code_for_reference(&payload.status_code)?;
     validate_status_code(&txn, &status_code).await?;
+    // A new asset is never created retired: retirement is recorded by Déclasser.
+    if is_retired_status_code(&txn, &status_code).await? {
+        return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]));
+    }
     let status_ref_id = resolve_status_ref_id(&txn, &status_code).await?;
 
     // ── Decommission date guard ──────────────────────────────────────────
@@ -1040,6 +1044,27 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     Ok(asset)
 }
 
+/// Refusal code: an asset is retired only through Déclasser (`decommission_asset`).
+pub const RETIRE_THROUGH_DECOMMISSION: &str = "ASSET_RETIRE_THROUGH_DECOMMISSION";
+/// Refusal code: a retired asset returns to service only through a recommission lifecycle event
+/// (`RECOMMISSIONED`, which records who and why and clears the end-of-life date).
+pub const RECOMMISSION_REQUIRED: &str = "ASSET_RECOMMISSION_REQUIRED";
+
+/// Whether `code` is a retired status (tag `retired` in the published `EQUIPMENT.STATUS` list).
+pub(crate) async fn is_retired_status_code<C: ConnectionTrait>(db: &C, code: &str) -> AppResult<bool> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT 1 AS hit WHERE ? IN ({})",
+                crate::assets::taxonomy_reference::RETIRED_STATUS_CODES_SQL
+            ),
+            [code.into()],
+        ))
+        .await?
+        .is_some())
+}
+
 /// Update the identity fields of an existing asset.
 ///
 /// Uses optimistic concurrency control via `expected_row_version`.
@@ -1057,7 +1082,8 @@ pub async fn update_asset_identity(
     let current = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT e.row_version, e.lifecycle_status, e.asset_id_code, ec.code AS class_code \
+            "SELECT e.row_version, e.lifecycle_status, e.asset_id_code, ec.code AS class_code, \
+                    e.decommissioned_at \
              FROM equipment e \
              LEFT JOIN equipment_classes ec ON ec.id = e.class_id \
              WHERE e.id = ? AND e.deleted_at IS NULL",
@@ -1080,6 +1106,41 @@ pub async fn update_asset_identity(
             "Conflit de version : version attendue {expected_row_version}, \
              version actuelle {current_version}. L'enregistrement a été modifié."
         )]));
+    }
+
+    // Retiring an asset (a retired status, or its end-of-life date) is done by Déclasser, which
+    // checks open work and records the reason; the identity form keeps what is stored.
+    let current_status: String = current
+        .try_get("", "lifecycle_status")
+        .map_err(|e| decode_err("lifecycle_status", e))?;
+    let current_decommissioned_at: Option<String> = current
+        .try_get("", "decommissioned_at")
+        .map_err(|e| decode_err("decommissioned_at", e))?;
+    if let Some(ref raw_status) = payload.status_code {
+        let normalized = normalize_status_code_for_reference(raw_status)?;
+        if normalized != current_status && is_retired_status_code(&txn, &normalized).await? {
+            return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]));
+        }
+        if normalized != current_status && is_retired_status_code(&txn, &current_status).await? {
+            return Err(AppError::ValidationFailed(vec![RECOMMISSION_REQUIRED.into()]));
+        }
+    }
+    if let Some(ref decom_at) = payload.decommissioned_at {
+        // Compared by calendar day: a different format of the same date is no change.
+        let day = |v: Option<&str>| {
+            v.map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.get(..10).unwrap_or(s).to_string())
+        };
+        match (day(current_decommissioned_at.as_deref()), day(decom_at.as_deref())) {
+            (None, Some(_)) => return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()])),
+            // Clearing the end-of-life date is a return to service.
+            (Some(_), None) => return Err(AppError::ValidationFailed(vec![RECOMMISSION_REQUIRED.into()])),
+            (Some(a), Some(b)) if a != b => {
+                return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]))
+            }
+            _ => {}
+        }
     }
 
     // ── Build dynamic SET clause ─────────────────────────────────────────
@@ -1196,15 +1257,6 @@ pub async fn update_asset_identity(
         binds.push(normalized.clone().into());
         sets.push("equipment_status_ref_id = ?".to_string());
         binds.push(status_ref.into());
-
-        // Auto-set decommissioned_at if transitioning to DECOMMISSIONED
-        if normalized == "DECOMMISSIONED" {
-            let has_explicit_decom = matches!(payload.decommissioned_at, Some(Some(_)));
-            if !has_explicit_decom {
-                sets.push("decommissioned_at = ?".to_string());
-                binds.push(Utc::now().to_rfc3339().into());
-            }
-        }
     }
 
     if let Some(ref mfg) = payload.manufacturer {
@@ -1242,10 +1294,8 @@ pub async fn update_asset_identity(
         sets.push("commissioning_date = ?".to_string());
         binds.push(com_at.clone().into());
     }
-    if let Some(ref decom_at) = payload.decommissioned_at {
-        sets.push("decommissioned_at = ?".to_string());
-        binds.push(decom_at.clone().into());
-    }
+    // The end-of-life date is written only by Déclasser and recommission (checked above: an
+    // identity edit can only send it back unchanged), so it is never rewritten here.
 
     if sets.is_empty() {
         return Err(AppError::ValidationFailed(vec!["Aucun champ à mettre à jour.".into()]));

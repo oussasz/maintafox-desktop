@@ -504,6 +504,7 @@ mod tests {
                 auto_reserve: Some(false),
                 notes: None,
                 origin: None,
+                is_required: true,
             },
         )
         .await

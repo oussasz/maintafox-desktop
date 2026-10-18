@@ -411,7 +411,13 @@ const DecisionSchema = z.object({
   status: z.string(),
   approver_id: optNum,
   approver_name: optStr,
+  proposed_by_id: optNum,
   proposed_by_name: optStr,
+  decided_by_id: optNum,
+  /** Approved by its own proposer (its site's opt-out, or an older record). */
+  self_approved: z.boolean(),
+  /** The decision's site opted out of four-eyes: its proposer may approve it. */
+  site_allows_self_approval: z.boolean(),
   proposed_at: z.string(),
   decided_by_name: optStr,
   decided_at: optStr,

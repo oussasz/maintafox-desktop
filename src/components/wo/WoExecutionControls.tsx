@@ -14,6 +14,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PartOptionalChip } from "@/components/common/PartNecessityChoice";
 import { WoPermitGateCard } from "@/components/permits/WoPermitGateCard";
 import { QualificationCheckNotice } from "@/components/personnel/qualification/QualificationCheckNotice";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
@@ -1092,6 +1093,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                           {formatOrDash(part.article_ref ?? part.article_label)}
                         </span>
                         <OriginBadge origin={part.origin} t={t} />
+                        {part.is_required === false ? <PartOptionalChip className="ml-1" /> : null}
                         {isNotUsed && part.not_used_reason_label && (
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             {t("execution.notUsed.reason")}: {part.not_used_reason_label}

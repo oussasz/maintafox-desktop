@@ -880,8 +880,9 @@ mod tests {
         // urgency scale commands (`list_urgency_levels`, `update_urgency_level`) and the plant's
         // OT sub-types (`list_work_order_subtypes`). Personnel added labour for a person without a
         // login (`add_personnel_labor`) and the people list (`list_wo_labor_people`). Migration 202:
-        // the shift windows of the team's Classes horaires (`list_wo_shift_options`).
-        assert_eq!(wo_lines.len(), 68, "invoke_handler must contain exactly 68 WO commands");
+        // the shift windows of the team's Classes horaires (`list_wo_shift_options`). Migration 230:
+        // "needs shutdown" on a work order (`set_wo_requires_shutdown`).
+        assert_eq!(wo_lines.len(), 69, "invoke_handler must contain exactly 69 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
@@ -1583,6 +1584,7 @@ mod tests {
                 auto_reserve: Some(true),
                 notes: None,
                 origin: None,
+                is_required: true,
             },
         )
         .await
@@ -1616,6 +1618,7 @@ mod tests {
                 auto_reserve: Some(true),
                 notes: None,
                 origin: None,
+                is_required: true,
             },
         )
         .await;

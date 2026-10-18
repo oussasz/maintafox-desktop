@@ -51,6 +51,8 @@ pub struct WoPart {
     pub not_used_comment: Option<String>,
     #[serde(default)]
     pub not_used_reason_label: Option<String>,
+    /// Required for the job: short, it blocks the plan; optional: short, it only warns.
+    pub is_required: bool,
 }
 
 fn default_part_origin() -> String {
@@ -72,6 +74,9 @@ pub struct AddPartInput {
     pub notes: Option<String>,
     /// Force origin; otherwise derived from WO status.
     pub origin: Option<String>,
+    /// Required for the job (a short required part blocks the plan) or optional (a short optional
+    /// part warns). No default: every new line says which.
+    pub is_required: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -142,6 +147,10 @@ fn map_part(row: &sea_orm::QueryResult) -> AppResult<WoPart> {
         not_used_reason_label: row
             .try_get::<Option<String>>("", "not_used_reason_label")
             .unwrap_or(None),
+        is_required: row
+            .try_get::<i64>("", "is_required")
+            .map_err(|e| decode_err("is_required", e))?
+            == 1,
     })
 }
 
@@ -170,7 +179,7 @@ const PART_COLS: &str = "wop.id, wop.work_order_id, wop.article_id, wop.article_
      wop.quantity_reserved, wop.quantity_issued, wop.notes, \
      COALESCE(NULLIF(TRIM(wop.article_ref), ''), a.article_code) AS article_label, \
      wop.origin, wop.consumption_status, wop.not_used_reason_id, wop.not_used_comment, \
-     nur.label AS not_used_reason_label";
+     nur.label AS not_used_reason_label, wop.is_required";
 
 const PART_FROM: &str = "\
     work_order_parts wop \
@@ -367,8 +376,8 @@ pub async fn add_planned_part(db: &DatabaseConnection, input: AddPartInput) -> A
         DbBackend::Sqlite,
         "INSERT INTO work_order_parts \
          (work_order_id, article_id, article_ref, quantity_planned, quantity_used, unit_cost, \
-          stock_location_id, notes, origin, consumption_status) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          stock_location_id, notes, origin, consumption_status, is_required) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             input
@@ -403,6 +412,7 @@ pub async fn add_planned_part(db: &DatabaseConnection, input: AddPartInput) -> A
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
             origin.clone().into(),
             initial_status.into(),
+            i64::from(input.is_required).into(),
         ],
     ))
     .await?;

@@ -44,6 +44,66 @@ pub struct WoScheduleSaveInput {
     pub planned_downtime_hours: Option<f64>,
 }
 
+/// Sets or clears "needs shutdown" on a work order still being prepared (draft, planning, ready).
+/// Planning then checks the job against the shutdown windows of its site or equipment
+/// (`planning::queries::evaluate_candidate`, the PM rule). Recorded as an action event.
+pub async fn save_shutdown_requirement(
+    db: &DatabaseConnection,
+    wo_id: i64,
+    requires_shutdown: bool,
+    expected_row_version: i64,
+    actor_id: i64,
+) -> AppResult<WorkOrder> {
+    let txn = db.begin().await?;
+    let (from_code, status, _) = load_wo_status(&txn, wo_id).await?;
+    if !matches!(status, WoStatus::Draft | WoStatus::Planning | WoStatus::Ready) {
+        return Err(crate::errors::org_validation_failed(
+            "WO_SHUTDOWN_FLAG_NOT_EDITABLE",
+            format!(
+                "\"Needs shutdown\" can be changed while the work order is prepared (draft, planning, ready); it is {}.",
+                status.as_str()
+            ),
+            std::collections::HashMap::from([("status".to_string(), status.as_str().to_string())]),
+        ));
+    }
+    let result = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET requires_shutdown = ?, row_version = row_version + 1, updated_at = ? \
+             WHERE id = ? AND row_version = ?",
+            [
+                i64::from(requires_shutdown).into(),
+                now_utc_z().into(),
+                wo_id.into(),
+                expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    check_concurrency(result.rows_affected())?;
+    emit_action_event(
+        &txn,
+        wo_id,
+        if requires_shutdown {
+            "shutdown_required_set"
+        } else {
+            "shutdown_required_cleared"
+        },
+        Some(actor_id),
+        Some(&from_code),
+        Some(&from_code),
+        None,
+    )
+    .await?;
+    let wo = queries::get_work_order(&txn, wo_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: wo_id.to_string(),
+        })?;
+    txn.commit().await?;
+    Ok(wo)
+}
+
 async fn has_schedule_commitment(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<bool> {
     let row = db
         .query_one(Statement::from_sql_and_values(

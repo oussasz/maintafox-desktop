@@ -503,6 +503,7 @@ mod tests {
                 reason_code: None,
                 notes: Some("Preservation treatment".to_string()),
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -625,6 +626,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )

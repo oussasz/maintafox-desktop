@@ -25,6 +25,7 @@ import { mfLayout } from "@/design-system/tokens";
 import { RELIABILITY_DECISION_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useSession } from "@/hooks/use-session";
 import {
   type ReliabilityStudy,
   type StudyDecision,
@@ -49,6 +50,8 @@ export function StudyDecisionsStep({
   const { t } = useTranslation("reliability");
   const { formatNumber, formatDecimal, formatDate } = useFormatters();
   const { can } = usePermissions();
+  const { info } = useSession();
+  const me = info?.user_id ?? null;
   const [rows, setRows] = useState<StudyDecision[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -77,6 +80,11 @@ export function StudyDecisionsStep({
   // An archived study is a record: its decisions are no longer approved, rejected or applied.
   const canManage = can(P.RAM_MANAGE) && study.status === "active";
   const hours = (v: number | null | undefined) => (v == null ? "—" : formatNumber(Math.round(v)));
+  /** Another person was designated: only they approve or reject. */
+  const designatedElsewhere = (d: StudyDecision) => d.approver_id != null && d.approver_id !== me;
+  /** Four-eyes: the proposer does not approve their own decision, unless its site opted out. */
+  const ownProposal = (d: StudyDecision) =>
+    !d.site_allows_self_approval && d.proposed_by_id != null && d.proposed_by_id === me;
 
   /** Runs inside the confirmation: a refusal (not the designated approver…) keeps it open. */
   const approve = async (d: StudyDecision) => {
@@ -203,6 +211,14 @@ export function StudyDecisionsStep({
                         tone={toneOf(RELIABILITY_DECISION_STATUS_TONE, d.status)}
                         label={t(`rams.decisions.status.${d.status}`)}
                       />
+                      {d.self_approved ? (
+                        <StatusChip
+                          className="ml-1"
+                          tone="warning"
+                          label={t("rams.decisions.selfApproved")}
+                          title={t("rams.decisions.selfApprovedHint")}
+                        />
+                      ) : null}
                       {d.decision_note ? (
                         <p className="mt-1 text-xs text-text-muted">{d.decision_note}</p>
                       ) : null}
@@ -234,17 +250,30 @@ export function StudyDecisionsStep({
                     <td className="px-3 py-2">
                       {canManage ? (
                         <div className="flex justify-end gap-1.5">
-                          {d.status === "proposed" ? (
+                          {d.status === "proposed" && designatedElsewhere(d) ? (
+                            <span className="text-xs text-text-muted">
+                              {t("rams.decisions.awaitingApprover", {
+                                name: d.approver_name ?? "—",
+                              })}
+                            </span>
+                          ) : null}
+                          {d.status === "proposed" && !designatedElsewhere(d) ? (
                             <>
-                              <Button
-                                variant="outline"
-                                className="h-10"
-                                disabled={busy}
-                                onClick={() => setApproveTarget(d)}
-                              >
-                                <Check className="h-4 w-4" aria-hidden />
-                                {t("rams.decisions.approve")}
-                              </Button>
+                              {ownProposal(d) ? (
+                                <span className="self-center text-xs text-text-muted">
+                                  {t("rams.decisions.ownProposal")}
+                                </span>
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  className="h-10"
+                                  disabled={busy}
+                                  onClick={() => setApproveTarget(d)}
+                                >
+                                  <Check className="h-4 w-4" aria-hidden />
+                                  {t("rams.decisions.approve")}
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 className="h-10"

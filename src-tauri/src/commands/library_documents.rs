@@ -112,3 +112,19 @@ pub async fn update_library_document(
     );
     library_documents::update_library_document_metadata(&state.db, input).await
 }
+
+/// The active document categories (`DOCUMENT.CATEGORIES`, Données de référence). Same right as
+/// the library list.
+#[tauri::command]
+pub async fn list_document_categories(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<library_documents::DocumentCategoryOption>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DOC_VIEW,
+        PermissionScope::Global
+    );
+    library_documents::list_document_categories(&state.db).await
+}

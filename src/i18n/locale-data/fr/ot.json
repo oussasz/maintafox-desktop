@@ -1,4 +1,21 @@
 {
+  "shutdownRequirement": {
+    "sectionTitle": "Arrêt de l'équipement",
+    "label": "Nécessite un arrêt",
+    "short": "Arrêt",
+    "badge": "Arrêt nécessaire",
+    "required": "Nécessaire",
+    "notRequired": "Non nécessaire",
+    "help": "Si coché, la planification vérifie l'OT contre les fenêtres d'arrêt comme un plan de MP : avertissement sans fenêtre d'arrêt, et l'engagement demande une fenêtre d'arrêt ouverte.",
+    "frozen": "Ne se modifie que pendant la préparation de l'OT (brouillon, planification ou prêt).",
+    "noPermission": "Vous n'avez pas le droit de modifier cet OT.",
+    "confirmOnTitle": "Marquer l'OT comme nécessitant un arrêt ?",
+    "confirmOnBody": "{{code}} ne pourra être engagé que dans une fenêtre d'arrêt ouverte. Le changement est enregistré dans l'historique de l'OT.",
+    "confirmOffTitle": "Retirer « Nécessite un arrêt » ?",
+    "confirmOffBody": "{{code}} ne sera plus vérifié contre les fenêtres d'arrêt. Le changement est enregistré dans l'historique de l'OT.",
+    "confirmOn": "Marquer",
+    "confirmOff": "Retirer"
+  },
   "permitRequirement": {
     "sectionTitle": "Sécurité",
     "label": "Permis de travail / consignation (LOTO) requis",
@@ -711,6 +728,8 @@
     "permitRequired": "Permis / consignation désormais exigé",
     "permitNotRequired": "Permis / consignation plus exigé",
     "actions": {
+      "shutdown_required_set": "OT marqué « nécessite un arrêt »",
+      "shutdown_required_cleared": "« Nécessite un arrêt » retiré",
       "created": "Ordre de travail créé",
       "submitted": "Soumis à la planification",
       "planned": "Planifié",

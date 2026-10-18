@@ -1419,3 +1419,50 @@ pub async fn list_all_wo_change_events(
     );
     audit::list_all_wo_change_events(&state.db, filter).await
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// set_wo_requires_shutdown — ot.edit (a planning field, like plan_wo)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Flags (or unflags) a work order being prepared as needing the equipment stopped; planning then
+/// checks it against shutdown windows like a PM plan.
+#[tauri::command]
+pub async fn set_wo_requires_shutdown(
+    wo_id: i64,
+    requires_shutdown: bool,
+    expected_row_version: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    let wo = crate::wo::workflow::actions::schedule::save_shutdown_requirement(
+        &state.db,
+        wo_id,
+        requires_shutdown,
+        expected_row_version,
+        i64::from(user.user_id),
+    )
+    .await?;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: if requires_shutdown {
+                "shutdown_required_set".into()
+            } else {
+                "shutdown_required_cleared".into()
+            },
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some(if requires_shutdown {
+                "Work order flagged as needing a shutdown".into()
+            } else {
+                "Work order no longer needs a shutdown".into()
+            }),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(wo)
+}

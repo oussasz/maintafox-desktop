@@ -388,6 +388,21 @@ mod tests {
             }
             other => panic!("expected ValidationFailed, got {other:?}"),
         }
+        // Refused inside the transaction: nothing written (status, date, lifecycle event).
+        let after = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        assert_eq!(after.status_code, asset.status_code);
+        assert!(after.decommissioned_at.is_none());
+        let events = db
+            .query_one(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM equipment_lifecycle_events WHERE equipment_id = ? AND event_type = 'DECOMMISSIONED'",
+                [asset.id.into()],
+            ))
+            .await
+            .expect("count")
+            .and_then(|r| r.try_get::<i64>("", "n").ok())
+            .unwrap_or(-1);
+        assert_eq!(events, 0);
     }
 
     #[tokio::test]

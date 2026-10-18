@@ -525,6 +525,7 @@ pub async fn create_pm_plan_version(
     validate_effective_window(&input.effective_from, input.effective_to.as_deref())?;
     validate_trigger_definition(db, &plan.strategy_type, &input.trigger_definition_json).await?;
     validate_required_skills_json(db, input.required_skills_json.as_deref()).await?;
+    crate::pm::wo_content::validate_required_parts_json(input.required_parts_json.as_deref())?;
     crate::planning::load::validate_crew_size(input.planned_crew_size)?;
     let version_no_row = db
         .query_one(Statement::from_sql_and_values(
@@ -580,6 +581,7 @@ pub async fn update_pm_plan_version(
             "Only draft PM plan versions can be edited.".to_string(),
         ]));
     }
+    crate::pm::wo_content::validate_required_parts_json(input.required_parts_json.as_deref())?;
     let rv: i64 = row.try_get("", "row_version")?;
     if rv != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
@@ -1081,7 +1083,12 @@ pub async fn list_pm_planning_readiness(
 
         let mut blockers: Vec<PmPlanningReadinessBlocker> = Vec::new();
 
-        if json_array_has_items(required_parts_json.as_deref()) {
+        // Only a REQUIRED part line blocks the projection (planning readiness: an optional part
+        // only warns).
+        if crate::pm::wo_content::parse_required_parts(required_parts_json.as_deref())
+            .iter()
+            .any(|p| p.required)
+        {
             blockers.push(PmPlanningReadinessBlocker {
                 code: "missing_parts".to_string(),
                 message: "PM version defines required_parts_json and no planning reservation contract exists yet."

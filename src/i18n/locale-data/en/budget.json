@@ -276,6 +276,8 @@
     "cumulative": "To date: actual {{actual}} against a budget of {{budget}}."
   },
   "drill": {
+    "actualsTotal_one": "Total of {{count}} entry: {{amount}}",
+    "actualsTotal_other": "Total of the {{count}} entries: {{amount}}",
     "title": "{{cc}} · {{bucket}}",
     "summary": "Actual {{actual}} · committed {{committed}} · budget {{budget}}",
     "loadError": "The details could not be loaded.",

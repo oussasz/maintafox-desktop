@@ -6,14 +6,13 @@ use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
 use super::domain::{
-    AuthorizationType, AvailabilityStatus, CompanyListFilter, EmploymentOrigin, EmploymentStatus, EmploymentType,
-    ExternalCompany, ExternalCompanyContact, Personnel, PersonnelAuthorization, PersonnelAvailabilityBlock,
-    PersonnelCertDraft, PersonnelCreateInput, PersonnelDetailPayload, PersonnelListFilter, PersonnelListPage,
-    PersonnelRateCard, PersonnelSkillDraft, PersonnelSkillReferenceValue, PersonnelTeamAssignment,
-    PersonnelUpdateInput, PersonnelWorkHistoryEntry, PersonnelWorkloadSummary, Position, PositionCategory,
-    PositionChangeEvent, PositionDetailPayload, PositionListFilter, PositionRequirementProfileInput,
-    PositionRequirementSeed, PositionUpsertInput, ScheduleClass, ScheduleClassWithDetails, ScheduleDetail,
-    SuccessionRiskRow,
+    AuthorizationType, AvailabilityStatus, CompanyListFilter, EmploymentOrigin, ExternalCompany,
+    ExternalCompanyContact, Personnel, PersonnelAuthorization, PersonnelAvailabilityBlock, PersonnelCertDraft,
+    PersonnelCreateInput, PersonnelDetailPayload, PersonnelListFilter, PersonnelListPage, PersonnelRateCard,
+    PersonnelSkillDraft, PersonnelSkillReferenceValue, PersonnelTeamAssignment, PersonnelUpdateInput,
+    PersonnelWorkHistoryEntry, PersonnelWorkloadSummary, Position, PositionChangeEvent, PositionDetailPayload,
+    PositionListFilter, PositionRequirementProfileInput, PositionRequirementSeed, PositionUpsertInput, ScheduleClass,
+    ScheduleClassWithDetails, ScheduleDetail, SuccessionRiskRow,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -559,11 +558,13 @@ pub async fn create_personnel(
     input: PersonnelCreateInput,
     actor_id: i64,
 ) -> AppResult<Personnel> {
-    EmploymentType::try_from(input.employment_type.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    // Employment type and status: values of their reference lists (`personnel::reference_lists`).
+    let employment_type = super::reference_lists::checked_employment_type(db, &input.employment_type).await?;
     EmploymentOrigin::try_from(input.employment_origin.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let emp_status = input.employment_status.as_deref().unwrap_or("active");
-    EmploymentStatus::try_from(emp_status).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    let emp_status =
+        super::reference_lists::checked_employment_status(db, input.employment_status.as_deref().unwrap_or("active"))
+            .await?;
 
     if input.employment_origin == "external" && input.external_company_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
@@ -643,9 +644,9 @@ pub async fn create_personnel(
             entity_sync_id.into(),
             code.clone().into(),
             input.full_name.clone().into(),
-            input.employment_type.clone().into(),
+            employment_type.into(),
             input.employment_origin.clone().into(),
-            emp_status.to_string().into(),
+            emp_status.clone().into(),
             (if blocked_override { 1_i64 } else { 0_i64 }).into(),
             input.position_id.into(),
             input.primary_entity_id.into(),
@@ -754,28 +755,68 @@ pub async fn update_personnel(
     }
 
     // Validate enums
-    if let Some(ref t) = input.employment_type {
-        EmploymentType::try_from(t.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    }
+    // Only a change is checked against the list: a record whose stored value was retired or
+    // flagged stays editable while the field is left as it is.
+    let employment_type = match input.employment_type.as_deref() {
+        Some(t) if t == current.employment_type => None,
+        Some(t) => Some(super::reference_lists::checked_employment_type(db, t).await?),
+        None => None,
+    };
     if let Some(ref o) = input.employment_origin {
         EmploymentOrigin::try_from(o.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     }
-    if let Some(ref s) = input.employment_status {
-        EmploymentStatus::try_from(s.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    }
+    let employment_status = match input.employment_status.as_deref() {
+        Some(s) if s == current.employment_status => None,
+        Some(s) => Some(super::reference_lists::checked_employment_status(db, s).await?),
+        None => None,
+    };
     if let Some(ref s) = input.availability_status {
         AvailabilityStatus::try_from(s.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     }
 
-    // Contract date validation
-    let eff_start = input
-        .contract_start_date
+    // Optional texts: `null` or an empty text clears the field (`PersonnelUpdateInput`).
+    let text = |v: &Option<Option<String>>| -> Option<Option<String>> {
+        v.as_ref().map(|inner| {
+            inner
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+        })
+    };
+    let hire_date = text(&input.hire_date);
+    let termination_date = text(&input.termination_date);
+    let email = text(&input.email);
+    let phone = text(&input.phone);
+    let contract_number = text(&input.contract_number);
+    let contract_start_date = text(&input.contract_start_date);
+    let contract_end_date = text(&input.contract_end_date);
+    let notes = text(&input.notes);
+
+    // An external person keeps a contractor company: it cannot be cleared.
+    let eff_origin = input
+        .employment_origin
         .as_deref()
-        .or(current.contract_start_date.as_deref());
-    let eff_end = input
-        .contract_end_date
-        .as_deref()
-        .or(current.contract_end_date.as_deref());
+        .unwrap_or(current.employment_origin.as_str());
+    let eff_company = match input.external_company_id {
+        Some(v) => v,
+        None => current.external_company_id,
+    };
+    if eff_origin == "external" && eff_company.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "external_company_id est requis pour un collaborateur externe.".into(),
+        ]));
+    }
+
+    // Contract date validation (on the values after the update, cleared ones included)
+    let eff_start = match &contract_start_date {
+        Some(v) => v.as_deref(),
+        None => current.contract_start_date.as_deref(),
+    };
+    let eff_end = match &contract_end_date {
+        Some(v) => v.as_deref(),
+        None => current.contract_end_date.as_deref(),
+    };
     if let (Some(start), Some(end)) = (eff_start, eff_end) {
         if start > end {
             return Err(AppError::ValidationFailed(vec![
@@ -785,7 +826,7 @@ pub async fn update_personnel(
     }
 
     // Supervisor cycle check
-    if let Some(sup_id) = input.supervisor_id {
+    if let Some(Some(sup_id)) = input.supervisor_id {
         assert_no_supervisor_cycle(db, input.id, sup_id).await?;
     }
 
@@ -798,7 +839,10 @@ pub async fn update_personnel(
     let new_position_id = input.position_id.or(current.position_id);
     let new_entity_id = input.primary_entity_id.or(current.primary_entity_id);
     let new_team_id = input.primary_team_id.or(current.primary_team_id);
-    let new_supervisor_id = input.supervisor_id.or(current.supervisor_id);
+    let new_supervisor_id = match input.supervisor_id {
+        Some(v) => v,
+        None => current.supervisor_id,
+    };
     let new_schedule_id = input
         .home_schedule_reference_value_id
         .or(current.home_schedule_reference_value_id);
@@ -810,7 +854,7 @@ pub async fn update_personnel(
         || input
             .primary_team_id
             .is_some_and(|v| Some(v) != current.primary_team_id)
-        || input.supervisor_id.is_some_and(|v| Some(v) != current.supervisor_id)
+        || input.supervisor_id.is_some_and(|v| v != current.supervisor_id)
         || input
             .home_schedule_reference_value_id
             .is_some_and(|v| Some(v) != current.home_schedule_reference_value_id);
@@ -822,7 +866,7 @@ pub async fn update_personnel(
         sets.push("full_name = ?".into());
         values.push(n.clone().into());
     }
-    if let Some(ref e) = input.employment_type {
+    if let Some(ref e) = employment_type {
         sets.push("employment_type = ?".into());
         values.push(e.clone().into());
     }
@@ -830,7 +874,7 @@ pub async fn update_personnel(
         sets.push("employment_origin = ?".into());
         values.push(o.clone().into());
     }
-    if let Some(ref s) = input.employment_status {
+    if let Some(ref s) = employment_status {
         sets.push("employment_status = ?".into());
         values.push(s.clone().into());
     }
@@ -862,41 +906,25 @@ pub async fn update_personnel(
         sets.push("availability_status = ?".into());
         values.push(s.clone().into());
     }
-    if let Some(ref h) = input.hire_date {
-        sets.push("hire_date = ?".into());
-        values.push(h.clone().into());
-    }
-    if let Some(ref t) = input.termination_date {
-        sets.push("termination_date = ?".into());
-        values.push(t.clone().into());
-    }
-    if let Some(ref e) = input.email {
-        sets.push("email = ?".into());
-        values.push(e.clone().into());
-    }
-    if let Some(ref p) = input.phone {
-        sets.push("phone = ?".into());
-        values.push(p.clone().into());
+    // Optional fields: present = set to the value, or cleared (NULL) when `null` / empty.
+    for (column, value) in [
+        ("hire_date", hire_date),
+        ("termination_date", termination_date),
+        ("email", email),
+        ("phone", phone),
+        ("contract_number", contract_number),
+        ("contract_start_date", contract_start_date),
+        ("contract_end_date", contract_end_date),
+        ("notes", notes),
+    ] {
+        if let Some(v) = value {
+            sets.push(format!("{column} = ?"));
+            values.push(v.into());
+        }
     }
     if let Some(v) = input.external_company_id {
         sets.push("external_company_id = ?".into());
         values.push(v.into());
-    }
-    if let Some(ref c) = input.contract_number {
-        sets.push("contract_number = ?".into());
-        values.push(c.clone().into());
-    }
-    if let Some(ref c) = input.contract_start_date {
-        sets.push("contract_start_date = ?".into());
-        values.push(c.clone().into());
-    }
-    if let Some(ref c) = input.contract_end_date {
-        sets.push("contract_end_date = ?".into());
-        values.push(c.clone().into());
-    }
-    if let Some(ref n) = input.notes {
-        sets.push("notes = ?".into());
-        values.push(n.clone().into());
     }
     // employee_code handled separately below
 
@@ -1163,7 +1191,25 @@ pub async fn upsert_position(
     input: PositionUpsertInput,
     actor_id: Option<i64>,
 ) -> AppResult<Position> {
-    PositionCategory::try_from(input.category.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    // Only a change is checked against the list: an existing position keeps a retired or flagged
+    // category while it is left as it is.
+    let stored_category: Option<String> = match input.id {
+        Some(id) => db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT category FROM positions WHERE id = ?",
+                [id.into()],
+            ))
+            .await?
+            .map(|r| r.try_get::<String>("", "category"))
+            .transpose()?,
+        None => None,
+    };
+    let category = if stored_category.as_deref() == Some(input.category.as_str()) {
+        input.category.clone()
+    } else {
+        super::reference_lists::checked_position_category(db, &input.category).await?
+    };
 
     if input.code.trim().is_empty() || input.name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -1211,7 +1257,7 @@ pub async fn upsert_position(
             [
                 input.code.clone().into(),
                 input.name.clone().into(),
-                input.category.clone().into(),
+                category.clone().into(),
                 (if input.is_active.unwrap_or(true) { 1_i64 } else { 0_i64 }).into(),
                 now.clone().into(),
                 id.into(),
@@ -1242,7 +1288,7 @@ pub async fn upsert_position(
             [
                 input.code.clone().into(),
                 input.name.clone().into(),
-                input.category.clone().into(),
+                category.clone().into(),
                 now.clone().into(),
                 now.clone().into(),
             ],

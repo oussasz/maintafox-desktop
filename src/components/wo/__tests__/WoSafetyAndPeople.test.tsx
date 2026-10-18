@@ -7,6 +7,7 @@ import type { WoListFilter, WorkOrder } from "@shared/ipc-types";
 
 import { WoKanbanView } from "../WoKanbanView";
 import { WoPermitRequirementField } from "../WoPermitRequirementField";
+import { WoShutdownBadge, WoShutdownRequirementField } from "../WoShutdownRequirementField";
 import { mergeWoPersonOptions, toWoPersonOptions, woPersonLabel } from "../use-wo-people";
 import { woActionFailureText } from "../wo-action-error";
 
@@ -184,5 +185,53 @@ describe("WoKanbanView", () => {
       ),
     );
     expect(screen.queryByRole("button", { name: /Load more/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("Needs shutdown", () => {
+  it("keeps the confirmation open when the save is refused", async () => {
+    const save = vi.fn().mockRejectedValue({ code: "VALIDATION_FAILED", message: "no" });
+    render(<WoShutdownRequirementField woCode="OT-7" checked={false} onConfirmChange={save} />);
+    const box = screen.getByRole("checkbox", { name: enOt.shutdownRequirement.label });
+    expect(box).toHaveAccessibleDescription(enOt.shutdownRequirement.help);
+    fireEvent.click(box);
+    // (this test's t() shows the text as written, without filling {{code}})
+    expect(screen.getByText(enOt.shutdownRequirement.confirmOnBody)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: enOt.shutdownRequirement.confirmOn }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(true));
+    expect(screen.getByText(enOt.shutdownRequirement.confirmOnTitle)).toBeInTheDocument();
+    expect(box).not.toBeChecked();
+  });
+
+  it("shows the badge on the board card of a work order that needs a shutdown", async () => {
+    const wo = (id: number, requires_shutdown: boolean) =>
+      ({
+        id,
+        code: `OT-${id}`,
+        title: `Job ${id}`,
+        status_code: "planning",
+        requires_shutdown,
+      }) as unknown as WorkOrder;
+    woSvc.listWos.mockReset();
+    woSvc.listWos.mockImplementation(({ status_codes }: WoListFilter) =>
+      Promise.resolve(
+        status_codes?.includes("planning")
+          ? { items: [wo(1, true), wo(2, false)], total: 2 }
+          : { items: [], total: 0 },
+      ),
+    );
+    render(
+      <MemoryRouter>
+        <WoKanbanView filter={BOARD_FILTER} onCardClick={vi.fn()} />
+      </MemoryRouter>,
+    );
+    const flagged = (await screen.findByText("Job 1")).closest("[data-kanban-card], li, article");
+    expect(screen.getAllByText(enOt.shutdownRequirement.badge)).toHaveLength(1);
+    expect(flagged ?? document.body).toHaveTextContent(enOt.shutdownRequirement.badge);
+  });
+
+  it("badge names the condition", () => {
+    render(<WoShutdownBadge />);
+    expect(screen.getByText(enOt.shutdownRequirement.badge)).toBeInTheDocument();
   });
 });

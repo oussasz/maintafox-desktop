@@ -211,6 +211,8 @@ struct PartNeed {
     label: String,
     needed: Option<f64>,
     reserved: f64,
+    /// Short and required: blocks; short and optional: warns.
+    required: bool,
 }
 
 async fn work_order_part_needs(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Vec<PartNeed>> {
@@ -219,7 +221,7 @@ async fn work_order_part_needs(db: &impl ConnectionTrait, wo_id: i64) -> AppResu
             DbBackend::Sqlite,
             "SELECT wop.article_id, COALESCE(a.article_code, wop.article_ref, '') AS label, \
                     wop.quantity_planned AS planned, COALESCE(wop.quantity_issued, 0.0) AS issued, \
-                    COALESCE(wop.quantity_reserved, 0.0) AS reserved \
+                    COALESCE(wop.quantity_reserved, 0.0) AS reserved, wop.is_required \
                FROM work_order_parts wop LEFT JOIN articles a ON a.id = wop.article_id \
               WHERE wop.work_order_id = ? AND wop.consumption_status <> 'not_used' \
                 AND COALESCE(wop.quantity_planned, 0) > 0 \
@@ -238,6 +240,10 @@ async fn work_order_part_needs(db: &impl ConnectionTrait, wo_id: i64) -> AppResu
                 // What is already issued is no longer needed from stock or reservations.
                 needed: Some((planned - issued).max(0.0)),
                 reserved: (reserved - issued).max(0.0),
+                required: r
+                    .try_get::<i64>("", "is_required")
+                    .map_err(|e| decode_err("is_required", e))?
+                    == 1,
             })
         })
         .collect()
@@ -287,6 +293,7 @@ async fn pm_part_needs(db: &impl ConnectionTrait, occurrence_id: i64) -> AppResu
             needed: part.quantity,
             // Reservations are made when the PM's work order is generated.
             reserved: 0.0,
+            required: part.required,
         });
     }
     Ok(Some(PmParts::Listed(needs)))
@@ -305,6 +312,7 @@ pub async fn parts_findings(db: &impl ConnectionTrait, source_type: &str, source
         _ => return Ok(Vec::new()),
     };
     let mut short = Vec::new();
+    let mut short_optional = Vec::new();
     let mut unreserved = Vec::new();
     let mut unknown = Vec::new();
     let mut no_quantity = Vec::new();
@@ -330,14 +338,19 @@ pub async fn parts_findings(db: &impl ConnectionTrait, source_type: &str, source
                 "available": available,
             }));
         } else {
-            short.push(json!({
+            let line = json!({
                 "article": need.label,
                 "article_id": article_id,
                 "needed": needed,
                 "reserved": need.reserved,
                 "available": available,
                 "short": missing - available,
-            }));
+            });
+            if need.required {
+                short.push(line);
+            } else {
+                short_optional.push(line);
+            }
         }
     }
     let mut out = Vec::new();
@@ -347,6 +360,16 @@ pub async fn parts_findings(db: &impl ConnectionTrait, source_type: &str, source
             conflict_type: "missing_critical_part",
             reason_code: "PARTS_SHORT",
             details: json!({ "articles": articles, "lines": short }),
+        });
+    }
+    if !short_optional.is_empty() {
+        // An optional part that is short only warns (`planning::queries::evaluate_candidate`
+        // blocks on PARTS_SHORT alone).
+        let articles: Vec<Value> = short_optional.iter().map(|s| s["article"].clone()).collect();
+        out.push(Finding {
+            conflict_type: "missing_critical_part",
+            reason_code: "PARTS_SHORT_OPTIONAL",
+            details: json!({ "articles": articles, "lines": short_optional }),
         });
     }
     if !unreserved.is_empty() {

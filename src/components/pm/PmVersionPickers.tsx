@@ -6,6 +6,7 @@ import { Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PartNecessityChoice } from "@/components/common/PartNecessityChoice";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -365,7 +366,8 @@ export function PmPartsPicker({
   const add = (row: InventoryArticleRow) => {
     setNames((prev) => ({ ...prev, [row.article_code]: row }));
     if (!value.some((p) => p.articleCode === row.article_code)) {
-      onChange([...value, { articleCode: row.article_code, quantity: 1 }]);
+      // Required or optional: the planner answers on the line (no preselected answer).
+      onChange([...value, { articleCode: row.article_code, quantity: 1, required: null }]);
     }
     setQuery("");
     setResults([]);
@@ -430,6 +432,14 @@ export function PmPartsPicker({
                 >
                   <Trash2 className="h-4 w-4" aria-hidden />
                 </Button>
+                <PartNecessityChoice
+                  className="basis-full"
+                  value={part.required}
+                  partLabel={part.articleCode}
+                  onChange={(required) =>
+                    onChange(value.map((p, i) => (i === idx ? { ...p, required } : p)))
+                  }
+                />
               </li>
             );
           })}

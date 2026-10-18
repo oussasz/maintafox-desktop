@@ -302,8 +302,15 @@ const DrilldownCommitmentSchema = z.object({
 export type DrilldownCommitment = z.infer<typeof DrilldownCommitmentSchema>;
 
 const DrilldownSchema = z.object({
+  /** One page of actual lines, newest first. */
   actuals: z.array(DrilldownActualSchema),
   commitments: z.array(DrilldownCommitmentSchema),
+  /** Every matching actual line (not only this page). */
+  actuals_total: z.number(),
+  /** Sum of every matching actual line (tenant currency): the cockpit figure. */
+  actuals_amount: z.number(),
+  limit: z.number(),
+  offset: z.number(),
 });
 export type BudgetCockpitDrilldown = z.infer<typeof DrilldownSchema>;
 
@@ -319,6 +326,9 @@ export interface BudgetCockpitDrilldownFilter {
   cost_center_id: number;
   bucket?: string | null;
   period_month?: number | null;
+  /** Actual lines per page (server default 200, at most 500). */
+  limit?: number | null;
+  offset?: number | null;
 }
 
 export function getBudgetCockpit(filter: BudgetCockpitFilter): Promise<BudgetCockpit> {

@@ -6,6 +6,7 @@ import assert from "node:assert";
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import { describe, it, expect, vi } from "vitest";
 
 import { DataTable } from "../DataTable";
@@ -140,5 +141,72 @@ describe("DataTable — V2 Supervisor Verification", () => {
     const pulseElements = container.querySelectorAll(".animate-pulse");
     // 3 skeleton rows × 3 columns = 9 pulse elements
     expect(pulseElements).toHaveLength(9);
+  });
+});
+
+// ── Columns rebuilt while labels load ───────────────────────────
+
+describe("DataTable — columns rebuilt while labels load", () => {
+  interface Row {
+    id: number;
+    code: string;
+    status: string;
+  }
+  const rows: Row[] = [{ id: 1, code: "OT-0001", status: "planning" }];
+  // Screens rebuild their columns when a catalogue / labels / permissions arrive: each build makes
+  // new cell functions. The rows must not be re-mounted by that.
+  const columnsWith = (label: (code: string) => string): ColumnDef<Row>[] => [
+    { id: "code", header: "Code", cell: ({ row }) => <span>{row.original.code}</span> },
+    { id: "status", header: "Status", cell: ({ row }) => label(row.original.status) },
+  ];
+
+  it("keeps the same row elements, so a click right after the first paint is not lost", () => {
+    const onRowClick = vi.fn();
+    const { rerender } = render(
+      <DataTable columns={columnsWith((c) => c)} data={rows} onRowClick={onRowClick} />,
+    );
+    const firstPaint = screen.getByText("OT-0001");
+    // The status catalogue arrives: new column functions, translated label.
+    rerender(
+      <DataTable
+        columns={columnsWith((c) => (c === "planning" ? "Planification" : c))}
+        data={rows}
+        onRowClick={onRowClick}
+      />,
+    );
+    expect(firstPaint.isConnected).toBe(true);
+    fireEvent.click(firstPaint);
+    expect(onRowClick).toHaveBeenCalledTimes(1);
+    // …and the cells show the new label at once.
+    expect(screen.getByText("Planification")).toBeInTheDocument();
+  });
+
+  it("keeps a cell that uses hooks isolated as its own component when the row count changes", () => {
+    // A cell needing hooks is written as a component (`cell: (ctx) => <Cell … />`): it keeps its
+    // own hook state, so rows appearing or disappearing never change DataTable's hook order.
+    function CountedCell({ code }: { code: string }) {
+      const [clicks, setClicks] = useState(0);
+      return (
+        <button type="button" onClick={() => setClicks((n) => n + 1)}>
+          {code}:{clicks}
+        </button>
+      );
+    }
+    const hookColumns: ColumnDef<Row>[] = [
+      { id: "code", header: "Code", cell: ({ row }) => <CountedCell code={row.original.code} /> },
+    ];
+    const many: Row[] = [
+      { id: 1, code: "A", status: "x" },
+      { id: 2, code: "B", status: "x" },
+      { id: 3, code: "C", status: "x" },
+    ];
+    const { rerender } = render(<DataTable columns={hookColumns} data={many.slice(0, 1)} />);
+    fireEvent.click(screen.getByRole("button", { name: "A:0" }));
+    rerender(<DataTable columns={hookColumns} data={many} />);
+    expect(screen.getByRole("button", { name: "A:1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "C:0" })).toBeInTheDocument();
+    rerender(<DataTable columns={hookColumns} data={many.slice(0, 1)} />);
+    expect(screen.getByRole("button", { name: "A:1" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "C:0" })).toBeNull();
   });
 });

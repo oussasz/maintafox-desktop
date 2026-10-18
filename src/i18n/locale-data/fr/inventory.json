@@ -1383,6 +1383,7 @@
     "unvaluedHint": "{{qty}} {{unit}} en stock n'ont pas encore de coût et ne sont pas valorisés"
   },
   "controls": {
+    "setInSettings": "Paramètres › Inventaire",
     "loadError": "Les données d'inventaire et de rapprochement n'ont pas pu être chargées",
     "sessionStatuses": {
       "draft": "Brouillon",
@@ -1394,13 +1395,14 @@
       "cancelled": "Abandonné"
     },
     "sessions": {
+      "criticalFromSettings": "L'écart critique d'une nouvelle session est la valeur de l'usine ; chaque session garde celle du jour de sa création :",
+      "criticalThresholdOfSession": "Écart critique de cette session : {{value}}",
       "title": "Inventaires tournants",
       "hint": "Comptez un magasin ou un emplacement, contrôlez les écarts puis passez-les en stock.",
       "warehouse": "Magasin",
       "selectWarehouse": "Choisir un magasin",
       "scopeLocation": "Emplacement (facultatif)",
       "allLocations": "Tous les emplacements du magasin",
-      "criticalThreshold": "Écart critique (quantité)",
       "create": "Créer une session d'inventaire",
       "session": "Session d'inventaire",
       "selectSession": "Choisir une session d'inventaire",
@@ -1464,9 +1466,9 @@
       "confirmDescription": "Tous les écarts passés en stock par l'inventaire {{code}} seront annulés."
     },
     "reconciliation": {
+      "breakFromSettings": "L'écart qui fait une rupture est la valeur de l'usine :",
       "title": "Rapprochement du stock",
       "hint": "Compare les soldes de stock au journal des mouvements et liste les dérives.",
-      "breakThreshold": "Seuil de rupture (quantité)",
       "run": "Lancer le rapprochement",
       "run_label": "Rapprochement",
       "selectRun": "Choisir un rapprochement",

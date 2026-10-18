@@ -8,7 +8,7 @@ import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
-import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { ErrorState, LoadingState, TruncationNotice } from "@/components/ui/data-state";
 import {
   Sheet,
   SheetContent,
@@ -34,6 +34,9 @@ import {
   getBudgetCockpitDrilldown,
 } from "@/services/finance-cost-service";
 
+/** Actual lines read per page (the server allows 1 to 500). */
+const DRILLDOWN_PAGE = 200;
+
 export interface CockpitDrilldownSheetProps {
   row: BudgetCockpitRow | null;
   fiscalYear: number;
@@ -56,6 +59,37 @@ export function CockpitDrilldownSheet({
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  /** Next page of actual lines (the server pages them; the totals cover every line). */
+  const loadMore = () => {
+    if (!row || !data || loadingMore) return;
+    setLoadingMore(true);
+    getBudgetCockpitDrilldown({
+      fiscal_year: fiscalYear,
+      budget_version_id: budgetVersionId,
+      cost_center_id: row.cost_center_id,
+      bucket: row.bucket,
+      limit: DRILLDOWN_PAGE,
+      offset: data.actuals.length,
+    })
+      .then((page) => {
+        setData((prev) => {
+          if (!prev) return prev;
+          const known = new Set(prev.actuals.map((a) => a.actual_id));
+          return {
+            ...prev,
+            actuals: [...prev.actuals, ...page.actuals.filter((a) => !known.has(a.actual_id))],
+            actuals_total: page.actuals_total,
+            actuals_amount: page.actuals_amount,
+          };
+        });
+      })
+      .catch(() => {
+        // The global IPC toast reports the failure; the loaded lines stay.
+      })
+      .finally(() => setLoadingMore(false));
+  };
 
   useEffect(() => {
     if (!row) return;
@@ -68,6 +102,8 @@ export function CockpitDrilldownSheet({
       budget_version_id: budgetVersionId,
       cost_center_id: row.cost_center_id,
       bucket: row.bucket,
+      limit: DRILLDOWN_PAGE,
+      offset: 0,
     })
       .then((d) => {
         if (!cancelled) setData(d);
@@ -118,8 +154,16 @@ export function CockpitDrilldownSheet({
                 <>
                   <section aria-labelledby="drill-actuals">
                     <h3 id="drill-actuals" className="mb-2 font-semibold text-text-primary">
-                      {t("drill.actuals", { count: data.actuals.length })}
+                      {t("drill.actuals", { count: data.actuals_total })}
                     </h3>
+                    {data.actuals_total > 0 ? (
+                      <p className="mb-2 text-text-secondary" data-testid="drill-actuals-total">
+                        {t("drill.actualsTotal", {
+                          count: data.actuals_total,
+                          amount: money(data.actuals_amount),
+                        })}
+                      </p>
+                    ) : null}
                     {data.actuals.length === 0 ? (
                       <p className="text-text-muted">{t("drill.noActuals")}</p>
                     ) : (
@@ -196,6 +240,13 @@ export function CockpitDrilldownSheet({
                         </TableBody>
                       </Table>
                     )}
+                    <TruncationNotice
+                      className="mt-2"
+                      shown={data.actuals.length}
+                      total={data.actuals_total}
+                      onLoadMore={loadMore}
+                      loadingMore={loadingMore}
+                    />
                   </section>
                   <section aria-labelledby="drill-commitments">
                     <h3 id="drill-commitments" className="mb-2 font-semibold text-text-primary">

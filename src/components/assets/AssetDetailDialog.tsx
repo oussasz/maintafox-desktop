@@ -22,6 +22,7 @@ import {
   Package,
   Pencil,
   Receipt,
+  RotateCcw,
   ShieldAlert,
   Wrench,
   X,
@@ -33,6 +34,7 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { AssetDecommissionModal } from "@/components/assets/AssetDecommissionModal";
 import { AssetHealthBadge } from "@/components/assets/AssetHealthBadge";
 import { AssetQrCode } from "@/components/assets/AssetQrCode";
+import { AssetRecommissionDialog } from "@/components/assets/AssetRecommissionDialog";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
 import { isRetiredStatus } from "@/components/assets/asset-tones";
@@ -69,6 +71,7 @@ import { mfLayout } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { assetToSearchResult } from "@/lib/asset-to-search-result";
 import { getAssetById } from "@/services/asset-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useDiStore } from "@/stores/di-store";
@@ -114,6 +117,7 @@ export function AssetDetailDialog() {
   const [tab, setTab] = useState<AssetTab>("overview");
   const [showDecommission, setShowDecommission] = useState(false);
   const [showCommercial, setShowCommercial] = useState(false);
+  const [showRecommission, setShowRecommission] = useState(false);
 
   const load = useMemo(() => (assetId == null ? null : () => getAssetById(assetId)), [assetId]);
   const {
@@ -238,6 +242,18 @@ export function AssetDetailDialog() {
                 {retired ? (
                   <span className="text-xs text-text-muted">{t("detail.retiredHint")}</span>
                 ) : null}
+                {retired ? (
+                  <PermissionGate permission={P.EQ_MANAGE}>
+                    <Button
+                      variant="outline"
+                      className="h-11 gap-1.5"
+                      onClick={() => setShowRecommission(true)}
+                    >
+                      <RotateCcw className="h-4 w-4" aria-hidden />
+                      {t("recommission.action")}
+                    </Button>
+                  </PermissionGate>
+                ) : null}
                 <PermissionGate permission={P.EQ_MANAGE}>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -333,6 +349,20 @@ export function AssetDetailDialog() {
               onDecommissioned={(updated) => {
                 setShowDecommission(false);
                 onAssetChanged(updated);
+              }}
+            />
+            <AssetRecommissionDialog
+              open={showRecommission}
+              asset={asset}
+              onClose={() => setShowRecommission(false)}
+              onRecommissioned={async (statusLabel) => {
+                setShowRecommission(false);
+                pushAppToast({
+                  title: t("recommission.done", { code: asset.asset_code, status: statusLabel }),
+                  variant: "success",
+                });
+                await reload();
+                void runSearch();
               }}
             />
             <AssetCommercialDialog

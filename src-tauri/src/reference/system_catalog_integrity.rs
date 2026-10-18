@@ -44,6 +44,14 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     crate::permit::energy_reference::map_isolation_texts(db).await?;
     // PM deferral / miss reasons (COMPANY) and finding severities (SYSTEM).
     crate::pm::reason_catalog::ensure_pm_reason_catalogs(db).await?;
+    // Personnel lists: employment statuses (SYSTEM), employment types, absence types (with their
+    // behaviour tag) and position categories (COMPANY); document categories (COMPANY).
+    crate::personnel::reference_lists::ensure_personnel_reference_lists(db).await?;
+    crate::library_documents::ensure_document_categories(db).await?;
+    // Values stored before the lists existed or received by sync from an older device: adopted
+    // with their exact code, flagged "à revoir" (absence types keep their former behaviour).
+    crate::personnel::reference_lists::adopt_stored_personnel_values(db).await?;
+    crate::library_documents::adopt_stored_document_categories(db).await?;
     // FMECA placeholder rows (former root-cause promotion) that arrived by sync from a device that
     // had not run migration 221 yet are flagged "to review" (exact signature only).
     crate::reliability::study::fmeca::flag_placeholder_rows(db).await?;

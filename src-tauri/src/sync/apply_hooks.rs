@@ -13,6 +13,13 @@
 //!   it is deferred, never written with a guessed kind: it decides the PRD lifecycle state);
 //! - `app_settings`: a tenant setting whose change is locked here (fiscal start month, currency
 //!   once postings exist) is refused as a conflict (`before_upsert_checked`);
+//! - `reliability_study_decisions`: an approval by the decision's own proposer is refused as a
+//!   conflict unless the decision's site opted out of four-eyes; a study, equipment or site not
+//!   applied yet makes it wait (`reliability::study::decisions::inbound_self_approval_check`);
+//! - `site_settings` / `site_setting_events`: a per-site rule relaxing a site is applied only with
+//!   its audited change (step-up, reason, settings right), waiting for that event while it is in
+//!   the inbox, a conflict otherwise; unknown rules and unreadable values are conflicts
+//!   (`settings::site::inbound_site_setting_check`, `inbound_site_setting_event_check`);
 //! - `weekly_schedules`: a received week that would go backwards in its lifecycle here (frozen
 //!   back to draft, a later baseline back to an earlier one) is refused as a conflict
 //!   (`planning::weekly_schedule::inbound_lifecycle_conflict`, `before_upsert_checked`);
@@ -56,12 +63,46 @@ pub(crate) fn before_upsert(
 pub(crate) async fn before_upsert_checked(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
+    entity_sync_id: &str,
     payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
     use crate::sync::materialize::ApplyOutcome;
+    if layout.def.entity_type == "reliability_study_decisions" {
+        use crate::reliability::study::decisions::{inbound_self_approval_check, InboundDecisionVerdict};
+        return Ok(inbound_self_approval_check(conn, entity_sync_id, payload)
+            .await?
+            .map(|verdict| match verdict {
+                InboundDecisionVerdict::Defer(message) => ApplyOutcome::Deferred {
+                    code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+                    message,
+                },
+                InboundDecisionVerdict::Conflict(message) => ApplyOutcome::Conflict {
+                    code: "DECISION_SELF_APPROVAL".into(),
+                    message,
+                },
+            }));
+    }
+    if layout.def.entity_type == "site_settings" || layout.def.entity_type == "site_setting_events" {
+        use crate::settings::site::{inbound_site_setting_check, inbound_site_setting_event_check, InboundVerdict};
+        let verdict = if layout.def.entity_type == "site_settings" {
+            inbound_site_setting_check(conn, payload).await?
+        } else {
+            inbound_site_setting_event_check(payload).await?
+        };
+        return Ok(verdict.map(|v| match v {
+            InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
+                code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+                message,
+            },
+            InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
+                code: code.into(),
+                message,
+            },
+        }));
+    }
     if layout.def.entity_type == "weekly_schedules" {
         return Ok(
-            crate::planning::weekly_schedule::inbound_lifecycle_conflict(conn, payload)
+            crate::planning::weekly_schedule::inbound_lifecycle_conflict(conn, entity_sync_id, payload)
                 .await?
                 .map(|message| ApplyOutcome::Conflict {
                     code: "WEEK_LIFECYCLE_BACKWARDS".into(),
