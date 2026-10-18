@@ -139,6 +139,7 @@ const WO_COLS: &str = "\
     wo.closed_at, wo.cancelled_at, \
     wo.expected_duration_hours, wo.planned_crew_size, wo.actual_duration_hours, \
     wo.active_labor_hours, wo.total_waiting_hours, wo.downtime_hours, wo.planned_downtime_hours, \
+    wo.requires_shutdown, \
     wo.labor_cost, wo.parts_cost, wo.service_cost, wo.total_cost, \
     wo.recurrence_risk_level, wo.production_impact_id, \
     wo.root_cause_summary, wo.corrective_action_summary, wo.verification_method, \

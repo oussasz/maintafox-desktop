@@ -5488,3 +5488,91 @@ async fn planning_requires_an_isolation_for_every_permit_type_flagged_for_energy
     );
     assert_eq!(readiness_of(&db, candidate).await, "blocked");
 }
+
+/// A corrective work order flagged "needs shutdown" is checked against the shutdown windows like
+/// a PM plan (same NO_FEASIBLE_WINDOW warning); unflagged, it is not. The flag is read live from
+/// the work order, so clearing it lifts the warning at the next evaluation.
+#[tokio::test]
+async fn a_corrective_work_order_needing_a_shutdown_is_checked_against_windows() {
+    let db = setup_db().await;
+    let (wo_id, actor) = create_planning_wo(&db, "Shutdown job").await;
+    let refresh = || async {
+        queries::refresh_schedule_candidates(
+            &db,
+            RefreshScheduleCandidatesInput {
+                include_work_orders: Some(true),
+                include_pm_occurrences: Some(false),
+                include_approved_di: Some(false),
+                limit_per_source: Some(50),
+            },
+        )
+        .await
+        .expect("refresh");
+    };
+    let no_window = |db: &DatabaseConnection| {
+        let db = db.clone();
+        async move {
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM scheduling_conflicts c
+                   JOIN schedule_candidates sc ON sc.id = c.candidate_id
+                  WHERE sc.source_type = 'work_order' AND sc.source_id = ?
+                    AND c.reason_code = 'NO_FEASIBLE_WINDOW' AND c.resolved_at IS NULL",
+                [wo_id.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<i64>("", "c")
+            .expect("count")
+        }
+    };
+    let row_version = |db: &DatabaseConnection| {
+        let db = db.clone();
+        async move {
+            crate::wo::queries::get_work_order(&db, wo_id)
+                .await
+                .expect("read")
+                .expect("wo")
+                .row_version
+        }
+    };
+
+    refresh().await;
+    assert_eq!(no_window(&db).await, 0, "not flagged: no shutdown check");
+
+    let wo = crate::wo::workflow::actions::schedule::save_shutdown_requirement(
+        &db,
+        wo_id,
+        true,
+        row_version(&db).await,
+        actor,
+    )
+    .await
+    .expect("flag");
+    assert!(wo.requires_shutdown);
+    refresh().await;
+    assert_eq!(no_window(&db).await, 1, "flagged and no open shutdown window: warned");
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO planning_windows (window_type, start_datetime, end_datetime, is_locked) VALUES ('shutdown', ?, ?, 0)",
+        ["2026-10-01T06:00:00Z".into(), "2026-10-01T18:00:00Z".into()],
+    ))
+    .await
+    .expect("window");
+    refresh().await;
+    assert_eq!(no_window(&db).await, 0, "the shutdown window covers the work");
+
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "DELETE FROM planning_windows WHERE window_type = 'shutdown'".to_string(),
+    ))
+    .await
+    .expect("no window again");
+    crate::wo::workflow::actions::schedule::save_shutdown_requirement(&db, wo_id, false, row_version(&db).await, actor)
+        .await
+        .expect("unflag");
+    refresh().await;
+    assert_eq!(no_window(&db).await, 0, "unflagged: no shutdown check");
+}

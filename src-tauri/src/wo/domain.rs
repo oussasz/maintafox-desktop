@@ -133,6 +133,10 @@ pub struct WorkOrder {
     pub total_waiting_hours: Option<f64>,
     pub downtime_hours: Option<f64>,
     pub planned_downtime_hours: Option<f64>,
+    /// The job needs the equipment stopped: planning checks it against shutdown windows (same rule
+    /// as a PM plan's `requires_shutdown`).
+    #[serde(default)]
+    pub requires_shutdown: bool,
     // Cost accumulators
     pub labor_cost: Option<f64>,
     pub parts_cost: Option<f64>,
@@ -472,6 +476,10 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .try_get::<Option<f64>>("", "downtime_hours")
             .map_err(|e| decode_err("downtime_hours", e))?,
         planned_downtime_hours: row.try_get::<Option<f64>>("", "planned_downtime_hours").unwrap_or(None),
+        requires_shutdown: row
+            .try_get::<i64>("", "requires_shutdown")
+            .map_err(|e| decode_err("requires_shutdown", e))?
+            == 1,
         labor_cost: row
             .try_get::<Option<f64>>("", "labor_cost")
             .map_err(|e| decode_err("labor_cost", e))?,
