@@ -37,7 +37,11 @@ export function useAccessAt(orgNodeId: number | null | undefined): AccessAt {
   useEffect(() => {
     // Never answer for the previous node while the new one loads.
     setGranted(undefined);
-    if (orgNodeId == null) return;
+    if (orgNodeId == null) {
+      // A cancelled load never clears `loading` itself.
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     void getMyAccessAt(orgNodeId)

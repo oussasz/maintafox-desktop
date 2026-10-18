@@ -14,7 +14,11 @@ import { useAccessAt } from "@/hooks/use-access-at";
 import { P } from "@shared/rbac/permissions.generated";
 
 describe("useAccessAt", () => {
-  beforeEach(() => getMyAccessAt.mockReset());
+  // Braces matter: vitest runs a function returned from beforeEach as the test's teardown, and
+  // `mockReset()` returns the mock, so the teardown would await test 1's never-settling promise.
+  beforeEach(() => {
+    getMyAccessAt.mockReset();
+  });
 
   it("answers for the node asked, and never for the previous one while the next loads", async () => {
     let releaseB: (perms: string[]) => void = () => undefined;
@@ -44,6 +48,17 @@ describe("useAccessAt", () => {
     });
     await waitFor(() => expect(result.current.can("anything")).toBe(true));
     rerender({ node: null });
+    expect(result.current.can("anything")).toBe(false);
+  });
+
+  it("stops loading when the node is cleared while a load is pending", async () => {
+    getMyAccessAt.mockImplementation(() => new Promise(() => undefined));
+    const { result, rerender } = renderHook(({ node }) => useAccessAt(node), {
+      initialProps: { node: 3 as number | null },
+    });
+    await waitFor(() => expect(result.current.loading).toBe(true));
+    rerender({ node: null });
+    expect(result.current.loading).toBe(false);
     expect(result.current.can("anything")).toBe(false);
   });
 });
