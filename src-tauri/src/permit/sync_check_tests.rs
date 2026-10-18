@@ -2059,9 +2059,10 @@ async fn only_rows_that_could_give_the_approver_the_right_hold_an_override() {
 }
 
 /// The whole clearing of a rule permit flag is its audit trace: a received row that changes who
-/// cleared it or why is judged in full, and a clearing recorded here is never rewritten.
+/// cleared it or why is judged in full, and a clearing recorded here is never removed nor partly
+/// rewritten.
 #[tokio::test]
-async fn the_clearing_of_a_rule_permit_flag_is_never_rewritten() {
+async fn the_clearing_of_a_rule_permit_flag_is_never_removed_or_partly_rewritten() {
     let db = setup().await;
     let asset = insert_equipment(&db, "EQ-SYNC-28").await;
     let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
@@ -2089,7 +2090,7 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_rewritten() {
             "{key}: {outcome:?}"
         );
     }
-    // A valid clearing applies; a later row rewriting its reason is refused.
+    // A valid clearing applies.
     let cleared = with(
         flagged.clone(),
         &[
@@ -2105,15 +2106,18 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_rewritten() {
     let reflagged = with(cleared.clone(), &[("requires_permit", json!(1))]);
     let outcome = apply(&db, "work_orders", &wo_sync, &reflagged).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "re-flag: {outcome:?}");
-    // No local action rewrites or removes a recorded clearing: a received row doing so is refused.
-    let verifier = user_sync(&db, VERIFIER).await;
+    // No local action removes a recorded clearing or a part of it: a received row doing so is refused.
     for (what, changes) in [
+        ("reason removed", vec![("permit_rule_clear_reason", json!(null))]),
+        ("clearer removed", vec![("permit_rule_cleared_by_sync_id", json!(null))]),
+        ("time removed", vec![("permit_rule_cleared_at", json!(null))]),
         (
-            "reason",
-            vec![("permit_rule_clear_reason", json!("Autre motif plus commode"))],
+            "reason removed, time rewritten",
+            vec![
+                ("permit_rule_clear_reason", json!(null)),
+                ("permit_rule_cleared_at", json!("2026-01-01T00:00:00Z")),
+            ],
         ),
-        ("clearer", vec![("permit_rule_cleared_by_sync_id", json!(verifier))]),
-        ("time", vec![("permit_rule_cleared_at", json!("2026-01-01T00:00:00Z"))]),
         (
             "removed",
             vec![
@@ -2130,4 +2134,141 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_rewritten() {
             "{what}: {outcome:?}"
         );
     }
+    // Flagged again here with the clearing kept, a received row setting the flag back to "not
+    // required" with the same clearing: the clearing is judged again in full (its clearer still holds
+    // the permit-issue right here), so it applies.
+    let outcome = apply(&db, "work_orders", &wo_sync, &cleared).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied),
+        "back to not required: {outcome:?}"
+    );
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(requires_permit AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+        )
+        .await
+        .as_deref(),
+        Some("0")
+    );
+}
+
+/// Two PCs that each cleared the same work order's rule permit flag offline converge: the clearing
+/// received over a different one recorded here is judged in full like a new one, and applied when
+/// valid.
+#[tokio::test]
+async fn a_different_complete_clearing_received_is_judged_and_applied() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-29").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET permit_rule_code = 'rule-elec', requires_permit = 1 WHERE id = {wo_id}"),
+    )
+    .await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let flagged = wire(&db, "work_orders", &wo_sync).await;
+    let clearing = |by: &str, at: &str, reason: &str| {
+        with(
+            flagged.clone(),
+            &[
+                ("requires_permit", json!(0)),
+                ("permit_rule_cleared_by_sync_id", json!(by)),
+                ("permit_rule_cleared_at", json!(at)),
+                ("permit_rule_clear_reason", json!(reason)),
+            ],
+        )
+    };
+    let recorded = || {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT u.entity_sync_id || '|' || w.permit_rule_cleared_at || '|' || w.permit_rule_clear_reason \
+                     FROM work_orders w JOIN user_accounts u ON u.id = w.permit_rule_cleared_by_id \
+                     WHERE w.id = {wo_id}"
+                ),
+            )
+            .await
+        }
+    };
+    // This PC cleared it (X).
+    let admin = user_sync(&db, APPLIER).await;
+    let mine_at = now();
+    let mine = clearing(&admin, &mine_at, "Consignation faite par l'exploitant");
+    let outcome = apply(&db, "work_orders", &wo_sync, &mine).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let x = recorded().await;
+
+    // Another PC cleared it too (Y): each invalid complete clearing is refused, X stays.
+    let verifier = user_sync(&db, VERIFIER).await;
+    let theirs_at = now();
+    for (what, received, expected) in [
+        (
+            "short reason",
+            clearing(&admin, &theirs_at, "court"),
+            "WO_PERMIT_RULE_CLEAR_INVALID",
+        ),
+        (
+            "future",
+            clearing(&admin, "2999-01-01T00:00:00Z", "Autre consignation par l'exploitant"),
+            "WO_PERMIT_RULE_CLEAR_INVALID",
+        ),
+        (
+            "after the start",
+            with(
+                clearing(&admin, &theirs_at, "Autre consignation par l'exploitant"),
+                &[("actual_start", json!("2026-01-01T00:00:00Z"))],
+            ),
+            "WO_PERMIT_RULE_CLEAR_INVALID",
+        ),
+        (
+            "clearer without the right",
+            clearing(&verifier, &theirs_at, "Autre consignation par l'exploitant"),
+            "WO_PERMIT_RULE_CLEAR_UNAUTHORISED",
+        ),
+    ] {
+        let outcome = apply(&db, "work_orders", &wo_sync, &received).await;
+        assert_eq!(code(&outcome), Some(expected), "{what}: {outcome:?}");
+        assert_eq!(recorded().await, x, "{what}: the clearing recorded here stays");
+    }
+
+    // The other clearer holds the permit-issue right here: Y is valid and applied.
+    let issuing_role = text(
+        &db,
+        &format!(
+            "SELECT r.entity_sync_id FROM roles r JOIN role_permissions rp ON rp.role_id = r.id \
+             JOIN permissions p ON p.id = rp.permission_id WHERE p.name = '{}' ORDER BY r.id LIMIT 1",
+            crate::rbac::permissions::PTW_ISSUE
+        ),
+    )
+    .await
+    .expect("a role carrying the right");
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
+             created_at, updated_at, row_version) VALUES ('usa-sync-29', {VERIFIER}, \
+             (SELECT id FROM roles WHERE entity_sync_id = '{issuing_role}'), 'tenant', NULL, \
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)"
+        ),
+    )
+    .await;
+    let theirs = clearing(&verifier, &theirs_at, "Autre consignation par l'exploitant");
+    let outcome = apply(&db, "work_orders", &wo_sync, &theirs).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        recorded().await.as_deref(),
+        Some(format!("{verifier}|{theirs_at}|Autre consignation par l'exploitant").as_str())
+    );
+    // A partial rewrite of Y is still refused.
+    let partial = with(theirs.clone(), &[("permit_rule_clear_reason", json!(null))]);
+    let outcome = apply(&db, "work_orders", &wo_sync, &partial).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
 }

@@ -861,7 +861,8 @@ async fn wo_children(
 /// permit_requirement`): a received work order whose rule-set flag is cleared (`requires_permit` 0,
 /// `permit_rule_code` set) says who cleared it, when and why (10 characters or more), before its
 /// execution started, and that person holds the permit-issue right here. A person not applied here
-/// yet makes it wait. A state already held here (same clearing) passes.
+/// yet makes it wait. A state already held here (same clearing) passes. A different complete clearing
+/// received over one recorded here is judged the same way; a removed or partial one is refused.
 pub(crate) async fn inbound_permit_rule_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -901,14 +902,18 @@ pub(crate) async fn inbound_permit_rule_check(
     let clearing_changed = local
         .as_ref()
         .map_or(clearing(&wo) != none, |l| clearing(l) != clearing(&wo));
+    // A clearing recorded here is never removed nor partly rewritten (who, when or why missing). A
+    // different complete clearing (another PC that cleared the same order offline) is judged in full
+    // below, like a new one, so both PCs converge on it when it is valid.
     if clearing_changed
         && local
             .as_ref()
             .is_some_and(|l| field(l, "permit_rule_cleared_at").is_some())
+        && clearing(&wo).iter().any(Option::is_none)
     {
         return conflict(
             "WO_PERMIT_RULE_CLEAR_INVALID",
-            format!("work order {code}: the clearing of its rule permit flag recorded here cannot be rewritten"),
+            format!("work order {code}: the clearing of its rule permit flag recorded here cannot be removed or partly rewritten"),
         );
     }
     if !clearing_changed {
