@@ -150,6 +150,33 @@ pub(crate) async fn before_upsert_checked(
     }
 }
 
+/// Checks of an inbound delete before it is applied; `Some` stops it with that outcome. A permit
+/// past draft, and an isolation or suspension of a permit still protecting work, are never deleted
+/// on this device: such a delete received by sync is a conflict (`permit::sync_check`).
+pub(crate) async fn before_delete_checked(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
+    use crate::sync::materialize::ApplyOutcome;
+    let verdict = match layout.def.entity_type {
+        "work_permits" | "permit_isolations" | "permit_suspensions" => {
+            crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?
+        }
+        _ => None,
+    };
+    Ok(verdict.map(|v| match v {
+        crate::settings::site::InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
+            code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+            message,
+        },
+        crate::settings::site::InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
+            code: code.into(),
+            message,
+        },
+    }))
+}
+
 fn hook_err(table: &str, e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("{table} apply hook: {e}"))
 }

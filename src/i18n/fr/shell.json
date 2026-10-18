@@ -90,6 +90,10 @@
       "QUALIFICATION_OVERRIDE_INVALID": "Une dérogation de qualification incomplète (personne, contexte ou approbateur)",
       "QUALIFICATION_OVERRIDE_SELF": "Une dérogation de qualification approuvée par la personne concernée",
       "QUALIFICATION_OVERRIDE_UNAUTHORISED": "Une dérogation de qualification approuvée par une personne sans le droit de certification ici",
+      "PERMIT_ISOLATION_MOVED": "Un isolement déplacé vers un autre permis",
+      "PERMIT_ISOLATION_WRONG_STATUS": "Un isolement modifié alors que son permis ne le permettait pas",
+      "PERMIT_DELETE_REFUSED": "Un permis, isolement ou suspension qui protège encore le travail a été supprimé ailleurs",
+      "QUALIFICATION_OVERRIDE_USE_PERSON": "Une dérogation de qualification sur un compte relié à une fiche personnel",
       "other": "À examiner"
     },
     "history": {

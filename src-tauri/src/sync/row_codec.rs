@@ -679,6 +679,36 @@ pub(crate) fn delete_payload(layout: &EntityLayout, natural_key: Option<&Map<Str
 }
 
 /// Outcome of resolving an inbound reference.
+/// The first required (not soft) reference of `payload` that is not applied here yet: its entity
+/// type and sync id. Used by the safety re-checks (`permit::sync_check`) to count a row still
+/// waiting in the inbox only when it can actually be applied.
+pub(crate) async fn first_missing_ref(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    payload: &Map<String, Value>,
+) -> AppResult<Option<(&'static str, String)>> {
+    for column in &layout.columns {
+        let Role::Ref {
+            key,
+            target,
+            soft: false,
+            ..
+        } = &column.role
+        else {
+            continue;
+        };
+        let Some(v) = payload.get(key) else {
+            continue;
+        };
+        if let Resolved::Missing { target_entity, sync_id } =
+            inbound_ref(conn, layout, column, target, v, payload).await?
+        {
+            return Ok(Some((target_entity, sync_id)));
+        }
+    }
+    Ok(None)
+}
+
 enum Resolved {
     Local(SqlValue),
     /// Target not here yet.
@@ -913,6 +943,9 @@ pub(crate) async fn apply_row(
                 code: "APPEND_ONLY_DELETE".into(),
                 message: format!("{table}: history rows are never deleted by synchronisation"),
             });
+        }
+        if let Some(outcome) = crate::sync::apply_hooks::before_delete_checked(conn, layout, entity_sync_id).await? {
+            return Ok(outcome);
         }
         let Some(locator) = locator else {
             return Ok(ApplyOutcome::Unchanged);

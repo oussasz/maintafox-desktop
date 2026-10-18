@@ -90,6 +90,10 @@
       "QUALIFICATION_OVERRIDE_INVALID": "An incomplete qualification override (person, context or approver)",
       "QUALIFICATION_OVERRIDE_SELF": "A qualification override approved by the person it concerns",
       "QUALIFICATION_OVERRIDE_UNAUTHORISED": "A qualification override approved by someone without the certification right here",
+      "PERMIT_ISOLATION_MOVED": "An isolation moved to another permit",
+      "PERMIT_ISOLATION_WRONG_STATUS": "An isolation changed while its permit did not allow it",
+      "PERMIT_DELETE_REFUSED": "A permit, isolation or suspension still protecting work was deleted elsewhere",
+      "QUALIFICATION_OVERRIDE_USE_PERSON": "A qualification override on a login that has a personnel record",
       "other": "Needs review"
     },
     "history": {

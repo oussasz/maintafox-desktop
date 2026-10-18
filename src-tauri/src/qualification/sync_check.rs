@@ -1,8 +1,9 @@
 //! A qualification override received by synchronisation is checked again before it is written
 //! (`sync::apply_hooks::before_upsert_checked`), with the rules of `qualification::gate`:
 //! - a reason of at least ten characters;
-//! - one subject (a personnel record, or a login with none — work orders only) and a context that
-//!   matches its keys (a work order, or a permit and a LOTO role);
+//! - one subject (a personnel record, or a login with none — work orders only; a login linked to a
+//!   personnel record is overridden as that person) and a context that matches its keys (a work
+//!   order, or a permit and a LOTO role);
 //! - never approved by the person it lets work (separation of duties);
 //! - approved by someone who holds the certification right (`trn.certify`) here, now. This is
 //!   evaluated on arrival: an approver whose right was withdrawn since makes it a conflict (fails
@@ -80,6 +81,20 @@ pub(crate) async fn inbound_override_check(
                 "QUALIFICATION_OVERRIDE_SELF",
                 "qualification override approved by the login it lets work".into(),
             );
+        }
+        (_, Some(account)) => {
+            // A login linked to a personnel record is overridden as that person
+            // (`QUALIFICATION_OVERRIDE_USE_PERSON` in `gate::record_account_work_order_override`).
+            let Some(user) = local_id(conn, "user_accounts", account).await? else {
+                return wait(format!("login {account} is not applied yet"));
+            };
+            if super::gate::personnel_for_user(conn, user).await?.is_some() {
+                return conflict(
+                    "QUALIFICATION_OVERRIDE_USE_PERSON",
+                    "qualification override on a login that has a personnel record: the person must be overridden"
+                        .into(),
+                );
+            }
         }
         (Some(person), _) => {
             let Some(personnel) = local_id(conn, "personnel", person).await? else {
