@@ -91,6 +91,11 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Hand-over receiver search: "%" and "_" in the search act as wildcards, and an upper-case accented letter does not find the lower-case one ("É" does not find "é"). A person without a display name is listed and shown under their login name. | UX | After pilot |
 | The upgrade step that creates the hand-over roles list (migration 235) uses the app's own list code. If that code later needs a column added by a later upgrade step, an upgrade from a version before 235 would fail; an upgrade test from a pre-235 database covers today's code. | Data | Release (upgrade test from an old database) |
 | Permits created before expiry became required (none set) are left unchanged: they cannot be activated or edited until someone sets an expiry (refused with "Permit … has no expiry"); permits already active keep running until closed. | Safety | Release (review open permits) |
+| Hand-over form: the receiving person is picked from at most 200 names per search (the server's page size); when more people match, the form says "N of total people shown" and asks to type a name to narrow the list (no "show more"). | UX | After pilot |
+| Hand-overs already recorded show the role's label from the plant's list; a role since removed from the list is shown by its stored code. | UX | After pilot |
+| Third-person lock removal on screen: the "Verify removal" button of an isolation is greyed with the reason for the person who verified it, and a notice names that verifier; there is no separate confirmation dialog (one click records the removal, as before). The server refuses it in any case (PERMIT_THREE_PERSON_REMOVAL). | Safety | Accepted |
+| The three-person setting is shown to everyone in the permit types list; it is changed in the permit type form, which needs the permit-issue right to open and the settings right (administrator) to switch it, then a reason of at least 10 characters and the password again. An administrator without the permit-issue right cannot change it. | UX | Accepted |
+| The hand-over, permit type and lock-removal screens were checked by automated screen tests only, not yet in the running app with the demo plant. | Safety | Step 7 |
 
 ## Preventive maintenance
 

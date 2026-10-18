@@ -1,16 +1,29 @@
 /**
  * Work-permit types editor — hosted in Données de référence (catalog `PERMIT.TYPES`), the one
  * place they are managed. Saves go through `upsert_permit_type` (permit issuer; administrator +
- * step-up + reason to stop requiring an energy isolation; the LOTO type keeps it).
+ * step-up + reason to stop requiring an energy isolation; the LOTO type keeps it). The
+ * three-person lock-removal setting is shown to everyone and changed only by an administrator
+ * (`adm.settings`), with a reason of at least THREE_PERSON_REASON_MIN characters and a step-up.
  */
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button, FormField, Input, Textarea } from "@/components/ui";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { appErrorReason } from "@/lib/app-error";
 import { upsertPermitType, type PermitTypeRecord } from "@/services/permit-service";
+import { P } from "@shared/rbac/permissions.generated";
+
+/** Shortest reason the server accepts for a three-person change (`MIN_REASON_CHARS`). */
+export const THREE_PERSON_REASON_MIN = 10;
+
+/** The step-up dialog was closed without confirming: nothing to report. */
+function isStepUpCancelled(err: unknown): boolean {
+  return err instanceof Error && err.message === "Step-up cancelled by user";
+}
 
 interface PermitTypesEditorProps {
   types: PermitTypeRecord[];
@@ -34,6 +47,11 @@ interface TypeDraft {
   /** Shipped LOTO type: the rule cannot be switched off. */
   lotoLocked: boolean;
   disableReason: string;
+  /** Third person confirms lock removal (the isolation's verifier may not). */
+  threePerson: boolean;
+  /** The saved value (false for a new type): any change needs a reason and an administrator. */
+  savedThreePerson: boolean;
+  threePersonReason: string;
   maxHours: string;
   ppeJson: string | null;
   rulesJson: string | null;
@@ -51,6 +69,9 @@ const EMPTY: TypeDraft = {
   savedEnergyIsolation: false,
   lotoLocked: false,
   disableReason: "",
+  threePerson: false,
+  savedThreePerson: false,
+  threePersonReason: "",
   maxHours: "",
   ppeJson: null,
   rulesJson: null,
@@ -69,6 +90,9 @@ function toDraft(ty: PermitTypeRecord): TypeDraft {
     savedEnergyIsolation: ty.requires_energy_isolation,
     lotoLocked: ty.code.trim().toLowerCase() === "loto",
     disableReason: "",
+    threePerson: ty.requires_three_person_removal,
+    savedThreePerson: ty.requires_three_person_removal,
+    threePersonReason: "",
     maxHours: ty.max_duration_hours == null ? "" : String(ty.max_duration_hours),
     ppeJson: ty.mandatory_ppe_ids_json,
     rulesJson: ty.mandatory_control_rules_json,
@@ -82,6 +106,12 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { withStepUp, StepUpDialogElement } = useStepUp();
+  const { can } = usePermissions();
+  const canChangeThreePerson = can(P.ADM_SETTINGS);
+
+  const changingThreePerson = draft.threePerson !== draft.savedThreePerson;
+  const threePersonReason = draft.threePersonReason.trim();
+  const threePersonReasonShort = threePersonReason.length < THREE_PERSON_REASON_MIN;
 
   const relaxing = draft.id != null && draft.savedEnergyIsolation && !draft.energyIsolation;
   const maxHoursValue = draft.maxHours.trim() === "" ? null : Number(draft.maxHours);
@@ -93,10 +123,12 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
     setSubmitted(true);
     if (!draft.code.trim() || !draft.name.trim() || maxHoursInvalid) return;
     if (relaxing && !draft.disableReason.trim()) return;
+    if (changingThreePerson && threePersonReasonShort) return;
     setBusy(true);
     setError(null);
     try {
-      // Switching the isolation rule off asks for the administrator's step-up when needed.
+      // Switching the isolation rule off or changing the three-person setting asks for the
+      // administrator's step-up when needed.
       const save = () =>
         upsertPermitType({
           id: draft.id,
@@ -111,13 +143,15 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
           mandatory_control_rules_json: draft.rulesJson,
           requires_energy_isolation: draft.energyIsolation,
           disable_isolation_reason: relaxing ? draft.disableReason.trim() : null,
+          requires_three_person_removal: draft.threePerson,
+          three_person_change_reason: changingThreePerson ? threePersonReason : null,
         });
-      await (relaxing ? withStepUp(save) : save());
+      await (relaxing || changingThreePerson ? withStepUp(save) : save());
       setDraft(EMPTY);
       setSubmitted(false);
       onSaved();
     } catch (err) {
-      setError(appErrorReason(err));
+      if (!isStepUpCancelled(err)) setError(appErrorReason(err));
     } finally {
       setBusy(false);
     }
@@ -143,6 +177,9 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
               <th className="px-2 py-1.5 font-medium">{t("types.name")}</th>
               <th className="px-2 py-1.5 font-medium">{t("types.maxHours")}</th>
               <th className="px-2 py-1.5 font-medium">{t("types.energyIsolationShort")}</th>
+              <th className="px-2 py-1.5 font-medium" title={t("types.threePerson")}>
+                {t("types.threePersonShort")}
+              </th>
               <th className="px-2 py-1.5" />
             </tr>
           </thead>
@@ -154,6 +191,9 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
                 <td className="px-2 py-1.5">{ty.max_duration_hours ?? t("detail.none")}</td>
                 <td className="px-2 py-1.5">
                   {ty.requires_energy_isolation ? t("types.yes") : t("types.no")}
+                </td>
+                <td className="px-2 py-1.5">
+                  {ty.requires_three_person_removal ? t("types.yes") : t("types.no")}
                 </td>
                 <td className="px-2 py-1.5 text-right">
                   {canEdit ? (
@@ -269,6 +309,42 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
                   rows={2}
                   value={draft.disableReason}
                   onChange={(e) => setDraft((d) => ({ ...d, disableReason: e.target.value }))}
+                />
+              </FormField>
+            ) : null}
+          </div>
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-2 text-sm text-text-primary">
+              <Switch
+                aria-label={t("types.threePerson")}
+                aria-describedby="type-three-person-hint"
+                checked={draft.threePerson}
+                disabled={!canChangeThreePerson}
+                onCheckedChange={(v) => setDraft((d) => ({ ...d, threePerson: v }))}
+              />
+              {t("types.threePerson")}
+            </label>
+            <p id="type-three-person-hint" className="pl-6 text-xs text-text-muted">
+              {t("types.threePersonHint")}
+              {canChangeThreePerson ? null : ` ${t("types.threePersonAdminOnly")}`}
+            </p>
+            {changingThreePerson ? (
+              <FormField
+                name="type-three-person-reason"
+                label={t("types.threePersonReason")}
+                description={t("types.threePersonReasonHint", { min: THREE_PERSON_REASON_MIN })}
+                required
+                error={
+                  (submitted || threePersonReason.length > 0) && threePersonReasonShort
+                    ? t("types.reasonMin", { min: THREE_PERSON_REASON_MIN })
+                    : undefined
+                }
+              >
+                <Textarea
+                  id="type-three-person-reason"
+                  rows={2}
+                  value={draft.threePersonReason}
+                  onChange={(e) => setDraft((d) => ({ ...d, threePersonReason: e.target.value }))}
                 />
               </FormField>
             ) : null}

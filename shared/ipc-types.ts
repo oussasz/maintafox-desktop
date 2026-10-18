@@ -10641,6 +10641,12 @@ export interface PermitTypeUpsertInput {
   requires_energy_isolation: boolean;
   /** Required when switching the rule off (administrator + step-up, audited). */
   disable_isolation_reason?: string | null;
+  /** Three-person lock-removal chain: the isolation's verifier may not confirm the removal.
+   * Update: omitted/null = unchanged. Create: omitted/null = off. */
+  requires_three_person_removal?: boolean | null;
+  /** At least 10 characters (trimmed), required whenever the setting changes (including a new
+   * type created with it on); administrator (`adm.settings`) + step-up, audited. */
+  three_person_change_reason?: string | null;
 }
 
 export interface WorkPermitCreateInput {
@@ -10691,9 +10697,34 @@ export interface PermitSuspendInput {
 
 export interface PermitHandoverLogInput {
   permit_id: number;
+  /** Codes of `PERMIT.HANDOVER_ROLES` (Données de référence). */
   handed_from_role: string;
   handed_to_role: string;
+  /** At least 10 characters. */
   confirmation_note: string;
+  /** The receiving person (a user account, never the signer), optional. The signer is the session
+   * user, set by the server. */
+  received_by_id?: number | null;
+}
+
+/** Someone who may receive a permit hand-over (`list_permit_handover_receivers`): name only. */
+export interface PermitHandoverReceiver {
+  id: number;
+  display_name: string;
+}
+
+/** One page of hand-over receivers with the total that match. */
+export interface PermitHandoverReceiverPage {
+  items: PermitHandoverReceiver[];
+  total: number;
+}
+
+/** One permit hand-over role of the plant (`list_permit_handover_roles`). */
+export interface PermitHandoverRoleOption {
+  code: string;
+  label: string;
+  /** Adopted from a stored free text: to review in Données de référence. */
+  review_required: boolean;
 }
 
 export interface PermitIsolationUpsertInput {

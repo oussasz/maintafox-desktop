@@ -5,6 +5,8 @@ import { z } from "zod";
 import { invoke } from "@/lib/ipc-invoke";
 import type {
   PermitHandoverLogInput,
+  PermitHandoverReceiverPage,
+  PermitHandoverRoleOption,
   PermitIsolationActionInput,
   PermitIsolationUpsertInput,
   PermitSuspendInput,
@@ -28,6 +30,8 @@ const PermitTypeSchema = z.object({
   mandatory_ppe_ids_json: z.string(),
   mandatory_control_rules_json: z.string(),
   requires_energy_isolation: z.boolean(),
+  /** Three-person lock-removal chain: the isolation's verifier may not confirm the removal. */
+  requires_three_person_removal: z.boolean(),
   row_version: z.number(),
 });
 
@@ -53,6 +57,8 @@ const WorkPermitSchema = z.object({
   asset_label: z.string().nullable(),
   linked_work_order_code: z.string().nullable(),
   permit_type_requires_energy_isolation: z.boolean(),
+  /** The permit's type asks for a third person to confirm lock removal. */
+  permit_type_requires_three_person_removal: z.boolean(),
 });
 
 const PermitSuspensionSchema = z.object({
@@ -78,7 +84,23 @@ const PermitHandoverLogSchema = z.object({
   handed_to_role: z.string(),
   confirmation_note: z.string(),
   signed_at: z.string(),
+  /** Who recorded it (null on hand-overs recorded before the signer was kept). */
+  signed_by_id: z.number().nullable(),
+  signed_by_name: z.string().nullable(),
+  received_by_id: z.number().nullable(),
+  received_by_name: z.string().nullable(),
   row_version: z.number(),
+});
+
+const PermitHandoverRoleOptionSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  review_required: z.boolean(),
+});
+
+const PermitHandoverReceiverPageSchema = z.object({
+  items: z.array(z.object({ id: z.number(), display_name: z.string() })),
+  total: z.number(),
 });
 
 const PermitIsolationSchema = z.object({
@@ -265,6 +287,29 @@ export async function suspendWorkPermit(
   const raw = await invoke<unknown>("suspend_work_permit", { input });
   const [permit, suspension] = z.tuple([WorkPermitSchema, PermitSuspensionSchema]).parse(raw);
   return { permit, suspension };
+}
+
+/**
+ * Who may receive a hand-over: active accounts by name, never the signed-in person (ptw.close).
+ * One page with the total of matches, so a cut list is never shown as complete.
+ */
+export async function listPermitHandoverReceivers(
+  search: string | null,
+  limit?: number,
+  offset?: number,
+): Promise<PermitHandoverReceiverPage> {
+  const raw = await invoke<unknown>("list_permit_handover_receivers", {
+    search: search && search.trim() ? search.trim() : null,
+    limit: limit ?? null,
+    offset: offset ?? null,
+  });
+  return PermitHandoverReceiverPageSchema.parse(raw);
+}
+
+/** The plant's hand-over roles (Données de référence › PERMIT.HANDOVER_ROLES). */
+export async function listPermitHandoverRoles(): Promise<PermitHandoverRoleOption[]> {
+  const raw = await invoke<unknown>("list_permit_handover_roles");
+  return z.array(PermitHandoverRoleOptionSchema).parse(raw);
 }
 
 export async function appendPermitHandoverLog(

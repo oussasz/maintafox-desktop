@@ -36,10 +36,10 @@ import {
   type PermitIsolationRecord,
   type PermitSuspensionRecord,
   type WorkPermitRecord,
-  appendPermitHandoverLog,
   applyPermitIsolation,
   getLotoCardView,
   listPermitHandoverLogs,
+  listPermitHandoverRoles,
   listPermitIsolationOptions,
   listPermitIsolations,
   listPermitSuspensions,
@@ -55,6 +55,7 @@ import { formatDateTime } from "@/utils/format-date";
 import type { WorkPermitStatus } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { PermitHandoverForm } from "./PermitHandoverForm";
 import { printLotoCard } from "./loto-card-print";
 import {
   ISOLATION_REMOVAL_STATUSES,
@@ -103,10 +104,6 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
 
   const [isoDraft, setIsoDraft] = useState(EMPTY_ISOLATION);
   const [isoSubmitted, setIsoSubmitted] = useState(false);
-  const [handover, setHandover] = useState({ from: "", to: "", note: "" });
-  const [handoverSubmitted, setHandoverSubmitted] = useState(false);
-  /** The last hand-over save failed: its reason is shown under the form, not only at the top. */
-  const [handoverFailed, setHandoverFailed] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [suspendDraft, setSuspendDraft] = useState({ reason: "", conditions: "" });
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -156,6 +153,26 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     }
     return map;
   }, [options]);
+
+  // Labels of the stored hand-over role codes (the plant's list); a code no longer in the list
+  // is shown as stored.
+  const [roleLabels, setRoleLabels] = useState<Map<string, string>>(new Map());
+  const hasHandovers = handovers.length > 0;
+  useEffect(() => {
+    if (!hasHandovers) return;
+    let cancelled = false;
+    listPermitHandoverRoles()
+      .then((roles) => {
+        if (!cancelled) setRoleLabels(new Map(roles.map((r) => [r.code, r.label])));
+      })
+      .catch(() => {
+        // The stored codes stay readable as they are; the form reports the list's failure.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasHandovers]);
+  const roleLabel = (code: string) => roleLabels.get(code) ?? code;
 
   const lang = i18n.resolvedLanguage || i18n.language;
   const energyLabel = (iso: PermitIsolationRecord) =>
@@ -230,27 +247,6 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     if (ok) {
       setIsoDraft(EMPTY_ISOLATION);
       setIsoSubmitted(false);
-    }
-  };
-
-  const handleHandover = async (e: FormEvent) => {
-    e.preventDefault();
-    setHandoverSubmitted(true);
-    setHandoverFailed(false);
-    if (!handover.from.trim() || !handover.to.trim()) return;
-    const ok = await run(async () => {
-      await appendPermitHandoverLog({
-        permit_id: permit.id,
-        handed_from_role: handover.from,
-        handed_to_role: handover.to,
-        confirmation_note: handover.note,
-      });
-    });
-    if (ok) {
-      setHandover({ from: "", to: "", note: "" });
-      setHandoverSubmitted(false);
-    } else {
-      setHandoverFailed(true);
     }
   };
 
@@ -471,6 +467,19 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             {isolations.map((iso) => {
               const state = isolationState(iso);
               const appliedByMe = me != null && iso.applied_by_id === me;
+              // Three-person chain of the permit's type: the isolation's verifier may not confirm
+              // its removal either (the server refuses it too: PERMIT_THREE_PERSON_REMOVAL).
+              const chainApplies =
+                permit.permit_type_requires_three_person_removal &&
+                state === "verified" &&
+                removalOpen;
+              const verifiedByMe = me != null && iso.verified_by_id === me;
+              const removalBlockedForMe = appliedByMe || (chainApplies && verifiedByMe);
+              const removalBlockedReason = appliedByMe
+                ? t("isolation.selfBlocked")
+                : chainApplies && verifiedByMe
+                  ? t("isolation.threePersonSelf")
+                  : undefined;
               return (
                 <li
                   key={iso.id}
@@ -546,8 +555,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={busy || appliedByMe}
-                        title={appliedByMe ? t("isolation.selfBlocked") : undefined}
+                        disabled={busy || removalBlockedForMe}
+                        title={removalBlockedReason}
                         onClick={() => void isolationAction(iso, verifyPermitIsolationRemoval)}
                       >
                         {t("isolation.verifyRemoval")}
@@ -562,6 +571,18 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                       <span className="text-xs text-text-muted">{t("isolation.selfBlocked")}</span>
                     ) : null}
                   </div>
+                  {chainApplies ? (
+                    <p
+                      className="text-xs text-tone-warning-fg"
+                      data-testid="isolation-three-person"
+                    >
+                      {verifiedByMe
+                        ? t("isolation.threePersonSelf")
+                        : iso.verified_by_name
+                          ? t("isolation.threePersonNotice", { name: iso.verified_by_name })
+                          : t("isolation.threePersonNoticeUnknown")}
+                    </p>
+                  ) : null}
                 </li>
               );
             })}
@@ -765,12 +786,12 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
               {handovers.map((h) => (
                 <li key={h.id} className="rounded-md border border-surface-border bg-surface-1 p-2">
                   <div className="flex flex-wrap items-center gap-1.5 text-text-primary">
-                    <span className="font-medium">{h.handed_from_role}</span>
+                    <span className="font-medium">{roleLabel(h.handed_from_role)}</span>
                     <span aria-hidden className="text-text-muted">
                       →
                     </span>
                     <span className="sr-only">{t("handover.handedTo")}</span>
-                    <span className="font-medium">{h.handed_to_role}</span>
+                    <span className="font-medium">{roleLabel(h.handed_to_role)}</span>
                     <time className="ms-auto text-xs text-text-muted" dateTime={h.signed_at}>
                       {fmt(h.signed_at)}
                     </time>
@@ -778,67 +799,20 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                   {h.confirmation_note ? (
                     <p className="mt-1 text-xs text-text-secondary">{h.confirmation_note}</p>
                   ) : null}
+                  <p className="mt-1 text-xs text-text-muted">
+                    {h.signed_by_name
+                      ? t("handover.signedBy", { name: h.signed_by_name })
+                      : t("handover.signerNotRecorded")}
+                    {h.received_by_name
+                      ? ` · ${t("handover.receivedBy", { name: h.received_by_name })}`
+                      : ""}
+                  </p>
                 </li>
               ))}
             </ol>
           )}
           {permit.status === "closed" && canClose ? (
-            <form
-              className="space-y-2 rounded-md border border-surface-border p-3"
-              aria-labelledby="handover-form-title"
-              onSubmit={(e) => void handleHandover(e)}
-            >
-              <h4 id="handover-form-title" className="text-sm font-medium text-text-primary">
-                {t("handover.add")}
-              </h4>
-              <p className="text-xs text-text-muted">{t("handover.rolesHint")}</p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <FormField
-                  name="handover-from"
-                  label={t("handover.from")}
-                  required
-                  error={
-                    handoverSubmitted && !handover.from.trim() ? t("errors.required") : undefined
-                  }
-                >
-                  <Input
-                    id="handover-from"
-                    value={handover.from}
-                    onChange={(e) => setHandover((h) => ({ ...h, from: e.target.value }))}
-                  />
-                </FormField>
-                <FormField
-                  name="handover-to"
-                  label={t("handover.to")}
-                  required
-                  error={
-                    handoverSubmitted && !handover.to.trim() ? t("errors.required") : undefined
-                  }
-                >
-                  <Input
-                    id="handover-to"
-                    value={handover.to}
-                    onChange={(e) => setHandover((h) => ({ ...h, to: e.target.value }))}
-                  />
-                </FormField>
-              </div>
-              <FormField name="handover-note" label={t("handover.note")}>
-                <Textarea
-                  id="handover-note"
-                  rows={2}
-                  value={handover.note}
-                  onChange={(e) => setHandover((h) => ({ ...h, note: e.target.value }))}
-                />
-              </FormField>
-              {handoverFailed && error ? (
-                <p role="alert" className="text-xs text-tone-danger-fg">
-                  {error}
-                </p>
-              ) : null}
-              <Button type="submit" className="h-10" disabled={busy}>
-                {t("handover.submit")}
-              </Button>
-            </form>
+            <PermitHandoverForm permitId={permit.id} onRecorded={() => void loadChildren()} />
           ) : canClose ? (
             <p className="text-xs text-text-muted">{t("handover.onlyWhenClosed")}</p>
           ) : null}
