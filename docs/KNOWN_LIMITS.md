@@ -70,7 +70,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Limit | Impact | Handled in |
 |---|---|---|
 | A permit that expires during the work is only warned in planning and by the expiry notification; start is refused only for an already expired permit. | Safety | Accepted |
-| Requests (DI) have no permit field; permit readiness is checked for work orders and PM only. | Safety | Step 7 |
+| Requests (DI) carry no permit; at conversion, the new work order is flagged "permit required" when a plant rule in Données de référence (equipment class and/or work type → permit type) matches, and the work-order permit/LOTO gate applies before start. With no rule configured nothing is flagged and the conversion says so. Clearing a rule's flag needs the permit-issue right and a reason (audited); rules that cannot be applied are marked in Données de référence and a conversion that skipped them shows a warning that stays until closed. | Safety | Accepted (owner decision) |
 | LOTO hand-over roles are free text. | Data | After pilot |
 | Permits created before expiry became required (none set) are left unchanged: they cannot be activated or edited until someone sets an expiry (refused with "Permit … has no expiry"); permits already active keep running until closed. | Safety | Release (review open permits) |
 
@@ -152,7 +152,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | The work mix link (planned / reactive / emergency) finds the matching work-order types on the screen with the same nature rule the figures use; a work-order type with no nature set appears in no mix, in the figure or the list. | Data | Step 7 (check every type has a nature) |
 | "My rounds" counts rounds assigned to me personally, not to my team; "My PM" means PM whose work order is mine. | Data | Accepted |
 | The planning backlog panel reads at most 2,000 jobs, with a notice. | UX | Accepted |
-| Very old equipment linked only through the legacy criticality list is not counted as critical. | Data | Step 7 |
+| Equipment whose criticality comes only from the old criticality list is read through the standard correspondence (CRITIQUE→A, IMPORTANT→B, STANDARD→C, NON-CRITIQUE→D) and flagged "à revoir"; a plant's own old code is read as no criticality until a planner sets one. Nothing stored is rewritten. | Data | Release (review flagged equipment) |
 
 ## Reliability decisions (four-eyes, owner decision 2026-10-17)
 
@@ -186,10 +186,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 |---|---|---|
 | There is no search across all record types; the top-bar box opens modules (Ctrl K). | UX | After pilot |
 | An organisation unit's cost centre is free text, not picked from finance cost centres (needs a decision on which permission may set it). | Data | Owner decision |
-| A node type cannot be placed under a node of the same type (the publish check treats it as a cycle), e.g. area inside area. | UX | Step 7 |
 | The sync centre names about 40 record types; others show as "Other record" with their number. | UX | Accepted |
-| Import wizards (reference data, personnel) show each problem's category translated, but the detail line (row, code, parent) is the server's sentence in one language (French for reference data, English for personnel). | UX | Step 7 (needs coded details from the server) |
-| The access-policy editor's "test" results show the server's rule messages untranslated. | UX | Step 7 |
 
 ## In progress (program side done, screens being wired)
 
