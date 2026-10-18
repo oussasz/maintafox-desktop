@@ -57,3 +57,68 @@ impl MigrationTrait for Migration {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+    use sea_orm_migration::MigratorTrait;
+
+    use crate::migrations::Migrator;
+
+    async fn text(db: &DatabaseConnection, sql: &str) -> Option<String> {
+        db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+            .and_then(|r| r.try_get_by_index::<Option<String>>(0).ok().flatten())
+    }
+
+    /// On a database from before 235, the free-text roles already stored are adopted into the list
+    /// with their exact text and flagged "à revoir"; no stored hand-over is rewritten and none gets
+    /// a signer or receiver.
+    #[tokio::test]
+    async fn stored_free_text_roles_are_adopted_flagged_and_nothing_is_rewritten() {
+        let db = crate::db::test_db::empty_memory_db().await;
+        let pos = Migrator::migrations()
+            .iter()
+            .position(|m| m.name() == "m20261018_000235_permit_handover_signer_roles")
+            .expect("registered");
+        Migrator::up(&db, Some(u32::try_from(pos).expect("position")))
+            .await
+            .expect("up to 234");
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+             confirmation_note, signed_at, row_version) VALUES \
+             ('ho-before-235-a', 1, 'Équipe nuit', 'Exploitation', 'Zone propre', '2026-01-01T00:00:00Z', 1), \
+             ('ho-before-235-b', 1, 'Exploitation', 'Équipe nuit', '', '2026-01-02T00:00:00Z', 2)"
+                .to_string(),
+        ))
+        .await
+        .expect("hand-overs recorded before 235");
+        let stored = "SELECT group_concat(entity_sync_id || '|' || permit_id || '|' || handed_from_role || '|' || \
+             handed_to_role || '|' || confirmation_note || '|' || signed_at || '|' || row_version, ';') \
+             FROM (SELECT * FROM permit_handover_logs ORDER BY id)";
+        let before = text(&db, stored).await;
+        assert!(before.is_some());
+
+        Migrator::up(&db, None).await.expect("235 and later");
+
+        assert_eq!(text(&db, stored).await, before, "no stored hand-over is rewritten");
+        assert_eq!(
+            text(
+                &db,
+                "SELECT CAST(COUNT(*) AS TEXT) FROM permit_handover_logs \
+                 WHERE signed_by_id IS NOT NULL OR received_by_id IS NOT NULL"
+            )
+            .await
+            .as_deref(),
+            Some("0"),
+            "no signer or receiver invented"
+        );
+        let roles = crate::permit::handover_roles::list_handover_roles(&db)
+            .await
+            .expect("roles");
+        let codes: Vec<_> = roles.iter().map(|r| (r.code.as_str(), r.review_required)).collect();
+        assert_eq!(codes, [("Exploitation", true), ("Équipe nuit", true)]);
+    }
+}

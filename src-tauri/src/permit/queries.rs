@@ -381,14 +381,26 @@ fn map_permit_suspension(row: &sea_orm::QueryResult) -> AppResult<PermitSuspensi
     })
 }
 
+/// The name shown for the user account of alias `alias` in a hand-over: its display name, or its
+/// login name when the display name is missing, empty or blank. One expression for the stored
+/// hand-overs and the receiver list, so a person picked under a name is shown under that name.
+fn handover_person_name_sql(alias: &str) -> String {
+    format!("COALESCE(NULLIF(TRIM({alias}.display_name), ''), {alias}.username)")
+}
+
 /// Columns of a hand-over log with the signer's and receiver's names (alias `h`).
-const HANDOVER_SELECT: &str = "SELECT h.id, h.entity_sync_id, h.permit_id, h.handed_from_role, h.handed_to_role, \
-     h.confirmation_note, h.signed_at, h.signed_by_id, h.received_by_id, h.row_version, \
-     COALESCE(us.display_name, us.username) AS signed_by_name, \
-     COALESCE(ur.display_name, ur.username) AS received_by_name \
-     FROM permit_handover_logs h \
-     LEFT JOIN user_accounts us ON us.id = h.signed_by_id \
-     LEFT JOIN user_accounts ur ON ur.id = h.received_by_id";
+fn handover_select() -> String {
+    format!(
+        "SELECT h.id, h.entity_sync_id, h.permit_id, h.handed_from_role, h.handed_to_role, \
+         h.confirmation_note, h.signed_at, h.signed_by_id, h.received_by_id, h.row_version, \
+         {} AS signed_by_name, {} AS received_by_name \
+         FROM permit_handover_logs h \
+         LEFT JOIN user_accounts us ON us.id = h.signed_by_id \
+         LEFT JOIN user_accounts ur ON ur.id = h.received_by_id",
+        handover_person_name_sql("us"),
+        handover_person_name_sql("ur"),
+    )
+}
 
 fn map_permit_handover_log(row: &sea_orm::QueryResult) -> AppResult<PermitHandoverLog> {
     Ok(PermitHandoverLog {
@@ -1474,7 +1486,7 @@ async fn append_permit_handover_log_in(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("{HANDOVER_SELECT} WHERE h.id = ?"),
+            format!("{} WHERE h.id = ?", handover_select()),
             [new_id.into()],
         ))
         .await?
@@ -1535,7 +1547,7 @@ pub async fn list_handover_receivers(
             "Listing hand-over receivers needs the permit close right.".into(),
         ));
     }
-    let name = "COALESCE(NULLIF(TRIM(ua.display_name), ''), ua.username)";
+    let name = handover_person_name_sql("ua");
     let filter = format!(
         "ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? \
          AND (? IS NULL OR LOWER({name}) LIKE '%' || LOWER(?) || '%')"
@@ -1586,7 +1598,7 @@ pub async fn list_permit_handover_logs(db: &impl ConnectionTrait, permit_id: i64
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("{HANDOVER_SELECT} WHERE h.permit_id = ? ORDER BY h.id ASC"),
+            format!("{} WHERE h.permit_id = ? ORDER BY h.id ASC", handover_select()),
             [permit_id.into()],
         ))
         .await?;

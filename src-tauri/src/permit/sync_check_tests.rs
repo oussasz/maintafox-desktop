@@ -1733,3 +1733,93 @@ async fn an_override_waits_only_for_rights_of_its_own_approver() {
     let outcome = apply(&db, "qualification_overrides", "qo-25", &by_verifier).await;
     assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
 }
+
+/// A hand-over log received from another PC is refused when the person who signed it also receives
+/// it, and such a log never lets a permit be handed back. A log naming another receiver is applied;
+/// one without a signer (sent by a PC from before signers were recorded) is accepted; one naming a
+/// signer not on this PC yet waits for that person.
+#[tokio::test]
+async fn a_received_handover_signed_and_received_by_one_person_is_refused() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-HO").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let wp = set_status(&db, &wp, "closed").await.expect("close");
+    super::tests::add_handover_role(&db, "Maintenance").await;
+    super::tests::add_handover_role(&db, "Operations").await;
+    let log = queries::append_permit_handover_log(
+        &db,
+        crate::permit::domain::PermitHandoverLogInput {
+            permit_id: wp.id,
+            handed_from_role: "Maintenance".into(),
+            handed_to_role: "Operations".into(),
+            confirmation_note: "Zone left clean".into(),
+            received_by_id: Some(VERIFIER),
+        },
+        APPLIER,
+    )
+    .await
+    .expect("handover");
+    let valid = wire(&db, "permit_handover_logs", &log.entity_sync_id).await;
+    // The log was recorded on another PC: not here yet.
+    exec(&db, &format!("DELETE FROM permit_handover_logs WHERE id = {}", log.id)).await;
+    let logs_sql = format!(
+        "SELECT CAST(COUNT(*) AS TEXT) FROM permit_handover_logs WHERE permit_id = {}",
+        wp.id
+    );
+    let logs = || text(&db, &logs_sql);
+    let signer = user_sync(&db, APPLIER).await;
+    let to_self = with(valid.clone(), &[("received_by_sync_id", json!(signer))]);
+
+    // Received by the person who signed it: refused, nothing written.
+    let outcome = apply(&db, "permit_handover_logs", &log.entity_sync_id, &to_self).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_HANDOVER_RECEIVER_IS_SIGNER"),
+        "{outcome:?}"
+    );
+    assert_eq!(logs().await.as_deref(), Some("0"));
+
+    // A permit handed back with only such a log waiting: refused, the permit stays closed.
+    let handed_back = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("handed_back")), ("handed_back_at", json!(now()))],
+    );
+    inbox(&db, "permit_handover_logs", &log.entity_sync_id, 2, "pending", &to_self).await;
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &handed_back).await;
+    assert_eq!(code(&outcome), Some("PERMIT_HANDOVER_REQUIRED"), "{outcome:?}");
+    assert_eq!(permit_status(&db, &wp).await, "closed");
+    assert_eq!(logs().await.as_deref(), Some("0"));
+
+    // A log naming a signer not on this PC yet waits for that person.
+    let unknown_signer = with(valid.clone(), &[("signed_by_sync_id", json!("user-not-here-yet"))]);
+    let outcome = apply(&db, "permit_handover_logs", "ho-unknown-signer", &unknown_signer).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    assert_eq!(logs().await.as_deref(), Some("0"));
+
+    // Received by someone else: the permit and its log are applied together.
+    exec(&db, "DELETE FROM sync_inbox").await;
+    inbox(&db, "permit_handover_logs", &log.entity_sync_id, 2, "pending", &valid).await;
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &handed_back).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(permit_status(&db, &wp).await, "handed_back");
+    assert_eq!(logs().await.as_deref(), Some("1"));
+
+    // Sent by a PC from before signers were recorded (no signer, no receiver): accepted.
+    let mut legacy = valid.clone();
+    legacy.remove("signed_by_sync_id");
+    legacy.remove("received_by_sync_id");
+    let outcome = apply(&db, "permit_handover_logs", "ho-legacy", &legacy).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(logs().await.as_deref(), Some("2"));
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COALESCE(signed_by_id, 0) AS TEXT) FROM permit_handover_logs WHERE entity_sync_id = 'ho-legacy'"
+        )
+        .await
+        .as_deref(),
+        Some("0"),
+        "no signer invented"
+    );
+}

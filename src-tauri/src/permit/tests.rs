@@ -366,6 +366,83 @@ async fn a_handover_is_signed_from_the_session_with_listed_roles_and_a_note() {
     );
 }
 
+/// The receiving person must be an active, non-deleted account; a signer or receiver whose display
+/// name is empty or blank is shown on the stored hand-over under the login name, as in the receiver
+/// list (never as nobody).
+#[tokio::test]
+async fn a_handover_refuses_inactive_receivers_and_never_shows_a_blank_name() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-HO3").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let wp = set_status(&db, &wp, "closed").await.expect("close");
+    add_handover_role(&db, "Maintenance").await;
+    add_handover_role(&db, "Operations").await;
+    for (sync, user, name, active, deleted) in [
+        ("ho3-inactive", "op.inactive", "Inactive Operator", 0, false),
+        ("ho3-deleted", "op.deleted", "Deleted Operator", 1, true),
+        ("ho3-empty", "op.empty", "", 1, false),
+        ("ho3-blank", "op.blank", "   ", 1, false),
+    ] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+             force_password_change, created_at, updated_at, deleted_at) VALUES (?, ?, ?, 'local', ?, 0, 0, \
+             datetime('now'), datetime('now'), CASE WHEN ? THEN datetime('now') END)",
+            [
+                sync.into(),
+                user.into(),
+                name.into(),
+                i64::from(active).into(),
+                i64::from(deleted).into(),
+            ],
+        ))
+        .await
+        .expect("user");
+    }
+    let id_of = |user: &'static str| {
+        let db = &db;
+        async move { scalar_i64(db, &format!("SELECT id FROM user_accounts WHERE username = '{user}'")).await }
+    };
+    let input = |receiver: i64| PermitHandoverLogInput {
+        permit_id: wp.id,
+        handed_from_role: "Maintenance".into(),
+        handed_to_role: "Operations".into(),
+        confirmation_note: "Zone left clean".into(),
+        received_by_id: Some(receiver),
+    };
+
+    for user in ["op.inactive", "op.deleted"] {
+        let err = queries::append_permit_handover_log(&db, input(id_of(user).await), APPLIER)
+            .await
+            .expect_err("receiver not active");
+        assert_eq!(refusal_code(err), "PERMIT_HANDOVER_RECEIVER_UNKNOWN", "{user}");
+    }
+
+    // Signed by an account with an empty display name, received by one with a blank one.
+    let log = queries::append_permit_handover_log(&db, input(id_of("op.blank").await), id_of("op.empty").await)
+        .await
+        .expect("handover");
+    assert_eq!(log.signed_by_name.as_deref(), Some("op.empty"));
+    assert_eq!(log.received_by_name.as_deref(), Some("op.blank"));
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    assert_eq!(
+        (
+            listed[0].signed_by_name.as_deref(),
+            listed[0].received_by_name.as_deref()
+        ),
+        (Some("op.empty"), Some("op.blank"))
+    );
+    // The receiver list shows the same name for the same person.
+    let page = queries::list_handover_receivers(&db, APPLIER, Some("op.blank".into()), None, None)
+        .await
+        .expect("receivers");
+    assert_eq!(
+        page.items.iter().map(|r| r.display_name.as_str()).collect::<Vec<_>>(),
+        ["op.blank"]
+    );
+}
+
 /// Free texts stored before the list existed are adopted with their exact text, flagged
 /// "à revoir"; the stored hand-over and its (unknown) signer are left as they were.
 #[tokio::test]

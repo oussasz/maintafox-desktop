@@ -101,6 +101,7 @@
       "WO_PERMIT_RULE_CLEAR_UNAUTHORISED": "A permit required by a plant rule was cleared by someone without the permit-issue right",
       "PERMIT_TYPE_REQUIRED_TO_START": "A work order started without a permit of the type a plant rule requires",
       "WO_PERMIT_RULE_CHANGED": "The plant rule that requires a work order's permit was removed or changed elsewhere",
+      "PERMIT_HANDOVER_RECEIVER_IS_SIGNER": "A permit hand-over received by the person who signed it",
       "other": "Needs review"
     },
     "history": {
