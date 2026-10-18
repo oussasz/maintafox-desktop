@@ -1383,6 +1383,7 @@
     "unvaluedHint": "{{qty}} {{unit}} in stock have no cost yet and are not included in the value"
   },
   "controls": {
+    "setInSettings": "Settings › Inventory",
     "loadError": "Count and reconciliation data could not be loaded",
     "sessionStatuses": {
       "draft": "Draft",
@@ -1394,13 +1395,14 @@
       "cancelled": "Cancelled"
     },
     "sessions": {
+      "criticalFromSettings": "A new session's critical variance is the plant's value; each session keeps the one it was opened with:",
+      "criticalThresholdOfSession": "This session's critical variance: {{value}}",
       "title": "Cycle counts",
       "hint": "Count a warehouse or one location, review the variances, then post them to stock.",
       "warehouse": "Warehouse",
       "selectWarehouse": "Select a warehouse",
       "scopeLocation": "Location (optional)",
       "allLocations": "All locations of the warehouse",
-      "criticalThreshold": "Critical variance (quantity)",
       "create": "Create count session",
       "session": "Count session",
       "selectSession": "Select a count session",
@@ -1464,9 +1466,9 @@
       "confirmDescription": "Every variance posted by count {{code}} will be reversed in stock."
     },
     "reconciliation": {
+      "breakFromSettings": "The gap that makes a break is the plant's value:",
       "title": "Stock reconciliation",
       "hint": "Compares stock balances with the movement ledger and lists the drifts.",
-      "breakThreshold": "Break threshold (quantity)",
       "run": "Run reconciliation",
       "run_label": "Reconciliation run",
       "selectRun": "Select a run",

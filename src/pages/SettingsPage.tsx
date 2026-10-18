@@ -47,7 +47,7 @@ import type { CurrencyOption, SettingsChangeEvent, SettingsOverview } from "@sha
 import { P } from "@shared/rbac/permissions.generated";
 
 /** Sections of the General tab, in display order (settings come from the server catalog). */
-const GENERAL_CATEGORIES = ["localization", "work_orders", "reliability"] as const;
+const GENERAL_CATEGORIES = ["localization", "work_orders", "inventory", "reliability"] as const;
 const BACKUP_CATEGORIES = ["backup"] as const;
 const SETTINGS_TAB_IDS = new Set<SettingsTabId>(SETTINGS_TABS.map((tab) => tab.id));
 

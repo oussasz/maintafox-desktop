@@ -1101,8 +1101,9 @@ export interface SettingDefinitionView {
   key: string;
   category: string;
   scope: string;
-  kind: "choice" | "integer" | "currency" | "month" | "document_header" | "module";
+  kind: "choice" | "integer" | "decimal" | "currency" | "month" | "document_header" | "module";
   options: string[];
+  /** Bounds of an `integer`, `decimal` or `month` value (a decimal's bounds may be fractional). */
   min: number | null;
   max: number | null;
   /** Value shipped with the application ("Valeur livrée"). */
@@ -3230,6 +3231,7 @@ export interface InventoryCountSession {
   warehouse_id: number;
   location_id: number | null;
   status: string;
+  /** Critical variance this session was opened with (Settings › Inventory at its creation). */
   critical_abs_threshold: number;
   submitted_by_id: number | null;
   submitted_at: string | null;
@@ -3271,7 +3273,6 @@ export interface InventoryCountLine {
 export interface CreateInventoryCountSessionInput {
   warehouse_id: number;
   location_id?: number | null;
-  critical_abs_threshold?: number;
   actor_id?: number | null;
 }
 
@@ -3342,7 +3343,6 @@ export interface InventoryReconciliationFinding {
 
 export interface RunInventoryReconciliationInput {
   actor_id?: number | null;
-  drift_break_threshold?: number;
 }
 
 // ── Supplier management ──────────────────────────────────────────────────────

@@ -66,8 +66,9 @@ const SettingDefinitionViewSchema = z.object({
   key: z.string(),
   category: z.string(),
   scope: z.string(),
-  kind: z.enum(["choice", "integer", "currency", "month", "document_header", "module"]),
+  kind: z.enum(["choice", "integer", "decimal", "currency", "month", "document_header", "module"]),
   options: z.array(z.string()),
+  /** Bounds of an `integer`, `decimal` or `month` value (a decimal's bounds may be fractional). */
   min: z.number().nullable(),
   max: z.number().nullable(),
   shipped_value_json: z.string(),

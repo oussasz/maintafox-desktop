@@ -54,6 +54,9 @@ export function formatSettingValue(
     }
     case "integer":
       return t(`catalog.units.${def.key}`, { count: Number(value) });
+    case "decimal":
+      // The unit text formats the number in the interface language (`{{value, number}}`).
+      return t(`catalog.units.${def.key}`, { value: Number(value) });
     case "currency":
       return String(value);
     default:
@@ -63,7 +66,9 @@ export function formatSettingValue(
 
 /** Stored JSON for an edited value of this kind. */
 function toValueJson(def: SettingDefinitionView, input: string): string {
-  if (def.kind === "integer" || def.kind === "month") return String(Number(input));
+  if (def.kind === "integer" || def.kind === "decimal" || def.kind === "month") {
+    return String(Number(input));
+  }
   return JSON.stringify(input);
 }
 
@@ -184,10 +189,12 @@ function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
       setDraft(null);
       return;
     }
-    if (def.kind === "integer") {
+    if (def.kind === "integer" || def.kind === "decimal") {
       const n = Number(draft);
       if (
-        !Number.isInteger(n) ||
+        draft.trim() === "" ||
+        !Number.isFinite(n) ||
+        (def.kind === "integer" && !Number.isInteger(n)) ||
         (def.min != null && n < def.min) ||
         (def.max != null && n > def.max)
       ) {
@@ -246,7 +253,8 @@ function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
       <Input
         id={inputId}
         type="number"
-        inputMode="numeric"
+        inputMode={def.kind === "decimal" ? "decimal" : "numeric"}
+        {...(def.kind === "decimal" ? { step: "any" } : {})}
         className="h-9 w-full"
         aria-label={label}
         value={draft ?? currentText}

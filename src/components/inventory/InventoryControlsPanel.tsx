@@ -1,6 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
@@ -61,10 +62,8 @@ import { P } from "@shared/rbac/permissions.generated";
 
 /** Minimum length of the mandatory reversal reason (audit trail). */
 const REVERSAL_REASON_MIN_LENGTH = 5;
-/** Default critical variance (absolute quantity) proposed for a new count session. */
-const DEFAULT_CRITICAL_THRESHOLD = 5;
-/** Default drift above which a reconciliation finding is a break. */
-const DEFAULT_DRIFT_BREAK_THRESHOLD = 0.01;
+/** Where the count and reconciliation tolerances are set (tenant settings, Inventory section). */
+const INVENTORY_SETTINGS_PATH = "/settings?tab=general";
 /** Count-session trace: most recent posted / reversed count movements shown. */
 const COUNT_TRACE_LIMIT = 120;
 
@@ -98,7 +97,6 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
 
   const [newWarehouseId, setNewWarehouseId] = useState(0);
   const [newLocationId, setNewLocationId] = useState(0);
-  const [newThreshold, setNewThreshold] = useState(DEFAULT_CRITICAL_THRESHOLD);
   const [lineArticleId, setLineArticleId] = useState(0);
   const [lineLocationId, setLineLocationId] = useState(0);
   const [lineCountQty, setLineCountQty] = useState(0);
@@ -107,7 +105,6 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
   const [approvalEvidence, setApprovalEvidence] = useState("");
   const [sessionReversalReason, setSessionReversalReason] = useState("");
   const [reverseConfirmOpen, setReverseConfirmOpen] = useState(false);
-  const [driftBreakThreshold, setDriftBreakThreshold] = useState(DEFAULT_DRIFT_BREAK_THRESHOLD);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId) ?? null,
@@ -440,8 +437,14 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
       <PermissionGate permission={P.INV_COUNT}>
         <section className="rounded-md border p-4">
           <h3 className="mb-1 text-sm font-semibold">{t("controls.sessions.title")}</h3>
-          <p className="mb-3 text-xs text-text-muted">{t("controls.sessions.hint")}</p>
-          <div className="grid gap-2 md:grid-cols-4">
+          <p className="mb-1 text-xs text-text-muted">{t("controls.sessions.hint")}</p>
+          <p className="mb-3 text-xs text-text-muted">
+            {t("controls.sessions.criticalFromSettings")}{" "}
+            <Link to={INVENTORY_SETTINGS_PATH} className="underline underline-offset-2">
+              {t("controls.setInSettings")}
+            </Link>
+          </p>
+          <div className="grid gap-2 md:grid-cols-3">
             <div className="space-y-1">
               <Label htmlFor="inv-cc-warehouse" className="text-xs">
                 {t("controls.sessions.warehouse")}
@@ -489,19 +492,6 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="inv-cc-threshold" className="text-xs">
-                {t("controls.sessions.criticalThreshold")}
-              </Label>
-              <Input
-                id="inv-cc-threshold"
-                type="number"
-                min={0}
-                step="0.1"
-                value={newThreshold}
-                onChange={(e) => setNewThreshold(Number(e.target.value || 0))}
-              />
-            </div>
             <div className="flex items-end">
               <Button
                 className="h-11"
@@ -512,7 +502,6 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                     const session = await createInventoryCountSession({
                       warehouse_id: newWarehouseId,
                       location_id: newLocationId > 0 ? newLocationId : null,
-                      critical_abs_threshold: newThreshold,
                       actor_id: info?.user_id ?? null,
                     });
                     setSelectedSessionId(session.id);
@@ -552,6 +541,16 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                   tone={toneOf(COUNT_SESSION_STATUS_TONE, selectedSession.status)}
                   dot
                 />
+                <span
+                  className="text-xs text-text-secondary"
+                  data-testid="inv-cc-session-threshold"
+                >
+                  {t("controls.sessions.criticalThresholdOfSession", {
+                    value: formatNumber(selectedSession.critical_abs_threshold, {
+                      maximumFractionDigits: 6,
+                    }),
+                  })}
+                </span>
                 {selectedSession.status === "draft" ? (
                   <Button
                     variant="outline"
@@ -781,23 +780,15 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
 
       <section className="rounded-md border p-4">
         <h3 className="mb-1 text-sm font-semibold">{t("controls.reconciliation.title")}</h3>
-        <p className="mb-3 text-xs text-text-muted">{t("controls.reconciliation.hint")}</p>
+        <p className="mb-1 text-xs text-text-muted">{t("controls.reconciliation.hint")}</p>
+        <p className="mb-3 text-xs text-text-muted">
+          {t("controls.reconciliation.breakFromSettings")}{" "}
+          <Link to={INVENTORY_SETTINGS_PATH} className="underline underline-offset-2">
+            {t("controls.setInSettings")}
+          </Link>
+        </p>
         <div className="flex flex-wrap items-end gap-2">
           <PermissionGate permission={P.ERP_RECONCILE}>
-            <div className="space-y-1">
-              <Label htmlFor="inv-recon-threshold" className="text-xs">
-                {t("controls.reconciliation.breakThreshold")}
-              </Label>
-              <Input
-                id="inv-recon-threshold"
-                type="number"
-                min={0}
-                step="0.01"
-                className="w-40"
-                value={driftBreakThreshold}
-                onChange={(e) => setDriftBreakThreshold(Number(e.target.value || 0))}
-              />
-            </div>
             <Button
               className="h-11"
               disabled={saving}
@@ -805,7 +796,6 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                 void withSave(async () => {
                   await runInventoryReconciliation({
                     actor_id: info?.user_id ?? null,
-                    drift_break_threshold: driftBreakThreshold,
                   });
                 })
               }
