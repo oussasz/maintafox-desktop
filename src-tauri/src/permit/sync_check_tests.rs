@@ -1702,9 +1702,12 @@ async fn an_override_waits_only_for_rights_of_its_own_approver() {
     // still waiting: wait.
     let role_sync = text(
         &db,
-        "SELECT r.entity_sync_id FROM roles r WHERE NOT EXISTS (SELECT 1 FROM role_permissions rp \
-         JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = r.id AND p.name = 'trn.certify') \
+        &format!(
+            "SELECT r.entity_sync_id FROM roles r WHERE NOT EXISTS (SELECT 1 FROM role_permissions rp \
+         JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = r.id AND p.name = '{}') \
          AND r.entity_sync_id IS NOT NULL ORDER BY r.id LIMIT 1",
+            crate::rbac::permissions::TRN_CERTIFY
+        ),
     )
     .await
     .expect("a role without the right");
@@ -1718,7 +1721,7 @@ async fn an_override_waits_only_for_rights_of_its_own_approver() {
         ),
     )
     .await;
-    let grant = json!({ "role_sync_id": role_sync, "permission_key": "trn.certify", "_sync_format": "row.v1" })
+    let grant = json!({ "role_sync_id": role_sync, "permission_key": crate::rbac::permissions::TRN_CERTIFY, "_sync_format": "row.v1" })
         .as_object()
         .cloned()
         .expect("object");
