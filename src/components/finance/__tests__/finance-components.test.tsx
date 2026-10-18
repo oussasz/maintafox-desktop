@@ -671,6 +671,52 @@ describe("BudgetCockpitView", () => {
     },
   );
 
+  it("sorts the category column by its name once the catalogue arrives after the rows", async () => {
+    perms.granted = new Set([P.FIN_BUDGET]);
+    const base = cockpit().rows[0] as BudgetCockpit["rows"][number];
+    svc.getBudgetCockpit.mockResolvedValue(
+      cockpit({
+        rows: [
+          { ...base, cost_center_id: 1, cost_center_code: "CC-A", bucket: "labor" },
+          { ...base, cost_center_id: 2, cost_center_code: "CC-B", bucket: "services" },
+        ],
+      }),
+    );
+    // The catalogue answers only after the cockpit rows are on screen.
+    let answerCatalogue!: (value: typeof catalogs) => void;
+    svc.listFinanceCatalogs.mockReturnValue(
+      new Promise<typeof catalogs>((resolve) => {
+        answerCatalogue = resolve;
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <BudgetCockpitView
+          fiscalYear={2026}
+          budgetVersionId={7}
+          onNavigate={vi.fn()}
+          onAnalyseVariance={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    await screen.findByText("CC-A");
+    const firstColumn = () =>
+      screen
+        .getAllByRole("row")
+        .slice(1)
+        .map((r) => r.querySelector("td")?.textContent ?? "");
+    // Sorted while the names are not known yet: the codes order "labor" before "services".
+    fireEvent.click(screen.getByRole("columnheader", { name: /^Category/ }));
+    await waitFor(() => expect(firstColumn()[0]).toContain("CC-A"));
+
+    answerCatalogue(catalogs);
+    await screen.findByText("Contractors and services");
+    // Once the names are known the sort follows them: "Contractors and services" (services)
+    // before "Labour" (labor).
+    await waitFor(() => expect(firstColumn()[0]).toContain("CC-B"));
+    expect(firstColumn()[1]).toContain("CC-A");
+  });
+
   it("explains what to set up when there is no cost centre", async () => {
     perms.granted = new Set([P.FIN_BUDGET]);
     svc.getBudgetCockpit.mockResolvedValue(
