@@ -243,6 +243,15 @@ async fn a_record_with_a_retired_or_flagged_value_stays_editable() {
     .await
     .expect("unchanged flagged type is editable");
     assert_eq!(state_of(&db, "LG-OFF").await, "blocked");
+    assert_eq!(
+        scalar(
+            &db,
+            &format!("SELECT is_critical FROM personnel_availability_blocks WHERE id = {block_id}")
+        )
+        .await,
+        0,
+        "a note edit keeps the stored critical flag of a legacy block"
+    );
 }
 
 /// S3: the real chain up to 228 with documents in all four categories and sync capture installed:
@@ -251,9 +260,22 @@ async fn a_record_with_a_retired_or_flagged_value_stays_editable() {
 #[tokio::test]
 async fn the_document_rebuild_on_the_real_chain_and_an_unknown_category_by_sync() {
     let db = migrated_before("m20261017_000228_personnel_document_lists").await;
-    crate::sync::capture::install_capture_in(&db)
-        .await
-        .expect("capture triggers");
+    // Capture triggers on the documents as a device has them (insert / update / delete into the
+    // journal). Written here rather than by `sync::capture::install_capture_in`, whose layout
+    // cache is shared by the whole test process and may describe a newer schema than this
+    // database's (an installed device builds it after its migrations).
+    for (event, row) in [("INSERT", "NEW"), ("UPDATE", "NEW"), ("DELETE", "OLD")] {
+        exec(
+            &db,
+            &format!(
+                "CREATE TRIGGER lg_cap_library_documents_{event} AFTER {event} ON library_documents \
+                 BEGIN INSERT INTO sync_capture_journal (entity_type, entity_sync_id, operation) \
+                 VALUES ('library_documents', {row}.entity_sync_id, \
+                         CASE WHEN '{event}' = 'DELETE' THEN 'delete' ELSE 'upsert' END); END"
+            ),
+        )
+        .await;
+    }
     for (i, cat) in [
         "technical_manuals",
         "sops",
@@ -353,4 +375,109 @@ async fn the_document_rebuild_on_the_real_chain_and_an_unknown_category_by_sync(
         1,
         "listed under its category"
     );
+}
+
+/// Codes were compared EXACTLY before the lists: `Leave`, `TRAINING`, `Vacation` showed the person
+/// blocked. They keep that state, each case variant is its own flagged value labelled verbatim,
+/// and a variant arriving later (by sync, after `vacation`) behaves the same once adopted.
+#[tokio::test]
+async fn case_variants_keep_their_former_state() {
+    let db = migrated_before("m20261017_000228_personnel_document_lists").await;
+    for (code, block) in [
+        ("CV-L", "Leave"),
+        ("CV-T", "TRAINING"),
+        ("CV-V", "Vacation"),
+        ("CV-v", "vacation"),
+    ] {
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO personnel (employee_code, full_name, employment_type, availability_status) \
+                 VALUES ('{code}', 'Person {code}', 'employee', 'available')"
+            ),
+        )
+        .await;
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO personnel_availability_blocks (personnel_id, block_type, start_at, end_at, is_critical) \
+                 SELECT id, '{block}', '2000-01-01T00:00:00Z', '2100-01-01T00:00:00Z', 0 \
+                   FROM personnel WHERE employee_code = '{code}'"
+            ),
+        )
+        .await;
+    }
+    Migrator::up(&db, None).await.expect("migrations");
+    for (code, former) in [
+        ("CV-L", "blocked"),
+        ("CV-T", "blocked"),
+        ("CV-V", "blocked"),
+        ("CV-v", "on_leave"),
+    ] {
+        assert_eq!(state_of(&db, code).await, former, "{code}");
+    }
+    let o = lists::list_personnel_reference_options(&db).await.expect("options");
+    for (code, tag) in [
+        ("Leave", "critical"),
+        ("TRAINING", "critical"),
+        ("Vacation", "critical"),
+        ("vacation", "leave"),
+    ] {
+        let v = find(&o.absence_types, code);
+        assert!(v.review_required, "{code} flagged");
+        assert_eq!(v.label, code, "labelled verbatim");
+        assert_eq!(v.tag.as_deref(), Some(tag), "{code}");
+    }
+    // A variant received later by sync, after `vacation` was adopted.
+    exec(
+        &db,
+        "INSERT INTO personnel (employee_code, full_name, employment_type, availability_status) \
+         VALUES ('CV-S', 'Synced', 'employee', 'available')",
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO personnel_availability_blocks (personnel_id, block_type, start_at, end_at, is_critical) \
+         SELECT id, 'VACATION', '2000-01-01T00:00:00Z', '2100-01-01T00:00:00Z', 0 FROM personnel WHERE employee_code = 'CV-S'",
+    )
+    .await;
+    assert_eq!(state_of(&db, "CV-S").await, "blocked", "before adoption: as before");
+    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&db)
+        .await
+        .expect("integrity");
+    assert_eq!(state_of(&db, "CV-S").await, "blocked", "after adoption: unchanged");
+    let o = lists::list_personnel_reference_options(&db).await.expect("options");
+    assert!(find(&o.absence_types, "VACATION").review_required);
+}
+
+/// Running the adoption again (migration 229 twice, the integrity pass on every start) writes
+/// nothing: no new list value, nothing for sync to send.
+#[tokio::test]
+async fn a_second_run_writes_nothing() {
+    let db = migrated_before("m20261017_000228_personnel_document_lists").await;
+    seed_legacy_people(&db).await;
+    Migrator::up(&db, None).await.expect("migrations");
+    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&db)
+        .await
+        .expect("first start");
+    crate::sync::capture::install_capture_in(&db).await.expect("capture");
+    let values = "SELECT COUNT(*) FROM reference_values";
+    let journal = "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type IN ('reference_values', 'reference_domains', 'reference_sets')";
+    let (values_before, journal_before) = (scalar(&db, values).await, scalar(&db, journal).await);
+
+    // Migration 229's body again, then a second start.
+    lists::ensure_personnel_reference_lists(&db).await.expect("lists");
+    crate::library_documents::ensure_document_categories(&db)
+        .await
+        .expect("categories");
+    lists::adopt_stored_personnel_values(&db).await.expect("adopt");
+    crate::library_documents::adopt_stored_document_categories(&db)
+        .await
+        .expect("adopt docs");
+    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&db)
+        .await
+        .expect("second start");
+
+    assert_eq!(scalar(&db, values).await, values_before, "no new list value");
+    assert_eq!(scalar(&db, journal).await, journal_before, "nothing captured for sync");
 }

@@ -370,19 +370,18 @@ pub async fn update_availability_block(
     let existing = fetch_block_by_id(db, input.id).await?;
     // Only a change of type is checked against the list: a block whose stored type was retired
     // or flagged stays editable and keeps that type's behaviour.
-    let (block_type, tag) = if input.block_type == existing.block_type {
-        let tag = super::reference_lists::stored_absence_tag(db, &existing.block_type)
-            .await?
-            .unwrap_or_else(|| {
-                if existing.is_critical {
-                    super::reference_lists::ABSENCE_TAG_CRITICAL.to_string()
-                } else {
-                    super::reference_lists::ABSENCE_TAG_LEAVE.to_string()
-                }
-            });
-        (existing.block_type.clone(), tag)
+    // Unchanged type: the stored critical flag is kept (a legacy type adopted "à revoir" never
+    // forces it, so a note edit cannot flip an old block); only a shipped or plant type tagged
+    // critical forces it, as on creation.
+    let (block_type, forced_critical, keep_critical) = if input.block_type == existing.block_type {
+        let forced = matches!(
+            super::reference_lists::stored_absence_type(db, &existing.block_type).await?,
+            Some((Some(ref tag), false)) if tag == super::reference_lists::ABSENCE_TAG_CRITICAL
+        );
+        (existing.block_type.clone(), forced, existing.is_critical)
     } else {
-        super::reference_lists::checked_absence_type(db, &input.block_type).await?
+        let (code, tag) = super::reference_lists::checked_absence_type(db, &input.block_type).await?;
+        (code, tag == super::reference_lists::ABSENCE_TAG_CRITICAL, false)
     };
     assert_no_overlapping_blocks(
         db,
@@ -394,7 +393,7 @@ pub async fn update_availability_block(
     )
     .await?;
 
-    let is_critical = input.is_critical.unwrap_or(false) || tag == super::reference_lists::ABSENCE_TAG_CRITICAL;
+    let is_critical = forced_critical || input.is_critical.unwrap_or(keep_critical);
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

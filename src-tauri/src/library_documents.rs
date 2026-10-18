@@ -210,11 +210,14 @@ fn map_row(row: &QueryResult) -> AppResult<LibraryDocumentRow> {
 /// former CHECK constraint, so a document never carries a category outside the list.
 pub async fn checked_category(db: &impl ConnectionTrait, cat: &str) -> AppResult<String> {
     let wanted = cat.trim();
-    list_document_categories(db)
-        .await?
-        .into_iter()
-        .find(|c| c.code.eq_ignore_ascii_case(wanted))
-        .map(|c| c.code)
+    let categories = list_document_categories(db).await?;
+    // The exact code first (legacy codes are kept verbatim, two may differ only by case), then
+    // ignoring case for a category typed in another case.
+    categories
+        .iter()
+        .find(|c| c.code == wanted)
+        .or_else(|| categories.iter().find(|c| c.code.eq_ignore_ascii_case(wanted)))
+        .map(|c| c.code.clone())
         .ok_or_else(|| {
             crate::errors::org_validation_failed(
                 CODE_CATEGORY_NOT_IN_LIST,

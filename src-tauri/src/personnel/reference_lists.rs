@@ -233,20 +233,21 @@ async fn checked_option(
     code: &str,
 ) -> AppResult<PersonnelOption> {
     let wanted = code.trim();
-    active_options(db, domain)
-        .await?
-        .into_iter()
-        .find(|o| o.code.eq_ignore_ascii_case(wanted))
-        .ok_or_else(|| {
-            crate::errors::org_validation_failed(
-                CODE_NOT_IN_LIST,
-                format!("{field} '{wanted}' is not an active value of {domain}."),
-                std::collections::HashMap::from([
-                    ("field".to_string(), field.to_string()),
-                    ("code".to_string(), wanted.to_string()),
-                ]),
-            )
-        })
+    let options = active_options(db, domain).await?;
+    // The exact code first (two values may differ only by case: legacy codes are kept verbatim),
+    // then ignoring case for a value typed in another case.
+    let exact = options.iter().position(|o| o.code == wanted);
+    let index = exact.or_else(|| options.iter().position(|o| o.code.eq_ignore_ascii_case(wanted)));
+    index.map(|i| options[i].clone()).ok_or_else(|| {
+        crate::errors::org_validation_failed(
+            CODE_NOT_IN_LIST,
+            format!("{field} '{wanted}' is not an active value of {domain}."),
+            std::collections::HashMap::from([
+                ("field".to_string(), field.to_string()),
+                ("code".to_string(), wanted.to_string()),
+            ]),
+        )
+    })
 }
 
 /// An employment status: an active value of the SYSTEM list (its list code).
@@ -315,24 +316,19 @@ pub fn checked_absence_tag(code: &str, tag: Option<&str>) -> AppResult<String> {
 }
 
 /// SQL fragment (alias `b` for `personnel_availability_blocks`): the behaviour tag of the block's
-/// absence type, matched case-insensitively like the checkers (an exact-case value first); NULL
-/// only for a type that is in no list at all (migration 229 and the integrity pass adopt every
-/// stored type, so this does not happen for data written before or received by sync).
-pub const BLOCK_TAG_SQL: &str = "COALESCE(\
-    (SELECT rv.semantic_tag FROM reference_values rv \
+/// absence type, matched on the EXACT code as the program always did (`Leave` was never `leave`);
+/// NULL only for a type in no list at all (migration 229 and the integrity pass adopt every
+/// stored exact code, so this does not happen for data written before or received by sync).
+pub const BLOCK_TAG_SQL: &str = "(SELECT rv.semantic_tag FROM reference_values rv \
       JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
       JOIN reference_domains d ON d.id = rs.domain_id \
      WHERE UPPER(TRIM(d.code)) = 'PERSONNEL.ABSENCE_TYPES' AND rv.code = b.block_type \
-     ORDER BY rs.version_no DESC LIMIT 1), \
-    (SELECT rv.semantic_tag FROM reference_values rv \
-      JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
-      JOIN reference_domains d ON d.id = rs.domain_id \
-     WHERE UPPER(TRIM(d.code)) = 'PERSONNEL.ABSENCE_TYPES' AND UPPER(rv.code) = UPPER(b.block_type) \
-     ORDER BY rs.version_no DESC LIMIT 1))";
+     ORDER BY rs.version_no DESC LIMIT 1)";
 
-/// The behaviour the program gave a stored absence type before the list existed (migration 228):
-/// `leave` / `vacation` / `sick` showed the person on leave, `training` in training, anything
-/// else blocked (= `critical` here, the only other non-leave behaviour).
+/// The behaviour the program gave a stored absence type before the list existed (migration 228),
+/// on the EXACT code: `leave` / `vacation` / `sick` showed the person on leave, `training` in
+/// training, anything else — `Leave`, `TRAINING` included — blocked (= `critical` here, the only
+/// other non-leave behaviour).
 pub fn legacy_absence_tag(code: &str) -> &'static str {
     match code {
         "leave" | "vacation" | "sick" => ABSENCE_TAG_LEAVE,
@@ -341,9 +337,10 @@ pub fn legacy_absence_tag(code: &str) -> &'static str {
     }
 }
 
-/// Adds every distinct value stored in `table.column` that is not in `domain` (case-insensitive)
-/// to the domain's published set, with its exact code, flagged `review_required` and
-/// `origin = "migrated"` — no stored value is rewritten. `tag_for` gives the behaviour tag (absence
+/// Adds every distinct value stored in `table.column` whose EXACT code is not in `domain` to the
+/// domain's published set, with that code as code and label (two case variants become two flagged
+/// values, visible as such to the reviewer), flagged `review_required` and `origin = "migrated"`
+/// — no stored value is rewritten. `tag_for` gives the behaviour tag (absence
 /// types). Idempotent: seeded sync identity per (domain, code), the same on every device.
 pub(crate) async fn adopt_stored_values(
     db: &impl ConnectionTrait,
@@ -372,7 +369,7 @@ pub(crate) async fn adopt_stored_values(
                     AND NOT EXISTS (SELECT 1 FROM reference_values rv \
                           JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
                           JOIN reference_domains d ON d.id = rs.domain_id \
-                         WHERE UPPER(TRIM(d.code)) = ? AND UPPER(rv.code) = UPPER(t.\"{column}\")) \
+                         WHERE UPPER(TRIM(d.code)) = ? AND rv.code = t.\"{column}\") \
                   ORDER BY 1"
             ),
             [domain.into()],
@@ -465,21 +462,30 @@ pub async fn list_personnel_status_review(db: &impl ConnectionTrait) -> AppResul
         .map_err(AppError::from)
 }
 
-/// The behaviour tag of an absence type that is already stored on a block (the edit keeps it):
-/// the list value whatever its state (a retired type keeps its behaviour), `None` when absent.
-pub async fn stored_absence_tag(db: &impl ConnectionTrait, code: &str) -> AppResult<Option<String>> {
-    Ok(db
+/// The list value of an absence type already stored on a block (exact code, whatever its state:
+/// a retired type keeps its behaviour): its tag and whether it was adopted from stored data
+/// ("à revoir"). `None` when the code is in no list.
+pub async fn stored_absence_type(db: &impl ConnectionTrait, code: &str) -> AppResult<Option<(Option<String>, bool)>> {
+    let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT rv.semantic_tag AS tag FROM reference_values rv \
+            "SELECT rv.semantic_tag AS tag, rv.metadata_json FROM reference_values rv \
                JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
                JOIN reference_domains d ON d.id = rs.domain_id \
-              WHERE UPPER(TRIM(d.code)) = ? AND UPPER(rv.code) = UPPER(?) \
-              ORDER BY rs.version_no DESC, (rv.code = ?) DESC LIMIT 1",
-            [ABSENCE_TYPES_DOMAIN.into(), code.into(), code.into()],
+              WHERE UPPER(TRIM(d.code)) = ? AND rv.code = ? \
+              ORDER BY rs.version_no DESC LIMIT 1",
+            [ABSENCE_TYPES_DOMAIN.into(), code.into()],
         ))
-        .await?
-        .map(|r| r.try_get::<Option<String>>("", "tag"))
-        .transpose()?
-        .flatten())
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let tag: Option<String> = row.try_get("", "tag")?;
+    let meta: Option<String> = row.try_get("", "metadata_json")?;
+    let flagged = meta
+        .as_deref()
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("review_required").and_then(serde_json::Value::as_bool))
+        .unwrap_or(false);
+    Ok(Some((tag, flagged)))
 }
