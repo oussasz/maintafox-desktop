@@ -9,6 +9,13 @@ use crate::inventory::domain::{
     UpsertInventoryCountLineInput,
 };
 
+/// Tenant setting (catalog, decimal): a counted line whose variance is at least this much is
+/// critical. Each count session keeps the value it was opened with.
+pub const SETTING_COUNT_CRITICAL_VARIANCE: &str = "inventory.count_critical_variance";
+/// Tenant setting (catalog, decimal): a ledger / balance gap of at least this much is a
+/// reconciliation break.
+pub const SETTING_RECONCILIATION_DRIFT_BREAK: &str = "inventory.reconciliation_drift_break";
+
 fn now_iso() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
@@ -161,11 +168,8 @@ pub async fn create_count_session(
     db: &DatabaseConnection,
     input: CreateInventoryCountSessionInput,
 ) -> AppResult<InventoryCountSession> {
-    if input.critical_abs_threshold.unwrap_or(5.0) < 0.0 {
-        return Err(AppError::ValidationFailed(vec![
-            "critical_abs_threshold must be >= 0.".to_string()
-        ]));
-    }
+    // The tolerance is the tenant setting (Settings > Inventory), kept on the session.
+    let critical_abs_threshold = crate::settings::catalog::decimal_setting(db, SETTING_COUNT_CRITICAL_VARIANCE).await?;
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_count_sessions
@@ -175,7 +179,7 @@ pub async fn create_count_session(
             next_doc("CC").into(),
             input.warehouse_id.into(),
             input.location_id.map_or(Value::BigInt(None), Value::from),
-            input.critical_abs_threshold.unwrap_or(5.0).into(),
+            critical_abs_threshold.into(),
             input.actor_id.map_or(Value::BigInt(None), Value::from),
             now_iso().into(),
             now_iso().into(),
@@ -538,7 +542,8 @@ pub async fn run_reconciliation(
     db: &DatabaseConnection,
     input: RunInventoryReconciliationInput,
 ) -> AppResult<InventoryReconciliationRun> {
-    let break_threshold = input.drift_break_threshold.unwrap_or(0.0001_f64).max(0.0);
+    // The tolerance is the tenant setting (Settings > Inventory).
+    let break_threshold = crate::settings::catalog::decimal_setting(db, SETTING_RECONCILIATION_DRIFT_BREAK).await?;
     let tx = db.begin().await?;
     let run_code = next_doc("RECON");
     let today = Utc::now().format("%Y-%m-%d").to_string();

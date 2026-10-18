@@ -1216,7 +1216,6 @@ pub struct InventoryReconciliationFinding {
 pub struct CreateInventoryCountSessionInput {
     pub warehouse_id: i64,
     pub location_id: Option<i64>,
-    pub critical_abs_threshold: Option<f64>,
     pub actor_id: Option<i64>,
 }
 
@@ -1264,7 +1263,6 @@ pub struct ReverseInventoryCountSessionInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunInventoryReconciliationInput {
     pub actor_id: Option<i64>,
-    pub drift_break_threshold: Option<f64>,
 }
 
 // ── Lots / serials (migration 184) ────────────────────────────────────────────

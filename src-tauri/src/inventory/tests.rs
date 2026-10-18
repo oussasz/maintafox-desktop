@@ -1215,12 +1215,20 @@ async fn count_session_requires_reviewer_evidence_for_posting() {
     .await
     .expect("seed stock");
 
+    // The count tolerance is the tenant setting.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE app_settings SET setting_value_json = '2' \
+         WHERE setting_key = 'inventory.count_critical_variance' AND setting_scope = 'tenant'"
+            .to_string(),
+    ))
+    .await
+    .expect("count tolerance");
     let mut session = controls::create_count_session(
         &db,
         CreateInventoryCountSessionInput {
             warehouse_id: 1,
             location_id: Some(location_id),
-            critical_abs_threshold: Some(2.0),
             actor_id: Some(1),
         },
     )
@@ -1250,6 +1258,11 @@ async fn count_session_requires_reviewer_evidence_for_posting() {
     )
     .await
     .expect("upsert line");
+    assert!(
+        (session.critical_abs_threshold - 2.0).abs() < f64::EPSILON,
+        "the session keeps the setting"
+    );
+    assert_eq!(line.is_critical, 1, "a variance of 4 is critical at a tolerance of 2");
     session = controls::transition_count_session(
         &db,
         TransitionInventoryCountSessionInput {
@@ -1346,15 +1359,18 @@ async fn reconciliation_detects_drift_under_realistic_volume() {
         .expect("seed bulk");
     }
 
-    let run = controls::run_reconciliation(
-        &db,
-        RunInventoryReconciliationInput {
-            actor_id: Some(1),
-            drift_break_threshold: Some(0.1),
-        },
-    )
+    // The reconciliation tolerance is the tenant setting.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE app_settings SET setting_value_json = '0.1' \
+         WHERE setting_key = 'inventory.reconciliation_drift_break' AND setting_scope = 'tenant'"
+            .to_string(),
+    ))
     .await
-    .expect("reconciliation run");
+    .expect("reconciliation tolerance");
+    let run = controls::run_reconciliation(&db, RunInventoryReconciliationInput { actor_id: Some(1) })
+        .await
+        .expect("reconciliation run");
     assert_eq!(run.checked_rows >= 120, true);
 
     // Inject a drift directly in balances and verify reconciliation catches it.
@@ -1368,15 +1384,9 @@ async fn reconciliation_detects_drift_under_realistic_volume() {
     .await
     .expect("inject drift");
 
-    let drift_run = controls::run_reconciliation(
-        &db,
-        RunInventoryReconciliationInput {
-            actor_id: Some(1),
-            drift_break_threshold: Some(0.1),
-        },
-    )
-    .await
-    .expect("drift run");
+    let drift_run = controls::run_reconciliation(&db, RunInventoryReconciliationInput { actor_id: Some(1) })
+        .await
+        .expect("drift run");
     assert!(drift_run.drift_rows > 0);
     let findings = controls::list_reconciliation_findings(&db, drift_run.id)
         .await
@@ -1794,5 +1804,86 @@ async fn low_stock_only_follows_the_shared_rule() {
     assert!(
         low.iter().all(|b| shared.contains(&(b.article_id, b.warehouse_id))),
         "every listed row is low by the shared rule"
+    );
+}
+
+/// The count and the reconciliation read their tolerance from the tenant settings (seeded 5 and
+/// 0.01); without the setting they refuse rather than guess.
+#[tokio::test]
+async fn count_tolerances_come_from_the_tenant_settings() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-CC-TOL").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 10.0,
+            reason_code: Some("seed count".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed stock");
+    let session = controls::create_count_session(
+        &db,
+        CreateInventoryCountSessionInput {
+            warehouse_id: 1,
+            location_id: Some(location_id),
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("create session");
+    assert!((session.critical_abs_threshold - 5.0).abs() < f64::EPSILON, "seeded 5");
+    let session = controls::transition_count_session(
+        &db,
+        TransitionInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            next_status: "counting".to_string(),
+            reason: None,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("to counting");
+    let line = controls::upsert_count_line(
+        &db,
+        UpsertInventoryCountLineInput {
+            session_id: session.id,
+            article_id,
+            location_id,
+            counted_qty: 6.0,
+            variance_reason_code: Some("COUNT_ERROR".to_string()),
+        },
+    )
+    .await
+    .expect("upsert line");
+    assert_eq!(line.is_critical, 0, "a variance of 4 is under the seeded 5");
+
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "DELETE FROM app_settings WHERE setting_key IN          ('inventory.count_critical_variance', 'inventory.reconciliation_drift_break')"
+            .to_string(),
+    ))
+    .await
+    .expect("remove settings");
+    assert!(controls::create_count_session(
+        &db,
+        CreateInventoryCountSessionInput {
+            warehouse_id: 1,
+            location_id: Some(location_id),
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .is_err());
+    assert!(
+        controls::run_reconciliation(&db, RunInventoryReconciliationInput { actor_id: Some(1) })
+            .await
+            .is_err()
     );
 }
