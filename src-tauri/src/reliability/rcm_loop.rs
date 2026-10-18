@@ -516,7 +516,12 @@ pub async fn create_pm_revision_from_source(
             effective_to: None,
             trigger_definition_json: trigger,
             task_package_json: get_s("task_package_json")?,
-            required_parts_json: get_s("required_parts_json")?,
+            // Copied part lines go through the same rule as a revision made in the PM module
+            // (`pm::plan_tools`): a flag-less line (stored before migration 231 or received from a
+            // PC that has not run it) is read as required, so the copy is not refused.
+            required_parts_json: crate::pm::wo_content::normalized_required_parts_json(
+                get_s("required_parts_json")?.as_deref(),
+            ),
             required_skills_json: get_s("required_skills_json")?,
             required_tools_json: get_s("required_tools_json")?,
             estimated_duration_hours: get_f("estimated_duration_hours")?,
