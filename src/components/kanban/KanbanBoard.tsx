@@ -35,6 +35,7 @@ import type {
   KanbanColumn,
   KanbanMetaItem,
   KanbanMoveOutcome,
+  KanbanServerPaging,
   KanbanTone,
 } from "./types";
 
@@ -278,6 +279,7 @@ function KanbanColumnView({
   onMove,
   onKeyboardMove,
   pageSize,
+  serverPaging,
   loadMoreLabel,
   emptyColumnLabel,
 }: {
@@ -293,6 +295,7 @@ function KanbanColumnView({
   onMove: (card: KanbanCard, toColumnId: string) => Promise<void>;
   onKeyboardMove: (card: KanbanCard, direction: -1 | 1) => void;
   pageSize: number;
+  serverPaging?: KanbanServerPaging | undefined;
   loadMoreLabel: (remaining: number) => string;
   emptyColumnLabel: string;
 }) {
@@ -300,8 +303,12 @@ function KanbanColumnView({
   const [dragOver, setDragOver] = useState(false);
   const titleId = useId();
 
-  const visible = cards.slice(0, visibleCount);
-  const remaining = cards.length - visibleCount;
+  // Server-paged lanes show every card they have read and count the server total; otherwise the
+  // lane pages through the cards it was given.
+  const serverTotal = serverPaging ? (serverPaging.totals[column.id] ?? cards.length) : null;
+  const visible = serverPaging ? cards : cards.slice(0, visibleCount);
+  const remaining = serverTotal != null ? serverTotal - cards.length : cards.length - visibleCount;
+  const loadingMore = serverPaging?.loadingMore?.[column.id] ?? false;
 
   return (
     <div
@@ -330,7 +337,7 @@ function KanbanColumnView({
           </span>
         </div>
         <Badge variant="outline" className={mfKanban.countBadge}>
-          {cards.length}
+          {serverTotal ?? cards.length}
         </Badge>
       </div>
 
@@ -362,7 +369,12 @@ function KanbanColumnView({
             variant="ghost"
             size="sm"
             className={mfKanban.loadMoreButton}
-            onClick={() => setVisibleCount((n) => n + pageSize)}
+            disabled={loadingMore}
+            onClick={() =>
+              serverPaging
+                ? serverPaging.onLoadMore(column.id)
+                : setVisibleCount((n) => n + pageSize)
+            }
           >
             <ChevronDown className="h-3.5 w-3.5" aria-hidden />
             {loadMoreLabel(remaining)}
@@ -395,6 +407,7 @@ export function KanbanBoard<T = KanbanCard>({
   canDrop,
   onDrop,
   pageSize = 20,
+  serverPaging,
   loadMoreLabel,
   emptyColumnLabel,
   empty,
@@ -568,6 +581,7 @@ export function KanbanBoard<T = KanbanCard>({
             onMove={moveCard}
             onKeyboardMove={keyboardMove}
             pageSize={pageSize}
+            {...(serverPaging ? { serverPaging } : {})}
             emptyColumnLabel={columnEmpty}
             loadMoreLabel={moreLabel}
           />

@@ -46,6 +46,11 @@ interface ReferenceGovernanceStoreState {
 
   readiness: ReferencePublishReadiness | null;
   readinessLoading: boolean;
+  /**
+   * The readiness check of `setId` could not be read. Kept apart from `error` (shared by every
+   * reference action) so the readiness panel never shows an unrelated failure.
+   */
+  readinessError: { setId: number; error: unknown } | null;
   impactSummary: ReferenceImpactSummary | null;
   impactLoading: boolean;
   error: string | null;
@@ -87,6 +92,7 @@ export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>
 
   readiness: null,
   readinessLoading: false,
+  readinessError: null,
   impactSummary: null,
   impactLoading: false,
   error: null,
@@ -168,12 +174,12 @@ export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>
   setNewValueDraft: (draft) => set({ newValueDraft: draft, editingValueId: null }),
 
   loadReadiness: async (setId) => {
-    set({ readinessLoading: true, error: null });
+    set({ readinessLoading: true, error: null, readinessError: null });
     try {
       const readiness = await computeRefPublishReadiness(setId);
       set({ readiness });
     } catch (err) {
-      set({ error: referenceErrorText(err) });
+      set({ error: referenceErrorText(err), readinessError: { setId, error: err } });
     } finally {
       set({ readinessLoading: false });
     }

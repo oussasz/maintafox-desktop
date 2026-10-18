@@ -42,13 +42,20 @@ function rightsOf(list: ReadableList): readonly PermissionName[] {
 }
 
 /**
- * Whether the signed-in user may read `list`. Outside a permission provider (unit tests) and while
- * permissions load, lists count as readable so nothing flashes a restriction note.
+ * Whether the signed-in user may read `list`. While permissions load the answer is "not yet"
+ * (nothing is requested before the rights are known; `ListAccessNote` stays hidden meanwhile so no
+ * restriction flashes). Outside a permission provider (unit tests) lists count as readable.
  */
 export function useCanReadList(list: ReadableList): boolean {
   const permissions = useContext(PermissionContext);
-  if (!permissions || permissions.isLoading) return true;
+  if (!permissions) return true;
+  if (permissions.isLoading) return false;
   return permissions.canAny(...rightsOf(list));
+}
+
+/** True while the signed-in user's rights are still loading. */
+export function usePermissionsLoading(): boolean {
+  return useContext(PermissionContext)?.isLoading ?? false;
 }
 
 /** Same as `useCanReadList` for several lists at once. */
@@ -56,8 +63,11 @@ export function useReadableLists<K extends ReadableList>(lists: readonly K[]): R
   const permissions = useContext(PermissionContext);
   const out = {} as Record<K, boolean>;
   for (const list of lists) {
-    out[list] =
-      !permissions || permissions.isLoading ? true : permissions.canAny(...rightsOf(list));
+    out[list] = !permissions
+      ? true
+      : permissions.isLoading
+        ? false
+        : permissions.canAny(...rightsOf(list));
   }
   return out;
 }

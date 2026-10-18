@@ -739,6 +739,7 @@
       "facetsLoadError": "Les choix de filtre du journal n'ont pas pu être chargés : les filtres sont désactivés."
     },
     "roleEditor": {
+      "unsavedLeaveBody": "Le rôle « {{name}} » a des modifications non enregistrées (droits ou description). Elles sont perdues si vous quittez cet onglet ou cette page.",
       "unsavedTitle": "Abandonner les modifications ?",
       "unsavedBody": "Le rôle « {{name}} » a des modifications non enregistrées (droits ou description). Elles seront perdues si vous ouvrez un autre rôle.",
       "discardChanges": "Abandonner les modifications",

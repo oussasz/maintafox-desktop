@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -33,6 +34,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
+import { useCanReadList } from "@/lib/list-access";
 import { listTeamMembers } from "@/services/personnel-service";
 import { extractIpcValidationDetails } from "@/utils/errors";
 import type {
@@ -72,6 +74,8 @@ export function BreakInDialog({
   onSubmit,
 }: BreakInDialogProps) {
   const { t, i18n } = useTranslation("planning");
+  // Approvers are user accounts: listed only with the user administration right.
+  const canReadUsers = useCanReadList("users");
   const { formatDateTime } = useFormatters();
   const reasons = useBreakInReasons(open);
   const [commitmentId, setCommitmentId] = useState<number | null>(null);
@@ -274,6 +278,7 @@ export function BreakInDialog({
             <div>
               <Label>{t("breakIns.approver")}</Label>
               <Select
+                disabled={!canReadUsers}
                 value={approverUserId != null ? String(approverUserId) : "__none__"}
                 onValueChange={(v) => setApproverUserId(v === "__none__" ? null : Number(v))}
               >
@@ -289,6 +294,7 @@ export function BreakInDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {!canReadUsers ? <ListAccessNote list="users" className="mt-1" /> : null}
             </div>
             <div>
               <Label>{t("breakIns.newAssignee")}</Label>

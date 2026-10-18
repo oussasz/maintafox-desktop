@@ -31,17 +31,8 @@ import { Timeline } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
-import {
-  Toast,
-  ToastClose,
-  ToastDescription,
-  ToastProvider,
-  ToastTitle,
-  ToastViewport,
-} from "@/components/ui/toast";
 import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useToast } from "@/hooks/use-toast";
 import { i18n } from "@/i18n";
 import { describeAppError } from "@/lib/app-error";
 import {
@@ -50,6 +41,7 @@ import {
   listReferenceCurrencies,
   listSettingChangeEvents,
 } from "@/services/settings-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type { CurrencyOption, SettingsChangeEvent, SettingsOverview } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -72,7 +64,6 @@ function isAdmSettingsTab(tab: SettingsTabId): boolean {
 export function SettingsPage() {
   const { t } = useTranslation("settings");
   const tAny = t as unknown as (key: string, options?: Record<string, unknown>) => string;
-  const { toasts, toast, dismiss } = useToast();
   const { can, isLoading: permissionsLoading } = usePermissions();
   const canManageSettings = can(P.ADM_SETTINGS);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -244,18 +235,14 @@ export function SettingsPage() {
       description?: string;
       variant?: "default" | "destructive" | "success";
     }) => {
-      toast({
+      // The app-wide toast host shows Settings confirmations like every other screen's.
+      pushAppToast({
         title: msg.title,
         ...(msg.description !== undefined ? { description: msg.description } : {}),
-        variant:
-          msg.variant === "success"
-            ? "success"
-            : msg.variant === "destructive"
-              ? "destructive"
-              : "default",
+        variant: msg.variant ?? "default",
       });
     },
-    [toast],
+    [],
   );
 
   const handleRestoreDefaults = useCallback(async () => {
@@ -305,200 +292,187 @@ export function SettingsPage() {
   );
 
   return (
-    <ToastProvider>
-      <ModulePageShell
-        icon={Settings}
-        title={t("page.title")}
-        description={t("page.description")}
-        bodyClassName={null}
-      >
-        <div className={mfLayout.moduleWorkspaceSplit}>
-          <div className="shrink-0 border-r border-surface-border py-6 pl-6 pr-2">
-            <SettingsCategorySidebar
-              tabs={visibleTabs}
-              activeTab={activeTab}
-              onSelectTab={handleSelectTab}
+    <ModulePageShell
+      icon={Settings}
+      title={t("page.title")}
+      description={t("page.description")}
+      bodyClassName={null}
+    >
+      <div className={mfLayout.moduleWorkspaceSplit}>
+        <div className="shrink-0 border-r border-surface-border py-6 pl-6 pr-2">
+          <SettingsCategorySidebar
+            tabs={visibleTabs}
+            activeTab={activeTab}
+            onSelectTab={handleSelectTab}
+          />
+        </div>
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-auto p-6">
+          {canManageSettings && error != null ? (
+            <ErrorState
+              className="shrink-0 py-4"
+              error={error}
+              title={t("page.loadError")}
+              onRetry={() => void loadAll({ allowEnsure: true })}
             />
-          </div>
+          ) : null}
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-auto p-6">
-            {canManageSettings && error != null ? (
-              <ErrorState
-                className="shrink-0 py-4"
-                error={error}
-                title={t("page.loadError")}
-                onRetry={() => void loadAll({ allowEnsure: true })}
-              />
-            ) : null}
+          <Card className="shrink-0">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                {t(`tabs.${activeTab}` as "tabs.general")}
+                {(contentRefreshing || restoringDefaults) && !initialLoading ? (
+                  <Loader2
+                    className="h-4 w-4 animate-spin text-text-muted"
+                    aria-label={t("page.loading")}
+                  />
+                ) : null}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-6">
+              {permissionsLoading || (isAdmSettingsTab(activeTab) && initialLoading) ? (
+                <LoadingState label={t("page.loading")} className="py-12" />
+              ) : (
+                <>
+                  {activeTab === "profile" ? (
+                    <section className="space-y-4">
+                      <p className="text-sm leading-relaxed text-text-muted">
+                        {t("tabs.profileHint")}
+                      </p>
+                      <ProfileSettingsPanel />
+                    </section>
+                  ) : null}
 
+                  {activeTab === "notifications" ? (
+                    <section className="space-y-4">
+                      <p className="text-sm leading-relaxed text-text-muted">
+                        {t("tabs.notificationsHint")}
+                      </p>
+                      <NotificationsSettingsPanel />
+                    </section>
+                  ) : null}
+
+                  {activeTab === "general" && canManageSettings ? (
+                    <section className="space-y-4">
+                      <p className="text-sm leading-relaxed text-text-muted">
+                        {t("tabs.generalHint")}
+                      </p>
+                      <DocumentHeaderSettingsPanel
+                        onToast={onToast}
+                        onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
+                      />
+                      {hasStoredSettings ? (
+                        <SettingsCatalogSections
+                          categories={GENERAL_CATEGORIES}
+                          definitions={definitions}
+                          currencies={currencies}
+                          rolesAllowed={overview?.roles_allowed_to_change ?? []}
+                          canEdit={canManageSettings}
+                          onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
+                          onToast={onToast}
+                        />
+                      ) : (
+                        emptyState
+                      )}
+                    </section>
+                  ) : null}
+
+                  {activeTab === "security" && canManageSettings ? (
+                    <section className="space-y-6">
+                      <p className="text-sm leading-relaxed text-text-muted">
+                        {t("tabs.securityHint")}
+                      </p>
+                      <PasswordPolicyPanel />
+                      <LockoutPolicyPanel />
+                      <PolicyEditorPanel domain="session" onToast={onToast} />
+                      <PermissionGate permission={P.LOG_VIEW}>
+                        <ActivityLogSettingsSection />
+                      </PermissionGate>
+                    </section>
+                  ) : null}
+
+                  {activeTab === "backup" && canManageSettings ? (
+                    <section className="space-y-6">
+                      {hasStoredSettings ? (
+                        <SettingsCatalogSections
+                          categories={BACKUP_CATEGORIES}
+                          definitions={definitions}
+                          currencies={currencies}
+                          rolesAllowed={overview?.roles_allowed_to_change ?? []}
+                          canEdit={canManageSettings}
+                          onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
+                          onToast={onToast}
+                        />
+                      ) : (
+                        emptyState
+                      )}
+                      <BackupOperationsPanel onToast={onToast} />
+                      <DatabaseRecoveryKeyPanel onToast={onToast} />
+                      <PolicyEditorPanel domain="backup" onToast={onToast} />
+                    </section>
+                  ) : null}
+
+                  {activeTab === "integrations" && canManageSettings ? (
+                    <section className="space-y-6">
+                      <p className="text-sm leading-relaxed text-text-muted">
+                        {t("tabs.integrationsHint")}
+                      </p>
+                      <SyncFeedbackPanel />
+                      <LicenseEnforcementPanel />
+                      <ConnectionProfilesPanel onToast={onToast} />
+                      <DiagnosticsPanel />
+                    </section>
+                  ) : null}
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {canManageSettings && (auditLog.length > 0 || auditLogError != null) ? (
             <Card className="shrink-0">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-lg">
-                  {t(`tabs.${activeTab}` as "tabs.general")}
-                  {(contentRefreshing || restoringDefaults) && !initialLoading ? (
-                    <Loader2
-                      className="h-4 w-4 animate-spin text-text-muted"
-                      aria-label={t("page.loading")}
-                    />
-                  ) : null}
+                  <History className="h-5 w-5" />
+                  {t("auditLog.title")}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="flex flex-col gap-6">
-                {permissionsLoading || (isAdmSettingsTab(activeTab) && initialLoading) ? (
-                  <LoadingState label={t("page.loading")} className="py-12" />
+              <CardContent>
+                {auditLogError != null ? (
+                  <ErrorState
+                    error={auditLogError}
+                    title={t("auditLog.loadError")}
+                    onRetry={() => void loadAuditLog()}
+                  />
                 ) : (
-                  <>
-                    {activeTab === "profile" ? (
-                      <section className="space-y-4">
-                        <p className="text-sm leading-relaxed text-text-muted">
-                          {t("tabs.profileHint")}
-                        </p>
-                        <ProfileSettingsPanel />
-                      </section>
-                    ) : null}
-
-                    {activeTab === "notifications" ? (
-                      <section className="space-y-4">
-                        <p className="text-sm leading-relaxed text-text-muted">
-                          {t("tabs.notificationsHint")}
-                        </p>
-                        <NotificationsSettingsPanel />
-                      </section>
-                    ) : null}
-
-                    {activeTab === "general" && canManageSettings ? (
-                      <section className="space-y-4">
-                        <p className="text-sm leading-relaxed text-text-muted">
-                          {t("tabs.generalHint")}
-                        </p>
-                        <DocumentHeaderSettingsPanel
-                          onToast={onToast}
-                          onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
-                        />
-                        {hasStoredSettings ? (
-                          <SettingsCatalogSections
-                            categories={GENERAL_CATEGORIES}
-                            definitions={definitions}
-                            currencies={currencies}
-                            rolesAllowed={overview?.roles_allowed_to_change ?? []}
-                            canEdit={canManageSettings}
-                            onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
-                            onToast={onToast}
-                          />
-                        ) : (
-                          emptyState
-                        )}
-                      </section>
-                    ) : null}
-
-                    {activeTab === "security" && canManageSettings ? (
-                      <section className="space-y-6">
-                        <p className="text-sm leading-relaxed text-text-muted">
-                          {t("tabs.securityHint")}
-                        </p>
-                        <PasswordPolicyPanel />
-                        <LockoutPolicyPanel />
-                        <PolicyEditorPanel domain="session" onToast={onToast} />
-                        <PermissionGate permission={P.LOG_VIEW}>
-                          <ActivityLogSettingsSection />
-                        </PermissionGate>
-                      </section>
-                    ) : null}
-
-                    {activeTab === "backup" && canManageSettings ? (
-                      <section className="space-y-6">
-                        {hasStoredSettings ? (
-                          <SettingsCatalogSections
-                            categories={BACKUP_CATEGORIES}
-                            definitions={definitions}
-                            currencies={currencies}
-                            rolesAllowed={overview?.roles_allowed_to_change ?? []}
-                            canEdit={canManageSettings}
-                            onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
-                            onToast={onToast}
-                          />
-                        ) : (
-                          emptyState
-                        )}
-                        <BackupOperationsPanel onToast={onToast} />
-                        <DatabaseRecoveryKeyPanel onToast={onToast} />
-                        <PolicyEditorPanel domain="backup" onToast={onToast} />
-                      </section>
-                    ) : null}
-
-                    {activeTab === "integrations" && canManageSettings ? (
-                      <section className="space-y-6">
-                        <p className="text-sm leading-relaxed text-text-muted">
-                          {t("tabs.integrationsHint")}
-                        </p>
-                        <SyncFeedbackPanel />
-                        <LicenseEnforcementPanel />
-                        <ConnectionProfilesPanel onToast={onToast} />
-                        <DiagnosticsPanel />
-                      </section>
-                    ) : null}
-                  </>
+                  <Timeline
+                    items={auditLog}
+                    aria-label={t("auditLog.title")}
+                    getEntry={(evt) => {
+                      const def = definitions.find((d) => d.key === evt.setting_key_or_domain);
+                      const valueChange =
+                        def && (evt.old_value_json != null || evt.new_value_json != null)
+                          ? `${formatSettingValue(def, evt.old_value_json, tAny)} → ${formatSettingValue(def, evt.new_value_json, tAny)}`
+                          : null;
+                      return {
+                        id: String(evt.id),
+                        title: def ? tAny(`keys.${def.key}`) : evt.setting_key_or_domain,
+                        description: valueChange ?? evt.change_summary,
+                        timestamp: evt.changed_at,
+                        ...(evt.changed_by_name ? { actor: evt.changed_by_name } : {}),
+                        ...(evt.required_step_up
+                          ? {
+                              badges: [{ label: t("auditLog.stepUp"), tone: "info" as const }],
+                            }
+                          : {}),
+                      };
+                    }}
+                  />
                 )}
               </CardContent>
             </Card>
-
-            {canManageSettings && (auditLog.length > 0 || auditLogError != null) ? (
-              <Card className="shrink-0">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <History className="h-5 w-5" />
-                    {t("auditLog.title")}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {auditLogError != null ? (
-                    <ErrorState
-                      error={auditLogError}
-                      title={t("auditLog.loadError")}
-                      onRetry={() => void loadAuditLog()}
-                    />
-                  ) : (
-                    <Timeline
-                      items={auditLog}
-                      aria-label={t("auditLog.title")}
-                      getEntry={(evt) => {
-                        const def = definitions.find((d) => d.key === evt.setting_key_or_domain);
-                        const valueChange =
-                          def && (evt.old_value_json != null || evt.new_value_json != null)
-                            ? `${formatSettingValue(def, evt.old_value_json, tAny)} → ${formatSettingValue(def, evt.new_value_json, tAny)}`
-                            : null;
-                        return {
-                          id: String(evt.id),
-                          title: def ? tAny(`keys.${def.key}`) : evt.setting_key_or_domain,
-                          description: valueChange ?? evt.change_summary,
-                          timestamp: evt.changed_at,
-                          ...(evt.changed_by_name ? { actor: evt.changed_by_name } : {}),
-                          ...(evt.required_step_up
-                            ? {
-                                badges: [{ label: t("auditLog.stepUp"), tone: "info" as const }],
-                              }
-                            : {}),
-                        };
-                      }}
-                    />
-                  )}
-                </CardContent>
-              </Card>
-            ) : null}
-          </div>
+          ) : null}
         </div>
-      </ModulePageShell>
-
-      {toasts.map((tm) => (
-        <Toast key={tm.id} variant={tm.variant ?? "default"} onOpenChange={() => dismiss(tm.id)}>
-          <div className="grid gap-1">
-            <ToastTitle>{tm.title}</ToastTitle>
-            {tm.description ? <ToastDescription>{tm.description}</ToastDescription> : null}
-          </div>
-          <ToastClose />
-        </Toast>
-      ))}
-      <ToastViewport />
-    </ToastProvider>
+      </div>
+    </ModulePageShell>
   );
 }

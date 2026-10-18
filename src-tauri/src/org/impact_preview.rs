@@ -122,15 +122,19 @@ async fn dependency_summaries(
         1,
     )
     .await?;
+    // Work orders not yet closed (`wo::backlog::NOT_CLOSED_SQL`).
     let open_work = count_with_ids(
         db,
-        "SELECT COUNT(*) AS cnt FROM work_orders w \
-         JOIN work_order_statuses s ON s.id = w.status_id \
-         WHERE s.is_terminal = 0 \
-           AND (w.entity_id IN ({ids}) \
+        concat!(
+            "SELECT COUNT(*) AS cnt FROM work_orders w \
+             JOIN work_order_statuses s ON s.id = w.status_id \
+             WHERE s.code NOT IN ",
+            crate::wo_closed_statuses_sql!(),
+            " AND (w.entity_id IN ({ids}) \
                 OR w.equipment_id IN (SELECT e.id FROM equipment e \
                                       WHERE e.installed_at_node_id IN ({ids}) \
-                                        AND e.deleted_at IS NULL))",
+                                        AND e.deleted_at IS NULL))"
+        ),
         ops_ids,
         2,
     )

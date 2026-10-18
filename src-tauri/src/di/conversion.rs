@@ -160,11 +160,14 @@ pub async fn convert_di_to_work_order(
     let duplicate_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wo.id, wo.code \
-             FROM work_orders wo \
-             JOIN work_order_statuses wos ON wos.id = wo.status_id \
-             WHERE wo.source_di_id = ? AND wos.is_terminal = 0 \
-             ORDER BY wo.id DESC LIMIT 1",
+            format!(
+                "SELECT wo.id, wo.code \
+                 FROM work_orders wo \
+                 JOIN work_order_statuses wos ON wos.id = wo.status_id \
+                 WHERE wo.source_di_id = ? AND wos.code NOT IN {} \
+                 ORDER BY wo.id DESC LIMIT 1",
+                crate::wo::backlog::CLOSED_STATUS_SQL
+            ),
             [input.di_id.into()],
         ))
         .await?;

@@ -27,6 +27,7 @@ import {
   toneOf,
 } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { getAssetMaintenanceProfile } from "@/services/asset-registry-service";
 import { listDis } from "@/services/di-service";
 import { listWos } from "@/services/wo-service";
@@ -39,6 +40,8 @@ const RECENT_ROWS = 10;
 
 export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
   const { t } = useTranslation(["equipment", "ot", "di", "pm"]);
+  // The open count follows one named "open OT" rule ("Not yet closed"): the tile names it.
+  const woOpenRuleText = useWoOpenRuleText();
   const { formatCurrency, formatDate, formatDecimal, formatPercent, formatNumber } =
     useFormatters();
   const navigate = useNavigate();
@@ -103,7 +106,11 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
             <KpiTile
               label={t("maintenance.kpi.workOrders")}
               value={formatNumber(p.work_order_count)}
-              hint={t("maintenance.kpi.openHint", { count: p.open_work_order_count })}
+              hint={
+                woOpenRuleText(p.open_work_order_rule)
+                  ? `${formatNumber(p.open_work_order_count)} · ${woOpenRuleText(p.open_work_order_rule)?.label ?? ""}`
+                  : t("maintenance.kpi.openHint", { count: p.open_work_order_count })
+              }
             />
             <KpiTile
               label={t("maintenance.kpi.failures")}

@@ -1065,7 +1065,8 @@ async fn collect_deactivation_blockers(db: &DatabaseConnection, personnel_id: i6
                  FROM work_orders wo \
                  JOIN work_order_statuses wos ON wos.id = wo.status_id \
                  WHERE {PERSON_ON_WO} \
-                   AND wos.code NOT IN ('closed', 'cancelled')"
+                   AND wos.code NOT IN {closed}",
+                closed = crate::wo::backlog::CLOSED_STATUS_SQL
             ),
             [personnel_id.into(), personnel_id.into(), personnel_id.into()],
         ))
@@ -2455,21 +2456,21 @@ pub async fn get_personnel_workload_summary(
                     FROM work_orders wo
                     JOIN work_order_statuses wos ON wos.id = wo.status_id
                     WHERE {PERSON_ON_WO}
-                      AND wos.code NOT IN ('closed', 'cancelled')
+                      AND wos.code NOT IN {closed}
                 ), 0) AS open_work_orders,
                 COALESCE((
                     SELECT COUNT(DISTINCT wo.id)
                     FROM work_orders wo
                     JOIN work_order_statuses wos ON wos.id = wo.status_id
                     WHERE {PERSON_ON_WO}
-                      AND wos.code IN ('in_progress', 'assigned', 'planned', 'ready_to_schedule')
+                      AND wos.code IN {open}
                 ), 0) AS in_progress_work_orders,
                 COALESCE((
-                    SELECT COUNT(DISTINCT di.id)
+                    SELECT COUNT(DISTINCT ir.id)
                     FROM user_accounts ua2
-                    JOIN intervention_requests di ON (di.submitter_id = ua2.id OR di.reviewer_id = ua2.id)
+                    JOIN intervention_requests ir ON (ir.submitter_id = ua2.id OR ir.reviewer_id = ua2.id)
                     WHERE ua2.personnel_id = ?
-                      AND di.status IN ('submitted', 'in_review', 'awaiting_approval', 'approved', 'deferred', 'returned_for_clarification')
+                      AND {di_open}
                 ), 0) AS pending_interventions,
                 COALESCE((
                     SELECT COUNT(*)
@@ -2477,7 +2478,10 @@ pub async fn get_personnel_workload_summary(
                     JOIN user_accounts ua3 ON ua3.id = di2.submitter_id
                     WHERE ua3.personnel_id = ?
                       AND date(di2.created_at) >= date('now', '-30 day')
-                ), 0) AS interventions_last_30d"
+                ), 0) AS interventions_last_30d",
+                closed = crate::wo::backlog::CLOSED_STATUS_SQL,
+                open = crate::wo::backlog::OPEN_STATUS_SQL,
+                di_open = crate::di::stats::OPEN_SQL,
             ),
             [
                 personnel_id.into(),
@@ -2494,10 +2498,12 @@ pub async fn get_personnel_workload_summary(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("workload summary query failed")))?;
 
     Ok(PersonnelWorkloadSummary {
-        open_work_orders: row.try_get("", "open_work_orders").unwrap_or_default(),
-        in_progress_work_orders: row.try_get("", "in_progress_work_orders").unwrap_or_default(),
-        pending_interventions: row.try_get("", "pending_interventions").unwrap_or_default(),
-        interventions_last_30d: row.try_get("", "interventions_last_30d").unwrap_or_default(),
+        open_work_orders_rule: crate::wo::backlog::RULE_NOT_YET_CLOSED.to_string(),
+        in_progress_work_orders_rule: crate::wo::backlog::RULE_OPEN_WORK_TO_DO.to_string(),
+        open_work_orders: row.try_get("", "open_work_orders")?,
+        in_progress_work_orders: row.try_get("", "in_progress_work_orders")?,
+        pending_interventions: row.try_get("", "pending_interventions")?,
+        interventions_last_30d: row.try_get("", "interventions_last_30d")?,
     })
 }
 

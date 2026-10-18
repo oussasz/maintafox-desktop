@@ -221,6 +221,10 @@ pub const MODULE_CATALOGS: &[ModuleCatalog] = &[
         code: MODULE_CATALOG_PERMIT_TYPES,
         audience: DomainAudience::Company,
     },
+    ModuleCatalog {
+        code: MODULE_CATALOG_FMECA_RATING_SCALES,
+        audience: DomainAudience::Company,
+    },
 ];
 
 pub const MODULE_CATALOG_URGENCY_SCALE: &str = "WORK.URGENCY_SCALE";
@@ -234,6 +238,10 @@ pub const MODULE_CATALOG_NOTIFICATION_CATEGORIES: &str = "NOTIFICATION.CATEGORIE
 /// issuer, and administrator + step-up to switch the energy-isolation rule off; the LOTO type
 /// keeps it whatever the editor).
 pub const MODULE_CATALOG_PERMIT_TYPES: &str = "PERMIT.TYPES";
+/// The plant's FMECA rating grids: the SYSTEM lists `RELIABILITY.FMECA_*` (fixed scores and zone
+/// codes), of which this catalog edits the definitions and attributes (`reliability::study::scales`,
+/// right `ram.manage`).
+pub const MODULE_CATALOG_FMECA_RATING_SCALES: &str = "RELIABILITY.FMECA_SCALES";
 
 /// Audience of a module catalog, `None` for an unknown code.
 pub fn module_catalog_audience(code: &str) -> Option<DomainAudience> {

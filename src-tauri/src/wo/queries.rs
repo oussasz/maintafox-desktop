@@ -94,6 +94,10 @@ pub struct WoListFilter {
     /// Only the overdue work (`wo::backlog::WO_OVERDUE_SQL`, the dashboard / home "overdue" count).
     #[serde(default)]
     pub overdue_only: Option<bool>,
+    /// Only the OTs not yet closed (`wo::backlog::NOT_CLOSED_SQL`, the reports' and the analytics
+    /// "open OT" count: also the completed OTs waiting for close-out).
+    #[serde(default)]
+    pub not_closed_only: Option<bool>,
     pub limit: i64,
     pub offset: i64,
 }
@@ -301,6 +305,9 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
     // ── Shared scopes: the KPI counts' own predicates, so a drill lists exactly what was counted ──
     if filter.open_only.unwrap_or(false) {
         where_clauses.push(format!("wos.code IN {}", crate::wo::backlog::OPEN_STATUS_SQL));
+    }
+    if filter.not_closed_only.unwrap_or(false) {
+        where_clauses.push(format!("wos.code NOT IN {}", crate::wo::backlog::CLOSED_STATUS_SQL));
     }
     if filter.overdue_only.unwrap_or(false) {
         // `WO_OVERDUE_SQL` reads the aliases `wo` / `s`: evaluated in its own scope.
@@ -513,11 +520,14 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
         let existing_wo = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT wo.id, wo.code \
-                 FROM work_orders wo \
-                 JOIN work_order_statuses wos ON wos.id = wo.status_id \
-                 WHERE wo.source_di_id = ? AND wos.is_terminal = 0 \
-                 ORDER BY wo.id DESC LIMIT 1",
+                format!(
+                    "SELECT wo.id, wo.code \
+                     FROM work_orders wo \
+                     JOIN work_order_statuses wos ON wos.id = wo.status_id \
+                     WHERE wo.source_di_id = ? AND wos.code NOT IN {} \
+                     ORDER BY wo.id DESC LIMIT 1",
+                    crate::wo::backlog::CLOSED_STATUS_SQL
+                ),
                 [di_id.into()],
             ))
             .await?;

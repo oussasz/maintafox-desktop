@@ -512,7 +512,7 @@ export function StudyFmecaStep({
         open={scalesOpen}
         onOpenChange={setScalesOpen}
         scales={ws.scales}
-        editable={can(P.RAM_MANAGE)}
+        editable={false}
         onSaved={() => void load()}
       />
     </div>

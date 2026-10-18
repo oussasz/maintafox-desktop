@@ -27,6 +27,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     crate::wo::closeout_reference_catalog::ensure_closeout_reference_catalogs(db).await?;
     // Shared DI / OT urgency scale and the OT types with their maintenance nature.
     crate::reference::urgency_scale::ensure_urgency_scale(db).await?;
+    // FMECA rating grids (severity, occurrence, detection, criticality zones).
+    crate::reliability::study::scales::ensure_fmeca_rating_scales(db).await?;
     crate::wo::types::ensure_work_order_type_catalog(db).await?;
     // Units of measure (COMPANY list) and their physical dimensions (SYSTEM list).
     crate::reference::units::ensure_unit_catalog(db).await?;

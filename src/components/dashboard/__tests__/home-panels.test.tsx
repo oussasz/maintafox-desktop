@@ -59,6 +59,7 @@ const myWork: HomeMyWork = {
   as_of: "2026-10-16T08:00:00Z",
   work_orders: {
     open: 9,
+    open_rule: "open_work_to_do",
     overdue: 1,
     today: 1,
     by_urgency: [{ urgency_code: "emergency", count: 1 }],

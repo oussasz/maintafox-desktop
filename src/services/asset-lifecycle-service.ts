@@ -196,6 +196,7 @@ export const AssetBindingSummarySchema = z.object({
   linked_erp_mapping_count: DomainBindingEntrySchema,
   open_di_count: DomainBindingEntrySchema,
   open_wo_count: DomainBindingEntrySchema,
+  open_wo_rule: z.string(),
 });
 
 export async function getAssetBindingSummary(assetId: number): Promise<AssetBindingSummary> {

@@ -37,6 +37,8 @@ pub struct MyWorkOrderItem {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct MyWorkOrders {
     pub open: i64,
+    /// Which "open OT" rule `open` counts: `wo::backlog::RULE_OPEN_WORK_TO_DO`.
+    pub open_rule: String,
     /// Planned end passed (`wo::backlog::WO_OVERDUE_SQL`, the OT module's one overdue rule).
     pub overdue: i64,
     /// Planned window includes today (local day) and not overdue.
@@ -210,6 +212,7 @@ pub async fn my_work_orders(db: &DatabaseConnection, user_id: i64, now: DateTime
         .collect::<AppResult<Vec<_>>>()?;
 
     Ok(MyWorkOrders {
+        open_rule: crate::wo::backlog::RULE_OPEN_WORK_TO_DO.to_string(),
         open: decode(&row, "open")?,
         overdue: decode(&row, "overdue")?,
         today: decode(&row, "today")?,

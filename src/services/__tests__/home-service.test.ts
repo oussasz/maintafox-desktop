@@ -40,6 +40,7 @@ const myWork = {
   as_of: "2026-10-16T08:00:00Z",
   work_orders: {
     open: 3,
+    open_rule: "open_work_to_do",
     overdue: 1,
     today: 1,
     by_urgency: [
@@ -138,6 +139,7 @@ const supervision = {
   },
   work_orders: {
     open: 6,
+    open_rule: "open_work_to_do",
     overdue: 2,
     planned: 3,
     reactive: 3,

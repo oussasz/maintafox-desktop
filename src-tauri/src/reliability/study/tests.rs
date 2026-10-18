@@ -89,6 +89,10 @@ async fn failure(
 
 async fn setup() -> Fixture {
     let db = crate::db::test_db::seeded().await;
+    // FMECA rating grids (Données de référence), as startup integrity seeds them.
+    crate::reliability::study::scales::ensure_fmeca_rating_scales(&db)
+        .await
+        .expect("FMECA rating grids");
     for sql in [
         "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
          VALUES (1, 'st-model', 1, 'active', datetime('now'), datetime('now'))",

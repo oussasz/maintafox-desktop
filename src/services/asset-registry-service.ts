@@ -36,6 +36,8 @@ const MaintenanceProfileSchema = z.object({
   asset_count: z.number(),
   work_order_count: z.number(),
   open_work_order_count: z.number(),
+  /** Which "open OT" rule `open_work_order_count` counts (`WoOpenRule`). */
+  open_work_order_rule: z.string(),
   failure_work_order_count: z.number(),
   planned_work_order_count: z.number(),
   downtime_hours: z.number(),

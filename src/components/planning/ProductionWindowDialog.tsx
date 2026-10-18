@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -37,6 +38,7 @@ import { Switch } from "@/components/ui/switch";
 import { mfTone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash } from "@/lib/display";
+import { useCanReadList } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { listOrgTree } from "@/services/org-node-service";
 import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
@@ -84,6 +86,9 @@ export function ProductionWindowDialog({
   const [sites, setSites] = useState<OrgTreeRow[]>([]);
   const [windowType, setWindowType] = useState<string>("");
   const [siteId, setSiteId] = useState<number | null>(null);
+  // Sites come from the organisation: without its view right only "plant-wide" is offered (and the
+  // window types still load — they used to fail together with the refused site list).
+  const canReadOrg = useCanReadList("orgNodes");
   const [equipment, setEquipment] = useState<AssetSearchResult | null>(null);
   const [locked, setLocked] = useState(false);
   const [start, setStart] = useState(toDateTimeLocal(new Date().toISOString()));
@@ -97,7 +102,7 @@ export function ProductionWindowDialog({
     let cancelled = false;
     void Promise.all([
       listPublishedReferenceValuesByDomainCode(PLANNING_WINDOW_TYPES_DOMAIN),
-      listOrgTree(),
+      canReadOrg ? listOrgTree() : Promise.resolve([]),
     ])
       .then(([typeRows, orgRows]) => {
         if (cancelled) return;
@@ -116,7 +121,7 @@ export function ProductionWindowDialog({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, canReadOrg]);
 
   const typeLabel = (code: string) => {
     const value = types.find((v) => v.code === code);
@@ -188,6 +193,7 @@ export function ProductionWindowDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {!canReadOrg ? <ListAccessNote list="orgNodes" className="mt-1" /> : null}
             </div>
             <div>
               <Label>{t("windows.equipment")}</Label>

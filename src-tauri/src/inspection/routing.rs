@@ -181,8 +181,11 @@ pub async fn route_inspection_anomaly_to_wo(
     let open = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM work_orders WHERE source_inspection_anomaly_id = ? \
-             AND closed_at IS NULL AND cancelled_at IS NULL",
+            format!(
+                "SELECT wo.id FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+                 WHERE wo.source_inspection_anomaly_id = ? AND {}",
+                crate::wo::backlog::NOT_CLOSED_SQL
+            ),
             [anomaly_id.into()],
         ))
         .await?;

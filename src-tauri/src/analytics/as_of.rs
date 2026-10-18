@@ -44,14 +44,20 @@ const DI_END: &str = concat!(
      WHEN ir.converted_at IS NOT NULL THEN ir.converted_at END"
 );
 
-/// SQL expression: when the WO stopped being open (closed / cancelled).
-const WO_END_OPEN: &str = "CASE WHEN s.code IN ('closed','cancelled') \
-THEN COALESCE(wo.closed_at, wo.cancelled_at, wo.updated_at) END";
+/// SQL expression: when the WO stopped being "not yet closed" (`wo::backlog::CLOSED_STATUS_SQL`).
+const WO_END_OPEN: &str = concat!(
+    "CASE WHEN s.code IN ",
+    crate::wo_closed_statuses_sql!(),
+    " THEN COALESCE(wo.closed_at, wo.cancelled_at, wo.updated_at) END"
+);
 
-/// SQL expression: when the WO's work was done or dropped (completed / closed / cancelled).
-const WO_END_WORK: &str = "CASE WHEN s.code IN ('completed','closed','cancelled','mechanically_complete',\
-'technically_verified') THEN COALESCE(wo.mechanically_completed_at, wo.closed_at, wo.cancelled_at, \
-wo.updated_at) END";
+/// SQL expression: when the WO stopped being "open (work to do)" (`wo::backlog::OPEN_STATUS_SQL`):
+/// its work was done or dropped.
+const WO_END_WORK: &str = concat!(
+    "CASE WHEN s.code NOT IN ",
+    crate::wo_open_statuses_sql!(),
+    " THEN COALESCE(wo.mechanically_completed_at, wo.closed_at, wo.cancelled_at, wo.updated_at) END"
+);
 
 /// SQL expression: when the PM occurrence was completed / cancelled / missed.
 const PM_END: &str = "CASE WHEN po.status IN ('completed','cancelled','missed') THEN COALESCE(\
@@ -103,7 +109,8 @@ pub async fn di_open_at(
     .await
 }
 
-/// Work orders open (not closed / cancelled) at `at`.
+/// Work orders "not yet closed" at `at` (`wo::backlog::RULE_NOT_YET_CLOSED`): at now, the
+/// `wo::backlog::NOT_CLOSED_SQL` count (the OT list's `not_closed_only` filter).
 pub async fn wo_open_at(db: &DatabaseConnection, at: DateTime<Utc>, org: Option<i64>) -> AppResult<i64> {
     let at_s = instant(at);
     let sql = format!(

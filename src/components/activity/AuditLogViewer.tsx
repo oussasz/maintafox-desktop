@@ -46,6 +46,7 @@ import {
   AUDIT_RESULT_OPTIONS,
   AUDIT_RETENTION_OPTIONS,
   authContextLabel,
+  eventLabel,
   humanizeCode,
   payloadLines,
   resultLabel,
@@ -388,7 +389,7 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                   >
                     <span className="min-w-0">
                       <span className="block truncate font-medium text-text-primary">
-                        {humanizeCode(row.action_code)}
+                        {eventLabel(t, row.action_code)}
                       </span>
                       <span className="block truncate font-mono text-[11px] text-text-muted">
                         {row.action_code}

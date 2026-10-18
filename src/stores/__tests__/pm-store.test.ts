@@ -404,13 +404,21 @@ describe("pm-store", () => {
       const due = [makeOccurrence({ id: 1 })];
       const calendar = [makeOccurrence({ id: 2, status: "completed" })];
       m.listPmOccurrences.mockResolvedValueOnce(due).mockResolvedValueOnce(calendar);
+      // The calendar is on screen for October: only those dates are read.
+      usePmStore.setState({
+        calendarRange: { from: "2026-09-28T00:00:00Z", to: "2026-11-09T23:59:59Z" },
+      });
 
       await usePmStore.getState().loadWorkspace();
 
       const s = usePmStore.getState();
       expect(m.listPmPlans).toHaveBeenCalledWith({});
       expect(m.listPmOccurrences).toHaveBeenNthCalledWith(1, { include_completed: false });
-      expect(m.listPmOccurrences).toHaveBeenNthCalledWith(2, { include_completed: true });
+      expect(m.listPmOccurrences).toHaveBeenNthCalledWith(2, {
+        include_completed: true,
+        due_from: "2026-09-28T00:00:00Z",
+        due_to: "2026-11-09T23:59:59Z",
+      });
       expect(s.plans).toEqual(plans);
       expect(s.dueOccurrences).toEqual(due);
       expect(s.calendarOccurrences).toEqual(calendar);
@@ -418,6 +426,33 @@ describe("pm-store", () => {
       expect(s.generationStatus).toEqual(makeGenStatus());
       expect(s.loading).toBe(false);
       expect(s.error).toBeNull();
+    });
+
+    it("reads no calendar while no calendar is on screen", async () => {
+      m.listPmPlans.mockResolvedValueOnce([]);
+      m.listPmOccurrences.mockResolvedValueOnce([]);
+      usePmStore.setState({ calendarRange: null });
+
+      await usePmStore.getState().loadWorkspace();
+
+      expect(m.listPmOccurrences).toHaveBeenCalledTimes(1);
+      expect(m.listPmOccurrences).toHaveBeenCalledWith({ include_completed: false });
+    });
+
+    it("keeps only the answer for the dates now on screen", async () => {
+      const october = deferred<ReturnType<typeof makeOccurrence>[]>();
+      m.listPmOccurrences
+        .mockReturnValueOnce(october.promise)
+        .mockResolvedValueOnce([makeOccurrence({ id: 9 })]);
+      const first = usePmStore
+        .getState()
+        .loadCalendarOccurrences({ from: "2026-09-28T00:00:00Z", to: "2026-11-09T23:59:59Z" });
+      await usePmStore
+        .getState()
+        .loadCalendarOccurrences({ from: "2026-10-26T00:00:00Z", to: "2026-12-07T23:59:59Z" });
+      october.resolve([makeOccurrence({ id: 1 })]);
+      await first;
+      expect(usePmStore.getState().calendarOccurrences.map((o) => o.id)).toEqual([9]);
     });
 
     it("sets loading while in flight and clears a stale error", async () => {

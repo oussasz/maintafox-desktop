@@ -612,7 +612,12 @@ fn module_catalog_audiences() {
     // The plant's permit types (the energy-isolation guard stays in `upsert_permit_type`).
     assert_eq!(module_catalog_audience("PERMIT.TYPES"), Some(DomainAudience::Company));
     assert!(assert_module_catalog_editable("PERMIT.TYPES").is_ok());
-    assert_eq!(MODULE_CATALOGS.len(), 7);
+    // The plant's FMECA rating grids (SYSTEM lists `RELIABILITY.FMECA_*`, edited with ram.manage).
+    assert_eq!(
+        module_catalog_audience("RELIABILITY.FMECA_SCALES"),
+        Some(DomainAudience::Company)
+    );
+    assert_eq!(MODULE_CATALOGS.len(), 8);
 
     assert_gate(assert_module_catalog_editable("WO.WORK_ORDER_STATUSES"), "OT statuses");
     assert!(assert_module_catalog_editable("INVENTORY.ARTICLE_FAMILY").is_ok());
