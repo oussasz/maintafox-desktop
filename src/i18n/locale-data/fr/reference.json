@@ -190,6 +190,19 @@
     }
   },
   "import": {
+    "problem": {
+      "REF_IMPORT_MISSING_CODE": "Ligne {{row}} : code manquant.",
+      "REF_IMPORT_INVALID_CODE_FORMAT": "Ligne {{row}} : le code « {{code}} » n'est pas valide (majuscules, chiffres, « _ » et « . », 1 à 64 caractères).",
+      "REF_IMPORT_DUPLICATE_IN_BATCH": "Ligne {{row}} : le code « {{code}} » figure déjà à la ligne {{firstRow}} du fichier.",
+      "REF_IMPORT_PROTECTED_DOMAIN_UPDATE": "Ligne {{row}} : « {{code}} » existe déjà dans la liste protégée {{domain}} ; sa mise à jour sera tracée.",
+      "REF_IMPORT_MISSING_LABEL": "Ligne {{row}} : libellé manquant.",
+      "REF_IMPORT_BLANK_LABEL": "Ligne {{row}} : libellé vide.",
+      "REF_IMPORT_MISSING_PARENT": "Ligne {{row}} : la valeur doit être rattachée à une valeur de {{parentDomain}} (colonne parent_code).",
+      "REF_IMPORT_INVALID_PARENT": "Ligne {{row}} : parent « {{parentCode}} » introuvable dans {{parentDomain}}.",
+      "REF_IMPORT_INVALID_NATURE_TAG": "Ligne {{row}} : nature « {{tag}} » refusée. {{detail}}",
+      "REF_IMPORT_INVALID_UNIT": "Ligne {{row}} : unité refusée. {{detail}}",
+      "REF_IMPORT_INVALID_CURRENCY": "Ligne {{row}} : devise « {{code}} » refusée. {{detail}}"
+    },
     "messageDetail": "Détail",
     "category": {
       "MissingCode": "Code manquant",

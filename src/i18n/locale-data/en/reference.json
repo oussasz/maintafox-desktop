@@ -190,6 +190,19 @@
     }
   },
   "import": {
+    "problem": {
+      "REF_IMPORT_MISSING_CODE": "Row {{row}}: code missing.",
+      "REF_IMPORT_INVALID_CODE_FORMAT": "Row {{row}}: the code “{{code}}” is not valid (capitals, digits, “_” and “.”, 1 to 64 characters).",
+      "REF_IMPORT_DUPLICATE_IN_BATCH": "Row {{row}}: the code “{{code}}” already appears on row {{firstRow}} of the file.",
+      "REF_IMPORT_PROTECTED_DOMAIN_UPDATE": "Row {{row}}: “{{code}}” already exists in the protected list {{domain}}; updating it will be traced.",
+      "REF_IMPORT_MISSING_LABEL": "Row {{row}}: label missing.",
+      "REF_IMPORT_BLANK_LABEL": "Row {{row}}: label is blank.",
+      "REF_IMPORT_MISSING_PARENT": "Row {{row}}: the value must belong to a value of {{parentDomain}} (parent_code column).",
+      "REF_IMPORT_INVALID_PARENT": "Row {{row}}: parent “{{parentCode}}” not found in {{parentDomain}}.",
+      "REF_IMPORT_INVALID_NATURE_TAG": "Row {{row}}: nature “{{tag}}” refused. {{detail}}",
+      "REF_IMPORT_INVALID_UNIT": "Row {{row}}: unit refused. {{detail}}",
+      "REF_IMPORT_INVALID_CURRENCY": "Row {{row}}: currency “{{code}}” refused. {{detail}}"
+    },
     "messageDetail": "Detail",
     "category": {
       "MissingCode": "Code missing",

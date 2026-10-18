@@ -1937,6 +1937,10 @@ export interface UpdateReferenceAliasPayload {
 export interface ImportRowMessage {
   category: string;
   severity: string;
+  /** Stable code (`REF_IMPORT_*`) and its details; empty on rows checked before the codes. */
+  code: string;
+  params: Record<string, string>;
+  /** The server's sentence: shown when the code cannot be said. */
   message: string;
 }
 
@@ -7023,6 +7027,10 @@ export interface PersonnelImportCreateInput {
 export interface PersonnelImportMessage {
   category: string;
   severity: "warning" | "error" | "info";
+  /** Stable code (`PERSONNEL_IMPORT_*`) and its details; empty on rows checked before the codes. */
+  code: string;
+  params: Record<string, string>;
+  /** The server's sentence: shown when the code cannot be said. */
   message: string;
 }
 

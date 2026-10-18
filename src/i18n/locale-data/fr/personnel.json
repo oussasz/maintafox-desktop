@@ -614,6 +614,18 @@
     }
   },
   "import": {
+    "problem": {
+      "PERSONNEL_IMPORT_EXISTING_SKIPPED": "La ligne vise une personne existante : elle sera ignorée en mode création seule.",
+      "PERSONNEL_IMPORT_FULL_NAME_REQUIRED": "Le nom complet est obligatoire pour créer une personne.",
+      "PERSONNEL_IMPORT_UNKNOWN_EMPLOYMENT_TYPE": "Type d'emploi « {{value}} » : ce n'est pas une valeur active de la liste des types d'emploi (Données de référence).",
+      "PERSONNEL_IMPORT_HIRE_DATE_NOT_UPDATED": "La date d'embauche n'est prise qu'à la création : elle ne remplace pas celle d'une personne existante.",
+      "PERSONNEL_IMPORT_TERMINATION_DATE_IGNORED": "La date de fin de contrat est protégée : l'import l'ignore.",
+      "PERSONNEL_IMPORT_UNKNOWN_POSITION": "Poste « {{code}} » inconnu.",
+      "PERSONNEL_IMPORT_UNKNOWN_ENTITY": "Entité « {{code}} » inconnue.",
+      "PERSONNEL_IMPORT_UNKNOWN_TEAM": "Équipe « {{code}} » inconnue.",
+      "PERSONNEL_IMPORT_UNKNOWN_SUPERVISOR": "Responsable « {{code}} » inconnu (matricule).",
+      "PERSONNEL_IMPORT_UNKNOWN_EXTERNAL_COMPANY": "Entreprise extérieure « {{name}} » inconnue."
+    },
     "messageDetail": "Détail",
     "category": {
       "CreateOnly": "Fiche existante : ignorée en mode création seule",
