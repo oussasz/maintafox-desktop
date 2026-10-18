@@ -44,10 +44,25 @@ import {
   type ProductLicenseOnboardingState,
   type UserFacingActivationError,
 } from "@/services/product-license-service";
-import { extractIpcValidationDetails, isSessionUnavailableError } from "@/utils/errors";
+import {
+  extractIpcValidationDetails,
+  isSessionUnavailableError,
+  isStepUpRequiredError,
+} from "@/utils/errors";
 
 /** This PC refused a licence change without an administrator signed in (`apply_product_license_reconciliation`). */
 const LICENSE_RECONCILE_ADMIN_REQUIRED = "LICENSE_RECONCILE_ADMIN_REQUIRED";
+
+/**
+ * This PC refused a licence change (it needs an administrator signed in, with a fresh identity
+ * check): the translated "what to do", or null for any other failure. Never a network failure.
+ */
+function licenceChangeRefusal(err: unknown): string | null {
+  const refused =
+    extractIpcValidationDetails(err).some((d) => d.code === LICENSE_RECONCILE_ADMIN_REQUIRED) ||
+    isStepUpRequiredError(err);
+  return refused ? appErrorText(err) : null;
+}
 
 type ReconcileOrigin = "submit" | "scheduled" | "manual" | "policy" | "startup" | "login";
 
@@ -267,10 +282,9 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       } catch (err) {
         // This PC refused to apply the claim (a licence change needs an administrator signed
         // in): say what to do, record nothing (it is not a network or server failure).
-        if (
-          extractIpcValidationDetails(err).some((d) => d.code === LICENSE_RECONCILE_ADMIN_REQUIRED)
-        ) {
-          setWarning(appErrorText(err));
+        const refusal = licenceChangeRefusal(err);
+        if (refusal) {
+          setWarning(refusal);
           return;
         }
         const e = err as Error & { code?: string; status?: number };
@@ -438,6 +452,11 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       }
       await completeLocalActivation(claim, trimmed);
     } catch (err) {
+      const refusal = licenceChangeRefusal(err);
+      if (refusal) {
+        setWarning(refusal);
+        return;
+      }
       setError(toUserFacingActivationError(err));
     } finally {
       setSubmitting(false);

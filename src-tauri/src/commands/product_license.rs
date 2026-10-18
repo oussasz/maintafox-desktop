@@ -811,89 +811,101 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
     crate::commands::admin_users::validate_password_strength(&input.password)?;
     let password_hash = crate::auth::password::hash_password(&input.password)?;
 
-    let txn = db.begin().await?;
-    if tenant_has_administrator_for_id(&txn, &tenant_id).await? {
-        return Err(first_admin_exists());
-    }
-    let exists = txn
-        .query_one(Statement::from_sql_and_values(
+    let written = async {
+        let txn = db.begin().await?;
+        if tenant_has_administrator_for_id(&txn, &tenant_id).await? {
+            return Err(first_admin_exists());
+        }
+        let exists = txn
+            .query_one(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT id FROM user_accounts WHERE LOWER(username) = LOWER(?) AND deleted_at IS NULL",
+                [username.to_string().into()],
+            ))
+            .await?;
+        if exists.is_some() {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Username '{username}' is already taken"
+            )]));
+        }
+
+        let role_row = txn
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT id FROM roles WHERE name = 'Administrator' AND deleted_at IS NULL LIMIT 1".to_string(),
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Administrator role not found in seed data")))?;
+        let role_id: i64 = role_row.try_get("", "id")?;
+
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let entity_sync_id = Uuid::new_v4().to_string();
+        let display_name = input
+            .display_name
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(std::string::ToString::to_string)
+            .unwrap_or_else(|| "Administrator".to_string());
+
+        txn.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT id FROM user_accounts WHERE LOWER(username) = LOWER(?) AND deleted_at IS NULL",
-            [username.to_string().into()],
-        ))
-        .await?;
-    if exists.is_some() {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Username '{username}' is already taken"
-        )]));
-    }
-
-    let role_row = txn
-        .query_one(Statement::from_string(
-            DatabaseBackend::Sqlite,
-            "SELECT id FROM roles WHERE name = 'Administrator' AND deleted_at IS NULL LIMIT 1".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Administrator role not found in seed data")))?;
-    let role_id: i64 = role_row.try_get("", "id")?;
-
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let entity_sync_id = Uuid::new_v4().to_string();
-    let display_name = input
-        .display_name
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(std::string::ToString::to_string)
-        .unwrap_or_else(|| "Administrator".to_string());
-
-    txn.execute(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        r"INSERT INTO user_accounts
+            r"INSERT INTO user_accounts
                 (entity_sync_id, username, display_name, identity_mode, password_hash,
                  is_active, is_admin, force_password_change, failed_login_attempts,
                  created_at, updated_at, row_version)
              VALUES (?, ?, ?, 'local', ?, 1, 1, 1, 0, ?, ?, 1)",
-        vec![
-            entity_sync_id.into(),
-            username.to_string().into(),
-            display_name.into(),
-            password_hash.into(),
-            now.clone().into(),
-            now.into(),
-        ],
-    ))
-    .await?;
-
-    let id_row = txn
-        .query_one(Statement::from_string(
-            DatabaseBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            vec![
+                entity_sync_id.into(),
+                username.to_string().into(),
+                display_name.into(),
+                password_hash.into(),
+                now.clone().into(),
+                now.into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to read new user id")))?;
-    let new_id: i64 = id_row.try_get("", "id")?;
+        .await?;
 
-    let assign_sync = Uuid::new_v4().to_string();
-    let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    txn.execute(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        r"INSERT INTO user_scope_assignments
+        let id_row = txn
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT last_insert_rowid() AS id".to_string(),
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to read new user id")))?;
+        let new_id: i64 = id_row.try_get("", "id")?;
+
+        let assign_sync = Uuid::new_v4().to_string();
+        let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        txn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            r"INSERT INTO user_scope_assignments
                 (entity_sync_id, user_id, role_id, scope_type, scope_reference,
                  valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version)
              VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, NULL, ?, ?, ?, 1)",
-        vec![
-            assign_sync.into(),
-            new_id.into(),
-            role_id.into(),
-            tenant_id.clone().into(),
-            "Bootstrap initial tenant admin".into(),
-            now_iso.clone().into(),
-            now_iso.into(),
-        ],
-    ))
-    .await?;
-    txn.commit().await?;
+            vec![
+                assign_sync.into(),
+                new_id.into(),
+                role_id.into(),
+                tenant_id.clone().into(),
+                "Bootstrap initial tenant admin".into(),
+                now_iso.clone().into(),
+                now_iso.into(),
+            ],
+        ))
+        .await?;
+        txn.commit().await?;
+        Ok::<(), AppError>(())
+    }
+    .await;
+    if let Err(e) = written {
+        // Two first-start submissions at once: the one that lost the write finds the
+        // administrator the other one created.
+        if tenant_has_administrator_for_id(db, &tenant_id).await.unwrap_or(false) {
+            return Err(first_admin_exists());
+        }
+        return Err(e);
+    }
 
     crate::audit::emit(
         db,
@@ -910,15 +922,6 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
     .await;
 
     Ok(())
-}
-
-async fn persist_state_record(
-    state: &State<'_, AppState>,
-    user_id: Option<i32>,
-    record: &ProductLicenseStateRecord,
-    summary: &str,
-) -> AppResult<()> {
-    persist_state_record_in(&state.db, user_id, record, summary).await
 }
 
 async fn persist_state_record_in(
@@ -966,37 +969,132 @@ pub async fn get_product_license_onboarding_state(
     }
 }
 
-/// Who may submit a licence key (pre-login gate or in-app):
-/// - No usable activation yet (uninitialized, pending, or any denied_* state, e.g. revoked/expired
-///   licence that blocks the whole app) → allowed without a session: onboarding and recovery.
-/// - An active or degraded (still usable) activation → only an authenticated session with
-///   `adm.settings` + step-up, so nobody at the login screen can swap a working licence.
-async fn authorize_license_key_submission(state: &State<'_, AppState>) -> AppResult<()> {
-    let record = load_state_record(state).await?;
-    let usable_activation = record.as_ref().is_some_and(|r| {
+/// Who asks for a licence change: the signed-in user (if any), whether they hold `adm.settings`
+/// plant-wide, and whether their identity re-check (step-up) is valid.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct LicenceCaller {
+    pub user_id: Option<i32>,
+    pub may_administer: bool,
+    pub step_up: bool,
+}
+
+/// The caller of a licence command, from its session (`check_permission` for `adm.settings`).
+pub(crate) async fn licence_caller(
+    db: &DatabaseConnection,
+    user_id: Option<i32>,
+    step_up: bool,
+) -> AppResult<LicenceCaller> {
+    let may_administer = match user_id {
+        Some(user_id) => {
+            crate::auth::rbac::check_permission(
+                db,
+                user_id,
+                crate::rbac::permissions::ADM_SETTINGS,
+                &crate::auth::rbac::PermissionScope::Global,
+            )
+            .await?
+        }
+        None => false,
+    };
+    Ok(LicenceCaller {
+        user_id,
+        may_administer,
+        step_up: step_up && user_id.is_some(),
+    })
+}
+
+async fn caller_of(state: &State<'_, AppState>) -> AppResult<LicenceCaller> {
+    let (user_id, step_up) = {
+        let guard = state.session.read().await;
+        (
+            guard.current.as_ref().map(|session| session.user.user_id),
+            guard.is_step_up_valid(),
+        )
+    };
+    licence_caller(&state.db, user_id, step_up).await
+}
+
+/// How a licence claim reaches this PC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LicenceChange {
+    /// A licence key entered (pre-login gate or in-app).
+    KeyEntry,
+    /// The result of the licence check with the control plane (every start, before sign-in).
+    Reconciliation,
+}
+
+/// A licence change refused without an administrator signed in (coded, translated on screen).
+fn reconcile_admin_required() -> AppError {
+    crate::errors::org_validation_failed(
+        "LICENSE_RECONCILE_ADMIN_REQUIRED",
+        "This licence change needs an administrator: sign in as an administrator, then retry.",
+        std::collections::HashMap::new(),
+    )
+}
+
+/// The one rule for storing a licence claim on this PC (key entry and reconciliation). Needs a
+/// signed-in user with `adm.settings` and a valid step-up:
+/// - a claim that would seed demo data on a plant that has an administrator, always;
+/// - while this PC has a usable licence (active or degraded with a valid claim): a key entry, and
+///   a reconciliation that changes tenant, licence or machine on a plant that has an
+///   administrator.
+///
+/// Everything else is accepted without a session: a refresh of the licence stored here (how a
+/// licence is renewed or a suspension lifted while nobody can sign in), any change before the
+/// plant has an administrator (first start), and a key or licence change while this PC has no
+/// usable licence (recovery). Denials and network / HTTP errors carry no claim and are always
+/// recorded. The licence state itself is not signed; the control plane is the authority.
+pub(crate) async fn authorize_licence_change(
+    db: &DatabaseConnection,
+    record: Option<&ProductLicenseStateRecord>,
+    claim: Option<&ProductActivationClaimRecord>,
+    change: LicenceChange,
+    caller: LicenceCaller,
+) -> AppResult<()> {
+    let stored = record
+        .and_then(|r| r.activation_claim.as_ref())
+        .filter(|c| activation_claim_is_complete(c));
+    let usable_activation = record.is_some_and(|r| {
         record_has_valid_activation_claim(r)
             && matches!(
                 r.status,
                 ProductLicenseActivationStatus::Active | ProductLicenseActivationStatus::DegradedApiUnavailable
             )
     });
-    if !usable_activation {
+    let mut administered = false;
+    for tenant in [stored.map(|c| c.tenant_id.trim()), claim.map(|c| c.tenant_id.trim())]
+        .into_iter()
+        .flatten()
+        .filter(|t| !t.is_empty())
+    {
+        administered = administered || tenant_has_administrator_for_id(db, tenant).await?;
+    }
+    let seeds_demo = match claim {
+        Some(c) if administered => crate::db::tenant_bootstrap::claim_would_seed_demo(db, c).await?,
+        _ => false,
+    };
+    let same_activation = claim.is_some_and(|c| {
+        stored.is_some_and(|s| {
+            s.tenant_id.trim() == c.tenant_id.trim()
+                && s.license_id.trim() == c.license_id.trim()
+                && s.machine_fingerprint.trim() == c.machine_fingerprint.trim()
+        })
+    });
+    let needs_admin = seeds_demo
+        || (usable_activation
+            && match change {
+                LicenceChange::KeyEntry => true,
+                LicenceChange::Reconciliation => administered && !same_activation,
+            });
+    if !needs_admin {
         return Ok(());
     }
-    if state.session.read().await.current.is_none() {
-        return Err(AppError::Auth(
-            "Une session administrateur est requise pour remplacer une licence active.              (An administrator session is required to replace an active licence.)"
-                .into(),
-        ));
+    if !caller.may_administer {
+        return Err(reconcile_admin_required());
     }
-    let user = require_session!(state);
-    crate::require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::ADM_SETTINGS,
-        crate::auth::rbac::PermissionScope::Global
-    );
-    crate::require_step_up!(state);
+    if !caller.step_up {
+        return Err(AppError::StepUpRequired);
+    }
     Ok(())
 }
 
@@ -1008,14 +1106,19 @@ pub async fn submit_product_license_key(
     app_version: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    authorize_license_key_submission(&state).await?;
-    let changed_by_id = state
-        .session
-        .read()
-        .await
-        .current
-        .as_ref()
-        .map(|session| session.user.user_id);
+    let caller = caller_of(&state).await?;
+    submit_product_license_key_in(&state.db, caller, &key, claim_json, machine_fingerprint, app_version).await
+}
+
+pub(crate) async fn submit_product_license_key_in(
+    db: &DatabaseConnection,
+    caller: LicenceCaller,
+    key: &str,
+    claim_json: Option<String>,
+    machine_fingerprint: Option<String>,
+    app_version: Option<String>,
+) -> AppResult<()> {
+    let changed_by_id = caller.user_id;
     let trimmed = key.trim();
     if trimmed.len() < 8 {
         return Err(AppError::ValidationFailed(vec![
@@ -1040,6 +1143,15 @@ pub async fn submit_product_license_key(
         }
         None => None,
     };
+    let current = load_state_record_from_db(db).await?;
+    authorize_licence_change(
+        db,
+        current.as_ref(),
+        parsed_claim.as_ref(),
+        LicenceChange::KeyEntry,
+        caller,
+    )
+    .await?;
 
     let mut record = ProductLicenseStateRecord {
         schema_version: 1,
@@ -1111,80 +1223,16 @@ pub async fn submit_product_license_key(
             .unwrap_or(0),
         "Product license key submit processed"
     );
-    persist_state_record(
-        &state,
+    persist_state_record_in(
+        db,
         changed_by_id,
         &record,
         "product license key submitted (state machine)",
     )
     .await?;
-    apply_claim_entitlement_envelope(&state.db, entitlement_envelope).await?;
-    crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, changed_by_id).await?;
+    apply_claim_entitlement_envelope(db, entitlement_envelope).await?;
+    crate::db::tenant_bootstrap::bootstrap_from_activation_claim(db, changed_by_id).await?;
     Ok(())
-}
-
-/// A licence change refused without an administrator signed in (coded, translated on screen).
-fn reconcile_admin_required() -> AppError {
-    crate::errors::org_validation_failed(
-        "LICENSE_RECONCILE_ADMIN_REQUIRED",
-        "This licence change needs an administrator: sign in as an administrator, then retry.",
-        std::collections::HashMap::new(),
-    )
-}
-
-/// Who may apply a successful reconciliation (it runs at the licence gate, before sign-in, on
-/// every start):
-/// - a refresh of the activation stored here (same tenant, licence and machine): anyone, as it is
-///   how a licence is renewed or a suspension lifted while nobody can sign in;
-/// - a change of tenant, licence or machine: without a session only while the plant has no
-///   administrator yet (first start) or this PC has no usable licence (the rule of key entry,
-///   `authorize_license_key_submission`); otherwise a signed-in user with `adm.settings`;
-/// - a claim that would seed demo data on a plant that has an administrator: only a signed-in
-///   user with `adm.settings`.
-///
-/// Denials and network / HTTP errors only restrict or degrade the licence: always recorded.
-async fn authorize_reconciled_claim(
-    db: &DatabaseConnection,
-    record: &ProductLicenseStateRecord,
-    claim: &ProductActivationClaimRecord,
-    may_administer: bool,
-) -> AppResult<()> {
-    if may_administer {
-        return Ok(());
-    }
-    let stored = record
-        .activation_claim
-        .as_ref()
-        .filter(|c| activation_claim_is_complete(c));
-    let mut administered = false;
-    for tenant in [stored.map(|c| c.tenant_id.trim()), Some(claim.tenant_id.trim())]
-        .into_iter()
-        .flatten()
-        .filter(|t| !t.is_empty())
-    {
-        administered = administered || tenant_has_administrator_for_id(db, tenant).await?;
-    }
-    if !administered {
-        return Ok(());
-    }
-    if crate::db::tenant_bootstrap::claim_would_seed_demo(db, claim).await? {
-        return Err(reconcile_admin_required());
-    }
-    let same_activation = stored.is_some_and(|s| {
-        s.tenant_id.trim() == claim.tenant_id.trim()
-            && s.license_id.trim() == claim.license_id.trim()
-            && s.machine_fingerprint.trim() == claim.machine_fingerprint.trim()
-    });
-    let usable_activation = record_has_valid_activation_claim(record)
-        && matches!(
-            record.status,
-            ProductLicenseActivationStatus::Active | ProductLicenseActivationStatus::DegradedApiUnavailable
-        );
-    if same_activation || !usable_activation {
-        Ok(())
-    } else {
-        Err(reconcile_admin_required())
-    }
 }
 
 #[tauri::command]
@@ -1192,34 +1240,16 @@ pub async fn apply_product_license_reconciliation(
     outcome_json: String,
     state: State<'_, AppState>,
 ) -> AppResult<ProductLicenseOnboardingState> {
-    let changed_by_id = state
-        .session
-        .read()
-        .await
-        .current
-        .as_ref()
-        .map(|session| session.user.user_id);
-    let may_administer = match changed_by_id {
-        Some(user_id) => {
-            crate::auth::rbac::check_permission(
-                &state.db,
-                user_id,
-                crate::rbac::permissions::ADM_SETTINGS,
-                &crate::auth::rbac::PermissionScope::Global,
-            )
-            .await?
-        }
-        None => false,
-    };
-    apply_product_license_reconciliation_in(&state.db, changed_by_id, may_administer, &outcome_json).await
+    let caller = caller_of(&state).await?;
+    apply_product_license_reconciliation_in(&state.db, caller, &outcome_json).await
 }
 
 pub(crate) async fn apply_product_license_reconciliation_in(
     db: &DatabaseConnection,
-    changed_by_id: Option<i32>,
-    may_administer: bool,
+    caller: LicenceCaller,
     outcome_json: &str,
 ) -> AppResult<ProductLicenseOnboardingState> {
+    let changed_by_id = caller.user_id;
     let mut record = load_state_record_from_db(db)
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["No local product license state found.".into()]))?;
@@ -1259,7 +1289,7 @@ pub(crate) async fn apply_product_license_reconciliation_in(
     })?;
     outcome.entitlement_envelope = entitlement_envelope;
     if let (ProductLicenseReconciliationOutcomeKind::Success, Some(claim)) = (&outcome.kind, outcome.claim.as_ref()) {
-        authorize_reconciled_claim(db, &record, claim, may_administer).await?;
+        authorize_licence_change(db, Some(&record), Some(claim), LicenceChange::Reconciliation, caller).await?;
     }
 
     let now = Utc::now().to_rfc3339();
