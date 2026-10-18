@@ -1,10 +1,11 @@
 /**
  * WO planning without the personnel and inventory view rights: teams and articles are never
  * requested, and the form names the missing rights instead of telling the planner "no teams".
+ * "Needs shutdown": confirmed, saved with the version the planner saw, locked outside preparation.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { PermissionContext, type PermissionContextValue } from "@/contexts/PermissionContext";
@@ -35,13 +36,16 @@ vi.mock("@/services/wo-execution-service", () => ({
   listTasks: vi.fn().mockResolvedValue([]),
   listWoTools: vi.fn().mockResolvedValue([]),
 }));
-vi.mock("@/services/wo-service", () => ({
+const woSvc = vi.hoisted(() => ({
   PERMIT_REQUIREMENT_EDITABLE_STATUSES: new Set<string>(),
+  SHUTDOWN_FLAG_EDITABLE_STATUSES: new Set<string>(["draft", "planning", "ready"]),
   emergencyReassignWo: vi.fn(),
   evaluateWoReadiness: vi.fn().mockResolvedValue(null),
   planWo: vi.fn(),
   setWoPermitRequirement: vi.fn(),
+  setWoRequiresShutdown: vi.fn(),
 }));
+vi.mock("@/services/wo-service", () => woSvc);
 // Stable values: the panel's effects depend on them.
 const stable = vi.hoisted(() => ({
   session: { info: { user_id: 7, display_name: "Planner", username: "planner" } },
@@ -101,5 +105,65 @@ describe("WoPlanningPanel without the personnel and inventory view rights", () =
     await waitFor(() => expect(personnel.listActiveTeams).not.toHaveBeenCalled());
     expect(inv.listInventoryArticles).not.toHaveBeenCalled();
     expect(inv.listInventoryLocations).not.toHaveBeenCalled();
+  });
+});
+
+describe("WoPlanningPanel — needs shutdown", () => {
+  beforeEach(() => {
+    woSvc.setWoRequiresShutdown.mockReset();
+  });
+
+  function renderPanel(wo: WorkOrder) {
+    return render(
+      <MemoryRouter>
+        <PermissionContext.Provider value={permissionsWithout()}>
+          <WoPlanningPanel wo={wo} canEdit />
+        </PermissionContext.Provider>
+      </MemoryRouter>,
+    );
+  }
+
+  it("asks for confirmation, then saves the flag with the version the planner saw", async () => {
+    woSvc.setWoRequiresShutdown.mockResolvedValueOnce({
+      ...WO,
+      requires_shutdown: true,
+      row_version: 4,
+    });
+    renderPanel({ ...WO, requires_shutdown: false } as WorkOrder);
+
+    const box = await screen.findByRole("checkbox", { name: "shutdownRequirement.label" });
+    expect(box).toBeEnabled();
+    fireEvent.click(box);
+    // Nothing is saved before the confirmation.
+    expect(woSvc.setWoRequiresShutdown).not.toHaveBeenCalled();
+    expect(screen.getByText("shutdownRequirement.confirmOnTitle")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "shutdownRequirement.confirmOn" }));
+
+    await waitFor(() =>
+      expect(woSvc.setWoRequiresShutdown).toHaveBeenCalledWith({
+        woId: 12,
+        requiresShutdown: true,
+        expectedRowVersion: 3,
+      }),
+    );
+    await waitFor(() => expect(box).toBeChecked());
+  });
+
+  it("saves nothing when the planner cancels", async () => {
+    renderPanel({ ...WO, requires_shutdown: true } as WorkOrder);
+    const box = await screen.findByRole("checkbox", { name: "shutdownRequirement.label" });
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    expect(screen.getByText("shutdownRequirement.confirmOffTitle")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "ds.confirm.cancel" }));
+    expect(woSvc.setWoRequiresShutdown).not.toHaveBeenCalled();
+    expect(box).toBeChecked();
+  });
+
+  it("is locked with the reason once the work order is no longer being prepared", async () => {
+    renderPanel({ ...WO, status_code: "in_progress", requires_shutdown: true } as WorkOrder);
+    const box = await screen.findByRole("checkbox", { name: "shutdownRequirement.label" });
+    expect(box).toBeDisabled();
+    expect(screen.getByText("shutdownRequirement.frozen")).toBeInTheDocument();
   });
 });

@@ -5095,6 +5095,8 @@ export interface WorkOrder {
   total_waiting_hours: number | null;
   downtime_hours: number | null;
   planned_downtime_hours: number | null;
+  /** The job needs the equipment stopped: planning checks it against shutdown windows. */
+  requires_shutdown: boolean;
   // Cost accumulators
   labor_cost: number | null;
   parts_cost: number | null;

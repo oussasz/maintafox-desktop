@@ -47,6 +47,7 @@ import { WoFormDialog } from "@/components/wo/WoFormDialog";
 import { WoIntegrityWorkbench } from "@/components/wo/WoIntegrityWorkbench";
 import { WoKanbanView } from "@/components/wo/WoKanbanView";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
+import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { mfLayout } from "@/design-system/tokens";
 import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
@@ -503,7 +504,10 @@ export function WorkOrdersPage() {
         accessorKey: "title",
         header: t("list.columns.title"),
         cell: ({ row }) => (
-          <span className="max-w-[200px] truncate block">{row.original.title}</span>
+          <div className="flex flex-col items-start gap-0.5">
+            <span className="max-w-[200px] truncate block">{row.original.title}</span>
+            {row.original.requires_shutdown ? <WoShutdownBadge /> : null}
+          </div>
         ),
       },
       {

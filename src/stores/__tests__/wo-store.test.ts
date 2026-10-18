@@ -110,6 +110,7 @@ function makeWo(overrides: Partial<WorkOrder> = {}): WorkOrder {
     total_waiting_hours: null,
     downtime_hours: null,
     planned_downtime_hours: null,
+    requires_shutdown: false,
     labor_cost: null,
     parts_cost: null,
     service_cost: null,

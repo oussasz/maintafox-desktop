@@ -101,6 +101,7 @@ export const WorkOrderSchema = z.object({
   total_waiting_hours: z.number().nullable(),
   downtime_hours: z.number().nullable(),
   planned_downtime_hours: z.number().nullable().optional(),
+  requires_shutdown: z.boolean().default(false),
   labor_cost: z.number().nullable(),
   parts_cost: z.number().nullable(),
   service_cost: z.number().nullable(),
@@ -428,6 +429,33 @@ export const PERMIT_REQUIREMENT_EDITABLE_STATUSES: ReadonlySet<string> = new Set
 export async function setWoPermitRequirement(input: WoPermitRequirementInput): Promise<WorkOrder> {
   try {
     const raw = await invoke<unknown>("set_wo_permit_requirement", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+export interface WoRequiresShutdownInput {
+  woId: number;
+  requiresShutdown: boolean;
+  expectedRowVersion: number;
+}
+
+/** Statuses in which "needs shutdown" can still change (backend mirror: the WO is prepared). */
+export const SHUTDOWN_FLAG_EDITABLE_STATUSES: ReadonlySet<string> = new Set([
+  "draft",
+  "planning",
+  "ready",
+]);
+
+/** Flags (or unflags) a work order as needing the equipment stopped (`ot.edit`). */
+export async function setWoRequiresShutdown(input: WoRequiresShutdownInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("set_wo_requires_shutdown", {
+      woId: input.woId,
+      requiresShutdown: input.requiresShutdown,
+      expectedRowVersion: input.expectedRowVersion,
+    });
     return WorkOrderSchema.parse(raw) as WorkOrder;
   } catch (err) {
     rethrowIfVersionConflict(err);

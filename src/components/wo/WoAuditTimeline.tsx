@@ -57,6 +57,8 @@ const KNOWN_ACTIONS = new Set([
   "attachment_uploaded",
   "service_cost_updated",
   "permit_requirement_changed",
+  "shutdown_required_set",
+  "shutdown_required_cleared",
 ]);
 
 function actionIcon(action: string) {
