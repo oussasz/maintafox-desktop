@@ -5,7 +5,7 @@
  * three-person lock-removal setting is shown to everyone and changed only by an administrator
  * (`adm.settings`), with a reason of at least THREE_PERSON_REASON_MIN characters and a step-up.
  */
-import { useState, type FormEvent } from "react";
+import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button, FormField, Input, Textarea } from "@/components/ui";
@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { appErrorReason } from "@/lib/app-error";
-import { upsertPermitType, type PermitTypeRecord } from "@/services/permit-service";
+import { type PermitTypeRecord, upsertPermitType } from "@/services/permit-service";
 import { P } from "@shared/rbac/permissions.generated";
 
 /** Shortest reason the server accepts for a three-person change (`MIN_REASON_CHARS`). */
@@ -143,7 +143,9 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
           mandatory_control_rules_json: draft.rulesJson,
           requires_energy_isolation: draft.energyIsolation,
           disable_isolation_reason: relaxing ? draft.disableReason.trim() : null,
-          requires_three_person_removal: draft.threePerson,
+          // Sent only when the user changed it: null keeps the server's current value, so a
+          // value changed elsewhere since the form loaded is not rewritten by an unrelated edit.
+          requires_three_person_removal: changingThreePerson ? draft.threePerson : null,
           three_person_change_reason: changingThreePerson ? threePersonReason : null,
         });
       await (relaxing || changingThreePerson ? withStepUp(save) : save());

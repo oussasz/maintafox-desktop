@@ -132,9 +132,9 @@
     "methodPlaceholder": "Choisir la méthode",
     "optionsError": "Les listes des énergies et des méthodes n’ont pas pu être chargées.",
     "listsHint": "Types d’énergie selon ISO 14118 / OSHA 1910.147 ; les méthodes d’isolement sont la liste de votre site (Données de référence).",
-    "threePersonNotice": "Règle de la troisième personne : {{name}} a vérifié cet isolement et ne peut pas confirmer son retrait.",
-    "threePersonNoticeUnknown": "Règle de la troisième personne : la personne qui a vérifié cet isolement ne peut pas confirmer son retrait.",
-    "threePersonSelf": "Vous avez vérifié cet isolement — une troisième personne doit confirmer son retrait."
+    "threePersonNotice": "Règle des trois personnes : {{name}} a vérifié cette isolation et ne peut pas confirmer son retrait.",
+    "threePersonNoticeUnknown": "Règle des trois personnes : la personne qui a vérifié cette isolation ne peut pas confirmer son retrait.",
+    "threePersonSelf": "Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait."
   },
   "card": {
     "title": "Fiche LOTO",
@@ -230,11 +230,11 @@
     "energyIsolationShort": "Isolation",
     "yes": "Oui",
     "no": "Non",
-    "threePerson": "Une troisième personne confirme le retrait des cadenas",
+    "threePerson": "Règle des trois personnes : une troisième personne confirme le retrait des cadenas",
     "threePersonShort": "3e personne",
-    "threePersonHint": "Activé : la personne qui a vérifié un isolement ne peut pas non plus confirmer son retrait ; une troisième personne doit le faire.",
+    "threePersonHint": "Activé : la personne qui a vérifié une isolation ne peut pas non plus confirmer son retrait ; une troisième personne doit le faire.",
     "threePersonAdminOnly": "Seul un administrateur (droit paramètres) peut modifier ce réglage.",
-    "threePersonReason": "Pourquoi modifier la règle de la troisième personne ?",
+    "threePersonReason": "Pourquoi modifier la règle des trois personnes ?",
     "threePersonReasonHint": "Au moins {{min}} caractères. Votre mot de passe est redemandé et la modification est inscrite au journal d’audit.",
     "reasonMin": "Écrivez au moins {{min}} caractères."
   },

@@ -196,7 +196,7 @@ describe("PermitTypesHost (Données de référence)", () => {
       fireEvent.click(switchOf());
       expect(switchOf()).toHaveAttribute("aria-checked", "true");
       const reason = screen.getByRole("textbox", {
-        name: new RegExp(enPermits.types.threePersonReason.replace("?", "\?")),
+        name: new RegExp(enPermits.types.threePersonReason.replace("?", "?")),
       });
       fireEvent.change(reason, { target: { value: "too short" } });
       expect(screen.getByText(reasonMin)).toBeInTheDocument();
@@ -222,7 +222,7 @@ describe("PermitTypesHost (Données de référence)", () => {
       await waitFor(() => expect(onSaved).toHaveBeenCalled());
     });
 
-    it("does not ask a reason or a step-up when the setting is left as it is", async () => {
+    it("does not ask a reason or a step-up, and leaves the setting alone, when it is left as it is", async () => {
       perms.granted = new Set<string>([P.PTW_VIEW, P.PTW_ISSUE, P.ADM_SETTINGS]);
       render(<PermitTypesHost />);
       const editButtons = await screen.findAllByRole("button", { name: enPermits.actions.edit });
@@ -232,11 +232,37 @@ describe("PermitTypesHost (Données de référence)", () => {
         expect(svc.upsertPermitType).toHaveBeenCalledWith(
           expect.objectContaining({
             id: 2,
-            requires_three_person_removal: false,
+            // null = unchanged: the server keeps its current value.
+            requires_three_person_removal: null,
             three_person_change_reason: null,
           }),
         ),
       );
+    });
+
+    it("saves another field of the type without touching the setting or asking a step-up", async () => {
+      // A permit issuer (not an administrator) changes only the maximum duration. The server may
+      // hold another value of the setting by now (changed elsewhere): the save does not send it.
+      const onSaved = vi.fn();
+      render(<PermitTypesHost onSaved={onSaved} />);
+      const editButtons = await screen.findAllByRole("button", { name: enPermits.actions.edit });
+      fireEvent.click(editButtons[1] as HTMLElement);
+      fireEvent.change(screen.getByLabelText(enPermits.types.maxHours), {
+        target: { value: "8" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: enPermits.types.save }));
+      await waitFor(() => expect(onSaved).toHaveBeenCalled());
+      expect(svc.upsertPermitType).toHaveBeenCalledTimes(1);
+      expect(svc.upsertPermitType).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 2,
+          max_duration_hours: 8,
+          requires_three_person_removal: null,
+          three_person_change_reason: null,
+        }),
+      );
+      expect(screen.queryByPlaceholderText("stepUp.passwordLabel")).toBeNull();
+      expect(rbac.verifyStepUp).not.toHaveBeenCalled();
     });
 
     it.each(["PERMIT_TYPE_THREE_PERSON_FORBIDDEN", "PERMIT_TYPE_THREE_PERSON_REASON"])(
@@ -252,7 +278,7 @@ describe("PermitTypesHost (Données de référence)", () => {
         fireEvent.click(switchOf());
         fireEvent.change(
           screen.getByRole("textbox", {
-            name: new RegExp(enPermits.types.threePersonReason.replace("?", "\?")),
+            name: new RegExp(enPermits.types.threePersonReason.replace("?", "?")),
           }),
           { target: { value: "Shared isolations on line 3" } },
         );

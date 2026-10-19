@@ -9,10 +9,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermitTypesEditor } from "@/components/permits/PermitTypesEditor";
+import { PERMIT_REFUSAL_NAMESPACES } from "@/components/permits/permit-rules";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { usePermissions } from "@/hooks/use-permissions";
+import { i18n } from "@/i18n";
 import { type PermitTypeRecord, listPermitTypes } from "@/services/permit-service";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -29,6 +31,10 @@ export function PermitTypesHost({ embedded = false, onSaved }: PermitTypesHostPr
   const { can } = usePermissions();
   const canView = can(P.PTW_VIEW);
   const canEdit = can(P.PTW_ISSUE);
+
+  useEffect(() => {
+    void i18n.loadNamespaces([...PERMIT_REFUSAL_NAMESPACES]);
+  }, []);
 
   const [types, setTypes] = useState<PermitTypeRecord[] | null>(null);
   const [loading, setLoading] = useState(false);

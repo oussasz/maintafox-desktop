@@ -132,8 +132,8 @@
     "methodPlaceholder": "Choose the method",
     "optionsError": "The energy and method lists could not be loaded.",
     "listsHint": "Energy types follow ISO 14118 / OSHA 1910.147; isolation methods are your site’s list (Reference data).",
-    "threePersonNotice": "Third-person rule: {{name}} verified this isolation and may not confirm its removal.",
-    "threePersonNoticeUnknown": "Third-person rule: the person who verified this isolation may not confirm its removal.",
+    "threePersonNotice": "Three-person rule: {{name}} verified this isolation and may not confirm its removal.",
+    "threePersonNoticeUnknown": "Three-person rule: the person who verified this isolation may not confirm its removal.",
     "threePersonSelf": "You verified this isolation — a third person must confirm its removal."
   },
   "card": {
@@ -230,11 +230,11 @@
     "energyIsolationShort": "Isolation",
     "yes": "Yes",
     "no": "No",
-    "threePerson": "Third person confirms lock removal",
+    "threePerson": "Three-person rule: a third person confirms lock removal",
     "threePersonShort": "3rd person",
     "threePersonHint": "When on, the person who verified an isolation may not confirm its removal either: a third person must.",
     "threePersonAdminOnly": "Only an administrator (settings right) can change this setting.",
-    "threePersonReason": "Why change the third-person rule?",
+    "threePersonReason": "Why change the three-person rule?",
     "threePersonReasonHint": "At least {{min}} characters. Your password is asked again and the change is recorded in the audit log.",
     "reasonMin": "Write at least {{min}} characters."
   },
