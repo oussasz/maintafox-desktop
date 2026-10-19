@@ -315,14 +315,14 @@ async fn a_handover_is_signed_from_the_session_with_listed_roles_and_a_note() {
         received_by_id: receiver,
     };
 
-    // The list ships empty: no role is accepted until the plant adds its own.
+    // A role that is not in the list is refused (the list starts with the three starter roles).
     let err = queries::append_permit_handover_log(
         &db,
         input("Maintenance", "Operations", "Zone left clean", None),
         APPLIER,
     )
     .await
-    .expect_err("empty list");
+    .expect_err("Operations is not in the list");
     assert_eq!(refusal_code(err), crate::permit::handover_roles::CODE_ROLE_NOT_IN_LIST);
 
     add_handover_role(&db, "Maintenance").await;
@@ -471,7 +471,16 @@ async fn stored_handover_roles_are_adopted_and_flagged_without_rewrite() {
         .await
         .expect("roles");
     let codes: Vec<_> = roles.iter().map(|r| (r.code.as_str(), r.review_required)).collect();
-    assert_eq!(codes, [("Exploitation", true), ("Équipe nuit", true)]);
+    // The starter roles (migration 239) first; "Exploitation" is one of them, so it is not added twice.
+    assert_eq!(
+        codes,
+        [
+            ("Maintenance", true),
+            ("Exploitation", true),
+            ("HSE", true),
+            ("Équipe nuit", true)
+        ]
+    );
     let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
     assert_eq!(listed[0].handed_from_role, "Équipe nuit");
     assert_eq!(listed[0].signed_by_id, None, "no signer invented");

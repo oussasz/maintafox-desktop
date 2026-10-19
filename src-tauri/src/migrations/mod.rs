@@ -214,6 +214,7 @@ mod m20261018_000235_permit_handover_signer_roles;
 mod m20261018_000236_permit_three_person_removal;
 mod m20261018_000237_ram_quality_view_trimmed_nature;
 mod m20261019_000238_permit_type_three_person_author;
+mod m20261019_000239_permit_handover_starter_roles;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -441,6 +442,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261018_000236_permit_three_person_removal::Migration),
             Box::new(m20261018_000237_ram_quality_view_trimmed_nature::Migration),
             Box::new(m20261019_000238_permit_type_three_person_author::Migration),
+            Box::new(m20261019_000239_permit_handover_starter_roles::Migration),
         ]
     }
 }

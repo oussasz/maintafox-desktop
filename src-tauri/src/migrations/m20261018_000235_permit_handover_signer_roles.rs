@@ -119,6 +119,15 @@ mod tests {
             .await
             .expect("roles");
         let codes: Vec<_> = roles.iter().map(|r| (r.code.as_str(), r.review_required)).collect();
-        assert_eq!(codes, [("Exploitation", true), ("Équipe nuit", true)]);
+        // The starter roles of migration 239 join them ("Exploitation" is already there).
+        assert_eq!(
+            codes,
+            [
+                ("Maintenance", true),
+                ("HSE", true),
+                ("Exploitation", true),
+                ("Équipe nuit", true)
+            ]
+        );
     }
 }

@@ -1,8 +1,10 @@
 //! Who hands a closed permit back to whom: the roles of a permit hand-over (`PERMIT.HANDOVER_ROLES`,
 //! migration 235).
 //!
-//! A COMPANY list of Données de référence, shipped **empty**: each plant names its own roles
-//! (maintenance executant, operations, HSE…). A hand-over's "from" and "to" roles must be active
+//! A COMPANY list of Données de référence: each plant names its own roles. It starts with three
+//! roles flagged "à revoir" ([`STARTER_ROLES`], migration 239) that the administrator reviews
+//! (owner decision); flagged roles stay usable, shown "(à revoir)" by the hand-over form
+//! ([`HandoverRoleOption::review_required`]). A hand-over's "from" and "to" roles must be active
 //! values of the list. Free texts stored before the list existed (or received from a PC that has
 //! not run 235) are adopted with their exact text, flagged "à revoir" (`review_required`), and no
 //! stored hand-over is rewritten — the same pattern as migration 229.
@@ -32,6 +34,71 @@ pub async fn ensure_handover_roles(db: &impl ConnectionTrait) -> AppResult<()> {
     )
     .await?;
     ensure_published_set(db, DOMAIN).await
+}
+
+/// The starter roles (owner decision, migration 239): code (also the French label) and English label.
+/// Seeded flagged "à revoir": the administrator reviews, renames, deactivates or completes them.
+pub const STARTER_ROLES: &[(&str, &str)] = &[
+    ("Maintenance", "Maintenance"),
+    ("Exploitation", "Operations"),
+    ("HSE", "HSE"),
+];
+
+/// Seeds [`STARTER_ROLES`] (migration 239 only — never the integrity pass, so a role removed later
+/// is not brought back). Only into a list that holds no value an administrator added (values
+/// adopted from old free text, `origin = "migrated"`, do not count); a starter whose code is already
+/// in the list (ignoring case and spaces, e.g. adopted from free text) is skipped; each has a seeded
+/// sync identity, the same on every PC, and is never written over an existing value.
+pub async fn seed_starter_roles(db: &impl ConnectionTrait) -> AppResult<()> {
+    ensure_handover_roles(db).await?;
+    let added_by_plant = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM reference_values rv \
+               JOIN reference_sets rs ON rs.id = rv.set_id \
+               JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE UPPER(TRIM(d.code)) = ? \
+                AND COALESCE(json_extract(CASE WHEN json_valid(rv.metadata_json) \
+                                               THEN rv.metadata_json END, '$.origin'), '') <> 'migrated'",
+            [DOMAIN.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<i64>("", "n"))
+        .transpose()?
+        .unwrap_or(0);
+    if added_by_plant > 0 {
+        return Ok(());
+    }
+    for (i, (code, label_en)) in STARTER_ROLES.iter().enumerate() {
+        let sync_id = crate::sync::identity::seeded_entity_sync_id("reference_values", &format!("{DOMAIN}:{code}"));
+        let meta = serde_json::json!({ "origin": "starter", "review_required": true, "label_en": label_en });
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, parent_id, code, label, \
+                description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, \
+                metadata_json) \
+             SELECT ?, rs.id, NULL, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, 1, ? \
+               FROM reference_domains d \
+               JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published' \
+              WHERE UPPER(TRIM(d.code)) = ? \
+                AND NOT EXISTS (SELECT 1 FROM reference_values rv WHERE rv.entity_sync_id = ?) \
+                AND NOT EXISTS (SELECT 1 FROM reference_values rv WHERE rv.set_id = rs.id \
+                                  AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?))) \
+              ORDER BY rs.version_no DESC LIMIT 1",
+            [
+                sync_id.clone().into(),
+                (*code).into(),
+                (*code).into(),
+                i64::try_from(i + 1).unwrap_or(1).into(),
+                meta.to_string().into(),
+                DOMAIN.into(),
+                sync_id.into(),
+                (*code).into(),
+            ],
+        ))
+        .await?;
+    }
+    Ok(())
 }
 
 /// Adopts the stored "from" / "to" texts that are not in the list (exact text kept, flagged
