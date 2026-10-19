@@ -44,6 +44,7 @@ export function DiHiddenRequestsNotice({
         <span>{t("list.hidden.outsideScope", { count: outsideScope })}</span>
       ) : null}
       {withoutSite > 0 ? <span>{t("list.hidden.withoutSite", { count: withoutSite })}</span> : null}
+      <span>{t("list.hidden.allRequests")}</span>
       <span>{t("list.hidden.askPlantWide")}</span>
     </div>
   );

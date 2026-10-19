@@ -217,7 +217,8 @@ async fn a_site_user_lists_their_sites_only_and_is_told_how_many_are_hidden_and_
     assert_eq!(first.total, 2);
     assert_eq!((first.hidden_outside_scope, first.hidden_without_site), (1, 1));
 
-    // The hidden counts follow the user's filters: searching site B's title hides it only.
+    // The hidden counts ignore the user's filters: a search matching site B's title (or anything
+    // else) must not tell a site-A user whether it matched (no probing of other sites' texts).
     let searched = queries::list_intervention_requests_in_scope(
         &f.db,
         DiListFilter {
@@ -229,7 +230,18 @@ async fn a_site_user_lists_their_sites_only_and_is_told_how_many_are_hidden_and_
     .await
     .expect("search");
     assert!(searched.items.is_empty());
-    assert_eq!((searched.hidden_outside_scope, searched.hidden_without_site), (1, 0));
+    assert_eq!((searched.hidden_outside_scope, searched.hidden_without_site), (1, 1));
+    let unmatched = queries::list_intervention_requests_in_scope(
+        &f.db,
+        DiListFilter {
+            search: Some("no request says this".into()),
+            ..all_filter()
+        },
+        &site_scope,
+    )
+    .await
+    .expect("search without match");
+    assert_eq!((unmatched.hidden_outside_scope, unmatched.hidden_without_site), (1, 1));
 
     // The unscoped entry point (home, dashboard: later stage) is plant-wide as before.
     let unscoped = queries::list_intervention_requests(&f.db, all_filter())

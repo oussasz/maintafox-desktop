@@ -411,18 +411,18 @@ pub async fn list_intervention_requests_in_scope(
     let (hidden_outside_scope, hidden_without_site) = if scope.is_everywhere() {
         (0, 0)
     } else {
-        // The requests the filters match that the scope leaves out (a NULL predicate — no node —
-        // counts as left out).
+        // Every request the scope leaves out (a NULL predicate — no node — counts as left out),
+        // whatever the user's filters: a count that followed the search or the person filters
+        // would let a site user probe other sites' request texts and people.
         let hidden_sql = format!(
             "SELECT COALESCE(SUM(CASE WHEN {without} THEN 1 ELSE 0 END), 0) AS without_site, \
                     COALESCE(SUM(CASE WHEN {without} THEN 0 ELSE 1 END), 0) AS outside_scope \
                FROM intervention_requests ir \
-              WHERE {filters_sql} AND NOT COALESCE(({scope_pred}), 0)",
+              WHERE NOT COALESCE(({scope_pred}), 0)",
             without = super::access::DI_WITHOUT_SITE_SQL,
             scope_pred = scope_sql.predicate,
         );
-        let mut hidden_binds = binds.clone();
-        hidden_binds.extend(scope_sql.binds.iter().cloned());
+        let hidden_binds = scope_sql.binds.clone();
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,

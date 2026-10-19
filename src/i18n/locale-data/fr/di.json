@@ -23,6 +23,7 @@
       "outsideScope_other": "{{count}} demandes ne sont pas affichées : hors de vos sites.",
       "withoutSite_one": "{{count}} demande n'est pas affichée : elle n'a pas de site.",
       "withoutSite_other": "{{count}} demandes ne sont pas affichées : elles n'ont pas de site.",
+      "allRequests": "Ces nombres portent sur toutes les demandes, quels que soient les filtres ou la recherche.",
       "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l'usine pour les voir."
     },
     "columns": {

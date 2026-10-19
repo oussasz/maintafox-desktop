@@ -91,6 +91,9 @@ describe("hidden requests notice", () => {
     const notice = screen.getByRole("status");
     expect(notice).toHaveTextContent("3 requests are not shown: outside your sites.");
     expect(notice).toHaveTextContent("1 request is not shown: it has no site.");
+    expect(notice).toHaveTextContent(
+      "These counts cover all requests, whatever the filters or search.",
+    );
     expect(notice).toHaveTextContent("Ask a user with a plant-wide role to see them.");
   });
 
@@ -100,6 +103,9 @@ describe("hidden requests notice", () => {
     const notice = screen.getByRole("status");
     expect(notice).toHaveTextContent("3 demandes ne sont pas affichées : hors de vos sites.");
     expect(notice).toHaveTextContent("2 demandes ne sont pas affichées : elles n'ont pas de site.");
+    expect(notice).toHaveTextContent(
+      "Ces nombres portent sur toutes les demandes, quels que soient les filtres ou la recherche.",
+    );
   });
 
   it("shows only the reason that applies, and nothing for a plant-wide user", () => {

@@ -23,6 +23,7 @@
       "outsideScope_other": "{{count}} requests are not shown: outside your sites.",
       "withoutSite_one": "{{count}} request is not shown: it has no site.",
       "withoutSite_other": "{{count}} requests are not shown: they have no site.",
+      "allRequests": "These counts cover all requests, whatever the filters or search.",
       "askPlantWide": "Ask a user with a plant-wide role to see them."
     },
     "columns": {

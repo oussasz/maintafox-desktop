@@ -275,7 +275,7 @@ pub async fn check_create_at(
     let mut passed = vec![check_any_at(db, map, &permissions, Anchor::Node(node), &denied_message).await?];
     if let Some(eq_node) = equipment_node(db, equipment_id).await? {
         if eq_node != node {
-            let at_equipment = check_any_at(db, map, &permissions, Anchor::Node(eq_node), &denied_message).await?;
+            let at_equipment = check_any_at(db, map, &permissions, Anchor::of(Some(eq_node)), &denied_message).await?;
             if !passed.contains(&at_equipment) {
                 passed.push(at_equipment);
             }
