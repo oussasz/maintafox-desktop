@@ -63,6 +63,7 @@
       "SETTING_LOCKED": "Un paramètre qui ne peut plus changer ici (des écritures en dépendent)",
       "WEEK_LIFECYCLE_BACKWARDS": "Une semaine de planification reviendrait en arrière dans son cycle",
       "DECISION_SELF_APPROVAL": "Une décision approuvée par la personne qui l'a proposée (quatre yeux)",
+      "WO_PART_LINE_HAS_USE": "Une ligne de pièce planifiée a été annulée sur un autre poste, mais des pièces ont déjà été utilisées ou sorties du magasin pour elle ici : vérifiez la ligne avec le planificateur et le magasin avant de décider",
       "SITE_SETTING_UNAUDITED": "Une règle de site modifiée sans sa trace d'audit (réauthentification, motif, droit paramètres)",
       "SITE_SETTING_INVALID": "Une règle de site dont la valeur ou la date est illisible",
       "SITE_SETTING_EVENT_INVALID": "Une modification de règle de site incomplète ou datée dans le futur",

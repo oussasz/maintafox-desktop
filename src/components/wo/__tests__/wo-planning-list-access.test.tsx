@@ -319,4 +319,55 @@ describe("WoPlanningPanel — cancelling and switching saved part lines", () => 
     expect(screen.queryByRole("button", { name: "planning.parts.cancelLine" })).toBeNull();
     expect(screen.queryByRole("radiogroup", { name: "partNecessity.legendFor" })).toBeNull();
   });
+
+  it("shows a refused cancel inside the confirmation, which stays open, and keeps the line", async () => {
+    exec.listParts.mockResolvedValueOnce([savedPart()]);
+    exec.cancelPlannedPart.mockRejectedValueOnce(new Error("Stock already issued for this line"));
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "planning.parts.cancelLine" }));
+    fireEvent.click(screen.getByRole("button", { name: "planning.parts.cancelConfirm" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Stock already issued for this line");
+    expect(screen.getByRole("dialog")).toContainElement(alert);
+    expect(screen.getByTestId("wo-part-line-part-41")).toHaveAttribute("data-status", "pending");
+  });
+
+  it("shows a refused required / optional switch on its line and keeps the saved answer", async () => {
+    exec.listParts.mockResolvedValueOnce([savedPart()]);
+    exec.setPlannedPartRequired.mockRejectedValueOnce(new Error("The work order left planning"));
+    renderPanel();
+    fireEvent.click(await screen.findByRole("radio", { name: "partNecessity.optional" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The work order left planning");
+    expect(screen.getByTestId("wo-part-line-part-41")).toContainElement(alert);
+    expect(screen.getByRole("radio", { name: "partNecessity.required" })).toBeChecked();
+  });
+
+  it("offers neither cancel nor switch without the edit right", async () => {
+    exec.listParts.mockResolvedValueOnce([savedPart()]);
+    render(
+      <MemoryRouter>
+        <PermissionContext.Provider value={permissionsWithout()}>
+          <WoPlanningPanel wo={WO} canEdit={false} />
+        </PermissionContext.Provider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByTestId("wo-part-line-part-41")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "planning.parts.cancelLine" })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "partNecessity.legendFor" })).toBeNull();
+  });
+
+  it("offers neither cancel nor switch on a line with recorded use or added during execution", async () => {
+    exec.listParts.mockResolvedValueOnce([
+      savedPart(),
+      savedPart({ id: 42, quantity_issued: 1 }),
+      savedPart({ id: 43, origin: "execution_added" }),
+    ]);
+    renderPanel();
+    expect(await screen.findByTestId("wo-part-line-part-43")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "planning.parts.cancelLine" })).toHaveLength(1);
+    expect(screen.getAllByRole("radiogroup", { name: "partNecessity.legendFor" })).toHaveLength(1);
+  });
 });

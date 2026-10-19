@@ -63,6 +63,7 @@
       "SETTING_LOCKED": "A setting that can no longer change here (postings depend on it)",
       "WEEK_LIFECYCLE_BACKWARDS": "A planning week would go back in its lifecycle",
       "DECISION_SELF_APPROVAL": "A decision approved by the person who proposed it (four-eyes)",
+      "WO_PART_LINE_HAS_USE": "A planned part line was cancelled on another device, but parts were already used or issued from the store for it here: check the line with the planner and the store before deciding",
       "SITE_SETTING_UNAUDITED": "A site rule changed without its audited change (step-up, reason, settings right)",
       "SITE_SETTING_INVALID": "A site rule with an unreadable value or time",
       "SITE_SETTING_EVENT_INVALID": "An incomplete or future-dated change of a site rule",
