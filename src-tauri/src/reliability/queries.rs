@@ -1932,8 +1932,8 @@ pub async fn list_wos_missing_failure_mode(
          WHERE wo.closed_at IS NOT NULL
            AND wo.equipment_id IS NOT NULL
            AND wfd.failure_mode_id IS NULL
-           AND wot.semantic_tag IN ({})",
-        crate::wo::types::nature_sql_list(&crate::wo::types::MaintenanceNature::CORRECTIVE)
+           AND {}",
+        crate::wo::types::tag_is_nature_sql("wot.semantic_tag", &crate::wo::types::MaintenanceNature::CORRECTIVE)
     );
     let mut vals: Vec<sea_orm::Value> = Vec::new();
     if let Some(eid) = equipment_id {

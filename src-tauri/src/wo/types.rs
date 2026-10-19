@@ -113,20 +113,49 @@ impl MaintenanceNature {
 pub const NATURE_TAG_TRIM: &[char] = &[' ', '\t', '\n', '\r'];
 
 /// SQL expression (literal, usable in `concat!`): column `$col` trimmed of [`NATURE_TAG_TRIM`].
+/// The one SQL reading of a stored nature tag; other modules use [`trimmed_tag_sql`],
+/// [`tag_is_nature_sql`] and [`nature_code_sql`], built on it.
 macro_rules! trimmed_tag {
     ($col:literal) => {
         concat!("TRIM(", $col, ", ' ' || char(9) || char(10) || char(13))")
     };
 }
 
-/// SQL list literal of nature codes (`'a', 'b'`) for `semantic_tag IN (…)`. The codes are
-/// compile-time constants, never user input.
+/// SQL list literal of nature codes (`'a', 'b'`) for `IN (…)`. The codes are compile-time
+/// constants, never user input. Compare them with [`tag_is_nature_sql`], never with the raw tag.
 pub fn nature_sql_list(natures: &[MaintenanceNature]) -> String {
     natures
         .iter()
         .map(|n| format!("'{}'", n.as_str()))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// SQL expression: the stored tag in column `col` (a `WORK.ORDER_TYPES` value's `semantic_tag`,
+/// e.g. `"wot.semantic_tag"`) trimmed like [`MaintenanceNature::parse`] trims it. `col` is a
+/// column name written in the code, never user input.
+pub(crate) fn trimmed_tag_sql(col: &str) -> String {
+    format!(trimmed_tag!("{}"), col)
+}
+
+/// SQL predicate, 0 or 1 (never NULL): the tag in column `col` names one of `natures` — true
+/// exactly when [`MaintenanceNature::parse`] finds one of them. Parenthesised: `NOT` negates it.
+pub(crate) fn tag_is_nature_sql(col: &str, natures: &[MaintenanceNature]) -> String {
+    format!(
+        "(COALESCE({}, '') IN ({}))",
+        trimmed_tag_sql(col),
+        nature_sql_list(natures)
+    )
+}
+
+/// SQL expression: the nature code named by the tag in column `col`, NULL when it names none —
+/// what `MaintenanceNature::parse(..).map(as_str)` returns, for selecting, grouping and joining.
+pub(crate) fn nature_code_sql(col: &str) -> String {
+    let tag = trimmed_tag_sql(col);
+    format!(
+        "(CASE WHEN {tag} IN ({}) THEN {tag} END)",
+        nature_sql_list(&MaintenanceNature::ALL)
+    )
 }
 
 struct NatureSeed {
@@ -447,10 +476,7 @@ fn map_type(row: &QueryResult) -> AppResult<WorkOrderTypeOption> {
 /// trimmed), so a type is "without nature" here exactly when the readers find none. Such a type
 /// counts in no work mix (planned / reactive / emergency) and is listed for review.
 pub fn without_nature_sql() -> String {
-    format!(
-        concat!("COALESCE(", trimmed_tag!("t.semantic_tag"), ", '') NOT IN ({})"),
-        nature_sql_list(&MaintenanceNature::ALL)
-    )
+    format!("NOT {}", tag_is_nature_sql("t.semantic_tag", &MaintenanceNature::ALL))
 }
 
 /// An OT type without a maintenance nature, with how many work orders use it.

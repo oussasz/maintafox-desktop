@@ -91,8 +91,10 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(
     let only_with_cost = filter.only_with_cost.unwrap_or(true);
     let limit = filter.limit.unwrap_or(200).clamp(1, 2000);
 
-    // Corrective work by the EN 13306 nature of the OT type (immediate + deferred), not its code.
-    let corrective = crate::wo::types::nature_sql_list(&crate::wo::types::MaintenanceNature::CORRECTIVE);
+    // Corrective work by the EN 13306 nature of the OT type (immediate + deferred), not its code;
+    // the tag read like every other reader (`wo::types::tag_is_nature_sql`).
+    let corrective =
+        crate::wo::types::tag_is_nature_sql("wot.semantic_tag", &crate::wo::types::MaintenanceNature::CORRECTIVE);
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -104,9 +106,9 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(
                     COALESCE(SUM(wo.parts_cost), 0.0) AS lifetime_parts,
                     COALESCE(SUM(wo.service_cost), 0.0) AS lifetime_services,
                     COALESCE(SUM(CASE WHEN wo.closed_at >= ?1 THEN wo.total_cost END), 0.0) AS cost_12m,
-                    COALESCE(SUM(CASE WHEN wot.semantic_tag IN ({corrective}) THEN 1 ELSE 0 END), 0) AS corrective_wos,
-                    COALESCE(SUM(CASE WHEN wot.semantic_tag IN ({corrective}) THEN wo.total_cost END), 0.0) AS corrective_cost,
-                    COALESCE(SUM(CASE WHEN wo.id IS NOT NULL AND (wot.semantic_tag IS NULL OR wot.semantic_tag NOT IN ({corrective}))
+                    COALESCE(SUM(CASE WHEN {corrective} THEN 1 ELSE 0 END), 0) AS corrective_wos,
+                    COALESCE(SUM(CASE WHEN {corrective} THEN wo.total_cost END), 0.0) AS corrective_cost,
+                    COALESCE(SUM(CASE WHEN wo.id IS NOT NULL AND NOT {corrective}
                                       THEN wo.total_cost END), 0.0) AS preventive_cost,
                     MAX(wo.closed_at) AS last_closed_at
              FROM equipment e

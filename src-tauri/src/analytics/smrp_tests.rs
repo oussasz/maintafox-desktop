@@ -1131,4 +1131,261 @@ async fn a_tag_with_a_tab_or_a_line_break_is_its_nature_everywhere() {
     let lined = types.iter().find(|t| t.id == line).expect("lined");
     assert_eq!(lined.nature.as_deref(), Some("corrective_deferred"));
     assert!(lined.nature_label.is_some());
+
+    // The other readers: W1 is improvement work, W2 corrective work without a failure mode.
+    let eq = on_equipment(&db, "EQ-TRIM", &[("W1", 100.0), ("W2", 40.0)]).await;
+    exec(
+        &db,
+        "INSERT INTO work_order_failure_details (work_order_id) SELECT id FROM work_orders WHERE code = 'W2'",
+    )
+    .await;
+    // The padded type and the shipped deferred-corrective type share one backlog cell.
+    let r = read_natures(&db, now, eq, &["LINED", "corrective"]).await;
+    assert_eq!(
+        r.detail_natures.get("W1"),
+        Some(&Some("improvement".to_string())),
+        "WO detail: trimmed"
+    );
+    assert_eq!(
+        r.detail_natures.get("W2"),
+        Some(&Some("corrective_deferred".to_string()))
+    );
+    assert!(r.detail_labels_found, "WO detail: the nature label is found");
+    assert_eq!(r.list_natures, r.detail_natures, "WO list reads it like the detail");
+    assert_eq!(
+        (r.corrective_wos, r.corrective_cost, r.preventive_cost),
+        (1, 40.0, 100.0),
+        "asset cost"
+    );
+    assert!(r.quality_view_flags_missing_mode, "RAMS quality view");
+    assert_eq!(r.missing_mode_wos, vec!["W2".to_string()]);
+    assert_eq!(
+        r.backlog_cell,
+        Some(Some("corrective_deferred".to_string())),
+        "supervision backlog: trimmed code"
+    );
+    assert_eq!(r.backlog_without_nature, 0);
+}
+
+/// A closed work order per `(code, total cost)` on a new equipment `asset_code`; its id.
+async fn on_equipment(db: &DatabaseConnection, asset_code: &str, wos: &[(&str, f64)]) -> i64 {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO equipment (entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+             created_at, updated_at) VALUES ('{asset_code}', '{asset_code}', 'Pump', 'active_in_service', 1, \
+             datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+    let eq = id_of(
+        db,
+        &format!("SELECT id FROM equipment WHERE asset_id_code = '{asset_code}'"),
+    )
+    .await;
+    for (code, cost) in wos {
+        exec(
+            db,
+            &format!("UPDATE work_orders SET equipment_id = {eq}, total_cost = {cost} WHERE code = '{code}'"),
+        )
+        .await;
+    }
+    eq
+}
+
+/// What the readers outside the work mix make of the natures of equipment `eq`'s work orders.
+struct NatureReadings {
+    detail_natures: std::collections::BTreeMap<String, Option<String>>,
+    list_natures: std::collections::BTreeMap<String, Option<String>>,
+    detail_labels_found: bool,
+    corrective_wos: i64,
+    corrective_cost: f64,
+    preventive_cost: f64,
+    quality_view_flags_missing_mode: bool,
+    missing_mode_wos: Vec<String>,
+    /// Supervision backlog: the nature of the one cell (no urgency) that all the OTs opened here
+    /// (`OPEN-<type>` per type) fall in; `None` when they do not fall in one cell together.
+    backlog_cell: Option<Option<String>>,
+    backlog_without_nature: i64,
+}
+
+async fn read_natures(db: &DatabaseConnection, now: DateTime<Utc>, eq: i64, open_types: &[&str]) -> NatureReadings {
+    let admin = id_of(db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let page = crate::wo::queries::list_work_orders(
+        db,
+        crate::wo::queries::WoListFilter {
+            equipment_id: Some(eq),
+            limit: 50,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("WO list");
+    let mut detail_natures = std::collections::BTreeMap::new();
+    let mut detail_labels_found = true;
+    for wo in &page.items {
+        let detail = crate::wo::queries::get_work_order(db, wo.id)
+            .await
+            .expect("WO detail")
+            .expect("row");
+        detail_labels_found &= detail.nature_code.is_none() || detail.nature_label.is_some();
+        detail_natures.insert(detail.code.clone(), detail.nature_code.clone());
+    }
+    let list_natures = page
+        .items
+        .iter()
+        .map(|w| (w.code.clone(), w.nature_code.clone()))
+        .collect();
+
+    let costs = crate::finance::asset_costs::list_asset_cost_history(
+        db,
+        crate::finance::asset_costs::AssetCostFilter {
+            only_with_cost: Some(false),
+            limit: Some(2000),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("asset costs");
+    let row = costs.rows.iter().find(|r| r.equipment_id == eq).expect("asset row");
+
+    let issues = crate::reliability::queries::list_ram_data_quality_issues(
+        db,
+        crate::reliability::domain::RamDataQualityIssuesFilter { equipment_id: Some(eq) },
+        i32::try_from(admin).expect("user id"),
+    )
+    .await
+    .expect("quality view");
+    let missing = crate::reliability::queries::list_wos_missing_failure_mode(db, Some(eq), None)
+        .await
+        .expect("missing failure modes");
+    let mut missing_mode_wos = Vec::new();
+    for m in &missing {
+        missing_mode_wos.push(
+            crate::wo::queries::get_work_order(db, m.work_order_id)
+                .await
+                .expect("wo")
+                .expect("row")
+                .code,
+        );
+    }
+
+    let before = crate::home::supervision::work_orders(db, now).await.expect("backlog");
+    for t in open_types {
+        insert_wo(db, &format!("OPEN-{t}"), t, "planning", &ts(now, -1, 0), "", "").await;
+    }
+    let after = crate::home::supervision::work_orders(db, now).await.expect("backlog");
+    let count_of = |w: &crate::home::supervision::SupervisionWorkOrders, n: &Option<String>| {
+        w.cells
+            .iter()
+            .filter(|c| &c.nature_code == n && c.urgency_code.is_none())
+            .map(|c| c.count)
+            .sum::<i64>()
+    };
+    let mut keys: Vec<_> = after
+        .cells
+        .iter()
+        .map(|c| (c.nature_code.clone(), c.urgency_code.clone()))
+        .collect();
+    let cells = keys.len();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), cells, "one backlog cell per nature and urgency");
+    let grown: Vec<Option<String>> = keys
+        .into_iter()
+        .filter(|(_, u)| u.is_none())
+        .map(|(n, _)| n)
+        .filter(|n| count_of(&after, n) > count_of(&before, n))
+        .collect();
+    assert_eq!(grown.len(), 1, "the open OTs fall in one cell: {grown:?}");
+    let backlog_growth = count_of(&after, &grown[0]) - count_of(&before, &grown[0]);
+    let backlog_cell = (backlog_growth == i64::try_from(open_types.len()).expect("len")).then(|| grown[0].clone());
+
+    NatureReadings {
+        detail_natures,
+        list_natures,
+        detail_labels_found,
+        corrective_wos: row.corrective_work_orders,
+        corrective_cost: row.corrective_cost,
+        preventive_cost: row.preventive_cost,
+        quality_view_flags_missing_mode: issues
+            .iter()
+            .any(|i| i.equipment_id == eq && i.issue_code == "MISSING_FAILURE_MODE"),
+        missing_mode_wos,
+        backlog_cell,
+        backlog_without_nature: after.without_nature - before.without_nature,
+    }
+}
+
+/// The "for none" side: a tag padded with a no-break space or a vertical tab (characters the
+/// readers do not strip) is a nature for no reader — outside every share of the work mix, on the
+/// review list, without nature in the type list, the WO list and detail, the asset cost (preventive
+/// side), the RAMS quality view and the supervision backlog.
+#[tokio::test]
+async fn a_tag_with_a_no_break_space_or_a_vertical_tab_is_no_nature_anywhere() {
+    let db = setup().await;
+    let now = fixed_now();
+    let nbsp = plant_type(&db, "NBSP", Some("\u{a0}improvement"), "{}").await;
+    let vtab = plant_type(&db, "VTAB", Some("corrective_deferred\u{0b}"), "{}").await;
+    insert_wo(
+        &db,
+        "X1",
+        "NBSP",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -5, 0),
+    )
+    .await;
+    insert_wo(
+        &db,
+        "X2",
+        "VTAB",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -4, 0),
+    )
+    .await;
+
+    let m = smrp::work_mix(&db, SmrpWindow::last_days(now, 30), None).await.unwrap();
+    assert_eq!(m.without_nature, 2, "in no share");
+    assert_eq!((m.planned.current.numerator, m.reactive.current.numerator), (0.0, 0.0));
+    let review = crate::wo::types::list_types_without_nature(&db).await.expect("review");
+    assert!(
+        review.iter().any(|t| t.id == nbsp) && review.iter().any(|t| t.id == vtab),
+        "to review"
+    );
+    let types = crate::wo::types::list_work_order_types(&db).await.expect("types");
+    for id in [nbsp, vtab] {
+        let t = types.iter().find(|t| t.id == id).expect("type");
+        assert_eq!((t.nature.as_deref(), t.nature_label.as_deref()), (None, None));
+    }
+
+    let eq = on_equipment(&db, "EQ-NONE", &[("X1", 100.0), ("X2", 40.0)]).await;
+    exec(
+        &db,
+        "INSERT INTO work_order_failure_details (work_order_id) SELECT id FROM work_orders WHERE code = 'X2'",
+    )
+    .await;
+    let r = read_natures(&db, now, eq, &["NBSP", "VTAB"]).await;
+    assert_eq!(r.detail_natures.get("X1"), Some(&None), "WO detail: no nature");
+    assert_eq!(r.detail_natures.get("X2"), Some(&None));
+    assert_eq!(r.list_natures, r.detail_natures);
+    assert_eq!(
+        (r.corrective_wos, r.corrective_cost, r.preventive_cost),
+        (0, 0.0, 140.0),
+        "asset cost: not corrective"
+    );
+    assert!(
+        !r.quality_view_flags_missing_mode,
+        "not corrective for the quality view"
+    );
+    assert!(r.missing_mode_wos.is_empty());
+    assert_eq!(
+        r.backlog_cell,
+        Some(None),
+        "supervision backlog: one cell without nature"
+    );
+    assert_eq!(r.backlog_without_nature, 2);
 }

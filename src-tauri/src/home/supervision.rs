@@ -207,17 +207,20 @@ pub async fn requests(
 
 pub async fn work_orders(db: &DatabaseConnection, now: DateTime<Utc>) -> AppResult<SupervisionWorkOrders> {
     let rank = urgency_rank_sql("ul.code");
+    // Grouped by the nature the tag names (NULL: none), so one nature is one cell whatever
+    // spacing its tag was stored with.
+    let nature = crate::wo::types::nature_code_sql("t.semantic_tag");
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             format!(
-                "SELECT t.semantic_tag AS nature_code, ul.code AS urgency_code, COUNT(*) AS cnt \
+                "SELECT {nature} AS nature_code, ul.code AS urgency_code, COUNT(*) AS cnt \
                  FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
                  LEFT JOIN reference_values t ON t.id = wo.type_id \
                  LEFT JOIN reference_values ul ON ul.id = wo.urgency_id \
                  WHERE s.code IN {OPEN_STATUS_SQL} \
-                 GROUP BY t.semantic_tag, ul.code \
-                 ORDER BY t.semantic_tag, MIN({rank})"
+                 GROUP BY 1, ul.code \
+                 ORDER BY 1, MIN({rank})"
             ),
         ))
         .await?;
@@ -246,10 +249,13 @@ pub async fn work_orders(db: &DatabaseConnection, now: DateTime<Utc>) -> AppResu
         cells: Vec::with_capacity(rows.len()),
     };
     for r in &rows {
-        let nature_code: Option<String> = decode(r, "nature_code")?;
+        let nature = decode::<Option<String>>(r, "nature_code")?
+            .as_deref()
+            .and_then(MaintenanceNature::parse);
+        let nature_code = nature.map(|n| n.as_str().to_string());
         let count: i64 = decode(r, "cnt")?;
         out.open += count;
-        match nature_code.as_deref().and_then(MaintenanceNature::parse) {
+        match nature {
             Some(n) => {
                 if n.is_planned() {
                     out.planned += count;

@@ -262,7 +262,8 @@ async fn initial_renewal(
 async fn load_pm_removals(db: &DatabaseConnection, equipment_id: i64, start: &str, end: &str) -> AppResult<Vec<PmRow>> {
     // Preventive renewals: work orders of a preventive nature (EN 13306) whose work is done: no
     // longer "open (work to do)" (`wo::backlog::OPEN_STATUS_SQL`) and not cancelled.
-    let preventive = crate::wo::types::nature_sql_list(&crate::wo::types::MaintenanceNature::PREVENTIVE);
+    let preventive =
+        crate::wo::types::tag_is_nature_sql("t.semantic_tag", &crate::wo::types::MaintenanceNature::PREVENTIVE);
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -271,7 +272,7 @@ async fn load_pm_removals(db: &DatabaseConnection, equipment_id: i64, start: &st
              FROM work_orders wo
              JOIN reference_values t ON t.id = wo.type_id
              JOIN work_order_statuses st ON st.id = wo.status_id
-             WHERE wo.equipment_id = ? AND t.semantic_tag IN ({preventive})
+             WHERE wo.equipment_id = ? AND {preventive}
                AND st.code NOT IN {open} AND st.code <> 'cancelled'
                AND COALESCE(wo.actual_end, wo.mechanically_completed_at, wo.closed_at) IS NOT NULL
                AND datetime(COALESCE(wo.actual_end, wo.mechanically_completed_at, wo.closed_at)) >= datetime(?)
