@@ -461,6 +461,16 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
         table: "machine_activation_state",
         category: LocalOnlyCategory::Licensing,
     },
+    // Vendor administrator recovery codes spent on this PC and the notices they raise for this PC's
+    // administrators (`auth::recovery_code`): local, like the first-administrator marker.
+    LocalOnlyTable {
+        table: "admin_recovery_codes_used",
+        category: LocalOnlyCategory::Licensing,
+    },
+    LocalOnlyTable {
+        table: "admin_recovery_notices",
+        category: LocalOnlyCategory::SessionOrDevice,
+    },
     LocalOnlyTable {
         table: "connection_profiles",
         category: LocalOnlyCategory::Secrets,

@@ -2449,6 +2449,8 @@
     }
   ],
   "local_only_tables": {
+    "admin_recovery_codes_used": "licensing",
+    "admin_recovery_notices": "session_or_device",
     "app_sessions": "session_or_device",
     "archive_actions": "device_archive",
     "archive_items": "device_archive",
