@@ -134,7 +134,10 @@
     "listsHint": "Types d’énergie selon ISO 14118 / OSHA 1910.147 ; les méthodes d’isolement sont la liste de votre site (Données de référence).",
     "threePersonNotice": "Règle des trois personnes : {{name}} a vérifié cette isolation et ne peut pas confirmer son retrait.",
     "threePersonNoticeUnknown": "Règle des trois personnes : la personne qui a vérifié cette isolation ne peut pas confirmer son retrait.",
-    "threePersonSelf": "Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait."
+    "threePersonSelf": "Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait.",
+    "removalConfirmTitle": "Confirmer le retrait des cadenas",
+    "removalConfirmDescription": "Vous confirmez que l’isolation « {{point}} » est retirée. Posée par {{applier}}, vérifiée par {{verifier}}. Votre nom sera inscrit comme celui qui a vérifié le retrait.",
+    "personUnknown": "personne non enregistrée"
   },
   "card": {
     "title": "Fiche LOTO",

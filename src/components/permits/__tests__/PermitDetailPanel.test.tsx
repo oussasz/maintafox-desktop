@@ -144,6 +144,7 @@ function renderPanel(p: WorkPermitRecord = permit()) {
   return screen.findByTestId("permit-isolation");
 }
 
+const confirmName = enPermits.isolation.verifyRemoval;
 const removalButton = (row: HTMLElement) =>
   within(row).getByRole("button", { name: enPermits.isolation.verifyRemoval });
 
@@ -185,10 +186,40 @@ describe("PermitDetailPanel — lock removal with a third person", () => {
     expect(removalButton(row)).toBeEnabled();
   });
 
+  it("asks for a confirmation naming the point, who applied it and who verified it", async () => {
+    const row = await renderPanel();
+    fireEvent.click(removalButton(row));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      fill(enPermits.isolation.removalConfirmDescription, {
+        point: "MCC-1 breaker",
+        applier: "Amine Tech",
+        verifier: "Sara Sup",
+      }),
+    );
+    // Nothing is recorded until the person confirms.
+    expect(svc.verifyPermitIsolationRemoval).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: confirmName }));
+    await waitFor(() => expect(svc.verifyPermitIsolationRemoval).toHaveBeenCalledTimes(1));
+  });
+
+  it("records nothing when the confirmation is cancelled", async () => {
+    const row = await renderPanel();
+    fireEvent.click(removalButton(row));
+    const dialog = await screen.findByRole("dialog");
+    // The common-namespace key stands in for the cancel label (not part of the permits catalogue).
+    fireEvent.click(within(dialog).getByRole("button", { name: "ds.confirm.cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(svc.verifyPermitIsolationRemoval).not.toHaveBeenCalled();
+  });
+
   it("shows the server's refusal in the user's language", async () => {
     svc.verifyPermitIsolationRemoval.mockRejectedValue({ code: "PERMIT_THREE_PERSON_REMOVAL" });
     const row = await renderPanel();
     fireEvent.click(removalButton(row));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: confirmName }),
+    );
     await waitFor(() =>
       expect(svc.verifyPermitIsolationRemoval).toHaveBeenCalledWith({
         isolation_id: 300,

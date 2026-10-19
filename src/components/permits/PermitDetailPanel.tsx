@@ -107,6 +107,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [suspendDraft, setSuspendDraft] = useState({ reason: "", conditions: "" });
   const [cancelOpen, setCancelOpen] = useState(false);
+  /** The isolation whose lock removal waits for the confirmation dialog. */
+  const [removalConfirm, setRemovalConfirm] = useState<PermitIsolationRecord | null>(null);
   const [editingExpiry, setEditingExpiry] = useState<string | null>(null);
 
   const fmt = (v: string | null) => (v ? formatDateTime(v, i18n.language) : t("detail.none"));
@@ -557,7 +559,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         variant="outline"
                         disabled={busy || removalBlockedForMe}
                         title={removalBlockedReason}
-                        onClick={() => void isolationAction(iso, verifyPermitIsolationRemoval)}
+                        onClick={() => setRemovalConfirm(iso)}
                       >
                         {t("isolation.verifyRemoval")}
                       </Button>
@@ -853,6 +855,27 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           </form>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={removalConfirm != null}
+        onOpenChange={(open) => {
+          if (!open) setRemovalConfirm(null);
+        }}
+        title={t("isolation.removalConfirmTitle")}
+        description={t("isolation.removalConfirmDescription", {
+          point: removalConfirm?.isolation_point ?? "",
+          applier: removalConfirm?.applied_by_name ?? t("isolation.personUnknown"),
+          verifier: removalConfirm?.verified_by_name ?? t("isolation.personUnknown"),
+        })}
+        confirmLabel={t("isolation.verifyRemoval")}
+        onConfirm={async () => {
+          const iso = removalConfirm;
+          if (!iso) return;
+          const ok = await isolationAction(iso, verifyPermitIsolationRemoval);
+          // Keep the dialog open on failure (the message is shown on the permit).
+          if (!ok) throw new Error("removal refused");
+        }}
+      />
 
       <ConfirmDialog
         open={cancelOpen}

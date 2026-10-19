@@ -134,7 +134,10 @@
     "listsHint": "Energy types follow ISO 14118 / OSHA 1910.147; isolation methods are your site’s list (Reference data).",
     "threePersonNotice": "Three-person rule: {{name}} verified this isolation and may not confirm its removal.",
     "threePersonNoticeUnknown": "Three-person rule: the person who verified this isolation may not confirm its removal.",
-    "threePersonSelf": "You verified this isolation — a third person must confirm its removal."
+    "threePersonSelf": "You verified this isolation — a third person must confirm its removal.",
+    "removalConfirmTitle": "Confirm lock removal",
+    "removalConfirmDescription": "You confirm that the isolation \"{{point}}\" has been removed. Applied by {{applier}}, verified by {{verifier}}. Your name will be recorded as the person who verified the removal.",
+    "personUnknown": "no one recorded"
   },
   "card": {
     "title": "LOTO card",
