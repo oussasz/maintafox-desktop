@@ -11,6 +11,7 @@ import {
 } from "@/components/planning/planning-model";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
 import { mfTone } from "@/design-system/tone";
 import { cn } from "@/lib/utils";
 import type {
@@ -217,6 +218,7 @@ function CandidateCardBody({
             {candidate.priority_label}
           </Badge>
         ) : null}
+        {candidate.shutdown_requirement ? <WoShutdownBadge /> : null}
       </div>
 
       {kinds.length > 0 && (

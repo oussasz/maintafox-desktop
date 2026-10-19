@@ -114,6 +114,7 @@ function makeEvent(overrides: Partial<DiReviewEvent> = {}): DiReviewEvent {
     di_id: 1,
     event_type: "screened",
     actor_id: 7,
+    actor_display_name: "Reviewer Name",
     acted_at: "2026-04-02T10:00:00Z",
     from_status: "submitted",
     to_status: "in_review",

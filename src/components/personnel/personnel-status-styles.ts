@@ -1,39 +1,27 @@
-/** Badge / dot colors for `personnel.availability_status` (PRD §6.6). */
+/** Badge / dot colours for `personnel.availability_status` (PRD §6.6), on the design-system tones. */
+
+const BADGE: Record<string, string> = {
+  available: "border border-tone-success-border bg-tone-success-bg text-tone-success-fg",
+  assigned: "border border-tone-info-border bg-tone-info-bg text-tone-info-fg",
+  in_training: "border border-tone-warning-border bg-tone-warning-bg text-tone-warning-fg",
+  on_leave: "border border-tone-neutral-border bg-tone-neutral-bg text-tone-neutral-fg",
+  blocked: "border border-tone-danger-border bg-tone-danger-bg text-tone-danger-fg",
+  inactive: "border border-tone-neutral-border bg-tone-neutral-bg text-tone-neutral-fg",
+};
+
+const DOT: Record<string, string> = {
+  available: "bg-tone-success-fg",
+  assigned: "bg-tone-info-fg",
+  in_training: "bg-tone-warning-fg",
+  on_leave: "bg-tone-neutral-fg",
+  blocked: "bg-tone-danger-fg",
+  inactive: "bg-tone-neutral-fg",
+};
 
 export function personnelAvailabilityBadgeClass(status: string): string {
-  switch (status) {
-    case "available":
-      return "border border-emerald-500/30 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200";
-    case "assigned":
-      return "border border-blue-500/30 bg-blue-500/15 text-blue-800 dark:text-blue-200";
-    case "in_training":
-      return "border border-amber-500/30 bg-amber-500/15 text-amber-900 dark:text-amber-100";
-    case "on_leave":
-      return "border border-gray-400/40 bg-gray-500/10 text-gray-800 dark:text-gray-200";
-    case "blocked":
-      return "border border-red-500/30 bg-red-500/15 text-red-800 dark:text-red-200";
-    case "inactive":
-      return "border border-slate-500/30 bg-slate-500/15 text-slate-800 dark:text-slate-200";
-    default:
-      return "border border-border bg-muted text-muted-foreground";
-  }
+  return BADGE[status] ?? "border border-border bg-muted text-muted-foreground";
 }
 
 export function personnelAvailabilityDotClass(status: string): string {
-  switch (status) {
-    case "available":
-      return "bg-emerald-500";
-    case "assigned":
-      return "bg-blue-500";
-    case "in_training":
-      return "bg-amber-500";
-    case "on_leave":
-      return "bg-gray-400";
-    case "blocked":
-      return "bg-red-500";
-    case "inactive":
-      return "bg-slate-500";
-    default:
-      return "bg-muted-foreground";
-  }
+  return DOT[status] ?? "bg-muted-foreground";
 }

@@ -13,7 +13,7 @@ import { dispositionLabelKey } from "@/components/di/disposition-meta";
 import { diStatusToI18nKey } from "@/components/di/status-meta";
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry } from "@/components/timeline";
-import { formatOrDash } from "@/lib/display";
+import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { getDiReviewEvents } from "@/services/di-review-service";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { DiReviewEvent } from "@shared/ipc-types";
@@ -90,10 +90,11 @@ export function DiReviewTimeline({ diId }: DiReviewTimelineProps) {
           subtitle: reasonText != null ? `${move} · ${reasonText}` : move,
           description: ev.notes ?? undefined,
           timestamp: ev.acted_at,
-          // The person is on the state history tab; only system events are labelled here.
-          ...(ev.actor_id == null
-            ? { actor: `${t("reviewTimeline.actor")}: ${t("reviewTimeline.systemActor")}` }
-            : {}),
+          actor: `${t("reviewTimeline.actor")}: ${
+            ev.actor_id != null
+              ? formatPersonLabel(ev.actor_display_name)
+              : t("reviewTimeline.systemActor")
+          }`,
           tone: breached ? ("danger" as const) : undefined,
           details: hasSla ? (
             <div className="grid grid-cols-2 gap-2 text-xs">

@@ -69,6 +69,8 @@
     "customizeTitle": "Disposition du tableau de bord",
     "save": "Enregistrer",
     "reset": "Réinitialiser",
+    "cancel": "Annuler",
+    "pageSectionsHeading": "Blocs de la page",
     "metricCardsHeading": "KPI Vue d'ensemble",
     "moveUp": "Monter",
     "moveDown": "Descendre",

@@ -4419,6 +4419,7 @@ export interface DiReviewEvent {
   di_id: number;
   event_type: string;
   actor_id: number | null;
+  actor_display_name: string | null;
   acted_at: string;
   from_status: string;
   to_status: string;

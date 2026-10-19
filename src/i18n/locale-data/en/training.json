@@ -264,6 +264,7 @@
     "add": "New session",
     "addTitle": "New training session",
     "editTitle": "Edit the session",
+    "formSection": "Session details",
     "edit": "Edit",
     "formDescription": "When a session leads to a certification, each person who passes receives it automatically, valid for the certification's period.",
     "leadsTo": "Leads to the certification",

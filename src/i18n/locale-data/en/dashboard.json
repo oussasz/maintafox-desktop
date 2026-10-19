@@ -69,6 +69,8 @@
     "customizeTitle": "Dashboard layout",
     "save": "Save",
     "reset": "Reset default",
+    "cancel": "Cancel",
+    "pageSectionsHeading": "Page blocks",
     "metricCardsHeading": "Overview KPIs",
     "moveUp": "Move up",
     "moveDown": "Move down",
