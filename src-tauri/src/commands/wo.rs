@@ -224,6 +224,40 @@ pub async fn create_wo(
             }
         }
     }
+    // Other sources: a cause diagram belongs to its equipment's site; an inspection anomaly to
+    // the inspections module, not site-scoped yet (stage 3), so linking one stays plant-wide.
+    if let Some(did) = input.source_ram_ishikawa_diagram_id {
+        let node = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT e.installed_at_node_id AS node FROM ram_ishikawa_diagrams d \
+                   LEFT JOIN equipment e ON e.id = d.equipment_id WHERE d.id = ?",
+                [did.into()],
+            ))
+            .await?
+            .map(|row| row.try_get::<Option<i64>>("", "node"))
+            .transpose()?
+            .flatten();
+        crate::auth::scope::require_at(
+            &state.db,
+            &state.permission_cache,
+            user.user_id,
+            crate::rbac::permissions::OT_CREATE,
+            crate::auth::scope::Anchor::of(node),
+        )
+        .await?;
+    }
+    if input.source_inspection_anomaly_id.is_some() {
+        crate::auth::scope::require_at(
+            &state.db,
+            &state.permission_cache,
+            user.user_id,
+            crate::rbac::permissions::OT_CREATE,
+            crate::auth::scope::Anchor::Plant,
+        )
+        .await?;
+    }
 
     if !errors.is_empty() {
         return Err(AppError::ValidationFailed(errors));
@@ -522,7 +556,14 @@ pub async fn clear_wo_permit_rule_flag(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::PTW_ISSUE, input.wo_id).await?;
+    // A safety gate: clearing a permit requirement set by a plant rule stays plant-wide (the
+    // action itself re-checks the plant-wide right in its transaction).
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PTW_ISSUE,
+        PermissionScope::Global
+    );
     let actor_id = i64::from(user.user_id);
     let reason = input.reason.trim().to_string();
     let wo =

@@ -662,6 +662,9 @@ async fn a_draft_moves_to_the_site_of_its_new_equipment() {
         .await
         .expect("to equipment of site B");
     assert_eq!(to_b.entity_id, Some(f.t.site_b));
+    let site = map_of(&f.db, f.site).await;
+    let err = access::check_on_wo(&f.db, &site, OT_VIEW, f.wo_a).await.unwrap_err();
+    assert_eq!(code_of(&err), "SCOPE_OUTSIDE_SITE", "the site-A user no longer sees it");
 
     // A draft with a permit still open on it does not move to another site (decision of the CMMS
     // Advisor): the user closes or cancels the permit first. A closed one does not hold it back.
