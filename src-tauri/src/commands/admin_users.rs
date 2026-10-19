@@ -668,7 +668,7 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
             PermissionScope::Global
         );
         require_step_up!(state);
-        create_user_impl(&state, &caller, input).await
+        create_user_then_retire_builtin_admin(&state, &caller, input).await
     }
     .await;
     crate::commands::admin_governance::record_blocked_admin_action(
@@ -684,6 +684,19 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
         notify_rbac_user_change(&app, &state, created.id, "user_created").await;
     }
     result
+}
+
+/// [`create_user_impl`], then, once the account is committed, retirement of a built-in "admin"
+/// never used that the new account supersedes (review E-1,
+/// `auth::builtin_admin::retire_after_administration_change`).
+pub(crate) async fn create_user_then_retire_builtin_admin(
+    state: &AppState,
+    caller: &AuthenticatedUser,
+    input: CreateUserInput,
+) -> AppResult<IdPayload> {
+    let created = create_user_impl(state, caller, input).await?;
+    crate::auth::builtin_admin::retire_after_administration_change(&state.db).await;
+    Ok(created)
 }
 
 pub(crate) async fn create_user_impl(
@@ -1754,7 +1767,7 @@ pub async fn assign_role_scope(
             PermissionScope::Global
         );
         require_step_up!(state);
-        assign_role_scope_impl(state.inner(), &caller, input, true, Some(&app)).await
+        assign_role_scope_then_retire_builtin_admin(state.inner(), &caller, input, Some(&app)).await
     }
     .await;
     crate::commands::admin_governance::record_blocked_admin_action(
@@ -1767,6 +1780,20 @@ pub async fn assign_role_scope(
     )
     .await;
     result
+}
+
+/// [`assign_role_scope_impl`] (frontend notified when `app` is given), then, once the assignment is
+/// committed, retirement of a built-in "admin" never used that the assignment supersedes (review
+/// E-1, `auth::builtin_admin::retire_after_administration_change`).
+pub(crate) async fn assign_role_scope_then_retire_builtin_admin(
+    state: &AppState,
+    caller: &AuthenticatedUser,
+    input: AssignRoleScopeInput,
+    app: Option<&AppHandle>,
+) -> AppResult<IdPayload> {
+    let assigned = assign_role_scope_impl(state, caller, input, app.is_some(), app).await?;
+    crate::auth::builtin_admin::retire_after_administration_change(&state.db).await;
+    Ok(assigned)
 }
 
 /// Revoke a role-scope assignment (soft-delete). The optional reason is kept in the ledger.
@@ -3573,33 +3600,11 @@ pub(crate) async fn ensure_may_manage_account(
 /// Role names that make an account a plant administrator (Phase 1 name `Administrator`).
 const ADMIN_ROLE_NAMES: &[&str] = &["Superadmin", "Administrator"];
 
-/// Accounts that can administer the plant, counted exactly like [`is_plant_admin`] (the elevated
-/// admin rule of `auth::rbac`: the active bootstrap account, or a permanent, in-force,
-/// tenant-scope administrator assignment). An emergency grant expires by itself, so it does
-/// not keep the plant administrable.
-async fn active_admin_holders<C: ConnectionTrait>(conn: &C) -> AppResult<i64> {
-    let sql = format!(
-        "SELECT COUNT(*) AS cnt FROM user_accounts ua WHERE {}",
-        crate::auth::rbac::elevated_admin_sql()
-    );
-    let values = resolver::permanent_binds(&resolver::assignment_clock()).to_vec();
-    Ok(conn
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
-        .await?
-        .and_then(|r| r.try_get::<i64>("", "cnt").ok())
-        .unwrap_or(0))
-}
-
-/// Run inside the transaction of a change, after it: refuses (the caller's transaction is then
-/// dropped, i.e. rolled back) when the change took away the last plant administrator.
-async fn ensure_an_admin_remains<C: ConnectionTrait>(conn: &C, before: i64) -> AppResult<()> {
-    if before > 0 && active_admin_holders(conn).await? == 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "This change would leave the plant without an active administrator.".into(),
-        ]));
-    }
-    Ok(())
-}
+// The last-administrator guard (`auth::last_admin`, CMMS Advisor decision 2026-10-19): the count of
+// active administrators (the plant-administrator rule of [`is_plant_admin`], without the built-in
+// "admin" account whose password was never changed) and the coded refusal. The same functions judge
+// a change received by synchronisation (`sync::apply_hooks`).
+use crate::auth::last_admin::{active_admin_count as active_admin_holders, ensure_an_admin_remains};
 
 /// Compute dependency warning messages for a set of permission names.
 async fn compute_dependency_warnings(

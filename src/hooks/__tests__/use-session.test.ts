@@ -42,7 +42,7 @@ describe("useSession", () => {
     await waitFor(() => expect(result.current.hasBootstrapped).toBe(true));
 
     await act(async () => {
-      await result.current.login({ username: "admin", password: "Admin#2026!" });
+      await result.current.login({ username: "admin", password: "correct-password" });
     });
 
     expect(result.current.info?.is_authenticated).toBe(true);

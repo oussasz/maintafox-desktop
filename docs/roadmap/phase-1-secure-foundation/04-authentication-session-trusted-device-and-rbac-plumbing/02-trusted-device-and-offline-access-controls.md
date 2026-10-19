@@ -722,9 +722,9 @@ ACCEPTANCE CRITERIA
 ### Supervisor Verification — Sprint S2
 
 **V1 — trusted_devices row created after login.**
-Run `pnpm run dev`. Log in using `admin` / `Admin#2026!` via the Developer Tools console:
+Run `pnpm run dev`. Log in using `admin` / `<DEV_ADMIN_PASSWORD>` via the Developer Tools console:
 ```javascript
-window.__TAURI__.core.invoke('login', { payload: { username: 'admin', password: 'Admin#2026!' } });
+window.__TAURI__.core.invoke('login', { payload: { username: 'admin', password: '<DEV_ADMIN_PASSWORD>' } });
 ```
 Then open DBeaver and run:
 ```sql

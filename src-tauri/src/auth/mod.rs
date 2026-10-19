@@ -9,7 +9,9 @@
 //!   - The `SessionManager` is the single authoritative source of who is logged in.
 //!   - All IPC commands that need auth call `require_session!(&state)`.
 
+pub mod builtin_admin;
 pub mod device;
+pub mod last_admin;
 pub mod lockout;
 pub mod password;
 pub mod password_policy;

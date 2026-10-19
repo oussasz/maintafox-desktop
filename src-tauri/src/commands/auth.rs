@@ -49,8 +49,8 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
         return Err(AppError::Auth("Identifiant ou mot de passe invalide.".into()));
     }
 
-    // Look up user
-    let user_record = session_manager::find_active_user(&state.db, &username).await?;
+    // Look up user (a built-in "admin" superseded by another administrator is retired first)
+    let user_record = crate::auth::builtin_admin::find_sign_in_account(&state.db, &username).await?;
     let (user_id, db_username, display_name, is_admin, force_pw_change, pw_hash) = match user_record {
         None => {
             // User not found — run a dummy hash to consume constant time

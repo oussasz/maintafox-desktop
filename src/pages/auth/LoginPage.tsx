@@ -1,4 +1,4 @@
-import { ArrowRight, Eye, EyeOff, Info, Loader2, Lock, User } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Info, Loader2, Lock, User, UserPlus } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
@@ -21,6 +21,7 @@ import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   clearProductLicenseBrowserState,
+  getActivationBootstrapState,
   getActivationLicenseMetadata,
   getProductLicenseOnboardingState,
   POST_ACTIVATION_LOGIN_HINT_KEY,
@@ -45,6 +46,13 @@ export function LoginPage() {
   const [licenseMeta, setLicenseMeta] = useState<ActivationLicenseMetadata | null>(null);
   const [activationReady, setActivationReady] = useState(false);
   const [activationCheckLoading, setActivationCheckLoading] = useState(true);
+  /**
+   * The PC is activated and has no administrator yet (`get_activation_bootstrap_state`): no named
+   * administrator was ever created here, so the first-start screen is still open. Also true on a
+   * PC whose only administrator is the built-in "admin" account with its password never changed.
+   * The backend alone decides whether the creation is allowed (`bootstrap_initial_tenant_admin`).
+   */
+  const [firstAdminPending, setFirstAdminPending] = useState(false);
   const [resettingActivation, setResettingActivation] = useState(false);
   const [resetActivationError, setResetActivationError] = useState<string | null>(null);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
@@ -68,8 +76,19 @@ export function LoginPage() {
       const s = await getProductLicenseOnboardingState();
       const ready = Boolean(s.complete && s.tenant_id && s.tenant_id.trim().length > 0);
       setActivationReady(ready);
+      let pending = false;
+      if (ready) {
+        try {
+          const bootstrap = await getActivationBootstrapState();
+          pending = Boolean(bootstrap.tenant_id?.trim()) && !bootstrap.has_tenant_admin;
+        } catch {
+          // No answer: offer nothing; the sign-in form stays available.
+        }
+      }
+      setFirstAdminPending(pending);
     } catch {
       setActivationReady(false);
+      setFirstAdminPending(false);
     } finally {
       setActivationCheckLoading(false);
     }
@@ -216,6 +235,22 @@ export function LoginPage() {
             disabled={resettingActivation}
           >
             {resettingActivation ? t("login.resetActivation.resetting") : t("activation.changeKey")}
+          </AuthButton>
+        </div>
+      ) : null}
+
+      {firstAdminPending && activationReady ? (
+        <div className="mt-4 space-y-2" data-testid="login-first-admin">
+          <AuthAlert tone="info" title={t("login.firstAdmin.title")}>
+            <p>{t("login.firstAdmin.message")}</p>
+          </AuthAlert>
+          <AuthButton
+            variant="secondary"
+            onClick={() => navigate("/admin-setup")}
+            disabled={resettingActivation}
+          >
+            <UserPlus className="h-4 w-4" aria-hidden />
+            {t("login.firstAdmin.cta")}
           </AuthButton>
         </div>
       ) : null}

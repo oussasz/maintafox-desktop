@@ -1323,7 +1323,7 @@ ACCEPTANCE CRITERIA
 
 **V1 — Login flow works end-to-end.**
 Run `pnpm run tauri dev`. The app should show the login screen. Enter the admin
-credentials (`admin` / `Admin#2026!`). The dashboard should appear with the sidebar
+credentials (`admin` / `<DEV_ADMIN_PASSWORD>`). The dashboard should appear with the sidebar
 and top bar. If the login screen does not appear, check that `AuthGuard` is in the
 router tree and that the `/login` route is defined.
 

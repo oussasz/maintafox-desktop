@@ -1,3 +1,4 @@
+use crate::auth::builtin_admin::BuildProfile;
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
@@ -10,7 +11,15 @@ pub const SEED_SCHEMA_VERSION: i32 = 2;
 ///
 /// Safe to call on every startup: uses INSERT OR IGNORE semantics.
 /// On completion, records `seed_schema_version = SEED_SCHEMA_VERSION` in `system_config`.
+/// The built-in "admin" account follows the build ([`BuildProfile::current`]): created only in
+/// builds with `debug_assertions`, never in a release build (`auth::builtin_admin`).
 pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
+    seed_system_data_for(db, BuildProfile::current()).await
+}
+
+/// [`seed_system_data`] for an explicit build profile: what a release build seeds can be checked
+/// from a test binary (which is a `debug_assertions` build).
+pub(crate) async fn seed_system_data_for(db: &DatabaseConnection, profile: BuildProfile) -> AppResult<()> {
     tracing::info!("seeder::starting system seed (version {})", SEED_SCHEMA_VERSION);
 
     // ── 1. Insert all domain definitions ─────────────────────────────────
@@ -2232,8 +2241,11 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     // ── 5. Ensure admin roles grant RAM analyze permissions (RBAC drift backfill) ─
     ensure_admin_ram_permissions(db).await?;
 
-    // ── 6. Seed bootstrap admin account ───────────────────────────────────
-    seed_admin_account(db).await?;
+    // ── 6. Built-in admin: dev account (dev builds only), then retirement of a built-in account
+    //       whose password was never changed once another administrator exists, and the
+    //       first-administrator marker of PCs administered before it existed.
+    seed_builtin_admin(db, profile).await?;
+    crate::auth::builtin_admin::reconcile_at_startup(db, profile).await?;
 
     // ── 7. Seed default application settings ──────────────────────────────
     seed_default_settings(db).await?;
@@ -2753,17 +2765,6 @@ async fn assign_permission_by_name(
     Ok(())
 }
 
-// ── Helper: seed bootstrap admin account ──────────────────────────────────
-
-/// Seeds the initial admin account for first launch.
-/// Uses username "admin" with a known dev password "Admin#2026!" that forces
-/// a password change on first login (`force_password_change = 1`).
-///
-/// This is only a development bootstrap credential. In production, the
-/// first-launch wizard sets the administrator password interactively.
-///
-/// Safety: checks for existing admin and skips if present — will not
-/// overwrite an existing admin account or its password.
 /// Idempotent backfill: Administrator/Superadmin must hold ram.analyze (added post-seed in some DBs).
 async fn ensure_admin_ram_permissions(db: &DatabaseConnection) -> AppResult<()> {
     for perm in [
@@ -2787,7 +2788,30 @@ async fn ensure_admin_ram_permissions(db: &DatabaseConnection) -> AppResult<()> 
     Ok(())
 }
 
-async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
+// ── Helper: built-in admin account (dev builds only) ─────────────────────────────
+
+/// The built-in "admin" account: seeded only when the build profile says so
+/// ([`BuildProfile::seeds_builtin_admin`]). The seeding code and the dev password are compiled only
+/// with `debug_assertions`, so a release binary contains neither.
+async fn seed_builtin_admin(db: &DatabaseConnection, profile: BuildProfile) -> AppResult<()> {
+    if !profile.seeds_builtin_admin() {
+        tracing::info!("seeder::builtin_admin not seeded (release build): first start creates the first administrator");
+        return Ok(());
+    }
+    #[cfg(debug_assertions)]
+    seed_dev_admin_account(db).await?;
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = db;
+    }
+    Ok(())
+}
+
+/// Dev account "admin" (`auth::builtin_admin::DEV_ADMIN_PASSWORD`, forced change at first sign-in).
+/// Skips an existing account (any state): never overwrites it or its password, never brings back
+/// one that was disabled or deleted.
+#[cfg(debug_assertions)]
+async fn seed_dev_admin_account(db: &DatabaseConnection) -> AppResult<()> {
     use crate::auth::password::hash_password;
 
     let existing = db
@@ -2811,7 +2835,7 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
         return Ok(());
     }
 
-    let password_hash = hash_password("Admin#2026!")?;
+    let password_hash = hash_password(crate::auth::builtin_admin::DEV_ADMIN_PASSWORD)?;
 
     let now = Utc::now().to_rfc3339();
     // Every device seeds this account: identity from the username (`sync::seeded_identity`).
@@ -2836,6 +2860,15 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
     ))
     .await?;
 
+    // A new dev account (first start, or after a local data reset wiped the accounts) is not the
+    // one this PC retired earlier: that retirement marker no longer applies.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM system_config WHERE key = ?",
+        [crate::auth::builtin_admin::BUILTIN_ADMIN_RETIRED_KEY.into()],
+    ))
+    .await?;
+
     tracing::info!("seeder::admin_account created (force_password_change=1)");
 
     // Assign the Administrator role to the newly created admin account
@@ -2846,6 +2879,7 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
 
 /// Ensures the admin user has the Administrator role assigned via user_scope_assignments.
 /// Idempotent — uses INSERT OR IGNORE.
+#[cfg(debug_assertions)]
 async fn ensure_admin_role_assignment(db: &DatabaseConnection) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     // Every device seeds this assignment (`sync::seeded_identity`).

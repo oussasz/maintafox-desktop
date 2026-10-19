@@ -506,6 +506,8 @@
     "LICENSE_RECONCILE_ADMIN_REQUIRED": "This licence change needs an administrator: sign in as an administrator; the licence screen then asks you to confirm your identity and applies the change.",
     "LICENSE_EXTENSION_ADMIN_REQUIRED": "This licence update extends the licence terms or lifts a denial (expiry, devices, edition, entitlements): sign in as an administrator; the licence screen then asks you to confirm your identity and applies the update.",
     "LICENSE_CLAIM_INVALID": "The licence data received is incomplete or malformed (organisation, licence, machine or activation token): nothing was changed.",
-    "LICENSE_FIRST_ADMIN_RETRY": "The first administrator could not be saved because another one is being created at the same time: wait a moment, then retry."
+    "LICENSE_FIRST_ADMIN_RETRY": "The first administrator could not be saved because another one is being created at the same time: wait a moment, then retry.",
+    "LICENSE_RESET_BUILTIN_ADMIN_PENDING": "This PC holds a licence and is still reached through its built-in administrator account: create the first administrator, then sign in with that account to reset local data.",
+    "LAST_ADMINISTRATOR_REQUIRED": "This change would leave the plant without an active administrator: create or enable a second administrator first."
   }
 }

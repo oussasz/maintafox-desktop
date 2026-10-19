@@ -217,9 +217,14 @@ async fn a_denial_is_always_recorded_and_a_pc_without_a_stored_claim_needs_an_ad
     );
 }
 
+/// On a release install (no built-in "admin" account: review E-1). A PC that still has a never-used
+/// built-in account and a stored claim is limited as administered (`auth::builtin_admin_tests`, L3).
 #[tokio::test]
 async fn before_any_administrator_a_licence_change_needs_no_session() {
-    let db = crate::db::test_db::seeded().await;
+    let db = crate::db::test_db::migrated().await;
+    crate::db::seeder::seed_system_data_for(&db, crate::auth::builtin_admin::BuildProfile::Release)
+        .await
+        .expect("release seed");
     record_activation_claim_for_tests(&db, TENANT, FINGERPRINT, "token-1")
         .await
         .expect("claim");

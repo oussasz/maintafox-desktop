@@ -452,7 +452,7 @@ seed_admin_account(db).await?;
 Add the function:
 ```rust
 /// Seeds the initial admin account for first launch.
-/// Uses username "admin" with a known dev password "Admin#2026!" that forces
+/// Uses username "admin" with a known dev password "<DEV_ADMIN_PASSWORD>" that forces
 /// a password change on first login (force_password_change = 1).
 ///
 /// This is only a development bootstrap credential. In production, the
@@ -476,7 +476,7 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
         return Ok(());
     }
 
-    let password_hash = hash_password("Admin#2026!")
+    let password_hash = hash_password("<DEV_ADMIN_PASSWORD>")
         .map_err(|e| AppError::Internal(format!("seed admin hash failed: {e}")))?;
 
     let now = Utc::now().to_rfc3339();
@@ -1089,7 +1089,7 @@ ACCEPTANCE CRITERIA
 - cargo test passes with 0 failures (6 new session_manager tests)
 - pnpm run dev starts cleanly
 - `invoke('get_session_info')` returns `{ is_authenticated: false }` before login
-- `invoke('login', { username: 'admin', password: 'Admin#2026!' })` returns a session
+- `invoke('login', { username: 'admin', password: '<DEV_ADMIN_PASSWORD>' })` returns a session
   with `is_authenticated: true`, `username: 'admin'`, `force_password_change: true`
 - `invoke('login', { username: 'admin', password: 'wrong' })` returns an error whose
   message is exactly "Identifiant ou mot de passe invalide." (no information leak)
@@ -1104,7 +1104,7 @@ ACCEPTANCE CRITERIA
 **V1 — Login with correct credentials succeeds.**
 Open Tauri Developer Tools. In the console, run:
 ```javascript
-window.__TAURI__.core.invoke('login', { payload: { username: 'admin', password: 'Admin#2026!' } })
+window.__TAURI__.core.invoke('login', { payload: { username: 'admin', password: '<DEV_ADMIN_PASSWORD>' } })
   .then(r => console.log(JSON.stringify(r, null, 2)));
 ```
 The response must show `session_info.is_authenticated === true`,
@@ -1518,7 +1518,7 @@ describe("useSession", () => {
     await act(async () => {});
 
     await act(async () => {
-      await result.current.login({ username: "admin", password: "Admin#2026!" });
+      await result.current.login({ username: "admin", password: "<DEV_ADMIN_PASSWORD>" });
     });
 
     expect(result.current.info?.is_authenticated).toBe(true);
