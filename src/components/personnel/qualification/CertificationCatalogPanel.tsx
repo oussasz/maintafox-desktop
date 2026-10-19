@@ -10,16 +10,9 @@ import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
+import { EntityFormDialog, EntityFormFooter, EntityFormSection } from "@/components/entity-form";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import {
@@ -204,13 +197,26 @@ export function CertificationCatalogPanel({
         />
       )}
 
-      <Dialog open={draft != null} onOpenChange={(o) => !o && !saving && setDraft(null)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{draft?.id ? t("catalog.editTitle") : t("catalog.addTitle")}</DialogTitle>
-            <DialogDescription>{t("catalog.formDescription")}</DialogDescription>
-          </DialogHeader>
-          {draft ? (
+      <EntityFormDialog
+        open={draft != null}
+        onOpenChange={(o) => !o && !saving && setDraft(null)}
+        title={draft?.id ? t("catalog.editTitle") : t("catalog.addTitle")}
+        description={t("catalog.formDescription")}
+        footer={
+          <EntityFormFooter
+            cancelLabel={t("action.cancel")}
+            primaryLabel={t("action.save")}
+            onCancel={() => setDraft(null)}
+            cancelDisabled={saving}
+            primaryType="button"
+            onPrimary={() => void save()}
+            primaryDisabled={!valid}
+            primaryLoading={saving}
+          />
+        }
+      >
+        {draft ? (
+          <EntityFormSection title={t("catalog.formSection")}>
             <div className="grid gap-3 sm:grid-cols-2">
               <FormField name="ct-code" label={t("col.code")} required>
                 <Input
@@ -286,22 +292,9 @@ export function CertificationCatalogPanel({
                 {t("catalog.active")}
               </label>
             </div>
-          ) : null}
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              className="h-11"
-              onClick={() => setDraft(null)}
-              disabled={saving}
-            >
-              {t("action.cancel")}
-            </Button>
-            <Button className="h-11" onClick={() => void save()} disabled={!valid || saving}>
-              {t("action.save")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </EntityFormSection>
+        ) : null}
+      </EntityFormDialog>
     </div>
   );
 }
