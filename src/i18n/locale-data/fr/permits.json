@@ -185,6 +185,7 @@
     "receiverSearch": "Rechercher un nom…",
     "receiverHint": "Vous signez vous-même la passation ; la personne qui reçoit ne peut pas être vous.",
     "receiversPartial": "{{shown}} personnes affichées sur {{total}} : tapez un nom pour affiner la liste.",
+    "receiversMore": "Afficher plus de personnes",
     "receiversAll": "Les {{total}} personnes correspondantes sont affichées.",
     "receiversNone": "Personne ne correspond à ce nom.",
     "noteMin": "Écrivez au moins {{min}} caractères.",

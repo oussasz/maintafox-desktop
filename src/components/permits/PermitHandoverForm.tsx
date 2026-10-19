@@ -1,12 +1,12 @@
 /**
  * Records the hand-over of a closed permit: roles from the plant's list (Données de référence ›
  * PERMIT.HANDOVER_ROLES, nothing preselected, no free text), an optional receiving person picked
- * by name from a paged, searchable list (never the signer — the server signs with the session
+ * by name from a paged, searchable list ("show more" asks the next page of the same search) (never the signer — the server signs with the session
  * user, shown here read-only), and a confirmation note of at least HANDOVER_NOTE_MIN characters.
  * Refusals are shown with the server's coded, translated reason.
  */
 
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -59,6 +59,9 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
   const [receiversReload, setReceiversReload] = useState(0);
   const [receiverSearch, setReceiverSearch] = useState("");
   const search = useDebouncedValue(receiverSearch.trim());
+  const searchRef = useRef(search);
+  searchRef.current = search;
+  const [loadingMore, setLoadingMore] = useState(false);
   /** The chosen receiver, kept even when a later search no longer lists them. */
   const [receiver, setReceiver] = useState<PermitHandoverReceiver | null>(null);
   const [draft, setDraft] = useState({ from: "", to: "", note: "" });
@@ -96,6 +99,37 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
       cancelled = true;
     };
   }, [search, receiversReload]);
+
+  /** Appends the next page of the current search (the list's own offset), never a stale one. */
+  const showMore = async () => {
+    if (!receivers) return;
+    const asked = search;
+    setLoadingMore(true);
+    try {
+      const page = await listPermitHandoverReceivers(
+        asked || null,
+        undefined,
+        receivers.items.length,
+      );
+      if (searchRef.current !== asked) return;
+      setReceivers((prev) =>
+        prev
+          ? {
+              total: page.total,
+              items: [
+                ...prev.items,
+                ...page.items.filter((p) => !prev.items.some((r) => r.id === p.id)),
+              ],
+            }
+          : page,
+      );
+      setReceiversError(null);
+    } catch (e) {
+      setReceiversError(e);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const note = draft.note.trim();
   const noteTooShort = note.length < HANDOVER_NOTE_MIN;
@@ -224,6 +258,17 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
                   ? t("handover.receiversNone")
                   : t("handover.receiversAll", { total: receivers.total })}
             </p>
+          ) : null}
+          {receivers != null && receivers.total > receivers.items.length ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={loadingMore}
+              onClick={() => void showMore()}
+            >
+              {t("handover.receiversMore")}
+            </Button>
           ) : null}
           {receiversError != null ? (
             <ErrorState error={receiversError} onRetry={() => setReceiversReload((n) => n + 1)} />

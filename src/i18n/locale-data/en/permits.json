@@ -185,6 +185,7 @@
     "receiverSearch": "Search a name…",
     "receiverHint": "You sign the hand-over yourself; the receiving person cannot be you.",
     "receiversPartial": "{{shown}} of {{total}} people shown: type a name to narrow the list.",
+    "receiversMore": "Show more people",
     "receiversAll": "All {{total}} matching people shown.",
     "receiversNone": "Nobody matches this name.",
     "noteMin": "Write at least {{min}} characters.",
