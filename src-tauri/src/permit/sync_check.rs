@@ -1007,7 +1007,20 @@ async fn judge_setting_record(
             ),
         );
     };
-    let record = |p: &Payload| [s.by, s.at, s.why].map(|k| field(p, k).map(str::to_string));
+    // The update's own restore of the shipped LOTO type's isolation rule (migration 241: nobody, a
+    // fixed reason, made by each PC at its own upgrade) is no change by anyone: read as no record,
+    // so the rows of PCs that needed it and of PCs that did not are accepted both ways. Only for
+    // that type and that rule; switching it off stays refused above.
+    let restore =
+        s.setting == ISOLATION_SETTING.setting && crate::permit::queries::is_shipped_loto_type(entity_sync_id, code);
+    let record = |p: &Payload| {
+        let r = [s.by, s.at, s.why].map(|k| field(p, k).map(str::to_string));
+        if restore && crate::permit::queries::is_loto_isolation_restore_record(r[0].as_deref(), r[2].as_deref()) {
+            [None, None, None]
+        } else {
+            r
+        }
+    };
     let held_record = local.map_or([None, None, None], record);
     let changes = if s.off_only {
         held == Some(true) && !wanted

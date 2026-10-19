@@ -3292,6 +3292,106 @@ async fn a_received_isolation_switch_off_is_rechecked_and_loto_stays_locked() {
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
 }
 
+/// The update's restore of the shipped LOTO type's isolation rule (migration 241, made by each PC
+/// itself: nobody, a fixed reason) passes on arrival both ways: from a PC that needed it to one that
+/// did not, and back. The same record on another type, or naming a person, is judged as usual.
+#[tokio::test]
+async fn the_updates_loto_isolation_restore_passes_both_ways() {
+    let db = setup().await;
+    let loto = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'loto'")
+        .await
+        .expect("loto");
+    let hot = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'hot_work'")
+        .await
+        .expect("hot work");
+    let restore = |base: &Payload, by: Value, at: &str| {
+        with(
+            base.clone(),
+            &[
+                ("requires_energy_isolation", json!(1)),
+                ("isolation_changed_by_sync_id", by),
+                ("isolation_changed_at", json!(at)),
+                (
+                    "isolation_change_reason",
+                    json!(crate::permit::queries::LOTO_ISOLATION_RESTORE_REASON),
+                ),
+            ],
+        )
+    };
+    let record = |sync: String| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT COALESCE(isolation_changed_at, '-') || '|' || COALESCE(isolation_change_reason, '-') \
+                     FROM permit_types WHERE entity_sync_id = '{sync}'"
+                ),
+            )
+            .await
+        }
+    };
+    // This PC kept LOTO on (no record); a PC that needed the restore sends its LOTO row: applied.
+    let held = wire(&db, "permit_types", &loto).await;
+    let restored_there = restore(&held, Value::Null, &now());
+    let outcome = apply(
+        &db,
+        "permit_types",
+        &loto,
+        &with(restored_there.clone(), &[("name", json!("LOTO (A)"))]),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert!(
+        record(loto.clone())
+            .await
+            .is_some_and(|r| r.ends_with(crate::permit::queries::LOTO_ISOLATION_RESTORE_REASON)),
+        "the update's record travels with the row"
+    );
+    // Its own restore made later on another PC (another time): applied too.
+    let later = (chrono::Utc::now() + chrono::Duration::minutes(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let outcome = apply(&db, "permit_types", &loto, &restore(&held, Value::Null, &later)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // And back: a PC that did not need it sends its LOTO row without a record: applied.
+    let unrecorded = with(
+        wire(&db, "permit_types", &loto).await,
+        &[
+            ("isolation_changed_by_sync_id", Value::Null),
+            ("isolation_changed_at", Value::Null),
+            ("isolation_change_reason", Value::Null),
+            ("name", json!("LOTO (B)")),
+        ],
+    );
+    let outcome = apply(&db, "permit_types", &loto, &unrecorded).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // Switching LOTO off stays refused, whatever record it carries.
+    let off = with(
+        restore(&wire(&db, "permit_types", &loto).await, Value::Null, &now()),
+        &[("requires_energy_isolation", json!(0))],
+    );
+    let outcome = apply(&db, "permit_types", &loto, &off).await;
+    assert_eq!(code(&outcome), Some("PERMIT_TYPE_LOTO_ISOLATION_LOCKED"), "{outcome:?}");
+
+    // The same record on another type is no restore by the update: judged (nobody named).
+    let outcome = apply(
+        &db,
+        "permit_types",
+        &hot,
+        &with(
+            restore(&wire(&db, "permit_types", &hot).await, Value::Null, &now()),
+            &[("requires_energy_isolation", json!(0))],
+        ),
+    )
+    .await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_ISOLATION_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+}
+
 /// A permit type received from another PC never changes its code (compared exactly, as stored, and
 /// only text can match: a number, true/false or null is refused too); its other fields are applied
 /// as received.

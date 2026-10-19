@@ -856,6 +856,70 @@ pub(crate) fn is_shipped_loto_type(entity_sync_id: &str, code: &str) -> bool {
     entity_sync_id == SHIPPED_LOTO_TYPE_SYNC_ID || code.trim().eq_ignore_ascii_case("loto")
 }
 
+/// The reason recorded when the update switches the shipped LOTO type's energy-isolation rule back
+/// on (migration 241). Fixed text, the same on every PC.
+pub(crate) const LOTO_ISOLATION_RESTORE_REASON: &str = "Mise à jour Maintafox : le type LOTO livré exige toujours une isolation énergétique (rétablie). / Maintafox update: the shipped LOTO type always requires an energy isolation (restored).";
+
+/// The record of that restore: written by nobody (the update itself) with the fixed reason.
+pub(crate) fn is_loto_isolation_restore_record(by: Option<&str>, reason: Option<&str>) -> bool {
+    by.is_none() && reason.map(str::trim) == Some(LOTO_ISOLATION_RESTORE_REASON)
+}
+
+/// Migration 241: the shipped LOTO type (identified as [`is_shipped_loto_type`] does) requires an
+/// energy isolation again where a switch-off received from another PC before migration 240 left it
+/// off. Touches that row only, and only while it is off (idempotent): the rule on, the record says
+/// the update did it (nobody, now, [`LOTO_ISOLATION_RESTORE_REASON`]), audited as a system change
+/// in the same transaction. Returns how many rows it switched back on.
+pub(crate) async fn restore_shipped_loto_isolation(db: &impl ConnectionTrait) -> AppResult<u64> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, code FROM permit_types \
+              WHERE (entity_sync_id = ? OR LOWER(TRIM(code)) = 'loto') \
+                AND COALESCE(requires_energy_isolation, 0) = 0",
+            [SHIPPED_LOTO_TYPE_SYNC_ID.into()],
+        ))
+        .await?;
+    let mut restored = 0;
+    for row in &rows {
+        let id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        let code: String = row.try_get("", "code").map_err(|e| decode_err("code", e))?;
+        let at = now_ts();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE permit_types SET requires_energy_isolation = 1, isolation_changed_by_id = NULL, \
+             isolation_changed_at = ?, isolation_change_reason = ?, row_version = row_version + 1 \
+             WHERE id = ? AND COALESCE(requires_energy_isolation, 0) = 0",
+            [at.clone().into(), LOTO_ISOLATION_RESTORE_REASON.into(), id.into()],
+        ))
+        .await?;
+        crate::audit::writer::write_audit_event_in(
+            db,
+            crate::audit::writer::AuditEventInput {
+                action_code: "permit_type.energy_isolation.restored".to_string(),
+                target_type: Some("permit_type".to_string()),
+                target_id: Some(id.to_string()),
+                actor_id: None,
+                auth_context: "system".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "standard".to_string(),
+                details_json: Some(serde_json::json!({
+                    "summary": "Shipped LOTO permit type requires an energy isolation again",
+                    "code": code,
+                    "reason": LOTO_ISOLATION_RESTORE_REASON,
+                    "origin": "migration_241",
+                    "at": at,
+                })),
+            },
+        )
+        .await?;
+        restored += 1;
+    }
+    Ok(restored)
+}
+
 /// Switching the energy-isolation rule off weakens the start gate: never for the shipped LOTO
 /// type, otherwise only for an administrator with step-up and a reason of at least
 /// [`crate::settings::catalog::MIN_REASON_CHARS`] characters, audited in the same transaction.
