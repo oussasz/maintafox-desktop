@@ -60,7 +60,23 @@ vi.mock("@/lib/app-error", async (importOriginal) => ({
     ((e.code && lookup(enTraining, `errors.${e.code}`)) || "unknown").replace(/\{\{\w+\}\}/g, ""),
 }));
 
-const perms = vi.hoisted(() => ({ granted: new Set<string>() }));
+const perms = vi.hoisted(() => ({
+  granted: new Set<string>(),
+  loading: false,
+  asked: [] as (number | null | undefined)[],
+}));
+// Permit types are plant-wide: the rights are read at no node (node 0).
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: (node: number | null | undefined) => {
+    perms.asked.push(node);
+    return {
+      loading: perms.loading,
+      can: (p: string) => !perms.loading && node === 0 && perms.granted.has(p),
+    };
+  },
+}));
+
+// The editor reads the administrator right (three-person setting) from the held-anywhere set.
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({
     can: (p: string) => perms.granted.has(p),
@@ -98,6 +114,8 @@ describe("PermitTypesHost (Données de référence)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     perms.granted = new Set<string>([P.PTW_VIEW, P.PTW_ISSUE]);
+    perms.loading = false;
+    perms.asked = [];
     svc.listPermitTypes.mockResolvedValue([LOTO_TYPE, HOT_WORK]);
     svc.upsertPermitType.mockResolvedValue(HOT_WORK);
   });
@@ -287,5 +305,18 @@ describe("PermitTypesHost (Données de référence)", () => {
         expect(await screen.findByText(text.replace(/\s+/g, " ").trim())).toBeInTheDocument();
       },
     );
+  });
+  it("reads the rights at no node (permit types are plant-wide)", async () => {
+    render(<PermitTypesHost />);
+    await screen.findByText("LOTO");
+    expect(perms.asked.length).toBeGreaterThan(0);
+    expect(perms.asked.every((n) => n === 0)).toBe(true);
+  });
+
+  it("shows neither the list nor the no-right message while the rights load", () => {
+    perms.loading = true;
+    render(<PermitTypesHost />);
+    expect(screen.queryByText(enPermits.types.noViewRight)).toBeNull();
+    expect(svc.listPermitTypes).not.toHaveBeenCalled();
   });
 });

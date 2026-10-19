@@ -18,7 +18,7 @@ import { PERMIT_QUERY_CREATE_FOR_WO, PERMIT_QUERY_SELECT } from "./permit-rules"
 interface WoPermitGateCardProps {
   workOrderId: number;
   /** The work order's site (`entity_id`); rights are read there. None: plant-wide rights only. */
-  workOrderSiteId?: number | null;
+  workOrderSiteId?: number | null | undefined;
   /** Bump to refetch (e.g. after the WO row version changes). */
   refreshKey?: number | string;
 }

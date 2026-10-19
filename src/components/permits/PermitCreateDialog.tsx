@@ -92,6 +92,7 @@ export function PermitCreateDialog({
   const siteId = workOrder != null ? (workOrder.siteId ?? null) : (asset?.org_node_id ?? null);
   const siteKnown = siteId != null && siteId > 0;
   const siteAccess = useAccessAt(siteKnown ? siteId : null);
+  const rightsLoading = siteKnown && siteAccess.loading;
   const noIssueRightAtSite = siteKnown && !siteAccess.loading && !siteAccess.can(P.PTW_ISSUE);
   const typeError = submitted && !typeId ? t("errors.required") : undefined;
   const assetError = submitted && needsAsset && !asset ? t("errors.required") : undefined;
@@ -197,7 +198,7 @@ export function PermitCreateDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {t("actions.cancel")}
             </Button>
-            <Button type="submit" disabled={busy || noIssueRightAtSite}>
+            <Button type="submit" disabled={busy || noIssueRightAtSite || rightsLoading}>
               {t("create.submit")}
             </Button>
           </DialogFooter>

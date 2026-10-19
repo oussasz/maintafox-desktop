@@ -64,12 +64,16 @@ vi.mock("@/components/permits/loto-card-print", () => ({ printLotoCard: vi.fn() 
 const rightsAt = vi.hoisted(() => ({
   byNode: new Map<number, string[]>(),
   asked: [] as (number | null | undefined)[],
+  loading: false,
 }));
 vi.mock("@/hooks/use-access-at", () => ({
   useAccessAt: (node: number | null | undefined) => {
     rightsAt.asked.push(node);
     const granted = node == null ? [] : (rightsAt.byNode.get(node) ?? []);
-    return { loading: false, can: (p: string) => granted.includes(p) };
+    return {
+      loading: rightsAt.loading,
+      can: (p: string) => !rightsAt.loading && granted.includes(p),
+    };
   },
 }));
 // The "held anywhere" set must not be what these screens read for a permit's buttons.
@@ -82,7 +86,9 @@ vi.mock("@/hooks/use-session", () => ({
   useSession: () => ({ info: { user_id: 10, username: "u", display_name: "U" } }),
 }));
 
+const gate = vi.hoisted(() => ({ permit: null as unknown }));
 const svc = vi.hoisted(() => ({
+  getPermitForWorkOrder: vi.fn(),
   listPermitIsolations: vi.fn(),
   listPermitIsolationOptions: vi.fn(),
   listPermitSuspensions: vi.fn(),
@@ -116,6 +122,7 @@ import {
   permitAccessNode,
   permitWithoutSite,
 } from "../PermitSiteScope";
+import { WoPermitGateCard } from "../WoPermitGateCard";
 
 function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
   return {
@@ -150,6 +157,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   rightsAt.byNode = new Map();
   rightsAt.asked = [];
+  rightsAt.loading = false;
+  gate.permit = null;
   svc.listPermitIsolations.mockResolvedValue([]);
   svc.listPermitIsolationOptions.mockResolvedValue({ energy_types: [], isolation_methods: [] });
   svc.listPermitSuspensions.mockResolvedValue([]);
@@ -225,6 +234,15 @@ describe("permit buttons follow the rights at the permit's site", () => {
     expect(rightsAt.asked).toContain(4);
   });
 
+  it("hides the action buttons while the rights load", async () => {
+    rightsAt.byNode.set(3, [P.PTW_VIEW, P.PTW_ISSUE, P.PTW_CLOSE]);
+    rightsAt.loading = true;
+    renderPanel(permit({ entity_id: 3 }));
+    await screen.findByText("PTW-2026-000041", { exact: false });
+    expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel permit" })).toBeNull();
+  });
+
   it("a permit without a site follows the plant-wide rights only, and is flagged", async () => {
     rightsAt.byNode.set(3, [P.PTW_VIEW, P.PTW_ISSUE, P.PTW_CLOSE]);
     rightsAt.byNode.set(0, [P.PTW_VIEW, P.PTW_ISSUE]);
@@ -290,11 +308,59 @@ describe("create dialog", () => {
     expect(screen.getByRole("button", { name: enPermits.create.submit })).toBeDisabled();
   });
 
+  it("disables submit while the rights at the chosen site load", () => {
+    rightsAt.byNode.set(3, [P.PTW_ISSUE]);
+    renderDialog();
+    rightsAt.loading = true;
+    fireEvent.click(screen.getByText("pick-site-3"));
+    expect(screen.getByRole("button", { name: enPermits.create.submit })).toBeDisabled();
+  });
+
   it("allows the equipment's site when the issue right is held there", () => {
     rightsAt.byNode.set(3, [P.PTW_ISSUE]);
     renderDialog();
     fireEvent.click(screen.getByText("pick-site-3"));
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("button", { name: enPermits.create.submit })).toBeEnabled();
+  });
+  describe("work-order permit gate card", () => {
+    function renderCard(siteId?: number | null) {
+      svc.getPermitForWorkOrder.mockResolvedValue(null);
+      render(
+        <MemoryRouter>
+          <WoPermitGateCard workOrderId={9} workOrderSiteId={siteId} />
+        </MemoryRouter>,
+      );
+    }
+
+    it("renders nothing while the rights load", async () => {
+      rightsAt.byNode.set(3, [P.PTW_VIEW, P.PTW_ISSUE]);
+      rightsAt.loading = true;
+      renderCard(3);
+      await waitFor(() => expect(svc.getPermitForWorkOrder).toHaveBeenCalled());
+      expect(screen.queryByTestId("wo-permit-gate")).toBeNull();
+    });
+
+    it("asks the work order's site and offers create when the issue right is held there", async () => {
+      rightsAt.byNode.set(3, [P.PTW_VIEW, P.PTW_ISSUE]);
+      renderCard(3);
+      expect(await screen.findByRole("button", { name: enPermits.woGate.create })).toBeTruthy();
+      expect(rightsAt.asked).toContain(3);
+    });
+
+    it("offers no create button when the issue right is held on another site only", async () => {
+      rightsAt.byNode.set(3, [P.PTW_VIEW]);
+      rightsAt.byNode.set(4, [P.PTW_ISSUE]);
+      renderCard(3);
+      await screen.findByTestId("wo-permit-gate");
+      expect(screen.queryByRole("button", { name: enPermits.woGate.create })).toBeNull();
+    });
+
+    it.each([[undefined], [null], [0]])("asks node 0 when the site is %s", async (site) => {
+      rightsAt.byNode.set(0, [P.PTW_VIEW, P.PTW_ISSUE]);
+      renderCard(site);
+      expect(await screen.findByRole("button", { name: enPermits.woGate.create })).toBeTruthy();
+      expect(rightsAt.asked.every((n) => n === 0)).toBe(true);
+    });
   });
 });
