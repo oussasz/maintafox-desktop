@@ -819,12 +819,28 @@ export async function applyProductLicenseReconciliation(
   return ProductLicenseOnboardingStateSchema.parse(raw);
 }
 
-/** Refresh edition capabilities without consuming a new device slot. */
+/**
+ * A version the licence server compares against a forced-update minimum: MAJOR.MINOR.PATCH with an
+ * optional pre-release ("0.4.0-dev" is below "0.4.0"), at most 32 characters as the server accepts.
+ */
+const STRICT_APP_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+/**
+ * Refresh edition capabilities without consuming a new device slot.
+ *
+ * `appVersion` is the version this PC is running, so a forced update releases a PC that is
+ * already up to date. It is sent only when well formed; without it the server applies the forced
+ * update as if the PC were out of date.
+ */
 export async function refreshProductActivationPolicy(
   activationToken: string,
+  appVersion?: string,
 ): Promise<ProductActivationClaim> {
   const token = activationToken.trim();
   if (!token) throw new Error("Activation token is required.");
+  const version = appVersion?.trim();
+  const sentVersion =
+    version && version.length <= 32 && STRICT_APP_VERSION.test(version) ? version : undefined;
   const res = await fetch(`${controlPlaneApiBase()}/api/v1/activation/policy-refresh`, {
     method: "POST",
     headers: {
@@ -832,7 +848,7 @@ export async function refreshProductActivationPolicy(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: "{}",
+    body: JSON.stringify(sentVersion ? { app_version: sentVersion } : {}),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => undefined);

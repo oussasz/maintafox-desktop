@@ -517,6 +517,59 @@ describe("ProductLicenseGate", () => {
     expect(kinds.every((k) => k === "success")).toBe(true);
   });
 
+  it("tells the licence server the version this PC runs when it refreshes the policy", async () => {
+    setUpDueActiveDevice();
+    mockedRefreshProductActivationPolicy.mockRejectedValue(
+      Object.assign(new Error("Update required"), { code: "force_update_required", status: 403 }),
+    );
+    mockedApplyProductLicenseReconciliation.mockResolvedValue({
+      complete: true,
+      status: "denied_force_update_required",
+      pending_online_validation: false,
+      tenant_id: "ten_test",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalledWith(
+        "device-token",
+        appInfo.version,
+      );
+    });
+  });
+
+  it("sends no version, never the placeholder, when the running version cannot be read", async () => {
+    setUpDueActiveDevice();
+    mockedGetAppInfo.mockRejectedValue(new Error("app info unavailable"));
+    mockedRefreshProductActivationPolicy.mockRejectedValue(
+      Object.assign(new Error("Update required"), { code: "force_update_required", status: 403 }),
+    );
+    mockedApplyProductLicenseReconciliation.mockResolvedValue({
+      complete: true,
+      status: "denied_force_update_required",
+      pending_online_validation: false,
+      tenant_id: "ten_test",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalled();
+    });
+    for (const call of mockedRefreshProductActivationPolicy.mock.calls) {
+      expect(call[1]).toBeUndefined();
+    }
+  });
+
   it("re-claims with the cached key when the device token was superseded", async () => {
     setUpDueActiveDevice();
     mockedRefreshProductActivationPolicy.mockRejectedValue(

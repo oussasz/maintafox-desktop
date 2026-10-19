@@ -120,6 +120,8 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
   const [key, setKey] = useState("");
   const [deviceName, setDeviceName] = useState(defaultDeviceName);
   const [appVersion, setAppVersion] = useState("0.1.0-dev");
+  /** The version read from the running app; unset while unknown (never the placeholder above). */
+  const [runningAppVersion, setRunningAppVersion] = useState<string | undefined>(undefined);
   const [error, setError] = useState<UserFacingActivationError | null>(null);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
@@ -194,6 +196,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       try {
         const info = await getAppInfo();
         setAppVersion(info.version);
+        setRunningAppVersion(info.version);
       } catch {
         // Keep default fallback.
       }
@@ -307,7 +310,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
         const existingToken = await getProductActivationToken().catch(() => null);
         if (existingToken) {
           try {
-            claim = await refreshProductActivationPolicy(existingToken);
+            claim = await refreshProductActivationPolicy(existingToken, runningAppVersion);
           } catch (refreshErr) {
             // Re-claim only when the token itself is unusable; a revocation or other denial must
             // surface as a denial, never be retried as a fresh claim.
@@ -393,6 +396,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       keyCacheStorage,
       recordOutcome,
       recordOutcomeSafely,
+      runningAppVersion,
       showLicenceRefusal,
       t,
     ],
