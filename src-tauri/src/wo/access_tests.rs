@@ -800,3 +800,95 @@ async fn a_draft_with_stock_reserved_or_locks_fitted_does_not_move() {
         .expect("moves once nothing ties it to its old location");
     assert_eq!(moved.entity_id, Some(f.t.site_b));
 }
+
+#[tokio::test]
+async fn an_open_permit_holds_any_equipment_change_but_stock_only_a_change_of_site() {
+    let f = fixture().await;
+    let eq_a2 = equipment(&f.db, "A2", Some(f.t.site_a)).await;
+    let wo = queries::get_work_order(&f.db, f.wo_a)
+        .await
+        .expect("read")
+        .expect("wo_a");
+
+    // A permit open on the order (it covers the old equipment): even a change to other equipment
+    // at the same location is refused (CMMS Advisor: the permit covers specific equipment).
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, status, row_version)
+             SELECT 'same-loc-permit', 'PTW-SAME-LOC', wo.id, pt.id, wo.equipment_id, wo.entity_id, 'active', 1
+               FROM work_orders wo, permit_types pt WHERE wo.id = {} AND pt.code = 'hot_work'",
+            f.wo_a
+        ),
+    )
+    .await;
+    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, wo.row_version, eq_a2))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::ValidationFailed(m) if m.iter().any(|e| e.contains("permis"))),
+        "{err:?}"
+    );
+    let kept = queries::get_work_order(&f.db, f.wo_a)
+        .await
+        .expect("read")
+        .expect("wo_a");
+    assert_eq!(kept.equipment_id, Some(f.eq_a), "equipment unchanged while refused");
+
+    // Permit closed, and stock reserved for the order: a change at the same location goes through
+    // (the store is on the same site), the order stays on site A.
+    exec(
+        &f.db,
+        "UPDATE work_permits SET status = 'closed' WHERE entity_sync_id = 'same-loc-permit'",
+    )
+    .await;
+    exec(
+        &f.db,
+        "INSERT INTO warehouses (entity_sync_id, code, name, is_active, row_version)
+         VALUES ('same-loc-wh', 'SAME-LOC-WH', 'Store of site A', 1, 1)",
+    )
+    .await;
+    exec(
+        &f.db,
+        "INSERT INTO stock_locations (entity_sync_id, warehouse_id, code, name, is_default, is_active)
+         SELECT 'same-loc-bin', id, 'SAME-LOC-BIN', 'Bin', 1, 1 FROM warehouses WHERE code = 'SAME-LOC-WH'",
+    )
+    .await;
+    exec(
+        &f.db,
+        "INSERT INTO articles (entity_sync_id, article_code, article_name, unit_value_id)
+         VALUES ('same-loc-art', 'SAME-LOC-ART', 'Seal',
+                 (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id
+                    JOIN reference_domains d ON d.id = s.domain_id
+                   WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'U'))",
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO stock_reservations (entity_sync_id, article_id, warehouse_id, location_id, source_type, source_id,
+                quantity_reserved, status)
+             SELECT 'same-loc-res', a.id, w.id, l.id, 'WO', {}, 1, 'active'
+               FROM articles a, warehouses w, stock_locations l
+              WHERE a.article_code = 'SAME-LOC-ART' AND w.code = 'SAME-LOC-WH' AND l.code = 'SAME-LOC-BIN'",
+            f.wo_a
+        ),
+    )
+    .await;
+    let changed = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, kept.row_version, eq_a2))
+        .await
+        .expect("same location, permit closed: allowed despite the reservation");
+    assert_eq!(
+        (changed.equipment_id, changed.entity_id),
+        (Some(eq_a2), Some(f.t.site_a))
+    );
+
+    // The reservation still holds back a change of site.
+    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, changed.row_version, f.eq_b))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::ValidationFailed(m) if m.iter().any(|e| e.contains("réservation"))),
+        "{err:?}"
+    );
+}

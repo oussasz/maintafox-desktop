@@ -835,12 +835,17 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
 // E) update_wo_draft_fields — optimistic concurrency + draft guard
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// A draft moving to another location must not carry items tied to its old one along silently:
-/// stock still reserved for it (any work-order reservation type, preventive included), a permit
-/// still open on it, or a lock still fitted under one of its permits whatever that permit's status
-/// (a cancelled or expired permit can leave locks on the plant until their removal is verified).
-/// The user deals with them first.
-async fn refuse_site_move_with_old_site_items(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<()> {
+/// A draft whose equipment changes must not carry along silently what covers its old equipment:
+/// a permit still open on it, or a lock still fitted under one of its permits whatever that
+/// permit's status (a cancelled or expired permit can leave locks on the plant until their removal
+/// is verified) — a permit and its isolations cover specific equipment. When its location changes
+/// too, stock still reserved for it (any work-order reservation type, preventive included) also
+/// holds it back: a store belongs to its site. The user deals with them first (CMMS Advisor).
+async fn refuse_equipment_change_with_old_items(
+    db: &impl ConnectionTrait,
+    wo_id: i64,
+    location_changes: bool,
+) -> AppResult<()> {
     let wo_sources = crate::finance::wo_costing::WO_SOURCE_TYPES_SQL;
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -856,19 +861,19 @@ async fn refuse_site_move_with_old_site_items(db: &impl ConnectionTrait, wo_id: 
     let permits: i64 = row.try_get("", "permits")?;
     let locks: i64 = row.try_get("", "locks")?;
     let mut errors = Vec::new();
-    if reservations > 0 {
+    if location_changes && reservations > 0 {
         errors.push(format!(
-            "Cet OT a {reservations} réservation(s) de stock en cours : libérez-les avant de choisir un équipement installé ailleurs."
+            "Cet OT a {reservations} réservation(s) de stock en cours : libérez-les avant de choisir un équipement installé ailleurs (le magasin appartient à son site)."
         ));
     }
     if permits > 0 {
         errors.push(format!(
-            "Cet OT a {permits} permis de travail encore ouvert(s) : menez-les à leur clôture avant de choisir un équipement installé ailleurs."
+            "Cet OT a {permits} permis de travail encore ouvert(s) : menez-les à leur clôture avant de choisir un autre équipement."
         ));
     }
     if locks > 0 {
         errors.push(format!(
-            "{locks} consignation(s) posée(s) sous les permis de cet OT n'ont pas leur dépose vérifiée : faites vérifier la dépose avant de choisir un équipement installé ailleurs."
+            "Cet OT a {locks} consignation(s) posée(s) sous ses permis dont la dépose n'est pas vérifiée : faites vérifier la dépose avant de choisir un autre équipement."
         ));
     }
     if errors.is_empty() {
@@ -963,9 +968,7 @@ pub async fn update_wo_draft_fields(
                             .into(),
                     ])
                 })?;
-            if current.entity_id != Some(node) {
-                refuse_site_move_with_old_site_items(&txn, input.id).await?;
-            }
+            refuse_equipment_change_with_old_items(&txn, input.id, current.entity_id != Some(node)).await?;
             sets.push("entity_id = ?".into());
             values.push(node.into());
         }

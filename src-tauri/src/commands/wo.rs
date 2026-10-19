@@ -426,16 +426,24 @@ pub async fn update_wo_draft(
     .await?;
     let before = queries::get_work_order(&state.db, input.id).await?;
     let wo = queries::update_wo_draft_fields(&state.db, input).await?;
-    // A draft that moved with its equipment to another location (org node): who, when, from
-    // where to where.
-    if let Some(before) = before.filter(|b| b.entity_id != wo.entity_id) {
+    // Every change of a draft's equipment is recorded (who, when, old and new equipment), and
+    // whether the order moved with it to another location (org node).
+    if let Some(before) = before.filter(|b| b.equipment_id != wo.equipment_id) {
+        let moved = before.entity_id != wo.entity_id;
         audit::record_wo_change_event(
             &state.db,
             audit::WoAuditInput {
                 wo_id: Some(wo.id),
-                action: "site_moved".into(),
+                action: if moved { "site_moved" } else { "equipment_changed" }.into(),
                 actor_id: Some(i64::from(user.user_id)),
-                summary: Some("Draft moved with its new equipment to another location".into()),
+                summary: Some(
+                    if moved {
+                        "Draft moved with its new equipment to another location"
+                    } else {
+                        "Draft equipment changed (same location)"
+                    }
+                    .into(),
+                ),
                 details_json: Some(
                     serde_json::json!({
                         "old_entity_id": before.entity_id,

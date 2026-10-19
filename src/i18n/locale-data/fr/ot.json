@@ -783,6 +783,7 @@
       "service_cost_updated": "Coût de prestation mis à jour",
       "permit_requirement_changed": "Exigence de permis modifiée",
       "site_moved": "Déplacé avec son nouvel équipement vers un autre emplacement",
+      "equipment_changed": "Équipement modifié",
       "other": "Modification enregistrée"
     },
     "created": "Créé le",

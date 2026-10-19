@@ -783,6 +783,7 @@
       "service_cost_updated": "Service cost updated",
       "permit_requirement_changed": "Permit requirement changed",
       "site_moved": "Moved with its new equipment to another location",
+      "equipment_changed": "Equipment changed",
       "other": "Change recorded"
     },
     "created": "Created",
