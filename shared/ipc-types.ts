@@ -4259,9 +4259,9 @@ export interface DiListFilter {
 export interface DiListPage {
   items: InterventionRequest[];
   total: number;
-  /** Requests matching the filters outside the user's sites (site-scoped roles); 0 plant-wide. */
+  /** Requests with a site outside the user's sites (site-scoped roles), whatever the filters or search; 0 plant-wide. */
   hidden_outside_scope: number;
-  /** Requests matching the filters that have no org node (plant-wide users only); 0 plant-wide. */
+  /** Requests without an org node (only plant-wide users see them), whatever the filters or search; 0 plant-wide. */
   hidden_without_site: number;
 }
 

@@ -69,3 +69,69 @@ export function useAccessAt(orgNodeId: number | null | undefined): AccessAt {
   );
   return { loading: orgNodeId != null && current === undefined, can };
 }
+
+export interface AccessAtNodes {
+  loading: boolean;
+  /**
+   * Whether, at EVERY one of the nodes, the user holds at least one of `permissions` (an empty
+   * node list answers true: nothing to refuse).
+   */
+  canAllAny: (permissions: readonly string[]) => boolean;
+}
+
+/** A loaded answer for a set of nodes (keyed so a render never reads another set's answer). */
+interface LoadedNodes {
+  key: string;
+  version: number;
+  /** One entry per node; null: every permission (administrator). */
+  granted: (Set<string> | null)[];
+}
+
+/**
+ * The user's rights at several org nodes at once (bulk actions over rows of different sites).
+ * Same source and refresh rules as `useAccessAt`; the backend stays the authority.
+ */
+export function useAccessAtNodes(orgNodeIds: readonly number[]): AccessAtNodes {
+  const [loaded, setLoaded] = useState<LoadedNodes | undefined>(undefined);
+  const [version, setVersion] = useState(0);
+  const key = [...new Set(orgNodeIds)].sort((a, b) => a - b).join(",");
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen("rbac-changed", () => setVersion((v) => v + 1)).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const nodes = key === "" ? [] : key.split(",").map(Number);
+    let cancelled = false;
+    void Promise.all(
+      nodes.map((node) =>
+        getMyAccessAt(node)
+          .then((perms) => (perms === null ? null : new Set(perms)))
+          .catch(() => new Set<string>()),
+      ),
+    ).then((granted) => {
+      if (!cancelled) setLoaded({ key, version, granted });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [key, version]);
+
+  const current = loaded?.key === key && loaded.version === version ? loaded : undefined;
+  const canAllAny = useCallback(
+    (permissions: readonly string[]) =>
+      current !== undefined &&
+      current.granted.every((g) => g === null || permissions.some((p) => g.has(p))),
+    [current],
+  );
+  return { loading: current === undefined, canAllAny };
+}

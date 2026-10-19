@@ -1,7 +1,4 @@
 {
-  "errors": {
-    "DI_ORG_NODE_REQUIRED": "Une demande doit être rattachée à un site : choisissez un équipement installé sur un nœud de l'organisation."
-  },
   "noSite": {
     "badge": "À revoir : sans site",
     "hint": "Demande enregistrée sans site (avant que le site soit obligatoire). Seuls les utilisateurs ayant un rôle valable pour toute l'usine la voient et peuvent agir dessus."
@@ -738,6 +735,7 @@
     "selected_other": "{{count}} demandes sélectionnées",
     "triage_one": "Admettre {{count}} demande en revue",
     "triage_other": "Admettre {{count}} demandes en revue",
+    "outsideYourSites": "Certaines demandes sélectionnées sont hors de vos sites : vous ne pouvez pas les admettre en revue.",
     "clear": "Effacer la sélection",
     "triageResult": "{{done}} sur {{total}} admises en revue ; {{failed}} n'ont pas pu l'être (modifiées entre-temps ou plus au statut soumis)."
   },
