@@ -68,6 +68,9 @@ use crate::settings::site::{instant, InboundVerdict, MAX_CLOCK_SKEW_MINUTES};
 
 pub(crate) type Payload = Map<String, Value>;
 
+/// Work-order statuses past "ready": the work started (`wo::workflow::state_machine`).
+const PAST_READY: &[&str] = &["in_progress", "on_hold", "completed", "closed"];
+
 /// Permit statuses after which a permit no longer protects work (`permit::queries`).
 const TERMINAL: &[&str] = &["closed", "handed_back", "cancelled", "expired"];
 /// Statuses in which isolations are applied and verified (`permit::queries::ISOLATION_SETUP_STATUSES`).
@@ -1286,8 +1289,21 @@ pub(crate) async fn inbound_permit_rule_check(
         if flag(&wo, "requires_permit") {
             return Ok(None);
         }
-        // The cleared state held here, unchanged.
-        if local.as_ref().is_some_and(|l| !flag(l, "requires_permit")) {
+        // The cleared state held here, unchanged: judged again only when the received row moves the
+        // work's start before the clearing (a clearing is valid only before execution started).
+        if let Some(l) = local.as_ref().filter(|l| !flag(l, "requires_permit")) {
+            let start_moved = field(l, "actual_start") != field(&wo, "actual_start");
+            let cleared = time(&wo, "permit_rule_cleared_at");
+            let started = time(&wo, "actual_start");
+            if start_moved && cleared.zip(started).is_some_and(|(c, s)| c > s) {
+                return conflict(
+                    "WO_PERMIT_RULE_CLEAR_INVALID",
+                    format!(
+                        "work order {code}: the permit required by a plant rule was cleared after its execution \
+                         started (the received start is before the clearing recorded here)"
+                    ),
+                );
+            }
             return Ok(None);
         }
     }
@@ -1310,6 +1326,20 @@ pub(crate) async fn inbound_permit_rule_check(
     }
     if time(&wo, "actual_start").is_some_and(|started| cleared_at > started) {
         return invalid("after its execution started");
+    }
+    // Past "ready" without a start time: it started at a time not known here, so a clearing cannot
+    // be shown to come before it (the clear action itself refuses a work order past "ready").
+    if time(&wo, "actual_start").is_none() {
+        if let Some(status_sync) = field(&wo, "status_sync_id") {
+            let Some(status) = status_code(conn, status_sync).await? else {
+                return wait(format!("work-order status {status_sync} is not applied yet"));
+            };
+            if PAST_READY.contains(&status.as_str()) {
+                return invalid(&format!(
+                    "while it is '{status}' with no start time (it counts as started)"
+                ));
+            }
+        }
     }
     let Some(clearer_sync) = field(&wo, "permit_rule_cleared_by_sync_id") else {
         return invalid("without saying who cleared it");

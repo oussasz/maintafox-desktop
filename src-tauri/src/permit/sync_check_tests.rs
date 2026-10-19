@@ -3118,3 +3118,104 @@ async fn a_received_permit_type_never_changes_its_code() {
     let outcome = apply(&db, "permit_types", &ty, &renamed).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
 }
+
+/// A clearing of a rule permit flag is valid only before the work started: a clearing held here is
+/// judged again when a received row moves the start before it, and a work order past "ready" with
+/// no start time counts as started (a clearing received with it is refused).
+#[tokio::test]
+async fn a_clearing_is_judged_against_a_received_start_and_a_start_without_time() {
+    let db = setup().await;
+    let status_sync = |code: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT entity_sync_id FROM work_order_statuses WHERE code = '{code}'"),
+            )
+            .await
+            .expect("status sync id")
+        }
+    };
+    let (in_progress, on_hold) = (status_sync("in_progress").await, status_sync("on_hold").await);
+    let admin = json!(user_sync(&db, APPLIER).await);
+    let reason = json!("Consignation faite par l'exploitant");
+    let at = |minutes_ago: i64| {
+        (chrono::Utc::now() - chrono::Duration::minutes(minutes_ago))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string()
+    };
+    let flagged_wo = |asset: &'static str| {
+        let db = &db;
+        async move {
+            let asset = insert_equipment(db, asset).await;
+            let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+            exec(
+                db,
+                &format!(
+                    "UPDATE work_orders SET permit_rule_code = 'rule-elec', requires_permit = 1 WHERE id = {wo_id}"
+                ),
+            )
+            .await;
+            text(
+                db,
+                &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+            )
+            .await
+            .expect("wo sync id")
+        }
+    };
+    let clearing = |base: Payload, cleared_at: String| {
+        with(
+            base,
+            &[
+                ("requires_permit", json!(0)),
+                ("permit_rule_cleared_by_sync_id", admin.clone()),
+                ("permit_rule_cleared_at", json!(cleared_at)),
+                ("permit_rule_clear_reason", reason.clone()),
+            ],
+        )
+    };
+
+    // A clearing recorded here an hour ago, then a received start half an hour before it: refused.
+    let wo = flagged_wo("EQ-SYNC-48A").await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo,
+        &clearing(wire(&db, "work_orders", &wo).await, at(60)),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let held = wire(&db, "work_orders", &wo).await;
+    let early = with(
+        held.clone(),
+        &[("status_sync_id", json!(in_progress)), ("actual_start", json!(at(90)))],
+    );
+    let outcome = apply(&db, "work_orders", &wo, &early).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    // Started after the clearing: applied.
+    let later = with(
+        held,
+        &[("status_sync_id", json!(in_progress)), ("actual_start", json!(at(30)))],
+    );
+    let outcome = apply(&db, "work_orders", &wo, &later).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+
+    // A clearing received with the work order on hold and no start time: it counts as started.
+    let wo = flagged_wo("EQ-SYNC-48B").await;
+    let base = with(
+        wire(&db, "work_orders", &wo).await,
+        &[("status_sync_id", json!(on_hold))],
+    );
+    let outcome = apply(&db, "work_orders", &wo, &clearing(base, at(5))).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(requires_permit AS TEXT) FROM work_orders WHERE entity_sync_id = '{wo}'")
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
