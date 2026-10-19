@@ -1391,7 +1391,8 @@ async fn sum_spare_stock_for_work_order(db: &DatabaseConnection, wo_id: i64) -> 
             "SELECT COALESCE(SUM(sb.available_qty), 0.0) AS q
              FROM work_order_parts wop
              LEFT JOIN stock_balances sb ON sb.article_id = wop.article_id
-             WHERE wop.work_order_id = ? AND wop.article_id IS NOT NULL",
+             WHERE wop.work_order_id = ? AND wop.article_id IS NOT NULL
+               AND wop.consumption_status <> 'cancelled'",
             [wo_id.into()],
         ))
         .await?;
@@ -1403,7 +1404,8 @@ async fn work_order_has_spare_lines(db: &DatabaseConnection, wo_id: i64) -> AppR
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM work_order_parts WHERE work_order_id = ? AND article_id IS NOT NULL",
+            "SELECT COUNT(*) AS c FROM work_order_parts WHERE work_order_id = ? AND article_id IS NOT NULL \
+             AND consumption_status <> 'cancelled'",
             [wo_id.into()],
         ))
         .await?;

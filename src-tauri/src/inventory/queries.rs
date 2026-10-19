@@ -2714,9 +2714,34 @@ pub(crate) async fn release_stock_reservation_with_connection<C: ConnectionTrait
     reservation_id: i64,
     notes: Option<&str>,
 ) -> AppResult<(StockReservation, Option<i64>)> {
+    release_reservation_in(db, reservation_id, notes, true).await
+}
+
+/// Releases a reservation whose need was withdrawn (a cancelled planned work-order part line),
+/// also when its article was deactivated since: a release only lowers the reserved quantity, it
+/// moves no stock, so the active-article rule of stock movements does not apply. The location
+/// must still exist.
+pub(crate) async fn release_withdrawn_reservation_with_connection<C: ConnectionTrait>(
+    db: &C,
+    reservation_id: i64,
+    notes: Option<&str>,
+) -> AppResult<(StockReservation, Option<i64>)> {
+    release_reservation_in(db, reservation_id, notes, false).await
+}
+
+async fn release_reservation_in<C: ConnectionTrait>(
+    db: &C,
+    reservation_id: i64,
+    notes: Option<&str>,
+    require_active_article: bool,
+) -> AppResult<(StockReservation, Option<i64>)> {
     let reservation = load_reservation_by_id(db, reservation_id).await?;
     ensure_reservation_invariants(&reservation)?;
-    ensure_active_mutation_context(db, reservation.article_id, reservation.location_id).await?;
+    if require_active_article {
+        ensure_active_mutation_context(db, reservation.article_id, reservation.location_id).await?;
+    } else {
+        ensure_location_exists(db, reservation.location_id).await?;
+    }
     if reservation.status == "released" {
         return Ok((reservation, None));
     }

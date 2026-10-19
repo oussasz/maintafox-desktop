@@ -14,6 +14,7 @@ import { PartNecessityChoice, PartOptionalChip } from "@/components/common/PartN
 import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
@@ -24,8 +25,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
 import { useSession } from "@/hooks/use-session";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorText, describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { useReadableLists } from "@/lib/list-access";
 import {
@@ -40,9 +42,11 @@ import {
   addPart,
   addTask,
   addWoTool,
+  cancelPlannedPart,
   listParts,
   listTasks,
   listWoTools,
+  setPlannedPartRequired,
 } from "@/services/wo-execution-service";
 import {
   PERMIT_REQUIREMENT_EDITABLE_STATUSES,
@@ -109,7 +113,35 @@ interface PartDraft {
   reservation_id: number | null;
   /** Required or optional; null until the planner answers (no preselected answer). */
   is_required: boolean | null;
+  /** `pending` until the line is settled; `cancelled` keeps it for the history only. */
+  consumption_status: string;
+  /** Stock unit symbol of the article (null for a free-text line or no article chosen yet). */
+  unit_symbol: string | null;
+  /** `planned` or `execution_added`. */
+  origin: string;
+  /** A used or issued quantity is recorded on the line. */
+  has_use: boolean;
   persisted: boolean;
+}
+
+/** A saved planned line withdrawn before execution: shown muted, out of every total. */
+const PART_STATUS_CANCELLED = "cancelled";
+
+function isCancelledPart(part: PartDraft): boolean {
+  return part.consumption_status === PART_STATUS_CANCELLED;
+}
+
+/**
+ * A saved line the planner may still cancel or switch required / optional: a planned line, still
+ * pending, with no used or issued quantity (the backend checks the same, and store issues too).
+ */
+function isEditableSavedPart(part: PartDraft): boolean {
+  return (
+    part.persisted &&
+    part.consumption_status === "pending" &&
+    part.origin === "planned" &&
+    !part.has_use
+  );
 }
 
 interface SelectOption {
@@ -178,6 +210,10 @@ function toPartDraft(part: WoExecPart): PartDraft {
     unit_cost: part.unit_cost != null ? String(part.unit_cost) : "",
     reservation_id: part.reservation_id ?? null,
     is_required: part.is_required,
+    consumption_status: part.consumption_status ?? "pending",
+    unit_symbol: part.unit_symbol ?? null,
+    origin: part.origin ?? "planned",
+    has_use: (part.quantity_used ?? 0) > 0 || part.quantity_issued > 0,
     persisted: true,
   };
 }
@@ -262,6 +298,14 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [teamRosterOptions, setTeamRosterOptions] = useState<SelectOption[]>([]);
     const [noTeamLeadUser, setNoTeamLeadUser] = useState(false);
     const lastValuationKeyByPart = useRef<Record<string, string>>({});
+    /** Saved planned line waiting for the cancel confirmation. */
+    const [partToCancel, setPartToCancel] = useState<PartDraft | null>(null);
+    /** Why the backend refused the cancel: shown inside the confirmation, which stays open. */
+    const [cancelError, setCancelError] = useState<string | null>(null);
+    /** Why the backend refused a required / optional switch, shown on that line. */
+    const [necessityError, setNecessityError] = useState<{ localId: string; text: string } | null>(
+      null,
+    );
 
     // Readiness evaluation state (planning → ready)
     const [readinessReport, setReadinessReport] = useState<WoReadinessResult | null>(null);
@@ -499,7 +543,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     // Check material availability whenever parts change (planning status only)
     useEffect(() => {
-      const hasPersisted = parts.some((p) => p.persisted);
+      const hasPersisted = parts.some((p) => p.persisted && !isCancelledPart(p));
       if (!hasPersisted || statusCode !== "planning") {
         setMaterialReadiness(null);
         return;
@@ -569,6 +613,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     const plannedCost = useMemo(() => {
       return parts.reduce((sum, part) => {
+        if (isCancelledPart(part)) return sum;
         const qty = parseNumber(part.quantity_planned) ?? 0;
         const unit = parseNumber(part.unit_cost) ?? 0;
         return sum + qty * unit;
@@ -903,6 +948,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           unit_cost: "",
           reservation_id: null,
           is_required: null,
+          consumption_status: "pending",
+          unit_symbol: null,
+          origin: "planned",
+          has_use: false,
           persisted: false,
         },
       ]);
@@ -915,6 +964,39 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const updatePartRow = useCallback((localId: string, patch: Partial<PartDraft>) => {
       setParts((prev) => prev.map((row) => (row.localId === localId ? { ...row, ...patch } : row)));
     }, []);
+
+    /** Runs inside ConfirmDialog: a refusal keeps it open and is shown above the parts. */
+    const confirmCancelPart = useCallback(async () => {
+      if (partToCancel?.id == null) return;
+      setCancelError(null);
+      try {
+        const cancelled = await cancelPlannedPart(partToCancel.id);
+        setParts((prev) =>
+          prev.map((p) => (p.localId === partToCancel.localId ? toPartDraft(cancelled) : p)),
+        );
+        setPartToCancel(null);
+      } catch (e) {
+        setCancelError(appErrorText(e));
+        throw e;
+      }
+    }, [partToCancel]);
+
+    const changeSavedPartNecessity = useCallback(
+      async (row: PartDraft, required: boolean) => {
+        if (row.id == null || tasksPartsDisabled || row.is_required === required) return;
+        setBusy(true);
+        setNecessityError(null);
+        try {
+          const saved = await setPlannedPartRequired(row.id, required);
+          setParts((prev) => prev.map((p) => (p.localId === row.localId ? toPartDraft(saved) : p)));
+        } catch (e) {
+          setNecessityError({ localId: row.localId, text: appErrorText(e) });
+        } finally {
+          setBusy(false);
+        }
+      },
+      [tasksPartsDisabled],
+    );
 
     const savePartRow = useCallback(
       async (row: PartDraft) => {
@@ -1434,6 +1516,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               <div className="text-sm text-muted-foreground">{t("planning.noPlannedParts")}</div>
             )}
             {parts.map((part) => {
+              const cancelled = isCancelledPart(part);
+              const savedPending = part.persisted && !cancelled;
+              const editableSaved = isEditableSavedPart(part);
               const filteredArticles = articleOptions
                 .filter((article) => {
                   const term = part.article_query.trim().toLowerCase();
@@ -1447,7 +1532,13 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               return (
                 <div
                   key={part.localId}
-                  className="grid gap-2 rounded-md border p-3 md:grid-cols-[2fr_2fr_120px_140px_auto_auto]"
+                  data-testid={`wo-part-line-${part.localId}`}
+                  data-status={part.consumption_status}
+                  className={
+                    cancelled
+                      ? "grid gap-2 rounded-md border border-dashed bg-muted/40 p-3 text-muted-foreground md:grid-cols-[2fr_2fr_120px_140px_auto_auto]"
+                      : "grid gap-2 rounded-md border p-3 md:grid-cols-[2fr_2fr_120px_140px_auto_auto]"
+                  }
                 >
                   <div className="relative space-y-1">
                     <Label>{t("planning.partReference")}</Label>
@@ -1492,6 +1583,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                                     article_id: article.id,
                                     article_ref: articleLabel,
                                     article_query: articleLabel,
+                                    unit_symbol: article.unit_symbol || null,
                                   });
                                   setActiveArticleField(null);
                                 }}
@@ -1530,7 +1622,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                     </Select>
                   </div>
                   <div className="space-y-1">
-                    <Label>{t("planning.parts.plannedQty")}</Label>
+                    <Label>
+                      {t("planning.parts.plannedQty")}
+                      {part.unit_symbol ? ` (${part.unit_symbol})` : ""}
+                    </Label>
                     <Input
                       type="number"
                       min="0"
@@ -1552,16 +1647,22 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       onChange={(e) => updatePartRow(part.localId, { unit_cost: e.target.value })}
                       disabled={tasksPartsDisabled || part.persisted}
                     />
-                    {part.persisted && part.reservation_id != null ? (
+                    {savedPending && part.reservation_id != null ? (
                       <p className="text-xs text-muted-foreground">{t("planning.stockReserved")}</p>
                     ) : null}
-                    {part.persisted && part.reservation_id == null ? (
+                    {savedPending && part.reservation_id == null ? (
                       <p className="text-xs text-tone-warning-fg">
                         {t("planning.noStockReservation")}
                       </p>
                     ) : null}
                   </div>
-                  <div className="flex items-end text-sm font-medium">
+                  <div
+                    className={
+                      cancelled
+                        ? "flex items-end text-sm font-medium line-through"
+                        : "flex items-end text-sm font-medium"
+                    }
+                  >
                     {(
                       (parseNumber(part.quantity_planned) ?? 0) * (parseNumber(part.unit_cost) ?? 0)
                     ).toFixed(2)}
@@ -1576,7 +1677,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                         {t("planning.savePart")}
                       </Button>
                     )}
-                    {isPlanningEditable && (
+                    {!part.persisted && isPlanningEditable && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -1586,9 +1687,42 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                         {t("planning.removePart")}
                       </Button>
                     )}
+                    {editableSaved && isPlanningEditable && canEdit && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setCancelError(null);
+                          setPartToCancel(part);
+                        }}
+                        disabled={tasksPartsDisabled}
+                      >
+                        {t("planning.parts.cancelLine")}
+                      </Button>
+                    )}
                   </div>
                   <div className="space-y-1 md:col-span-6">
-                    {part.persisted ? (
+                    {cancelled ? (
+                      <StatusChip
+                        tone="neutral"
+                        label={t("planning.parts.cancelledStatus")}
+                        title={t("planning.parts.cancelledHint")}
+                      />
+                    ) : editableSaved && isPlanningEditable && canEdit ? (
+                      <>
+                        <PartNecessityChoice
+                          value={part.is_required}
+                          onChange={(required) => void changeSavedPartNecessity(part, required)}
+                          disabled={tasksPartsDisabled}
+                          partLabel={part.article_query || t("planning.partReference")}
+                        />
+                        {necessityError?.localId === part.localId ? (
+                          <p role="alert" className="text-xs text-tone-danger-fg">
+                            {necessityError.text}
+                          </p>
+                        ) : null}
+                      </>
+                    ) : part.persisted ? (
                       part.is_required === false ? (
                         <PartOptionalChip />
                       ) : null
@@ -1611,6 +1745,33 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           <div className="text-right text-sm font-semibold">
             {t("planning.plannedTotalCost")}: {plannedCost.toFixed(2)}
           </div>
+          <ConfirmDialog
+            open={partToCancel !== null}
+            onOpenChange={(open) => {
+              if (!open) {
+                setPartToCancel(null);
+                setCancelError(null);
+              }
+            }}
+            title={t("planning.parts.cancelTitle")}
+            description={t("planning.parts.cancelDescription", {
+              part: partToCancel?.article_query || t("planning.partReference"),
+              qty: partToCancel?.quantity_planned ?? "",
+              unit: partToCancel?.unit_symbol ?? "",
+            })}
+            confirmLabel={t("planning.parts.cancelConfirm")}
+            destructive
+            onConfirm={confirmCancelPart}
+          >
+            {cancelError ? (
+              <p
+                role="alert"
+                className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
+              >
+                {cancelError}
+              </p>
+            ) : null}
+          </ConfirmDialog>
         </section>
 
         <section className="space-y-3">

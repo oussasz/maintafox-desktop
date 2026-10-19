@@ -42,6 +42,8 @@ mod gap06_regression_tests;
 #[cfg(test)]
 mod migration_tests;
 #[cfg(test)]
+mod part_lines_tests;
+#[cfg(test)]
 mod shift_tests;
 #[cfg(test)]
 mod tests;

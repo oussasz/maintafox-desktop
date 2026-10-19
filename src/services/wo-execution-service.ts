@@ -275,6 +275,26 @@ export async function markPartNotUsed(input: MarkPartNotUsedInput): Promise<WoEx
   return announceCost(await invoke<WoExecPart>("mark_part_not_used", { input }));
 }
 
+/**
+ * Cancel a saved planned part line while the work order is prepared: the line is kept with the
+ * status "cancelled" (never deleted), its reservation is released and the change is audited.
+ */
+export async function cancelPlannedPart(woPartId: number): Promise<WoExecPart> {
+  return announceCost(
+    await invoke<WoExecPart>("cancel_planned_part", { input: { wo_part_id: woPartId } }),
+  );
+}
+
+/** Switch a saved planned part line between required and optional (audited). */
+export async function setPlannedPartRequired(
+  woPartId: number,
+  isRequired: boolean,
+): Promise<WoExecPart> {
+  return invoke<WoExecPart>("set_planned_part_required", {
+    input: { wo_part_id: woPartId, is_required: isRequired },
+  });
+}
+
 export async function getPlanAdherence(woId: number): Promise<WoPlanAdherence> {
   return invoke<WoPlanAdherence>("get_wo_plan_adherence", { woId });
 }

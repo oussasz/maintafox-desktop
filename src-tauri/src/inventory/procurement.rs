@@ -2330,6 +2330,7 @@ pub async fn check_wo_part_stock_availability(
              ) sb_sum ON sb_sum.article_id = wop.article_id
              WHERE wop.work_order_id = ?
                AND wop.article_id IS NOT NULL
+               AND wop.consumption_status <> 'cancelled'
                AND COALESCE(wop.quantity_planned, 0) > 0",
             [work_order_id.into()],
         ))

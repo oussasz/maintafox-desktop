@@ -98,10 +98,12 @@ function buildHtml(
     )
     .join("");
 
-  const partRows = parts
+  // A planned line cancelled while the work order was prepared is not part of the job.
+  const activeParts = parts.filter((p) => p.consumption_status !== "cancelled");
+  const partRows = activeParts
     .map(
       (p) =>
-        `<tr><td>${esc(formatOrDash(p.article_ref ?? p.article_label))}</td><td>${p.quantity_used ?? p.quantity_planned ?? "—"}</td><td>${p.unit_cost != null ? `${p.unit_cost.toFixed(2)}` : "—"}</td></tr>`,
+        `<tr><td>${esc(formatOrDash(p.article_ref ?? p.article_label))}</td><td>${p.quantity_used ?? p.quantity_planned ?? "—"}${p.unit_symbol ? ` ${esc(p.unit_symbol)}` : ""}</td><td>${p.unit_cost != null ? `${p.unit_cost.toFixed(2)}` : "—"}</td></tr>`,
     )
     .join("");
 
@@ -215,7 +217,7 @@ function buildHtml(
   }
 
   ${
-    parts.length > 0
+    activeParts.length > 0
       ? `<div class="section">
     <h2>${esc(t("print.partsUsed"))}</h2>
     <table>

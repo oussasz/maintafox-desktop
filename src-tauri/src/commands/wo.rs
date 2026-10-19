@@ -1121,6 +1121,28 @@ pub async fn mark_part_not_used(
     parts::mark_part_not_used(&state.db, input).await
 }
 
+/// Cancel a planned part line (kept as `cancelled`, its reservation released) — ot.edit.
+#[tauri::command]
+pub async fn cancel_planned_part(
+    input: parts::CancelPlannedPartInput,
+    state: State<'_, AppState>,
+) -> AppResult<parts::WoPart> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    parts::cancel_planned_part(&state.db, input, user.user_id.into()).await
+}
+
+/// Switch a planned part line between required and optional — ot.edit.
+#[tauri::command]
+pub async fn set_planned_part_required(
+    input: parts::SetPlannedPartRequiredInput,
+    state: State<'_, AppState>,
+) -> AppResult<parts::WoPart> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    parts::set_planned_part_required(&state.db, input, user.user_id.into()).await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // R) confirm_no_parts — ot.edit
 // ═══════════════════════════════════════════════════════════════════════════════
