@@ -14,6 +14,23 @@
     "select": "Select {{code}}",
     "retry": "Retry"
   },
+  "siteScope": {
+    "hidden": {
+      "outsideScope_one": "{{count}} permit is not shown: outside your sites.",
+      "outsideScope_other": "{{count}} permits are not shown: outside your sites.",
+      "withoutSite_one": "{{count}} permit is not shown: it has no site.",
+      "withoutSite_other": "{{count}} permits are not shown: they have no site.",
+      "allPermits": "These counts cover all permits, whatever the filters or search.",
+      "askPlantWide": "Ask a plant-wide user to see them."
+    },
+    "noSite": {
+      "badge": "To review: no site",
+      "hint": "Permit recorded without a site. Only users with a plant-wide role see it and can act on it."
+    },
+    "openHidden_one": "{{count}} more open permit is outside your sites or has no site: not counted",
+    "openHidden_other": "{{count}} more open permits are outside your sites or have no site: not counted",
+    "noIssueRightAtSite": "You do not hold the permit issue right at the site of this equipment."
+  },
   "kpi": {
     "title": "LOTO compliance (30 days)",
     "summary": "Activations: {{activated}} · Handed back on time: {{onTime}}",

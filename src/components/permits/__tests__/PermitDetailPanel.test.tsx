@@ -80,6 +80,10 @@ vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
 }));
 
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: () => ({ loading: false, can: () => true }),
+}));
+
 function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
   return {
     id: 41,

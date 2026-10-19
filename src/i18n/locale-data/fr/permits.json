@@ -14,6 +14,23 @@
     "select": "Sélectionner {{code}}",
     "retry": "Réessayer"
   },
+  "siteScope": {
+    "hidden": {
+      "outsideScope_one": "{{count}} permis n’est pas affiché : hors de vos sites.",
+      "outsideScope_other": "{{count}} permis ne sont pas affichés : hors de vos sites.",
+      "withoutSite_one": "{{count}} permis n’est pas affiché : il n’a pas de site.",
+      "withoutSite_other": "{{count}} permis ne sont pas affichés : ils n’ont pas de site.",
+      "allPermits": "Ces nombres portent sur tous les permis, quels que soient les filtres ou la recherche.",
+      "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l’usine pour les voir."
+    },
+    "noSite": {
+      "badge": "À revoir : sans site",
+      "hint": "Permis enregistré sans site. Seuls les utilisateurs ayant un rôle valable pour toute l’usine le voient et peuvent agir dessus."
+    },
+    "openHidden_one": "{{count}} autre permis ouvert est hors de vos sites ou sans site : non compté",
+    "openHidden_other": "{{count}} autres permis ouverts sont hors de vos sites ou sans site : non comptés",
+    "noIssueRightAtSite": "Vous n’avez pas le droit de délivrer des permis sur le site de cet équipement."
+  },
   "kpi": {
     "title": "Conformité LOTO (30 j.)",
     "summary": "Activations : {{activated}} · Mainlevées à temps : {{onTime}}",

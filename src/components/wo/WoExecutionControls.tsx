@@ -912,7 +912,11 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         )}
 
         {wo.requires_permit && !["closed", "cancelled"].includes(statusCode) ? (
-          <WoPermitGateCard workOrderId={wo.id} refreshKey={rowVersion} />
+          <WoPermitGateCard
+            workOrderId={wo.id}
+            workOrderSiteId={wo.entity_id}
+            refreshKey={rowVersion}
+          />
         ) : null}
 
         {/* Delay form (pause / hold) */}

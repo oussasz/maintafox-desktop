@@ -215,14 +215,16 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
           </Select>
           {receivers != null ? (
             <p className="text-xs text-text-muted" data-testid="handover-receivers-count">
-              {receivers.total > receivers.items.length
-                ? t("handover.receiversPartial", {
-                    shown: receivers.items.length,
-                    total: receivers.total,
-                  })
-                : receivers.total === 0
-                  ? t("handover.receiversNone")
-                  : t("handover.receiversAll", { total: receivers.total })}
+              {receivers.empty_reason
+                ? t(`errors:scope.${receivers.empty_reason}`)
+                : receivers.total > receivers.items.length
+                  ? t("handover.receiversPartial", {
+                      shown: receivers.items.length,
+                      total: receivers.total,
+                    })
+                  : receivers.total === 0
+                    ? t("handover.receiversNone")
+                    : t("handover.receiversAll", { total: receivers.total })}
             </p>
           ) : null}
           {receiversError != null ? (

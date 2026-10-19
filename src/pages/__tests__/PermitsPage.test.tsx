@@ -101,6 +101,14 @@ vi.mock("@/hooks/use-permissions", () => ({
   }),
 }));
 
+// Rights at a permit's site (and at no node): the same grants as the "held anywhere" set here.
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: (node: number | null | undefined) => ({
+    loading: false,
+    can: (p: string) => node != null && !perms.denied.has(p),
+  }),
+}));
+
 const LOTO_TYPE: PermitTypeRecord = {
   id: 1,
   entity_sync_id: "t1",
@@ -509,5 +517,27 @@ describe("PermitsPage", () => {
     const link = await screen.findByRole("link", { name: enPermits.actions.manageTypes });
     expect(link).toHaveAttribute("href", "/lookups?catalog=PERMIT.TYPES");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("says how many permits the list and the open report leave out, and why", async () => {
+    svc.listWorkPermits.mockResolvedValue({
+      items: [permit()],
+      hidden_outside_scope: 3,
+      hidden_without_site: 1,
+    });
+    svc.listOpenPermitsReport.mockResolvedValue({
+      items: [permit()],
+      hidden_outside_scope: 2,
+      hidden_without_site: 0,
+    });
+    renderPage();
+    const outside = await screen.findByText("3 permits are not shown: outside your sites.");
+    expect(outside.parentElement).toHaveTextContent("1 permit is not shown: it has no site.");
+    expect(await screen.findByText(/2 more open permits are outside your sites/)).toBeTruthy();
+  });
+
+  it("shows no notice when nothing is hidden", async () => {
+    renderPage();
+    await screen.findByText("PTW-2026-000041");
+    expect(screen.queryByText(/not shown: /)).toBeNull();
   });
 });

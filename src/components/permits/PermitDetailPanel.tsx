@@ -25,7 +25,6 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
-import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import { appErrorReason } from "@/lib/app-error";
 import {
@@ -56,6 +55,7 @@ import type { WorkPermitStatus } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 import { PermitHandoverForm } from "./PermitHandoverForm";
+import { PermitNoSiteBadge, usePermitAccess } from "./PermitSiteScope";
 import { printLotoCard } from "./loto-card-print";
 import {
   ISOLATION_REMOVAL_STATUSES,
@@ -83,10 +83,11 @@ const EMPTY_ISOLATION = { point: "", energy: "", method: "", lock: "" };
 
 export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps) {
   const { t, i18n } = useTranslation("permits");
-  const { can } = usePermissions();
   const { info: session } = useSession();
-  const canIssue = can(P.PTW_ISSUE);
-  const canClose = can(P.PTW_CLOSE);
+  // Every action is checked at the permit's site, as the backend does.
+  const access = usePermitAccess(permit);
+  const canIssue = access.can(P.PTW_ISSUE);
+  const canClose = access.can(P.PTW_CLOSE);
   const me = session?.user_id ?? null;
 
   const [isolations, setIsolations] = useState<PermitIsolationRecord[]>([]);
@@ -305,9 +306,12 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
-          <h2 className="text-base font-semibold text-text-primary">
-            {t("detail.title", { code: permit.code })}
-          </h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold text-text-primary">
+              {t("detail.title", { code: permit.code })}
+            </h2>
+            <PermitNoSiteBadge permit={permit} />
+          </div>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-sm">
             <dt className="text-text-muted">{t("detail.type")}</dt>
             <dd>{permit.permit_type_name ?? t("detail.none")}</dd>
