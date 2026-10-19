@@ -237,6 +237,22 @@ describe("PermitHandoverForm", () => {
     expect(await screen.findByRole("option", { name: "Chaima Ops" })).toBeInTheDocument();
   });
 
+  it("offers no 'show more' while the list still belongs to the previous search", async () => {
+    svc.listPermitHandoverReceivers.mockResolvedValueOnce({
+      items: [{ id: 9, display_name: "Ali Operations" }],
+      total: 3,
+    });
+    renderForm();
+    await screen.findByRole("button", { name: enPermits.handover.receiversMore });
+    // The new search never answers: the old list must not be extended at the old offset.
+    svc.listPermitHandoverReceivers.mockReturnValue(new Promise(() => {}));
+    fireEvent.change(screen.getByRole("textbox", { name: enPermits.handover.receiverSearch }), {
+      target: { value: "kar" },
+    });
+    await waitFor(() => expect(svc.listPermitHandoverReceivers).toHaveBeenCalledWith("kar"));
+    expect(screen.queryByRole("button", { name: enPermits.handover.receiversMore })).toBeNull();
+  });
+
   it("offers no 'show more' when every matching person is shown", async () => {
     renderForm();
     await screen.findByText(fill(enPermits.handover.receiversAll, { total: 1 }));

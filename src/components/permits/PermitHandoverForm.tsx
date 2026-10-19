@@ -62,6 +62,8 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
   const [receivers, setReceivers] = useState<PermitHandoverReceiverPage | null>(null);
   const [receiversError, setReceiversError] = useState<unknown>(null);
   const [receiversReload, setReceiversReload] = useState(0);
+  /** The search the listed people belong to (the list lags behind the typed search). */
+  const [receiversSearch, setReceiversSearch] = useState<string | null>(null);
   const [receiverSearch, setReceiverSearch] = useState("");
   const search = useDebouncedValue(receiverSearch.trim());
   const searchRef = useRef(search);
@@ -95,7 +97,9 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
     setReceiversError(null);
     listPermitHandoverReceivers(search || null)
       .then((page) => {
-        if (!cancelled) setReceivers(page);
+        if (cancelled) return;
+        setReceivers(page);
+        setReceiversSearch(search);
       })
       .catch((e: unknown) => {
         if (!cancelled) setReceiversError(e);
@@ -107,7 +111,7 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
 
   /** Appends the next page of the current search (the list's own offset), never a stale one. */
   const showMore = async () => {
-    if (!receivers) return;
+    if (!receivers || receiversSearch !== search) return;
     const asked = search;
     setLoadingMore(true);
     try {
@@ -265,7 +269,9 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
                   : t("handover.receiversAll", { total: receivers.total })}
             </p>
           ) : null}
-          {receivers != null && receivers.total > receivers.items.length ? (
+          {receivers != null &&
+          receiversSearch === search &&
+          receivers.total > receivers.items.length ? (
             <Button
               type="button"
               size="sm"
