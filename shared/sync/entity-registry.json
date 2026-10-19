@@ -25,6 +25,27 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "admin_recovery_acknowledgements",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 2,
+      "parents": [
+        "admin_recovery_notices",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "admin_recovery_notices",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "analytics_contract_versions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -2450,7 +2471,6 @@
   ],
   "local_only_tables": {
     "admin_recovery_codes_used": "licensing",
-    "admin_recovery_notices": "session_or_device",
     "app_sessions": "session_or_device",
     "archive_actions": "device_archive",
     "archive_items": "device_archive",

@@ -16,18 +16,28 @@
 //!
 //! **Redeeming it** ([`redeem_admin_recovery_code`], signed out): whatever the administrators of
 //! this PC, the code creates exactly one new named account with the plant password policy, holding
-//! the normal Administrator role plant-wide (tenant scope of this PC's organisation) with no end
-//! date. An existing account is never reset or taken over: the username must be one this PC has
-//! never had. In one write transaction: the account and its role, the code recorded as spent, the
-//! audit event, and a notice for every other active administrator.
+//! the normal Administrator role plant-wide (tenant scope with no scope reference, so the role
+//! synchronises to every PC) with no end date. An existing account is never reset or taken over:
+//! the username must be one this PC has never had. In one write transaction: the account and its
+//! role, the code recorded as spent, the audit event, and a notice for every other active
+//! administrator.
 //!
 //! **Nothing for strangers**: a signed-out caller learns only "this code is refused, and why"
 //! until a genuine, current, unused code for this PC is presented; only then are the username and
-//! password examined. No existing account is read back or changed.
+//! password examined. No existing account is read back or changed, except the retirement of a
+//! never-used built-in "admin", as at first start.
+//!
+//! **The code's lifetime**: the vendor issues `expires_at = issued_at + 24 h`; a code with a longer
+//! window, or one that ends before it starts, is refused ([`Refusal::InvalidWindow`]).
 //!
 //! **The notice** ([`get_admin_recovery_notices`], [`acknowledge_admin_recovery_notice`]): every
-//! administrator told sees it after each sign-in until that administrator acknowledges it; the
-//! acknowledgement is audited.
+//! administrator active at redemption (the new one excluded) gets one notice, shown after each
+//! sign-in until that administrator acknowledges it, on every PC of the plant (CMMS Advisor
+//! decision (a): notices and acknowledgements are synchronised). Only the recipient acknowledges
+//! their own notice, here and when an acknowledgement arrives by synchronisation
+//! ([`inbound_acknowledgement_check`]); nobody edits or deletes a notice ([`inbound_notice_check`],
+//! and a trigger refuses any update). The acknowledgement records who, when and on which PC, and is
+//! audited. The register of spent codes stays on this PC: a code names one PC's activation.
 
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
@@ -49,6 +59,9 @@ pub const RECOVERY_SIGNATURE_ALG: &str = "ed25519:admin-recovery:v1";
 const TRUST_KEY_PURPOSE: &str = "entitlement_signature";
 /// How far in the future `issued_at` may be (clock drift between this PC and the vendor).
 pub const MAX_CLOCK_SKEW_MINUTES: i64 = 5;
+/// Longest window `expires_at - issued_at` accepted: the vendor issues exactly 24 h
+/// (`ADMIN_RECOVERY_TTL_HOURS` of the vendor console's `admin-recovery-signer.ts`).
+pub const MAX_CODE_LIFETIME_HOURS: i64 = 24;
 /// Longest code accepted for decoding (a real code is about 600 characters).
 const MAX_CODE_LEN: usize = 4096;
 /// Longest display name of the created administrator.
@@ -63,9 +76,21 @@ pub const AUDIT_NOTICE_ACKNOWLEDGED: &str = "admin_recovery.notice_acknowledged"
 pub const USERNAME_INVALID: &str = "ADMIN_RECOVERY_USERNAME_INVALID";
 pub const USERNAME_TAKEN: &str = "ADMIN_RECOVERY_USERNAME_TAKEN";
 pub const DISPLAY_NAME_REQUIRED: &str = "ADMIN_RECOVERY_DISPLAY_NAME_REQUIRED";
+/// Invisible or control characters (Unicode Cc / Cf, bidi controls) in the name or username.
+pub const NAME_INVISIBLE_CHARACTERS: &str = "ADMIN_RECOVERY_NAME_INVISIBLE_CHARACTERS";
 pub const PASSWORD_MISMATCH: &str = "ADMIN_RECOVERY_PASSWORD_MISMATCH";
 pub const RETRY: &str = "ADMIN_RECOVERY_RETRY";
 pub const NOTICE_NOT_FOUND: &str = "ADMIN_RECOVERY_NOTICE_NOT_FOUND";
+
+/// Sync conflict codes of received notices and acknowledgements.
+pub const CONFLICT_NOTICE_CHANGED: &str = "ADMIN_RECOVERY_NOTICE_CHANGED";
+pub const CONFLICT_NOTICE_INVALID: &str = "ADMIN_RECOVERY_NOTICE_INVALID";
+pub const CONFLICT_ACK_NOT_RECIPIENT: &str = "ADMIN_RECOVERY_ACK_NOT_RECIPIENT";
+pub const CONFLICT_ACK_CHANGED: &str = "ADMIN_RECOVERY_ACK_CHANGED";
+
+/// Entity types (and tables) of the synchronised notices and acknowledgements.
+pub const NOTICE_ENTITY: &str = "admin_recovery_notices";
+pub const ACK_ENTITY: &str = "admin_recovery_acknowledgements";
 
 // ── The code ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -91,6 +116,9 @@ pub enum Refusal {
     WrongTenant,
     WrongMachine,
     WrongLicense,
+    /// `expires_at <= issued_at`, or `expires_at - issued_at` longer than
+    /// [`MAX_CODE_LIFETIME_HOURS`] (the vendor issues exactly 24 h).
+    InvalidWindow,
     /// `now >= expires_at`.
     Expired,
     /// `issued_at` more than [`MAX_CLOCK_SKEW_MINUTES`] after now.
@@ -115,6 +143,7 @@ impl Refusal {
             Self::WrongTenant => "wrong_tenant",
             Self::WrongMachine => "wrong_machine",
             Self::WrongLicense => "wrong_license",
+            Self::InvalidWindow => "invalid_window",
             Self::Expired => "expired",
             Self::IssuedInFuture => "issued_in_future",
             Self::AlreadyUsed => "already_used",
@@ -136,6 +165,7 @@ impl Refusal {
             Self::WrongTenant => "ADMIN_RECOVERY_CODE_WRONG_TENANT",
             Self::WrongMachine => "ADMIN_RECOVERY_CODE_WRONG_MACHINE",
             Self::WrongLicense => "ADMIN_RECOVERY_CODE_WRONG_LICENSE",
+            Self::InvalidWindow => "ADMIN_RECOVERY_CODE_INVALID_WINDOW",
             Self::Expired => "ADMIN_RECOVERY_CODE_EXPIRED",
             Self::IssuedInFuture => "ADMIN_RECOVERY_CODE_ISSUED_IN_FUTURE",
             Self::AlreadyUsed => "ADMIN_RECOVERY_CODE_ALREADY_USED",
@@ -153,6 +183,7 @@ impl Refusal {
                 | Self::WrongTenant
                 | Self::WrongMachine
                 | Self::WrongLicense
+                | Self::InvalidWindow
                 | Self::Expired
                 | Self::IssuedInFuture
                 | Self::AlreadyUsed
@@ -322,10 +353,14 @@ fn parse_instant(value: &str) -> Result<DateTime<Utc>, Refusal> {
         .map_err(|_| Refusal::Malformed)
 }
 
-/// Current: `now < expires_at` and `issued_at <= now + MAX_CLOCK_SKEW_MINUTES`.
+/// A window the vendor issues (`issued_at < expires_at <= issued_at + MAX_CODE_LIFETIME_HOURS`),
+/// current: `now < expires_at` and `issued_at <= now + MAX_CLOCK_SKEW_MINUTES`.
 pub fn check_validity_window(payload: &RecoveryPayload, now: DateTime<Utc>) -> Result<(), Refusal> {
     let issued_at = parse_instant(&payload.issued_at)?;
     let expires_at = parse_instant(&payload.expires_at)?;
+    if expires_at <= issued_at || expires_at - issued_at > Duration::hours(MAX_CODE_LIFETIME_HOURS) {
+        return Err(Refusal::InvalidWindow);
+    }
     if now >= expires_at {
         return Err(Refusal::Expired);
     }
@@ -405,13 +440,26 @@ pub async fn verify_code_in(
 
 // ── Redeeming a code ─────────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct RedeemAdminRecoveryCodeInput {
     pub code: String,
     pub username: String,
     pub display_name: String,
     pub password: String,
     pub password_confirmation: String,
+}
+
+/// The code and both passwords never reach a log, even through `{:?}`.
+impl std::fmt::Debug for RedeemAdminRecoveryCodeInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedeemAdminRecoveryCodeInput")
+            .field("code", &"<redacted>")
+            .field("username", &self.username)
+            .field("display_name", &self.display_name)
+            .field("password", &"<redacted>")
+            .field("password_confirmation", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -434,17 +482,45 @@ async fn begin_write_transaction(db: &DatabaseConnection) -> AppResult<sea_orm::
     Ok(txn)
 }
 
+/// A genuine vendor code refused on this PC: who issued it, for which code, and why. At most one
+/// audit row per (code, reason): a code submitted again and again from the login screen adds
+/// nothing more to the (synchronised) audit trail; every attempt is still logged.
 async fn audit_refusal(db: &DatabaseConnection, refusal: Refusal, code: &str) {
+    let code_id = decode_code(code).ok().map(|d| d.payload.code_id);
+    tracing::warn!(
+        event = "admin_recovery_code_refused",
+        reason = refusal.as_str(),
+        code_id = code_id.as_deref().unwrap_or(""),
+        "Vendor recovery code refused"
+    );
     if !refusal.signed_by_vendor() {
-        tracing::warn!(
-            event = "admin_recovery_code_refused",
-            reason = refusal.as_str(),
-            "Vendor recovery code refused"
-        );
         return;
     }
-    // A genuine vendor code refused on this PC: who issued it, for which code, and why.
-    let code_id = decode_code(code).ok().map(|d| d.payload.code_id);
+    if let Err(err) = write_refusal_audit_once(db, refusal, code_id).await {
+        tracing::error!(error = %err, "admin recovery refusal could not be audited");
+    }
+}
+
+async fn write_refusal_audit_once(db: &DatabaseConnection, refusal: Refusal, code_id: Option<String>) -> AppResult<()> {
+    // Under the write lock, so two refusals of one code racing write one row.
+    let txn = begin_write_transaction(db).await?;
+    let already = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT EXISTS (SELECT 1 FROM audit_events
+                 WHERE action_code = ? AND target_type = 'admin_recovery_code'
+                   AND target_id IS ? AND json_extract(details_json, '$.reason') = ?) AS done",
+            [AUDIT_REFUSED.into(), code_id.clone().into(), refusal.as_str().into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<i64>("", "done"))
+        .transpose()?
+        .unwrap_or(0)
+        == 1;
+    if already {
+        txn.rollback().await?;
+        return Ok(());
+    }
     let input = crate::audit::writer::AuditEventInput {
         action_code: AUDIT_REFUSED.to_string(),
         target_type: Some("admin_recovery_code".to_string()),
@@ -461,14 +537,59 @@ async fn audit_refusal(db: &DatabaseConnection, refusal: Refusal, code: &str) {
             "code_id": code_id,
         })),
     };
-    if let Err(err) = crate::audit::writer::write_audit_event(db, input).await {
-        tracing::error!(error = %err, "admin recovery refusal could not be audited");
-    }
+    crate::audit::writer::write_audit_event_in(&txn, input).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// Unicode general category Cf (format characters: bidi controls U+202A-U+202E and
+/// U+2066-U+2069, zero-width U+200B-U+200F, soft hyphen, BOM, tags...), as of Unicode 15.1.
+/// Invisible, they let a name pose as another one (a right-to-left override shows it reversed).
+pub fn is_format_character(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x202A..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
+}
+
+/// A control (Cc) or format (Cf) character: never part of a name shown to administrators.
+pub fn has_invisible_character(value: &str) -> bool {
+    value.chars().any(|c| c.is_control() || is_format_character(c))
+}
+
+fn invisible_characters_error() -> AppError {
+    coded(
+        NAME_INVISIBLE_CHARACTERS,
+        "The name and the username must not contain invisible or control characters.",
+    )
 }
 
 /// The new account's username: the usual username rule, and never a name this PC has had (an
 /// account, even disabled or deleted, is never taken over).
 fn checked_username(raw: &str) -> AppResult<String> {
+    if has_invisible_character(raw.trim()) {
+        return Err(invisible_characters_error());
+    }
     crate::commands::admin_users::normalize_username(raw).map_err(|err| {
         let reason = match &err {
             AppError::ValidationFailed(messages) => messages.join(" "),
@@ -480,7 +601,10 @@ fn checked_username(raw: &str) -> AppResult<String> {
 
 fn checked_display_name(raw: &str) -> AppResult<String> {
     let name = raw.trim();
-    if name.is_empty() || name.chars().count() > MAX_DISPLAY_NAME_CHARS || name.chars().any(char::is_control) {
+    if has_invisible_character(name) {
+        return Err(invisible_characters_error());
+    }
+    if name.is_empty() || name.chars().count() > MAX_DISPLAY_NAME_CHARS {
         return Err(coded(
             DISPLAY_NAME_REQUIRED,
             "Give the new administrator's name (1 to 120 characters).",
@@ -533,8 +657,9 @@ async fn write_recovery(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Administrator role not found in seed data")))?
         .try_get("", "id")?;
 
-    // Told before the account exists: every other active administrator of this PC.
+    // Told before the account exists: every administrator active now (the new one excluded).
     let recipients = crate::auth::last_admin::active_administrator_ids(txn).await?;
+    let device_code = crate::sync::device_code::this_device_code(txn).await?;
 
     let stamp = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
@@ -564,20 +689,25 @@ async fn write_recovery(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to read new user id")))?
         .try_get("", "id")?;
+    // As at first start: an administrator created on this PC closes the first-start screen for
+    // good (keeps a marker that still names an existing account).
+    crate::auth::builtin_admin::record_first_administrator_in(txn, &entity_sync_id).await?;
 
-    // Plant-wide (tenant scope of this PC's organisation), normal Administrator role, no end date:
-    // a lasting administrator (`auth::last_admin::lasting_administrator_ids`).
+    // Plant-wide, normal Administrator role, no end date: a lasting administrator
+    // (`auth::last_admin::lasting_administrator_ids`). Tenant scope with no scope reference, the
+    // convention of the seeder and of emergency access (`product_license` counts it for this
+    // organisation): such an assignment synchronises, so the new administrator is an administrator
+    // on every PC of the plant (a tenant id as reference cannot be sent by sync).
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_scope_assignments
             (entity_sync_id, user_id, role_id, scope_type, scope_reference,
              valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version)
-         VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, NULL, ?, ?, ?, 1)",
+         VALUES (?, ?, ?, 'tenant', NULL, NULL, NULL, NULL, ?, ?, ?, 1)",
         [
             crate::sync::identity::new_entity_sync_id().into(),
             user_id.into(),
             role_id.into(),
-            payload.tenant_id.clone().into(),
             "Administrator created with a vendor recovery code".into(),
             stamp.clone().into(),
             stamp.clone().into(),
@@ -631,24 +761,28 @@ async fn write_recovery(
                 "role": "Administrator",
                 "scope": "tenant",
                 "notified_administrators": recipients,
+                "device_code": device_code,
             })),
         },
     )
     .await?;
 
+    // One notice per recipient, synchronised to every PC of the plant.
     for recipient in &recipients {
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO admin_recovery_notices
-                (code_id, recipient_user_id, created_user_id, created_username, created_display_name,
-                 created_at, acknowledged_at)
-             VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                (entity_sync_id, code_id, recipient_user_id, created_user_id, created_username,
+                 created_display_name, redeemed_device_code, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [
+                crate::sync::identity::new_entity_sync_id().into(),
                 payload.code_id.clone().into(),
                 (*recipient).into(),
                 user_id.into(),
                 username.into(),
                 display_name.into(),
+                device_code.clone().into(),
                 consumed_at.clone().into(),
             ],
         ))
@@ -748,12 +882,19 @@ pub async fn redeem_admin_recovery_code(
 /// One administrator created with a recovery code, not yet acknowledged by the signed-in one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AdminRecoveryNotice {
+    /// Local id of the notice on this PC (what [`acknowledge_admin_recovery_notice`] takes).
     pub id: i64,
     /// When the code was redeemed (RFC 3339, UTC).
     pub created_at: String,
     pub created_username: String,
     pub created_display_name: String,
+    /// The PC where the code was redeemed (`sync::device_code`).
+    pub redeemed_device_code: String,
 }
+
+/// SQL condition: the notice `n` has been acknowledged by its recipient (on any PC).
+const ACKNOWLEDGED_BY_RECIPIENT_SQL: &str = "EXISTS (SELECT 1 FROM admin_recovery_acknowledgements a \
+     WHERE a.notice_id = n.id AND a.acknowledged_by_id = n.recipient_user_id)";
 
 /// The notices of `user_id` still to acknowledge, while that account is an administrator.
 pub(crate) async fn notices_for(
@@ -772,10 +913,12 @@ pub(crate) async fn notices_for(
     let rows = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, created_at, created_username, created_display_name
-               FROM admin_recovery_notices
-              WHERE recipient_user_id = ? AND acknowledged_at IS NULL
-              ORDER BY id",
+            format!(
+                "SELECT n.id, n.created_at, n.created_username, n.created_display_name, n.redeemed_device_code
+                   FROM admin_recovery_notices n
+                  WHERE n.recipient_user_id = ? AND NOT {ACKNOWLEDGED_BY_RECIPIENT_SQL}
+                  ORDER BY n.id"
+            ),
             [user_id.into()],
         ))
         .await?;
@@ -786,43 +929,56 @@ pub(crate) async fn notices_for(
                 created_at: r.try_get("", "created_at")?,
                 created_username: r.try_get("", "created_username")?,
                 created_display_name: r.try_get("", "created_display_name")?,
+                redeemed_device_code: r.try_get("", "redeemed_device_code")?,
             })
         })
         .collect()
 }
 
-/// Acknowledges `notice_id` for `user_id` only (another administrator's notice is never touched),
-/// with an audit entry in the same transaction.
+/// Acknowledges `notice_id` for `user_id` only: the notice must be addressed to that account and
+/// not acknowledged yet (another administrator's notice is never touched). The acknowledgement
+/// (who, when, this PC) is a new synchronised row, audited in the same transaction; the notice
+/// itself is never changed.
 pub(crate) async fn acknowledge_notice_in(db: &DatabaseConnection, user_id: i64, notice_id: i64) -> AppResult<()> {
-    let txn = db.begin().await?;
-    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
-    let updated = txn
-        .execute(Statement::from_sql_and_values(
+    let txn = begin_write_transaction(db).await?;
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE admin_recovery_notices SET acknowledged_at = ?
-              WHERE id = ? AND recipient_user_id = ? AND acknowledged_at IS NULL",
-            [now.into(), notice_id.into(), user_id.into()],
+            format!(
+                "SELECT n.code_id, n.created_user_id, n.created_username
+                   FROM admin_recovery_notices n
+                  WHERE n.id = ? AND n.recipient_user_id = ? AND NOT {ACKNOWLEDGED_BY_RECIPIENT_SQL}"
+            ),
+            [notice_id.into(), user_id.into()],
         ))
-        .await?
-        .rows_affected();
-    if updated != 1 {
+        .await?;
+    let Some(row) = row else {
         txn.rollback().await?;
         return Err(coded(
             NOTICE_NOT_FOUND,
             "This notice is not yours or was already acknowledged.",
         ));
-    }
-    let row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT code_id, created_user_id, created_username FROM admin_recovery_notices WHERE id = ?",
-            [notice_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("acknowledged notice vanished")))?;
+    };
     let code_id: String = row.try_get("", "code_id")?;
     let created_user_id: i64 = row.try_get("", "created_user_id")?;
     let created_username: String = row.try_get("", "created_username")?;
+    let device_code = crate::sync::device_code::this_device_code(&txn).await?;
+    let acknowledged_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let acknowledgement_sync_id = crate::sync::identity::new_entity_sync_id();
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO admin_recovery_acknowledgements
+            (entity_sync_id, notice_id, acknowledged_by_id, acknowledged_at, device_code)
+         VALUES (?, ?, ?, ?, ?)",
+        [
+            acknowledgement_sync_id.clone().into(),
+            notice_id.into(),
+            user_id.into(),
+            acknowledged_at.clone().into(),
+            device_code.clone().into(),
+        ],
+    ))
+    .await?;
     crate::audit::writer::write_audit_event_in(
         &txn,
         crate::audit::writer::AuditEventInput {
@@ -840,6 +996,9 @@ pub(crate) async fn acknowledge_notice_in(db: &DatabaseConnection, user_id: i64,
                 "notice_id": notice_id,
                 "code_id": code_id,
                 "created_username": created_username,
+                "acknowledged_at": acknowledged_at,
+                "device_code": device_code,
+                "acknowledgement_sync_id": acknowledgement_sync_id,
             })),
         },
     )
@@ -867,6 +1026,116 @@ pub async fn get_admin_recovery_notices(state: State<'_, AppState>) -> AppResult
 pub async fn acknowledge_admin_recovery_notice(notice_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = crate::require_session!(state);
     acknowledge_notice_in(&state.db, i64::from(user.user_id), notice_id).await
+}
+
+// ── Notices and acknowledgements received by synchronisation ────────────────────────────────────
+
+type Payload = serde_json::Map<String, serde_json::Value>;
+
+fn payload_text<'a>(payload: &'a Payload, key: &str) -> Option<&'a str> {
+    payload.get(key).and_then(serde_json::Value::as_str)
+}
+
+/// Keys of `received` whose value differs from this PC's copy of the row (keys this version does not
+/// know are not compared: they are never written).
+fn changed_keys(local: &Payload, received: &Payload) -> Vec<String> {
+    received
+        .iter()
+        .filter(|(key, value)| {
+            key.as_str() != crate::sync::row_layout::PAYLOAD_FORMAT_KEY
+                && local.get(key.as_str()).is_some_and(|mine| mine != *value)
+        })
+        .map(|(key, _)| key.clone())
+        .collect()
+}
+
+/// A received notice (`sync::apply_hooks::before_upsert_checked`): a notice already here is never
+/// changed (any difference is a conflict, whoever sent it); a new one never names the created
+/// administrator as its recipient and carries no invisible characters in the names it shows.
+pub(crate) async fn inbound_notice_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &Payload,
+) -> AppResult<Option<crate::settings::site::InboundVerdict>> {
+    use crate::settings::site::InboundVerdict;
+    if let Some(local) = crate::permit::sync_check::local_wire(conn, NOTICE_ENTITY, entity_sync_id).await? {
+        let changed = changed_keys(&local, payload);
+        return Ok((!changed.is_empty()).then(|| InboundVerdict::Conflict {
+            code: CONFLICT_NOTICE_CHANGED,
+            message: format!(
+                "An administrator recovery notice is never changed; received changes to: {}",
+                changed.join(", ")
+            ),
+        }));
+    }
+    let recipient = payload_text(payload, "recipient_user_sync_id");
+    if recipient.is_none() || recipient == payload_text(payload, "created_user_sync_id") {
+        return Ok(Some(InboundVerdict::Conflict {
+            code: CONFLICT_NOTICE_INVALID,
+            message: "A recovery notice must be addressed to an administrator other than the one created".into(),
+        }));
+    }
+    if ["created_username", "created_display_name"]
+        .iter()
+        .any(|key| payload_text(payload, key).is_some_and(has_invisible_character))
+    {
+        return Ok(Some(InboundVerdict::Conflict {
+            code: CONFLICT_NOTICE_INVALID,
+            message: "A recovery notice names the administrator with invisible or control characters".into(),
+        }));
+    }
+    Ok(None)
+}
+
+/// A received acknowledgement: only the notice's recipient acknowledges it (an acknowledgement
+/// made by anyone else is a conflict), and an acknowledgement already here is never changed. One
+/// whose notice has not arrived yet waits for it.
+pub(crate) async fn inbound_acknowledgement_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &Payload,
+) -> AppResult<Option<crate::settings::site::InboundVerdict>> {
+    use crate::settings::site::InboundVerdict;
+    if let Some(local) = crate::permit::sync_check::local_wire(conn, ACK_ENTITY, entity_sync_id).await? {
+        let changed = changed_keys(&local, payload);
+        return Ok((!changed.is_empty()).then(|| InboundVerdict::Conflict {
+            code: CONFLICT_ACK_CHANGED,
+            message: format!(
+                "An acknowledgement of a recovery notice is never changed; received changes to: {}",
+                changed.join(", ")
+            ),
+        }));
+    }
+    let Some(notice_sync_id) = payload_text(payload, "notice_sync_id") else {
+        return Ok(Some(InboundVerdict::Conflict {
+            code: CONFLICT_ACK_NOT_RECIPIENT,
+            message: "An acknowledgement must name its recovery notice".into(),
+        }));
+    };
+    let recipient: Option<String> = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT u.entity_sync_id AS recipient
+               FROM admin_recovery_notices n JOIN user_accounts u ON u.id = n.recipient_user_id
+              WHERE n.entity_sync_id = ?",
+            [notice_sync_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<Option<String>>("", "recipient"))
+        .transpose()?
+        .flatten();
+    let Some(recipient) = recipient else {
+        return Ok(Some(InboundVerdict::Defer(format!(
+            "recovery notice {notice_sync_id} not received yet"
+        ))));
+    };
+    if payload_text(payload, "acknowledged_by_sync_id") != Some(recipient.as_str()) {
+        return Ok(Some(InboundVerdict::Conflict {
+            code: CONFLICT_ACK_NOT_RECIPIENT,
+            message: "Only the administrator a recovery notice is addressed to can acknowledge it".into(),
+        }));
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

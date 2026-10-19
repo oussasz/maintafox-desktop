@@ -120,6 +120,10 @@
       "PERMIT_TYPE_LOTO_ISOLATION_LOCKED": "La règle d'isolation d'énergie du type de permis LOTO désactivée sur un autre poste",
       "PERMIT_TYPE_CODE_LOCKED": "Le code d'un type de permis modifié sur un autre poste",
       "LAST_ADMINISTRATOR_REQUIRED": "Une modification venue d'un autre poste qui laisserait ce poste sans administrateur actif",
+      "ADMIN_RECOVERY_NOTICE_CHANGED": "Un avis sur un administrateur créé avec un code de récupération a été modifié sur un autre poste : un avis n'est jamais modifié",
+      "ADMIN_RECOVERY_NOTICE_INVALID": "Un avis sur un administrateur créé avec un code de récupération est arrivé adressé au nouvel administrateur, ou avec des caractères invisibles dans les noms affichés",
+      "ADMIN_RECOVERY_ACK_NOT_RECIPIENT": "Un avis de code de récupération a été marqué comme lu sur un autre poste par une autre personne que l'administrateur destinataire",
+      "ADMIN_RECOVERY_ACK_CHANGED": "La prise de connaissance d'un avis de code de récupération a été modifiée sur un autre poste : elle n'est jamais modifiée",
       "other": "À examiner"
     },
     "history": {

@@ -1,6 +1,8 @@
 // Persistent notice to each administrator after an administrator was created with a vendor
-// recovery code (`auth::recovery_code`). Shown after every sign-in until that administrator
-// acknowledges it; the acknowledgement is per administrator and audited by the backend.
+// recovery code (`auth::recovery_code`). Shown after every sign-in, on every PC of the plant, until
+// that administrator acknowledges it; the acknowledgement is per administrator and audited by the
+// backend. It names the new account by its display name AND its username (the username is what
+// signs in; a display name alone could pose as an existing administrator).
 
 import { ShieldAlert } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -86,7 +88,9 @@ export function AdminRecoveryNotice({ sessionUserId, className }: AdminRecoveryN
             <p>
               {t("session.recoveryNotice.message", {
                 date: formatDateTime(notice.created_at, i18n.language || "fr"),
-                name: notice.created_display_name || notice.created_username,
+                name: notice.created_display_name,
+                username: notice.created_username,
+                device: notice.redeemed_device_code,
               })}
             </p>
           </div>

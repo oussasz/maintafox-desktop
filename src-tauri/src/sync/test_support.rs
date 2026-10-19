@@ -321,6 +321,13 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ),
     // Labour booked to a person without a login (migration 190): personnel only.
     ("work_order_interveners", "intervener_id", "NULL"),
+    // Only a notice's recipient acknowledges it (`auth::recovery_code::inbound_acknowledgement_check`):
+    // the acknowledgement names the recipient of the notice just created as its parent.
+    (
+        "admin_recovery_acknowledgements",
+        "acknowledged_by_id",
+        "(SELECT recipient_user_id FROM admin_recovery_notices ORDER BY id DESC LIMIT 1)",
+    ),
     // A requirement asks for one certification or one skill, never both.
     ("qualification_requirements", "skill_reference_value_id", "NULL"),
     ("qualification_requirements", "min_proficiency_level", "NULL"),

@@ -36,6 +36,7 @@ const NOTICE = {
   created_at: "2026-10-19T09:00:00Z",
   created_username: "sauveur",
   created_display_name: "Responsable Maintenance",
+  redeemed_device_code: "7KQ2",
 };
 
 describe("AdminRecoveryNotice", () => {
@@ -53,6 +54,16 @@ describe("AdminRecoveryNotice", () => {
     expect(notice).toHaveTextContent("session.recoveryNotice.message");
     expect(notice).toHaveTextContent("Responsable Maintenance");
     expect(ipc.calls.map((c) => c.cmd)).toEqual(["get_admin_recovery_notices"]);
+  });
+
+  it("names the new account by its username as well as its display name, and the PC", async () => {
+    // A display name chosen to look like an existing administrator: the username still shows.
+    ipc.notices = [{ ...NOTICE, created_display_name: "Jean Dupont", created_username: "intrus" }];
+    render(<AdminRecoveryNotice sessionUserId={1} />);
+    const notice = await screen.findByTestId("admin-recovery-notice");
+    expect(notice).toHaveTextContent('"name":"Jean Dupont"');
+    expect(notice).toHaveTextContent('"username":"intrus"');
+    expect(notice).toHaveTextContent('"device":"7KQ2"');
   });
 
   it("goes away once acknowledged, for this notice only", async () => {

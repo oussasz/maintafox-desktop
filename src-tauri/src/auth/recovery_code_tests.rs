@@ -459,6 +459,17 @@ async fn the_validity_window_is_enforced_at_its_edges() {
         verify(&db, &code, instant("2026-10-19T08:24:59.999Z")).await.err(),
         Some(Refusal::IssuedInFuture)
     );
+    // The window itself must be one the vendor issues (checked before expiry).
+    assert_eq!(
+        verify(
+            &db,
+            &signed_variant(|p| p.expires_at = "2030-01-01T00:00:00.000Z".into()),
+            primary_now()
+        )
+        .await
+        .err(),
+        Some(Refusal::InvalidWindow)
+    );
     let unreadable = signed_variant(|p| p.expires_at = "tomorrow".into());
     assert_eq!(
         verify(&db, &unreadable, primary_now()).await.err(),
@@ -496,7 +507,7 @@ async fn redeeming_creates_one_lasting_administrator_and_spends_the_code() {
             &format!(
                 "SELECT COUNT(*) AS n FROM user_scope_assignments usa JOIN roles r ON r.id = usa.role_id \
                  WHERE usa.user_id = {new_id} AND r.name = 'Administrator' AND usa.scope_type = 'tenant' \
-                 AND usa.scope_reference = '{TENANT}' AND usa.valid_to IS NULL AND usa.deleted_at IS NULL"
+                 AND usa.scope_reference IS NULL AND usa.valid_to IS NULL AND usa.deleted_at IS NULL"
             )
         )
         .await,
@@ -567,6 +578,12 @@ async fn redeeming_creates_one_lasting_administrator_and_spends_the_code() {
     assert_eq!(notices.len(), 1);
     assert_eq!(notices[0].created_username, "recovery.admin");
     assert_eq!(notices[0].created_display_name, "Responsable Maintenance");
+    assert_eq!(
+        notices[0].redeemed_device_code,
+        crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code")
+    );
     assert!(notices_for(&db, Some(new_id)).await.expect("notices").is_empty());
     assert!(notices_for(&db, None).await.expect("signed out").is_empty());
 
@@ -823,4 +840,696 @@ async fn a_former_administrator_is_not_shown_the_notice() {
         .await
         .expect("disable");
     assert!(notices_for(&db, Some(chef)).await.expect("chef").is_empty());
+}
+
+// ── Review should-fix round (S1, S2, S4, N4, N7) ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn the_code_lifetime_is_at_most_24_hours() {
+    let db = activated_pc().await;
+    let now = primary_now();
+    // issued 2026-10-19T08:30:00.000Z (the vector's primary code: exactly 24 h, accepted).
+    assert!(verify(&db, &primary_code(), now).await.is_ok());
+    let exactly = signed_variant(|p| p.expires_at = "2026-10-20T08:30:00.000Z".into());
+    assert!(verify(&db, &exactly, now).await.is_ok());
+    let shorter = signed_variant(|p| p.expires_at = "2026-10-19T09:30:00.000Z".into());
+    assert!(verify(&db, &shorter, now).await.is_ok());
+    for expires_at in [
+        // 24 h + 1 ms.
+        "2026-10-20T08:30:00.001Z",
+        // Ends when it starts, or before.
+        "2026-10-19T08:30:00.000Z",
+        "2026-10-19T08:29:59.999Z",
+        // Years ahead.
+        "2036-10-19T08:30:00.000Z",
+    ] {
+        let code = signed_variant(|p| p.expires_at = expires_at.into());
+        assert_eq!(
+            verify(&db, &code, now).await.err(),
+            Some(Refusal::InvalidWindow),
+            "{expires_at}"
+        );
+    }
+    assert_eq!(Refusal::InvalidWindow.as_str(), "invalid_window");
+    assert_eq!(
+        Refusal::InvalidWindow.error_code(),
+        "ADMIN_RECOVERY_CODE_INVALID_WINDOW"
+    );
+    // A genuine code with such a window is refused when redeemed, audited, and creates nothing.
+    let long = signed_variant(|p| p.expires_at = "2026-10-20T08:30:00.001Z".into());
+    let err = redeem_admin_recovery_code_in(&db, input(&long, "nouveau"), now)
+        .await
+        .expect_err("long window");
+    assert_eq!(code_of(&err), Some("ADMIN_RECOVERY_CODE_INVALID_WINDOW"));
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT COUNT(*) AS n FROM user_accounts WHERE username = 'nouveau'"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) AS n FROM audit_events WHERE action_code = '{AUDIT_REFUSED}' \
+                 AND json_extract(details_json, '$.reason') = 'invalid_window'"
+            )
+        )
+        .await,
+        1
+    );
+}
+
+async fn refusal_rows(db: &DatabaseConnection, reason: &str) -> i64 {
+    scalar(
+        db,
+        &format!(
+            "SELECT COUNT(*) AS n FROM audit_events WHERE action_code = '{AUDIT_REFUSED}' \
+             AND json_extract(details_json, '$.reason') = '{reason}'"
+        ),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn repeated_refusals_of_one_genuine_code_are_audited_once_per_reason() {
+    let db = administered_pc().await;
+    redeem_admin_recovery_code_in(&db, input(&primary_code(), "sauveur"), primary_now())
+        .await
+        .expect("redeemed");
+    // The spent code replayed again and again from the login screen: one audit row.
+    for attempt in 0..5 {
+        let err = redeem_admin_recovery_code_in(&db, input(&primary_code(), &format!("rejeu{attempt}")), primary_now())
+            .await
+            .expect_err("replay");
+        assert_eq!(code_of(&err), Some(Refusal::AlreadyUsed.error_code()));
+    }
+    assert_eq!(refusal_rows(&db, "already_used").await, 1);
+
+    // Another genuine code, for another PC: one row for that code and reason too.
+    let other = signed_variant(|p| p.code_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".into());
+    set_claim(&db, TENANT, "fp-other-pc", LICENSE).await;
+    for _ in 0..3 {
+        let err = redeem_admin_recovery_code_in(&db, input(&other, "autre"), primary_now())
+            .await
+            .expect_err("other PC");
+        assert_eq!(code_of(&err), Some(Refusal::WrongMachine.error_code()));
+    }
+    assert_eq!(refusal_rows(&db, "wrong_machine").await, 1);
+    // The same code refused for another reason is a new row (one per code and reason).
+    set_claim(&db, TENANT, FINGERPRINT, "lic_other").await;
+    for _ in 0..2 {
+        redeem_admin_recovery_code_in(&db, input(&other, "autre"), primary_now())
+            .await
+            .expect_err("other licence");
+    }
+    assert_eq!(refusal_rows(&db, "wrong_license").await, 1);
+    assert_eq!(
+        scalar(
+            &db,
+            &format!("SELECT COUNT(*) AS n FROM audit_events WHERE action_code = '{AUDIT_REFUSED}'")
+        )
+        .await,
+        3
+    );
+}
+
+#[test]
+fn format_and_control_characters_are_recognised() {
+    for c in [
+        '\u{202E}',
+        '\u{202A}',
+        '\u{2066}',
+        '\u{2069}',
+        '\u{200B}',
+        '\u{200F}',
+        '\u{200D}',
+        '\u{00AD}',
+        '\u{FEFF}',
+        '\u{061C}',
+        '\u{E0041}',
+    ] {
+        assert!(is_format_character(c), "U+{:04X}", u32::from(c));
+        assert!(has_invisible_character(&format!("Jean{c}Dupont")));
+    }
+    assert!(has_invisible_character("Jean\u{0007}Dupont"));
+    for name in ["Jean Dupont", "Hélène Çelik", "محمد", "Ørsted-Nuñez", "李雷"] {
+        assert!(!has_invisible_character(name), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn invisible_characters_are_refused_in_the_name_and_username() {
+    let db = administered_pc().await;
+    for display_name in [
+        "Jean\u{202E}tnopuD",
+        "Chef\u{200B}",
+        "\u{2066}Chef\u{2069}",
+        "Jean\u{00AD}Dupont",
+        "Jean\nDupont",
+    ] {
+        let mut sneaky = input(&primary_code(), "nouveau");
+        sneaky.display_name = display_name.into();
+        let err = redeem_admin_recovery_code_in(&db, sneaky, primary_now())
+            .await
+            .expect_err("display name");
+        assert_eq!(code_of(&err), Some(NAME_INVISIBLE_CHARACTERS), "{display_name:?}");
+    }
+    for username in ["chef\u{200D}2", "\u{202E}fehc", "adm\u{FEFF}in"] {
+        let err = redeem_admin_recovery_code_in(&db, input(&primary_code(), username), primary_now())
+            .await
+            .expect_err("username");
+        assert_eq!(code_of(&err), Some(NAME_INVISIBLE_CHARACTERS), "{username:?}");
+    }
+    assert_eq!(
+        scalar(&db, "SELECT COUNT(*) AS n FROM admin_recovery_codes_used").await,
+        0
+    );
+    // Letters of any script stay allowed.
+    let mut accented = input(&primary_code(), "hélène");
+    accented.display_name = "Hélène Çelik".into();
+    redeem_admin_recovery_code_in(&db, accented, primary_now())
+        .await
+        .expect("accented names");
+}
+
+#[test]
+fn debug_of_the_input_never_shows_the_code_or_the_passwords() {
+    let shown = format!("{:?}", input(&primary_code(), "sauveur"));
+    assert!(!shown.contains(PASSWORD), "{shown}");
+    assert!(!shown.contains("MFXREC1"), "{shown}");
+    assert!(shown.contains("sauveur"), "{shown}");
+    assert_eq!(shown.matches("<redacted>").count(), 3, "{shown}");
+}
+
+async fn first_admin_marker(db: &DatabaseConnection) -> Option<String> {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT value FROM system_config WHERE key = ?",
+        [crate::auth::builtin_admin::FIRST_ADMIN_MARKER_KEY.into()],
+    ))
+    .await
+    .expect("marker")
+    .and_then(|r| r.try_get::<String>("", "value").ok())
+}
+
+async fn sync_id_of(db: &DatabaseConnection, username: &str) -> String {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT entity_sync_id FROM user_accounts WHERE username = ?",
+        [username.into()],
+    ))
+    .await
+    .expect("query")
+    .and_then(|r| r.try_get::<String>("", "entity_sync_id").ok())
+    .expect("sync id")
+}
+
+#[tokio::test]
+async fn the_recovered_administrator_is_recorded_as_first_administrator_like_first_start() {
+    // No administrator yet: the recovered one becomes the PC's first-administrator marker, so the
+    // first-start screen stays closed even if this account is disabled before a restart.
+    let db = activated_pc().await;
+    assert!(!crate::auth::builtin_admin::first_admin_marker_closes(&db)
+        .await
+        .expect("marker"));
+    redeem_admin_recovery_code_in(&db, input(&primary_code(), "sauveur"), primary_now())
+        .await
+        .expect("redeemed");
+    assert_eq!(first_admin_marker(&db).await, Some(sync_id_of(&db, "sauveur").await));
+    assert!(crate::auth::builtin_admin::first_admin_marker_closes(&db)
+        .await
+        .expect("marker"));
+
+    // A PC whose first administrator exists keeps its marker (the call is idempotent).
+    let db = administered_pc().await;
+    let chef_marker = first_admin_marker(&db).await;
+    assert_eq!(chef_marker, Some(sync_id_of(&db, "chef").await));
+    redeem_admin_recovery_code_in(&db, input(&primary_code(), "sauveur"), primary_now())
+        .await
+        .expect("redeemed");
+    assert_eq!(first_admin_marker(&db).await, chef_marker);
+}
+
+// ── S3: notices synchronised across PCs ──────────────────────────────────────────────────────────
+
+use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
+use crate::sync::test_support::{current_payload, started_device_db, TestServer};
+
+type Payload = serde_json::Map<String, Value>;
+
+/// A named administrator whose role travels by synchronisation (plant-wide, no scope reference).
+async fn synced_admin(db: &DatabaseConnection, username: &str) -> i64 {
+    let now = Utc::now().to_rfc3339();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO user_accounts
+            (entity_sync_id, username, display_name, identity_mode, password_hash, is_active, is_admin,
+             force_password_change, password_changed_at, failed_login_attempts, created_at, updated_at, row_version)
+         VALUES (?, ?, ?, 'local', 'x', 1, 0, 0, ?, 0, ?, ?, 1)",
+        [
+            uuid::Uuid::new_v4().to_string().into(),
+            username.into(),
+            username.into(),
+            now.clone().into(),
+            now.clone().into(),
+            now.clone().into(),
+        ],
+    ))
+    .await
+    .expect("account");
+    let id = user_id(db, username).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO user_scope_assignments
+            (entity_sync_id, user_id, role_id, scope_type, scope_reference, valid_to, created_at, updated_at,
+             row_version)
+         VALUES (?, ?, (SELECT id FROM roles WHERE name = 'Administrator' AND deleted_at IS NULL), 'tenant',
+                 NULL, NULL, ?, ?, 1)",
+        [
+            uuid::Uuid::new_v4().to_string().into(),
+            id.into(),
+            now.clone().into(),
+            now.into(),
+        ],
+    ))
+    .await
+    .expect("role");
+    id
+}
+
+/// PC A (activated for the vector, administrators "chef" and "adjoint") and PC B, in sync, with a
+/// recovery code redeemed on A ("sauveur") and everything exchanged once more.
+async fn two_pcs_after_recovery() -> (DatabaseConnection, DatabaseConnection, TestServer) {
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    crate::license::security::ensure_default_licensing_trust_keys(&a)
+        .await
+        .expect("trust keys");
+    set_claim(&a, TENANT, FINGERPRINT, LICENSE).await;
+    synced_admin(&a, "chef").await;
+    synced_admin(&a, "adjoint").await;
+    let mut server = TestServer::new();
+    server.exchange("A", &a).await;
+    server.exchange("B", &b).await;
+    assert!(
+        crate::auth::rbac::user_has_elevated_admin_access(&b, i32::try_from(user_id(&b, "chef").await).expect("id"))
+            .await
+            .expect("rights"),
+        "chef is an administrator on B too"
+    );
+
+    redeem_admin_recovery_code_in(&a, input(&primary_code(), "sauveur"), primary_now())
+        .await
+        .expect("redeemed on A");
+    server.exchange("A", &a).await;
+    let received = server.exchange("B", &b).await;
+    assert!(
+        received.materialized.errors.is_empty(),
+        "{:?}",
+        received.materialized.errors
+    );
+    // Everything staged on A, the new administrator's role included.
+    assert_eq!(
+        scalar(
+            &a,
+            "SELECT COUNT(*) AS n FROM sync_conflicts WHERE conflict_type = 'STAGE_ERROR'"
+        )
+        .await,
+        0
+    );
+    (a, b, server)
+}
+
+async fn notice_sync_id(db: &DatabaseConnection, recipient: &str) -> String {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT n.entity_sync_id FROM admin_recovery_notices n JOIN user_accounts u ON u.id = n.recipient_user_id
+          WHERE u.username = ?",
+        [recipient.into()],
+    ))
+    .await
+    .expect("query")
+    .and_then(|r| r.try_get::<String>("", "entity_sync_id").ok())
+    .expect("notice")
+}
+
+async fn wire_of(db: &DatabaseConnection, entity_type: &str, sync_id: &str) -> Payload {
+    current_payload(db, entity_type, sync_id, &Default::default())
+        .await
+        .expect("payload")
+        .expect("row")
+}
+
+async fn receive(
+    db: &DatabaseConnection,
+    entity_type: &str,
+    sync_id: &str,
+    operation: &str,
+    row: &Payload,
+) -> ApplyOutcome {
+    apply_inbound_payload(
+        db,
+        entity_type,
+        sync_id,
+        operation,
+        2,
+        &serde_json::to_string(row).expect("json"),
+    )
+    .await
+    .expect("apply")
+}
+
+fn conflict_code(outcome: &ApplyOutcome) -> Option<&str> {
+    match outcome {
+        ApplyOutcome::Conflict { code, .. } => Some(code.as_str()),
+        _ => None,
+    }
+}
+
+#[tokio::test]
+async fn a_notice_reaches_every_pc_and_its_acknowledgement_travels_back() {
+    let (a, b, mut server) = two_pcs_after_recovery().await;
+    let device_a = crate::sync::device_code::this_device_code(&a).await.expect("code A");
+    let device_b = crate::sync::device_code::this_device_code(&b).await.expect("code B");
+
+    // One notice per administrator active at redemption, the new one excluded, on both PCs.
+    for db in [&a, &b] {
+        assert_eq!(scalar(db, "SELECT COUNT(*) AS n FROM admin_recovery_notices").await, 2);
+        assert_eq!(
+            scalar(
+                db,
+                "SELECT COUNT(*) AS n FROM admin_recovery_notices n JOIN user_accounts u \
+                 ON u.id = n.recipient_user_id WHERE u.username = 'sauveur'"
+            )
+            .await,
+            0
+        );
+    }
+    // PC B received the account AND its Administrator role: a lasting, plant-wide administrator there.
+    let sauveur_b = user_id(&b, "sauveur").await;
+    assert_eq!(
+        scalar(
+            &b,
+            &format!(
+                "SELECT COUNT(*) AS n FROM user_scope_assignments usa JOIN roles r ON r.id = usa.role_id                  WHERE usa.user_id = {sauveur_b} AND r.name = 'Administrator' AND usa.scope_type = 'tenant'                  AND usa.scope_reference IS NULL AND usa.valid_to IS NULL AND usa.deleted_at IS NULL"
+            )
+        )
+        .await,
+        1
+    );
+    assert!(
+        crate::auth::rbac::user_has_elevated_admin_access(&b, i32::try_from(sauveur_b).expect("id"))
+            .await
+            .expect("rights")
+    );
+    assert!(crate::auth::last_admin::lasting_administrator_ids(&b)
+        .await
+        .expect("lasting")
+        .contains(&sauveur_b));
+    assert!(crate::auth::last_admin::active_administrator_ids(&b)
+        .await
+        .expect("active")
+        .contains(&sauveur_b));
+    let chef_b = user_id(&b, "chef").await;
+    let on_b = notices_for(&b, Some(chef_b)).await.expect("chef on B");
+    assert_eq!(on_b.len(), 1, "the notice is visible on the second PC");
+    assert_eq!(on_b[0].created_username, "sauveur");
+    assert_eq!(on_b[0].created_display_name, "Responsable Maintenance");
+    assert_eq!(on_b[0].redeemed_device_code, device_a);
+    assert_eq!(
+        notices_for(&b, Some(user_id(&b, "adjoint").await))
+            .await
+            .expect("adjoint on B")
+            .len(),
+        1
+    );
+
+    // Chef acknowledges on B: the acknowledgement (who, when, which PC) reaches A and clears it there.
+    let chef_a = user_id(&a, "chef").await;
+    assert_eq!(notices_for(&a, Some(chef_a)).await.expect("chef on A").len(), 1);
+    acknowledge_notice_in(&b, chef_b, on_b[0].id).await.expect("ack on B");
+    assert!(notices_for(&b, Some(chef_b)).await.expect("chef on B").is_empty());
+    server.exchange("B", &b).await;
+    server.exchange("A", &a).await;
+    assert_eq!(
+        scalar(
+            &a,
+            "SELECT COUNT(*) AS n FROM sync_conflicts WHERE entity_type LIKE 'admin_recovery%'"
+        )
+        .await,
+        0
+    );
+    assert!(notices_for(&a, Some(chef_a)).await.expect("chef on A").is_empty());
+    assert_eq!(
+        scalar(
+            &a,
+            &format!(
+                "SELECT COUNT(*) AS n FROM admin_recovery_acknowledgements \
+                 WHERE acknowledged_by_id = {chef_a} AND device_code = '{device_b}'"
+            )
+        )
+        .await,
+        1
+    );
+    // Adjoint's own notice is still waiting on both PCs.
+    assert_eq!(
+        notices_for(&a, Some(user_id(&a, "adjoint").await))
+            .await
+            .expect("adjoint on A")
+            .len(),
+        1
+    );
+    // The acknowledgement was audited where it was made.
+    assert_eq!(
+        scalar(
+            &b,
+            &format!(
+                "SELECT COUNT(*) AS n FROM audit_events WHERE action_code = '{AUDIT_NOTICE_ACKNOWLEDGED}' \
+                 AND actor_id = {chef_b} AND json_extract(details_json, '$.device_code') = '{device_b}'"
+            )
+        )
+        .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn an_acknowledgement_made_by_anyone_but_the_recipient_is_refused() {
+    let (a, b, _server) = two_pcs_after_recovery().await;
+    // In the backend command: adjoint cannot acknowledge chef's notice, nor can the new administrator.
+    let chef_notice_b = notice_sync_id(&b, "chef").await;
+    let chef_notice_b_id = scalar(
+        &b,
+        &format!("SELECT id AS n FROM admin_recovery_notices WHERE entity_sync_id = '{chef_notice_b}'"),
+    )
+    .await;
+    for intruder in ["adjoint", "sauveur"] {
+        let err = acknowledge_notice_in(&b, user_id(&b, intruder).await, chef_notice_b_id)
+            .await
+            .expect_err("not theirs");
+        assert_eq!(code_of(&err), Some(NOTICE_NOT_FOUND), "{intruder}");
+    }
+
+    // A genuine acknowledgement by chef on B, as B sends it.
+    let chef_b = user_id(&b, "chef").await;
+    acknowledge_notice_in(&b, chef_b, chef_notice_b_id).await.expect("ack");
+    let ack_sync: String = b
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id AS v FROM admin_recovery_acknowledgements".to_string(),
+        ))
+        .await
+        .expect("query")
+        .and_then(|r| r.try_get::<String>("", "v").ok())
+        .expect("ack");
+    let genuine = wire_of(&b, ACK_ENTITY, &ack_sync).await;
+    assert_eq!(
+        genuine.get("acknowledged_by_sync_id").and_then(Value::as_str),
+        Some(sync_id_of(&b, "chef").await.as_str())
+    );
+
+    // The same acknowledgement rewritten on a PC to name someone else: refused on arrival.
+    for intruder in ["adjoint", "sauveur"] {
+        let mut forged = genuine.clone();
+        forged.insert(
+            "acknowledged_by_sync_id".into(),
+            Value::String(sync_id_of(&a, intruder).await),
+        );
+        let forged_sync = uuid::Uuid::new_v4().to_string();
+        let outcome = receive(&a, ACK_ENTITY, &forged_sync, "upsert", &forged).await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some(CONFLICT_ACK_NOT_RECIPIENT),
+            "{intruder}: {outcome:?}"
+        );
+    }
+    assert_eq!(
+        scalar(&a, "SELECT COUNT(*) AS n FROM admin_recovery_acknowledgements").await,
+        0
+    );
+    let chef_a = user_id(&a, "chef").await;
+    assert_eq!(notices_for(&a, Some(chef_a)).await.expect("chef on A").len(), 1);
+
+    // The genuine one is applied; changed afterwards (another time, another PC), it is refused.
+    let outcome = receive(&a, ACK_ENTITY, &ack_sync, "upsert", &genuine).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert!(notices_for(&a, Some(chef_a)).await.expect("chef on A").is_empty());
+    let mut changed = genuine.clone();
+    changed.insert("acknowledged_at".into(), Value::String("2027-01-01T00:00:00Z".into()));
+    assert_eq!(
+        conflict_code(&receive(&a, ACK_ENTITY, &ack_sync, "upsert", &changed).await),
+        Some(CONFLICT_ACK_CHANGED)
+    );
+    // Nor can an acknowledgement be removed by synchronisation (append-only).
+    assert_eq!(
+        conflict_code(&receive(&a, ACK_ENTITY, &ack_sync, "delete", &genuine).await),
+        Some("APPEND_ONLY_DELETE")
+    );
+}
+
+#[tokio::test]
+async fn nobody_edits_or_deletes_a_notice() {
+    let (a, b, _server) = two_pcs_after_recovery().await;
+    let notice = notice_sync_id(&a, "chef").await;
+    let original = wire_of(&a, NOTICE_ENTITY, &notice).await;
+
+    // Received edits of any field are refused, whoever made them; the notice stays as it was.
+    for (key, value) in [
+        ("created_username", Value::String("quelquun".into())),
+        ("created_display_name", Value::String("Jean Dupont".into())),
+        ("created_at", Value::String("2020-01-01T00:00:00Z".into())),
+        ("redeemed_device_code", Value::String("ZZZZ".into())),
+        ("recipient_user_sync_id", Value::String(sync_id_of(&a, "sauveur").await)),
+    ] {
+        let mut edited = original.clone();
+        edited.insert(key.into(), value);
+        let outcome = receive(&a, NOTICE_ENTITY, &notice, "upsert", &edited).await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some(CONFLICT_NOTICE_CHANGED),
+            "{key}: {outcome:?}"
+        );
+    }
+    assert_eq!(wire_of(&a, NOTICE_ENTITY, &notice).await, original);
+    // A received delete is refused.
+    let outcome = receive(&a, NOTICE_ENTITY, &notice, "delete", &original).await;
+    assert_eq!(conflict_code(&outcome), Some("APPEND_ONLY_DELETE"), "{outcome:?}");
+    assert_eq!(scalar(&a, "SELECT COUNT(*) AS n FROM admin_recovery_notices").await, 2);
+    // The same notice received again unchanged is a no-op.
+    let outcome = receive(&a, NOTICE_ENTITY, &notice, "upsert", &original).await;
+    assert!(matches!(outcome, ApplyOutcome::Unchanged), "{outcome:?}");
+
+    // A new notice addressed to the created administrator himself is refused.
+    let mut to_himself = original.clone();
+    to_himself.insert(
+        "recipient_user_sync_id".into(),
+        original.get("created_user_sync_id").cloned().expect("created"),
+    );
+    to_himself.insert("code_id".into(), Value::String("other-code".into()));
+    let outcome = receive(
+        &b,
+        NOTICE_ENTITY,
+        &uuid::Uuid::new_v4().to_string(),
+        "upsert",
+        &to_himself,
+    )
+    .await;
+    assert_eq!(conflict_code(&outcome), Some(CONFLICT_NOTICE_INVALID), "{outcome:?}");
+    // Nor one whose names carry invisible characters.
+    let mut disguised = original.clone();
+    disguised.insert(
+        "created_display_name".into(),
+        Value::String("Jean\u{202E}tnopuD".into()),
+    );
+    disguised.insert("code_id".into(), Value::String("other-code-2".into()));
+    let outcome = receive(
+        &b,
+        NOTICE_ENTITY,
+        &uuid::Uuid::new_v4().to_string(),
+        "upsert",
+        &disguised,
+    )
+    .await;
+    assert_eq!(conflict_code(&outcome), Some(CONFLICT_NOTICE_INVALID), "{outcome:?}");
+
+    // On the PC itself, the database refuses any change of a notice or an acknowledgement, the
+    // new administrator's or anyone's.
+    let sauveur = user_id(&a, "sauveur").await;
+    assert!(a
+        .execute_unprepared(&format!(
+            "UPDATE admin_recovery_notices SET created_display_name = 'x', recipient_user_id = {sauveur}"
+        ))
+        .await
+        .is_err());
+    let chef_a = user_id(&a, "chef").await;
+    let id = notices_for(&a, Some(chef_a)).await.expect("chef")[0].id;
+    acknowledge_notice_in(&a, chef_a, id).await.expect("ack");
+    assert!(a
+        .execute_unprepared("UPDATE admin_recovery_acknowledgements SET acknowledged_at = 'x'")
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn the_recovered_administrator_counts_everywhere_as_a_lasting_plant_wide_administrator() {
+    // A plant with no administrator at all: every check reads the recovered one alone.
+    let db = activated_pc().await;
+    assert!(
+        !crate::commands::product_license::tenant_has_administrator_for_id(&db, TENANT)
+            .await
+            .expect("tenant")
+    );
+    redeem_admin_recovery_code_in(&db, input(&primary_code(), "sauveur"), primary_now())
+        .await
+        .expect("redeemed");
+    let id = user_id(&db, "sauveur").await;
+    // auth::last_admin
+    assert_eq!(
+        crate::auth::last_admin::lasting_administrator_ids(&db)
+            .await
+            .expect("lasting"),
+        vec![id]
+    );
+    assert_eq!(
+        crate::auth::last_admin::active_administrator_ids(&db)
+            .await
+            .expect("active"),
+        vec![id]
+    );
+    // auth::rbac: elevated access and the settings right plant-wide.
+    let id32 = i32::try_from(id).expect("id");
+    assert!(crate::auth::rbac::user_has_elevated_admin_access(&db, id32)
+        .await
+        .expect("elevated"));
+    assert!(crate::auth::rbac::check_permission(
+        &db,
+        id32,
+        crate::rbac::permissions::ADM_SETTINGS,
+        &crate::auth::rbac::PermissionScope::Global,
+    )
+    .await
+    .expect("settings permission"));
+    // commands::product_license (AdministratorScope::Tenant and Any) and the first-admin marker.
+    assert!(
+        crate::commands::product_license::tenant_has_administrator_for_id(&db, TENANT)
+            .await
+            .expect("tenant")
+    );
+    assert!(crate::commands::product_license::plant_has_administrator(&db)
+        .await
+        .expect("plant"));
+    assert!(crate::auth::builtin_admin::first_admin_marker_closes(&db)
+        .await
+        .expect("marker"));
+    // notices_for: a later code tells this administrator.
+    let second = signed_variant(|p| p.code_id = "11111111-2222-4333-8444-555555555555".into());
+    redeem_admin_recovery_code_in(&db, input(&second, "deuxieme"), primary_now())
+        .await
+        .expect("second");
+    let notices = notices_for(&db, Some(id)).await.expect("notices");
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].created_username, "deuxieme");
 }

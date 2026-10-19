@@ -906,6 +906,14 @@
     {
       "entity_type": "weekly_schedule_baseline_items",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "admin_recovery_notices",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "admin_recovery_acknowledgements",
+      "scope": "tenant"
     }
   ]
 }

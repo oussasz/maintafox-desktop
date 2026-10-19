@@ -120,6 +120,10 @@
       "PERMIT_TYPE_LOTO_ISOLATION_LOCKED": "The LOTO permit type's energy-isolation rule switched off on another PC",
       "PERMIT_TYPE_CODE_LOCKED": "A permit type's code changed on another PC",
       "LAST_ADMINISTRATOR_REQUIRED": "A change from another PC that would leave this PC without an active administrator",
+      "ADMIN_RECOVERY_NOTICE_CHANGED": "A notice about an administrator created with a recovery code was changed on another PC: notices are never changed",
+      "ADMIN_RECOVERY_NOTICE_INVALID": "A notice about an administrator created with a recovery code arrived addressed to the new administrator, or with invisible characters in the names it shows",
+      "ADMIN_RECOVERY_ACK_NOT_RECIPIENT": "A recovery-code notice was acknowledged on another PC by someone other than the administrator it is addressed to",
+      "ADMIN_RECOVERY_ACK_CHANGED": "An acknowledgement of a recovery-code notice was changed on another PC: acknowledgements are never changed",
       "other": "Needs review"
     },
     "history": {
