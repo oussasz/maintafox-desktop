@@ -171,11 +171,14 @@ pub async fn count_di_queues_in_scope(
 pub struct DiListPage {
     pub items: Vec<InterventionRequest>,
     pub total: i64,
-    /// Requests matching the filters that the reader's sites do not cover (rule §2.4: shown as a
-    /// count, never silently left out). Always 0 for a plant-wide reader.
+    /// Requests that have an org node but that the reader's sites do not cover (rule §2.4: shown
+    /// as a count, never silently left out). Counted over ALL requests, ignoring every user
+    /// filter and the search, so a site user cannot probe other sites' requests by filtering.
+    /// Always 0 for a plant-wide reader.
     pub hidden_outside_scope: i64,
-    /// Requests matching the filters that have no org node (rows from before decision O7):
-    /// plant-wide readers only. Always 0 for a plant-wide reader.
+    /// Requests without an org node (rows from before decision O7), which only a plant-wide
+    /// reader can see. Counted over ALL requests, ignoring every user filter and the search.
+    /// Always 0 for a plant-wide reader.
     pub hidden_without_site: i64,
 }
 
@@ -225,6 +228,14 @@ pub struct DiCreateInput {
     pub submitter_id: i64,
     #[serde(default)]
     pub source_inspection_anomaly_id: Option<i64>,
+}
+
+impl DiCreateInput {
+    /// The requester is the signed-in user, never a value sent by the screen (a `di.create.own`
+    /// holder could otherwise file a request in someone else's name).
+    pub fn bind_requester(&mut self, session_user_id: i32) {
+        self.submitter_id = i64::from(session_user_id);
+    }
 }
 
 fn default_request_type() -> String {
