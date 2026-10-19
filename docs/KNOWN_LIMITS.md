@@ -38,7 +38,7 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| A corrective work order can be flagged "needs shutdown" (planning panel, with confirmation) and is checked against shutdown windows like PM plans. The badge shows on the work-order list, board and detail; the planning backlog shows the shutdown warning but not the badge. | UX | Accepted |
+| A corrective work order can be flagged "needs shutdown" (planning panel, with confirmation) and is checked against shutdown windows like PM plans. The badge shows on the work-order list, board, detail and the planning backlog cards. | UX | Accepted |
 | A permit, isolation, suspension, hand-over log, work-order start or qualification override changed on another PC is checked again on arrival with the same rules as here (never stricter): activation (time, expiry, isolations verified by a second person, no lock removed), close, hand-back, suspension, the two-person rule, the start gate at the start time (including a permit of the rule's type for a rule-flagged work order), override reason / person / context / no self-override / approver right. A refused change is a sync conflict for review (sync centre, coded and explained in FR/EN), with nothing written. | Safety | Accepted |
 | Not re-checked on arrival: the qualifications of the people booked or acting on the work day, and the permissions and step-up of the person at the time of the action; these stay enforced on the PC where the action is taken (certificates may reach this PC later or differently). | Safety | Accepted |
 | Rows that arrive together are applied together: a permit's change with the isolations, suspensions and hand-over logs it was judged on, a work order's start with its permits, waits and status changes. Each goes through the normal checks of any received row (an older version, or a row changed here and not yet sent, is never applied over this PC's copy); if one is refused, none is written and the permit or work order is a conflict; if one is still waiting, the whole group waits. | Safety | Accepted |
@@ -66,17 +66,16 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Every "open work order" count uses one of the two shared rules and its figure shows the rule name, with a list link using the same rule (SMRP backlog included). | Data | Accepted |
 | Devices on the previous version must upgrade together with this one: they would still send the old urgency and type references, and an edit from an old PC turns a part line marked optional back to required (the safe direction). | Data | Release |
 | The 4 h estimated duration once used for DI planning candidates was removed; DIs are "not estimated" until converted and estimated. | UX | Accepted |
-| Planned labour per technician on a work order does not exist (labour lines hold actuals only), so planning counts only the named assignee per commitment ("+N crew members not named"). Naming every crew member is proposed for later. | Data | Owner decision |
+| Planned labour per technician on a work order does not exist (labour lines hold actuals only), so planning books duration × crew size and counts unnamed crew members in the crew load. Naming every crew member is not planned for the pilot (decision 2026-10-19; after the pilot if planners ask). | Data | Accepted |
 | A work-order type without a maintenance nature is listed in Données de référence with the number of work orders using it; a holder of the reference-data manage right gives it one of the six natures, once, with a reason (audited). Until then its work orders count in no planned / reactive / emergency share. | Data | Accepted |
-| A nature tag is read the same way by every screen and report: spaces, tabs and line breaks around it are ignored. A tag with another invisible character (for example a no-break space) is read as no nature by all of them and appears on the review list. Stored tags are not rewritten. | Data | Accepted |
+| A nature tag is read the same way by every screen and report: spaces, tabs and line breaks around it are ignored. A tag with another invisible character (for example a no-break space) is read as no nature by all of them and appears on the review list. Stored tags are not rewritten (owner decision: leave stored data as is). | Data | Accepted |
 
 ## Requests (DI) screens
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| No personal saved views; the work queues stand in for them (would need a new synced table). | UX | After pilot |
-| The asset picker is a search with the site path shown, not a tree browser. | UX | Step 5 (asset picker batch) |
-| The review history does not show who took each decision (the status-history tab does). | UX | After pilot |
+| No personal saved views; the work queues stand in for them (decision 2026-10-19: enough for the pilot; a new synced table only if pilot users ask). | UX | Accepted |
+| The asset picker is a search with the site path shown, not a tree browser; the full tree is on the equipment page (decision 2026-10-19). | UX | Accepted |
 | Requests are now limited by site (step 6, stage 2): a user whose role is on a site sees, counts and acts on the requests of that site and of the lines/zones below it only; a plant-wide user sees everything as before. The list says how many requests it leaves out and why ("outside your sites", "without a site"); these counts cover all requests, whatever the filters or search, so a search never tells a site user what another site's requests contain. The home page, the dashboard and the request reports and exports are not converted yet: they still need a plant-wide role. | Data | Step 6 (stage 3: home, analytics, reports) |
 | Old requests recorded without a site (site left empty before a site was required) are flagged "To review: no site". Only plant-wide users see them and can act on them; no screen can attach them to a site yet (editing a request does not change its site or equipment), and nothing is rewritten in the stored data. | Data | After pilot (data review) |
 | A new request must have a site, taken from its equipment's location: a request without one is refused for everyone, from the request screen and from inspection and PM follow-ups alike. A site user cannot create a request on another site, nor on equipment installed on another site. | Data | Accepted |
@@ -106,7 +105,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | A PM follow-up work order is deferred corrective (EN 13306) and keeps its PM link; follow-ups created before the change were re-tagged only where the link was unambiguous. | Data | Accepted |
 | PM / request qualification gaps cannot be overridden before the work order exists (overrides are recorded on work orders). | UX | Accepted |
 | The PM auto-pilot is set as a daily run time; a non-daily schedule set elsewhere is kept and shown as "custom", and can only be changed by switching back to daily. | UX | Accepted |
-| Parts on PM plans are chosen by article-code search. | UX | After pilot |
+| Parts on PM plans are chosen by article-code search (same search as work orders; shows the available quantity and unit). | UX | Accepted |
 | Deferral, miss and cancel reasons are now a site reference list; reasons stored before keep their old upper-case codes and new ones are stored in lower case. Screens match either form; no stored reason is rewritten. | Data | Accepted |
 
 ## Stock and units of measure
@@ -178,8 +177,8 @@ Each figure says which one it shows, and its list link applies the same rule.
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| Figures open their list pre-filtered, shown as a clearable chip, and the list counts exactly what the figure counted (open and overdue work orders, open requests and requests waiting 7+ days, articles to reorder); tests hold list total = figure. Overdue and waiting use the clock at the moment the list is loaded. Planning figures are not linked yet. | Data | Accepted |
-| The work mix link (planned / reactive / emergency) finds the matching work-order types on the screen with the same nature rule the figures use; a work-order type with no nature set appears in no mix, in the figure or the list; the types concerned are listed in Données de référence for review. | Data | Step 7 (check the review list is empty) |
+| Figures open their list pre-filtered, shown as a clearable chip, and the list counts exactly what the figure counted (open and overdue work orders, open requests and requests waiting 7+ days, articles to reorder); tests hold list total = figure. Overdue and waiting use the clock at the moment the list is loaded. Planning figures on home open the planning page, not pre-filtered. | Data | Accepted |
+| The work mix link (planned / reactive / emergency) finds the matching work-order types on the screen with the same nature rule the figures use; a work-order type with no nature set appears in no mix, in the figure or the list; the types concerned are listed in Données de référence for review. | Data | Release (a plant's review list must be empty before go-live) |
 | "My rounds" counts rounds assigned to me personally, not to my team; "My PM" means PM whose work order is mine. | Data | Accepted |
 | The planning backlog panel reads at most 2,000 jobs, with a notice. | UX | Accepted |
 | Equipment whose criticality comes only from the old criticality list is read through the standard correspondence (CRITIQUE→A, IMPORTANT→B, STANDARD→C, NON-CRITIQUE→D) and flagged "à revoir"; a plant's own old code is read as no criticality until a planner sets one. Nothing stored is rewritten. | Data | Release (review flagged equipment) |
@@ -201,7 +200,6 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Limit | Impact | Handled in |
 |---|---|---|
 | The cost tile: a work order settled before the period and reopened inside it shows as a negative cost in the current period (consistent with the Finance cockpit). | Data | Accepted |
-| RAMS studies do not pull the mean corrective cost automatically (shown in Asset costs). | UX | After pilot |
 
 ## Assets
 
@@ -238,7 +236,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 |---|---|---|
 | Work-order and request boards are read-only: each status change needs its own dialog (urgency, reason, permit checks). Purchasing boards allow submit/approve by drag, menu or keyboard through the same server step. | UX | Accepted |
 | Work-order and request boards load each lane from the server with its own count and "load more"; opening a board sends one request per lane (7 or 6, in parallel). | UX | Accepted |
-| Screens still old or mixed (in progress): training, analytics "Customise", asset import wizard, diagnostics page, permit types dialog (to move under Données de référence), permit hand-over form, and the remaining reliability tools (Ishikawa, decision log, rating scales). | UX | Step 5 |
+| Screens still old or mixed (in progress): asset import wizard, diagnostics page, permit types dialog (to move under Données de référence), permit hand-over form, and the remaining reliability tools (Ishikawa, decision log, rating scales). | UX | Step 5 |
 
 ## Modules delivered before this register
 
