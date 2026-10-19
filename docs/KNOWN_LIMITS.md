@@ -250,7 +250,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 |---|---|---|
 | Work-order and request boards are read-only: each status change needs its own dialog (urgency, reason, permit checks). Purchasing boards allow submit/approve by drag, menu or keyboard through the same server step. | UX | Accepted |
 | Work-order and request boards load each lane from the server with its own count and "load more"; opening a board sends one request per lane (7 or 6, in parallel). | UX | Accepted |
-| Screens still old or mixed (in progress): the training certification-catalogue and qualification-requirements dialogs, asset import wizard, diagnostics page, permit types dialog (to move under Données de référence), permit hand-over form, and the remaining reliability tools (Ishikawa, decision log, rating scales). | UX | Step 5 |
+| Screens still old or mixed (in progress): asset import wizard, diagnostics page, permit types dialog (to move under Données de référence), permit hand-over form, and the remaining reliability tools (Ishikawa, decision log, rating scales). | UX | Step 5 |
 
 ## Modules delivered before this register
 
