@@ -105,7 +105,7 @@ function makeDi(overrides: Partial<InterventionRequest> = {}): InterventionReque
 }
 
 function makePage(items: InterventionRequest[]): DiListPage {
-  return { items, total: items.length };
+  return { items, total: items.length, hidden_outside_scope: 0, hidden_without_site: 0 };
 }
 
 function makeEvent(overrides: Partial<DiReviewEvent> = {}): DiReviewEvent {

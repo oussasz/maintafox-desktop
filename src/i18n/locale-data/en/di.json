@@ -1,4 +1,11 @@
 {
+  "errors": {
+    "DI_ORG_NODE_REQUIRED": "A request must be attached to a site: choose equipment installed on an org node."
+  },
+  "noSite": {
+    "badge": "To review: no site",
+    "hint": "Recorded without a site (before a site was required). Only users with a plant-wide role see this request and can act on it."
+  },
   "page": {
     "title": "Intervention Requests",
     "titleDetail": "Request detail",
@@ -11,6 +18,14 @@
     "filterSettings": "Filter settings"
   },
   "list": {
+    "hidden": {
+      "outsideScope_one": "{{count}} request is not shown: outside your sites.",
+      "outsideScope_other": "{{count}} requests are not shown: outside your sites.",
+      "withoutSite_one": "{{count}} request is not shown: it has no site.",
+      "withoutSite_other": "{{count}} requests are not shown: they have no site.",
+      "allRequests": "These counts cover all requests, whatever the filters or search.",
+      "askPlantWide": "Ask a user with a plant-wide role to see them."
+    },
     "columns": {
       "number": "No.",
       "subject": "Subject",

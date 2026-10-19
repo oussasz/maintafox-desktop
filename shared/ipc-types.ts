@@ -4259,6 +4259,10 @@ export interface DiListFilter {
 export interface DiListPage {
   items: InterventionRequest[];
   total: number;
+  /** Requests matching the filters outside the user's sites (site-scoped roles); 0 plant-wide. */
+  hidden_outside_scope: number;
+  /** Requests matching the filters that have no org node (plant-wide users only); 0 plant-wide. */
+  hidden_without_site: number;
 }
 
 export interface DiTransitionRow {
@@ -5226,6 +5230,24 @@ export interface WoTransitionRow {
   acted_at: string;
   /** Lifecycle state right after the transition (null before Phase 6.4). */
   lifecycle_state?: string | null;
+}
+
+/** An OT type without a maintenance nature (`list_work_order_types_to_review`). */
+export interface WorkOrderTypeToReview {
+  id: number;
+  code: string;
+  label: string;
+  is_active: boolean;
+  /** Work orders of this type (any status). */
+  work_order_count: number;
+}
+
+/** Give a plant's own OT type its nature (`set_work_order_type_nature`, ref.manage). */
+export interface SetWorkOrderTypeNatureInput {
+  type_id: number;
+  nature: MaintenanceNatureCode;
+  /** At least 10 characters. */
+  reason: string;
 }
 
 /** EN 13306 maintenance nature (reference list `WORK.MAINTENANCE_NATURES`, fixed by Maintafox). */

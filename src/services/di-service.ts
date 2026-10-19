@@ -122,6 +122,8 @@ const DiSummaryRowSchema = z.object({
 const DiListPageSchema = z.object({
   items: z.array(InterventionRequestSchema),
   total: z.number(),
+  hidden_outside_scope: z.number(),
+  hidden_without_site: z.number(),
 });
 
 const DiGetResponseSchema = z.object({

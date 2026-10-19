@@ -475,5 +475,24 @@
     "chooseBase": "Base unit…",
     "factorInvalid": "The factor must be a number greater than zero.",
     "reviewFilter": "To review ({{count}})"
+  },
+  "natureReview": {
+    "title_one": "{{count}} work-order type has no maintenance nature",
+    "title_other": "{{count}} work-order types have no maintenance nature",
+    "hint": "Carried over from the plant's former list, they count in no planned, reactive or emergency share. Give each its nature once.",
+    "workOrders_one": "{{count}} work order",
+    "workOrders_other": "{{count}} work orders",
+    "inactive": "(inactive)",
+    "give": "Give a nature",
+    "dialogTitle": "Nature of “{{label}}”",
+    "dialogHint": "The nature decides how this type's work orders count (failure coding, planned / reactive / emergency work). It is set once and recorded with your reason.",
+    "nature": "Maintenance nature",
+    "naturePlaceholder": "Choose a nature…",
+    "natureRequired": "Choose a nature.",
+    "naturesUnavailable": "The maintenance natures could not be read. Check the list “WORK.MAINTENANCE_NATURES” in reference data.",
+    "reason": "Reason",
+    "reasonMin": "Write at least {{min}} characters.",
+    "cancel": "Cancel",
+    "save": "Save"
   }
 }

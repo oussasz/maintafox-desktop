@@ -78,8 +78,11 @@ impl MaintenanceNature {
         }
     }
 
+    /// The nature named by a stored tag, read with [`NATURE_TAG_TRIM`] — the same characters the
+    /// SQL readers strip (`trimmed_tag!`), so a tag is a nature for every reader or for none.
     pub fn parse(raw: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|n| n.as_str() == raw.trim())
+        let tag = raw.trim_matches(NATURE_TAG_TRIM);
+        Self::ALL.into_iter().find(|n| n.as_str() == tag)
     }
 
     /// The work follows a failure or a fault (failure coding and RAMS apply).
@@ -105,14 +108,54 @@ impl MaintenanceNature {
     }
 }
 
-/// SQL list literal of nature codes (`'a', 'b'`) for `semantic_tag IN (…)`. The codes are
-/// compile-time constants, never user input.
+/// Characters stripped around a stored nature tag, in Rust ([`MaintenanceNature::parse`]) and in
+/// SQL (`trimmed_tag!`): space, tab, line feed, carriage return.
+pub const NATURE_TAG_TRIM: &[char] = &[' ', '\t', '\n', '\r'];
+
+/// SQL expression (literal, usable in `concat!`): column `$col` trimmed of [`NATURE_TAG_TRIM`].
+/// The one SQL reading of a stored nature tag; other modules use [`trimmed_tag_sql`],
+/// [`tag_is_nature_sql`] and [`nature_code_sql`], built on it.
+macro_rules! trimmed_tag {
+    ($col:literal) => {
+        concat!("TRIM(", $col, ", ' ' || char(9) || char(10) || char(13))")
+    };
+}
+
+/// SQL list literal of nature codes (`'a', 'b'`) for `IN (…)`. The codes are compile-time
+/// constants, never user input. Compare them with [`tag_is_nature_sql`], never with the raw tag.
 pub fn nature_sql_list(natures: &[MaintenanceNature]) -> String {
     natures
         .iter()
         .map(|n| format!("'{}'", n.as_str()))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// SQL expression: the stored tag in column `col` (a `WORK.ORDER_TYPES` value's `semantic_tag`,
+/// e.g. `"wot.semantic_tag"`) trimmed like [`MaintenanceNature::parse`] trims it. `col` is a
+/// column name written in the code, never user input.
+pub(crate) fn trimmed_tag_sql(col: &str) -> String {
+    format!(trimmed_tag!("{}"), col)
+}
+
+/// SQL predicate, 0 or 1 (never NULL): the tag in column `col` names one of `natures` — true
+/// exactly when [`MaintenanceNature::parse`] finds one of them. Parenthesised: `NOT` negates it.
+pub(crate) fn tag_is_nature_sql(col: &str, natures: &[MaintenanceNature]) -> String {
+    format!(
+        "(COALESCE({}, '') IN ({}))",
+        trimmed_tag_sql(col),
+        nature_sql_list(natures)
+    )
+}
+
+/// SQL expression: the nature code named by the tag in column `col`, NULL when it names none —
+/// what `MaintenanceNature::parse(..).map(as_str)` returns, for selecting, grouping and joining.
+pub(crate) fn nature_code_sql(col: &str) -> String {
+    let tag = trimmed_tag_sql(col);
+    format!(
+        "(CASE WHEN {tag} IN ({}) THEN {tag} END)",
+        nature_sql_list(&MaintenanceNature::ALL)
+    )
 }
 
 struct NatureSeed {
@@ -383,14 +426,18 @@ pub struct WorkOrderTypeOption {
     pub is_active: bool,
 }
 
-const TYPE_SELECT: &str = "SELECT t.id, t.code, t.label, t.semantic_tag, t.is_active, t.metadata_json, \
+const TYPE_SELECT: &str = concat!(
+    "SELECT t.id, t.code, t.label, t.semantic_tag, t.is_active, t.metadata_json, \
             n.label AS nature_label, n.metadata_json AS nature_metadata \
        FROM reference_values t \
        JOIN reference_sets rs ON rs.id = t.set_id AND rs.status = 'published' \
        JOIN reference_domains d ON d.id = rs.domain_id AND UPPER(TRIM(d.code)) = 'WORK.ORDER_TYPES' \
-       LEFT JOIN reference_values n ON n.code = t.semantic_tag AND n.set_id IN ( \
+       LEFT JOIN reference_values n ON n.code = ",
+    trimmed_tag!("t.semantic_tag"),
+    " AND n.set_id IN ( \
             SELECT nrs.id FROM reference_sets nrs JOIN reference_domains nd ON nd.id = nrs.domain_id \
-             WHERE UPPER(TRIM(nd.code)) = 'WORK.MAINTENANCE_NATURES' AND nrs.status = 'published')";
+             WHERE UPPER(TRIM(nd.code)) = 'WORK.MAINTENANCE_NATURES' AND nrs.status = 'published')"
+);
 
 fn decode(e: sea_orm::DbErr) -> AppError {
     AppError::Internal(anyhow::anyhow!("WORK.ORDER_TYPES row decode: {e}"))
@@ -409,7 +456,8 @@ fn map_type(row: &QueryResult) -> AppResult<WorkOrderTypeOption> {
     let nature: Option<String> = row
         .try_get::<Option<String>>("", "semantic_tag")
         .map_err(decode)?
-        .filter(|t| MaintenanceNature::parse(t).is_some());
+        .and_then(|t| MaintenanceNature::parse(&t))
+        .map(|n| n.as_str().to_string());
     Ok(WorkOrderTypeOption {
         id: row.try_get("", "id").map_err(decode)?,
         code: row.try_get("", "code").map_err(decode)?,
@@ -421,6 +469,269 @@ fn map_type(row: &QueryResult) -> AppResult<WorkOrderTypeOption> {
         nature,
         is_active: row.try_get::<i64>("", "is_active").map_err(decode)? != 0,
     })
+}
+
+/// SQL predicate (alias `t` = a `WORK.ORDER_TYPES` value, no bind): the type carries no
+/// maintenance nature the program knows — read like [`MaintenanceNature::parse`] (the tag
+/// trimmed), so a type is "without nature" here exactly when the readers find none. Such a type
+/// counts in no work mix (planned / reactive / emergency) and is listed for review.
+pub fn without_nature_sql() -> String {
+    format!("NOT {}", tag_is_nature_sql("t.semantic_tag", &MaintenanceNature::ALL))
+}
+
+/// An OT type without a maintenance nature, with how many work orders use it.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct WorkOrderTypeToReview {
+    pub id: i64,
+    pub code: String,
+    pub label: String,
+    pub is_active: bool,
+    /// Work orders of this type (any status).
+    pub work_order_count: i64,
+}
+
+/// OT types of the published list that carry no maintenance nature (a plant's own type carried
+/// over by migration 198, or received from a PC that has it), with their use. Read only.
+pub async fn list_types_without_nature(conn: &impl ConnectionTrait) -> AppResult<Vec<WorkOrderTypeToReview>> {
+    let rows = conn
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT t.id, t.code, t.label, t.is_active, \
+                        (SELECT COUNT(*) FROM work_orders wo WHERE wo.type_id = t.id) AS n \
+                   FROM reference_values t \
+                   JOIN reference_sets rs ON rs.id = t.set_id AND rs.status = 'published' \
+                   JOIN reference_domains d ON d.id = rs.domain_id AND UPPER(TRIM(d.code)) = 'WORK.ORDER_TYPES' \
+                  WHERE {} \
+                  ORDER BY t.sort_order ASC, t.code ASC",
+                without_nature_sql()
+            ),
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(WorkOrderTypeToReview {
+                id: r.try_get("", "id").map_err(decode)?,
+                code: r.try_get("", "code").map_err(decode)?,
+                label: r.try_get("", "label").map_err(decode)?,
+                is_active: r.try_get::<i64>("", "is_active").map_err(decode)? != 0,
+                work_order_count: r.try_get("", "n").map_err(decode)?,
+            })
+        })
+        .collect()
+}
+
+/// Keep the "to review" flag (`metadata_json.nature_review_required`) in step with the nature:
+/// set on every OT type without a nature (as migration 198 did for the types it carried over —
+/// also those received later by sync), removed from a type that now has one (given through the
+/// nature command, the reference editor or another PC). Only the flag changes: no code, label,
+/// nature or work order. Idempotent (integrity pass). Returns the number of types changed.
+pub async fn flag_types_without_nature(conn: &impl ConnectionTrait) -> AppResult<u64> {
+    let cleared = conn
+        .execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE reference_values AS t \
+                    SET metadata_json = json_remove(t.metadata_json, '$.nature_review_required') \
+                  WHERE t.set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+                                      WHERE UPPER(TRIM(d.code)) = 'WORK.ORDER_TYPES') \
+                    AND NOT ({}) \
+                    AND json_valid(t.metadata_json) \
+                    AND json_extract(t.metadata_json, '$.nature_review_required') IS NOT NULL",
+                without_nature_sql()
+            ),
+        ))
+        .await?
+        .rows_affected();
+    let result = conn
+        .execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE reference_values AS t \
+                    SET metadata_json = json_set(CASE WHEN json_valid(t.metadata_json) THEN t.metadata_json \
+                                                      ELSE '{{}}' END, '$.nature_review_required', json('true')) \
+                  WHERE t.set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+                                      WHERE UPPER(TRIM(d.code)) = 'WORK.ORDER_TYPES') \
+                    AND {} \
+                    AND COALESCE(CASE WHEN json_valid(t.metadata_json) \
+                                      THEN json_extract(t.metadata_json, '$.nature_review_required') END, 0) <> 1",
+                without_nature_sql()
+            ),
+        ))
+        .await?;
+    Ok(result.rows_affected() + cleared)
+}
+
+/// Writes the nature of type `type_id` only while it still has none (compare-and-set: the
+/// condition is in the UPDATE itself), clearing its review flag. `false` when the type has a
+/// nature by then — never overwritten.
+pub(crate) async fn write_nature_if_unset(
+    conn: &impl ConnectionTrait,
+    type_id: i64,
+    nature: MaintenanceNature,
+) -> AppResult<bool> {
+    let updated = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE reference_values AS t \
+                    SET semantic_tag = ?, \
+                        metadata_json = json_remove(CASE WHEN json_valid(t.metadata_json) THEN t.metadata_json \
+                                                         ELSE '{{}}' END, '$.nature_review_required') \
+                  WHERE t.id = ? AND {}",
+                without_nature_sql()
+            ),
+            [nature.as_str().into(), type_id.into()],
+        ))
+        .await?;
+    Ok(updated.rows_affected() == 1)
+}
+
+/// Test seam: a nature written by "someone else" between the read and the write of
+/// [`set_work_order_type_nature`] (only for the type code stored here; codes, not ids, because
+/// every test database numbers its rows the same way).
+#[cfg(test)]
+pub(crate) static CONCURRENT_NATURE_WRITE_FOR: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
+
+/// Stable codes of the nature-setting refusals.
+pub mod nature_codes {
+    pub const RIGHT_REQUIRED: &str = "WO_TYPE_NATURE_RIGHT_REQUIRED";
+    pub const REASON_REQUIRED: &str = "WO_TYPE_NATURE_REASON_REQUIRED";
+    pub const UNKNOWN_NATURE: &str = "WO_TYPE_NATURE_UNKNOWN";
+    pub const TYPE_NOT_FOUND: &str = "WO_TYPE_NATURE_TYPE_NOT_FOUND";
+    pub const SYSTEM_TYPE: &str = "WO_TYPE_NATURE_SYSTEM_TYPE";
+    pub const ALREADY_SET: &str = "WO_TYPE_NATURE_ALREADY_SET";
+}
+
+/// Shortest reason accepted to give a type its nature (the audit trail's "why").
+pub const MIN_NATURE_REASON_CHARS: usize = 10;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetWorkOrderTypeNatureInput {
+    /// `reference_values.id` of the OT type.
+    pub type_id: i64,
+    /// One of the maintenance natures (`MaintenanceNature` code).
+    pub nature: String,
+    pub reason: String,
+}
+
+/// Give a plant's own OT type (carried over without a nature, flagged "to review") its maintenance
+/// nature, once. The person holds the reference-data manage right (or is an administrator),
+/// checked here; a reason of 10 characters or more is required. The nature is written only while
+/// the type still has none (a second person setting it at the same moment is refused, never
+/// overwritten), the review flag is cleared, and an audit event records who, when, why and
+/// old → new, all in one transaction. Shipped types keep the nature Maintafox gives them.
+pub async fn set_work_order_type_nature(
+    db: &sea_orm::DatabaseConnection,
+    input: SetWorkOrderTypeNatureInput,
+    actor_id: i64,
+) -> AppResult<WorkOrderTypeOption> {
+    use sea_orm::TransactionTrait;
+    let params = |pairs: &[(&str, String)]| crate::errors::issue_params(pairs);
+    let reason = input.reason.trim().to_string();
+    if reason.chars().count() < MIN_NATURE_REASON_CHARS {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::REASON_REQUIRED,
+            format!("Give a reason of at least {MIN_NATURE_REASON_CHARS} characters."),
+            params(&[("min", MIN_NATURE_REASON_CHARS.to_string())]),
+        ));
+    }
+    let Some(nature) = MaintenanceNature::parse(input.nature.trim()) else {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::UNKNOWN_NATURE,
+            format!("'{}' is not a maintenance nature.", input.nature.trim()),
+            params(&[("nature", input.nature.trim().to_string())]),
+        ));
+    };
+    let txn = db.begin().await?;
+    if !crate::settings::site::holds_tenant_right(&txn, actor_id, crate::rbac::permissions::REF_MANAGE).await? {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::RIGHT_REQUIRED,
+            "Giving a work-order type its nature needs the reference-data manage right.".to_string(),
+            std::collections::HashMap::new(),
+        ));
+    }
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT t.code, t.semantic_tag, t.metadata_json FROM reference_values t \
+               JOIN reference_sets rs ON rs.id = t.set_id \
+               JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE t.id = ? AND UPPER(TRIM(d.code)) = 'WORK.ORDER_TYPES'",
+            [input.type_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            crate::errors::org_validation_failed(
+                nature_codes::TYPE_NOT_FOUND,
+                "This work-order type does not exist.".to_string(),
+                params(&[("typeId", input.type_id.to_string())]),
+            )
+        })?;
+    let code: String = row.try_get("", "code").map_err(decode)?;
+    let old_tag: Option<String> = row.try_get("", "semantic_tag").map_err(decode)?;
+    let meta: Option<String> = row.try_get("", "metadata_json").map_err(decode)?;
+    if meta_str(meta.as_deref(), "origin").as_deref() == Some("system") {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::SYSTEM_TYPE,
+            format!("'{code}' is a Maintafox type: its nature is fixed."),
+            params(&[("code", code)]),
+        ));
+    }
+    if old_tag.as_deref().and_then(MaintenanceNature::parse).is_some() {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::ALREADY_SET,
+            format!("'{code}' already has a nature."),
+            params(&[("code", code)]),
+        ));
+    }
+    #[cfg(test)]
+    if *CONCURRENT_NATURE_WRITE_FOR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        == Some(code.as_str())
+    {
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE reference_values SET semantic_tag = 'improvement' WHERE id = ?",
+            [input.type_id.into()],
+        ))
+        .await?;
+    }
+    // Only while it still has none: a concurrent change is refused, never overwritten.
+    if !write_nature_if_unset(&txn, input.type_id, nature).await? {
+        return Err(crate::errors::org_validation_failed(
+            nature_codes::ALREADY_SET,
+            format!("'{code}' already has a nature."),
+            params(&[("code", code)]),
+        ));
+    }
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: "wo_type.nature.set".to_string(),
+            target_type: Some("work_order_type".to_string()),
+            target_id: Some(input.type_id.to_string()),
+            actor_id: Some(actor_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "code": code,
+                "old_nature": old_tag,
+                "new_nature": nature.as_str(),
+                "reason": reason,
+            })),
+        },
+    )
+    .await?;
+    let out = type_by(&txn, "t.id = ?", input.type_id.into())
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("type {} missing after update", input.type_id)))?;
+    txn.commit().await?;
+    Ok(out)
 }
 
 /// Every OT type (active and inactive), in the product order.

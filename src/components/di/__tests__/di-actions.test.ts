@@ -82,11 +82,15 @@ describe("diActions — decisions offered match the backend gates", () => {
   });
 
   it("conversion is offered once, on an approved request without a work order", () => {
-    const can = roles(P.DI_CONVERT);
+    const can = roles(P.DI_CONVERT, P.OT_CREATE);
     expect(diActions(di({ status: "approved" }), 7, can).convert).toBe(true);
     expect(diActions(di({ status: "approved", converted_to_wo_id: 9 }), 7, can).convert).toBe(
       false,
     );
+  });
+
+  it("conversion also needs the work-order create right (the work order is created there)", () => {
+    expect(diActions(di({ status: "approved" }), 7, roles(P.DI_CONVERT)).convert).toBe(false);
   });
 });
 

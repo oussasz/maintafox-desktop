@@ -348,6 +348,7 @@
     "SKILL_LEVEL_RANGE": "Choose a level from 1 (notions) to 5 (expert).",
     "SKILL_VALID_TO_INVALID": "Enter a valid end-of-validity date.",
     "SKILL_VALIDATOR_NOT_LINKED": "Only a user linked to a personnel record can validate a skill.",
+    "PERSONNEL_DEACTIVATION_OPEN_WORK": "This person is on open work orders ({{work_orders}}): reassign them before deactivating.",
     "COMPANY_NAME_REQUIRED": "The company name is required.",
     "COMPANY_STATUS_UNKNOWN": "Unknown onboarding or insurance status.",
     "COMPANY_CONTRACT_DATES": "The contract end is before its start.",
@@ -404,6 +405,12 @@
     "PERSONNEL_ABSENCE_TAG_REQUIRED": "Every absence type needs a behaviour: leave (plain absence), critical (always a critical block) or training (shown as in training).",
     "DOCUMENT_CATEGORY_NOT_IN_LIST": "“{{code}}” is not an active document category in Reference data.",
     "WO_SHUTDOWN_FLAG_NOT_EDITABLE": "“Needs shutdown” can only be changed while the work order is being prepared (draft, planning or ready); it is {{status}}.",
+    "WO_TYPE_NATURE_RIGHT_REQUIRED": "Giving a work-order type its nature needs the reference-data manage right.",
+    "WO_TYPE_NATURE_REASON_REQUIRED": "Give a reason of at least {{min}} characters.",
+    "WO_TYPE_NATURE_UNKNOWN": "“{{nature}}” is not a maintenance nature.",
+    "WO_TYPE_NATURE_TYPE_NOT_FOUND": "This work-order type does not exist.",
+    "WO_TYPE_NATURE_SYSTEM_TYPE": "“{{code}}” is a Maintafox type: its nature is fixed.",
+    "WO_TYPE_NATURE_ALREADY_SET": "“{{code}}” already has a nature.",
     "PM_PART_REQUIRED_FLAG_MISSING": "Part line “{{code}}” must say whether it is required or optional.",
     "PERMIT_WO_NO_EQUIPMENT": "The work order has no equipment: the permit cannot be aligned with it.",
     "PERMIT_REMOVAL_PENDING": "{{pending}} isolation(s) still need their lock removal verified before the permit can be closed.",
@@ -457,10 +464,6 @@
     "PLANNING_CAPACITY_EXCEEDED": "The crew's load would exceed its capacity plus its overtime ceiling on {{day}}.",
     "PLANNING_DOUBLE_BOOKING": "The technician already holds another job at this time: choose someone else, move the slot or override with a reason.",
     "PLANNING_OVERRIDE_REASON_REQUIRED": "Give the reason for overriding the checks on the technician.",
-    "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED": "This break-in exceeds the crew's capacity: give a dangerous-override reason to proceed.",
-    "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",
-    "SCOPE_RECORD_WITHOUT_SITE": "This record has no site: only a plant-wide role can act on it.",
-    "SCOPE_PLANT_WIDE_ONLY": "This is a plant-wide object: only a plant-wide role can act on it.",
-    "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Administrator roles are plant-wide: they cannot be limited to a site."
+    "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED": "This break-in exceeds the crew's capacity: give a dangerous-override reason to proceed."
   }
 }
