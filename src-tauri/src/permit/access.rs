@@ -219,11 +219,33 @@ pub async fn check_on_child(
     scope::check_anchor(db, &scope, permission, anchor).await
 }
 
+/// The installed node of equipment `equipment_id` as an anchor (installed nowhere: no site); not
+/// found when the equipment does not exist (as the create reports it).
+async fn existing_equipment_anchor(db: &impl ConnectionTrait, equipment_id: i64) -> AppResult<Anchor> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT installed_at_node_id FROM equipment WHERE id = ?",
+            [equipment_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "Equipment".into(),
+            id: equipment_id.to_string(),
+        })?;
+    Ok(Anchor::of(row.try_get::<Option<i64>>("", "installed_at_node_id")?))
+}
+
 /// Rule §2.6: creating a permit needs `ptw.issue` at the new permit's org node (derived as the
-/// create does), at its equipment's installed node when that is another one, and — when it is
-/// linked to a work order — at that work order's node (a site user never attaches a permit to
-/// another site's work order, nor to one without a site). Without a derivable node: plant-wide
-/// users only (the create then refuses it for everyone, as before: a permit needs a node).
+/// create does), at its equipment's installed node when that is another one (equipment installed
+/// nowhere: plant-wide users only, as an edit), and — when it is linked to a work order — at that
+/// work order's node (a site user never attaches a permit to another site's work order, nor to one
+/// without a site). Without a derivable node: plant-wide users only (the create then refuses it
+/// for everyone, as before: a permit needs a node).
+///
+/// The refusals keep the order of the other checks: the right held nowhere, then what the create
+/// itself reports first (a work order or equipment that does not exist: not found; no equipment
+/// given nor on the work order: the create's validation error), then the sites.
 pub async fn check_create_at(
     db: &impl ConnectionTrait,
     map: &AccessMap,
@@ -231,14 +253,12 @@ pub async fn check_create_at(
 ) -> AppResult<()> {
     let scope = check_anywhere(map, PTW_ISSUE)?;
     let (node, asset_id) = new_permit_node(db, input).await?;
+    let asset = asset_id.ok_or_else(crate::permit::queries::asset_required_error)?;
+    let asset_anchor = existing_equipment_anchor(db, asset).await?;
     let anchor = Anchor::of(node);
     scope::check_anchor(db, &scope, PTW_ISSUE, anchor).await?;
-    if let Some(asset) = asset_id {
-        if let Some(asset_node) = equipment_node(db, asset).await? {
-            if Some(asset_node) != node {
-                scope::check_anchor(db, &scope, PTW_ISSUE, Anchor::of(Some(asset_node))).await?;
-            }
-        }
+    if asset_anchor != anchor {
+        scope::check_anchor(db, &scope, PTW_ISSUE, asset_anchor).await?;
     }
     if let Some(wo_id) = input.linked_work_order_id {
         let wo = wo_anchor(db, wo_id).await?;
@@ -309,8 +329,9 @@ pub async fn check_isolation_upsert(
 /// The one rule of who may receive a permit at `anchor`: an SQL predicate on the account `ua.id`
 /// and its binds. True for the elevated administrators (who hold every right), and for the
 /// accounts with a role in force carrying `ptw.close` plant-wide or on the anchor's node or one of
-/// its parents (the subtree rule of [`scope::access_scope`]). A permit without a site: plant-wide
-/// holders only. Activity and "not the signer" are the callers' filters.
+/// its parents (the subtree rule of [`scope::access_scope`]: the same in-force assignments, live
+/// nodes and strict reading of the node reference). A permit without a site: plant-wide holders
+/// only. Activity and "not the signer" are the callers' filters.
 pub async fn eligible_receiver_sql(
     db: &impl ConnectionTrait,
     anchor: Anchor,
@@ -329,8 +350,9 @@ pub async fn eligible_receiver_sql(
                 let marks = vec!["?"; chain.len()].join(",");
                 binds.extend(chain.into_iter().map(sea_orm::Value::from));
                 format!(
-                    "({live} AND CAST(TRIM(usa.scope_reference) AS INTEGER) IN ({marks}))",
-                    live = scope::LIVE_NODE_ASSIGNMENT_SQL
+                    "({live} AND {node_id} IN ({marks}))",
+                    live = scope::LIVE_NODE_ASSIGNMENT_SQL,
+                    node_id = scope::NODE_REFERENCE_ID_SQL,
                 )
             }
         }

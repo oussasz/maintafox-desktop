@@ -1159,12 +1159,21 @@ async fn upsert_permit_type_in(
 
 /// Permits the reader's scope leaves out, as `(outside their sites, without a site)`, whatever the
 /// user's filters (only the scope's binds): a count that followed the search or the filters would
-/// let a site user probe other sites' permits. `(0, 0)` plant-wide.
-async fn hidden_permit_counts(db: &impl ConnectionTrait, scope: &AccessScope) -> AppResult<(i64, i64)> {
+/// let a site user probe other sites' permits. `(0, 0)` plant-wide. `shown` is the screen's own
+/// fixed condition on `wp` (never a user filter), with its binds: only the permits the screen
+/// would show are counted (`1=1` for the list, the open, non-expired ones for the open report).
+async fn hidden_permit_counts(
+    db: &impl ConnectionTrait,
+    scope: &AccessScope,
+    shown: &str,
+    shown_binds: Vec<sea_orm::Value>,
+) -> AppResult<(i64, i64)> {
     if scope.is_everywhere() {
         return Ok((0, 0));
     }
     let scope_sql = super::access::scope_sql(scope);
+    let mut values = shown_binds;
+    values.extend(scope_sql.binds);
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1172,11 +1181,11 @@ async fn hidden_permit_counts(db: &impl ConnectionTrait, scope: &AccessScope) ->
                 "SELECT COALESCE(SUM(CASE WHEN {without} THEN 1 ELSE 0 END), 0) AS without_site, \
                         COALESCE(SUM(CASE WHEN {without} THEN 0 ELSE 1 END), 0) AS outside_scope \
                    FROM work_permits wp \
-                  WHERE NOT COALESCE(({pred}), 0)",
+                  WHERE ({shown}) AND NOT COALESCE(({pred}), 0)",
                 without = super::access::PERMIT_WITHOUT_SITE_SQL,
                 pred = scope_sql.predicate,
             ),
-            scope_sql.binds,
+            values,
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("permit hidden count query returned no rows")))?;
@@ -1249,7 +1258,7 @@ pub async fn list_work_permits_in_scope(
     for row in rows {
         items.push(map_work_permit(&row)?);
     }
-    let (hidden_outside_scope, hidden_without_site) = hidden_permit_counts(db, scope).await?;
+    let (hidden_outside_scope, hidden_without_site) = hidden_permit_counts(db, scope, "1=1", Vec::new()).await?;
     Ok(WorkPermitListPage {
         items,
         hidden_outside_scope,
@@ -1273,6 +1282,13 @@ async fn require_work_permit(db: &impl ConnectionTrait, id: i64) -> AppResult<Wo
         entity: "WorkPermit".into(),
         id: id.to_string(),
     })
+}
+
+/// A new permit with no equipment given and none on its linked work order (or no work order).
+pub(crate) fn asset_required_error() -> AppError {
+    AppError::ValidationFailed(vec![
+        "An asset is required (the linked work order has no equipment).".into()
+    ])
 }
 
 /// Resolves `(asset_id, entity_id)` for a new permit: explicit values win, then the
@@ -1299,11 +1315,7 @@ async fn resolve_permit_scope(db: &impl ConnectionTrait, input: &WorkPermitCreat
         asset_id = asset_id.or(wo_equipment);
         entity_id = entity_id.or(wo_entity);
     }
-    let asset_id = asset_id.ok_or_else(|| {
-        AppError::ValidationFailed(vec![
-            "An asset is required (the linked work order has no equipment).".into()
-        ])
-    })?;
+    let asset_id = asset_id.ok_or_else(asset_required_error)?;
     if entity_id.is_none() {
         let row = db
             .query_one(Statement::from_sql_and_values(
@@ -2612,8 +2624,8 @@ async fn record_loto_card_print_in(
     input: LotoCardPrintInput,
     actor_id: i64,
 ) -> AppResult<LotoCardPrintJob> {
-    // The lock card is issued by someone authorised to apply the isolation.
-    enforce_loto_role(db, actor_id, input.permit_id, "isolation_apply").await?;
+    // The isolation must belong to the permit named (not found otherwise) before anything is judged
+    // on that permit: a mismatched permit id never yields that permit's qualification refusals.
     let iso = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2625,6 +2637,8 @@ async fn record_loto_card_print_in(
             entity: "PermitIsolation".into(),
             id: input.isolation_id.to_string(),
         })?;
+    // The lock card is issued by someone authorised to apply the isolation.
+    enforce_loto_role(db, actor_id, input.permit_id, "isolation_apply").await?;
     let verified_at: Option<String> = iso.try_get("", "verified_at").ok().flatten();
     if verified_at.is_none() {
         return Err(refused(
@@ -2700,16 +2714,17 @@ pub async fn list_open_permits_report_in_scope(
     scope: &AccessScope,
 ) -> AppResult<WorkPermitListPage> {
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    // What the report shows (open, not expired): one condition for the rows and the hidden counts.
+    let open_sql = format!("wp.status IN {OPEN_PERMIT_STATUSES_SQL} AND (wp.expires_at IS NULL OR wp.expires_at > ?)");
     let scope_sql = super::access::scope_sql(scope);
-    let mut values: Vec<sea_orm::Value> = vec![now.into()];
+    let mut values: Vec<sea_orm::Value> = vec![now.clone().into()];
     values.extend(scope_sql.binds);
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
                 "{WORK_PERMIT_SELECT} \
-                 WHERE wp.status IN {OPEN_PERMIT_STATUSES_SQL} \
-                 AND (wp.expires_at IS NULL OR wp.expires_at > ?) \
+                 WHERE {open_sql} \
                  AND ({pred}) \
                  ORDER BY wp.id DESC",
                 pred = scope_sql.predicate,
@@ -2721,7 +2736,8 @@ pub async fn list_open_permits_report_in_scope(
     for row in rows {
         items.push(map_work_permit(&row)?);
     }
-    let (hidden_outside_scope, hidden_without_site) = hidden_permit_counts(db, scope).await?;
+    let (hidden_outside_scope, hidden_without_site) =
+        hidden_permit_counts(db, scope, &open_sql, vec![now.into()]).await?;
     Ok(WorkPermitListPage {
         items,
         hidden_outside_scope,

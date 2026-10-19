@@ -5,7 +5,7 @@
  * without a site is answered with the plant-wide rights only (node 0), the hand-over form says
  * why nobody can receive, and the create dialog reads the issue right at the equipment's site.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -61,6 +61,8 @@ vi.mock("@/lib/app-error", async (importOriginal) => ({
 vi.mock("@/components/permits/loto-card-print", () => ({ printLotoCard: vi.fn() }));
 
 // Rights per org node, as `get_my_access_at` answers them (node 0: the plant-wide rights).
+// `can` answers the node's rights even while `loading` (the real hook answers false then, see
+// `use-access-at.test.ts`): a loading test here proves the screen's own loading gate, not the hook's.
 const rightsAt = vi.hoisted(() => ({
   byNode: new Map<number, string[]>(),
   asked: [] as (number | null | undefined)[],
@@ -72,7 +74,7 @@ vi.mock("@/hooks/use-access-at", () => ({
     const granted = node == null ? [] : (rightsAt.byNode.get(node) ?? []);
     return {
       loading: rightsAt.loading,
-      can: (p: string) => !rightsAt.loading && granted.includes(p),
+      can: (p: string) => granted.includes(p),
     };
   },
 }));
@@ -237,10 +239,23 @@ describe("permit buttons follow the rights at the permit's site", () => {
   it("hides the action buttons while the rights load", async () => {
     rightsAt.byNode.set(3, [P.PTW_VIEW, P.PTW_ISSUE, P.PTW_CLOSE]);
     rightsAt.loading = true;
-    renderPanel(permit({ entity_id: 3 }));
+    const p = permit({ entity_id: 3 });
+    const onChanged = vi.fn();
+    // A new element each time, so the rerender renders again.
+    const ui = () => (
+      <MemoryRouter>
+        <PermitDetailPanel permit={p} onChanged={onChanged} />
+      </MemoryRouter>
+    );
+    const { rerender } = render(ui());
     await screen.findByText("PTW-2026-000041", { exact: false });
     expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Cancel permit" })).toBeNull();
+    // The same rights once loaded: the buttons come.
+    rightsAt.loading = false;
+    rerender(ui());
+    expect(await screen.findByRole("button", { name: "Suspend" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel permit" })).toBeTruthy();
   });
 
   it("a permit without a site follows the plant-wide rights only, and is flagged", async () => {
@@ -336,9 +351,24 @@ describe("create dialog", () => {
     it("renders nothing while the rights load", async () => {
       rightsAt.byNode.set(3, [P.PTW_VIEW, P.PTW_ISSUE]);
       rightsAt.loading = true;
-      renderCard(3);
+      svc.getPermitForWorkOrder.mockResolvedValue(null);
+      // A new element each time, so the rerender renders again.
+      const ui = () => (
+        <MemoryRouter>
+          <WoPermitGateCard workOrderId={9} workOrderSiteId={3} />
+        </MemoryRouter>
+      );
+      const { rerender } = render(ui());
       await waitFor(() => expect(svc.getPermitForWorkOrder).toHaveBeenCalled());
+      // Let the permit load settle: only the rights are still loading.
+      await act(async () => {
+        await Promise.resolve();
+      });
       expect(screen.queryByTestId("wo-permit-gate")).toBeNull();
+      // The same rights once loaded: the card comes.
+      rightsAt.loading = false;
+      rerender(ui());
+      expect(await screen.findByTestId("wo-permit-gate")).toBeTruthy();
     });
 
     it("asks the work order's site and offers create when the issue right is held there", async () => {

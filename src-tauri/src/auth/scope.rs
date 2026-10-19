@@ -31,6 +31,16 @@ pub const NODE_SCOPE_TYPES_SQL: &str = "('org_node', 'site', 'entity')";
 pub const LIVE_NODE_ASSIGNMENT_SQL: &str = "usa.scope_type IN ('org_node', 'site', 'entity') AND EXISTS ( \
      SELECT 1 FROM org_nodes n WHERE n.id = CAST(TRIM(usa.scope_reference) AS INTEGER) AND n.deleted_at IS NULL)";
 
+/// The org node id of a node-scope assignment (alias `usa`) in SQL, read as strictly as
+/// [`load_access_map`] reads it in Rust (`trim()` then `parse::<i64>()`): the reference trimmed of
+/// ASCII whitespace must be an optional sign followed by digits only, else the expression is NULL
+/// and matches no node (`CAST` alone would read `"12x"` as node 12).
+pub const NODE_REFERENCE_ID_SQL: &str = "(CASE WHEN TRIM(usa.scope_reference, ' ' || char(9, 10, 11, 12, 13)) \
+         GLOB '[0-9+-]*' \
+     AND SUBSTR(TRIM(usa.scope_reference, ' ' || char(9, 10, 11, 12, 13)), 2) NOT GLOB '*[^0-9]*' \
+     AND TRIM(usa.scope_reference, ' ' || char(9, 10, 11, 12, 13)) GLOB '*[0-9]*' \
+     THEN CAST(TRIM(usa.scope_reference, ' ' || char(9, 10, 11, 12, 13)) AS INTEGER) END)";
+
 /// Where a user holds one permission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccessScope {

@@ -352,9 +352,18 @@ async fn the_open_permits_report_and_the_compliance_figure_cover_the_users_sites
         .await
         .expect("kpi");
     assert_eq!(site_kpi_before.activated_count, 0);
+    // The report's hidden counts cover only what it would show (open, not expired): the drafts of
+    // site B and without site are not counted yet.
+    let site_open_before = queries::list_open_permits_report_in_scope(&f.db, &site_scope)
+        .await
+        .expect("site report");
+    let hidden_before = (
+        site_open_before.hidden_outside_scope,
+        site_open_before.hidden_without_site,
+    );
 
     activate(&f.db, f.p_a.clone()).await;
-    activate(&f.db, f.p_b.clone()).await;
+    let p_b = activate(&f.db, f.p_b.clone()).await;
     let p_none = queries::get_work_permit(&f.db, f.p_none.id)
         .await
         .expect("get")
@@ -365,8 +374,37 @@ async fn the_open_permits_report_and_the_compliance_figure_cover_the_users_sites
         .await
         .expect("site report");
     assert_eq!(ids(&site_open), vec![f.p_a.id], "site A's open permit only");
-    assert!(site_open.hidden_outside_scope >= 1);
-    assert!(site_open.hidden_without_site >= 1);
+    assert_eq!(
+        (site_open.hidden_outside_scope, site_open.hidden_without_site),
+        (hidden_before.0 + 1, hidden_before.1 + 1),
+        "site B's and the siteless permit, now open, are counted"
+    );
+    // An expired open permit is not shown, so not counted either.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE work_permits SET expires_at = '2000-01-01T00:00:00Z' WHERE id = {}",
+            p_b.id
+        ),
+    )
+    .await;
+    let after_expiry = queries::list_open_permits_report_in_scope(&f.db, &site_scope)
+        .await
+        .expect("site report");
+    assert_eq!(
+        (after_expiry.hidden_outside_scope, after_expiry.hidden_without_site),
+        (hidden_before.0, hidden_before.1 + 1),
+        "site B's expired permit is not counted"
+    );
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE work_permits SET expires_at = '{}' WHERE id = {}",
+            super::tests::future_expiry(),
+            p_b.id
+        ),
+    )
+    .await;
     let plant_open = queries::list_open_permits_report_in_scope(&f.db, &plant_scope)
         .await
         .expect("plant report");
@@ -533,6 +571,11 @@ async fn creating_a_permit_needs_the_right_at_its_site_its_equipment_and_its_wor
             create_input(ty, Some(f.eq_none), None, None),
             "SCOPE_RECORD_WITHOUT_SITE",
         ),
+        // Equipment installed nowhere on a node of the user's site: refused as an edit refuses it.
+        (
+            create_input(ty, Some(f.eq_none), Some(f.t.site_a), None),
+            "SCOPE_RECORD_WITHOUT_SITE",
+        ),
     ] {
         let err = access::check_create_at(&f.db, &site, &input).await.unwrap_err();
         assert_eq!(code_of(&err), expected, "{input:?}");
@@ -541,15 +584,41 @@ async fn creating_a_permit_needs_the_right_at_its_site_its_equipment_and_its_wor
             .await
             .unwrap_or_else(|e| panic!("plant {input:?}: {e:?}"));
     }
-    // The view right alone does not issue; a missing work order is not found.
+    // The view right alone does not issue.
     let err = access::check_create_at(&f.db, &viewer, &create_input(ty, Some(f.eq_a), None, None))
         .await
         .unwrap_err();
     assert_eq!(code_of(&err), "PERMISSION_DENIED");
-    let err = access::check_create_at(&f.db, &site, &create_input(ty, None, None, Some(9_999_999)))
+    // What the create reports first comes before the sites, for everyone: a work order or
+    // equipment that does not exist is not found (even with another site's node given), no
+    // equipment given nor on a work order is the create's validation error.
+    let missing = 9_999_999;
+    for map in [&site, &plant] {
+        for input in [
+            create_input(ty, None, None, Some(missing)),
+            create_input(ty, None, Some(f.t.site_b), Some(missing)),
+            create_input(ty, Some(missing), None, None),
+            create_input(ty, Some(missing), Some(f.t.site_a), None),
+            create_input(ty, Some(missing), Some(f.t.site_b), None),
+        ] {
+            let err = access::check_create_at(&f.db, map, &input).await.unwrap_err();
+            assert!(is_not_found(&err), "{input:?}: {err:?}");
+        }
+        for input in [
+            create_input(ty, None, None, None),
+            create_input(ty, None, Some(f.t.site_b), None),
+        ] {
+            let err = access::check_create_at(&f.db, map, &input).await.unwrap_err();
+            assert!(matches!(err, AppError::ValidationFailed(_)), "{input:?}: {err:?}");
+            // The same error as the create itself.
+            let create_err = queries::create_work_permit(&f.db, input.clone()).await.unwrap_err();
+            assert_eq!(format!("{err:?}"), format!("{create_err:?}"));
+        }
+    }
+    let create_err = queries::create_work_permit(&f.db, create_input(ty, Some(missing), None, None))
         .await
         .unwrap_err();
-    assert!(is_not_found(&err), "{err:?}");
+    assert!(is_not_found(&create_err), "{create_err:?}");
 }
 
 #[tokio::test]
@@ -740,6 +809,224 @@ async fn hand_over_receivers_hold_the_close_right_at_the_permits_site() {
         .expect("receivers");
     assert!(page.items.is_empty());
     assert_eq!(page.empty_reason.as_deref(), Some(queries::NO_RECEIVER_AT_SITE));
+}
+
+/// Whether `u` may receive `permit`, asserted to agree with the user's real access map (the
+/// close right at the permit's node, as every other check reads it).
+async fn eligible_as_the_access_map_says(db: &DatabaseConnection, permit: &WorkPermit, u: i32) -> bool {
+    let may = access::may_receive_handover(db, permit.id, i64::from(u))
+        .await
+        .expect("check");
+    let close = scope::access_scope(db, u, PTW_CLOSE).await.expect("scope");
+    let held = scope::check_anchor(db, &close, PTW_CLOSE, Anchor::of(Some(permit.entity_id)))
+        .await
+        .is_ok();
+    assert_eq!(
+        may, held,
+        "user {u}, permit {}: receiver rule and access map disagree",
+        permit.id
+    );
+    may
+}
+
+/// A new user with `role_id` on `node`, the assignment then changed by `change` (an SQL `SET` list).
+async fn assigned_on(db: &DatabaseConnection, name: &str, role_id: i64, node: i64, change: Option<&str>) -> i32 {
+    let u = user(db, name).await;
+    assign(db, u, role_id, "org_node", Some(node)).await;
+    if let Some(set) = change {
+        exec(
+            db,
+            &format!("UPDATE user_scope_assignments SET {set} WHERE user_id = {u}"),
+        )
+        .await;
+    }
+    u
+}
+
+/// The receiver rule (picker and save) reads assignments exactly as the access map does: the close
+/// right itself, the subtree going down only, assignments in force (validity, deletion, emergency
+/// expiry), live nodes, strict node references, and elevated administrators.
+#[tokio::test]
+async fn hand_over_receivers_follow_the_same_assignment_rules_as_the_access_map() {
+    let f = fixture().await;
+    let close_role = role(&f.db, "PTW scope closer only", &[PTW_CLOSE]).await;
+    let view_role = role(&f.db, "PTW scope viewer only", &[PTW_VIEW]).await;
+    let site_a = f.t.site_a;
+
+    // Refused for site A's permit:
+    let view_only = assigned_on(&f.db, "ptw_rcv_view_only", view_role, site_a, None).await;
+    let line_only = assigned_on(&f.db, "ptw_rcv_line_only", close_role, f.t.line_a1, None).await;
+    let ended = assigned_on(
+        &f.db,
+        "ptw_rcv_ended",
+        close_role,
+        site_a,
+        Some("valid_to = '2000-01-01T00:00:00Z'"),
+    )
+    .await;
+    let not_started = assigned_on(
+        &f.db,
+        "ptw_rcv_not_started",
+        close_role,
+        site_a,
+        Some("valid_from = '2999-01-01T00:00:00Z'"),
+    )
+    .await;
+    let deleted = assigned_on(
+        &f.db,
+        "ptw_rcv_deleted",
+        close_role,
+        site_a,
+        Some("deleted_at = '2026-01-02T00:00:00Z'"),
+    )
+    .await;
+    let lapsed = assigned_on(
+        &f.db,
+        "ptw_rcv_lapsed_emergency",
+        close_role,
+        site_a,
+        Some("is_emergency = 1, emergency_expires_at = '2000-01-01T00:00:00Z'"),
+    )
+    .await;
+    let emergency_no_expiry = assigned_on(
+        &f.db,
+        "ptw_rcv_emergency_no_expiry",
+        close_role,
+        site_a,
+        Some("is_emergency = 1, emergency_expires_at = NULL"),
+    )
+    .await;
+    // A malformed node reference that a lenient cast would read as site A.
+    let malformed_ref = format!("scope_reference = '{site_a}x'");
+    let malformed = assigned_on(&f.db, "ptw_rcv_malformed", close_role, site_a, Some(&malformed_ref)).await;
+
+    // Eligible for site A's permit:
+    let live_emergency = assigned_on(
+        &f.db,
+        "ptw_rcv_live_emergency",
+        close_role,
+        site_a,
+        Some("is_emergency = 1, emergency_expires_at = '2999-01-01T00:00:00Z'"),
+    )
+    .await;
+    // Padding around a well-formed reference is read as the node (Rust `trim`, then parse).
+    let padded_ref = format!("scope_reference = ' {site_a} '");
+    let padded = assigned_on(&f.db, "ptw_rcv_padded", close_role, site_a, Some(&padded_ref)).await;
+    let on_plant_node = user(&f.db, "ptw_rcv_plant_node").await;
+    assign(&f.db, on_plant_node, close_role, "org_node", Some(f.t.plant)).await;
+    // An elevated administrator holds every right, with no role at all.
+    let admin = user(&f.db, "ptw_rcv_admin").await;
+    exec(
+        &f.db,
+        &format!("UPDATE user_accounts SET is_admin = 1 WHERE id = {admin}"),
+    )
+    .await;
+
+    let refused = [
+        view_only,
+        line_only,
+        ended,
+        not_started,
+        deleted,
+        lapsed,
+        emergency_no_expiry,
+        malformed,
+    ];
+    let eligible = [f.site, f.plant, live_emergency, padded, on_plant_node, admin];
+    for u in refused {
+        assert!(
+            !eligible_as_the_access_map_says(&f.db, &f.p_a, u).await,
+            "{u} may not receive site A's permit"
+        );
+    }
+    for u in eligible {
+        assert!(
+            eligible_as_the_access_map_says(&f.db, &f.p_a, u).await,
+            "{u} may receive site A's permit"
+        );
+    }
+    // The line closer receives the line's permit (the subtree goes down).
+    assert!(eligible_as_the_access_map_says(&f.db, &f.p_a1, line_only).await);
+
+    // The picker lists exactly the eligible people (the asker aside).
+    let page = queries::list_handover_receivers(&f.db, i64::from(f.closer_b), f.p_a.id, None, None, None)
+        .await
+        .expect("receivers");
+    let listed: Vec<i64> = page.items.iter().map(|r| r.id).collect();
+    for u in eligible {
+        assert!(listed.contains(&i64::from(u)), "{u} listed");
+    }
+    for u in refused {
+        assert!(!listed.contains(&i64::from(u)), "{u} not listed");
+    }
+
+    // A role on an org node deleted since grants nothing, here as in the access map.
+    let area = crate::auth::scope_tests::node(&f.db, "RCV-AREA", Some(f.t.plant)).await;
+    let zone = crate::auth::scope_tests::node(&f.db, "RCV-ZONE", Some(area)).await;
+    let eq_zone = equipment(&f.db, "RCV-ZONE", Some(zone)).await;
+    let p_zone = permit(&f.db, eq_zone).await;
+    let area_closer = user(&f.db, "ptw_rcv_area").await;
+    assign(&f.db, area_closer, close_role, "org_node", Some(area)).await;
+    assert!(eligible_as_the_access_map_says(&f.db, &p_zone, area_closer).await);
+    exec(
+        &f.db,
+        &format!("UPDATE org_nodes SET deleted_at = '2026-01-02T00:00:00Z' WHERE id = {area}"),
+    )
+    .await;
+    assert!(!eligible_as_the_access_map_says(&f.db, &p_zone, area_closer).await);
+}
+
+/// LOTO card print: the isolation must belong to the permit named before the LOTO role is judged
+/// on that permit (a mismatched permit is not found, never that permit's qualification refusal).
+#[tokio::test]
+async fn printing_a_loto_card_checks_the_isolation_belongs_to_the_permit_first() {
+    let f = fixture().await;
+    exec(
+        &f.db,
+        "INSERT INTO certification_types (entity_sync_id, code, name, category, row_version) \
+         VALUES ('ct-ptw-scope-loto', 'PTW-SCOPE-LOTO', 'Chargé de consignation', 'loto', 1)",
+    )
+    .await;
+    let loto = scalar(
+        &f.db,
+        "SELECT id FROM certification_types WHERE code = 'PTW-SCOPE-LOTO'",
+    )
+    .await;
+    let admin = scalar(&f.db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    crate::qualification::requirements::upsert_requirement(
+        &f.db,
+        crate::qualification::requirements::QualificationRequirementUpsertInput {
+            id: None,
+            expected_row_version: None,
+            target_kind: "loto_role".into(),
+            work_order_id: None,
+            target_code: Some("isolation_apply".into()),
+            certification_type_id: Some(loto),
+            skill_reference_value_id: None,
+            min_proficiency_level: None,
+            coverage: None,
+            notes: None,
+            is_active: None,
+        },
+        admin,
+    )
+    .await
+    .expect("role requirement");
+    let iso_a = super::tests::add_isolation(&f.db, f.p_a.id, "Breaker A").await;
+    let print = |permit_id: i64| crate::permit::domain::LotoCardPrintInput {
+        permit_id,
+        isolation_id: iso_a.id,
+    };
+    // The plant user has no personnel record: the LOTO role gate refuses them on a matching pair.
+    let err = queries::record_loto_card_print(&f.db, print(f.p_a.id), i64::from(f.plant))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "LOTO_ROLE_PERSON_UNKNOWN");
+    // Another permit named: not found, before any gate on that permit.
+    let err = queries::record_loto_card_print(&f.db, print(f.p_b.id), i64::from(f.plant))
+        .await
+        .unwrap_err();
+    assert!(is_not_found(&err), "{err:?}");
 }
 
 #[tokio::test]

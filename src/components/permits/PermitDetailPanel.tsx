@@ -84,10 +84,11 @@ const EMPTY_ISOLATION = { point: "", energy: "", method: "", lock: "" };
 export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps) {
   const { t, i18n } = useTranslation("permits");
   const { info: session } = useSession();
-  // Every action is checked at the permit's site, as the backend does.
+  // Every action is checked at the permit's site, as the backend does; no button while the rights
+  // at that site load (an explicit gate, as the work-order gate card and the create dialog have).
   const access = usePermitAccess(permit);
-  const canIssue = access.can(P.PTW_ISSUE);
-  const canClose = access.can(P.PTW_CLOSE);
+  const canIssue = !access.loading && access.can(P.PTW_ISSUE);
+  const canClose = !access.loading && access.can(P.PTW_CLOSE);
   const me = session?.user_id ?? null;
 
   const [isolations, setIsolations] = useState<PermitIsolationRecord[]>([]);
