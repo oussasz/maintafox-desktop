@@ -599,9 +599,10 @@ pub async fn get_di_stats_in_scope(
         &format!(
             "SELECT AVG(MAX(0.0, {elapsed})) AS value
              FROM intervention_requests ir
-             WHERE {screened} AND ir.screened_at IS NOT NULL",
+             WHERE {screened} AND ({scope}) AND ir.screened_at IS NOT NULL",
             elapsed = super::sla::SLA_RESPONSE_ELAPSED_SQL,
-            screened = format!("{} AND ({})", event_scope_sql("ir.screened_at"), scope.predicate),
+            screened = event_scope_sql("ir.screened_at"),
+            scope = scope.predicate,
         ),
         binds.to_vec(),
     )
@@ -612,9 +613,10 @@ pub async fn get_di_stats_in_scope(
         &format!(
             "SELECT AVG(MAX(0.0, {elapsed})) AS value
              FROM intervention_requests ir
-             WHERE {converted} AND ir.converted_at IS NOT NULL",
+             WHERE {converted} AND ({scope}) AND ir.converted_at IS NOT NULL",
             elapsed = super::sla::SLA_RESOLUTION_ELAPSED_SQL,
-            converted = format!("{} AND ({})", event_scope_sql("ir.converted_at"), scope.predicate),
+            converted = event_scope_sql("ir.converted_at"),
+            scope = scope.predicate,
         ),
         binds.to_vec(),
     )

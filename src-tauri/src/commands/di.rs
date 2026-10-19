@@ -168,10 +168,13 @@ pub async fn get_di(id: i64, state: State<'_, AppState>) -> AppResult<DiGetRespo
 
 #[tauri::command]
 pub async fn create_di(
-    input: queries::DiCreateInput,
+    mut input: queries::DiCreateInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
+    // The requester is the signed-in user, never a value sent by the screen (a di.create.own
+    // holder could otherwise file a request in someone else's name).
+    input.submitter_id = i64::from(user.user_id);
 
     // Decision O7 (an org node is required, for everyone), then di.create or di.create.own at the
     // new request's org node and at its equipment's node (rule §2.6).

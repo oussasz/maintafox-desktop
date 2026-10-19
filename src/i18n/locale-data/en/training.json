@@ -457,10 +457,6 @@
     "PLANNING_CAPACITY_EXCEEDED": "The crew's load would exceed its capacity plus its overtime ceiling on {{day}}.",
     "PLANNING_DOUBLE_BOOKING": "The technician already holds another job at this time: choose someone else, move the slot or override with a reason.",
     "PLANNING_OVERRIDE_REASON_REQUIRED": "Give the reason for overriding the checks on the technician.",
-    "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED": "This break-in exceeds the crew's capacity: give a dangerous-override reason to proceed.",
-    "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",
-    "SCOPE_RECORD_WITHOUT_SITE": "This record has no site: only a plant-wide role can act on it.",
-    "SCOPE_PLANT_WIDE_ONLY": "This is a plant-wide object: only a plant-wide role can act on it.",
-    "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Administrator roles are plant-wide: they cannot be limited to a site."
+    "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED": "This break-in exceeds the crew's capacity: give a dangerous-override reason to proceed."
   }
 }

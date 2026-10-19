@@ -13,7 +13,7 @@ export type OrgIssueLike = Pick<OrgValidationIssue, "code" | "message"> & {
 };
 
 const ISSUE_KEY_PREFIXES = ["governance.issues", "errors", "preview.issues"] as const;
-/** Asset, request, reference-data, training and reliability commands return coded issues, translated in their own namespaces. */
+/** Asset, request, reference-data, training and reliability commands return coded issues, translated in their own namespaces; site-scope refusals (any module) in the eager `errors` namespace. */
 const OTHER_NAMESPACE_KEY_PREFIXES = [
   "equipment:errors",
   "di:errors",
@@ -21,6 +21,7 @@ const OTHER_NAMESPACE_KEY_PREFIXES = [
   "training:errors",
   "reliability:errors",
   "settings:errors",
+  "errors:scope",
 ] as const;
 
 function issueKeys(code: string, orgNs: string): string[] {

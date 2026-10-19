@@ -457,10 +457,6 @@
     "PLANNING_CAPACITY_EXCEEDED": "La charge de l'équipe dépasserait sa capacité plus son plafond d'heures supplémentaires le {{day}}.",
     "PLANNING_DOUBLE_BOOKING": "Le technicien a déjà un autre travail sur ce créneau : choisissez quelqu'un d'autre, déplacez le créneau ou dérogez avec un motif.",
     "PLANNING_OVERRIDE_REASON_REQUIRED": "Indiquez le motif de la dérogation aux contrôles sur le technicien.",
-    "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED": "Ce break-in dépasse la capacité de l'équipe : indiquez un motif de dérogation dangereuse pour continuer.",
-    "SCOPE_OUTSIDE_SITE": "Cet enregistrement appartient à un site hors de vos rôles.",
-    "SCOPE_RECORD_WITHOUT_SITE": "Cet enregistrement n'a pas de site : seul un rôle valable pour toute l'usine peut agir dessus.",
-    "SCOPE_PLANT_WIDE_ONLY": "Objet commun à toute l'usine : seul un rôle valable pour toute l'usine peut agir dessus.",
-    "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Les rôles d'administrateur s'appliquent à toute l'usine : ils ne peuvent pas être limités à un site."
+    "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED": "Ce break-in dépasse la capacité de l'équipe : indiquez un motif de dérogation dangereuse pour continuer."
   }
 }
