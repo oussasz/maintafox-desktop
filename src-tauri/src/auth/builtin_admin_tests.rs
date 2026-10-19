@@ -646,6 +646,104 @@ async fn assigning_an_administrator_role_retires_the_builtin_admin() {
     );
 }
 
+/// Review SF-2: only an administrator of the whole plant without an end date (the rule of the
+/// last-administrator guard) supersedes the built-in account. A 2-hour emergency elevation, a
+/// site-scoped administrator role or a plant-wide one with an end date never retires it: the plant
+/// would lose its only real administrator when that right ends or does not reach account management.
+#[tokio::test]
+async fn only_a_lasting_plant_administrator_retires_the_builtin_admin() {
+    let db = crate::db::test_db::seeded().await;
+    let state = crate::state::AppState::new(db.clone());
+    let role_id = administrator_role(&db).await;
+    for username in ["chef_de_quart", "chef_de_site", "prestataire"] {
+        exec(
+            &db,
+            "INSERT INTO user_accounts (entity_sync_id, username, identity_mode, password_hash, is_active, is_admin,
+                 force_password_change, failed_login_attempts, created_at, updated_at, row_version)
+             VALUES (?, ?, 'local', 'x', 1, 0, 0, 0, '2026-10-19T00:00:00Z', '2026-10-19T00:00:00Z', 1)",
+            vec![format!("sync-{username}").into(), username.into()],
+        )
+        .await;
+    }
+    let user = |name: &'static str| {
+        let db = db.clone();
+        async move {
+            scalar(
+                &db,
+                "SELECT id FROM user_accounts WHERE username = ?",
+                vec![name.into()],
+            )
+            .await
+        }
+    };
+
+    // A 2-hour emergency elevation to Administrator, granted by the built-in account.
+    crate::commands::admin_users::grant_emergency_elevation_impl(
+        &state,
+        &session_of(&db, "admin").await,
+        crate::commands::admin_users::GrantEmergencyElevationInput {
+            user_id: user("chef_de_quart").await,
+            role_id,
+            scope_type: "tenant".into(),
+            scope_reference: None,
+            reason: "Night shift cover".into(),
+            expires_at: (chrono::Utc::now() + chrono::Duration::hours(2)).to_rfc3339(),
+        },
+    )
+    .await
+    .expect("emergency elevation");
+    // Administrator on one site only, and plant-wide with an end date.
+    let end = (chrono::Utc::now() + chrono::Duration::days(60))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    for (username, scope_type, scope_reference, valid_to) in [
+        ("chef_de_site", "site", Some("SITE-1".to_string()), None),
+        ("prestataire", "tenant", None, Some(end)),
+    ] {
+        exec(
+            &db,
+            "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference,
+                 valid_to, created_at, updated_at, row_version)
+             VALUES (?, ?, ?, ?, ?, ?, '2026-10-19T00:00:00Z', '2026-10-19T00:00:00Z', 1)",
+            vec![
+                format!("usa-{username}").into(),
+                user(username).await.into(),
+                role_id.into(),
+                scope_type.into(),
+                scope_reference.map_or(sea_orm::Value::String(None), Into::into),
+                valid_to.map_or(sea_orm::Value::String(None), Into::into),
+            ],
+        )
+        .await;
+    }
+
+    assert!(
+        retire_builtin_admin_if_superseded(&db, BuildProfile::Release, RetireOrigin::Startup)
+            .await
+            .expect("retire")
+            .is_none(),
+        "not superseded"
+    );
+    assert!(
+        find_sign_in_account(&db, "admin").await.expect("lookup").is_some(),
+        "still the way in"
+    );
+    let row = builtin(&db).await;
+    assert!(row.is_active);
+    assert_eq!(retire_audits(&db, row.user_id).await, 0);
+
+    // A lasting plant administrator: retired.
+    insert_administrator(&db, "chef").await;
+    assert!(
+        retire_builtin_admin_if_superseded(&db, BuildProfile::Release, RetireOrigin::Startup)
+            .await
+            .expect("retire")
+            .is_some(),
+        "superseded"
+    );
+    assert!(!builtin(&db).await.is_active);
+}
+
 // ── 5. L3: a licensed PC still reached through the never-used built-in account ───────────────────
 
 const SIGNED_OUT: LicenceCaller = LicenceCaller {

@@ -12,8 +12,10 @@
 //!   as that account row exists (disabled or deleted included), so a local data reset (which wipes
 //!   the accounts) reopens the screen, and nothing else does.
 //! - **Existing PCs**: a built-in "admin" whose password was never changed (its forced change is
-//!   still pending) is disabled, with an audit entry, as soon as another active administrator
-//!   exists ([`retire_builtin_admin_if_superseded`]): at every start (`seeder::seed_system_data`),
+//!   still pending) is disabled, with an audit entry, as soon as another lasting administrator
+//!   exists (an administrator of the whole plant with no end date, the rule of the
+//!   last-administrator guard: [`other_active_administrator_exists`])
+//!   ([`retire_builtin_admin_if_superseded`]): at every start (`seeder::seed_system_data`),
 //!   before every sign-in, when an administrator is created or given a role, and when the account
 //!   arrives by synchronisation. In builds
 //!   with `debug_assertions` it is deleted (soft delete) instead. While it is the only
@@ -131,18 +133,27 @@ pub async fn builtin_admin_row(conn: &impl ConnectionTrait) -> AppResult<Option<
     }))
 }
 
-/// Active accounts (not deleted, not disabled) other than `excluding_user_id` that hold
-/// `adm.settings` through an assignment in force, whatever its scope: the same notion of
-/// administrator as the first-start rule (`product_license::count_tenant_administrators`), by the
-/// permission model (any role carrying the right), never a role name.
+/// A lasting administrator other than `excluding_user_id` exists: the rule of the last-administrator
+/// guard (`auth::last_admin::lasting_administrator_ids`: an active account that administers the
+/// whole plant with no end date, the built-in account whose password was never changed left out).
+/// Only such an administrator supersedes the built-in account: a site-scoped role, an emergency
+/// elevation or a role with an end date never retires it, since the plant would lose its only real
+/// administrator when that right ends or does not reach account management (review SF-2).
 pub async fn other_active_administrator_exists(
     conn: &impl ConnectionTrait,
     excluding_user_id: Option<i64>,
 ) -> AppResult<bool> {
-    Ok(first_active_administrator(conn, excluding_user_id).await?.is_some())
+    Ok(crate::auth::last_admin::lasting_administrator_ids(conn)
+        .await?
+        .into_iter()
+        .any(|id| Some(id) != excluding_user_id))
 }
 
-/// `entity_sync_id` of the oldest active administrator other than `excluding_user_id`.
+/// `entity_sync_id` of the oldest active account other than `excluding_user_id` that holds
+/// `adm.settings` through an assignment in force, whatever its scope: the same notion of
+/// administrator as the first-start rule (`product_license::count_tenant_administrators`), by the
+/// permission model (any role carrying the right), never a role name. Used for the first-start
+/// marker only ([`backfill_first_admin_marker`]).
 async fn first_active_administrator(
     conn: &impl ConnectionTrait,
     excluding_user_id: Option<i64>,

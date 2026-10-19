@@ -12,9 +12,15 @@
 //!   delete of one) that would leave this PC without an active administrator is a sync conflict and
 //!   is not applied ([`inbound_change_check`], from `sync::apply_hooks`). It is judged by the same
 //!   count as the commands: the received change is written inside a savepoint, counted, and undone.
-//! - **Lockout**: failed sign-ins lock the last administrator for at most
-//!   [`LAST_ADMIN_MAX_LOCKOUT_MINUTES`]; a longer or unreadable stored lock is brought back to that
-//!   bound ([`last_admin_lockout_minutes`], [`clamp_last_admin_lock`], used by `auth::lockout`).
+//! - **Administrators with an end date**: a change is also refused when it leaves only
+//!   administrators whose role has an end date while there was a lasting one before
+//!   ([`lasting_administrator_ids`]): otherwise the plant would lose its last administrator on a
+//!   timer (review SF-1).
+//! - **Lockout**: failed sign-ins lock an administrator for at most [`LAST_ADMIN_MAX_LOCKOUT_MINUTES`]
+//!   whenever no other active administrator can sign in (each other one is locked too); a longer or
+//!   unreadable stored lock is then brought back to that bound ([`last_admin_lockout_minutes`],
+//!   [`clamp_last_admin_lock`], used by `auth::lockout`). So all administrators locked together
+//!   never keep the plant out for longer than that bound (review SF-3).
 //! - **Warning**: while the signed-in administrator is the only one, the shell asks for a second
 //!   one ([`get_single_administrator_warning`]); two administrators can reset each other's password.
 //!
@@ -48,20 +54,74 @@ pub const LAST_ADMIN_MAX_LOCKOUT_MINUTES: i64 = 60;
 /// Synchronised tables whose rows decide who is an administrator ([`inbound_change_check`]).
 const GUARDED_ENTITY_TYPES: [&str; 3] = ["user_accounts", "user_scope_assignments", "roles"];
 
-/// Accounts that are active administrators (see the module rule), by id.
-pub async fn active_administrator_ids(conn: &impl ConnectionTrait) -> AppResult<Vec<i64>> {
+/// `ids` without the built-in "admin" account whose password was never changed.
+async fn without_unchanged_builtin(conn: &impl ConnectionTrait, mut ids: Vec<i64>) -> AppResult<Vec<i64>> {
     let builtin_never_changed = crate::auth::builtin_admin::builtin_admin_row(conn)
         .await?
         .filter(|row| row.password_never_changed)
         .map(|row| row.user_id);
-    let mut ids = crate::auth::rbac::elevated_admin_user_ids(conn).await?;
     ids.retain(|id| Some(*id) != builtin_never_changed);
     Ok(ids)
 }
 
-/// Number of active administrators ([`active_administrator_ids`]).
-pub async fn active_admin_count(conn: &impl ConnectionTrait) -> AppResult<i64> {
-    Ok(i64::try_from(active_administrator_ids(conn).await?.len()).unwrap_or(i64::MAX))
+/// Accounts that are active administrators (see the module rule), by id.
+pub async fn active_administrator_ids(conn: &impl ConnectionTrait) -> AppResult<Vec<i64>> {
+    let ids = crate::auth::rbac::elevated_admin_user_ids(conn).await?;
+    without_unchanged_builtin(conn, ids).await
+}
+
+/// The active administrators ([`active_administrator_ids`]) that stay administrators with no end
+/// date: the bootstrap account (`is_admin`), or an account holding Administrator / Superadmin
+/// plant-wide (tenant scope) through a permanent assignment in force whose `valid_to` is empty. An
+/// assignment with an end date, a site-scoped role or an emergency elevation does not make a
+/// lasting administrator. The built-in "admin" account whose password was never changed is left
+/// out, as in [`active_administrator_ids`].
+pub async fn lasting_administrator_ids(conn: &impl ConnectionTrait) -> AppResult<Vec<i64>> {
+    let now = crate::rbac::resolver::assignment_clock();
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT ua.id FROM user_accounts ua \
+                 WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND (ua.is_admin = 1 OR EXISTS ( \
+                   SELECT 1 FROM user_scope_assignments usa INNER JOIN roles r ON r.id = usa.role_id \
+                   WHERE usa.user_id = ua.id AND usa.scope_type = 'tenant' \
+                     AND {} AND usa.valid_to IS NULL \
+                     AND r.deleted_at IS NULL AND r.name IN {})) \
+                 ORDER BY ua.id",
+                crate::rbac::resolver::PERMANENT_ASSIGNMENT_IN_FORCE_SQL,
+                crate::auth::rbac::ELEVATED_ADMIN_ROLES_SQL,
+            ),
+            crate::rbac::resolver::permanent_binds(&now),
+        ))
+        .await?;
+    let ids = rows
+        .iter()
+        .map(|r| r.try_get::<i64>("", "id"))
+        .collect::<Result<Vec<_>, _>>()?;
+    without_unchanged_builtin(conn, ids).await
+}
+
+/// The administrators of the plant before a change ([`active_admin_count`]), judged after it by
+/// [`leaves_no_administrator`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdministratorCount {
+    /// Active administrators ([`active_administrator_ids`]).
+    pub active: i64,
+    /// Lasting administrators among them ([`lasting_administrator_ids`]).
+    pub lasting: i64,
+}
+
+fn count_of(ids: &[i64]) -> i64 {
+    i64::try_from(ids.len()).unwrap_or(i64::MAX)
+}
+
+/// The administrators now: active ones, and lasting ones among them.
+pub async fn active_admin_count(conn: &impl ConnectionTrait) -> AppResult<AdministratorCount> {
+    Ok(AdministratorCount {
+        active: count_of(&active_administrator_ids(conn).await?),
+        lasting: count_of(&lasting_administrator_ids(conn).await?),
+    })
 }
 
 /// True when `user_id` is the one and only active administrator.
@@ -69,26 +129,57 @@ pub async fn is_sole_active_administrator(conn: &impl ConnectionTrait, user_id: 
     Ok(active_administrator_ids(conn).await? == [user_id])
 }
 
-/// After a change, in its transaction: it took away the last active administrator (there were
-/// `before` of them). A plant that had none before is not judged here (first start, or only the
-/// built-in account whose password was never changed).
-pub async fn leaves_no_administrator(conn: &impl ConnectionTrait, before: i64) -> AppResult<bool> {
-    Ok(before > 0 && active_admin_count(conn).await? == 0)
-}
-
 const REFUSAL_MESSAGE: &str = "This change would leave the plant without an active administrator: create or \
                                enable a second administrator first.";
 
+const ONLY_END_DATED_MESSAGE: &str = "This change would leave the plant with administrators whose role has an \
+                                      end date only: give a second account the Administrator role for the whole \
+                                      organisation, without an end date, first.";
+
+/// After a change, in its transaction: why it leaves the plant without a lasting way to
+/// administer it, if it does. Refused when it took away the last active administrator (there were
+/// `before.active` of them), or the last lasting one (there were `before.lasting`) so that only
+/// administrators with an end date remain. A plant that had none before is not judged here (first
+/// start, or only the built-in account whose password was never changed); neither is a plant
+/// whose administrators all had an end date already, except for its last active one.
+async fn administrator_shortfall(
+    conn: &impl ConnectionTrait,
+    before: AdministratorCount,
+) -> AppResult<Option<&'static str>> {
+    if before.active <= 0 {
+        return Ok(None);
+    }
+    let after = active_admin_count(conn).await?;
+    if after.active == 0 {
+        return Ok(Some(REFUSAL_MESSAGE));
+    }
+    if before.lasting > 0 && after.lasting == 0 {
+        return Ok(Some(ONLY_END_DATED_MESSAGE));
+    }
+    Ok(None)
+}
+
+/// After a change, in its transaction: it took away the last active administrator, or the last
+/// lasting one ([`AdministratorCount`]); the one rule of the commands and of synchronisation.
+pub async fn leaves_no_administrator(conn: &impl ConnectionTrait, before: AdministratorCount) -> AppResult<bool> {
+    Ok(administrator_shortfall(conn, before).await?.is_some())
+}
+
 /// The refusal of a change that would leave no active administrator (coded).
 pub fn last_administrator_refusal() -> AppError {
-    crate::errors::org_validation_failed(LAST_ADMINISTRATOR_REQUIRED, REFUSAL_MESSAGE, HashMap::new())
+    refusal(REFUSAL_MESSAGE)
+}
+
+fn refusal(message: &str) -> AppError {
+    crate::errors::org_validation_failed(LAST_ADMINISTRATOR_REQUIRED, message, HashMap::new())
 }
 
 /// Run inside the transaction of a change, after it: refuses (the caller's transaction is then
-/// dropped, i.e. rolled back) when the change took away the last active administrator.
-pub async fn ensure_an_admin_remains(conn: &impl ConnectionTrait, before: i64) -> AppResult<()> {
-    if leaves_no_administrator(conn, before).await? {
-        return Err(last_administrator_refusal());
+/// dropped, i.e. rolled back) when the change took away the last active administrator or the last
+/// lasting one ([`leaves_no_administrator`]).
+pub async fn ensure_an_admin_remains(conn: &impl ConnectionTrait, before: AdministratorCount) -> AppResult<()> {
+    if let Some(message) = administrator_shortfall(conn, before).await? {
+        return Err(refusal(message));
     }
     Ok(())
 }
@@ -129,7 +220,7 @@ pub(crate) async fn inbound_change_check(
         return Ok(None);
     }
     let before = active_admin_count(conn).await?;
-    if before == 0 || !stored_row_exists(conn, layout.table(), entity_sync_id).await? {
+    if before.active == 0 || !stored_row_exists(conn, layout.table(), entity_sync_id).await? {
         return Ok(None);
     }
     conn.execute_unprepared(&format!("SAVEPOINT {PROBE_SAVEPOINT}")).await?;
@@ -157,9 +248,9 @@ pub(crate) async fn inbound_change_check(
             .is_ok_and(|done| done.rows_affected() > 0),
     };
     let verdict = if written {
-        leaves_no_administrator(conn, before).await
+        administrator_shortfall(conn, before).await
     } else {
-        Ok(false)
+        Ok(None)
     };
     conn.execute_unprepared(&format!("ROLLBACK TO SAVEPOINT {PROBE_SAVEPOINT}"))
         .await?;
@@ -167,9 +258,9 @@ pub(crate) async fn inbound_change_check(
         .await?;
     // References resolved during the trial may name rows the rollback removed.
     crate::sync::row_codec::clear_ref_cache();
-    if !verdict? {
+    let Some(reason) = verdict? else {
         return Ok(None);
-    }
+    };
     tracing::warn!(
         entity_type = layout.def.entity_type,
         entity_sync_id,
@@ -178,7 +269,7 @@ pub(crate) async fn inbound_change_check(
     Ok(Some(ApplyOutcome::Conflict {
         code: LAST_ADMINISTRATOR_REQUIRED.into(),
         message: format!(
-            "{}: this change would leave this PC without an active administrator; it is not applied.",
+            "{}: this received change is not applied on this PC. {reason}",
             layout.def.entity_type
         ),
     }))
@@ -197,26 +288,65 @@ async fn stored_row_exists(conn: &impl ConnectionTrait, table: &str, entity_sync
 
 // ── Lockout ──────────────────────────────────────────────────────────────────────────────────────
 
+/// True when `user_id` is an active administrator and no other active administrator can sign in
+/// now: each other one is locked (a stored lock that has not ended, or that cannot be read). The
+/// account's own lock does not matter. With a single administrator, that is the one.
+pub async fn is_last_administrator_able_to_sign_in(conn: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
+    let ids = active_administrator_ids(conn).await?;
+    if !ids.contains(&user_id) {
+        return Ok(false);
+    }
+    let now = chrono::Utc::now();
+    for other in ids.into_iter().filter(|id| *id != user_id) {
+        if !is_locked_at(conn, other, now).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The account has a stored lock ending after `now`; an unreadable end counts as locked.
+async fn is_locked_at(
+    conn: &impl ConnectionTrait,
+    user_id: i64,
+    now: chrono::DateTime<chrono::Utc>,
+) -> AppResult<bool> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT locked_until FROM user_accounts WHERE id = ?",
+            [user_id.into()],
+        ))
+        .await?;
+    let locked_until = row
+        .map(|r| r.try_get::<Option<String>>("", "locked_until"))
+        .transpose()?
+        .flatten();
+    Ok(locked_until.is_some_and(|raw| stored_instant(&raw).is_none_or(|until| until > now)))
+}
+
 /// Lock duration for `user_id` after failed sign-ins: the policy's `policy_minutes`, at most
-/// [`LAST_ADMIN_MAX_LOCKOUT_MINUTES`] for the last active administrator.
+/// [`LAST_ADMIN_MAX_LOCKOUT_MINUTES`] for an administrator while no other one can sign in
+/// ([`is_last_administrator_able_to_sign_in`]).
 pub async fn last_admin_lockout_minutes(
     conn: &impl ConnectionTrait,
     user_id: i64,
     policy_minutes: i64,
 ) -> AppResult<i64> {
-    if is_sole_active_administrator(conn, user_id).await? {
+    if is_last_administrator_able_to_sign_in(conn, user_id).await? {
         return Ok(policy_minutes.clamp(1, LAST_ADMIN_MAX_LOCKOUT_MINUTES));
     }
     Ok(policy_minutes)
 }
 
-/// A running lock of `user_id` ending at `locked_until`: for the last active administrator, a lock
-/// ending later than [`LAST_ADMIN_MAX_LOCKOUT_MINUTES`] from now, or unreadable, is brought back to
-/// that bound (stored); returns the end that applies. Any other account keeps its lock as stored.
+/// A running lock of `user_id` ending at `locked_until`: for an administrator while no other one
+/// can sign in ([`is_last_administrator_able_to_sign_in`]), a lock ending later than
+/// [`LAST_ADMIN_MAX_LOCKOUT_MINUTES`] from now, or unreadable, is brought back to that bound
+/// (stored); returns the end that applies. Any other account keeps its lock as stored.
 pub async fn clamp_last_admin_lock(conn: &impl ConnectionTrait, user_id: i64, locked_until: &str) -> AppResult<String> {
     let bound = chrono::Utc::now() + chrono::Duration::minutes(LAST_ADMIN_MAX_LOCKOUT_MINUTES);
     let within_bound = stored_instant(locked_until).is_some_and(|until| until <= bound);
-    if within_bound || !is_sole_active_administrator(conn, user_id).await? {
+    if within_bound || !is_last_administrator_able_to_sign_in(conn, user_id).await? {
         return Ok(locked_until.to_string());
     }
     let bounded = bound.format("%Y-%m-%dT%H:%M:%SZ").to_string();

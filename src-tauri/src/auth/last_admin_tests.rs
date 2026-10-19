@@ -50,6 +50,18 @@ async fn builtin_caller(db: &DatabaseConnection) -> AuthenticatedUser {
 /// A named, active account (password chosen) holding the Administrator role plant-wide; returns
 /// (user id, assignment id).
 async fn named_admin(db: &DatabaseConnection, username: &str) -> (i64, i64) {
+    admin_until(db, username, None).await
+}
+
+/// The end of a validity window `days` from now, in the stored form.
+fn days_from_now(days: i64) -> String {
+    (chrono::Utc::now() + chrono::Duration::days(days))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+/// [`named_admin`], its Administrator assignment ending at `valid_to` (none: no end date).
+async fn admin_until(db: &DatabaseConnection, username: &str, valid_to: Option<String>) -> (i64, i64) {
     let now = chrono::Utc::now().to_rfc3339();
     exec(
         db,
@@ -76,12 +88,14 @@ async fn named_admin(db: &DatabaseConnection, username: &str) -> (i64, i64) {
     exec(
         db,
         "INSERT INTO user_scope_assignments \
-         (entity_sync_id, user_id, role_id, scope_type, scope_reference, created_at, updated_at, row_version) \
-         VALUES (?, ?, ?, 'tenant', NULL, ?, ?, 1)",
+         (entity_sync_id, user_id, role_id, scope_type, scope_reference, valid_to, created_at, updated_at, \
+          row_version) \
+         VALUES (?, ?, ?, 'tenant', NULL, ?, ?, ?, 1)",
         vec![
             format!("{username}-assignment").into(),
             user.into(),
             admin_role.into(),
+            valid_to.map_or(sea_orm::Value::String(None), Into::into),
             now.clone().into(),
             now.into(),
         ],
@@ -242,6 +256,113 @@ async fn withdrawing_the_role_is_allowed_with_a_second_administrator() {
     assert_eq!(active_administrator_ids(&db).await.unwrap(), vec![second]);
 }
 
+/// The details form (`update_user_impl`): switching the account off there is refused outright (it
+/// goes through Disable, guarded above), and a change of the forced password change that makes the
+/// only administrator the never-changed built-in account is refused by the guard.
+#[tokio::test]
+async fn the_details_form_cannot_remove_the_last_administrator() {
+    use crate::commands::admin_users::{update_user_impl, UpdateUserInput};
+    fn details(user_id: i64, force_password_change: Option<bool>, is_active: Option<bool>) -> UpdateUserInput {
+        UpdateUserInput {
+            user_id,
+            username: None,
+            display_name: None,
+            email: None,
+            phone: None,
+            personnel_id: None,
+            force_password_change,
+            is_active,
+        }
+    }
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = builtin_caller(&db).await;
+    let builtin = builtin_id(&db).await;
+    let (only, _) = named_admin(&db, "details_only").await;
+
+    let refused = update_user_impl(&state, &caller, details(only, None, Some(false))).await;
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(is_active(&db, only).await, "still active");
+
+    // The built-in account, its forced change no longer pending, is the only administrator once the
+    // named one is disabled (allowed: the built-in account then counts).
+    exec(
+        &db,
+        "UPDATE user_accounts SET force_password_change = 0 WHERE id = ?",
+        vec![builtin.into()],
+    )
+    .await;
+    set_user_active_impl(&state, &caller, disable(only), false)
+        .await
+        .expect("the built-in account remains an administrator");
+    assert_eq!(active_administrator_ids(&db).await.unwrap(), vec![builtin]);
+    // Forcing its password change again makes it a never-changed account: no administrator left.
+    let refused = update_user_impl(&state, &caller, details(builtin, Some(true), None)).await;
+    assert!(is_last_admin_refusal(&refused), "{refused:?}");
+    assert_eq!(
+        active_administrator_ids(&db).await.unwrap(),
+        vec![builtin],
+        "rolled back"
+    );
+}
+
+/// The signed-in caller for a named account.
+fn caller_of(user_id: i64, username: &str) -> AuthenticatedUser {
+    AuthenticatedUser {
+        user_id: i32::try_from(user_id).expect("fits"),
+        username: username.into(),
+        display_name: None,
+        is_admin: false,
+        force_password_change: false,
+        tenant_id: "tenant-test".into(),
+        token_tenant_id: "tenant-test".into(),
+    }
+}
+
+/// Review SF-1: an administrator whose role has an end date cannot take away the last
+/// administrator without one, nor can that one's role be given an end date.
+#[tokio::test]
+async fn an_administrator_with_an_end_date_cannot_remove_the_last_lasting_one() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let (lasting, _) = named_admin(&db, "lasting_admin").await;
+    let (contractor, _) = admin_until(&db, "contractor_admin", Some(days_from_now(60))).await;
+    assert_eq!(active_administrator_ids(&db).await.unwrap(), vec![lasting, contractor]);
+    assert_eq!(lasting_administrator_ids(&db).await.unwrap(), vec![lasting]);
+
+    // The contractor disables the lasting administrator: refused.
+    let caller = caller_of(contractor, "contractor_admin");
+    let refused = set_user_active_impl(&state, &caller, disable(lasting), false).await;
+    assert!(is_last_admin_refusal(&refused), "{refused:?}");
+    assert!(is_active(&db, lasting).await, "rolled back");
+
+    // Giving the lasting administrator's role an end date: refused.
+    let admin_role = role_id(&db, "Administrator").await;
+    let mut end_dated = readonly_at_tenant(lasting, admin_role);
+    end_dated.valid_to = Some(days_from_now(30));
+    let refused = assign_role_scope_impl(&state, &builtin_caller(&db).await, end_dated, false, None).await;
+    assert!(is_last_admin_refusal(&refused), "{refused:?}");
+    assert_eq!(
+        lasting_administrator_ids(&db).await.unwrap(),
+        vec![lasting],
+        "nothing changed"
+    );
+}
+
+#[tokio::test]
+async fn an_administrator_with_an_end_date_may_disable_one_while_a_lasting_one_remains() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let (first, _) = named_admin(&db, "lasting_first").await;
+    let (second, _) = named_admin(&db, "lasting_second").await;
+    let (contractor, _) = admin_until(&db, "contractor_two", Some(days_from_now(60))).await;
+    set_user_active_impl(&state, &caller_of(contractor, "contractor_two"), disable(first), false)
+        .await
+        .expect("a lasting administrator remains");
+    assert!(!is_active(&db, first).await);
+    assert_eq!(lasting_administrator_ids(&db).await.unwrap(), vec![second]);
+}
+
 // ── Synchronisation ──
 
 async fn payload(
@@ -348,6 +469,71 @@ async fn an_unrelated_received_change_is_applied() {
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
 }
 
+/// A received `roles` row: the Administrator role renamed or deleted on another PC would leave
+/// this PC without an administrator.
+#[tokio::test]
+async fn a_received_role_change_leaving_no_administrator_is_a_conflict() {
+    let db = crate::db::test_db::seeded().await;
+    crate::sync::capture::install_capture_in(&db)
+        .await
+        .expect("capture + seeded identities");
+    let (only, _) = named_admin(&db, "role_admin").await;
+    let role_sync_id = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM roles WHERE name = 'Administrator'".to_string(),
+        ))
+        .await
+        .unwrap()
+        .expect("role")
+        .try_get::<String>("", "entity_sync_id")
+        .expect("seeded identity");
+    let role = payload(&db, "roles", &role_sync_id).await;
+
+    let mut renamed = role.clone();
+    assert!(renamed.contains_key("name"), "{renamed:?}");
+    renamed.insert("name".into(), "Former administrators".into());
+    let outcome = receive(&db, "roles", &role_sync_id, "upsert", renamed).await;
+    assert!(is_last_admin_conflict(&outcome), "{outcome:?}");
+
+    let mut deleted = role;
+    assert!(deleted.contains_key("deleted_at"), "{deleted:?}");
+    deleted.insert("deleted_at".into(), chrono::Utc::now().to_rfc3339().into());
+    let outcome = receive(&db, "roles", &role_sync_id, "upsert", deleted).await;
+    assert!(is_last_admin_conflict(&outcome), "{outcome:?}");
+
+    assert_eq!(
+        active_administrator_ids(&db).await.unwrap(),
+        vec![only],
+        "nothing applied"
+    );
+}
+
+/// Review SF-1 by synchronisation: an end date received on the role of the last administrator
+/// without one, while an administrator with an end date remains, is a conflict.
+#[tokio::test]
+async fn a_received_end_date_on_the_last_lasting_administrator_is_a_conflict() {
+    let db = crate::db::test_db::seeded().await;
+    crate::sync::capture::install_capture_in(&db)
+        .await
+        .expect("capture + seeded identities");
+    let (lasting, _) = named_admin(&db, "sync_lasting").await;
+    admin_until(&db, "sync_contractor", Some(days_from_now(60))).await;
+    let mut assignment = payload(&db, "user_scope_assignments", "sync_lasting-assignment").await;
+    assert!(assignment.contains_key("valid_to"), "{assignment:?}");
+    assignment.insert("valid_to".into(), days_from_now(30).into());
+    let outcome = receive(
+        &db,
+        "user_scope_assignments",
+        "sync_lasting-assignment",
+        "upsert",
+        assignment,
+    )
+    .await;
+    assert!(is_last_admin_conflict(&outcome), "{outcome:?}");
+    assert_eq!(lasting_administrator_ids(&db).await.unwrap(), vec![lasting]);
+}
+
 // ── Lockout ──
 
 async fn locked_until(db: &DatabaseConnection, user: i64) -> Option<String> {
@@ -436,6 +622,82 @@ async fn another_account_keeps_the_policy_lock() {
     assert!(
         instant(&until) > chrono::Utc::now() + chrono::Duration::minutes(1_000),
         "not the last administrator: the policy applies ({until})"
+    );
+}
+
+/// Review SF-3: two administrators, one locked: the other is the last one who can sign in, so its
+/// lock is bounded too, and the first one's longer lock is bounded when next checked.
+#[tokio::test]
+async fn with_every_other_administrator_locked_the_lock_is_bounded() {
+    let db = crate::db::test_db::seeded().await;
+    let (first, _) = named_admin(&db, "locked_first").await;
+    let (second, _) = named_admin(&db, "locked_second").await;
+    let bound = chrono::Utc::now() + chrono::Duration::minutes(LAST_ADMIN_MAX_LOCKOUT_MINUTES + 1);
+
+    crate::auth::lockout::record_failed_attempt(&db, i32::try_from(first).unwrap(), &long_policy())
+        .await
+        .unwrap();
+    let first_until = locked_until(&db, first).await.expect("locked");
+    assert!(
+        instant(&first_until) > bound,
+        "the second one could sign in ({first_until})"
+    );
+
+    crate::auth::lockout::record_failed_attempt(&db, i32::try_from(second).unwrap(), &long_policy())
+        .await
+        .unwrap();
+    let second_until = locked_until(&db, second).await.expect("locked");
+    assert!(
+        instant(&second_until) <= bound,
+        "no other administrator could sign in: bounded ({second_until})"
+    );
+
+    match crate::auth::lockout::check_lockout(&db, i32::try_from(first).unwrap()).await {
+        Err(AppError::AccountLocked { until }) => assert!(instant(&until) <= bound, "{until}"),
+        other => panic!("still locked, bounded: {other:?}"),
+    }
+}
+
+/// A lock stored as SQLite `datetime()` text (`session_manager::record_failed_login`) is read: kept
+/// when within the bound, brought back to it when longer.
+#[tokio::test]
+async fn a_lock_stored_as_sqlite_datetime_text_is_bounded() {
+    let db = crate::db::test_db::seeded().await;
+    let (only, _) = named_admin(&db, "sqlite_lock_admin").await;
+    let uid = i32::try_from(only).unwrap();
+    let bound = chrono::Utc::now() + chrono::Duration::minutes(LAST_ADMIN_MAX_LOCKOUT_MINUTES + 1);
+
+    let soon = (chrono::Utc::now() + chrono::Duration::minutes(30))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+    exec(
+        &db,
+        "UPDATE user_accounts SET locked_until = ? WHERE id = ?",
+        vec![soon.clone().into(), only.into()],
+    )
+    .await;
+    // (Read by the clamp itself: `check_lockout` compares the stored text with the clock as text,
+    // older code that is not part of this rule.)
+    assert_eq!(
+        clamp_last_admin_lock(&db, only, &soon).await.unwrap(),
+        soon,
+        "within the bound: kept"
+    );
+    assert_eq!(locked_until(&db, only).await, Some(soon), "not rewritten");
+
+    exec(
+        &db,
+        "UPDATE user_accounts SET locked_until = '2999-01-01 00:00:00' WHERE id = ?",
+        vec![only.into()],
+    )
+    .await;
+    match crate::auth::lockout::check_lockout(&db, uid).await {
+        Err(AppError::AccountLocked { until }) => assert!(instant(&until) <= bound, "{until}"),
+        other => panic!("still locked, bounded: {other:?}"),
+    }
+    assert!(
+        instant(&locked_until(&db, only).await.unwrap()) <= bound,
+        "stored bounded, as RFC 3339"
     );
 }
 

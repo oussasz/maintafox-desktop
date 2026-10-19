@@ -513,7 +513,7 @@ async fn the_last_administrator_cannot_be_removed_by_any_path() {
     // administrator at all (`auth::last_admin`).
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
-        "UPDATE user_accounts SET is_admin = 0, force_password_change = 0,          password_changed_at = '2026-10-19T08:00:00Z' WHERE username = 'admin'"
+        "UPDATE user_accounts SET is_admin = 0, force_password_change = 0, password_changed_at = '2026-10-19T08:00:00Z' WHERE username = 'admin'"
             .to_string(),
     ))
     .await
@@ -1662,7 +1662,7 @@ async fn an_approval_limit_ends_with_its_grant_not_at_midnight() {
 async fn the_last_admin_guard_counts_like_plant_administration() {
     let db = crate::db::test_db::seeded().await;
     let admin_role = role_id(&db, "Administrator").await;
-    let base = active_admin_holders(&db).await.unwrap();
+    let base = active_admin_holders(&db).await.unwrap().active;
 
     let site = insert_user(&db, "guard_site_admin").await;
     raw_assignment(&db, "guard-site", site, admin_role, "site", Some("1"), None, None).await;
@@ -1691,14 +1691,14 @@ async fn the_last_admin_guard_counts_like_plant_administration() {
     )
     .await;
     assert_eq!(
-        active_admin_holders(&db).await.unwrap(),
+        active_admin_holders(&db).await.unwrap().active,
         base,
         "site-scoped, emergency and ended administrators cannot administer the plant"
     );
 
     let plant = insert_user(&db, "guard_plant_admin").await;
     raw_assignment(&db, "guard-plant", plant, admin_role, "tenant", None, None, None).await;
-    assert_eq!(active_admin_holders(&db).await.unwrap(), base + 1);
+    assert_eq!(active_admin_holders(&db).await.unwrap().active, base + 1);
     for id in [site, emergency, ended, plant] {
         assert_eq!(
             is_plant_admin(&db, id).await.unwrap(),

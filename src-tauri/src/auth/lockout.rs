@@ -83,7 +83,7 @@ pub async fn check_lockout(db: &sea_orm::DatabaseConnection, user_id: i32) -> Ap
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     if until > now {
-        // Still locked. The last active administrator is never locked for longer than
+        // Still locked. An administrator while no other one can sign in is never locked for longer than
         // `last_admin::LAST_ADMIN_MAX_LOCKOUT_MINUTES` (a longer or unreadable stored end is bounded).
         let until = crate::auth::last_admin::clamp_last_admin_lock(db, i64::from(user_id), &until).await?;
         return Err(AppError::AccountLocked { until });
@@ -160,7 +160,8 @@ pub async fn record_failed_attempt(
         } else {
             base
         };
-        // The last active administrator: time-limited, short lock (`auth::last_admin`).
+        // The last active administrator who can still sign in: time-limited, short lock
+        // (`auth::last_admin`).
         let duration_minutes =
             crate::auth::last_admin::last_admin_lockout_minutes(db, i64::from(user_id), duration_minutes).await?;
 
