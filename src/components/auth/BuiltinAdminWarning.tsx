@@ -1,6 +1,7 @@
-// Warning shown to the built-in "admin" account while it is the only administrator of this PC
-// (`auth::builtin_admin`). It cannot be dismissed: it disappears once a named administrator exists
-// (the built-in account is then disabled automatically if its password was never changed).
+// Warning shown to the built-in "admin" account whenever it is signed in (`auth::builtin_admin`).
+// It cannot be dismissed. While that account is the only administrator it asks for a named
+// administrator; once one exists it asks to disable this account (nothing disables it
+// automatically once its password has been chosen).
 
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -10,11 +11,12 @@ import { mfTone } from "@/design-system/tone";
 import { cn } from "@/lib/utils";
 import {
   type BuiltinAdminWarning as BuiltinAdminWarningState,
+  builtinAdminWarningMessage,
   builtinAdminWarningVisible,
   getBuiltinAdminWarning,
 } from "@/services/builtin-admin-service";
 
-/** Re-read while shown, so it disappears soon after a named administrator is created. */
+/** Re-read while shown, so its text follows soon after a named administrator is created. */
 const REFRESH_INTERVAL_MS = 60 * 1000;
 
 interface BuiltinAdminWarningProps {
@@ -51,7 +53,7 @@ export function BuiltinAdminWarning({ sessionUserId, className }: BuiltinAdminWa
     };
   }, [sessionUserId]);
 
-  if (!builtinAdminWarningVisible(warning)) return null;
+  if (warning === null || !builtinAdminWarningVisible(warning)) return null;
 
   return (
     <div
@@ -67,11 +69,7 @@ export function BuiltinAdminWarning({ sessionUserId, className }: BuiltinAdminWa
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
       <div className="space-y-1">
         <p className="font-semibold">{t("session.builtinAdmin.title")}</p>
-        <p>
-          {warning?.password_change_pending
-            ? t("session.builtinAdmin.passwordPending")
-            : t("session.builtinAdmin.passwordChanged")}
-        </p>
+        <p>{t(`session.builtinAdmin.${builtinAdminWarningMessage(warning)}`)}</p>
       </div>
     </div>
   );

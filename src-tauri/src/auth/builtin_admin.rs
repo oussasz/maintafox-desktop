@@ -17,11 +17,15 @@
 //!   before every sign-in, when an administrator is created or given a role, and when the account
 //!   arrives by synchronisation. In builds
 //!   with `debug_assertions` it is deleted (soft delete) instead. While it is the only
-//!   administrator it stays usable and the shell shows a warning to create a named administrator
+//!   administrator it stays usable and the shell shows a warning to create a named administrator;
+//!   the warning stays while that account is signed in, asking to disable it by hand once a named
+//!   administrator exists (an account whose password was chosen is never disabled automatically)
 //!   ([`get_builtin_admin_warning`]).
 //! - **Synchronisation**: the account arriving from another PC is disabled on arrival when this PC
 //!   has another administrator, or when this PC did not have it (a PC that never had the account
-//!   does not gain a default-password administrator) ([`after_inbound_user_account`]).
+//!   does not gain a default-password administrator), or when this PC has already retired it
+//!   ([`BUILTIN_ADMIN_RETIRED_KEY`]: a later version of the row, which carries `is_active`, never
+//!   re-enables it while its password was never changed) ([`after_inbound_user_account`]).
 //!
 //! The account is recognised by its seeded identity (`sync::identity::seeded_entity_sync_id` of
 //! `user_accounts` / `admin`) and its username, never by the username alone: a first administrator
@@ -44,6 +48,12 @@ pub const DEV_ADMIN_PASSWORD: &str = "Admin#2026!";
 
 /// `system_config` key of the "an administrator has been created on this PC" marker.
 pub const FIRST_ADMIN_MARKER_KEY: &str = "first_administrator_created";
+
+/// `system_config` key of the "this PC has retired the built-in account" marker (value: the
+/// account's `entity_sync_id`). `system_config` is local to this PC (never synchronised): once this
+/// PC has disabled the account, a later version of that row from another PC never brings it back
+/// while its password was never changed ([`after_inbound_user_account`]).
+pub const BUILTIN_ADMIN_RETIRED_KEY: &str = "builtin_admin_retired";
 
 /// Which kind of build is running: decides whether the dev account is seeded, and whether a
 /// superseded built-in account is deleted (dev) or only disabled (release).
@@ -247,6 +257,18 @@ async fn write_retirement(
         ],
     ))
     .await?;
+    // Local, never synchronised (`system_config`): this PC has retired the account for good.
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO system_config (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        [
+            BUILTIN_ADMIN_RETIRED_KEY.into(),
+            builtin_admin_entity_sync_id().into(),
+            Utc::now().to_rfc3339().into(),
+        ],
+    ))
+    .await?;
     crate::auth::session_manager::revoke_user_sessions(conn, row.user_id).await?;
     Ok(RetiredBuiltinAdmin {
         user_id: row.user_id,
@@ -256,6 +278,19 @@ async fn write_retirement(
 
 const REASON_SUPERSEDED: &str = "another_administrator_exists";
 const REASON_NOT_ON_THIS_PC: &str = "received_on_a_pc_without_it";
+const REASON_RETIRED_HERE: &str = "already_retired_on_this_pc";
+
+/// True once this PC has retired the built-in account ([`BUILTIN_ADMIN_RETIRED_KEY`]).
+pub async fn builtin_admin_retired_here(conn: &impl ConnectionTrait) -> AppResult<bool> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT EXISTS (SELECT 1 FROM system_config WHERE key = ? AND value = ?) AS retired",
+            [BUILTIN_ADMIN_RETIRED_KEY.into(), builtin_admin_entity_sync_id().into()],
+        ))
+        .await?;
+    Ok(row.map(|r| r.try_get::<i64>("", "retired")).transpose()?.unwrap_or(0) == 1)
+}
 
 /// Disables (release) or deletes (dev) the built-in account when its password was never changed
 /// and another active administrator exists; otherwise changes nothing (`None`). The change is a
@@ -325,7 +360,10 @@ pub async fn retire_after_administration_change(db: &DatabaseConnection) {
 /// its password never changed and still active, it is disabled (deleted in dev builds) if this PC
 /// has another active administrator, or if the row was inserted (this PC did not have the account:
 /// it does not gain an administrator whose password is known to everyone). A PC whose only
-/// administrator is that very account keeps it (warning state, as at startup).
+/// administrator is that very account keeps it (warning state, as at startup), unless this PC has
+/// already retired it ([`builtin_admin_retired_here`]): the row received carries `is_active` and
+/// `deleted_at`, so a later version from another PC would otherwise re-enable it; it is retired
+/// again, whatever else holds, as long as its password was never changed.
 pub(crate) async fn after_inbound_user_account(
     conn: &impl ConnectionTrait,
     user_id: i64,
@@ -335,7 +373,28 @@ pub(crate) async fn after_inbound_user_account(
     let Some(row) = builtin_admin_row(conn).await? else {
         return Ok(());
     };
-    if row.user_id != user_id || !row.is_default_password_account() {
+    if row.user_id != user_id || !row.password_never_changed {
+        return Ok(());
+    }
+    if builtin_admin_retired_here(conn).await? {
+        let still_open = row.is_active || (profile.deletes_superseded_builtin_admin() && !row.deleted);
+        if !still_open {
+            return Ok(());
+        }
+        let retired = write_retirement(conn, &row, profile).await?;
+        crate::audit::writer::write_audit_event_in(
+            conn,
+            retire_audit(retired, RetireOrigin::SyncArrival, REASON_RETIRED_HERE),
+        )
+        .await?;
+        tracing::warn!(
+            user_id,
+            reason = REASON_RETIRED_HERE,
+            "builtin_admin::retired_on_arrival"
+        );
+        return Ok(());
+    }
+    if !row.is_default_password_account() {
         return Ok(());
     }
     let reason = if other_active_administrator_exists(conn, Some(row.user_id)).await? {

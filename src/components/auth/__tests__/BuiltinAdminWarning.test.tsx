@@ -47,15 +47,26 @@ describe("BuiltinAdminWarning", () => {
     );
   });
 
-  it("shows nothing once another administrator exists, or for any other account", async () => {
-    answer(true, true, true);
+  it("keeps warning once another administrator exists, asking to disable the account", async () => {
+    answer(true, true, false);
     const { rerender } = render(<BuiltinAdminWarning sessionUserId={1} />);
-    await waitFor(() => expect(ipc.calls.length).toBe(1));
-    expect(screen.queryByTestId("builtin-admin-warning")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("builtin-admin-warning")).toHaveTextContent(
+      "session.builtinAdmin.otherAdministratorExists",
+    );
 
-    answer(false, false, false);
-    rerender(<BuiltinAdminWarning sessionUserId={2} />);
+    // Also while its forced password change is pending: nothing promises an automatic disable.
+    answer(true, true, true);
+    rerender(<BuiltinAdminWarning sessionUserId={3} />);
     await waitFor(() => expect(ipc.calls.length).toBe(2));
+    expect(screen.getByTestId("builtin-admin-warning")).toHaveTextContent(
+      "session.builtinAdmin.otherAdministratorExists",
+    );
+  });
+
+  it("shows nothing for any other account", async () => {
+    answer(false, true, false);
+    render(<BuiltinAdminWarning sessionUserId={2} />);
+    await waitFor(() => expect(ipc.calls.length).toBe(1));
     expect(screen.queryByTestId("builtin-admin-warning")).not.toBeInTheDocument();
   });
 

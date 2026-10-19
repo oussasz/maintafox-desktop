@@ -2860,6 +2860,15 @@ async fn seed_dev_admin_account(db: &DatabaseConnection) -> AppResult<()> {
     ))
     .await?;
 
+    // A new dev account (first start, or after a local data reset wiped the accounts) is not the
+    // one this PC retired earlier: that retirement marker no longer applies.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM system_config WHERE key = ?",
+        [crate::auth::builtin_admin::BUILTIN_ADMIN_RETIRED_KEY.into()],
+    ))
+    .await?;
+
     tracing::info!("seeder::admin_account created (force_password_change=1)");
 
     // Assign the Administrator role to the newly created admin account

@@ -16,6 +16,9 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 // ── T1 — Login success creates a valid session ─────────────────────────
 
+// The dev account and its password exist only in builds with `debug_assertions`
+// (`auth::builtin_admin::DEV_ADMIN_PASSWORD`): `cargo test --release` compiles without this test.
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn t1_login_success_creates_session() {
     let db = common::create_test_db().await;

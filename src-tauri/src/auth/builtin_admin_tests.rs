@@ -589,6 +589,7 @@ async fn creating_an_administrator_in_user_administration_retires_the_builtin_ad
             username: "adjoint".into(),
             identity_mode: "local".into(),
             role_id,
+            scope_node_id: None,
             personnel_id: None,
             initial_password: Some("Adjoint-Usine-2026!".into()),
             force_password_change: None,
@@ -877,5 +878,65 @@ mod sync_arrival {
             "the only administrator of this PC is kept (warning state)"
         );
         assert_eq!(retire_audits(&db, row.user_id).await, 0);
+    }
+
+    /// Review SF-1, scenario A: a release PC that never had the account receives it (disabled on
+    /// arrival), then a later version of the same row, which carries `is_active = 1`, while this PC
+    /// has no other active administrator. The account stays disabled.
+    #[tokio::test]
+    async fn a_later_version_never_re_enables_it_on_a_pc_that_never_had_it() {
+        let db = release_fresh_db().await;
+        crate::sync::capture::install_capture(&db).await.expect("capture");
+        receive(&db, sent_by_another_pc(2, "Administrateur Maintafox").await, "b4").await;
+        assert!(!builtin(&db).await.is_active);
+        assert!(
+            builtin_admin_retired_here(&db).await.expect("marker"),
+            "retirement recorded"
+        );
+
+        receive(&db, sent_by_another_pc(3, "Admin (renamed on PC A)").await, "b5").await;
+        let row = builtin(&db).await;
+        assert!(
+            !other_active_administrator_exists(&db, Some(row.user_id))
+                .await
+                .expect("check"),
+            "no other administrator on this PC at that moment"
+        );
+        assert!(
+            !row.is_active,
+            "a later version never re-enables a default-password administrator this PC retired"
+        );
+        assert_eq!(retire_audits(&db, row.user_id).await, 2, "each arrival audited");
+    }
+
+    /// Review SF-1, scenario B: an upgraded PC retired its own built-in account because a named
+    /// administrator existed; that administrator is later disabled; a later version of the
+    /// built-in row arrives. The account stays retired.
+    #[tokio::test]
+    async fn a_later_version_never_re_enables_it_after_a_local_retirement() {
+        let db = crate::sync::test_support::started_db().await;
+        insert_administrator(&db, "chef").await;
+        reconcile_at_startup(&db, BuildProfile::Release).await.expect("startup");
+        let retired = builtin(&db).await;
+        assert!(!retired.is_active, "retired at startup");
+        assert!(builtin_admin_retired_here(&db).await.expect("marker"));
+
+        exec(
+            &db,
+            "UPDATE user_accounts SET is_active = 0 WHERE username = 'chef'",
+            vec![],
+        )
+        .await;
+        assert!(!other_active_administrator_exists(&db, Some(retired.user_id))
+            .await
+            .expect("check"));
+
+        receive(&db, sent_by_another_pc(5, "Admin (PC A)").await, "b6").await;
+        let row = builtin(&db).await;
+        assert!(!row.is_active, "still retired with no other active administrator");
+        assert!(
+            find_sign_in_account(&db, "admin").await.expect("lookup").is_none(),
+            "and it cannot sign in"
+        );
     }
 }

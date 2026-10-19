@@ -64,6 +64,9 @@ mod tests {
 
     // ── V1 — Login with correct credentials succeeds. ───────────────────
 
+    // The dev account and its password exist only in builds with `debug_assertions`
+    // (`auth::builtin_admin::DEV_ADMIN_PASSWORD`): `cargo test --release` compiles without this test.
+    #[cfg(debug_assertions)]
     #[tokio::test]
     async fn v1_login_with_correct_credentials_succeeds() {
         let db = setup_db().await;
