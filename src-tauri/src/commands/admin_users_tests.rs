@@ -508,17 +508,24 @@ async fn the_last_administrator_cannot_be_removed_by_any_path() {
     let readonly = role_id(&db, "Readonly").await;
     let only = admin_assignment(&db).await;
     // The seeded `admin` is also the bootstrap account (`is_admin`), which administers the plant
-    // by itself; here its Administrator assignment is the only way anyone administers.
+    // by itself; here its Administrator assignment is the only way anyone administers. Its password
+    // is chosen: a built-in account whose password was never changed is not counted as an
+    // administrator at all (`auth::last_admin`).
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
-        "UPDATE user_accounts SET is_admin = 0 WHERE username = 'admin'".to_string(),
+        "UPDATE user_accounts SET is_admin = 0, force_password_change = 0,          password_changed_at = '2026-10-19T08:00:00Z' WHERE username = 'admin'"
+            .to_string(),
     ))
     .await
     .unwrap();
 
     // Withdrawing the only administrator assignment is refused and rolled back.
     let revoked = revoke_assignment_impl(&state, &caller, only, None, false).await;
-    assert!(matches!(revoked, Err(AppError::ValidationFailed(_))), "{revoked:?}");
+    assert!(
+        matches!(&revoked, Err(AppError::OrgValidationFailed(issues))
+            if issues.iter().any(|i| i.code == crate::auth::last_admin::LAST_ADMINISTRATOR_REQUIRED)),
+        "{revoked:?}"
+    );
     assert_eq!(admin_assignment(&db).await, only, "nothing was withdrawn");
 
     // Replacing it at the same scope is refused too (and an own account is never re-assigned).

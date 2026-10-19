@@ -2,6 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { BuiltinAdminWarning } from "@/components/auth/BuiltinAdminWarning";
+import { SingleAdministratorWarning } from "@/components/auth/SingleAdministratorWarning";
 import { AppToastHost } from "@/components/shell/AppToastHost";
 import { DatabaseRecoveryScreen } from "@/components/startup/DatabaseRecoveryScreen";
 import { useStartupBridge } from "@/hooks/use-startup-bridge";
@@ -114,6 +115,7 @@ export function AppShell({ children }: AppShellProps) {
           )}
         >
           <BuiltinAdminWarning sessionUserId={sessionUserId} className="m-4" />
+          <SingleAdministratorWarning sessionUserId={sessionUserId} className="m-4" />
           {children}
         </main>
       </div>

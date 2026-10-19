@@ -119,6 +119,7 @@
       "PERMIT_TYPE_ISOLATION_STALE": "A permit type's energy-isolation rule received with a change older than the one recorded here",
       "PERMIT_TYPE_LOTO_ISOLATION_LOCKED": "The LOTO permit type's energy-isolation rule switched off on another PC",
       "PERMIT_TYPE_CODE_LOCKED": "A permit type's code changed on another PC",
+      "LAST_ADMINISTRATOR_REQUIRED": "A change from another PC that would leave this PC without an active administrator",
       "other": "Needs review"
     },
     "history": {

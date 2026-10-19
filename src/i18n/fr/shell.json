@@ -119,6 +119,7 @@
       "PERMIT_TYPE_ISOLATION_STALE": "La règle d'isolation d'énergie d'un type de permis reçue avec une modification plus ancienne que celle enregistrée ici",
       "PERMIT_TYPE_LOTO_ISOLATION_LOCKED": "La règle d'isolation d'énergie du type de permis LOTO désactivée sur un autre poste",
       "PERMIT_TYPE_CODE_LOCKED": "Le code d'un type de permis modifié sur un autre poste",
+      "LAST_ADMINISTRATOR_REQUIRED": "Une modification venue d'un autre poste qui laisserait ce poste sans administrateur actif",
       "other": "À examiner"
     },
     "history": {

@@ -49,6 +49,9 @@
 //! - `user_accounts`: the built-in "admin" account received with its password never changed is
 //!   disabled on arrival when this PC has another administrator or did not have the account
 //!   (`auth::builtin_admin::after_inbound_user_account`).
+//! - `user_accounts` / `user_scope_assignments` / `roles`: a received change or delete that would
+//!   leave this PC without an active administrator is refused as a conflict
+//!   (`auth::last_admin::inbound_change_check`, `before_upsert_checked`, `before_delete_checked`).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -91,6 +94,18 @@ pub(crate) async fn before_upsert_checked(
     payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
     use crate::sync::materialize::ApplyOutcome;
+    // `user_accounts` / `user_scope_assignments` / `roles`: a change that would leave this PC
+    // without an active administrator is a conflict (`auth::last_admin`).
+    if let Some(outcome) = crate::auth::last_admin::inbound_change_check(
+        conn,
+        layout,
+        entity_sync_id,
+        crate::auth::last_admin::InboundChange::Upsert(&serde_json::Value::Object(payload.clone()).to_string()),
+    )
+    .await?
+    {
+        return Ok(Some(outcome));
+    }
     if layout.def.entity_type == "reliability_study_decisions" {
         use crate::reliability::study::decisions::{inbound_self_approval_check, InboundDecisionVerdict};
         return Ok(inbound_self_approval_check(conn, entity_sync_id, payload)
@@ -212,6 +227,17 @@ pub(crate) async fn before_delete_checked(
     entity_sync_id: &str,
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
     use crate::sync::materialize::ApplyOutcome;
+    // A delete that would leave this PC without an active administrator (`auth::last_admin`).
+    if let Some(outcome) = crate::auth::last_admin::inbound_change_check(
+        conn,
+        layout,
+        entity_sync_id,
+        crate::auth::last_admin::InboundChange::Delete,
+    )
+    .await?
+    {
+        return Ok(Some(outcome));
+    }
     let verdict = match layout.def.entity_type {
         "work_permits" | "permit_isolations" | "permit_suspensions" | "permit_types" | "qualification_requirements" => {
             crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?

@@ -11,6 +11,7 @@
 
 pub mod builtin_admin;
 pub mod device;
+pub mod last_admin;
 pub mod lockout;
 pub mod password;
 pub mod password_policy;
