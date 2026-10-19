@@ -67,6 +67,8 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Devices on the previous version must upgrade together with this one: they would still send the old urgency and type references, and an edit from an old PC turns a part line marked optional back to required (the safe direction). | Data | Release |
 | The 4 h estimated duration once used for DI planning candidates was removed; DIs are "not estimated" until converted and estimated. | UX | Accepted |
 | Planned labour per technician on a work order does not exist (labour lines hold actuals only), so planning counts only the named assignee per commitment ("+N crew members not named"). Naming every crew member is proposed for later. | Data | Owner decision |
+| A work-order type without a maintenance nature is listed in Données de référence with the number of work orders using it; a holder of the reference-data manage right gives it one of the six natures, once, with a reason (audited). Until then its work orders count in no planned / reactive / emergency share. | Data | Accepted |
+| A nature tag is read the same way by every screen and report: spaces, tabs and line breaks around it are ignored. A tag with another invisible character (for example a no-break space) is read as no nature by all of them and appears on the review list. Stored tags are not rewritten. | Data | Accepted |
 
 ## Requests (DI) screens
 
@@ -171,7 +173,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Limit | Impact | Handled in |
 |---|---|---|
 | Figures open their list pre-filtered, shown as a clearable chip, and the list counts exactly what the figure counted (open and overdue work orders, open requests and requests waiting 7+ days, articles to reorder); tests hold list total = figure. Overdue and waiting use the clock at the moment the list is loaded. Planning figures are not linked yet. | Data | Accepted |
-| The work mix link (planned / reactive / emergency) finds the matching work-order types on the screen with the same nature rule the figures use; a work-order type with no nature set appears in no mix, in the figure or the list. | Data | Step 7 (check every type has a nature) |
+| The work mix link (planned / reactive / emergency) finds the matching work-order types on the screen with the same nature rule the figures use; a work-order type with no nature set appears in no mix, in the figure or the list; the types concerned are listed in Données de référence for review. | Data | Step 7 (check the review list is empty) |
 | "My rounds" counts rounds assigned to me personally, not to my team; "My PM" means PM whose work order is mine. | Data | Accepted |
 | The planning backlog panel reads at most 2,000 jobs, with a notice. | UX | Accepted |
 | Equipment whose criticality comes only from the old criticality list is read through the standard correspondence (CRITIQUE→A, IMPORTANT→B, STANDARD→C, NON-CRITIQUE→D) and flagged "à revoir"; a plant's own old code is read as no criticality until a planner sets one. Nothing stored is rewritten. | Data | Release (review flagged equipment) |

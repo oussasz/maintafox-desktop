@@ -589,14 +589,19 @@ mod tests {
         let err = deactivate_personnel(&db, p.id, p.row_version, actor)
             .await
             .expect_err("blocked");
-        let msg = match err {
-            AppError::ValidationFailed(v) => v.join(" "),
-            e => panic!("expected ValidationFailed, got {e:?}"),
-        };
-        assert!(
-            msg.contains("Ordres de travail actifs") && msg.contains(&wo.code),
-            "msg={msg}"
-        );
+        match err {
+            AppError::OrgValidationFailed(issues) => {
+                assert_eq!(issues[0].code, "PERSONNEL_DEACTIVATION_OPEN_WORK");
+                assert!(
+                    issues[0]
+                        .params
+                        .get("work_orders")
+                        .is_some_and(|w| w.contains(&wo.code)),
+                    "{issues:?}"
+                );
+            }
+            e => panic!("expected a coded refusal, got {e:?}"),
+        }
 
         let cancelled_id: i64 = db
             .query_one(Statement::from_string(

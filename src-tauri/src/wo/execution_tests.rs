@@ -882,8 +882,10 @@ mod tests {
         // login (`add_personnel_labor`) and the people list (`list_wo_labor_people`). Migration 202:
         // the shift windows of the team's Classes horaires (`list_wo_shift_options`). Migration 230:
         // "needs shutdown" on a work order (`set_wo_requires_shutdown`). Migration 233: clearing the
-        // permit flag a plant rule set at conversion (`clear_wo_permit_rule_flag`, ptw.issue).
-        assert_eq!(wo_lines.len(), 70, "invoke_handler must contain exactly 70 WO commands");
+        // permit flag a plant rule set at conversion (`clear_wo_permit_rule_flag`, ptw.issue). OT types
+        // without a maintenance nature, for review (`list_work_order_types_to_review`), and giving one
+        // its nature (`set_work_order_type_nature`).
+        assert_eq!(wo_lines.len(), 72, "invoke_handler must contain exactly 72 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {

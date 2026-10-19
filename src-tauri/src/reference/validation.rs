@@ -179,6 +179,7 @@ pub async fn validate_reference_set(
     check_nature_tags(db, &domain, &all_values, &mut issues).await?;
     check_unit_dimensions(db, &domain, &all_values, &mut issues).await?;
     check_permit_rules(db, &domain, &all_values, &mut issues).await?;
+    check_work_order_type_natures(&domain.code, &all_values, &mut issues);
 
     // ── Check 5: invalid color format ─────────────────────────────────────
     check_invalid_colors(&all_values, &mut issues);
@@ -538,6 +539,40 @@ async fn check_permit_rules(
     Ok(())
 }
 
+/// Check 4f: every active OT type (`WORK.ORDER_TYPES`) carries a maintenance nature: a type
+/// without one would count in no work mix (planned / reactive / emergency).
+fn check_work_order_type_natures(
+    domain_code: &str,
+    vals: &[values::ReferenceValue],
+    issues: &mut Vec<ReferenceValidationIssue>,
+) {
+    if !domain_code
+        .trim()
+        .eq_ignore_ascii_case(crate::wo::types::WORK_ORDER_TYPES_DOMAIN)
+    {
+        return;
+    }
+    for v in vals.iter().filter(|v| v.is_active) {
+        let known = v
+            .semantic_tag
+            .as_deref()
+            .and_then(crate::wo::types::MaintenanceNature::parse)
+            .is_some();
+        if !known {
+            issues.push(ReferenceValidationIssue {
+                check: "work_order_type_without_nature".into(),
+                message: format!(
+                    "OT type '{}' has no maintenance nature: it would count in no work mix.",
+                    v.code
+                ),
+                severity: IssueSeverity::Blocking,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            });
+        }
+    }
+}
+
 /// Check 5: invalid color_hex format.
 ///
 /// If color_hex is provided it must be a valid 3- or 6-digit hex, optionally
@@ -660,5 +695,39 @@ async fn check_protected_deactivations_without_migration(
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod work_order_type_nature_tests {
+    use super::{check_work_order_type_natures, IssueSeverity};
+
+    fn value(code: &str, tag: Option<&str>, active: bool) -> crate::reference::values::ReferenceValue {
+        serde_json::from_value(serde_json::json!({
+            "id": 1, "set_id": 1, "parent_id": null, "code": code, "label": code, "description": null,
+            "sort_order": 1, "color_hex": null, "icon_name": null, "semantic_tag": tag,
+            "external_code": null, "is_active": active, "metadata_json": null
+        }))
+        .expect("value")
+    }
+
+    /// An active OT type without a known nature blocks publishing; an inactive one does not.
+    #[test]
+    fn an_active_type_without_nature_blocks_publishing() {
+        let vals = [
+            value("corrective", Some("corrective_deferred"), true),
+            value("PLANT_OWN", None, true),
+            value("ODD", Some("not_a_nature"), true),
+            value("OLD", None, false),
+        ];
+        let mut issues = Vec::new();
+        check_work_order_type_natures("WORK.ORDER_TYPES", &vals, &mut issues);
+        let codes: Vec<_> = issues.iter().filter_map(|i| i.value_code.clone()).collect();
+        assert_eq!(codes, ["PLANT_OWN", "ODD"]);
+        assert!(issues.iter().all(|i| i.severity == IssueSeverity::Blocking));
+
+        let mut other = Vec::new();
+        check_work_order_type_natures("DI.REQUEST_TYPE", &vals, &mut other);
+        assert!(other.is_empty(), "other lists are not concerned");
     }
 }

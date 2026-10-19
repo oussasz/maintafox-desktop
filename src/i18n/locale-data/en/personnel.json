@@ -545,7 +545,8 @@
         "assigned": "Assigned",
         "on_leave": "On leave",
         "in_training": "In training",
-        "blocked": "Blocked"
+        "blocked": "Blocked",
+        "inactive": "Inactive (employment ended)"
       },
       "overview": {
         "identity": "Planning context",

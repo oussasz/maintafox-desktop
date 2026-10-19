@@ -467,6 +467,198 @@ async fn work_mix_by_labour_hours() {
     assert_eq!(m.reactive.current.numerator, 7.0);
     assert_eq!(m.emergency.current.numerator, 2.0);
     assert_eq!(m.planned.previous.value_pct, Some(100.0));
+    assert_eq!(m.without_nature, 0);
+}
+
+/// A plant's own OT type without a maintenance nature (as migration 198 carried it over): its
+/// work orders count in the total but in no share, and the figure says how many; the type is
+/// listed for review with its use and flagged "to review" without any other change.
+#[tokio::test]
+async fn work_mix_counts_work_orders_whose_type_has_no_nature() {
+    let db = setup().await;
+    let now = fixed_now();
+    exec(
+        &db,
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active, semantic_tag, metadata_json) \
+         SELECT rs.id, 'PLANT_OWN', 'Type maison', 99, 1, NULL, '{\"origin\":\"migrated\"}' \
+           FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'WORK.ORDER_TYPES' AND rs.status = 'published'",
+    )
+    .await;
+    insert_wo(
+        &db,
+        "N1",
+        "corrective",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -5, 0),
+    )
+    .await;
+    insert_wo(
+        &db,
+        "N2",
+        "PLANT_OWN",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -4, 0),
+    )
+    .await;
+    insert_wo(&db, "N3", "PLANT_OWN", "planning", &ts(now, -2, 0), "", "").await;
+
+    let m = smrp::work_mix(&db, SmrpWindow::last_days(now, 30), None).await.unwrap();
+    assert_eq!(m.basis, "count");
+    assert_eq!(m.work_orders, 2);
+    assert_eq!(m.without_nature, 1, "N2 counts in no share");
+    assert_eq!(m.reactive.current.numerator, 1.0);
+    assert_eq!(m.planned.current.numerator, 0.0);
+
+    let review = crate::wo::types::list_types_without_nature(&db).await.expect("review");
+    assert_eq!(review.len(), 1);
+    assert_eq!(review[0].code, "PLANT_OWN");
+    assert_eq!(review[0].work_order_count, 2);
+
+    assert_eq!(crate::wo::types::flag_types_without_nature(&db).await.expect("flag"), 1);
+    assert_eq!(
+        crate::wo::types::flag_types_without_nature(&db).await.expect("again"),
+        0,
+        "idempotent"
+    );
+    let meta: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT metadata_json FROM reference_values WHERE code = 'PLANT_OWN'".to_string(),
+        ))
+        .await
+        .expect("q")
+        .expect("row")
+        .try_get_by_index(0)
+        .expect("meta");
+    let meta: serde_json::Value = serde_json::from_str(&meta).expect("json");
+    assert_eq!(meta["nature_review_required"], true);
+    assert_eq!(meta["origin"], "migrated", "the rest is kept");
+    assert_eq!(
+        id_of(
+            &db,
+            "SELECT COUNT(*) FROM reference_values WHERE code = 'PLANT_OWN' AND semantic_tag IS NULL AND label = 'Type maison'"
+        )
+        .await,
+        1,
+        "nature and label not rewritten"
+    );
+
+    // Giving it a nature: the right, a reason and a known nature are required; a system type is
+    // refused; once set, it is recorded and the type leaves the review list and joins the mix.
+    use crate::wo::types::{nature_codes as nc, set_work_order_type_nature, SetWorkOrderTypeNatureInput};
+    let code_of = |e: crate::errors::AppError| match e {
+        crate::errors::AppError::OrgValidationFailed(i) => i.first().map(|x| x.code.clone()).unwrap_or_default(),
+        other => format!("{other:?}"),
+    };
+    let own = id_of(&db, "SELECT id FROM reference_values WHERE code = 'PLANT_OWN'").await;
+    let input = |nature: &str, reason: &str| SetWorkOrderTypeNatureInput {
+        type_id: own,
+        nature: nature.into(),
+        reason: reason.into(),
+    };
+    exec(
+        &db,
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+         force_password_change, created_at, updated_at) VALUES ('nt-user', 'clerk', 'Clerk', 'local', 1, 0, 0, \
+         datetime('now'), datetime('now'))",
+    )
+    .await;
+    let clerk = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'clerk'").await;
+    let admin = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let why = "Plant type is planned maintenance";
+    assert_eq!(
+        code_of(
+            set_work_order_type_nature(&db, input("preventive_predetermined", why), clerk)
+                .await
+                .unwrap_err()
+        ),
+        nc::RIGHT_REQUIRED
+    );
+    assert_eq!(
+        code_of(
+            set_work_order_type_nature(&db, input("preventive_predetermined", "short"), admin)
+                .await
+                .unwrap_err()
+        ),
+        nc::REASON_REQUIRED
+    );
+    assert_eq!(
+        code_of(
+            set_work_order_type_nature(&db, input("planned", why), admin)
+                .await
+                .unwrap_err()
+        ),
+        nc::UNKNOWN_NATURE
+    );
+    let corrective = id_of(
+        &db,
+        "SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+         JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'corrective'",
+    )
+    .await;
+    assert_eq!(
+        code_of(
+            set_work_order_type_nature(
+                &db,
+                SetWorkOrderTypeNatureInput {
+                    type_id: corrective,
+                    nature: "improvement".into(),
+                    reason: why.into(),
+                },
+                admin,
+            )
+            .await
+            .unwrap_err()
+        ),
+        nc::SYSTEM_TYPE
+    );
+    let set = set_work_order_type_nature(&db, input("preventive_predetermined", why), admin)
+        .await
+        .expect("set");
+    assert_eq!(set.nature.as_deref(), Some("preventive_predetermined"));
+    assert_eq!(
+        code_of(
+            set_work_order_type_nature(&db, input("improvement", why), admin)
+                .await
+                .unwrap_err()
+        ),
+        nc::ALREADY_SET,
+        "set once, never overwritten"
+    );
+    assert!(crate::wo::types::list_types_without_nature(&db)
+        .await
+        .expect("review")
+        .is_empty());
+    assert_eq!(
+        id_of(
+            &db,
+            "SELECT COUNT(*) FROM reference_values WHERE code = 'PLANT_OWN' \
+             AND json_extract(metadata_json, '$.nature_review_required') IS NULL \
+             AND json_extract(metadata_json, '$.origin') = 'migrated'"
+        )
+        .await,
+        1,
+        "review flag cleared, the rest kept"
+    );
+    assert_eq!(
+        id_of(
+            &db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' \
+             AND json_extract(details_json, '$.reason') = 'Plant type is planned maintenance' \
+             AND json_extract(details_json, '$.new_nature') = 'preventive_predetermined'"
+        )
+        .await,
+        1,
+        "audited with who, why and old -> new"
+    );
+    let m = smrp::work_mix(&db, SmrpWindow::last_days(now, 30), None).await.unwrap();
+    assert_eq!(m.without_nature, 0);
+    assert_eq!(m.planned.current.numerator, 1.0, "N2 is now planned work");
 }
 
 // ── Backlog ────────────────────────────────────────────────────────────────────────────────
@@ -649,4 +841,552 @@ async fn pm_due_windows_at_an_instant() {
         1,
         "THEN"
     );
+}
+
+/// A plant type of the published OT type list, with an optional raw tag and metadata.
+async fn plant_type(db: &DatabaseConnection, code: &str, tag: Option<&str>, meta: &str) -> i64 {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active, semantic_tag, metadata_json) \
+         SELECT rs.id, ?, ?, 99, 1, ?, ? FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'WORK.ORDER_TYPES' AND rs.status = 'published'",
+        [code.into(), code.into(), tag.map(str::to_string).into(), meta.into()],
+    ))
+    .await
+    .expect("plant type");
+    id_of(db, &format!("SELECT id FROM reference_values WHERE code = '{code}'")).await
+}
+
+fn refusal(e: crate::errors::AppError) -> String {
+    match e {
+        crate::errors::AppError::OrgValidationFailed(i) => i.first().map(|x| x.code.clone()).unwrap_or_default(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// The nature is written by compare-and-set: a nature written by someone else between the read
+/// and the write is never overwritten, the whole change is rolled back (no audit row).
+#[tokio::test]
+async fn a_nature_written_meanwhile_is_never_overwritten_and_nothing_is_recorded() {
+    use crate::wo::types::{
+        nature_codes as nc, set_work_order_type_nature, write_nature_if_unset, MaintenanceNature,
+        SetWorkOrderTypeNatureInput, CONCURRENT_NATURE_WRITE_FOR,
+    };
+    let db = setup().await;
+    let admin = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let raced = plant_type(&db, "RACED", None, "{\"nature_review_required\":true}").await;
+
+    *CONCURRENT_NATURE_WRITE_FOR.lock().expect("seam") = Some("RACED");
+    let err = set_work_order_type_nature(
+        &db,
+        SetWorkOrderTypeNatureInput {
+            type_id: raced,
+            nature: "preventive_predetermined".into(),
+            reason: "Plant type is planned maintenance".into(),
+        },
+        admin,
+    )
+    .await
+    .expect_err("refused by the compare-and-set");
+    *CONCURRENT_NATURE_WRITE_FOR.lock().expect("seam") = None;
+    assert_eq!(refusal(err), nc::ALREADY_SET);
+    assert_eq!(
+        id_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM reference_values WHERE id = {raced} AND semantic_tag IS NULL")
+        )
+        .await,
+        1,
+        "rolled back: neither nature written"
+    );
+    assert_eq!(
+        id_of(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' AND target_id = '{raced}'"
+            )
+        )
+        .await,
+        0,
+        "a refused change leaves no audit row"
+    );
+
+    // The write itself refuses a type that has a nature by then.
+    exec(
+        &db,
+        &format!("UPDATE reference_values SET semantic_tag = 'improvement' WHERE id = {raced}"),
+    )
+    .await;
+    assert!(
+        !write_nature_if_unset(&db, raced, MaintenanceNature::PreventivePredictive)
+            .await
+            .expect("write")
+    );
+    assert_eq!(
+        id_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM reference_values WHERE id = {raced} AND semantic_tag = 'improvement'")
+        )
+        .await,
+        1
+    );
+}
+
+/// Unknown type refused; a person (not an administrator) holding the reference-data manage right
+/// may set it.
+#[tokio::test]
+async fn the_reference_manage_right_sets_a_nature_and_an_unknown_type_is_refused() {
+    use crate::wo::types::{nature_codes as nc, set_work_order_type_nature, SetWorkOrderTypeNatureInput};
+    let db = setup().await;
+    let admin = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let why = "Plant type is planned maintenance";
+    let err = set_work_order_type_nature(
+        &db,
+        SetWorkOrderTypeNatureInput {
+            type_id: 987_654,
+            nature: "improvement".into(),
+            reason: why.into(),
+        },
+        admin,
+    )
+    .await
+    .expect_err("unknown type");
+    assert_eq!(refusal(err), nc::TYPE_NOT_FOUND);
+
+    let own = plant_type(&db, "REF_MANAGER_TYPE", None, "{}").await;
+    let now = "2026-01-01T00:00:00Z";
+    for sql in [
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+         force_password_change, created_at, updated_at) VALUES ('rm-user', 'refmgr', 'Ref manager', 'local', 1, 0, 0, \
+         datetime('now'), datetime('now'))"
+            .to_string(),
+        format!(
+            "INSERT INTO roles (entity_sync_id, name, role_type, status, is_system, created_at, updated_at, row_version) \
+             VALUES ('rm-role', 'ref-manager', 'custom', 'active', 0, '{now}', '{now}', 1)"
+        ),
+        format!(
+            "INSERT INTO role_permissions (role_id, permission_id, granted_at) \
+             SELECT r.id, p.id, '{now}' FROM roles r, permissions p WHERE r.name = 'ref-manager' AND p.name = '{perm}'",
+            perm = crate::rbac::permissions::REF_MANAGE
+        ),
+        format!(
+            "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at, row_version) \
+             SELECT 'rm-usa', u.id, r.id, 'tenant', '{now}', '{now}', 1 FROM user_accounts u, roles r \
+              WHERE u.username = 'refmgr' AND r.name = 'ref-manager'"
+        ),
+    ] {
+        exec(&db, &sql).await;
+    }
+    let manager = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'refmgr'").await;
+    let set = set_work_order_type_nature(
+        &db,
+        SetWorkOrderTypeNatureInput {
+            type_id: own,
+            nature: "corrective_deferred".into(),
+            reason: why.into(),
+        },
+        manager,
+    )
+    .await
+    .expect("ref.manage may set it");
+    assert_eq!(set.nature.as_deref(), Some("corrective_deferred"));
+    assert_eq!(
+        id_of(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' \
+                 AND target_id = '{own}' AND actor_id = {manager}"
+            )
+        )
+        .await,
+        1
+    );
+}
+
+/// One reading of the nature: a tag with spaces is the nature it names everywhere (not "without
+/// nature", not to review); a flag left on a type that now has a nature is removed.
+#[tokio::test]
+async fn the_nature_is_read_trimmed_and_a_stale_review_flag_is_removed() {
+    let db = setup().await;
+    let now = fixed_now();
+    let spaced = plant_type(&db, "SPACED", Some(" improvement "), "{}").await;
+    let stale = plant_type(
+        &db,
+        "STALE_FLAG",
+        Some("corrective_deferred"),
+        "{\"origin\":\"migrated\",\"nature_review_required\":true}",
+    )
+    .await;
+    insert_wo(
+        &db,
+        "T1",
+        "SPACED",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -5, 0),
+    )
+    .await;
+
+    let m = smrp::work_mix(&db, SmrpWindow::last_days(now, 30), None).await.unwrap();
+    assert_eq!(m.without_nature, 0, "the spaced tag is a nature");
+    assert_eq!(m.planned.current.numerator, 1.0);
+    let review = crate::wo::types::list_types_without_nature(&db).await.expect("review");
+    assert!(review.iter().all(|t| t.id != spaced && t.id != stale));
+
+    assert_eq!(
+        crate::wo::types::flag_types_without_nature(&db)
+            .await
+            .expect("sync flags"),
+        1
+    );
+    assert_eq!(
+        id_of(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM reference_values WHERE id = {stale} \
+                 AND json_extract(metadata_json, '$.nature_review_required') IS NULL \
+                 AND json_extract(metadata_json, '$.origin') = 'migrated'"
+            )
+        )
+        .await,
+        1,
+        "stale flag removed, the rest kept"
+    );
+    assert_eq!(
+        id_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM reference_values WHERE id = {spaced} AND metadata_json = '{{}}'")
+        )
+        .await,
+        1,
+        "the spaced type is never flagged"
+    );
+    assert_eq!(
+        crate::wo::types::flag_types_without_nature(&db).await.expect("again"),
+        0
+    );
+}
+
+/// A tag with a tab or a line break around it is the nature it names for every reader: the work
+/// mix, the review list, the flag, the nature command and the type list (with its label).
+#[tokio::test]
+async fn a_tag_with_a_tab_or_a_line_break_is_its_nature_everywhere() {
+    use crate::wo::types::{nature_codes as nc, set_work_order_type_nature, SetWorkOrderTypeNatureInput};
+    let db = setup().await;
+    let now = fixed_now();
+    let admin = id_of(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let tab = plant_type(&db, "TABBED", Some("improvement\t"), "{}").await;
+    let line = plant_type(&db, "LINED", Some("\r\ncorrective_deferred\n"), "{}").await;
+    insert_wo(
+        &db,
+        "W1",
+        "TABBED",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -5, 0),
+    )
+    .await;
+    insert_wo(
+        &db,
+        "W2",
+        "LINED",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -4, 0),
+    )
+    .await;
+
+    let m = smrp::work_mix(&db, SmrpWindow::last_days(now, 30), None).await.unwrap();
+    assert_eq!(m.without_nature, 0);
+    assert_eq!((m.planned.current.numerator, m.reactive.current.numerator), (1.0, 1.0));
+    let review = crate::wo::types::list_types_without_nature(&db).await.expect("review");
+    assert!(
+        review.iter().all(|t| t.id != tab && t.id != line),
+        "not stuck on the review list"
+    );
+    assert_eq!(
+        crate::wo::types::flag_types_without_nature(&db).await.expect("flags"),
+        0
+    );
+
+    let err = set_work_order_type_nature(
+        &db,
+        SetWorkOrderTypeNatureInput {
+            type_id: tab,
+            nature: "corrective_deferred".into(),
+            reason: "Plant type is planned maintenance".into(),
+        },
+        admin,
+    )
+    .await
+    .expect_err("already a nature");
+    assert_eq!(refusal(err), nc::ALREADY_SET);
+
+    let types = crate::wo::types::list_work_order_types(&db).await.expect("types");
+    let tabbed = types.iter().find(|t| t.id == tab).expect("tabbed");
+    assert_eq!(tabbed.nature.as_deref(), Some("improvement"), "returned trimmed");
+    assert!(tabbed.nature_label.is_some(), "the nature label is found");
+    let lined = types.iter().find(|t| t.id == line).expect("lined");
+    assert_eq!(lined.nature.as_deref(), Some("corrective_deferred"));
+    assert!(lined.nature_label.is_some());
+
+    // The other readers: W1 is improvement work, W2 corrective work without a failure mode.
+    let eq = on_equipment(&db, "EQ-TRIM", &[("W1", 100.0), ("W2", 40.0)]).await;
+    exec(
+        &db,
+        "INSERT INTO work_order_failure_details (work_order_id) SELECT id FROM work_orders WHERE code = 'W2'",
+    )
+    .await;
+    // The padded type and the shipped deferred-corrective type share one backlog cell.
+    let r = read_natures(&db, now, eq, &["LINED", "corrective"]).await;
+    assert_eq!(
+        r.detail_natures.get("W1"),
+        Some(&Some("improvement".to_string())),
+        "WO detail: trimmed"
+    );
+    assert_eq!(
+        r.detail_natures.get("W2"),
+        Some(&Some("corrective_deferred".to_string()))
+    );
+    assert!(r.detail_labels_found, "WO detail: the nature label is found");
+    assert_eq!(r.list_natures, r.detail_natures, "WO list reads it like the detail");
+    assert_eq!(
+        (r.corrective_wos, r.corrective_cost, r.preventive_cost),
+        (1, 40.0, 100.0),
+        "asset cost"
+    );
+    assert!(r.quality_view_flags_missing_mode, "RAMS quality view");
+    assert_eq!(r.missing_mode_wos, vec!["W2".to_string()]);
+    assert_eq!(
+        r.backlog_cell,
+        Some(Some("corrective_deferred".to_string())),
+        "supervision backlog: trimmed code"
+    );
+    assert_eq!(r.backlog_without_nature, 0);
+}
+
+/// A closed work order per `(code, total cost)` on a new equipment `asset_code`; its id.
+async fn on_equipment(db: &DatabaseConnection, asset_code: &str, wos: &[(&str, f64)]) -> i64 {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO equipment (entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+             created_at, updated_at) VALUES ('{asset_code}', '{asset_code}', 'Pump', 'active_in_service', 1, \
+             datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+    let eq = id_of(
+        db,
+        &format!("SELECT id FROM equipment WHERE asset_id_code = '{asset_code}'"),
+    )
+    .await;
+    for (code, cost) in wos {
+        exec(
+            db,
+            &format!("UPDATE work_orders SET equipment_id = {eq}, total_cost = {cost} WHERE code = '{code}'"),
+        )
+        .await;
+    }
+    eq
+}
+
+/// What the readers outside the work mix make of the natures of equipment `eq`'s work orders.
+struct NatureReadings {
+    detail_natures: std::collections::BTreeMap<String, Option<String>>,
+    list_natures: std::collections::BTreeMap<String, Option<String>>,
+    detail_labels_found: bool,
+    corrective_wos: i64,
+    corrective_cost: f64,
+    preventive_cost: f64,
+    quality_view_flags_missing_mode: bool,
+    missing_mode_wos: Vec<String>,
+    /// Supervision backlog: the nature of the one cell (no urgency) that all the OTs opened here
+    /// (`OPEN-<type>` per type) fall in; `None` when they do not fall in one cell together.
+    backlog_cell: Option<Option<String>>,
+    backlog_without_nature: i64,
+}
+
+async fn read_natures(db: &DatabaseConnection, now: DateTime<Utc>, eq: i64, open_types: &[&str]) -> NatureReadings {
+    let admin = id_of(db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let page = crate::wo::queries::list_work_orders(
+        db,
+        crate::wo::queries::WoListFilter {
+            equipment_id: Some(eq),
+            limit: 50,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("WO list");
+    let mut detail_natures = std::collections::BTreeMap::new();
+    let mut detail_labels_found = true;
+    for wo in &page.items {
+        let detail = crate::wo::queries::get_work_order(db, wo.id)
+            .await
+            .expect("WO detail")
+            .expect("row");
+        detail_labels_found &= detail.nature_code.is_none() || detail.nature_label.is_some();
+        detail_natures.insert(detail.code.clone(), detail.nature_code.clone());
+    }
+    let list_natures = page
+        .items
+        .iter()
+        .map(|w| (w.code.clone(), w.nature_code.clone()))
+        .collect();
+
+    let costs = crate::finance::asset_costs::list_asset_cost_history(
+        db,
+        crate::finance::asset_costs::AssetCostFilter {
+            only_with_cost: Some(false),
+            limit: Some(2000),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("asset costs");
+    let row = costs.rows.iter().find(|r| r.equipment_id == eq).expect("asset row");
+
+    let issues = crate::reliability::queries::list_ram_data_quality_issues(
+        db,
+        crate::reliability::domain::RamDataQualityIssuesFilter { equipment_id: Some(eq) },
+        i32::try_from(admin).expect("user id"),
+    )
+    .await
+    .expect("quality view");
+    let missing = crate::reliability::queries::list_wos_missing_failure_mode(db, Some(eq), None)
+        .await
+        .expect("missing failure modes");
+    let mut missing_mode_wos = Vec::new();
+    for m in &missing {
+        missing_mode_wos.push(
+            crate::wo::queries::get_work_order(db, m.work_order_id)
+                .await
+                .expect("wo")
+                .expect("row")
+                .code,
+        );
+    }
+
+    let before = crate::home::supervision::work_orders(db, now).await.expect("backlog");
+    for t in open_types {
+        insert_wo(db, &format!("OPEN-{t}"), t, "planning", &ts(now, -1, 0), "", "").await;
+    }
+    let after = crate::home::supervision::work_orders(db, now).await.expect("backlog");
+    let count_of = |w: &crate::home::supervision::SupervisionWorkOrders, n: &Option<String>| {
+        w.cells
+            .iter()
+            .filter(|c| &c.nature_code == n && c.urgency_code.is_none())
+            .map(|c| c.count)
+            .sum::<i64>()
+    };
+    let mut keys: Vec<_> = after
+        .cells
+        .iter()
+        .map(|c| (c.nature_code.clone(), c.urgency_code.clone()))
+        .collect();
+    let cells = keys.len();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), cells, "one backlog cell per nature and urgency");
+    let grown: Vec<Option<String>> = keys
+        .into_iter()
+        .filter(|(_, u)| u.is_none())
+        .map(|(n, _)| n)
+        .filter(|n| count_of(&after, n) > count_of(&before, n))
+        .collect();
+    assert_eq!(grown.len(), 1, "the open OTs fall in one cell: {grown:?}");
+    let backlog_growth = count_of(&after, &grown[0]) - count_of(&before, &grown[0]);
+    let backlog_cell = (backlog_growth == i64::try_from(open_types.len()).expect("len")).then(|| grown[0].clone());
+
+    NatureReadings {
+        detail_natures,
+        list_natures,
+        detail_labels_found,
+        corrective_wos: row.corrective_work_orders,
+        corrective_cost: row.corrective_cost,
+        preventive_cost: row.preventive_cost,
+        quality_view_flags_missing_mode: issues
+            .iter()
+            .any(|i| i.equipment_id == eq && i.issue_code == "MISSING_FAILURE_MODE"),
+        missing_mode_wos,
+        backlog_cell,
+        backlog_without_nature: after.without_nature - before.without_nature,
+    }
+}
+
+/// The "for none" side: a tag padded with a no-break space or a vertical tab (characters the
+/// readers do not strip) is a nature for no reader — outside every share of the work mix, on the
+/// review list, without nature in the type list, the WO list and detail, the asset cost (preventive
+/// side), the RAMS quality view and the supervision backlog.
+#[tokio::test]
+async fn a_tag_with_a_no_break_space_or_a_vertical_tab_is_no_nature_anywhere() {
+    let db = setup().await;
+    let now = fixed_now();
+    let nbsp = plant_type(&db, "NBSP", Some("\u{a0}improvement"), "{}").await;
+    let vtab = plant_type(&db, "VTAB", Some("corrective_deferred\u{0b}"), "{}").await;
+    insert_wo(
+        &db,
+        "X1",
+        "NBSP",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -5, 0),
+    )
+    .await;
+    insert_wo(
+        &db,
+        "X2",
+        "VTAB",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -4, 0),
+    )
+    .await;
+
+    let m = smrp::work_mix(&db, SmrpWindow::last_days(now, 30), None).await.unwrap();
+    assert_eq!(m.without_nature, 2, "in no share");
+    assert_eq!((m.planned.current.numerator, m.reactive.current.numerator), (0.0, 0.0));
+    let review = crate::wo::types::list_types_without_nature(&db).await.expect("review");
+    assert!(
+        review.iter().any(|t| t.id == nbsp) && review.iter().any(|t| t.id == vtab),
+        "to review"
+    );
+    let types = crate::wo::types::list_work_order_types(&db).await.expect("types");
+    for id in [nbsp, vtab] {
+        let t = types.iter().find(|t| t.id == id).expect("type");
+        assert_eq!((t.nature.as_deref(), t.nature_label.as_deref()), (None, None));
+    }
+
+    let eq = on_equipment(&db, "EQ-NONE", &[("X1", 100.0), ("X2", 40.0)]).await;
+    exec(
+        &db,
+        "INSERT INTO work_order_failure_details (work_order_id) SELECT id FROM work_orders WHERE code = 'X2'",
+    )
+    .await;
+    let r = read_natures(&db, now, eq, &["NBSP", "VTAB"]).await;
+    assert_eq!(r.detail_natures.get("X1"), Some(&None), "WO detail: no nature");
+    assert_eq!(r.detail_natures.get("X2"), Some(&None));
+    assert_eq!(r.list_natures, r.detail_natures);
+    assert_eq!(
+        (r.corrective_wos, r.corrective_cost, r.preventive_cost),
+        (0, 0.0, 140.0),
+        "asset cost: not corrective"
+    );
+    assert!(
+        !r.quality_view_flags_missing_mode,
+        "not corrective for the quality view"
+    );
+    assert!(r.missing_mode_wos.is_empty());
+    assert_eq!(
+        r.backlog_cell,
+        Some(None),
+        "supervision backlog: one cell without nature"
+    );
+    assert_eq!(r.backlog_without_nature, 2);
 }

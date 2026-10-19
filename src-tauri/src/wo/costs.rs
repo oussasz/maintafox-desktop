@@ -220,9 +220,13 @@ pub async fn get_cost_posting_hook(db: &impl ConnectionTrait, wo_id: i64) -> App
         urgency_code: row
             .try_get::<Option<String>>("", "urgency_code")
             .map_err(|e| decode_err("urgency_code", e))?,
+        // The nature the stored tag names (`MaintenanceNature::parse`), never the raw tag.
         nature_code: row
             .try_get::<Option<String>>("", "nature_code")
-            .map_err(|e| decode_err("nature_code", e))?,
+            .map_err(|e| decode_err("nature_code", e))?
+            .as_deref()
+            .and_then(crate::wo::types::MaintenanceNature::parse)
+            .map(|n| n.as_str().to_string()),
         total_cost: row
             .try_get::<f64>("", "total_cost")
             .map_err(|e| decode_err("total_cost", e))?,

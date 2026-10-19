@@ -475,5 +475,24 @@
     "chooseBase": "Unité de base…",
     "factorInvalid": "Le facteur doit être un nombre strictement positif.",
     "reviewFilter": "À revoir ({{count}})"
+  },
+  "natureReview": {
+    "title_one": "{{count}} type d’OT n’a pas de nature de maintenance",
+    "title_other": "{{count}} types d’OT n’ont pas de nature de maintenance",
+    "hint": "Repris de l’ancienne liste de l’usine, ils ne comptent dans aucune part (planifiée, réactive, urgence). Attribuez une nature à chacun, une fois.",
+    "workOrders_one": "{{count}} OT",
+    "workOrders_other": "{{count}} OT",
+    "inactive": "(inactif)",
+    "give": "Attribuer une nature",
+    "dialogTitle": "Nature de « {{label}} »",
+    "dialogHint": "La nature détermine comment comptent les OT de ce type (codification des défaillances, travaux planifiés / réactifs / urgents). Elle s’attribue une seule fois et est enregistrée avec votre motif.",
+    "nature": "Nature de maintenance",
+    "naturePlaceholder": "Choisir une nature…",
+    "natureRequired": "Choisissez une nature.",
+    "naturesUnavailable": "Les natures de maintenance n’ont pas pu être lues. Vérifiez la liste « WORK.MAINTENANCE_NATURES » dans les données de référence.",
+    "reason": "Motif",
+    "reasonMin": "Écrivez au moins {{min}} caractères.",
+    "cancel": "Annuler",
+    "save": "Enregistrer"
   }
 }

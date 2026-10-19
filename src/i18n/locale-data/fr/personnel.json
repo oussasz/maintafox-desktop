@@ -545,7 +545,8 @@
         "assigned": "Affecté",
         "on_leave": "En congé",
         "in_training": "En formation",
-        "blocked": "Bloqué"
+        "blocked": "Bloqué",
+        "inactive": "Inactif (contrat terminé)"
       },
       "overview": {
         "identity": "Contexte planification",

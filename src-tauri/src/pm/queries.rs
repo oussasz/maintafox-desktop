@@ -1275,7 +1275,7 @@ pub async fn get_pm_governance_kpi_report(
             COALESCE(COUNT(*), 0) AS denominator,
             COALESCE(SUM(CASE WHEN EXISTS (
                 SELECT 1 FROM work_orders fw JOIN reference_values ft ON ft.id = fw.type_id
-                 WHERE fw.id = pf.follow_up_work_order_id AND ft.semantic_tag IN ({corrective})
+                 WHERE fw.id = pf.follow_up_work_order_id AND {corrective}
             ) THEN 1 ELSE 0 END), 0) AS failures_found
          FROM pm_findings pf
          JOIN pm_executions pe ON pe.id = pf.pm_execution_id
@@ -1284,7 +1284,8 @@ pub async fn get_pm_governance_kpi_report(
          LEFT JOIN lookup_values lv ON lv.id = pp.criticality_value_id
          WHERE pe.executed_at >= ?
            AND pe.executed_at <= ?",
-        corrective = crate::wo::types::nature_sql_list(&crate::wo::types::MaintenanceNature::CORRECTIVE)
+        corrective =
+            crate::wo::types::tag_is_nature_sql("ft.semantic_tag", &crate::wo::types::MaintenanceNature::CORRECTIVE)
     );
     let mut follow_up_binds: Vec<sea_orm::Value> = vec![from.clone().into(), to.clone().into()];
     if let Some(pm_plan_id) = input.pm_plan_id {
