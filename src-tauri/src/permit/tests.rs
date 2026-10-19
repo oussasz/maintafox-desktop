@@ -1678,6 +1678,9 @@ async fn changing_the_three_person_chain_is_guarded_both_ways_and_an_unchanged_v
         .await
         .expect_err("no reason");
     assert_eq!(refusal_code(err), "PERMIT_TYPE_THREE_PERSON_REASON");
+    // A later change (the one above was recorded within this second: a change in the same second
+    // is refused, `a_three_person_change_is_refused_when_this_pcs_clock_is_behind_the_last_change`).
+    backdate_three_person_change(&db, same.id).await;
     let off = queries::upsert_permit_type(&db, chain_input(&same, Some(false), Some(GOOD_REASON)), ADMIN_STEP_UP)
         .await
         .expect("administrator turns it off");
@@ -1934,4 +1937,93 @@ async fn without_the_three_person_chain_the_verifier_may_verify_the_removal() {
         .await
         .expect("two-person rule only");
     assert_eq!(removed.removal_verified_by_id, Some(VERIFIER));
+}
+
+/// A three-person change is recorded at this PC's time; when the change already recorded for the
+/// type is not earlier (this PC's clock is behind), it is refused here with the time to wait for,
+/// instead of being shown as made here and refused on every other PC. An unreadable recorded time
+/// is replaced by the new record.
+#[tokio::test]
+async fn a_three_person_change_is_refused_when_this_pcs_clock_is_behind_the_last_change() {
+    let db = setup().await;
+    let hot = queries::list_permit_types(&db)
+        .await
+        .expect("types")
+        .into_iter()
+        .find(|t| t.code == "hot_work")
+        .expect("hot_work");
+    let ahead = (chrono::Utc::now() + chrono::Duration::minutes(5))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let set_held = |at: &str| {
+        let db = &db;
+        let sql = format!(
+            "UPDATE permit_types SET three_person_changed_at = '{at}', three_person_changed_by_id = {APPLIER}, \
+             three_person_change_reason = 'Changed on a PC ahead in time' WHERE id = {}",
+            hot.id
+        );
+        async move {
+            db.execute(Statement::from_string(DbBackend::Sqlite, sql))
+                .await
+                .expect("held record");
+        }
+    };
+    set_held(&ahead).await;
+    let err = queries::upsert_permit_type(&db, chain_input(&hot, Some(true), Some(GOOD_REASON)), ADMIN_STEP_UP)
+        .await
+        .expect_err("clock behind");
+    match err {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, "PERMIT_TYPE_THREE_PERSON_CLOCK_BEHIND");
+            assert_eq!(issues[0].params.get("last"), Some(&ahead));
+            assert_eq!(issues[0].params.get("type"), Some(&hot.code));
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+    let still_off = queries::get_permit_type(&db, hot.id).await.expect("q").expect("type");
+    assert!(!still_off.requires_three_person_removal, "nothing written");
+    // A plain edit (setting unchanged) is not a change of the setting: allowed.
+    let mut renamed = type_input(&still_off, None, None);
+    renamed.name = "Hot work (renamed)".into();
+    queries::upsert_permit_type(&db, renamed, EDITOR)
+        .await
+        .expect("plain edit");
+
+    // An unreadable recorded time: replaced by the new, readable record.
+    set_held("not a time").await;
+    let current = queries::get_permit_type(&db, hot.id).await.expect("q").expect("type");
+    let on = queries::upsert_permit_type(&db, chain_input(&current, Some(true), Some(GOOD_REASON)), ADMIN_STEP_UP)
+        .await
+        .expect("unreadable held time");
+    assert!(on.requires_three_person_removal);
+    let at = scalar_text(
+        &db,
+        &format!("SELECT three_person_changed_at FROM permit_types WHERE id = {}", hot.id),
+    )
+    .await;
+    assert!(crate::settings::site::instant(&at).is_some(), "{at}");
+}
+
+async fn scalar_text(db: &DatabaseConnection, sql: &str) -> String {
+    db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get_by_index::<String>(0)
+        .expect("text")
+}
+
+/// Moves the recorded time of a type's last three-person change one minute back (tests that make
+/// two changes of the same type within one second).
+async fn backdate_three_person_change(db: &DatabaseConnection, type_id: i64) {
+    let earlier = (chrono::Utc::now() - chrono::Duration::minutes(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE permit_types SET three_person_changed_at = ? WHERE id = ?",
+        [earlier.into(), type_id.into()],
+    ))
+    .await
+    .expect("backdate");
 }

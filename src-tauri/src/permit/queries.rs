@@ -949,6 +949,48 @@ async fn audit_three_person_change(
     Ok(())
 }
 
+/// A change of the three-person setting is recorded at this PC's time, and every other PC applies
+/// it only when that time is later than the change it holds (`permit::sync_check::
+/// inbound_permit_type_check`). When the change already recorded here is not earlier than now, this
+/// PC's clock is behind: the change would be refused everywhere else while shown as made here, so
+/// it is refused here, naming the time to wait for (no time is made up). A recorded time that cannot
+/// be read is not compared: the new record (readable) replaces it.
+async fn guard_three_person_clock(db: &impl ConnectionTrait, current: &PermitType) -> AppResult<()> {
+    let held: Option<String> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT three_person_changed_at FROM permit_types WHERE id = ?",
+            [current.id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<Option<String>>("", "three_person_changed_at"))
+        .transpose()
+        .map_err(|e| decode_err("three_person_changed_at", e))?
+        .flatten();
+    let Some(held) = held.as_deref().map(str::trim).filter(|h| !h.is_empty()) else {
+        return Ok(());
+    };
+    let Some(last) = crate::settings::site::instant(held) else {
+        return Ok(());
+    };
+    // `now_ts()` has whole seconds: the record written would be `now` truncated.
+    let now = crate::settings::site::instant(&now_ts()).unwrap_or_else(Utc::now);
+    if last >= now {
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_TYPE_THREE_PERSON_CLOCK_BEHIND",
+            format!(
+                "The three-person lock-removal rule of permit type {} was last changed at {held}, not earlier than this PC's time: check this PC's clock, then change it again.",
+                current.code
+            ),
+            std::collections::HashMap::from([
+                ("type".to_string(), current.code.clone()),
+                ("last".to_string(), held.to_string()),
+            ]),
+        ));
+    }
+    Ok(())
+}
+
 /// The author, time and reason of a change of the three-person setting (migration 238); all `None`
 /// when the save does not change it.
 struct ThreePersonTrace {
@@ -976,6 +1018,9 @@ async fn upsert_permit_type_in(
     } else {
         None
     };
+    if let (Some(_), Some(current)) = (&three_person_reason, &existing) {
+        guard_three_person_clock(db, current).await?;
+    }
     // Who changed the setting, when and why, written with the row (sent with it by sync and
     // re-checked on arrival: `permit::sync_check::inbound_permit_type_check`); kept otherwise.
     let trace = ThreePersonTrace {

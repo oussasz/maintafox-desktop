@@ -32,7 +32,6 @@
 //! - a permit type whose three-person lock-removal setting changes (or a new type with it on), or
 //!   whose record of that change changes, says who changed it, when (later than the change recorded
 //!   here) and why, and that person holds the settings right here (`inbound_permit_type_check`);
-
 //! - deletes (this device never deletes them): a permit, its isolations and suspensions only while
 //!   the permit is a draft (the LOTO history of any other permit is kept); a permit type or a
 //!   qualification requirement never (they are deactivated or edited).
@@ -852,9 +851,15 @@ fn on_off(p: &Payload, key: &str) -> Option<bool> {
 /// - the setting is a value this version reads one way and stores the same way ([`on_off`]);
 /// - the reason has at least [`crate::settings::catalog::MIN_REASON_CHARS`] characters, the time is
 ///   readable, not in the future and strictly later than the change already recorded here for this
-///   type (an older record of this type is not replayed);
+///   type (an older record of this type is not replayed: `PERMIT_TYPE_THREE_PERSON_STALE`; a time
+///   recorded here that cannot be read refuses every received change of the type);
 /// - the record is not one already held here for another type (copied from that type);
 /// - the person named holds the settings right (`adm.settings`, plant-wide) here, judged on arrival.
+///
+/// A type new here whose setting is off is applied once its record passes the reason and time
+/// checks, without judging who changed it: off is the setting every type has without a record, and
+/// a PC paired later must not be stuck on a past change by an administrator who has since lost the
+/// right.
 ///
 /// A person not applied here yet, or whose rights are still waiting in the inbox, makes it wait;
 /// otherwise a sync conflict, nothing written. The step-up itself cannot be re-verified here, and a
@@ -884,7 +889,7 @@ pub(crate) async fn inbound_permit_type_check(
         );
     };
     let record = |p: &Payload| [BY, AT, WHY].map(|k| field(p, k).map(str::to_string));
-    let held_record = local.as_ref().map_or([None, None, None], |l| record(l));
+    let held_record = local.as_ref().map_or([None, None, None], record);
     let changes = held.map_or(wanted, |h| h != wanted);
     if !changes && record(&ty) == held_record {
         return Ok(None);
@@ -906,13 +911,30 @@ pub(crate) async fn inbound_permit_type_check(
         return unaudited("at a time in the future".into());
     }
     // Each change is later than the one before it: a record not later than the one held here is
-    // an earlier change of this type (or this one again), not a new one.
-    if let Some(last) = local.as_ref().and_then(|l| time(l, AT)) {
+    // an earlier change of this type (or this one again), not a new one. A time held here that
+    // cannot be read cannot be compared: refused (fails closed).
+    if let Some(held_at) = local.as_ref().and_then(|l| field(l, AT)) {
+        let stale = |why: String| {
+            conflict(
+                "PERMIT_TYPE_THREE_PERSON_STALE",
+                format!("permit type {code}: its three-person lock-removal rule was received {why}"),
+            )
+        };
+        let Some(last) = instant(held_at) else {
+            return stale(format!(
+                "while the change recorded here has an unreadable time ({held_at})"
+            ));
+        };
         if changed_at <= last {
-            return unaudited(format!(
+            return stale(format!(
                 "with a record dated {changed_at}, not later than the change already recorded here ({last})"
             ));
         }
+    }
+    // New here and off: the setting a type has without any record; who changed it is not judged
+    // (a PC paired later is never stuck on a past change of a since-demoted administrator).
+    if local.is_none() && !wanted {
+        return Ok(None);
     }
     let unauthorised = |why: &str| {
         conflict(
@@ -942,7 +964,8 @@ pub(crate) async fn inbound_permit_type_check(
     let others = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT three_person_changed_at AS at, three_person_change_reason AS reason FROM permit_types              WHERE three_person_changed_by_id = ? AND entity_sync_id <> ?",
+            "SELECT three_person_changed_at AS at, three_person_change_reason AS reason FROM permit_types \
+             WHERE three_person_changed_by_id = ? AND entity_sync_id <> ?",
             [author.into(), entity_sync_id.into()],
         ))
         .await?;

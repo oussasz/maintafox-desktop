@@ -106,6 +106,7 @@
       "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED": "A permit type's third-person lock-removal rule changed on another PC by someone without the settings right",
       "PERMIT_TYPE_THREE_PERSON_UNAUDITED": "A permit type's third-person lock-removal rule changed on another PC without who, when or why",
       "PERMIT_TYPE_CHANGED": "A permit moved to another permit type",
+      "PERMIT_TYPE_THREE_PERSON_STALE": "A permit type's third-person lock-removal rule received with a change older than the one recorded here",
       "other": "Needs review"
     },
     "history": {

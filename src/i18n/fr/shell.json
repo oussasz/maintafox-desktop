@@ -106,6 +106,7 @@
       "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED": "La règle de la troisième personne au retrait des cadenas d'un type de permis modifiée sur un autre poste par une personne sans le droit sur les paramètres",
       "PERMIT_TYPE_THREE_PERSON_UNAUDITED": "La règle de la troisième personne au retrait des cadenas d'un type de permis modifiée sur un autre poste sans qui, quand ou pourquoi",
       "PERMIT_TYPE_CHANGED": "Un permis passé à un autre type de permis",
+      "PERMIT_TYPE_THREE_PERSON_STALE": "La règle de la troisième personne au retrait des cadenas d'un type de permis reçue avec une modification plus ancienne que celle enregistrée ici",
       "other": "À examiner"
     },
     "history": {
