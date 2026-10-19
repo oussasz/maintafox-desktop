@@ -76,7 +76,7 @@
       "PERMIT_EXPIRED": "Un permis utilisé après son expiration",
       "PERMIT_EXPIRES_BEFORE_PLANNED_END": "Un ordre de travail démarré sur un permis qui expire avant sa fin prévue",
       "PERMIT_EXPIRES_BEFORE_ESTIMATED_END": "Un ordre de travail démarré ou repris sur un permis qui expire avant son début ou sa reprise plus sa durée prévue (ou le temps restant saisi)",
-      "WO_PLANNED_END_PASSED": "Un ordre de travail démarré ou repris sur un permis après sa fin prévue, sans durée prévue ni temps restant (replanifier ses dates)",
+      "WO_PLANNED_END_PASSED": "Un ordre de travail démarré ou repris sur un permis après sa fin prévue, sans durée prévue utilisable ni temps restant (replanifier ses dates)",
       "WO_EXPECTED_DURATION_UNREADABLE": "Un ordre de travail démarré sur un permis avec une durée prévue qui n’est pas un nombre d’heures",
       "WO_REMAINING_TIME_INVALID": "Un ordre de travail repris ou rouvert avec un temps restant estimé qui n’est pas un nombre d’heures supérieur à 0",
       "WO_PLANNED_END_UNREADABLE": "Un ordre de travail démarré avec une fin prévue qui n’est pas une date et une heure lisibles (replanifier ses dates)",

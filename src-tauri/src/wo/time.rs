@@ -3,13 +3,25 @@
 //! All WO mutation paths should use these helpers to keep UTC/Z formatting
 //! consistent across intake, execution, closeout, and attachments.
 
-use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Offset, SecondsFormat, TimeZone, Timelike, Utc};
 
 use crate::errors::{AppError, AppResult};
 
 /// Canonical "now" in UTC RFC3339 with trailing `Z` and second precision.
 pub fn now_utc_z() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+    stamp(now_utc_second())
+}
+
+/// "Now" in whole seconds (truncated, as [`now_utc_z`] records it). Read once by a status change
+/// that is judged (the permit gate) and recorded, so both use the identical moment.
+pub fn now_utc_second() -> DateTime<Utc> {
+    let now = Utc::now();
+    now - Duration::nanoseconds(i64::from(now.timestamp_subsec_nanos()))
+}
+
+/// An instant in the canonical stored form (UTC RFC3339, `Z`, whole seconds).
+pub fn stamp(at: DateTime<Utc>) -> String {
+    at.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 /// Parse an input timestamp accepted by WO lifecycle APIs.
@@ -42,11 +54,13 @@ pub enum PlannedBound {
 
 /// A local wall-clock time in `tz` as an instant. Shown twice (autumn change): the earlier instant
 /// for a start, the later one for an end (see [`PlannedBound`]). Skipped by the clock (spring
-/// change, e.g. 02:30 when 02:00 jumps to 03:00): the instant just after the gap (the first minute
-/// the clock shows again), for a start as for an end — the time is readable, the clock merely never
-/// showed it, and the work cannot begin or end inside the jump. That is the same instant for both
-/// bounds and never earlier than any reading of the typed time, so it is never fail-open for an
-/// end; refusing it as "unreadable" would block a time a planner could legitimately type.
+/// change, e.g. 02:30 when 02:00 jumps to 03:00) — readable, never refused as "unreadable":
+/// - an end is read with the offset in force just before the jump (02:30 at UTC+1 = 01:30 UTC),
+///   the latest reading of the typed time and the one a browser gives (`new Date("…T02:30")`), so a
+///   permit expiring in the skipped hour is never judged against an end read too early;
+/// - a start is the instant just after the jump (03:00 local, 01:00 UTC): work cannot begin inside
+///   the jump, and a start is never judged against a permit's expiry, so its exact reading is not
+///   a safety matter.
 pub fn local_instant<Tz: TimeZone>(tz: &Tz, local: NaiveDateTime, bound: PlannedBound) -> Option<DateTime<Utc>> {
     let at = |naive: &NaiveDateTime| tz.from_local_datetime(naive);
     match at(&local) {
@@ -60,13 +74,23 @@ pub fn local_instant<Tz: TimeZone>(tz: &Tz, local: NaiveDateTime, bound: Planned
         }
         chrono::LocalResult::None => {
             // Gaps are whole minutes and last at most a few hours: the first whole minute after
-            // `local` the clock shows again.
+            // `local` the clock shows again is the instant just after the jump.
             let minute = local.with_second(0)?.with_nanosecond(0)?;
-            (1..=24 * 60).find_map(|m| {
+            let after = (1..=24 * 60).find_map(|m| {
                 at(&(minute + Duration::minutes(m)))
                     .earliest()
                     .map(|d| d.with_timezone(&Utc))
-            })
+            })?;
+            match bound {
+                PlannedBound::Start => Some(after),
+                PlannedBound::End => {
+                    // The offset in force just before the jump.
+                    let before = tz
+                        .offset_from_utc_datetime(&(after - Duration::seconds(1)).naive_utc())
+                        .fix();
+                    Some(Utc.from_utc_datetime(&(local - before)))
+                }
+            }
         }
     }
 }
@@ -211,18 +235,29 @@ mod tests {
         }
     }
 
-    /// Review SF2: a time the clock skips (spring jump 02:00 -> 03:00) is read as the instant just
-    /// after the jump (03:00 local), never refused as unreadable.
+    /// Review SF2 and d1884404 SF1: a time skipped by the clock (spring jump 02:00 -> 03:00) is never
+    /// refused as unreadable. An end is read with the offset in force before the jump (UTC+1: the
+    /// latest reading, as a browser reads it, never early); a start is the instant just after the
+    /// jump (03:00 local).
     #[test]
-    fn a_time_skipped_by_the_clock_is_the_instant_just_after_the_jump() {
+    fn a_time_skipped_by_the_clock_is_read_late_for_an_end_and_after_the_jump_for_a_start() {
+        for (typed, end) in [
+            ("2026-03-29T02:00", "2026-03-29T01:00:00Z"),
+            ("2026-03-29T02:30", "2026-03-29T01:30:00Z"),
+            ("2026-03-29T02:59", "2026-03-29T01:59:00Z"),
+        ] {
+            assert_eq!(
+                local_instant(&DstZone, local(typed), PlannedBound::End),
+                Some(utc(end)),
+                "{typed}"
+            );
+            assert_eq!(
+                local_instant(&DstZone, local(typed), PlannedBound::Start),
+                Some(utc("2026-03-29T01:00:00Z")),
+                "{typed}"
+            );
+        }
         for bound in [PlannedBound::Start, PlannedBound::End] {
-            for typed in ["2026-03-29T02:00", "2026-03-29T02:30", "2026-03-29T02:59"] {
-                assert_eq!(
-                    local_instant(&DstZone, local(typed), bound),
-                    Some(utc("2026-03-29T01:00:00Z")),
-                    "{typed}"
-                );
-            }
             assert_eq!(
                 local_instant(&DstZone, local("2026-03-29T01:59"), bound),
                 Some(utc("2026-03-29T00:59:00Z"))

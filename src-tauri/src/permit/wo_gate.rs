@@ -22,25 +22,29 @@ use crate::errors::{org_validation_failed, AppError, AppResult};
 
 use super::queries::{activation_ready, list_live_permits_linked_to_work_order};
 
-/// Gate of a start: the end of the work uses the full expected duration.
+/// Gate of a start judged now: the end of the work uses the full expected duration.
 pub async fn assert_in_progress_permit_gate(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<()> {
-    assert_in_progress_permit_gate_with(db, wo_id, None).await
+    assert_in_progress_permit_gate_with(db, wo_id, None, crate::wo::time::now_utc_second()).await
 }
 
-/// Gate of a start, resume or reopening. `remaining_hours`: the estimated remaining time entered on
-/// a resume or reopening ([`checked_remaining_hours`]), used instead of the expected duration for
-/// this check only; `None`: the full expected duration.
+/// Gate of a start, resume or reopening at `at` — the moment the caller records as the start,
+/// resume or reopening (one clock read, `wo::time::now_utc_second`), so the arrival check on another
+/// PC judges the identical moment. `remaining_hours`: the estimated remaining time entered on a
+/// resume or reopening ([`checked_remaining_hours`]), used instead of the expected duration for this
+/// check only; `None`: the full expected duration.
 pub async fn assert_in_progress_permit_gate_with(
     db: &impl ConnectionTrait,
     wo_id: i64,
     remaining_hours: Option<f64>,
+    at: DateTime<Utc>,
 ) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT requires_permit, planned_end, \
              CASE WHEN typeof(expected_duration_hours) IN ('real', 'integer') THEN expected_duration_hours END AS hours_number, \
-             CASE WHEN typeof(expected_duration_hours) = 'text' THEN expected_duration_hours END AS hours_text, \
+             CASE typeof(expected_duration_hours) WHEN 'text' THEN expected_duration_hours \
+                  WHEN 'blob' THEN 'blob' END AS hours_text, \
              CASE WHEN permit_rule_cleared_at IS NULL THEN permit_rule_permit_type END AS rule_permit_type \
              FROM work_orders WHERE id = ?",
             [wo_id.into()],
@@ -65,18 +69,15 @@ pub async fn assert_in_progress_permit_gate_with(
     let hours_text: Option<String> = row
         .try_get("", "hours_text")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("expected_duration_hours decode: {e}")))?;
-    // Stored as text (a forged or corrupt row): read as the arrival check reads a text value.
+    // Stored as text or a blob (a forged or corrupt row): read as the arrival check reads a value
+    // that is not a number (a blob is never one).
     let expected = match hours_number {
         Some(h) => Hours::Value(h),
         None => Hours::from_text(hours_text.as_deref()),
     };
     let required = requires == 1;
-    // The work starts or resumes now, in whole seconds as the start or resume is recorded
-    // (`now_utc_z`), so the arrival check on another PC judges the same instant: the end it must be
-    // covered until.
-    let now = Utc::now();
-    let now = now - Duration::nanoseconds(i64::from(now.timestamp_subsec_nanos()));
-    let end = work_end(planned_end.as_deref(), &expected, remaining_hours, now);
+    // The work starts or resumes at `at`: the end it must be covered until.
+    let end = work_end(planned_end.as_deref(), &expected, remaining_hours, at);
     assert_live_permits_ready(
         db,
         wo_id,
@@ -203,8 +204,9 @@ pub(crate) fn work_end(
     };
     match (planned, hours) {
         (planned, Some((hours, remaining))) => {
-            // Whole seconds; a duration beyond the calendar ends after any expiry.
-            let end = Duration::try_seconds((hours * 3600.0).round() as i64)
+            // Whole seconds rounded up, so a tiny time never ends before the moment plus that time
+            // (never earlier); a duration beyond the calendar ends after any expiry.
+            let end = Duration::try_seconds((hours * 3600.0).ceil() as i64)
                 .and_then(|d| at.checked_add_signed(d))
                 .unwrap_or(DateTime::<Utc>::MAX_UTC);
             match planned {
@@ -326,7 +328,7 @@ fn covers_the_work(permit_code: &str, expires_at: Option<&str>, end: &WorkEnd) -
         (Some(code), WorkEnd::PlannedPassed(p)) => {
             let p = stored(*p);
             let message = format!(
-                "The work order's planned end ({p}) has passed and it has no expected duration, so the end of the work covered by permit {permit_code} (expires {expiry_raw}) is unknown: re-plan the work order's dates, or enter its expected duration (or, when resuming or reopening, the estimated remaining time)."
+                "The work order's planned end ({p}) has passed and it has no usable expected duration (none, or 0 h or less), so the end of the work covered by permit {permit_code} (expires {expiry_raw}) is unknown: re-plan the work order's dates, or enter its expected duration (or, when resuming or reopening, the estimated remaining time)."
             );
             params.insert("planned_end".to_string(), p);
             Err(org_validation_failed(code, message, params))
@@ -581,6 +583,28 @@ mod tests {
         assert_eq!(shown_hours(2.5), "2.5");
         assert_eq!(shown_hours(1.0 / 3.0), "0.33");
         assert_eq!(shown_hours(2.999), "3");
+    }
+
+    /// Review N2: the hours are counted in whole seconds rounded up: a tiny time still ends after the
+    /// moment, never at or before it.
+    #[test]
+    fn hours_round_up_to_the_next_second() {
+        assert_eq!(
+            work_end(None, &h(0.0001), None, at()),
+            WorkEnd::Estimated {
+                end: at() + Duration::seconds(1),
+                hours: 0.0001,
+                remaining: false
+            }
+        );
+        assert_eq!(
+            work_end(Some("2026-10-18T12:00:00Z"), &Hours::Absent, Some(0.0001), at()),
+            WorkEnd::Estimated {
+                end: at() + Duration::seconds(1),
+                hours: 0.0001,
+                remaining: true
+            }
+        );
     }
 
     #[test]

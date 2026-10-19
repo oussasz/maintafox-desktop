@@ -76,7 +76,7 @@
       "PERMIT_EXPIRED": "A permit used after its expiry",
       "PERMIT_EXPIRES_BEFORE_PLANNED_END": "A work order started on a permit that expires before its planned end",
       "PERMIT_EXPIRES_BEFORE_ESTIMATED_END": "A work order started or resumed on a permit that expires before its start or resume plus its expected duration (or the remaining time entered)",
-      "WO_PLANNED_END_PASSED": "A work order started or resumed on a permit after its planned end had passed, with no expected duration or remaining time (re-plan its dates)",
+      "WO_PLANNED_END_PASSED": "A work order started or resumed on a permit after its planned end had passed, with no usable expected duration or remaining time (re-plan its dates)",
       "WO_EXPECTED_DURATION_UNREADABLE": "A work order started on a permit with an expected duration that is not a number of hours",
       "WO_REMAINING_TIME_INVALID": "A work order resumed or reopened with an estimated remaining time that is not a number of hours greater than 0",
       "WO_PLANNED_END_UNREADABLE": "A work order started with a planned end that is not a readable date and time (re-plan its dates)",

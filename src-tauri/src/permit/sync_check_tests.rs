@@ -3363,6 +3363,24 @@ async fn an_expected_duration_that_is_not_a_number_is_refused_here_and_on_arriva
         }
         other => panic!("expected WO_EXPECTED_DURATION_UNREADABLE, got {other:?}"),
     }
+    // A blob is never a number either (review N5): the same refusal, never "no duration".
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET expected_duration_hours = X'34' WHERE id = {wo_id}"),
+    )
+    .await;
+    match crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await {
+        Err(crate::errors::AppError::OrgValidationFailed(issues)) => {
+            assert_eq!(issues[0].code, "WO_EXPECTED_DURATION_UNREADABLE");
+        }
+        other => panic!("expected WO_EXPECTED_DURATION_UNREADABLE for a blob, got {other:?}"),
+    }
+    // Back to text before the arrival cases (the received row is laid over this row).
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET expected_duration_hours = 'four' WHERE id = {wo_id}"),
+    )
+    .await;
     // Arrival: the same value, the same refusal.
     let outcome = apply(
         &db,
