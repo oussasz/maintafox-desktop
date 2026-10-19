@@ -74,6 +74,8 @@
       "PERMIT_EXPIRY_MISSING": "Un permis activé sans date d'expiration",
       "PERMIT_EXPIRED": "Un permis utilisé après son expiration",
       "PERMIT_EXPIRES_BEFORE_PLANNED_END": "Un ordre de travail démarré sur un permis qui expire avant sa fin prévue",
+      "PERMIT_EXPIRES_BEFORE_ESTIMATED_END": "Un ordre de travail sans fin prévue démarré sur un permis qui expire avant son début plus sa durée prévue",
+      "WO_PLANNED_END_UNREADABLE": "Un ordre de travail démarré avec une fin prévue qui n’est pas une date et une heure lisibles (replanifier ses dates)",
       "LOTO_NO_ISOLATION": "Un permis consignation activé sans point d'isolement",
       "LOTO_NOT_VERIFIED": "Un permis activé avec des isolements non vérifiés par une deuxième personne",
       "LOTO_ISOLATION_REMOVED": "Un permis activé avec un cadenas déjà retiré",

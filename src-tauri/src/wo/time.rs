@@ -23,3 +23,37 @@ pub fn parse_utc_timestamp(raw: &str, field: &str) -> AppResult<DateTime<Utc>> {
         })
         .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 UTC timestamp.")]))
 }
+
+/// Stable codes: a planned start / planned end that is not a date and time.
+pub const CODE_PLANNED_START_UNREADABLE: &str = "WO_PLANNED_START_UNREADABLE";
+pub const CODE_PLANNED_END_UNREADABLE: &str = "WO_PLANNED_END_UNREADABLE";
+
+/// A planned date and time as an instant, read like planning reads it
+/// (`wo::shifts::planned_instant`): RFC 3339 as stored; typed without a zone, in this computer's
+/// time zone. A bare day or any other text is not a time of day: `None`.
+pub fn planned_time(raw: &str) -> Option<DateTime<Utc>> {
+    match super::shifts::planned_local(Some(raw)) {
+        Some((_, Some(_))) => super::shifts::planned_instant(raw),
+        _ => None,
+    }
+}
+
+/// A planned date and time (`planned_start` with [`CODE_PLANNED_START_UNREADABLE`], `planned_end`
+/// with [`CODE_PLANNED_END_UNREADABLE`]) in its stored form: UTC RFC 3339 with `Z`, whole seconds,
+/// so every reader (the permit start gate, planning, another PC) reads the same instant. Accepts an
+/// RFC 3339 instant, or a date and time typed without a zone (a `datetime-local` field), read in
+/// this computer's time zone as planning reads it (`wo::shifts::planned_instant`), never as UTC.
+/// Blank: `None` (no date). A bare day or any other text is refused (coded, FR/EN on screen).
+pub fn stored_planned_time(raw: Option<&str>, code: &str) -> AppResult<Option<String>> {
+    let Some(raw) = raw.map(str::trim).filter(|r| !r.is_empty()) else {
+        return Ok(None);
+    };
+    match planned_time(raw) {
+        Some(at) => Ok(Some(at.to_rfc3339_opts(SecondsFormat::Secs, true))),
+        None => Err(crate::errors::org_validation_failed(
+            code,
+            format!("The planned date ({raw}) is not a readable date and time: re-plan the work order's dates."),
+            std::collections::HashMap::from([("value".to_string(), raw.to_string())]),
+        )),
+    }
+}

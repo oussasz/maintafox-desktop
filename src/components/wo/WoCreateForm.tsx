@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 
 import { AssetPicker } from "@/components/assets/AssetPicker";
 import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
+import { fromDateTimeLocal, toDateTimeLocal } from "@/components/planning/planning-model";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -134,8 +135,13 @@ export function WoCreateForm({
   const [subtypes, setSubtypes] = useState<WorkOrderSubtypeOption[]>([]);
   const [subtypeCode, setSubtypeCode] = useState<string>(initial?.subtype_code ?? "");
   const [urgencyId, setUrgencyId] = useState<string>(initial?.urgency_code ?? "");
-  const [plannedStart, setPlannedStart] = useState(initial?.planned_start ?? "");
-  const [plannedEnd, setPlannedEnd] = useState(initial?.planned_end ?? "");
+  // The inputs hold local date and time (`datetime-local`); the work order stores UTC instants.
+  const [plannedStart, setPlannedStart] = useState(
+    initial?.planned_start ? toDateTimeLocal(initial.planned_start) : "",
+  );
+  const [plannedEnd, setPlannedEnd] = useState(
+    initial?.planned_end ? toDateTimeLocal(initial.planned_end) : "",
+  );
   const [expectedDuration, setExpectedDuration] = useState(
     initial?.expected_duration_hours?.toString() ?? "",
   );
@@ -294,8 +300,8 @@ export function WoCreateForm({
           equipment_id: resolvedEquipmentId,
           urgency_code: urgencyId ? (urgencyId as UrgencyCode) : null,
           subtype_code: subtypeCode,
-          planned_start: plannedStart || null,
-          planned_end: plannedEnd || null,
+          planned_start: plannedStart ? fromDateTimeLocal(plannedStart) : null,
+          planned_end: plannedEnd ? fromDateTimeLocal(plannedEnd) : null,
           expected_duration_hours: expectedDuration ? Number(expectedDuration) : null,
           notes: notes.trim() || null,
           requires_permit: requiresPermit,
@@ -310,8 +316,8 @@ export function WoCreateForm({
           equipment_id: resolvedEquipmentId,
           urgency_code: urgencyId ? (urgencyId as UrgencyCode) : null,
           subtype_code: subtypeCode || null,
-          planned_start: plannedStart || null,
-          planned_end: plannedEnd || null,
+          planned_start: plannedStart ? fromDateTimeLocal(plannedStart) : null,
+          planned_end: plannedEnd ? fromDateTimeLocal(plannedEnd) : null,
           expected_duration_hours: expectedDuration ? Number(expectedDuration) : null,
           notes: notes.trim() || null,
           creator_id: info.user_id,

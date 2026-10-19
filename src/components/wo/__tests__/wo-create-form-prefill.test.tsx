@@ -1,7 +1,10 @@
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { toDateTimeLocal } from "@/components/planning/planning-model";
 import { WoCreateForm } from "@/components/wo/WoCreateForm";
+import { useWoStore } from "@/stores/wo-store";
+import type { WorkOrder } from "@shared/ipc-types";
 
 const i18nMock = vi.hoisted(() => ({
   t: (key: string) => key,
@@ -53,5 +56,49 @@ describe("WoCreateForm equipment pre-fill", () => {
       />,
     );
     await waitFor(() => expect(assetSvc.getAssetByIdSilent).toHaveBeenCalledWith(7));
+  });
+});
+
+describe("WoCreateForm planned dates", () => {
+  it("shows the stored instants in local time and saves the typed local time as an instant", async () => {
+    const updateDraft = vi.fn(() => Promise.resolve());
+    useWoStore.setState({ updateDraft } as unknown as Partial<
+      ReturnType<typeof useWoStore.getState>
+    >);
+    const initial = {
+      id: 5,
+      row_version: 3,
+      title: "Replace breaker",
+      description: null,
+      type_code: "",
+      subtype_code: "",
+      urgency_code: "",
+      equipment_id: null,
+      planned_start: "2026-10-20T06:00:00Z",
+      planned_end: "2026-10-20T12:30:00Z",
+      expected_duration_hours: null,
+      notes: null,
+      requires_permit: false,
+    } as unknown as WorkOrder;
+    const { container, getByText } = render(
+      <WoCreateForm initial={initial} onSubmitted={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const start = container.querySelector<HTMLInputElement>("#wo-planned-start");
+    const end = container.querySelector<HTMLInputElement>("#wo-planned-end");
+    expect(start?.value).toBe(toDateTimeLocal("2026-10-20T06:00:00Z"));
+    expect(end?.value).toBe(toDateTimeLocal("2026-10-20T12:30:00Z"));
+
+    fireEvent.change(end as HTMLInputElement, { target: { value: "2026-10-21T09:15" } });
+    const save = getByText("form.update").closest("button") as HTMLButtonElement;
+    await waitFor(() => expect(save).not.toBeDisabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(updateDraft).toHaveBeenCalledTimes(1));
+    expect(updateDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planned_start: "2026-10-20T06:00:00.000Z",
+        // Typed in local time; sent as the instant it names, never as a zone-less text.
+        planned_end: new Date("2026-10-21T09:15").toISOString(),
+      }),
+    );
   });
 });

@@ -28,7 +28,8 @@
 //! - a work order entering `in_progress` passes the permit gate (`permit::wo_gate`) at the time it
 //!   started, resumed or was reopened: a permit when it requires one (of the type a plant rule named,
 //!   when a rule flagged it), every permit live at that time active, not suspended, not expired, not
-//!   expiring before the work order's planned end, with its isolations ready;
+//!   expiring before the end of the work (the planned end; without one, that time plus the
+//!   expected duration), with its isolations ready;
 //! - a permit type whose three-person lock-removal setting changes (or a new type with it on), or
 //!   whose energy-isolation rule is switched off, or whose record of such a change changes, says who
 //!   changed it, when (later than the change recorded here) and why, and that person holds the
@@ -109,6 +110,16 @@ fn flag(p: &Payload, key: &str) -> bool {
 
 fn time(p: &Payload, key: &str) -> Option<DateTime<Utc>> {
     field(p, key).and_then(instant)
+}
+
+/// A number field of a payload (a JSON number, or a number sent as text); `None` when absent, null
+/// or not a number.
+fn number(p: &Payload, key: &str) -> Option<f64> {
+    match p.get(key) {
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(s)) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }
 }
 
 /// Latest time a received row may carry: this device's clock plus the tolerated difference.
@@ -1610,16 +1621,28 @@ pub(crate) async fn inbound_work_order_check(
                     format!("work order {code} started at {at} after permit {pcode} expired ({expiry})"),
                 );
             }
-            // The work would outlive its protection (`permit::wo_gate`): a permit expiring before the
-            // planned end refuses the start (the planned end is fixed once the order is past ready).
-            // An unreadable planned end is refused, as locally.
-            if let (Some(end), Some(expires)) = (field(&wo, "planned_end"), instant(expiry)) {
-                if instant(end).is_none_or(|e| expires < e) {
-                    return conflict(
-                        crate::permit::wo_gate::CODE_EXPIRES_BEFORE_PLANNED_END,
-                        format!(
-                            "work order {code} started at {at} while permit {pcode} expires ({expiry}) before its planned end ({end})"
+            // The work would outlive its protection (`permit::wo_gate`), judged as of the start or
+            // resume the row records (`at`, never this PC's clock): against the planned end (fixed
+            // once the order is past ready); without one, `at` plus the expected duration; without
+            // either, not judged. An unreadable planned end is refused, as locally.
+            if let Some(expires) = instant(expiry) {
+                use crate::permit::wo_gate::{expiry_refusal, stored, work_end, WorkEnd};
+                let end = work_end(field(&wo, "planned_end"), number(&wo, "expected_duration_hours"), at);
+                if let Some(c) = expiry_refusal(expires, &end) {
+                    let why = match &end {
+                        WorkEnd::Planned(e) => format!("expires ({expiry}) before its planned end ({})", stored(*e)),
+                        WorkEnd::Estimated { end: e, hours } => format!(
+                            "expires ({expiry}) before its estimated end ({}: start or resume + {hours} h, no planned end)",
+                            stored(*e)
                         ),
+                        WorkEnd::Unreadable(raw) => {
+                            format!("is judged against a planned end ({raw}) that is not a readable date and time")
+                        }
+                        WorkEnd::Unknown => String::new(),
+                    };
+                    return conflict(
+                        c,
+                        format!("work order {code} started at {at} while permit {pcode} {why}"),
                     );
                 }
             }

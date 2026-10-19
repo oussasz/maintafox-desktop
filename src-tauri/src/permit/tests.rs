@@ -2217,7 +2217,8 @@ async fn backdate_three_person_change(db: &DatabaseConnection, type_id: i64) {
 }
 
 /// Owner decision: a work order does not start or resume on a permit that expires before its
-/// planned end (the work would outlive its protection). Without a planned end nothing is judged.
+/// planned end (the work would outlive its protection). Without a planned end or an expected
+/// duration nothing is judged.
 #[tokio::test]
 async fn wo_gate_refuses_a_permit_expiring_before_the_planned_end() {
     let db = setup().await;
@@ -2253,11 +2254,53 @@ async fn wo_gate_refuses_a_permit_expiring_before_the_planned_end() {
         }
         other => panic!("expected a coded refusal, got {other:?}"),
     }
-    // An unreadable planned end is refused, never guessed.
-    set_planned_end(Some("someday".into())).await;
-    assert_validation(start(&db, wo_id, rv).await, "not a readable time");
-    // No planned end: not judged.
+    // A planned end typed without a zone (a form's local date and time) is read in this computer's
+    // time zone, as planning reads it, and judged; the refusal gives it as a stored (UTC) time.
+    let typed = (chrono::Local::now() + chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
+    set_planned_end(Some(typed.clone())).await;
+    let err = start(&db, wo_id, rv)
+        .await
+        .expect_err("typed local end after the expiry");
+    match &err {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, "PERMIT_EXPIRES_BEFORE_PLANNED_END");
+            assert_eq!(issues[0].params.get("planned_end"), Some(&utc_of_local(&typed)));
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+    // Typed without a zone, before the expiry: not refused as unreadable (checked on the gate
+    // itself, so the order stays ready for the cases below).
+    let typed_soon = (chrono::Local::now() + chrono::Duration::hours(1))
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
+    set_planned_end(Some(typed_soon)).await;
+    crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .expect("typed local end before the expiry");
+    // An unreadable planned end (text, or a bare day with no time) is refused with its own code
+    // ("re-plan the dates"), never guessed.
+    for bad in ["someday", "2026-10-20"] {
+        set_planned_end(Some(bad.into())).await;
+        let err = start(&db, wo_id, rv).await.expect_err("unreadable planned end");
+        match &err {
+            AppError::OrgValidationFailed(issues) => {
+                assert_eq!(issues[0].code, "WO_PLANNED_END_UNREADABLE", "{bad}");
+                assert_eq!(issues[0].params.get("value").map(String::as_str), Some(bad));
+            }
+            other => panic!("expected a coded refusal for {bad}, got {other:?}"),
+        }
+    }
+    // No planned end and no expected duration: not judged.
     set_planned_end(None).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET expected_duration_hours = NULL WHERE id = ?",
+        [wo_id.into()],
+    ))
+    .await
+    .expect("no duration");
     start(&db, wo_id, rv).await.expect("no planned end");
 
     // Resume: the same gate.
@@ -2297,6 +2340,230 @@ async fn wo_gate_refuses_a_permit_expiring_before_the_planned_end() {
     // Planned to end before the expiry: resumes.
     set_planned_end(Some((chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339())).await;
     resume(paused.row_version).await.expect("covered by the permit");
+}
+
+/// A date and time typed without a zone (`YYYY-MM-DDTHH:MM`), as the UTC instant this computer's
+/// time zone gives it, in the stored form.
+fn utc_of_local(typed: &str) -> String {
+    let local = chrono::NaiveDateTime::parse_from_str(typed, "%Y-%m-%dT%H:%M").expect("typed");
+    chrono::TimeZone::from_local_datetime(&chrono::Local, &local)
+        .earliest()
+        .expect("local time")
+        .with_timezone(&chrono::Utc)
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+/// CMMS Advisor decision (2026-10-19): without a planned end, the end of the work is the moment of
+/// the start or resume plus the expected duration; the refusal names that estimated end. Without
+/// either nothing is judged, but an expired permit is always refused.
+#[tokio::test]
+async fn wo_gate_judges_the_estimated_end_without_a_planned_end() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-96").await;
+    let (wo_id, rv) = assigned_wo_requiring_permit(&db, asset).await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-96").await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let expires = wp.expires_at.clone().expect("expiry");
+    let set_plan = |end: Option<&'static str>, hours: Option<f64>| {
+        let db = &db;
+        async move {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_orders SET planned_end = ?, expected_duration_hours = ? WHERE id = ?",
+                [end.into(), hours.into(), wo_id.into()],
+            ))
+            .await
+            .expect("plan");
+        }
+    };
+
+    // No planned end; 48 h of work from now outlives the permit (8 h): refused, naming the
+    // estimated end and the duration it was computed with.
+    set_plan(None, Some(48.0)).await;
+    let before = chrono::Utc::now();
+    let err = start(&db, wo_id, rv).await.expect_err("estimated end after the expiry");
+    match &err {
+        AppError::OrgValidationFailed(issues) => {
+            let issue = &issues[0];
+            assert_eq!(issue.code, "PERMIT_EXPIRES_BEFORE_ESTIMATED_END");
+            assert_eq!(issue.params.get("permit"), Some(&wp.code));
+            assert_eq!(issue.params.get("expires_at"), Some(&expires));
+            assert_eq!(issue.params.get("hours").map(String::as_str), Some("48"));
+            let end = crate::settings::site::instant(issue.params.get("end_at").expect("end_at")).expect("time");
+            assert!(end >= before + chrono::Duration::hours(48) - chrono::Duration::seconds(1));
+            assert!(end <= chrono::Utc::now() + chrono::Duration::hours(48));
+            assert!(issue.message.contains("estimated end"), "{}", issue.message);
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+    // A zero duration is no estimate: not judged.
+    set_plan(None, Some(0.0)).await;
+    crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .expect("no estimate");
+    // A planned end wins over the duration: planned before the expiry, 48 h of work: judged on the
+    // planned end.
+    set_plan(Some("2026-04-10T16:00:00Z"), Some(48.0)).await;
+    crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .expect("judged on the planned end");
+
+    // Resume: judged at the resume moment.
+    set_plan(None, Some(1.0)).await;
+    start(&db, wo_id, rv).await.expect("one hour of work is covered");
+    let actor = admin_id(&db).await;
+    let rv = scalar_i64(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await;
+    let reason = scalar_i64(
+        &db,
+        "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+         JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' AND rv.is_active = 1 AND rs.status = 'published' LIMIT 1",
+    )
+    .await;
+    let pause = |rv: i64| {
+        execution::pause_wo(
+            &db,
+            execution::WoPauseInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                delay_reason_id: reason,
+                comment: None,
+            },
+        )
+    };
+    let resume = |rv: i64| {
+        execution::resume_wo(
+            &db,
+            execution::WoResumeInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+            },
+        )
+    };
+    let paused = pause(rv).await.expect("pause");
+    set_plan(None, Some(10.0)).await;
+    assert_validation(resume(paused.row_version).await, "PERMIT_EXPIRES_BEFORE_ESTIMATED_END");
+    // Neither a planned end nor a duration: not judged.
+    set_plan(None, None).await;
+    let resumed = resume(paused.row_version).await.expect("not judged");
+
+    // An expired permit is always refused, with or without an end.
+    let paused = pause(resumed.row_version).await.expect("pause again");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET expires_at = ? WHERE id = ?",
+        [
+            (chrono::Utc::now() - chrono::Duration::minutes(1))
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string()
+                .into(),
+            wp.id.into(),
+        ],
+    ))
+    .await
+    .expect("expire");
+    assert_validation(resume(paused.row_version).await, "PERMIT_EXPIRED");
+}
+
+/// The planned dates typed in the work order form (a `datetime-local` value, no zone) are stored as
+/// UTC instants read in this computer's time zone (never read as UTC); text that is not a date and
+/// time is refused with a coded "re-plan the dates", at create and at draft edit.
+#[tokio::test]
+async fn planned_dates_typed_without_a_zone_are_stored_as_instants() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-97").await;
+    let actor = admin_id(&db).await;
+    let input = |start: Option<&str>, end: Option<&str>| WoCreateInput {
+        type_code: "corrective".into(),
+        equipment_id: Some(asset),
+        location_id: None,
+        source_di_id: None,
+        source_inspection_anomaly_id: None,
+        source_ram_ishikawa_diagram_id: None,
+        source_ishikawa_flow_node_id: None,
+        source_rca_cause_text: None,
+        entity_id: Some(1),
+        planner_id: None,
+        urgency_code: Some("normal".into()),
+        subtype_code: None,
+        title: "Typed dates".into(),
+        description: None,
+        notes: None,
+        planned_start: start.map(str::to_string),
+        planned_end: end.map(str::to_string),
+        shift: None,
+        expected_duration_hours: None,
+        creator_id: actor,
+        requires_permit: Some(false),
+    };
+    let planned = |column: &'static str, id: i64| {
+        let db = &db;
+        async move { scalar_text(db, &format!("SELECT {column} FROM work_orders WHERE id = {id}")).await }
+    };
+    let wo = crate::wo::queries::create_work_order(&db, input(Some("2026-10-20T08:00"), Some("2026-10-20T14:30")))
+        .await
+        .expect("create");
+    assert_eq!(planned("planned_start", wo.id).await, utc_of_local("2026-10-20T08:00"));
+    assert_eq!(planned("planned_end", wo.id).await, utc_of_local("2026-10-20T14:30"));
+    // An instant with an offset is stored in UTC.
+    let other = crate::wo::queries::create_work_order(&db, input(None, Some("2026-10-20T14:30:00+02:00")))
+        .await
+        .expect("create");
+    assert_eq!(planned("planned_end", other.id).await, "2026-10-20T12:30:00Z");
+    for (start, end, code) in [
+        (Some("tomorrow"), None, "WO_PLANNED_START_UNREADABLE"),
+        (None, Some("2026-10-20"), "WO_PLANNED_END_UNREADABLE"),
+    ] {
+        match crate::wo::queries::create_work_order(&db, input(start, end)).await {
+            Err(AppError::OrgValidationFailed(issues)) => assert_eq!(issues[0].code, code),
+            other => panic!("expected {code}, got {other:?}"),
+        }
+    }
+
+    // Draft edit: the same; a blank date clears it.
+    let draft = |id: i64, rv: i64, end: &str| crate::wo::domain::WoDraftUpdateInput {
+        id,
+        expected_row_version: rv,
+        title: None,
+        type_code: None,
+        equipment_id: None,
+        location_id: None,
+        description: None,
+        planned_start: None,
+        planned_end: Some(end.to_string()),
+        shift: None,
+        expected_duration_hours: None,
+        notes: None,
+        urgency_code: None,
+        subtype_code: None,
+        requires_permit: None,
+    };
+    let edited = crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, wo.row_version, "2026-10-21T09:15"))
+        .await
+        .expect("edit");
+    assert_eq!(planned("planned_end", wo.id).await, utc_of_local("2026-10-21T09:15"));
+    match crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, edited.row_version, "soon")).await {
+        Err(AppError::OrgValidationFailed(issues)) => assert_eq!(issues[0].code, "WO_PLANNED_END_UNREADABLE"),
+        other => panic!("expected WO_PLANNED_END_UNREADABLE, got {other:?}"),
+    }
+    crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, edited.row_version, "  "))
+        .await
+        .expect("clear");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM work_orders WHERE id = {} AND planned_end IS NULL",
+                wo.id
+            )
+        )
+        .await,
+        1
+    );
 }
 
 /// A permit type's code is fixed once the type exists (plant rules, permits and work orders name the

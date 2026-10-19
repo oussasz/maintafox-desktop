@@ -2928,12 +2928,26 @@ async fn a_received_start_on_a_permit_expiring_before_the_planned_end_is_refused
     .await;
     assert_eq!(code(&outcome), Some("PERMIT_EXPIRES_BEFORE_PLANNED_END"), "{outcome:?}");
     assert_eq!(text(&db, &status_sql).await.as_deref(), Some("ready"));
-    // An unreadable planned end is refused too, as locally.
+    // An unreadable planned end (text, or a bare day) is refused too, as locally, under its own code.
+    for bad in ["someday", "2026-10-20"] {
+        let outcome = apply(
+            &db,
+            "work_orders",
+            &wo_sync,
+            &with(started.clone(), &[("planned_end", json!(bad))]),
+        )
+        .await;
+        assert_eq!(code(&outcome), Some("WO_PLANNED_END_UNREADABLE"), "{bad}: {outcome:?}");
+    }
+    // A planned end typed without a zone is read in this computer's time zone, as locally.
+    let typed = (chrono::Local::now() + chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
     let outcome = apply(
         &db,
         "work_orders",
         &wo_sync,
-        &with(started.clone(), &[("planned_end", json!("someday"))]),
+        &with(started.clone(), &[("planned_end", json!(typed))]),
     )
     .await;
     assert_eq!(code(&outcome), Some("PERMIT_EXPIRES_BEFORE_PLANNED_END"), "{outcome:?}");
@@ -2950,6 +2964,202 @@ async fn a_received_start_on_a_permit_expiring_before_the_planned_end_is_refused
     .await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     assert_eq!(text(&db, &status_sql).await.as_deref(), Some("in_progress"));
+}
+
+/// A work order ready to start, with an active hot-work permit active since `active_since`, and its
+/// received "started" row without a planned end. Returns (work order sync id, received row, permit
+/// expiry, local work order id).
+async fn ready_wo_with_permit_active_since(
+    db: &DatabaseConnection,
+    asset_code: &str,
+    active_since: chrono::DateTime<chrono::Utc>,
+) -> (String, Payload, chrono::DateTime<chrono::Utc>, i64) {
+    let asset = insert_equipment(db, asset_code).await;
+    let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+    let wo_sync = text(
+        db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let in_progress = text(
+        db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'in_progress'",
+    )
+    .await
+    .expect("status sync id");
+    let wp = advance_to_issued(db, create_from_wo(db, "hot_work", wo_id).await.expect("permit")).await;
+    let wp = set_status(db, &wp, "active").await.expect("activate");
+    exec(
+        db,
+        &format!(
+            "UPDATE work_permits SET activated_at = '{}' WHERE id = {}",
+            active_since.format("%Y-%m-%dT%H:%M:%SZ"),
+            wp.id
+        ),
+    )
+    .await;
+    let expiry = crate::settings::site::instant(wp.expires_at.as_deref().expect("expiry")).expect("expiry time");
+    let row = with(
+        wire(db, "work_orders", &wo_sync).await,
+        &[
+            ("status_sync_id", json!(in_progress)),
+            ("planned_end", Value::Null),
+            ("updated_at", json!(now())),
+        ],
+    );
+    (wo_sync, row, expiry, wo_id)
+}
+
+/// Hours from `from` to `minutes` before (negative: after) the permit's expiry.
+fn hours_until(from: chrono::DateTime<chrono::Utc>, expiry: chrono::DateTime<chrono::Utc>, minutes: i64) -> f64 {
+    ((expiry - from).num_seconds() - minutes * 60) as f64 / 3600.0
+}
+
+/// CMMS Advisor decision (2026-10-19), re-checked on arrival like here: without a planned end, a
+/// received start is judged against the start time the row records plus the expected duration,
+/// never this PC's clock.
+#[tokio::test]
+async fn a_received_start_without_a_planned_end_is_judged_from_its_recorded_start() {
+    let db = setup().await;
+    let started_at = chrono::Utc::now() - chrono::Duration::hours(2);
+    let (wo_sync, row, expiry, wo_id) =
+        ready_wo_with_permit_active_since(&db, "EQ-SYNC-96", started_at - chrono::Duration::hours(1)).await;
+    let started = with(
+        row,
+        &[(
+            "actual_start",
+            json!(started_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        )],
+    );
+    let status_sql = format!(
+        "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id WHERE w.id = {wo_id}"
+    );
+    // The work, from its recorded start, ends 30 minutes after the expiry: refused, nothing written.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(
+            started.clone(),
+            &[("expected_duration_hours", json!(hours_until(started_at, expiry, -30)))],
+        ),
+    )
+    .await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&db, &status_sql).await.as_deref(), Some("ready"));
+    // From its recorded start it ends 30 minutes before the expiry: applied (judged from this PC's
+    // clock, two hours later, it would end after the expiry).
+    let covered = hours_until(started_at, expiry, 30);
+    assert!(chrono::Utc::now() + chrono::Duration::seconds((covered * 3600.0) as i64) > expiry);
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started, &[("expected_duration_hours", json!(covered))]),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(text(&db, &status_sql).await.as_deref(), Some("in_progress"));
+}
+
+/// The same on a resume: the moment judged is the latest return to in progress the row's history
+/// records (here a resume in the transition log), not its first start.
+#[tokio::test]
+async fn a_received_resume_without_a_planned_end_is_judged_from_its_recorded_resume() {
+    let db = setup().await;
+    let started_at = chrono::Utc::now() - chrono::Duration::hours(3);
+    let resumed_at = chrono::Utc::now() - chrono::Duration::hours(1);
+    let (wo_sync, row, expiry, wo_id) =
+        ready_wo_with_permit_active_since(&db, "EQ-SYNC-97", started_at - chrono::Duration::hours(1)).await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO wo_state_transition_log (wo_id, from_status, to_status, action, actor_id, acted_at, lifecycle_state) \
+             VALUES ({wo_id}, 'on_hold', 'in_progress', 'resume', 1, '{}', 'in_progress')",
+            resumed_at.format("%Y-%m-%dT%H:%M:%SZ")
+        ),
+    )
+    .await;
+    let started = with(
+        row,
+        &[(
+            "actual_start",
+            json!(started_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        )],
+    );
+    // Covered from the first start, not from the resume: refused.
+    let hours = hours_until(started_at, expiry, 30);
+    assert!(resumed_at + chrono::Duration::seconds((hours * 3600.0) as i64) > expiry);
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started.clone(), &[("expected_duration_hours", json!(hours))]),
+    )
+    .await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+        "{outcome:?}"
+    );
+    // Covered from the resume: applied.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(
+            started,
+            &[("expected_duration_hours", json!(hours_until(resumed_at, expiry, 30)))],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// Neither a planned end nor an expected duration: a received start is not judged on the expiry
+/// (the permit was valid when the work started); an expired permit is still refused.
+#[tokio::test]
+async fn a_received_start_without_any_end_is_not_judged_but_an_expired_permit_is() {
+    let db = setup().await;
+    let started_at = chrono::Utc::now() - chrono::Duration::hours(1);
+    let (wo_sync, row, _, wo_id) =
+        ready_wo_with_permit_active_since(&db, "EQ-SYNC-98", started_at - chrono::Duration::hours(1)).await;
+    let started = with(
+        row,
+        &[
+            ("expected_duration_hours", Value::Null),
+            (
+                "actual_start",
+                json!(started_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+            ),
+        ],
+    );
+    let set_expiry = |at: chrono::DateTime<chrono::Utc>| {
+        let db = &db;
+        async move {
+            exec(
+                db,
+                &format!(
+                    "UPDATE work_permits SET expires_at = '{}' WHERE linked_work_order_id = {wo_id}",
+                    at.format("%Y-%m-%dT%H:%M:%SZ")
+                ),
+            )
+            .await;
+        }
+    };
+    // The permit had expired when the work started: refused.
+    set_expiry(started_at - chrono::Duration::minutes(5)).await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &started).await;
+    assert_eq!(code(&outcome), Some("PERMIT_EXPIRED"), "{outcome:?}");
+    // Valid when the work started (expired since, ten minutes later): with no end to judge, applied.
+    set_expiry(started_at + chrono::Duration::minutes(10)).await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
 }
 
 /// Owner decision: switching a permit type's energy-isolation rule off on another PC is re-checked
