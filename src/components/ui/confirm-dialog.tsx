@@ -27,6 +27,9 @@ export interface ConfirmDialogProps {
   description: string;
   /** Verb naming the action, e.g. "Deactivate article". */
   confirmLabel: string;
+  /** Label of the button that closes without acting, when "Cancel" would read like the action
+   * itself (e.g. next to "Cancel the line"). Defaults to the common "Cancel". */
+  dismissLabel?: string;
   destructive?: boolean;
   /** Disables the confirm button (e.g. while a required reason field is empty). */
   confirmDisabled?: boolean;
@@ -41,6 +44,7 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel,
+  dismissLabel,
   destructive = false,
   confirmDisabled = false,
   children,
@@ -78,7 +82,7 @@ export function ConfirmDialog({
             onClick={() => onOpenChange(false)}
             disabled={pending}
           >
-            {t("ds.confirm.cancel")}
+            {dismissLabel ?? t("ds.confirm.cancel")}
           </Button>
           <Button
             variant={destructive ? "destructive" : "default"}

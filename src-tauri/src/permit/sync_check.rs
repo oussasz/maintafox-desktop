@@ -561,28 +561,19 @@ async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> Ap
     .map_err(sync_err)
 }
 
-/// The fewest changes a permit sent back to draft takes to reach `status` again: the return to
-/// draft, then one change per lifecycle step (`pending_review` 2, `approved` 3, `issued` 4, `active`
-/// 5); any other status after draft at least 2.
-fn min_versions_after_reset(status: &str) -> i64 {
-    const STEPS: &[&str] = &["draft", "pending_review", "approved", "issued", "active"];
-    STEPS
-        .iter()
-        .position(|s| *s == status)
-        .map_or(2, |i| i64::try_from(i).unwrap_or(i64::MAX).saturating_add(1))
-}
-
 /// A received permit whose equipment, linked work order or site differs from the copy held here
-/// (`permit::queries::update_work_permit`, CMMS Advisor decision A), judged as an edit on this PC is:
+/// (`permit::queries::update_work_permit_checked`, CMMS Advisor decision A), judged as an edit on
+/// this PC is:
 /// - a linked work order is never removed (no edit on this PC removes it);
 /// - the copy held here is a draft or waiting for review (a permit approved here was approved for
 ///   its equipment at its site: the sending PC held that version too, or its change is older and is
 ///   not applied here);
-/// - held here waiting for review, a change of equipment, work order or site sends the permit back
-///   to draft: a received row with such a change and another status must be at least as many versions
-///   above the one applied here as the return to draft and the steps since take (two to wait for
-///   review again, three to be approved); an envelope version or a version applied here that cannot
-///   be read refuses it;
+/// - held here waiting for review, a change of equipment, work order or site sent the permit back to
+///   draft on the other PC; it may arrive already submitted or approved again, since the journal
+///   folds every save made there before a sync into one row whose version says nothing of how many
+///   saves it carries. It is accepted on the rules below; a sending PC that skipped the return to
+///   draft is not detected on arrival (left to step 6 stage 4, who sent the row and their rights;
+///   `docs/KNOWN_LIMITS.md`);
 /// - for a change of equipment or work order, no lock fitted under it here without a verified
 ///   removal and no isolation point planned on it here (they name the former equipment's points).
 ///   Isolation rows received just before the permit row (planned on the other PC for the new
@@ -642,28 +633,6 @@ async fn equipment_change_check(
                 ),
             )
         };
-    }
-    let to = field(permit, "status").unwrap_or_default();
-    // Held waiting for review, any change of equipment, work order or site sends it back to draft.
-    if held == "pending_review" && to != "draft" {
-        let received = crate::sync::materialize::INBOUND_ROW_VERSION.try_with(|v| *v).ok();
-        let applied = crate::sync::queries::synced_row_version(conn, "work_permits", permit_sync_id)
-            .await?
-            .map(|(v, _)| v);
-        let needed = min_versions_after_reset(to);
-        let enough = matches!((received, applied), (Some(r), Some(a)) if r.saturating_sub(a) >= needed);
-        if !enough {
-            return conflict(
-                "PERMIT_EQUIPMENT_REVIEW_SKIPPED",
-                format!(
-                    "permit {code} waits for review here; its equipment, work order or site changed and it arrives \
-                     '{to}' at version {} over version {} applied here: going back to draft and to '{to}' \
-                     takes at least {needed} versions",
-                    received.map_or_else(|| "unknown".to_string(), |v| v.to_string()),
-                    applied.map_or_else(|| "unknown".to_string(), |v| v.to_string()),
-                ),
-            );
-        }
     }
     if equipment_changes {
         let count = |condition: &str| {
@@ -977,10 +946,13 @@ fn isolation_actions(p: &Payload) -> [Option<&str>; 7] {
     ]
 }
 
-/// What a line cancelled here keeps as it was: its permit, content, actions and cancellation.
+/// What a line cancelled here keeps as it was: its permit, content (the energy and method texts and
+/// references, the mapping review mark), actions and cancellation.
 const CANCELLED_LINE_KEPT: &[&str] = &[
     "permit_sync_id",
     "isolation_point",
+    "energy_type",
+    "isolation_method",
     "energy_type_sync_id",
     "isolation_method_sync_id",
     "lock_number",
@@ -1010,7 +982,9 @@ async fn cancellation_check(
 ) -> AppResult<Option<InboundVerdict>> {
     let point = field(iso, "isolation_point").unwrap_or("?").to_string();
     if let Some(held) = local.filter(|l| field(l, "cancelled_at").is_some()) {
-        if CANCELLED_LINE_KEPT.iter().any(|k| field(held, k) != field(iso, k)) {
+        if CANCELLED_LINE_KEPT.iter().any(|k| field(held, k) != field(iso, k))
+            || flag(held, "mapping_review_required") != flag(iso, "mapping_review_required")
+        {
             return conflict(
                 "PERMIT_ISOLATION_CANCELLED",
                 format!(
@@ -1335,8 +1309,9 @@ pub(crate) async fn inbound_permit_type_check(
 
 /// Re-check of a delete received by synchronisation. This device never deletes these rows: a
 /// permit, its isolations and suspensions may go only while the permit is a draft (the LOTO history
-/// of any other permit is kept); a permit type and a qualification requirement never (they are
-/// edited or deactivated, which keeps their history).
+/// of any other permit is kept); a cancelled isolation line never, whatever its permit's status (it
+/// is kept, greyed, as the trace of its cancellation); a permit type and a qualification requirement
+/// never (they are edited or deactivated, which keeps their history).
 pub(crate) async fn inbound_delete_check(
     conn: &impl ConnectionTrait,
     entity_type: &str,
@@ -1366,14 +1341,14 @@ pub(crate) async fn inbound_delete_check(
         };
     }
     let sql = match entity_type {
-        "work_permits" => "SELECT status, code FROM work_permits WHERE entity_sync_id = ?",
+        "work_permits" => "SELECT status, code, NULL AS cancelled_at FROM work_permits WHERE entity_sync_id = ?",
         "permit_isolations" => {
-            "SELECT p.status, p.code FROM permit_isolations c JOIN work_permits p ON p.id = c.permit_id \
-             WHERE c.entity_sync_id = ?"
+            "SELECT p.status, p.code, c.cancelled_at FROM permit_isolations c \
+             JOIN work_permits p ON p.id = c.permit_id WHERE c.entity_sync_id = ?"
         }
         "permit_suspensions" => {
-            "SELECT p.status, p.code FROM permit_suspensions c JOIN work_permits p ON p.id = c.permit_id \
-             WHERE c.entity_sync_id = ?"
+            "SELECT p.status, p.code, NULL AS cancelled_at FROM permit_suspensions c \
+             JOIN work_permits p ON p.id = c.permit_id WHERE c.entity_sync_id = ?"
         }
         _ => return Ok(None),
     };
@@ -1389,6 +1364,16 @@ pub(crate) async fn inbound_delete_check(
     };
     let status: String = row.try_get("", "status").map_err(sync_err)?;
     let code: String = row.try_get("", "code").map_err(sync_err)?;
+    let cancelled_at: Option<String> = row.try_get("", "cancelled_at").map_err(sync_err)?;
+    if cancelled_at.is_some() {
+        return conflict(
+            "PERMIT_DELETE_REFUSED",
+            format!(
+                "a cancelled isolation line of permit {code} ('{status}') cannot be deleted by synchronisation: \
+                 it is kept as the trace of its cancellation"
+            ),
+        );
+    }
     if status != "draft" {
         return conflict(
             "PERMIT_DELETE_REFUSED",

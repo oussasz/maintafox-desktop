@@ -3043,13 +3043,6 @@ async fn equipment_on_line_of_first_site(db: &DatabaseConnection, code: &str) ->
     super::tests::scalar_i64(db, &format!("SELECT id FROM equipment WHERE asset_id_code = '{code}'")).await
 }
 
-/// [`apply`] as the inbox pass applies a row of envelope version `version`.
-async fn apply_at(db: &DatabaseConnection, version: i64, sync_id: &str, payload: &Payload) -> ApplyOutcome {
-    crate::sync::materialize::INBOUND_ROW_VERSION
-        .scope(version, apply(db, "work_permits", sync_id, payload))
-        .await
-}
-
 /// The version the server holds for a permit, as recorded when it was last synced here.
 async fn synced_at(db: &DatabaseConnection, wp: &WorkPermit, version: i64) {
     crate::sync::queries::record_synced_state(db, "work_permits", &wp.entity_sync_id, version, "test-hash", "test")
@@ -3129,77 +3122,100 @@ async fn a_received_site_change_is_rechecked_against_the_permit_held_here() {
     assert_eq!(code(&outcome), Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"), "{outcome:?}");
 }
 
-/// Held here waiting for review, a permit received with other equipment and another status than
-/// draft must carry the versions of the return to draft and the steps since (two to wait for
-/// review again, three to be approved); an unknown version is refused.
+/// A permit held here waiting for review, as last synced at `version`, with nothing of this PC still
+/// to send (its own saves are on the server).
+async fn held_in_review_synced_at(db: &DatabaseConnection, asset: i64, version: i64) -> WorkPermit {
+    let wp = create_permit(db, "hot_work", asset).await;
+    let wp = set_status(db, &wp, "pending_review").await.expect("submit");
+    exec(db, "DELETE FROM sync_capture_journal").await;
+    exec(db, "DELETE FROM sync_outbox").await;
+    synced_at(db, &wp, version).await;
+    wp
+}
+
+/// Runs the inbox pass on the rows waiting; returns (applied, conflicts).
+async fn inbox_pass(db: &DatabaseConnection) -> (i64, i64) {
+    let result = crate::sync::materialize::materialize_inbox_batch(db, None)
+        .await
+        .expect("materialize");
+    crate::sync::row_codec::clear_ref_cache();
+    (result.applied, result.conflicts)
+}
+
+/// The normal offline flow on another PC: a permit waiting for review has its equipment (or only
+/// its site) changed, goes back to draft there, is submitted again and even approved, then syncs.
+/// The capture journal folds those saves into ONE row, one version above the one held here: it is
+/// accepted, with no rule on how many versions it carries.
 #[tokio::test]
-async fn a_received_equipment_change_skipping_the_return_to_draft_is_refused() {
+async fn a_folded_offline_equipment_change_resubmitted_or_approved_is_accepted() {
     let db = setup().await;
     let asset = insert_equipment(&db, "EQ-SYNC-RV1").await;
-    let _ = insert_equipment(&db, "EQ-SYNC-RV2").await;
-    let other = json!("eq-sync-EQ-SYNC-RV2");
-    for (status, too_few, enough) in [("pending_review", 1, 2), ("approved", 2, 3)] {
-        let wp = create_permit(&db, "hot_work", asset).await;
-        let wp = set_status(&db, &wp, "pending_review").await.expect("submit");
-        synced_at(&db, &wp, 5).await;
+    let other = insert_equipment(&db, "EQ-SYNC-RV2").await;
+    for status in ["pending_review", "approved"] {
+        let wp = held_in_review_synced_at(&db, asset, 5).await;
         let changed = with(
             wire(&db, "work_permits", &wp.entity_sync_id).await,
-            &[("asset_sync_id", other.clone()), ("status", json!(status))],
+            &[
+                ("asset_sync_id", json!("eq-sync-EQ-SYNC-RV2")),
+                ("status", json!(status)),
+            ],
         );
-        let outcome = apply_at(&db, 5 + too_few, &wp.entity_sync_id, &changed).await;
+        inbox(&db, "work_permits", &wp.entity_sync_id, 6, "pending", &changed).await;
+        assert_eq!(inbox_pass(&db).await, (1, 0), "{status} at held + 1");
+        let now = queries::get_work_permit(&db, wp.id)
+            .await
+            .expect("read")
+            .expect("permit");
+        assert_eq!((now.asset_id, now.status.as_str()), (other, status));
         assert_eq!(
-            code(&outcome),
-            Some("PERMIT_EQUIPMENT_REVIEW_SKIPPED"),
-            "{status} at +{too_few}: {outcome:?}"
-        );
-        // Outside an inbox apply the version is unknown: refused too.
-        let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &changed).await;
-        assert_eq!(code(&outcome), Some("PERMIT_EQUIPMENT_REVIEW_SKIPPED"), "{outcome:?}");
-        let outcome = apply_at(&db, 5 + enough, &wp.entity_sync_id, &changed).await;
-        assert!(
-            matches!(outcome, ApplyOutcome::Applied),
-            "{status} at +{enough}: {outcome:?}"
+            text(
+                &db,
+                &format!(
+                    "SELECT apply_status FROM sync_inbox WHERE entity_sync_id = '{}'",
+                    wp.entity_sync_id
+                )
+            )
+            .await
+            .as_deref(),
+            Some("applied")
         );
     }
-    // Without a version applied here: refused.
-    let wp = create_permit(&db, "hot_work", asset).await;
-    let wp = set_status(&db, &wp, "pending_review").await.expect("submit");
-    let changed = with(
-        wire(&db, "work_permits", &wp.entity_sync_id).await,
-        &[("asset_sync_id", other.clone())],
-    );
-    let outcome = apply_at(&db, 9, &wp.entity_sync_id, &changed).await;
-    assert_eq!(code(&outcome), Some("PERMIT_EQUIPMENT_REVIEW_SKIPPED"), "{outcome:?}");
-    // Sent back to draft (one version): applied whatever the versions.
-    let outcome = apply(
-        &db,
-        "work_permits",
-        &wp.entity_sync_id,
-        &with(changed, &[("status", json!("draft"))]),
-    )
-    .await;
-    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
 
-    // The site alone (to its equipment's line, on the chain) sends it back to draft too: the same
-    // minimum versions.
+    // The site alone (to its equipment's line, on the chain), resubmitted there: accepted too.
     let on_line = equipment_on_line_of_first_site(&db, "EQ-SYNC-RV3").await;
-    let wp = create_permit(&db, "hot_work", on_line).await;
+    let wp = held_in_review_synced_at(&db, on_line, 5).await;
     assert_eq!(wp.entity_id, 1);
-    let wp = set_status(&db, &wp, "pending_review").await.expect("submit");
-    synced_at(&db, &wp, 5).await;
     let moved = with(
         wire(&db, "work_permits", &wp.entity_sync_id).await,
         &[("entity_sync_id", json!("permit-test-org-003"))],
     );
-    let outcome = apply_at(&db, 6, &wp.entity_sync_id, &moved).await;
-    assert_eq!(code(&outcome), Some("PERMIT_EQUIPMENT_REVIEW_SKIPPED"), "{outcome:?}");
-    let outcome = apply_at(&db, 7, &wp.entity_sync_id, &moved).await;
-    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    inbox(&db, "work_permits", &wp.entity_sync_id, 6, "pending", &moved).await;
+    assert_eq!(inbox_pass(&db).await, (1, 0));
     let now = queries::get_work_permit(&db, wp.id)
         .await
         .expect("read")
         .expect("permit");
     assert_eq!((now.entity_id, now.status.as_str()), (3, "pending_review"));
+
+    // The other arrival rules still hold for a folded row: a site off the new equipment's chain is
+    // a conflict, nothing written.
+    let far = equipment_on_second_site(&db, "EQ-SYNC-RV4").await;
+    let wp = held_in_review_synced_at(&db, asset, 5).await;
+    let off_chain = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[
+            ("asset_sync_id", json!("eq-sync-EQ-SYNC-RV4")),
+            ("status", json!("approved")),
+        ],
+    );
+    inbox(&db, "work_permits", &wp.entity_sync_id, 6, "pending", &off_chain).await;
+    assert_eq!(inbox_pass(&db).await, (0, 1));
+    let now = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_ne!(now.asset_id, far, "nothing written");
+    assert_eq!(now.status, "pending_review");
 }
 
 /// A work order is never removed from a permit by a received row, and a work order recording no
@@ -3485,4 +3501,63 @@ async fn a_cancelled_line_does_not_block_a_received_equipment_change_or_activati
     );
     let outcome = apply(&db, "work_permits", &other.entity_sync_id, &active).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// A cancelled line is the only trace of its cancellation on this PC: a received delete of it is
+/// refused whatever its permit's status (a planned line of a draft may still go), and a received
+/// row cannot change any of its content (energy and method texts, the mapping review mark).
+#[tokio::test]
+async fn a_cancelled_line_is_never_deleted_or_rewritten_by_sync() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-CX5").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let cancelled = add_isolation(&db, wp.id, "Line to cancel").await;
+    let planned = add_isolation(&db, wp.id, "Line still planned").await;
+    queries::cancel_permit_isolation(&db, cancel_input(&cancelled), VERIFIER)
+        .await
+        .expect("cancel in draft");
+    assert_eq!(permit_status(&db, &wp).await, "draft");
+
+    let held = wire(&db, "permit_isolations", &cancelled.entity_sync_id).await;
+    for (key, value) in [
+        ("energy_type", json!("Pneumatic (changed elsewhere)")),
+        ("isolation_method", json!("Valve (changed elsewhere)")),
+        ("mapping_review_required", flipped(&held, "mapping_review_required")),
+    ] {
+        let changed = with(held.clone(), &[(key, value)]);
+        let outcome = apply(&db, "permit_isolations", &cancelled.entity_sync_id, &changed).await;
+        assert_eq!(code(&outcome), Some("PERMIT_ISOLATION_CANCELLED"), "{key}: {outcome:?}");
+    }
+
+    for operation in ["delete", "archive"] {
+        let outcome = delete_as(&db, "permit_isolations", &cancelled.entity_sync_id, operation).await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_DELETE_REFUSED"),
+            "{operation}: {outcome:?}"
+        );
+    }
+    assert!(
+        text(
+            &db,
+            &format!(
+                "SELECT cancelled_at FROM permit_isolations WHERE entity_sync_id = '{}'",
+                cancelled.entity_sync_id
+            )
+        )
+        .await
+        .is_some(),
+        "the cancelled line is kept"
+    );
+    let outcome = delete(&db, "permit_isolations", &planned.entity_sync_id).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// The flag `key` of `p` set the other way, in the form the row carries it (number or boolean).
+fn flipped(p: &Payload, key: &str) -> Value {
+    match p.get(key) {
+        Some(Value::Bool(b)) => json!(!b),
+        Some(Value::Number(n)) if n.as_i64().is_some_and(|v| v != 0) => json!(0),
+        _ => json!(1),
+    }
 }

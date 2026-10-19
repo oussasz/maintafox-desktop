@@ -511,7 +511,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                     <span className="text-text-muted">
                       {energyLabel(iso)} · {methodLabel(iso)}
                     </span>
-                    {iso.mapping_review_required ? (
+                    {iso.mapping_review_required && state !== "cancelled" ? (
                       <StatusChip
                         label={t("isolation.toReview")}
                         tone="attention"
@@ -924,6 +924,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             : ""
         }
         confirmLabel={t("isolation.cancel")}
+        dismissLabel={t("isolation.cancelKeep")}
         destructive
         onConfirm={async () => {
           const line = cancelLine;

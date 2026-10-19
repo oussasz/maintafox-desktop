@@ -155,6 +155,7 @@
     "threePersonSelf": "You verified this isolation — a third person must confirm its removal.",
     "cancel": "Cancel the line",
     "cancelTitle": "Cancel the isolation line",
+    "cancelKeep": "Keep the line",
     "cancelConfirm": "The line “{{point}}” ({{energy}} · {{method}}) was never applied. It will be marked “Cancelled” and kept in the permit's history: it can no longer be applied, verified or edited.",
     "cancelResetNotice": "This permit is waiting for review: it will go back to draft and must be submitted again.",
     "cancelHint": "A line never applied can be cancelled while the permit is a draft or waiting for review; a fitted lock is removed with a verified removal.",

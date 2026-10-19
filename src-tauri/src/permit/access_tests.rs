@@ -1224,9 +1224,11 @@ async fn changing_a_permits_equipment_moves_it_to_the_equipments_site_with_the_r
     );
 }
 
-/// Read-only review of permits approved before the site followed the equipment: an approved,
-/// issued or active permit whose equipment is on another site is listed by the data-integrity
-/// check, never rewritten; a permit on a site for equipment of one of its lines is not listed.
+/// Read-only review of permits approved before the site followed the equipment, by the rule of the
+/// creation, an edit and sync arrival (`derived_permit_node` + `node_on_permit_chain`): an approved,
+/// issued or active permit on another site than its equipment's, or on a level below it, is listed
+/// by the data-integrity check, never rewritten; a permit on a site for equipment of one of its
+/// lines, or on the node its work order records, is not listed.
 #[tokio::test]
 async fn permits_on_equipment_of_another_site_are_listed_for_review_not_rewritten() {
     let f = fixture().await;
@@ -1253,6 +1255,36 @@ async fn permits_on_equipment_of_another_site_are_listed_for_review_not_rewritte
         ),
     )
     .await;
+    // On line A1 for equipment of site A: a level below, listed.
+    let below = set_status(&f.db, &permit(&f.db, f.eq_a).await, "pending_review").await;
+    let below = set_status(&f.db, &below, "approved").await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE work_permits SET entity_id = {} WHERE id = {}",
+            f.t.line_a1, below.id
+        ),
+    )
+    .await;
+    // Equipment of site A on a work order recording site B: the permit follows its work order to
+    // site B, not listed.
+    let wo_on_b = work_order(&f.db, f.eq_a, f.plant, "Work order recorded on site B").await;
+    exec(
+        &f.db,
+        &format!("UPDATE work_orders SET entity_id = {} WHERE id = {wo_on_b}", f.t.site_b),
+    )
+    .await;
+    let ty = hot_work(&f.db).await;
+    let follows_wo = queries::create_work_permit(&f.db, create_input(ty, Some(f.eq_a), None, Some(wo_on_b)))
+        .await
+        .expect("permit on the work order");
+    assert_eq!(follows_wo.entity_id, f.t.site_b, "the work order's site");
+    let follows_wo = set_status(
+        &f.db,
+        &set_status(&f.db, &follows_wo, "pending_review").await,
+        "approved",
+    )
+    .await;
     // A draft in the same case is not judged (its equipment can still change).
     let draft = permit(&f.db, f.eq_a).await;
     exec(
@@ -1272,6 +1304,8 @@ async fn permits_on_equipment_of_another_site_are_listed_for_review_not_rewritte
     };
     assert_eq!(scalar(&f.db, &listed(on_b.id)).await, 1);
     assert_eq!(scalar(&f.db, &listed(line.id)).await, 0);
+    assert_eq!(scalar(&f.db, &listed(below.id)).await, 1);
+    assert_eq!(scalar(&f.db, &listed(follows_wo.id)).await, 0);
     assert_eq!(scalar(&f.db, &listed(draft.id)).await, 0);
     // Never rewritten.
     assert_eq!(
@@ -1287,6 +1321,66 @@ async fn permits_on_equipment_of_another_site_are_listed_for_review_not_rewritte
         .await
         .expect("detectors again");
     assert_eq!(scalar(&f.db, &listed(on_b.id)).await, 1);
+}
+
+/// A deleted org node is no site for a permit, even above its equipment's; and a derived node that
+/// does not exist here gives the permit no site, whether it is given or left out.
+#[tokio::test]
+async fn a_deleted_parent_or_a_missing_derived_node_is_no_permit_site() {
+    let f = fixture().await;
+    let ty = hot_work(&f.db).await;
+    let area = crate::auth::scope_tests::node(&f.db, "PTW-DEL-AREA", Some(f.t.site_a)).await;
+    let cell = crate::auth::scope_tests::node(&f.db, "PTW-DEL-CELL", Some(area)).await;
+    let eq_cell = equipment(&f.db, "DEL-CELL", Some(cell)).await;
+    // Before the deletion the area above the cell is a valid site.
+    let before = queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), Some(area), None))
+        .await
+        .expect("area above the cell");
+    assert_eq!(before.entity_id, area);
+    exec(
+        &f.db,
+        &format!("UPDATE org_nodes SET deleted_at = '2026-01-02T00:00:00Z' WHERE id = {area}"),
+    )
+    .await;
+    let err = queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), Some(area), None))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "PERMIT_SITE_NOT_EQUIPMENT_SITE");
+    // The cell itself and the live site above stay valid.
+    for node in [None, Some(f.t.site_a)] {
+        queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), node, None))
+            .await
+            .unwrap_or_else(|e| panic!("{node:?}: {e:?}"));
+    }
+    // The edit applies the same rule: a draft moved to the deleted area is refused.
+    let draft = permit(&f.db, eq_cell).await;
+    let err = queries::update_work_permit(
+        &f.db,
+        WorkPermitUpdateInput {
+            id: draft.id,
+            expected_row_version: draft.row_version,
+            asset_id: None,
+            entity_id: Some(area),
+            linked_work_order_id: None,
+            expires_at: None,
+        },
+        i64::from(f.plant),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(code_of(&err), "PERMIT_SITE_NOT_EQUIPMENT_SITE");
+
+    // Equipment installed on a node missing here: refused given or not, the same way.
+    let missing = 8_888_888;
+    let eq_lost = equipment(&f.db, "LOST-NODE", Some(missing)).await;
+    let omitted = queries::create_work_permit(&f.db, create_input(ty, Some(eq_lost), None, None))
+        .await
+        .unwrap_err();
+    let given = queries::create_work_permit(&f.db, create_input(ty, Some(eq_lost), Some(missing), None))
+        .await
+        .unwrap_err();
+    assert!(matches!(omitted, AppError::ValidationFailed(_)), "{omitted:?}");
+    assert_eq!(format!("{omitted:?}"), format!("{given:?}"));
 }
 
 /// The edit of a permit's site alone (same equipment and work order): before approval, the node

@@ -290,18 +290,23 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
 /// Permit statuses checked by [`permit_site_findings`]: approved, issued and still in force.
 const PERMIT_SITE_CHECKED_STATUSES_SQL: &str = "('approved', 'issued', 'active', 'suspended', 'revalidation_required')";
 
-/// Permits approved, issued or in force whose equipment is installed on another site than the
-/// permit's (read-only: never rewritten, CMMS Advisor decision A, point 5). Before a permit's site
-/// followed its equipment, an edit could change the equipment and keep the former site. "Another
-/// site": neither node is the other or one of its parents (a permit recorded on a site for
-/// equipment on one of its lines is on the same site). Equipment installed nowhere, or a permit
-/// without a site, is not judged here (the permit lists count permits without a site).
+/// Permits approved, issued or in force whose site is not the one their equipment and work order
+/// give them (read-only: never rewritten, CMMS Advisor decision A, point 5), judged by the rule of
+/// the creation, an edit and a permit received by sync (`permit::queries::derived_permit_node` and
+/// `node_on_permit_chain`): the work order's node when it records one, else the equipment's, or a
+/// level above it. Listed: another site, a level below, a sibling, or a site deleted since. Before a
+/// permit's site followed its equipment, an edit could change the equipment and keep the former
+/// site. A permit without a site, or whose equipment and work order give no usable node, is not
+/// judged here (the permit lists count permits without a site).
 async fn permit_site_findings(db: &impl ConnectionTrait) -> AppResult<i64> {
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             format!(
-                "SELECT wp.id, wp.code, wp.status, wp.entity_id, wp.asset_id, e.asset_id_code,                  e.installed_at_node_id                  FROM work_permits wp JOIN equipment e ON e.id = wp.asset_id                  WHERE wp.status IN {PERMIT_SITE_CHECKED_STATUSES_SQL}                    AND wp.entity_id > 0 AND e.installed_at_node_id > 0                    AND wp.entity_id <> e.installed_at_node_id"
+                "SELECT wp.id, wp.code, wp.status, wp.entity_id, wp.asset_id, wp.linked_work_order_id, \
+                 e.asset_id_code, e.installed_at_node_id \
+                 FROM work_permits wp JOIN equipment e ON e.id = wp.asset_id \
+                 WHERE wp.status IN {PERMIT_SITE_CHECKED_STATUSES_SQL} AND wp.entity_id > 0"
             ),
         ))
         .await?;
@@ -309,21 +314,24 @@ async fn permit_site_findings(db: &impl ConnectionTrait) -> AppResult<i64> {
     for row in &rows {
         let permit_id: i64 = row.try_get("", "id").map_err(|e| map_err("id", e))?;
         let permit_node: i64 = row.try_get("", "entity_id").map_err(|e| map_err("entity_id", e))?;
-        let equipment_node: i64 = row
+        let asset_id: i64 = row.try_get("", "asset_id").map_err(|e| map_err("asset_id", e))?;
+        let linked_wo: Option<i64> = row
+            .try_get("", "linked_work_order_id")
+            .map_err(|e| map_err("linked_work_order_id", e))?;
+        let equipment_node: Option<i64> = row
             .try_get("", "installed_at_node_id")
             .map_err(|e| map_err("installed_at_node_id", e))?;
-        let related = crate::auth::scope::ancestor_chain(db, equipment_node)
-            .await?
-            .contains(&permit_node)
-            || crate::auth::scope::ancestor_chain(db, permit_node)
-                .await?
-                .contains(&equipment_node);
-        if related {
+        let derived = match crate::permit::queries::derived_permit_node(db, asset_id, linked_wo).await {
+            Ok(Some(node)) => node,
+            // No usable node, or a linked work order that no longer exists: not judged here.
+            Ok(None) | Err(crate::errors::AppError::NotFound { .. }) => continue,
+            Err(e) => return Err(e),
+        };
+        if crate::permit::queries::node_on_permit_chain(db, derived, permit_node).await? {
             continue;
         }
         let code: String = row.try_get("", "code").map_err(|e| map_err("code", e))?;
         let status: String = row.try_get("", "status").map_err(|e| map_err("status", e))?;
-        let asset_id: i64 = row.try_get("", "asset_id").map_err(|e| map_err("asset_id", e))?;
         let asset_code: Option<String> = row
             .try_get("", "asset_id_code")
             .map_err(|e| map_err("asset_id_code", e))?;
@@ -343,6 +351,8 @@ async fn permit_site_findings(db: &impl ConnectionTrait) -> AppResult<i64> {
                 "equipment_id": asset_id,
                 "equipment_code": asset_code,
                 "equipment_entity_id": equipment_node,
+                "linked_work_order_id": linked_wo,
+                "derived_entity_id": derived,
             }),
         )
         .await?;

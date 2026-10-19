@@ -1369,15 +1369,33 @@ pub(crate) async fn derived_permit_node(
     Ok(installed.filter(|n| *n > 0))
 }
 
+/// Whether `node` is an org node that exists here and is not deleted.
+async fn live_org_node(db: &impl ConnectionTrait, node: i64) -> AppResult<bool> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM org_nodes WHERE id = ? AND deleted_at IS NULL",
+            [node.into()],
+        ))
+        .await?
+        .is_some())
+}
+
 /// Whether a permit whose site follows `derived` may be recorded on `node`: that node or one of its
-/// parents (never a sibling, a node below it or another site).
+/// parents (never a sibling, a node below it or another site). Both must exist here and not be
+/// deleted: a deleted parent is no site for a permit, and a derived node missing here gives none.
+/// (`auth::scope::ancestor_chain` follows parents whatever their status, as the rights need.)
 pub(crate) async fn node_on_permit_chain(db: &impl ConnectionTrait, derived: i64, node: i64) -> AppResult<bool> {
+    if !live_org_node(db, derived).await? || !live_org_node(db, node).await? {
+        return Ok(false);
+    }
     Ok(crate::auth::scope::ancestor_chain(db, derived).await?.contains(&node))
 }
 
 /// The node a permit on `asset_id` (and `linked_work_order_id`) is recorded on: `given` when it is
 /// the derived node or one of its parents, the derived node when none is given. Refused when the
-/// derived node is not usable, or when `given` is off its chain.
+/// derived node is not usable (none, missing here or deleted, whether it is given or not), or when
+/// `given` is off its chain.
 async fn checked_permit_node(
     db: &impl ConnectionTrait,
     asset_id: i64,
@@ -1387,6 +1405,9 @@ async fn checked_permit_node(
     let derived = derived_permit_node(db, asset_id, linked_work_order_id)
         .await?
         .ok_or_else(undetermined_site_error)?;
+    if !live_org_node(db, derived).await? {
+        return Err(undetermined_site_error());
+    }
     match given {
         None => Ok(derived),
         Some(node) if node_on_permit_chain(db, derived, node).await? => Ok(node),
@@ -1700,9 +1721,10 @@ fn permit_audit_event(
 }
 
 /// `actor_id` is the session user: it is recorded as the person who changed the permit's
-/// equipment, linked work order or site. Without a scope check before it (the command uses
-/// [`update_work_permit_checked`]).
-pub async fn update_work_permit(
+/// equipment, linked work order or site. Without a scope check before it: tests only, the command
+/// uses [`update_work_permit_checked`].
+#[cfg(test)]
+pub(crate) async fn update_work_permit(
     db: &DatabaseConnection,
     input: WorkPermitUpdateInput,
     actor_id: i64,
@@ -1713,7 +1735,7 @@ pub async fn update_work_permit(
     Ok(out)
 }
 
-/// [`update_work_permit`] after the scope check (`access::require_update`): `checked` is the
+/// The edit of a permit after the scope check (`access::require_update`): `checked` is the
 /// target that check judged. The save computes the target again inside its transaction and
 /// refuses the edit as a concurrent update when it differs (the permit, its work order or the
 /// equipment changed between the check and the save), so the node stored is always the node
@@ -2553,12 +2575,14 @@ async fn cancel_permit_isolation_in(
             DbBackend::Sqlite,
             "UPDATE permit_isolations SET cancelled_at = ?, cancelled_by_id = ?, row_version = row_version + 1 \
              WHERE id = ? AND row_version = ? AND cancelled_at IS NULL AND applied_at IS NULL \
-               AND verified_at IS NULL AND removal_verified_at IS NULL",
+               AND verified_at IS NULL AND removal_verified_at IS NULL \
+               AND EXISTS (SELECT 1 FROM work_permits WHERE id = ? AND status IN ('draft', 'pending_review'))",
             [
                 cancelled_at.clone().into(),
                 actor_id.into(),
                 iso.id.into(),
                 iso.row_version.into(),
+                permit.id.into(),
             ],
         ))
         .await?;

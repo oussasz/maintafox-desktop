@@ -155,6 +155,7 @@
     "threePersonSelf": "Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait.",
     "cancel": "Annuler la ligne",
     "cancelTitle": "Annuler la ligne d'isolement",
+    "cancelKeep": "Garder la ligne",
     "cancelConfirm": "La ligne « {{point}} » ({{energy}} · {{method}}) n'a jamais été posée. Elle sera marquée « Annulée » et gardée dans l'historique du permis : elle ne pourra plus être posée, vérifiée ni modifiée.",
     "cancelResetNotice": "Ce permis attend sa revue : il repassera en brouillon et devra être soumis de nouveau.",
     "cancelHint": "Une ligne jamais posée peut être annulée tant que le permis est en brouillon ou en attente de revue ; un cadenas posé se retire avec une dépose vérifiée.",
