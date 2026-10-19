@@ -250,11 +250,13 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
               name="type-code"
               label={t("types.code")}
               required
+              description={draft.id != null ? t("types.codeLocked") : undefined}
               error={submitted && !draft.code.trim() ? t("errors.required") : undefined}
             >
               <Input
                 id="type-code"
                 value={draft.code}
+                readOnly={draft.id != null}
                 onChange={(e) => setDraft((d) => ({ ...d, code: e.target.value }))}
               />
             </FormField>

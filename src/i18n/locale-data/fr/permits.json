@@ -229,6 +229,7 @@
     "hse": "Approbation HSE requise",
     "operations": "Approbation exploitation requise",
     "atmospheric": "Test atmosphérique requis",
+    "codeLocked": "Le code d’un type existant ne peut plus être modifié : permis et règles s’y réfèrent. Créez un nouveau type si besoin.",
     "maxHours": "Durée max (h)",
     "version": "Version",
     "save": "Enregistrer le type",
