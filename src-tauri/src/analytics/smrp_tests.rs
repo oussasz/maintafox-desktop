@@ -966,7 +966,8 @@ async fn the_reference_manage_right_sets_a_nature_and_an_unknown_type_is_refused
         ),
         format!(
             "INSERT INTO role_permissions (role_id, permission_id, granted_at) \
-             SELECT r.id, p.id, '{now}' FROM roles r, permissions p WHERE r.name = 'ref-manager' AND p.name = 'ref.manage'"
+             SELECT r.id, p.id, '{now}' FROM roles r, permissions p WHERE r.name = 'ref-manager' AND p.name = '{perm}'",
+            perm = crate::rbac::permissions::REF_MANAGE
         ),
         format!(
             "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at, row_version) \
