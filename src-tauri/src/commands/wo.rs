@@ -13,20 +13,111 @@
 //!                open_downtime, close_downtime, save_failure_detail, save_verification,
 //!                close_wo, upload_wo_attachment, update_service_cost
 //!   ot.admin   — reopen_wo, delete_wo_attachment
+//!
+//! Site scope (step 6, `docs/SITE_SCOPED_ROLES.md`): every work order is checked at its org node
+//! `work_orders.entity_id` (`wo::access`), with the same permission as before; what belongs to a
+//! work order (labour, parts, tasks, tools, downtime, attachments) at its work order's node. The
+//! list, the statistics, the backlog heatmap and the audit log are limited in SQL to where the
+//! user holds the right; the list says how many work orders it leaves out and why. A plant-wide
+//! role sees and acts everywhere, as before. The actor of an action is always the signed-in
+//! user. Reference catalogs (types, statuses, urgency) and the people pickers stay plant-wide.
 
 use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
+use crate::auth::scope::{AccessScope, Anchor};
 use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
 use crate::wo::types;
 use crate::wo::{
-    analytics, attachments, audit, closeout, costs, delay, execution, labor, parts, queries, stats, statuses, tasks,
+    access, analytics, attachments, audit, closeout, costs, delay, execution, labor, parts, queries, stats, statuses,
+    tasks,
 };
 use crate::{require_permission, require_session};
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use tauri::Manager;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Site-scope checks shared by the commands (`wo::access`)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Where the user holds `permission` (held nowhere: refused as before); filters lists and figures.
+async fn require_anywhere(state: &AppState, user_id: i32, permission: &str) -> AppResult<AccessScope> {
+    access::require_anywhere(&state.db, &state.permission_cache, user_id, permission).await
+}
+
+/// `permission` on the work order `wo_id` (held nowhere: refused as before; no such work order:
+/// not found; else checked at its org node).
+async fn require_on_wo(state: &AppState, user_id: i32, permission: &str, wo_id: i64) -> AppResult<Anchor> {
+    access::require_on_wo(&state.db, &state.permission_cache, user_id, permission, wo_id).await
+}
+
+/// `permission` for the reads of what belongs to the work order `wo_id` (a work order that no
+/// longer exists has no site: plant-wide users only, who read what is left of it as before).
+async fn require_on_wo_records(state: &AppState, user_id: i32, permission: &str, wo_id: i64) -> AppResult<()> {
+    access::require_on_wo_records(&state.db, &state.permission_cache, user_id, permission, wo_id).await
+}
+
+/// `permission` on the work order a labour entry, part line, task, tool, downtime segment or
+/// attachment belongs to (no such record: not found).
+async fn require_on_child(
+    state: &AppState,
+    user_id: i32,
+    permission: &str,
+    child: access::WoChild,
+    id: i64,
+) -> AppResult<()> {
+    access::require_on_child(&state.db, &state.permission_cache, user_id, permission, child, id).await
+}
+
+/// `permission` on the work order, and at the new equipment's node when the equipment changes.
+async fn require_equipment_change(
+    state: &AppState,
+    user_id: i32,
+    permission: &str,
+    wo_id: i64,
+    new_equipment_id: Option<i64>,
+) -> AppResult<()> {
+    access::require_equipment_change(
+        &state.db,
+        &state.permission_cache,
+        user_id,
+        permission,
+        wo_id,
+        new_equipment_id,
+    )
+    .await
+}
+
+/// The reference catalogs of the work-order screens (types, statuses) are plant-wide objects any
+/// work-order user reads: `ref.view` plant-wide, or `ot.view` / `ot.create` held anywhere (a
+/// site-only user reads them too). Refused as before otherwise.
+async fn require_wo_catalog_read(state: &AppState, user_id: i32) -> AppResult<()> {
+    let has_ref_view = crate::auth::rbac::check_permission(
+        &state.db,
+        user_id,
+        crate::rbac::permissions::REF_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    if has_ref_view {
+        return Ok(());
+    }
+    if access::holds_anywhere(
+        &state.db,
+        &state.permission_cache,
+        user_id,
+        crate::rbac::permissions::OT_VIEW,
+    )
+    .await?
+    {
+        return Ok(());
+    }
+    require_anywhere(state, user_id, crate::rbac::permissions::OT_CREATE)
+        .await
+        .map(|_| ())
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) list_wo — requires ot.view
@@ -35,8 +126,9 @@ use tauri::Manager;
 #[tauri::command]
 pub async fn list_wo(filter: queries::WoListFilter, state: State<'_, AppState>) -> AppResult<queries::WoListPage> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
-    queries::list_work_orders(&state.db, filter).await
+    let scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::OT_VIEW).await?;
+    // Where the user holds ot.view, in SQL before paging; the page counts what it leaves out.
+    queries::list_work_orders_in_scope(&state.db, filter, &scope).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -46,7 +138,7 @@ pub async fn list_wo(filter: queries::WoListFilter, state: State<'_, AppState>) 
 #[tauri::command]
 pub async fn get_wo(id: i64, state: State<'_, AppState>) -> AppResult<queries::WoGetResponse> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    let scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::OT_VIEW).await?;
 
     let wo = queries::get_work_order(&state.db, id)
         .await?
@@ -54,6 +146,13 @@ pub async fn get_wo(id: i64, state: State<'_, AppState>) -> AppResult<queries::W
             entity: "WorkOrder".into(),
             id: id.to_string(),
         })?;
+    crate::auth::scope::check_anchor(
+        &state.db,
+        &scope,
+        crate::rbac::permissions::OT_VIEW,
+        Anchor::of(wo.entity_id),
+    )
+    .await?;
 
     let transitions = queries::get_wo_transition_log(&state.db, id).await?;
 
@@ -66,16 +165,24 @@ pub async fn get_wo(id: i64, state: State<'_, AppState>) -> AppResult<queries::W
 
 #[tauri::command]
 pub async fn create_wo(
-    input: crate::wo::domain::WoCreateInput,
+    mut input: crate::wo::domain::WoCreateInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::OT_CREATE,
-        PermissionScope::Global
-    );
+    // The creator (requester of record) is the signed-in user, never an id sent by the screen.
+    input.creator_id = i64::from(user.user_id);
+    // Rule §2.6: ot.create at the new work order's org node (the node given, else its equipment's
+    // installed node — as the create derives it) and at the equipment's node when that is
+    // another one. No derivable node: plant-wide users only (the create then refuses it for
+    // everyone, as before).
+    access::require_create_at(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        input.entity_id,
+        input.equipment_id,
+    )
+    .await?;
 
     // ── Validate required fields ─────────────────────────────────────────
     let mut errors: Vec<String> = Vec::new();
@@ -130,28 +237,7 @@ pub async fn create_wo(
 #[tauri::command]
 pub async fn list_work_order_types(state: State<'_, AppState>) -> AppResult<Vec<types::WorkOrderTypeOption>> {
     let user = require_session!(state);
-    let has_ref_view = crate::auth::rbac::check_permission(
-        &state.db,
-        user.user_id,
-        crate::rbac::permissions::REF_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let has_ot_view = crate::auth::rbac::check_permission(
-        &state.db,
-        user.user_id,
-        crate::rbac::permissions::OT_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    if !has_ref_view && !has_ot_view {
-        require_permission!(
-            state,
-            &user,
-            crate::rbac::permissions::OT_CREATE,
-            PermissionScope::Global
-        );
-    }
+    require_wo_catalog_read(&state, user.user_id).await?;
     types::list_work_order_types(&state.db).await
 }
 
@@ -167,7 +253,7 @@ pub async fn list_wo_shift_options(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::shifts::WoShiftOptions> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     crate::wo::shifts::list_wo_shift_options(&state.db, wo_id, planned_start.as_deref(), team_id).await
 }
 
@@ -212,28 +298,7 @@ pub async fn update_urgency_level(
 #[tauri::command]
 pub async fn list_work_order_statuses(state: State<'_, AppState>) -> AppResult<Vec<statuses::WorkOrderStatusOption>> {
     let user = require_session!(state);
-    let has_ref_view = crate::auth::rbac::check_permission(
-        &state.db,
-        user.user_id,
-        crate::rbac::permissions::REF_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let has_ot_view = crate::auth::rbac::check_permission(
-        &state.db,
-        user.user_id,
-        crate::rbac::permissions::OT_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    if !has_ref_view && !has_ot_view {
-        require_permission!(
-            state,
-            &user,
-            crate::rbac::permissions::OT_CREATE,
-            PermissionScope::Global
-        );
-    }
+    require_wo_catalog_read(&state, user.user_id).await?;
     statuses::list_work_order_statuses(&state.db).await
 }
 
@@ -266,7 +331,16 @@ pub async fn update_wo_draft(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    // At the work order's site, and at the new equipment's site when the equipment changes
+    // (rule §2.7; the order's own node is not changed by a draft edit).
+    require_equipment_change(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        input.id,
+        input.equipment_id,
+    )
+    .await?;
     queries::update_wo_draft_fields(&state.db, input).await
 }
 
@@ -276,11 +350,13 @@ pub async fn update_wo_draft(
 
 #[tauri::command]
 pub async fn cancel_wo(
-    input: crate::wo::domain::WoCancelInput,
+    mut input: crate::wo::domain::WoCancelInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
 
     // Check if the WO is in_progress or later — require step-up
     let current = queries::get_work_order(&state.db, input.id)
@@ -338,11 +414,13 @@ pub async fn cancel_wo(
 
 #[tauri::command]
 pub async fn plan_wo(
-    input: execution::WoPlanInput,
+    mut input: execution::WoPlanInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let wo = execution::plan_wo(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -370,7 +448,7 @@ pub async fn set_wo_permit_requirement(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     let actor_id = i64::from(user.user_id);
     let requires_permit = input.requires_permit;
     let wo = crate::wo::workflow::actions::set_permit_requirement(&state.db, input, actor_id).await?;
@@ -406,12 +484,7 @@ pub async fn clear_wo_permit_rule_flag(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::PTW_ISSUE,
-        PermissionScope::Global
-    );
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::PTW_ISSUE, input.wo_id).await?;
     let actor_id = i64::from(user.user_id);
     let reason = input.reason.trim().to_string();
     let wo =
@@ -445,11 +518,13 @@ pub async fn clear_wo_permit_rule_flag(
 
 #[tauri::command]
 pub async fn submit_wo(
-    input: crate::wo::workflow::actions::WoSubmitInput,
+    mut input: crate::wo::workflow::actions::WoSubmitInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let wo = crate::wo::workflow::actions::submit_wo(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -473,17 +548,19 @@ pub async fn evaluate_wo_readiness(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::workflow::readiness::ReadinessReport> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     crate::wo::workflow::readiness::evaluate_wo_readiness(&state.db, wo_id).await
 }
 
 #[tauri::command]
 pub async fn mark_wo_ready(
-    input: crate::wo::workflow::actions::WoMarkReadyInput,
+    mut input: crate::wo::workflow::actions::WoMarkReadyInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let wo = crate::wo::workflow::actions::mark_wo_ready(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -503,11 +580,13 @@ pub async fn mark_wo_ready(
 
 #[tauri::command]
 pub async fn return_to_planning(
-    input: crate::wo::workflow::actions::WoReturnToPlanningInput,
+    mut input: crate::wo::workflow::actions::WoReturnToPlanningInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let wo = crate::wo::workflow::actions::return_to_planning(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -527,16 +606,13 @@ pub async fn return_to_planning(
 
 #[tauri::command]
 pub async fn approve_planning(
-    input: crate::wo::workflow::actions::WoApprovePlanningInput,
+    mut input: crate::wo::workflow::actions::WoApprovePlanningInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::OT_APPROVE,
-        PermissionScope::Global
-    );
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_APPROVE, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let wo = crate::wo::workflow::actions::approve_planning(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -560,16 +636,19 @@ pub async fn approve_planning(
 
 #[tauri::command]
 pub async fn assign_wo(
-    input: execution::WoAssignInput,
+    mut input: execution::WoAssignInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
+    require_on_wo(
+        &state,
+        user.user_id,
         crate::rbac::permissions::OT_EMERGENCY_ASSIGN,
-        PermissionScope::Global
-    );
+        input.wo_id,
+    )
+    .await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let reason = input.override_reason.clone();
     let wo = execution::assign_wo(&state.db, input).await?;
     audit::record_wo_change_event(
@@ -594,16 +673,19 @@ pub async fn assign_wo(
 
 #[tauri::command]
 pub async fn emergency_reassign_wo(
-    input: execution::WoEmergencyReassignInput,
+    mut input: execution::WoEmergencyReassignInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
+    require_on_wo(
+        &state,
+        user.user_id,
         crate::rbac::permissions::OT_EMERGENCY_ASSIGN,
-        PermissionScope::Global
-    );
+        input.wo_id,
+    )
+    .await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let reason = input.override_reason.clone();
     let wo = execution::emergency_reassign_wo(&state.db, input).await?;
     audit::record_wo_change_event(
@@ -628,11 +710,13 @@ pub async fn emergency_reassign_wo(
 
 #[tauri::command]
 pub async fn start_wo(
-    input: execution::WoStartInput,
+    mut input: execution::WoStartInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let wo = execution::start_wo(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -656,11 +740,13 @@ pub async fn start_wo(
 
 #[tauri::command]
 pub async fn pause_wo(
-    input: execution::WoPauseInput,
+    mut input: execution::WoPauseInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let wo = execution::pause_wo(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -684,11 +770,13 @@ pub async fn pause_wo(
 
 #[tauri::command]
 pub async fn resume_wo(
-    input: execution::WoResumeInput,
+    mut input: execution::WoResumeInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let wo = execution::resume_wo(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -712,11 +800,13 @@ pub async fn resume_wo(
 
 #[tauri::command]
 pub async fn hold_wo(
-    input: execution::WoHoldInput,
+    mut input: execution::WoHoldInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let wo = execution::set_waiting_for_prerequisite(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -740,11 +830,13 @@ pub async fn hold_wo(
 
 #[tauri::command]
 pub async fn complete_wo_mechanically(
-    input: execution::WoMechCompleteInput,
+    mut input: execution::WoMechCompleteInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
     let wo = execution::complete_wo_mechanically(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -768,7 +860,7 @@ pub async fn evaluate_wo_completion_gates(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<crate::wo::execution::WoCompletionGate>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     crate::wo::execution::evaluate_completion_gates(&state.db, wo_id).await
 }
 
@@ -779,7 +871,7 @@ pub async fn evaluate_wo_completion_gates(
 #[tauri::command]
 pub async fn add_labor(input: labor::AddLaborInput, state: State<'_, AppState>) -> AppResult<labor::WoIntervener> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     labor::add_labor_entry(&state.db, input).await
 }
 
@@ -792,7 +884,7 @@ pub async fn add_personnel_labor(
     state: State<'_, AppState>,
 ) -> AppResult<labor::WoIntervener> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     labor::add_personnel_labor_entry(&state.db, input).await
 }
 
@@ -818,8 +910,17 @@ pub async fn close_labor(
     state: State<'_, AppState>,
 ) -> AppResult<labor::WoIntervener> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
-    labor::close_labor_entry(&state.db, intervener_id, ended_at, actor_id).await
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Labor,
+        intervener_id,
+    )
+    .await?;
+    // The actor is the signed-in user; the id the screen still sends is not used.
+    let _ = actor_id;
+    labor::close_labor_entry(&state.db, intervener_id, ended_at, i64::from(user.user_id)).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -829,7 +930,7 @@ pub async fn close_labor(
 #[tauri::command]
 pub async fn list_labor(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<labor::WoIntervener>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     labor::list_labor_entries(&state.db, wo_id).await
 }
 
@@ -848,7 +949,7 @@ pub async fn list_wo_labor_candidates(state: State<'_, AppState>) -> AppResult<V
 #[tauri::command]
 pub async fn add_part(input: parts::AddPartInput, state: State<'_, AppState>) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     parts::add_planned_part(&state.db, input).await
 }
 
@@ -864,7 +965,14 @@ pub async fn record_part_usage(
     state: State<'_, AppState>,
 ) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Part,
+        wo_part_id,
+    )
+    .await?;
     parts::record_actual_usage(&state.db, wo_part_id, quantity_used, unit_cost).await
 }
 
@@ -874,11 +982,17 @@ pub async fn mark_part_not_used(
     state: State<'_, AppState>,
 ) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Part,
+        input.wo_part_id,
+    )
+    .await?;
+    // The actor is the signed-in user, never an id sent by the screen.
     let mut input = input;
-    if input.actor_id.is_none() {
-        input.actor_id = Some(user.user_id.into());
-    }
+    input.actor_id = Some(user.user_id.into());
     parts::mark_part_not_used(&state.db, input).await
 }
 
@@ -889,14 +1003,14 @@ pub async fn mark_part_not_used(
 #[tauri::command]
 pub async fn confirm_no_parts(wo_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
     parts::confirm_no_parts_used(&state.db, wo_id, user.user_id.into()).await
 }
 
 #[tauri::command]
 pub async fn unconfirm_no_parts(wo_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
     parts::unconfirm_no_parts_used(&state.db, wo_id, user.user_id.into()).await
 }
 
@@ -907,7 +1021,7 @@ pub async fn unconfirm_no_parts(wo_id: i64, state: State<'_, AppState>) -> AppRe
 #[tauri::command]
 pub async fn list_wo_parts(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<parts::WoPart>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     parts::list_wo_parts(&state.db, wo_id).await
 }
 
@@ -918,7 +1032,7 @@ pub async fn list_wo_parts(wo_id: i64, state: State<'_, AppState>) -> AppResult<
 #[tauri::command]
 pub async fn add_task(input: tasks::AddTaskInput, state: State<'_, AppState>) -> AppResult<tasks::WoTask> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     tasks::add_task(&state.db, input).await
 }
 
@@ -935,8 +1049,17 @@ pub async fn complete_task(
     state: State<'_, AppState>,
 ) -> AppResult<tasks::WoTask> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
-    tasks::complete_task(&state.db, task_id, actor_id, result_code, notes).await
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Task,
+        task_id,
+    )
+    .await?;
+    // The actor is the signed-in user; the id the screen still sends is not used.
+    let _ = actor_id;
+    tasks::complete_task(&state.db, task_id, i64::from(user.user_id), result_code, notes).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -946,7 +1069,7 @@ pub async fn complete_task(
 #[tauri::command]
 pub async fn list_tasks(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<tasks::WoTask>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     tasks::list_tasks(&state.db, wo_id).await
 }
 
@@ -956,7 +1079,7 @@ pub async fn get_wo_plan_adherence(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::plan_adherence::WoPlanAdherence> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     crate::wo::plan_adherence::get_plan_adherence(&state.db, wo_id).await
 }
 
@@ -966,14 +1089,14 @@ pub async fn list_wo_execution_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<crate::wo::execution_log::WoExecutionEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     crate::wo::execution_log::list_execution_events(&state.db, wo_id).await
 }
 
 #[tauri::command]
 pub async fn list_wo_tools(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<crate::wo::tools::WoTool>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     crate::wo::tools::list_tools(&state.db, wo_id).await
 }
 
@@ -983,21 +1106,35 @@ pub async fn add_wo_tool(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::tools::WoTool> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     crate::wo::tools::add_tool(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn mark_wo_tool_used(tool_id: i64, state: State<'_, AppState>) -> AppResult<crate::wo::tools::WoTool> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Tool,
+        tool_id,
+    )
+    .await?;
     crate::wo::tools::mark_tool_used(&state.db, tool_id).await
 }
 
 #[tauri::command]
 pub async fn mark_wo_tool_not_used(tool_id: i64, state: State<'_, AppState>) -> AppResult<crate::wo::tools::WoTool> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Tool,
+        tool_id,
+    )
+    .await?;
     crate::wo::tools::mark_tool_not_used(&state.db, tool_id).await
 }
 
@@ -1015,14 +1152,16 @@ pub async fn open_downtime(
     state: State<'_, AppState>,
 ) -> AppResult<delay::WoDowntimeSegment> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
+    // The actor is the signed-in user; the id the screen still sends is not used.
+    let _ = actor_id;
     delay::open_downtime_segment(
         &state.db,
         delay::OpenDowntimeInput {
             wo_id,
             downtime_type,
             comment,
-            actor_id,
+            actor_id: i64::from(user.user_id),
             classification_code,
         },
     )
@@ -1040,7 +1179,14 @@ pub async fn close_downtime(
     state: State<'_, AppState>,
 ) -> AppResult<delay::WoDowntimeSegment> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Downtime,
+        segment_id,
+    )
+    .await?;
     delay::close_downtime_segment(&state.db, segment_id, ended_at).await
 }
 
@@ -1051,7 +1197,7 @@ pub async fn close_downtime(
 #[tauri::command]
 pub async fn list_delay_segments(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<delay::WoDelaySegment>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     delay::list_delay_segments(&state.db, wo_id).await
 }
 
@@ -1065,7 +1211,7 @@ pub async fn list_downtime_segments(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<delay::WoDowntimeSegment>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     delay::list_downtime_segments(&state.db, wo_id).await
 }
 
@@ -1083,7 +1229,13 @@ pub async fn save_failure_detail(
     state: State<'_, AppState>,
 ) -> AppResult<closeout::WoFailureDetail> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        input.base.wo_id,
+    )
+    .await?;
     let wo_id = input.base.wo_id;
     let detail = closeout::save_failure_coding(&state.db, input).await?;
     audit::record_wo_change_event(
@@ -1108,11 +1260,13 @@ pub async fn save_failure_detail(
 
 #[tauri::command]
 pub async fn save_verification(
-    input: closeout::SaveVerificationInput,
+    mut input: closeout::SaveVerificationInput,
     state: State<'_, AppState>,
 ) -> AppResult<(closeout::WoVerification, crate::wo::domain::WorkOrder)> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // The verifier is the signed-in user (as the screen sends), never another id.
+    input.verified_by_id = i64::from(user.user_id);
 
     let result = closeout::save_verification(&state.db, input).await?;
     audit::record_wo_change_event(
@@ -1137,16 +1291,13 @@ pub async fn save_verification(
 
 #[tauri::command]
 pub async fn close_wo(
-    input: closeout::WoCloseInput,
+    mut input: closeout::WoCloseInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::OT_CLOSE,
-        PermissionScope::Global
-    );
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_CLOSE, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
 
     match closeout::close_wo(&state.db, input).await {
         Ok(wo) => {
@@ -1192,16 +1343,13 @@ pub async fn close_wo(
 
 #[tauri::command]
 pub async fn reopen_wo(
-    input: closeout::WoReopenInput,
+    mut input: closeout::WoReopenInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::OT_REOPEN,
-        PermissionScope::Global
-    );
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_REOPEN, input.wo_id).await?;
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
 
     // Manual step-up check to record blocked event
     {
@@ -1248,7 +1396,7 @@ pub async fn reopen_wo(
 #[tauri::command]
 pub async fn update_wo_rca(input: closeout::UpdateWoRcaInput, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     let wo_id = input.wo_id;
     closeout::update_wo_rca(&state.db, input).await?;
     audit::record_wo_change_event(
@@ -1283,7 +1431,7 @@ pub async fn upload_wo_attachment(
     state: State<'_, AppState>,
 ) -> AppResult<attachments::WoAttachment> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
 
     let app_data_dir = app
         .path()
@@ -1324,7 +1472,7 @@ pub async fn upload_wo_attachment(
 #[tauri::command]
 pub async fn list_wo_attachments(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<attachments::WoAttachment>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     attachments::list_wo_attachments(&state.db, wo_id).await
 }
 
@@ -1335,12 +1483,14 @@ pub async fn list_wo_attachments(wo_id: i64, state: State<'_, AppState>) -> AppR
 #[tauri::command]
 pub async fn delete_wo_attachment(attachment_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
+    require_on_child(
+        &state,
+        user.user_id,
         crate::rbac::permissions::OT_ADMIN,
-        PermissionScope::Global
-    );
+        access::WoChild::Attachment,
+        attachment_id,
+    )
+    .await?;
     attachments::delete_wo_attachment_record(&state.db, attachment_id).await
 }
 
@@ -1351,7 +1501,7 @@ pub async fn delete_wo_attachment(attachment_id: i64, state: State<'_, AppState>
 #[tauri::command]
 pub async fn get_cost_summary(wo_id: i64, state: State<'_, AppState>) -> AppResult<costs::WoCostSummary> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     costs::get_cost_summary(&state.db, wo_id).await
 }
 
@@ -1362,7 +1512,7 @@ pub async fn get_cost_summary(wo_id: i64, state: State<'_, AppState>) -> AppResu
 #[tauri::command]
 pub async fn update_service_cost(wo_id: i64, service_cost: f64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
     costs::update_service_cost(&state.db, wo_id, service_cost, i64::from(user.user_id)).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -1387,7 +1537,7 @@ pub async fn update_service_cost(wo_id: i64, service_cost: f64, state: State<'_,
 #[tauri::command]
 pub async fn get_cost_posting_hook(wo_id: i64, state: State<'_, AppState>) -> AppResult<costs::CostPostingHook> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     costs::get_cost_posting_hook(&state.db, wo_id).await
 }
 
@@ -1403,8 +1553,9 @@ pub async fn get_wo_backlog_heatmap(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::backlog::WoBacklogHeatmap> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
-    crate::wo::backlog::get_wo_backlog_heatmap(&state.db, input).await
+    let scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::OT_VIEW).await?;
+    // The work orders and the crews of the user's sites (plant-wide: all of them, as before).
+    crate::wo::backlog::get_wo_backlog_heatmap_in_scope(&state.db, input, &scope).await
 }
 
 #[tauri::command]
@@ -1413,7 +1564,7 @@ pub async fn get_wo_analytics_snapshot(
     state: State<'_, AppState>,
 ) -> AppResult<analytics::WoAnalyticsSnapshot> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     analytics::get_wo_analytics_snapshot(&state.db, wo_id).await
 }
 
@@ -1424,8 +1575,9 @@ pub async fn get_wo_analytics_snapshot(
 #[tauri::command]
 pub async fn get_wo_stats(state: State<'_, AppState>) -> AppResult<stats::WoStatsPayload> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
-    stats::get_wo_stats(&state.db).await
+    let scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::OT_VIEW).await?;
+    // Figures over the work orders of the user's sites only (rule §2.8).
+    stats::get_wo_stats_in_scope(&state.db, &access::ScopeSql::of(&scope)).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1439,7 +1591,7 @@ pub async fn list_wo_change_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<audit::WoChangeEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
     audit::list_wo_change_events(&state.db, wo_id, limit.unwrap_or(50)).await
 }
 
@@ -1453,13 +1605,9 @@ pub async fn list_all_wo_change_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<audit::WoChangeEvent>> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::OT_ADMIN,
-        PermissionScope::Global
-    );
-    audit::list_all_wo_change_events(&state.db, filter).await
+    let scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::OT_ADMIN).await?;
+    // The events of the work orders of the user's sites (no work order: plant-wide users only).
+    audit::list_all_wo_change_events_in_scope(&state.db, filter, &access::ScopeSql::of(&scope)).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1476,7 +1624,7 @@ pub async fn set_wo_requires_shutdown(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
     let wo = crate::wo::workflow::actions::schedule::save_shutdown_requirement(
         &state.db,
         wo_id,

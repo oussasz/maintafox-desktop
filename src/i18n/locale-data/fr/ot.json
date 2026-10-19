@@ -1,4 +1,18 @@
 {
+  "siteScope": {
+    "hidden": {
+      "outsideScope_one": "{{count}} OT n’est pas affiché : hors de vos sites.",
+      "outsideScope_other": "{{count}} OT ne sont pas affichés : hors de vos sites.",
+      "withoutSite_one": "{{count}} OT n’est pas affiché : il n’a pas de site.",
+      "withoutSite_other": "{{count}} OT ne sont pas affichés : ils n’ont pas de site.",
+      "allWorkOrders": "Ces nombres portent sur tous les OT, quels que soient les filtres ou la recherche.",
+      "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l’usine pour les voir."
+    },
+    "noSite": {
+      "badge": "À revoir : sans site",
+      "hint": "OT enregistré sans site (son équipement n’avait pas de nœud d’installation). Seuls les utilisateurs ayant un rôle valable pour toute l’usine le voient et peuvent agir dessus."
+    }
+  },
   "permitRule": {
     "requiredBy": "Permis exigé par la règle {{rule}} (type de permis {{permitType}}).",
     "requiredByNoType": "Permis exigé par la règle {{rule}}.",

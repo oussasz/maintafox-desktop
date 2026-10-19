@@ -156,6 +156,17 @@ pub async fn list_all_wo_change_events(
     db: &DatabaseConnection,
     filter: WoAuditFilter,
 ) -> crate::errors::AppResult<Vec<WoChangeEvent>> {
+    list_all_wo_change_events_in_scope(db, filter, &super::access::ScopeSql::everywhere()).await
+}
+
+/// [`list_all_wo_change_events`] limited to the work orders of the reader's scope
+/// (`wo::access::ScopeSql` on the event's work order; an event without a work order, or whose
+/// work order is gone, has no site: plant-wide readers only).
+pub async fn list_all_wo_change_events_in_scope(
+    db: &DatabaseConnection,
+    filter: WoAuditFilter,
+    scope: &super::access::ScopeSql,
+) -> crate::errors::AppResult<Vec<WoChangeEvent>> {
     let limit = filter.limit.unwrap_or(50).min(500);
     let offset = filter.offset.unwrap_or(0);
 
@@ -184,11 +195,11 @@ pub async fn list_all_wo_change_events(
         values.push(wo_id.into());
     }
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
+    // Last condition: its binds follow the filters' and precede LIMIT / OFFSET.
+    conditions.push(format!("({})", scope.predicate));
+    values.extend(scope.binds.iter().cloned());
+
+    let where_clause = format!("WHERE {}", conditions.join(" AND "));
 
     values.push(limit.into());
     values.push(offset.into());
@@ -200,6 +211,7 @@ pub async fn list_all_wo_change_events(
                  e.requires_step_up, e.apply_result
             FROM wo_change_events e
             LEFT JOIN user_accounts ua ON ua.id = e.actor_id
+            LEFT JOIN work_orders wo ON wo.id = e.wo_id
            {where_clause}
            ORDER BY e.acted_at DESC, e.id DESC
            LIMIT ? OFFSET ?"

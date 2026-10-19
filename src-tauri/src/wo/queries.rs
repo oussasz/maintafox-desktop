@@ -107,6 +107,12 @@ pub struct WoListFilter {
 pub struct WoListPage {
     pub items: Vec<WorkOrder>,
     pub total: i64,
+    /// Work orders the reader's sites do not cover (rule §2.4: shown as a count, never silently
+    /// left out). Counts every such work order, whatever the filters. Always 0 plant-wide.
+    pub hidden_outside_scope: i64,
+    /// Work orders without an org node (plant-wide readers only), whatever the filters. Always 0
+    /// plant-wide.
+    pub hidden_without_site: i64,
 }
 
 /// Composite detail response for `get_wo`.
@@ -217,6 +223,16 @@ const WO_JOINS: &str = "\
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> AppResult<WoListPage> {
+    list_work_orders_in_scope(db, filter, &crate::auth::scope::AccessScope::Everywhere).await
+}
+
+/// [`list_work_orders`] limited to the reader's scope (where they hold `ot.view`), in SQL before
+/// paging, with the count of the work orders left out and why.
+pub async fn list_work_orders_in_scope(
+    db: &DatabaseConnection,
+    filter: WoListFilter,
+    scope: &crate::auth::scope::AccessScope,
+) -> AppResult<WoListPage> {
     let mut where_clauses: Vec<String> = vec!["1 = 1".to_string()];
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
@@ -333,7 +349,41 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
         }
     }
 
-    let where_sql = where_clauses.join(" AND ");
+    let filters_sql = where_clauses.join(" AND ");
+
+    // ── Site scope (rule §2.5): last predicate, so its binds follow the filters' ──
+    let scope_sql = super::access::ScopeSql::of(scope);
+    let (hidden_outside_scope, hidden_without_site) = if scope.is_everywhere() {
+        (0, 0)
+    } else {
+        // Every work order the scope leaves out (a NULL predicate — no node — counts as left
+        // out), whatever the user's filters: a count that followed the search or the person
+        // filters would let a site user probe other sites' work order texts and people.
+        let hidden_sql = format!(
+            "SELECT COALESCE(SUM(CASE WHEN {without} THEN 1 ELSE 0 END), 0) AS without_site, \
+                    COALESCE(SUM(CASE WHEN {without} THEN 0 ELSE 1 END), 0) AS outside_scope \
+               FROM work_orders wo \
+              WHERE NOT COALESCE(({scope_pred}), 0)",
+            without = super::access::WO_WITHOUT_SITE_SQL,
+            scope_pred = scope_sql.predicate,
+        );
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                &hidden_sql,
+                scope_sql.binds.clone(),
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("WO hidden count query returned no rows")))?;
+        (
+            row.try_get::<i64>("", "outside_scope")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("WO hidden count decode: {e}")))?,
+            row.try_get::<i64>("", "without_site")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("WO hidden count decode: {e}")))?,
+        )
+    };
+    let where_sql = format!("{filters_sql} AND ({})", scope_sql.predicate);
+    binds.extend(scope_sql.binds);
 
     // ── Count query ──────────────────────────────────────────────────────
     let count_sql = format!("SELECT COUNT(*) AS total FROM work_orders wo {WO_JOINS} WHERE {where_sql}");
@@ -368,7 +418,12 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
 
     let items: Vec<WorkOrder> = rows.iter().map(map_work_order).collect::<AppResult<Vec<_>>>()?;
 
-    Ok(WoListPage { items, total })
+    Ok(WoListPage {
+        items,
+        total,
+        hidden_outside_scope,
+        hidden_without_site,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -48,6 +48,7 @@ import { WoIntegrityWorkbench } from "@/components/wo/WoIntegrityWorkbench";
 import { WoKanbanView } from "@/components/wo/WoKanbanView";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
+import { WoHiddenNotice, WoNoSiteBadge } from "@/components/wo/WoSiteScope";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { mfLayout } from "@/design-system/tokens";
 import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
@@ -96,6 +97,8 @@ export function WorkOrdersPage() {
   const items = useWoStore((s) => s.items);
   const listFilter = useWoStore((s) => s.filter);
   const total = useWoStore((s) => s.total);
+  const hiddenOutsideScope = useWoStore((s) => s.hiddenOutsideScope);
+  const hiddenWithoutSite = useWoStore((s) => s.hiddenWithoutSite);
   const loading = useWoStore((s) => s.loading);
   const loadingMore = useWoStore((s) => s.loadingMore);
   const listError = useWoStore((s) => s.listError);
@@ -507,6 +510,7 @@ export function WorkOrdersPage() {
           <div className="flex flex-col items-start gap-0.5">
             <span className="max-w-[200px] truncate block">{row.original.title}</span>
             {row.original.requires_shutdown ? <WoShutdownBadge /> : null}
+            <WoNoSiteBadge wo={row.original} />
           </div>
         ),
       },
@@ -685,6 +689,13 @@ export function WorkOrdersPage() {
         <div className="p-4">
           <ErrorState error={listError} onRetry={() => void loadWos()} retrying={loading} />
         </div>
+      ) : null}
+      {recordView && !showListError ? (
+        <WoHiddenNotice
+          outsideScope={hiddenOutsideScope}
+          withoutSite={hiddenWithoutSite}
+          className="mx-4 mt-3"
+        />
       ) : null}
       {recordView && !showListError && items.length < total ? (
         <div className="px-4 pt-3">

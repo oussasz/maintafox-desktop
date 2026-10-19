@@ -5351,6 +5351,10 @@ export interface WoListFilter {
 export interface WoListPage {
   items: WorkOrder[];
   total: number;
+  /** Work orders outside the user’s sites (site-scoped roles), whatever the filters; 0 plant-wide. */
+  hidden_outside_scope: number;
+  /** Work orders without an org node (plant-wide users only), whatever the filters; 0 plant-wide. */
+  hidden_without_site: number;
 }
 
 export interface WoGetResponse {

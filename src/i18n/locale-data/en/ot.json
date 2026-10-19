@@ -1,4 +1,18 @@
 {
+  "siteScope": {
+    "hidden": {
+      "outsideScope_one": "{{count}} work order is not shown: outside your sites.",
+      "outsideScope_other": "{{count}} work orders are not shown: outside your sites.",
+      "withoutSite_one": "{{count}} work order is not shown: it has no site.",
+      "withoutSite_other": "{{count}} work orders are not shown: they have no site.",
+      "allWorkOrders": "These counts cover all work orders, whatever the filters or search.",
+      "askPlantWide": "Ask a user with a plant-wide role to see them."
+    },
+    "noSite": {
+      "badge": "To review: no site",
+      "hint": "Recorded without a site (its equipment had no installation node). Only users with a plant-wide role see this work order and can act on it."
+    }
+  },
   "permitRule": {
     "requiredBy": "Permit required by rule {{rule}} (permit type {{permitType}}).",
     "requiredByNoType": "Permit required by rule {{rule}}.",

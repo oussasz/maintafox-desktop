@@ -12,11 +12,11 @@ import {
   AlertCircle,
   CheckCircle2,
   Loader2,
-  Save,
-  WrenchIcon,
-  ShieldCheck,
   Lock,
   RotateCcw,
+  Save,
+  ShieldCheck,
+  WrenchIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -41,23 +41,23 @@ import {
   WoCompletionGatesChecklist,
   completionGatesProgress,
 } from "@/components/wo/WoCompletionGatesChecklist";
+import { useWoAccess } from "@/components/wo/WoSiteScope";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
-import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import { useStepUp } from "@/hooks/use-step-up";
 import { describeAppError } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
 import { getSetting } from "@/services/settings-service";
 import {
-  saveFailureDetail,
-  saveVerification,
-  closeWo,
-  reopenWo,
-  updateWoRca,
-  updateServiceCost,
-  getWoAnalyticsSnapshot,
   CloseoutBlockingError,
   type WoAnalyticsSnapshot,
+  closeWo,
+  getWoAnalyticsSnapshot,
+  reopenWo,
+  saveFailureDetail,
+  saveVerification,
+  updateServiceCost,
+  updateWoRca,
 } from "@/services/wo-closeout-service";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
@@ -117,7 +117,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const { t } = useTranslation("ot");
   const { t: tPermits } = useTranslation("permits");
   const { info } = useSession();
-  const { can } = usePermissions();
+  // Reopen is offered from the user's rights at this work order's site.
+  const { can } = useWoAccess(wo);
   // Reopen still asks for the password; verification and close are confirmed in a dialog.
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const [confirmAction, setConfirmAction] = useState<"verify" | "close" | null>(null);
@@ -285,7 +286,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         root_cause_summary: rootCauseSummary.trim() || null,
         corrective_action_summary: correctiveAction.trim() || null,
       });
-      const costNum = parseFloat(serviceCost);
+      const costNum = Number.parseFloat(serviceCost);
       if (!isNaN(costNum) && costNum >= 0) {
         await updateServiceCost(currentWo.id, costNum);
       }
