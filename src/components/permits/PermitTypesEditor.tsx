@@ -257,6 +257,7 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
                 id="type-code"
                 value={draft.code}
                 readOnly={draft.id != null}
+                aria-describedby={draft.id != null ? "type-code-description" : undefined}
                 onChange={(e) => setDraft((d) => ({ ...d, code: e.target.value }))}
               />
             </FormField>

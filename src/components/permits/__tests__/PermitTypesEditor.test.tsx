@@ -67,6 +67,7 @@ describe("PermitTypesEditor — the code of an existing type", () => {
     const code = screen.getByLabelText(new RegExp(`^${enPermits.types.code}`));
     expect(code).toHaveValue("hot_work");
     expect(code).toHaveAttribute("readonly");
+    expect(code).toHaveAccessibleDescription(enPermits.types.codeLocked);
     expect(screen.getByText(enPermits.types.codeLocked)).toBeInTheDocument();
   });
 
@@ -74,6 +75,7 @@ describe("PermitTypesEditor — the code of an existing type", () => {
     render(<PermitTypesEditor types={[HOT_WORK]} canEdit onSaved={vi.fn()} />);
     const code = await screen.findByLabelText(new RegExp(`^${enPermits.types.code}`));
     expect(code).not.toHaveAttribute("readonly");
+    expect(code).not.toHaveAttribute("aria-describedby");
     fireEvent.change(code, { target: { value: "work_at_height" } });
     await waitFor(() => expect(code).toHaveValue("work_at_height"));
     expect(screen.queryByText(enPermits.types.codeLocked)).toBeNull();
