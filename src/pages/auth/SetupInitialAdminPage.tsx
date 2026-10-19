@@ -11,7 +11,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useProductLicenseGateRefresh } from "@/contexts/product-license-gate-context";
 import { mfAuth, mfAuthAlert } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorText, describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   type ActivationLicenseMetadata,
@@ -97,7 +97,7 @@ export function SetupInitialAdminPage() {
       sessionStorage.setItem(POST_ACTIVATION_LOGIN_HINT_KEY, "1");
       navigate("/login", { replace: true });
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorText(err));
     } finally {
       setSubmitting(false);
     }

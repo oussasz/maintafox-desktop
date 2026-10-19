@@ -66,6 +66,8 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "SETTING_LOCKED",
   "WEEK_LIFECYCLE_BACKWARDS",
   "DECISION_SELF_APPROVAL",
+  // A work-order part line received as cancelled although it has recorded use.
+  "WO_PART_LINE_HAS_USE",
   "SITE_SETTING_UNAUDITED",
   "SITE_SETTING_INVALID",
   "SITE_SETTING_EVENT_INVALID",

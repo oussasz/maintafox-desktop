@@ -692,7 +692,8 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
                     AND COALESCE(quantity_used, 0) <= 0) AS pending_planned, \
                 (SELECT COUNT(*) FROM work_order_parts \
                   WHERE work_order_id = ? \
-                    AND COALESCE(origin, 'planned') = 'planned') AS planned_count, \
+                    AND COALESCE(origin, 'planned') = 'planned' \
+                    AND consumption_status <> 'cancelled') AS planned_count, \
                 (SELECT COUNT(*) FROM work_order_parts \
                   WHERE work_order_id = ? \
                     AND (COALESCE(consumption_status, '') = 'used' \

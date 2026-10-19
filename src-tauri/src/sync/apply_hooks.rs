@@ -11,6 +11,10 @@
 //! - `work_order_delay_segments`: before the apply, `hold_kind` must be `pause` or `prerequisite`
 //!   (anything else is refused as a conflict) and present (a row from an older app version without
 //!   it is deferred, never written with a guessed kind: it decides the PRD lifecycle state);
+//! - `work_order_parts`: a line received as cancelled is refused as a conflict when it carries a
+//!   used or issued quantity, or when this device's copy of it has recorded use (used / issued
+//!   quantity, or stock issued from the store against its reservation): only a line with no
+//!   recorded use is cancelled (`wo::parts::inbound_part_line_check`, `before_upsert_checked`);
 //! - `app_settings`: a tenant setting whose change is locked here (fiscal start month, currency
 //!   once postings exist) is refused as a conflict (`before_upsert_checked`);
 //! - `reliability_study_decisions`: an approval by the decision's own proposer is refused as a
@@ -121,6 +125,7 @@ pub(crate) async fn before_upsert_checked(
         "qualification_overrides" => {
             Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)
         }
+        "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
         _ => None,
     };
     if let Some(verdict) = safety_check {

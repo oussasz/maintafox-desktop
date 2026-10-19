@@ -223,7 +223,7 @@ async fn work_order_part_needs(db: &impl ConnectionTrait, wo_id: i64) -> AppResu
                     wop.quantity_planned AS planned, COALESCE(wop.quantity_issued, 0.0) AS issued, \
                     COALESCE(wop.quantity_reserved, 0.0) AS reserved, wop.is_required \
                FROM work_order_parts wop LEFT JOIN articles a ON a.id = wop.article_id \
-              WHERE wop.work_order_id = ? AND wop.consumption_status <> 'not_used' \
+              WHERE wop.work_order_id = ? AND wop.consumption_status NOT IN ('not_used', 'cancelled') \
                 AND COALESCE(wop.quantity_planned, 0) > 0 \
               ORDER BY wop.id",
             [wo_id.into()],

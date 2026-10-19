@@ -352,7 +352,13 @@
       "stockLocation": "Stock location",
       "locationPlaceholder": "Location",
       "plannedQty": "Planned qty",
-      "unitCost": "Unit cost"
+      "unitCost": "Unit cost",
+      "cancelLine": "Cancel line",
+      "cancelTitle": "Cancel this part line?",
+      "cancelDescription": "{{part}} × {{qty}} {{unit}} leaves the plan: its stock reservation is released and the line stays in the work-order history as cancelled. To plan the part again, add a new line.",
+      "cancelConfirm": "Cancel part line",
+      "cancelledStatus": "Cancelled",
+      "cancelledHint": "Cancelled while the work order was prepared: out of the totals, availability and reservations."
     },
     "stockReserved": "Stock reserved",
     "noStockReservation": "No stock reservation on this line.",
@@ -552,6 +558,7 @@
     },
     "parts": {
       "plannedTitle": "Planned",
+      "cancelledTitle": "Cancelled planned lines",
       "actualTitle": "Actually used",
       "actualEmpty": "No parts recorded as used yet.",
       "nonePlanned": "No planned parts",
@@ -648,6 +655,9 @@
       "empty": "No execution events yet.",
       "partUsed": "Part used: {{label}}",
       "partNotUsed": "Part marked unused: {{label}}",
+      "partCancelled": "Planned part line cancelled: {{label}}",
+      "partSetRequired": "Part line set to required: {{label}}",
+      "partSetOptional": "Part line set to optional: {{label}}",
       "partAdded": "Part added during execution: {{label}}",
       "partPlanned": "Part planned: {{label}}",
       "taskAdded": "Task added: {{label}}",

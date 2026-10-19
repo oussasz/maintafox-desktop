@@ -19,6 +19,14 @@ const PRODUCT_LICENSE_SCOPE: &str = "device";
 const TENANT_BOOTSTRAP_KEY: &str = "tenant.initial_bootstrap";
 const TENANT_BOOTSTRAP_SCOPE: &str = "device";
 
+/// Serialises every read → authorise → write of the licence record (key entry, reconciliation), so
+/// a change is always authorised against the record it replaces: a signed-out claim authorised
+/// against an active record never overwrites a revocation written meanwhile. A process lock, not a
+/// SQLite transaction: the app's pool has one connection (`db::connect_sqlcipher`), and the
+/// authorisation and the settings write read and write through the pool, so a transaction holding
+/// that connection would wait on itself. One process writes the record (single-instance app).
+static LICENCE_RECORD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[derive(Serialize)]
 pub struct ProductLicenseOnboardingState {
     pub complete: bool,
@@ -135,6 +143,16 @@ pub struct ProductLicenseStateRecord {
     pub diagnostics: Vec<ProductLicenseDiagnosticEvent>,
     #[serde(default)]
     pub company_display_name: Option<String>,
+    /// Whether the forced-update denial recorded here may be lifted without an administrator once
+    /// this PC runs the forced minimum version (`forced_update_installed`). Set by
+    /// [`forced_update_lift_allowed`] only when a success claim recorded the forced update with a
+    /// readable forced minimum version stored with it, and did not replace another denial (unless an
+    /// administrator with step-up applied it); `false` for every other status, after a forced-update
+    /// denial recorded from a bare denial outcome (no claim, no minimum), and after any denial
+    /// outcome. A record written before this field existed reads as `false`: fail-closed, the lift
+    /// then needs an administrator.
+    #[serde(default)]
+    pub forced_update_lift_allowed: bool,
 }
 
 impl ProductLicenseStateRecord {
@@ -174,6 +192,7 @@ impl ProductLicenseStateRecord {
             reconciliation: ProductLicenseReconciliationPolicy::default(),
             diagnostics: vec![],
             company_display_name: None,
+            forced_update_lift_allowed: false,
         })
     }
 
@@ -331,6 +350,14 @@ async fn apply_claim_entitlement_envelope(
     let Some(envelope) = envelope else {
         return Ok(());
     };
+    if envelope_would_overwrite_unverified(db, &envelope).await? {
+        tracing::warn!(
+            event = "desktop_entitlement_envelope_same_id_unverified",
+            envelope_id = %envelope.envelope_id,
+            "Entitlement envelope reuses a stored envelope id without a valid signature; not applied"
+        );
+        return Ok(());
+    }
     // Ensure trust material exists before verify (older DBs may have an empty table).
     if let Err(e) = crate::license::security::ensure_default_licensing_trust_keys(db).await {
         tracing::warn!(
@@ -369,6 +396,26 @@ async fn apply_claim_entitlement_envelope(
     Ok(())
 }
 
+/// Whether `envelope` reuses the id of an envelope stored here while its signature does not verify.
+/// Applying it would rewrite that row (the one in force included) with unverified content
+/// (`apply_entitlement_envelope` updates a row of the same id in place), so it is never applied.
+async fn envelope_would_overwrite_unverified(
+    db: &DatabaseConnection,
+    envelope: &crate::entitlements::domain::EntitlementEnvelopeInput,
+) -> AppResult<bool> {
+    if envelope_signature_verified(envelope) {
+        return Ok(false);
+    }
+    let existing = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT 1 AS found FROM entitlement_envelopes WHERE envelope_id = ? LIMIT 1",
+            [envelope.envelope_id.clone().into()],
+        ))
+        .await?;
+    Ok(existing.is_some())
+}
+
 fn compute_backoff_at(attempt: u32) -> DateTime<Utc> {
     // 30s, 60s, 120s... capped at 6h
     let exponent = attempt.min(12);
@@ -385,6 +432,65 @@ fn map_denied_status(code: Option<&str>) -> ProductLicenseActivationStatus {
         "slot_limit_reached" => ProductLicenseActivationStatus::DeniedSlotLimit,
         "force_update_required" => ProductLicenseActivationStatus::DeniedForceUpdateRequired,
         _ => ProductLicenseActivationStatus::DeniedInvalid,
+    }
+}
+
+/// How severe a recorded licence status is: the one order in which a denial may be replaced. A
+/// denial outcome (which carries no claim and anyone can report signed out) and a success claim
+/// accepted without an administrator may only keep the severity recorded here or raise it, never
+/// lower it (`apply_product_license_reconciliation_in`, `denial_lifted`):
+/// - `0`: not denied by the control plane (active, degraded, pending, uninitialised; the offline
+///   grace is derived on read and not stored);
+/// - `1`: a forced update (`DeniedForceUpdateRequired`): the only denial this PC can end by itself,
+///   by installing the update (`forced_update_installed`);
+/// - `2`: a revocation, an expiry, a slot limit or an invalid licence: only the control plane ends
+///   these, so on this PC only an administrator with step-up applies the claim that lifts them. They
+///   rank equal: replacing one with another changes only the reason shown, never what can be lifted
+///   here, so the latest denial the control plane gave is recorded.
+///
+/// So a revocation, expiry, slot-limit or invalid denial always replaces a forced update, while a
+/// forced update (or no denial) never replaces one of them.
+fn denial_severity(status: &ProductLicenseActivationStatus) -> u8 {
+    match status {
+        ProductLicenseActivationStatus::DeniedRevoked
+        | ProductLicenseActivationStatus::DeniedExpired
+        | ProductLicenseActivationStatus::DeniedSlotLimit
+        | ProductLicenseActivationStatus::DeniedInvalid => 2,
+        ProductLicenseActivationStatus::DeniedForceUpdateRequired => 1,
+        ProductLicenseActivationStatus::Uninitialized
+        | ProductLicenseActivationStatus::PendingOnlineValidation
+        | ProductLicenseActivationStatus::Active
+        | ProductLicenseActivationStatus::DegradedApiUnavailable
+        | ProductLicenseActivationStatus::DeniedOfflineGraceExpired => 0,
+    }
+}
+
+/// Whether the forced-update denial a success claim records may later be lifted on this PC by
+/// installing the update (stored as `forced_update_lift_allowed`). Only when the claim forces the
+/// update with a forced minimum version this PC can read, and either an administrator with step-up
+/// applied it, or the record it replaces holds no denial, or holds a forced update that was itself
+/// liftable. A forced update recorded from a bare denial outcome (no minimum) stays not liftable when
+/// a claim later keeps it forced; a claim never replaces a revocation, expiry, slot-limit or invalid
+/// denial without an administrator (`denial_lifted`), and if one ever did it would not be liftable.
+fn forced_update_lift_allowed(
+    previous: Option<&ProductLicenseStateRecord>,
+    claim: &ProductActivationClaimRecord,
+    authority: LicenceAuthority,
+) -> bool {
+    let minimum_readable = claim.force_min_app_version.as_deref().and_then(version_parts).is_some();
+    if claim.force_update_required != Some(true) || !minimum_readable {
+        return false;
+    }
+    if authority == LicenceAuthority::Administrator {
+        return true;
+    }
+    match previous {
+        None => true,
+        Some(record) => match denial_severity(&record.status) {
+            0 => true,
+            1 => record.forced_update_lift_allowed,
+            _ => false,
+        },
     }
 }
 
@@ -456,7 +562,7 @@ fn commercial_edition_from_claim(claim: &ProductActivationClaimRecord) -> Option
         .flatten()
     {
         let v = candidate.trim().to_ascii_lowercase();
-        if matches!(v.as_str(), "core" | "professional" | "enterprise" | "development") {
+        if edition_rank(&v).is_some() {
             return Some(v);
         }
     }
@@ -564,13 +670,104 @@ pub async fn tenant_config_sync_payload(db: &DatabaseConnection) -> AppResult<Op
     }))
 }
 
-/// True when at least one active user has Administrator or Superadmin explicitly scoped to this tenant.
-/// Only permanent assignments in force count (an expired or emergency grant does not make the
-/// tenant administered).
-pub async fn tenant_has_administrator_for_id(db: &DatabaseConnection, tenant_id: &str) -> AppResult<bool> {
+/// True when at least one active user may administer this tenant (`count_tenant_administrators`):
+/// through an assignment scoped to `tenant_id` or to every tenant (no scope reference).
+pub async fn tenant_has_administrator_for_id(db: &impl ConnectionTrait, tenant_id: &str) -> AppResult<bool> {
+    Ok(count_tenant_administrators(db, AdministratorScope::Tenant(tenant_id), AdministratorTime::Ever).await? > 0)
+}
+
+/// True when this PC has an administrator, whatever the organisation (same rule as
+/// [`tenant_has_administrator_for_id`], any scope). This, not the licence claim stored here, tells
+/// a true first start apart: the stored claim can be replaced by a key entry, the administrators
+/// cannot.
+pub(crate) async fn plant_has_administrator(db: &impl ConnectionTrait) -> AppResult<bool> {
+    Ok(count_tenant_administrators(db, AdministratorScope::Any, AdministratorTime::Ever).await? > 0)
+}
+
+/// Which assignments of `adm.settings` an administrator count reads.
+#[derive(Clone, Copy)]
+enum AdministratorScope<'a> {
+    /// Any scope (tenant, wildcard, site, entity...).
+    Any,
+    /// Tenant scope, any reference: what `check_permission` with `PermissionScope::Global` accepts.
+    TenantScope,
+    /// Tenant scope for this tenant, or for every tenant (no reference).
+    Tenant(&'a str),
+}
+
+/// When an assignment counts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AdministratorTime {
+    /// Not deleted, whatever its validity window or emergency expiry. "The plant has an
+    /// administrator" is fail-closed: once an administrator exists, the passing of time alone (an
+    /// assignment reaching its end, an emergency grant expiring, or this PC's clock moved) never
+    /// reopens the first-start steps; only an administrator's act does (removing the assignment,
+    /// disabling or deleting the account).
+    Ever,
+    /// In force now, as `check_permission` reads it: who can act right now.
+    InForce,
+}
+
+/// Active users (not deleted, not disabled) holding `adm.settings`, the right the licence rule asks
+/// of its caller (`licence_caller`), by the permission model itself: any role that carries it
+/// (custom roles included, never a role name), through the assignments `scope` and `time` select.
+///
+/// The administrator account the system seeder creates on every PC (its own wildcard assignment)
+/// does not count while it has never been taken into use: its forced first password change still
+/// pending and its password never changed. So a brand-new PC still has its first start. Once its
+/// password has been changed it counts like any administrator.
+async fn count_tenant_administrators(
+    db: &impl ConnectionTrait,
+    scope: AdministratorScope<'_>,
+    time: AdministratorTime,
+) -> AppResult<i64> {
     let now = crate::rbac::resolver::assignment_clock();
-    let mut values: Vec<sea_orm::Value> = crate::rbac::resolver::permanent_binds(&now).to_vec();
-    values.push(tenant_id.into());
+    let mut values: Vec<sea_orm::Value> = Vec::new();
+    let time_filter = match time {
+        AdministratorTime::Ever => "usa.deleted_at IS NULL",
+        AdministratorTime::InForce => {
+            values.extend(crate::rbac::resolver::in_force_binds(&now));
+            crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
+        }
+    };
+    values.push(crate::rbac::permissions::ADM_SETTINGS.into());
+    let scope_filter = match scope {
+        AdministratorScope::Tenant(tenant_id) => {
+            values.push(tenant_id.into());
+            "usa.scope_type = 'tenant' AND (TRIM(COALESCE(usa.scope_reference, '')) = '' OR usa.scope_reference = ?)"
+        }
+        AdministratorScope::TenantScope => "usa.scope_type = 'tenant'",
+        AdministratorScope::Any => "1 = 1",
+    };
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            format!(
+                "SELECT COUNT(DISTINCT ua.id) AS c
+                FROM user_accounts ua
+                INNER JOIN user_scope_assignments usa ON usa.user_id = ua.id
+                INNER JOIN role_permissions rp ON rp.role_id = usa.role_id
+                INNER JOIN permissions p ON p.id = rp.permission_id
+               WHERE ua.deleted_at IS NULL AND ua.is_active = 1
+                 AND {time_filter}
+                 AND p.name = ?
+                 AND NOT (ua.username = 'admin' AND COALESCE(usa.notes, '') = 'System seeder'
+                          AND ua.force_password_change = 1 AND ua.password_changed_at IS NULL)
+                 AND {scope_filter}"
+            ),
+            values,
+        ))
+        .await?;
+    Ok(row.as_ref().and_then(|r| r.try_get::<i64>("", "c").ok()).unwrap_or(0))
+}
+
+/// Whether `user_id` holds `adm.settings` through an assignment in force at any scope (same
+/// account and assignment rules as [`count_tenant_administrators`]).
+async fn user_holds_settings_right_at_any_scope(db: &DatabaseConnection, user_id: i32) -> AppResult<bool> {
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(crate::rbac::resolver::in_force_binds(&now));
+    values.push(crate::rbac::permissions::ADM_SETTINGS.into());
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -578,20 +775,17 @@ pub async fn tenant_has_administrator_for_id(db: &DatabaseConnection, tenant_id:
                 "SELECT COUNT(1) AS c
                 FROM user_accounts ua
                 INNER JOIN user_scope_assignments usa ON usa.user_id = ua.id
-                INNER JOIN roles r ON r.id = usa.role_id AND r.deleted_at IS NULL
-               WHERE ua.deleted_at IS NULL AND ua.is_active = 1
+                INNER JOIN role_permissions rp ON rp.role_id = usa.role_id
+                INNER JOIN permissions p ON p.id = rp.permission_id
+               WHERE ua.id = ? AND ua.deleted_at IS NULL AND ua.is_active = 1
                  AND {}
-                 AND usa.scope_type = 'tenant'
-                 AND r.name IN ('Administrator', 'Superadmin')
-                 AND NOT (ua.username = 'admin' AND COALESCE(usa.notes, '') = 'System seeder')
-                 AND TRIM(COALESCE(usa.scope_reference, '')) = ?",
-                crate::rbac::resolver::PERMANENT_ASSIGNMENT_IN_FORCE_SQL
+                 AND p.name = ?",
+                crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
             ),
             values,
         ))
         .await?;
-    let count: i64 = row.as_ref().and_then(|r| r.try_get::<i64>("", "c").ok()).unwrap_or(0);
-    Ok(count > 0)
+    Ok(row.as_ref().and_then(|r| r.try_get::<i64>("", "c").ok()).unwrap_or(0) > 0)
 }
 
 async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> AppResult<u64> {
@@ -723,7 +917,11 @@ pub struct ActivationLicenseMetadata {
 
 #[tauri::command]
 pub async fn get_activation_bootstrap_state(state: State<'_, AppState>) -> AppResult<ActivationBootstrapState> {
-    let record = load_state_record(&state).await?;
+    get_activation_bootstrap_state_in(&state.db).await
+}
+
+pub(crate) async fn get_activation_bootstrap_state_in(db: &DatabaseConnection) -> AppResult<ActivationBootstrapState> {
+    let record = load_state_record_from_db(db).await?;
     let Some(record) = record else {
         return Ok(ActivationBootstrapState {
             tenant_id: None,
@@ -732,11 +930,9 @@ pub async fn get_activation_bootstrap_state(state: State<'_, AppState>) -> AppRe
         });
     };
     let tenant_id = record.activation_claim.as_ref().map(|c| c.tenant_id.clone());
-    let has_tenant_admin = if let Some(ref tid) = tenant_id {
-        tenant_has_administrator_for_id(&state.db, tid).await?
-    } else {
-        false
-    };
+    // As `bootstrap_initial_tenant_admin` decides: an administrator of any organisation on this PC
+    // closes the first-administrator step.
+    let has_tenant_admin = tenant_id.is_some() && plant_has_administrator(db).await?;
     Ok(ActivationBootstrapState {
         tenant_id,
         company_display_name: record.company_display_name,
@@ -769,18 +965,62 @@ pub async fn get_activation_license_metadata(
     }))
 }
 
+/// A transaction that holds the database write lock from its start, as SQLite's
+/// `BEGIN IMMEDIATE` does: sea-orm only opens a deferred `BEGIN`, and SQLite takes the write lock
+/// at the first write of a transaction, so the first statement is a write that changes no row.
+/// A second writer waits (busy timeout) until this one commits, then reads what it wrote; it never
+/// reads first and fails on the write with a stale snapshot.
+async fn begin_write_transaction(db: &DatabaseConnection) -> AppResult<sea_orm::DatabaseTransaction> {
+    let txn = db.begin().await?;
+    txn.execute_unprepared("UPDATE user_accounts SET id = id WHERE 0")
+        .await?;
+    Ok(txn)
+}
+
+/// A first-start action refused because the plant already has an administrator.
+fn first_admin_exists() -> AppError {
+    crate::errors::org_validation_failed(
+        "FIRST_ADMIN_ALREADY_EXISTS",
+        "An administrator already exists for this activation: sign in with that account.",
+        std::collections::HashMap::new(),
+    )
+}
+
+/// A first-administrator creation that could not take the database (another one is being written):
+/// coded, to be retried.
+fn first_admin_retry() -> AppError {
+    crate::errors::org_validation_failed(
+        "LICENSE_FIRST_ADMIN_RETRY",
+        "The first administrator could not be saved because another one is being created at the same time: wait a \
+         moment, then retry.",
+        std::collections::HashMap::new(),
+    )
+}
+
+/// Creates the first administrator of the activated tenant. Runs without a session (first start),
+/// so it is refused as soon as this PC has an administrator, for this organisation or any other
+/// (`plant_has_administrator`): the organisation stored here is not proof of a first start, since
+/// it can be replaced, while the administrators stay until local data is reset (which itself needs
+/// an administrator once one exists). The check and the account, role and scope rows are one
+/// write transaction that holds the write lock from its start (`begin_write_transaction`): two
+/// submissions at once make one administrator, the other waits and gets the coded refusal.
 #[tauri::command]
 pub async fn bootstrap_initial_tenant_admin(
     input: BootstrapInitialAdminInput,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let tenant_id = get_activation_claim_tenant_id(&state.db)
+    bootstrap_initial_tenant_admin_in(&state.db, input).await
+}
+
+pub(crate) async fn bootstrap_initial_tenant_admin_in(
+    db: &DatabaseConnection,
+    input: BootstrapInitialAdminInput,
+) -> AppResult<()> {
+    let tenant_id = get_activation_claim_tenant_id(db)
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["Device is not activated.".into()]))?;
-    if tenant_has_administrator_for_id(&state.db, &tenant_id).await? {
-        return Err(AppError::ValidationFailed(vec![
-            "A tenant administrator already exists for this activation.".into(),
-        ]));
+    if plant_has_administrator(db).await? {
+        return Err(first_admin_exists());
     }
 
     let username = input.username.trim();
@@ -792,45 +1032,46 @@ pub async fn bootstrap_initial_tenant_admin(
         return Err(AppError::ValidationFailed(vec!["A valid email is required.".into()]));
     }
     crate::commands::admin_users::validate_password_strength(&input.password)?;
-
-    let exists = state
-        .db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT id FROM user_accounts WHERE LOWER(username) = LOWER(?) AND deleted_at IS NULL",
-            [username.to_string().into()],
-        ))
-        .await?;
-    if exists.is_some() {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Username '{username}' is already taken"
-        )]));
-    }
-
-    let role_row = state
-        .db
-        .query_one(Statement::from_string(
-            DatabaseBackend::Sqlite,
-            "SELECT id FROM roles WHERE name = 'Administrator' AND deleted_at IS NULL LIMIT 1".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Administrator role not found in seed data")))?;
-    let role_id: i64 = role_row.try_get("", "id")?;
-
     let password_hash = crate::auth::password::hash_password(&input.password)?;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let entity_sync_id = Uuid::new_v4().to_string();
-    let display_name = input
-        .display_name
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(std::string::ToString::to_string)
-        .unwrap_or_else(|| "Administrator".to_string());
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
+    let written = async {
+        let txn = begin_write_transaction(db).await?;
+        if plant_has_administrator(&txn).await? {
+            return Err(first_admin_exists());
+        }
+        let exists = txn
+            .query_one(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT id FROM user_accounts WHERE LOWER(username) = LOWER(?) AND deleted_at IS NULL",
+                [username.to_string().into()],
+            ))
+            .await?;
+        if exists.is_some() {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Username '{username}' is already taken"
+            )]));
+        }
+
+        let role_row = txn
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT id FROM roles WHERE name = 'Administrator' AND deleted_at IS NULL LIMIT 1".to_string(),
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Administrator role not found in seed data")))?;
+        let role_id: i64 = role_row.try_get("", "id")?;
+
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let entity_sync_id = Uuid::new_v4().to_string();
+        let display_name = input
+            .display_name
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(std::string::ToString::to_string)
+            .unwrap_or_else(|| "Administrator".to_string());
+
+        txn.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             r"INSERT INTO user_accounts
                 (entity_sync_id, username, display_name, identity_mode, password_hash,
@@ -848,21 +1089,18 @@ pub async fn bootstrap_initial_tenant_admin(
         ))
         .await?;
 
-    let id_row = state
-        .db
-        .query_one(Statement::from_string(
-            DatabaseBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to read new user id")))?;
-    let new_id: i64 = id_row.try_get("", "id")?;
+        let id_row = txn
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT last_insert_rowid() AS id".to_string(),
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to read new user id")))?;
+        let new_id: i64 = id_row.try_get("", "id")?;
 
-    let assign_sync = Uuid::new_v4().to_string();
-    let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
+        let assign_sync = Uuid::new_v4().to_string();
+        let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        txn.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             r"INSERT INTO user_scope_assignments
                 (entity_sync_id, user_id, role_id, scope_type, scope_reference,
@@ -879,16 +1117,35 @@ pub async fn bootstrap_initial_tenant_admin(
             ],
         ))
         .await?;
+        txn.commit().await?;
+        Ok::<(), AppError>(())
+    }
+    .await;
+    if let Err(e) = written {
+        // Two first-start submissions at once: the one that lost the write finds the
+        // administrator the other one created; if the other one has not committed yet (its write
+        // outlasted the busy timeout), a coded "retry", never the raw database error.
+        return Err(match plant_has_administrator(db).await {
+            Ok(true) => first_admin_exists(),
+            Ok(false) if !matches!(e, AppError::Database(_)) => e,
+            _ => first_admin_retry(),
+        });
+    }
 
     crate::audit::emit(
-        &state.db,
+        db,
         crate::audit::AuditEvent {
             event_type: crate::audit::event_type::USER_CREATED,
             summary: "Bootstrap initial tenant administrator",
-            detail_json: Some(format!(
-                r#"{{"username":"{}","email":"{}","tenant_id":"{}","bootstrap":true}}"#,
-                username, email, tenant_id
-            )),
+            detail_json: Some(
+                serde_json::json!({
+                    "username": username,
+                    "email": email,
+                    "tenant_id": tenant_id,
+                    "bootstrap": true,
+                })
+                .to_string(),
+            ),
             ..Default::default()
         },
     )
@@ -897,15 +1154,15 @@ pub async fn bootstrap_initial_tenant_admin(
     Ok(())
 }
 
-async fn persist_state_record(
-    state: &State<'_, AppState>,
+async fn persist_state_record_in(
+    db: &DatabaseConnection,
     user_id: Option<i32>,
     record: &ProductLicenseStateRecord,
     summary: &str,
 ) -> AppResult<()> {
     let json = serde_json::to_string(record)?;
     settings::set_setting(
-        &state.db,
+        db,
         PRODUCT_LICENSE_ONBOARDING_KEY,
         PRODUCT_LICENSE_SCOPE,
         &json,
@@ -942,38 +1199,830 @@ pub async fn get_product_license_onboarding_state(
     }
 }
 
-/// Who may submit a licence key (pre-login gate or in-app):
-/// - No usable activation yet (uninitialized, pending, or any denied_* state, e.g. revoked/expired
-///   licence that blocks the whole app) → allowed without a session: onboarding and recovery.
-/// - An active or degraded (still usable) activation → only an authenticated session with
-///   `adm.settings` + step-up, so nobody at the login screen can swap a working licence.
-async fn authorize_license_key_submission(state: &State<'_, AppState>) -> AppResult<()> {
-    let record = load_state_record(state).await?;
-    let usable_activation = record.as_ref().is_some_and(|r| {
+/// Who asks for a licence change: the signed-in user (if any), whether they hold `adm.settings`
+/// plant-wide, and whether their identity re-check (step-up) is valid.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct LicenceCaller {
+    pub user_id: Option<i32>,
+    pub may_administer: bool,
+    pub step_up: bool,
+}
+
+/// The caller of a licence command, from its session. May administer: `adm.settings` at tenant
+/// scope (`check_permission`, global), or, on a plant where nobody holds it at tenant scope right
+/// now, `adm.settings` at any scope. Every holder at any scope closes the first-start steps
+/// (`plant_has_administrator`), so without that second case a plant whose only administrators are
+/// site-scoped would be "administered" with nobody able to approve a licence change. Where a
+/// tenant-scope holder exists, only such a holder approves.
+pub(crate) async fn licence_caller(
+    db: &DatabaseConnection,
+    user_id: Option<i32>,
+    step_up: bool,
+) -> AppResult<LicenceCaller> {
+    let may_administer = match user_id {
+        Some(user_id) => {
+            crate::auth::rbac::check_permission(
+                db,
+                user_id,
+                crate::rbac::permissions::ADM_SETTINGS,
+                &crate::auth::rbac::PermissionScope::Global,
+            )
+            .await?
+                || (count_tenant_administrators(db, AdministratorScope::TenantScope, AdministratorTime::InForce)
+                    .await?
+                    == 0
+                    && user_holds_settings_right_at_any_scope(db, user_id).await?)
+        }
+        None => false,
+    };
+    Ok(LicenceCaller {
+        user_id,
+        may_administer,
+        step_up: step_up && user_id.is_some(),
+    })
+}
+
+/// The signed-in user as every other command sees it (`require_session!`: no idle-locked or
+/// expired session, no revoked stored session, no disabled account, no pending forced password
+/// change).
+async fn session_user(state: &State<'_, AppState>) -> AppResult<crate::auth::session_manager::AuthenticatedUser> {
+    Ok(require_session!(state))
+}
+
+/// The caller of a licence command. A session that fails the checks of `require_session!` counts
+/// as signed out (the licence rule then applies its signed-out limits; nothing is refused for it).
+async fn caller_of(state: &State<'_, AppState>) -> AppResult<LicenceCaller> {
+    let has_session = state.session.read().await.current.is_some();
+    let user_id = if has_session {
+        session_user(state).await.ok().map(|user| user.user_id)
+    } else {
+        None
+    };
+    let step_up = user_id.is_some() && state.session.read().await.is_step_up_valid();
+    licence_caller(&state.db, user_id, step_up).await
+}
+
+/// How a licence claim reaches this PC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LicenceChange {
+    /// A licence key entered (pre-login gate or in-app).
+    KeyEntry,
+    /// The result of the licence check with the control plane (every start, before sign-in).
+    Reconciliation,
+}
+
+/// A licence change refused without an administrator signed in (coded, translated on screen).
+fn reconcile_admin_required() -> AppError {
+    crate::errors::org_validation_failed(
+        "LICENSE_RECONCILE_ADMIN_REQUIRED",
+        "This licence change needs an administrator: sign in as an administrator; the licence screen then asks \
+         you to confirm your identity and applies the change.",
+        std::collections::HashMap::new(),
+    )
+}
+
+/// A licence update refused without an administrator signed in because it extends the licence
+/// terms or lifts a denial (coded, translated on screen).
+fn extension_admin_required() -> AppError {
+    crate::errors::org_validation_failed(
+        "LICENSE_EXTENSION_ADMIN_REQUIRED",
+        "This licence update extends the licence terms or lifts a denial (expiry, devices, edition, \
+         entitlements): sign in as an administrator; the licence screen then asks you to confirm your identity \
+         and applies the update.",
+        std::collections::HashMap::new(),
+    )
+}
+
+/// The commercial editions, lowest first: the order of what they grant in
+/// `src/lib/edition-capability-catalog.ts` (`SYSTEM_EDITION_IDS`): professional adds modules to
+/// core, enterprise to professional; development holds every enterprise module and is not a
+/// commercial edition, so moving into it ranks as a raise. The one place this order is defined.
+const EDITION_ORDER: [&str; 4] = ["core", "professional", "enterprise", "development"];
+
+/// Rank of a commercial edition in [`EDITION_ORDER`]; `None` for an edition this PC does not know.
+fn edition_rank(edition: &str) -> Option<usize> {
+    let edition = edition.trim().to_ascii_lowercase();
+    EDITION_ORDER.iter().position(|known| *known == edition)
+}
+
+/// OWNER DECISION (option A, 2026-10-19): a term (expiry, device limit, edition, offline grace)
+/// stated on NEITHER side, the stored licence nor the incoming one, is "nothing changed", so it is
+/// not an extension and a signed-out refresh may carry it. Flip this one value to make it an
+/// extension again (then a licence without that term needs an administrator with step-up at every
+/// refresh). A term missing on only one side is always an extension (`term_extended`).
+const fn term_missing_on_both_sides_extends() -> bool {
+    false
+}
+
+/// Whether going from `stored` to `incoming` extends a term, fail-closed: a term missing on one
+/// side only is an extension (a licence that states no expiry, device limit, edition or offline
+/// grace may mean "unlimited", so it never compares as a keep with one that states it); missing on
+/// both sides is decided by [`term_missing_on_both_sides_extends`]; `raises` decides between two
+/// values.
+fn term_extended<T>(stored: Option<T>, incoming: Option<T>, raises: impl FnOnce(T, T) -> bool) -> bool {
+    match (stored, incoming) {
+        (Some(stored), Some(incoming)) => raises(stored, incoming),
+        (None, None) => term_missing_on_both_sides_extends(),
+        _ => true,
+    }
+}
+
+/// Whether a restriction that is on when `Some(true)` is lifted: on before, not on now. A
+/// restriction absent or off before may be turned on (stricter) or stay off.
+fn restriction_lifted(stored: Option<bool>, incoming: Option<bool>) -> bool {
+    stored == Some(true) && incoming != Some(true)
+}
+
+/// The numeric parts of a version (`1.4.2`, `v1.4.2`, `1.4.2-rc1` reads as `1.4.2`); `None` when it
+/// is not a dotted number.
+fn version_parts(version: &str) -> Option<Vec<u64>> {
+    let core = version.trim().trim_start_matches(['v', 'V']);
+    let core = core.split(['-', '+']).next()?;
+    if core.is_empty() {
+        return None;
+    }
+    core.split('.').map(|part| part.parse::<u64>().ok()).collect()
+}
+
+/// Whether the minimum app version a licence forces is lowered or removed (looser); a forced
+/// minimum this PC cannot read, on either side, counts as lowered.
+fn minimum_version_lowered(stored: Option<&str>, incoming: Option<&str>) -> bool {
+    let stored = stored.map(str::trim).filter(|v| !v.is_empty());
+    let incoming = incoming.map(str::trim).filter(|v| !v.is_empty());
+    match (stored, incoming) {
+        (None, _) => false,
+        (Some(_), None) => true,
+        (Some(stored), Some(incoming)) => match (version_parts(stored), version_parts(incoming)) {
+            (Some(mut stored), Some(mut incoming)) => {
+                let len = stored.len().max(incoming.len());
+                stored.resize(len, 0);
+                incoming.resize(len, 0);
+                incoming < stored
+            }
+            _ => true,
+        },
+    }
+}
+
+/// The version of the app running on this PC: the one the app reports everywhere
+/// (`commands::app::get_app_info`, read by the licence screen and sent to the control plane), fixed
+/// at build time.
+fn running_app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// Whether `running` meets the forced minimum version `minimum`, fail-closed: both must read as
+/// dotted numbers (`version_parts`); a running pre-release (`1.4.0-rc1`) is below its own release,
+/// so it meets only a lower minimum.
+fn version_meets_minimum(running: &str, minimum: &str) -> bool {
+    let (Some(mut run), Some(mut min)) = (version_parts(running), version_parts(minimum)) else {
+        return false;
+    };
+    let len = run.len().max(min.len());
+    run.resize(len, 0);
+    min.resize(len, 0);
+    let prerelease = running.trim().contains(['-', '+']);
+    if prerelease {
+        run > min
+    } else {
+        run >= min
+    }
+}
+
+/// Whether a claim lifting the forced update recorded here only states what this PC can check for
+/// itself: the update was installed. That is: the record holds a forced-update denial that a success
+/// claim recorded with its forced minimum version (`forced_update_lift_allowed`; never one recorded
+/// from a bare denial outcome, which names no minimum, nor one that replaced another denial), the
+/// stored claim forces the update with that minimum, the incoming claim says explicitly that no
+/// update is forced and keeps the forced minimum version (not lowered, checked apart by
+/// `minimum_version_lowered`), and the app running here meets the stored forced minimum
+/// ([`running_app_version`]). Then lifting it is not an extension; any other lift is one (no stored
+/// minimum, one this PC cannot read, a PC still below it, or a denial not recorded that way).
+fn forced_update_installed(record: &ProductLicenseStateRecord, incoming: &LicenceChangeTarget) -> bool {
+    record.status == ProductLicenseActivationStatus::DeniedForceUpdateRequired
+        && record.forced_update_lift_allowed
+        && incoming.force_update_required == Some(false)
+        && record.activation_claim.as_ref().is_some_and(|stored| {
+            stored.force_update_required == Some(true)
+                && stored
+                    .force_min_app_version
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .is_some_and(|minimum| version_meets_minimum(running_app_version(), minimum))
+        })
+}
+
+fn parse_instant(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value.trim())
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
+}
+
+/// A later instant (or one this PC cannot read) extends.
+fn instant_raised(stored: &str, incoming: &str) -> bool {
+    match (parse_instant(stored), parse_instant(incoming)) {
+        (Some(stored), Some(incoming)) => incoming > stored,
+        _ => true,
+    }
+}
+
+/// A higher edition, or an edition this PC does not know on either side, extends.
+fn edition_raised(stored: &str, incoming: &str) -> bool {
+    match (edition_rank(stored), edition_rank(incoming)) {
+        (Some(stored), Some(incoming)) => incoming > stored,
+        _ => true,
+    }
+}
+
+/// The commercial edition a claim states (`license_tier`, else `license_plan`).
+fn claim_edition<'a>(license_tier: Option<&'a str>, license_plan: Option<&'a str>) -> Option<&'a str> {
+    [license_tier, license_plan]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|v| !v.is_empty())
+}
+
+/// Whether the claim terms of `incoming` extend those stored here: a later expiry, more devices, a
+/// higher edition or a longer offline grace (any of these missing on either side counts as
+/// extended), or a looser policy: a forced update lifted (unless `update_installed`: the record's
+/// forced update is lifted by installing it, `forced_update_installed`) or a forced minimum version
+/// lowered or removed, immediate disconnection on trust revocation or the fresh-heartbeat rule on
+/// reconnect lifted, another update channel. These fields are not covered by any signature, so they
+/// always follow keep-or-reduce without an administrator.
+fn claim_terms_extended(
+    stored: &ProductActivationClaimRecord,
+    incoming: &LicenceChangeTarget,
+    update_installed: bool,
+) -> bool {
+    term_extended(
+        stored.expires_at.as_deref(),
+        incoming.expires_at.as_deref(),
+        instant_raised,
+    ) || term_extended(stored.device_limit, incoming.device_limit, |s, i| i > s)
+        || term_extended(
+            claim_edition(stored.license_tier.as_deref(), stored.license_plan.as_deref()),
+            claim_edition(incoming.license_tier.as_deref(), incoming.license_plan.as_deref()),
+            edition_raised,
+        )
+        || term_extended(stored.offline_grace_hours, incoming.offline_grace_hours, |s, i| i > s)
+        || (restriction_lifted(stored.force_update_required, incoming.force_update_required) && !update_installed)
+        || minimum_version_lowered(
+            stored.force_min_app_version.as_deref(),
+            incoming.force_min_app_version.as_deref(),
+        )
+        || restriction_lifted(
+            stored.trust_revocation_disconnects_immediately,
+            incoming.trust_revocation_disconnects_immediately,
+        )
+        || restriction_lifted(
+            stored.reconnect_requires_fresh_heartbeat,
+            incoming.reconnect_requires_fresh_heartbeat,
+        )
+        || stored.update_channel.as_deref().map(str::trim) != incoming.update_channel.as_deref().map(str::trim)
+}
+
+/// The entitlement envelope active on this PC, as the terms an incoming one is compared with.
+struct StoredEnvelope {
+    verified: bool,
+    tier: String,
+    state: String,
+    channel: String,
+    machine_slots: i64,
+    feature_flags_json: String,
+    capabilities_json: String,
+    policy_json: String,
+    issued_at: String,
+    valid_from: String,
+    valid_until: String,
+    offline_grace_until: String,
+}
+
+async fn load_active_envelope(db: &DatabaseConnection) -> AppResult<Option<StoredEnvelope>> {
+    let row = db
+        .query_one(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT e.verification_result, e.tier, e.state, e.channel, e.machine_slots, e.feature_flags_json,
+                    e.capabilities_json, e.policy_json, e.issued_at, e.valid_from, e.valid_until,
+                    e.offline_grace_until
+               FROM entitlement_cache_state s
+               JOIN entitlement_envelopes e ON e.id = s.active_envelope_id
+              WHERE s.id = 1"
+                .to_string(),
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    Ok(Some(StoredEnvelope {
+        verified: row.try_get::<String>("", "verification_result")? == "verified",
+        tier: row.try_get("", "tier")?,
+        state: row.try_get("", "state")?,
+        channel: row.try_get("", "channel")?,
+        machine_slots: row.try_get("", "machine_slots")?,
+        feature_flags_json: row.try_get("", "feature_flags_json")?,
+        capabilities_json: row.try_get("", "capabilities_json")?,
+        policy_json: row.try_get("", "policy_json")?,
+        issued_at: row.try_get("", "issued_at")?,
+        valid_from: row.try_get("", "valid_from")?,
+        valid_until: row.try_get("", "valid_until")?,
+        offline_grace_until: row.try_get("", "offline_grace_until")?,
+    }))
+}
+
+/// Whether applying `incoming` would extend the entitlements in force here. The envelope carries no
+/// tenant, licence or device field, so even a valid signature does not bind it to this PC (a signed
+/// envelope of another organisation, or an older one, could be replayed); and an envelope whose
+/// signature does not verify is stored without becoming active, but may rewrite the active row
+/// when it reuses its id. So every envelope, signed or not, is compared with the verified envelope
+/// in force, fail-closed: it extends when no verified envelope is in force, when it is older
+/// (`issued_at`, the only ordering it carries that the control plane sets at each issue), when the
+/// edition, device slots or validity window (`valid_from` earlier, `valid_until` later) are raised,
+/// when its state leaves suspended or revoked (or turns active again), when its channel,
+/// capabilities, feature flags or policy differ, or when its offline grace ends after what the
+/// stored terms give (the control plane moves it forward at each contact: `now` or the expiry, plus
+/// the licence's `offline_grace_hours`).
+async fn envelope_extended(
+    db: &DatabaseConnection,
+    incoming: &crate::entitlements::domain::EntitlementEnvelopeInput,
+    stored_grace_hours: Option<u32>,
+) -> AppResult<bool> {
+    let Some(stored) = load_active_envelope(db).await? else {
+        return Ok(true);
+    };
+    if !stored.verified {
+        return Ok(true);
+    }
+    let older = match (parse_instant(&stored.issued_at), parse_instant(&incoming.issued_at)) {
+        (Some(stored), Some(incoming)) => incoming < stored,
+        _ => true,
+    };
+    let state_raised = incoming.state != stored.state && incoming.state == "active";
+    let state_unknown_change = incoming.state != stored.state && stored.state != "active";
+    let grace_raised = offline_grace_raised(&stored, incoming, stored_grace_hours);
+    Ok(older
+        || edition_raised(&stored.tier, &incoming.tier)
+        || incoming.machine_slots > stored.machine_slots
+        || instant_raised(&stored.valid_until, &incoming.valid_until)
+        || instant_raised(&incoming.valid_from, &stored.valid_from)
+        || state_raised
+        || state_unknown_change
+        || incoming.channel != stored.channel
+        || incoming.capabilities_json != stored.capabilities_json
+        || incoming.feature_flags_json != stored.feature_flags_json
+        || incoming.policy_json != stored.policy_json
+        || grace_raised)
+}
+
+/// Whether the incoming envelope's offline grace ends later than the stored terms give. The control
+/// plane sets it, from its own clock, to the licence expiry (`valid_until`) or the issue instant
+/// (`issued_at`, for a licence without expiry), plus the licence's `offline_grace_hours`; so it is
+/// bounded by those instants of the incoming envelope plus the stored hours, or by the grace end
+/// already in force. Only instants are compared with each other: this PC's clock is never read, so a
+/// PC clock running behind or ahead changes nothing. An unreadable instant extends.
+fn offline_grace_raised(
+    stored: &StoredEnvelope,
+    incoming: &crate::entitlements::domain::EntitlementEnvelopeInput,
+    stored_grace_hours: Option<u32>,
+) -> bool {
+    let Some(incoming_grace) = parse_instant(&incoming.offline_grace_until) else {
+        return true;
+    };
+    let mut bound = parse_instant(&stored.offline_grace_until);
+    if let Some(hours) = stored_grace_hours {
+        let hours = Duration::hours(i64::from(hours));
+        for base in [parse_instant(&incoming.issued_at), parse_instant(&incoming.valid_until)]
+            .into_iter()
+            .flatten()
+        {
+            bound = bound.max(Some(base + hours));
+        }
+    }
+    bound.is_none_or(|bound| incoming_grace > bound)
+}
+
+/// The licence a change would bring to this PC: read from the claim, or from the control plane's
+/// preview of that claim before it is taken (`check_product_license_key_entry`). Only what the
+/// rule reads.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct LicenceChangeTarget {
+    pub tenant_id: String,
+    pub license_id: String,
+    pub machine_fingerprint: String,
+    /// The activation token the claim brings; absent from the control plane's preview (the check
+    /// asked before the claim), so only the claim itself is held to the token rule.
+    #[serde(default)]
+    pub activation_token: Option<String>,
+    #[serde(default)]
+    pub has_demo_data: Option<bool>,
+    #[serde(default)]
+    pub is_initialized: Option<bool>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub device_limit: Option<i64>,
+    #[serde(default)]
+    pub license_tier: Option<String>,
+    #[serde(default)]
+    pub license_plan: Option<String>,
+    #[serde(default)]
+    pub offline_grace_hours: Option<u32>,
+    #[serde(default)]
+    pub force_update_required: Option<bool>,
+    #[serde(default)]
+    pub force_min_app_version: Option<String>,
+    #[serde(default)]
+    pub update_channel: Option<String>,
+    #[serde(default)]
+    pub trust_revocation_disconnects_immediately: Option<bool>,
+    #[serde(default)]
+    pub reconnect_requires_fresh_heartbeat: Option<bool>,
+    /// The entitlement envelope that comes with the claim, if any.
+    #[serde(skip)]
+    pub envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
+}
+
+impl LicenceChangeTarget {
+    fn from_claim(
+        claim: &ProductActivationClaimRecord,
+        envelope: Option<&crate::entitlements::domain::EntitlementEnvelopeInput>,
+    ) -> Self {
+        Self {
+            tenant_id: claim.tenant_id.clone(),
+            license_id: claim.license_id.clone(),
+            machine_fingerprint: claim.machine_fingerprint.clone(),
+            activation_token: Some(claim.activation_token.clone()),
+            has_demo_data: claim.has_demo_data,
+            is_initialized: claim.is_initialized,
+            expires_at: claim.expires_at.clone(),
+            device_limit: claim.device_limit,
+            license_tier: claim.license_tier.clone(),
+            license_plan: claim.license_plan.clone(),
+            offline_grace_hours: claim.offline_grace_hours,
+            force_update_required: claim.force_update_required,
+            force_min_app_version: claim.force_min_app_version.clone(),
+            update_channel: claim.update_channel.clone(),
+            trust_revocation_disconnects_immediately: claim.trust_revocation_disconnects_immediately,
+            reconnect_requires_fresh_heartbeat: claim.reconnect_requires_fresh_heartbeat,
+            envelope: envelope.cloned(),
+        }
+    }
+}
+
+/// Why a licence change needs an administrator signed in with a fresh identity check.
+enum AdminNeeded {
+    /// Another organisation, another licence or machine, another activation token not bound to
+    /// this activation, demo data, a key without a claim.
+    Change,
+    /// The same activation with extended terms, or a denial lifted.
+    Extension,
+}
+
+/// Who the licence rule let a change through for: decides what of the claim is taken as it comes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LicenceAuthority {
+    /// No administrator on this PC yet (first start): the claim is taken as it comes.
+    FirstStart,
+    /// An administrator signed in with a valid step-up.
+    Administrator,
+    /// Nobody who may administer: the same activation, same or reduced terms. Display fields
+    /// (organisation name, slug) are kept as stored.
+    KeepOrReduce,
+}
+
+/// A claim refused whatever the caller: an identifier or token empty, or not exactly what will be
+/// stored (leading or trailing spaces), so no whitespace variant of the organisation, licence or
+/// machine can be stored and compared later.
+fn claim_invalid() -> AppError {
+    crate::errors::org_validation_failed(
+        "LICENSE_CLAIM_INVALID",
+        "The licence data received is incomplete or malformed (organisation, licence, machine or activation \
+         token): nothing was changed.",
+        std::collections::HashMap::new(),
+    )
+}
+
+/// An identifier as it may be stored: non-empty and without surrounding spaces.
+fn canonical_id(value: &str) -> bool {
+    !value.is_empty() && value.trim() == value
+}
+
+/// The `iss` and `aud` the control plane signs into a device activation token
+/// (`maintafox-vendor-console/api/src/auth-tokens.ts`, `signDeviceActivationToken`).
+const DEVICE_TOKEN_ISSUER: &str = "maintafox-control-api";
+const DEVICE_TOKEN_AUDIENCE: &str = "maintafox-desktop-device";
+
+/// What a device activation token says about itself (its payload, read without the signature: the
+/// control plane signs it with a secret this PC does not hold).
+struct DeviceTokenPayload {
+    tenant_id: String,
+    license_id: String,
+    machine_fingerprint: String,
+    issued_at: i64,
+}
+
+fn device_token_payload(token: &str) -> Option<DeviceTokenPayload> {
+    use base64::Engine as _;
+    let mut parts = token.split('.');
+    let (_header, payload, _signature) = (parts.next()?, parts.next()?, parts.next()?);
+    if parts.next().is_some() {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload.trim_end_matches('='))
+        .ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let text = |key: &str| value.get(key).and_then(serde_json::Value::as_str);
+    let audience_ok = match value.get("aud") {
+        Some(serde_json::Value::String(aud)) => aud == DEVICE_TOKEN_AUDIENCE,
+        Some(serde_json::Value::Array(auds)) => auds.iter().any(|a| a.as_str() == Some(DEVICE_TOKEN_AUDIENCE)),
+        _ => false,
+    };
+    if text("kind") != Some("activation") || text("iss") != Some(DEVICE_TOKEN_ISSUER) || !audience_ok {
+        return None;
+    }
+    Some(DeviceTokenPayload {
+        tenant_id: text("tenant_id")?.to_string(),
+        license_id: text("license_id")?.to_string(),
+        machine_fingerprint: text("machine_fingerprint")?.to_string(),
+        issued_at: value.get("iat")?.as_i64()?,
+    })
+}
+
+/// How much later than the entitlement envelope of the same answer a device token may be issued, in
+/// seconds. The control plane builds both in one request from its own clock: the claim signs the
+/// token before the envelope, the policy refresh builds the envelope first and then rotates the
+/// token, so the token's `iat` (whole seconds) can follow the envelope's `issued_at` by the time the
+/// request takes. Five minutes covers a slow request; a forged token can be dated at most this far
+/// past the newest envelope the control plane signed.
+const DEVICE_TOKEN_AFTER_ENVELOPE_SECONDS: i64 = 300;
+
+/// Whether `envelope`'s signature verifies with the trusted keys compiled into this build.
+fn envelope_signature_verified(envelope: &crate::entitlements::domain::EntitlementEnvelopeInput) -> bool {
+    crate::entitlements::trusted_keys::verify_entitlement_signature(
+        &envelope.issuer,
+        &envelope.key_id,
+        crate::entitlements::queries::canonical_payload(envelope).as_bytes(),
+        &envelope.signature,
+    ) == crate::entitlements::trusted_keys::SignatureCheck::Verified
+}
+
+/// The control plane's clock as the answer carrying a claim states it, in seconds: the issue instant
+/// of the entitlement envelope that comes with it, only when its signature verifies (an unsigned
+/// envelope's instant is whatever the sender wrote). `None` without such an envelope.
+fn server_time_of(envelope: Option<&crate::entitlements::domain::EntitlementEnvelopeInput>) -> Option<i64> {
+    let envelope = envelope.filter(|e| envelope_signature_verified(e))?;
+    parse_instant(&envelope.issued_at).map(|instant| instant.timestamp())
+}
+
+/// Whether a new activation token may replace the stored one without an administrator. The control
+/// plane rotates the device token on a routine refresh (every 7 days, or when an operator asks) and
+/// the old one stops working at once, so a token change alone cannot require an administrator
+/// without locking plants out every week. Fail-closed instead: the new token must name, in its
+/// payload, exactly the organisation, licence and machine stored here, as a device activation token
+/// of the control plane, issued no earlier than the stored token (which must read the same way), and
+/// no later than the control plane's own clock in the same answer allows (`server_time`, the issue
+/// instant of the signed envelope that comes with it, plus [`DEVICE_TOKEN_AFTER_ENVELOPE_SECONDS`]);
+/// this PC's clock is never read. Anything else (a token of another activation, an older one, one
+/// this PC cannot read, one dated past the server time, or a rotation without a signed envelope)
+/// needs an administrator.
+///
+/// The token's signature cannot be checked here (shared secret of the control plane), so a forged
+/// token naming this activation can still be stored signed out. The control plane refuses it at the
+/// next contact (it takes the organisation from the verified token, so no plant data reaches another
+/// organisation) and the gate falls back to a fresh claim with the key kept on this PC. The genuine
+/// token that claim brings is accepted signed out as long as it is not older than the forged one:
+/// the bound above keeps a forged `iat` at most five minutes past the newest envelope the control
+/// plane signed, so a genuine token issued more than five minutes after that envelope passes. A
+/// genuine claim inside those five minutes is refused (needs an administrator) once; the next check
+/// (15 minutes later) gets a newer genuine token, which passes.
+fn activation_token_bound(stored: &ProductActivationClaimRecord, incoming: &str, server_time: Option<i64>) -> bool {
+    if incoming == stored.activation_token {
+        return true;
+    }
+    let (Some(old), Some(new), Some(server_time)) = (
+        device_token_payload(&stored.activation_token),
+        device_token_payload(incoming),
+        server_time,
+    ) else {
+        return false;
+    };
+    let names_this_activation = |p: &DeviceTokenPayload| {
+        p.tenant_id == stored.tenant_id
+            && p.license_id == stored.license_id
+            && p.machine_fingerprint == stored.machine_fingerprint
+    };
+    names_this_activation(&new)
+        && names_this_activation(&old)
+        && new.issued_at >= old.issued_at
+        && new.issued_at <= server_time.saturating_add(DEVICE_TOKEN_AFTER_ENVELOPE_SECONDS)
+}
+
+/// Whether `incoming` would lower the denial recorded here ([`denial_severity`]; the offline grace is
+/// read from the clock and cleared by any contact, so it is not a recorded denial). A success claim
+/// leaves the licence active (severity 0), or denied for a forced update (1) when it forces one; so
+/// from a revocation, an expiry, a slot limit or an invalid licence (2) every claim lowers it (and
+/// with it every change of the forced-update fields), and from a forced update only a claim kept
+/// forced does not. The one lowering that needs no administrator: the forced update recorded here
+/// from a success claim with its minimum, once this PC runs a version that meets that minimum
+/// (`forced_update_installed`).
+fn denial_lifted(record: &ProductLicenseStateRecord, incoming: &LicenceChangeTarget) -> bool {
+    let after = if incoming.force_update_required == Some(true) {
+        ProductLicenseActivationStatus::DeniedForceUpdateRequired
+    } else {
+        ProductLicenseActivationStatus::Active
+    };
+    denial_severity(&after) < denial_severity(&record.status) && !forced_update_installed(record, incoming)
+}
+
+/// A denial recorded from the control plane's answer (the offline grace is derived on read, see
+/// `effective_status`).
+fn status_is_denied(status: &ProductLicenseActivationStatus) -> bool {
+    matches!(
+        status,
+        ProductLicenseActivationStatus::DeniedRevoked
+            | ProductLicenseActivationStatus::DeniedExpired
+            | ProductLicenseActivationStatus::DeniedSlotLimit
+            | ProductLicenseActivationStatus::DeniedForceUpdateRequired
+            | ProductLicenseActivationStatus::DeniedInvalid
+    )
+}
+
+/// The one rule for storing a licence claim on this PC (key entry, its preview check, and
+/// reconciliation).
+///
+/// Refused whatever the caller: a claim whose organisation, licence, machine or activation token is
+/// empty or carries surrounding spaces (`claim_invalid`).
+///
+/// Needs a signed-in user with `adm.settings` and a valid step-up:
+/// - on a plant that has an administrator (`plant_has_administrator`), whatever the licence state
+///   (usable, denied, offline):
+///   - a claim for another activation than the one stored here (another organisation, licence or
+///     machine, compared exactly), or any claim when none is stored (nothing to compare it with);
+///   - a new activation token not bound to this activation (`activation_token_bound`);
+///   - a claim that would seed demo data;
+///   - a claim that extends the stored terms (`claim_terms_extended`), brings an entitlement
+///     envelope that extends those in force (`envelope_extended`), or would lower a denial recorded
+///     here (`denial_lifted`, in the order of `denial_severity`): never extended signed out (the one
+///     exception: a forced update recorded from a success claim with its minimum, lifted once this
+///     PC runs a version meeting it, `forced_update_installed`);
+///   - a key entered without a claim, which would forget the activation stored here;
+/// - while this PC has a usable licence (active or degraded with a valid claim): any key entry.
+///
+/// Everything else is accepted without a session: on an administered plant, a claim of the very
+/// activation stored here that keeps or reduces its terms and leaves a denial in place
+/// ([`LicenceAuthority::KeepOrReduce`]); and any change before the plant has an administrator
+/// (first start). Denials and network / HTTP errors carry no claim and are always recorded, but
+/// never lower the denial recorded here (a denial outcome below it is kept as a diagnostic only,
+/// `denial_severity`; a network or HTTP error leaves a denial in place). Until
+/// the control plane signs the claim, its terms are only trusted to keep or reduce what is stored.
+pub(crate) async fn authorize_licence_change(
+    db: &DatabaseConnection,
+    record: Option<&ProductLicenseStateRecord>,
+    target: Option<&LicenceChangeTarget>,
+    change: LicenceChange,
+    caller: LicenceCaller,
+) -> AppResult<LicenceAuthority> {
+    if let Some(t) = target {
+        let ids_ok = canonical_id(&t.tenant_id) && canonical_id(&t.license_id) && canonical_id(&t.machine_fingerprint);
+        let token_ok = t.activation_token.as_deref().is_none_or(canonical_id);
+        if !ids_ok || !token_ok {
+            return Err(claim_invalid());
+        }
+    }
+    let stored = record
+        .and_then(|r| r.activation_claim.as_ref())
+        .filter(|c| activation_claim_is_complete(c));
+    let usable_activation = record.is_some_and(|r| {
         record_has_valid_activation_claim(r)
             && matches!(
                 r.status,
                 ProductLicenseActivationStatus::Active | ProductLicenseActivationStatus::DegradedApiUnavailable
             )
     });
-    if !usable_activation {
-        return Ok(());
+    let administered = plant_has_administrator(db).await?;
+    let mut needed: Option<AdminNeeded> = None;
+    if administered {
+        match (target, stored, record) {
+            (Some(t), Some(s), Some(r)) => {
+                let seeds_demo = crate::db::tenant_bootstrap::claim_would_seed_demo(
+                    db,
+                    &t.tenant_id,
+                    t.has_demo_data,
+                    t.is_initialized,
+                )
+                .await?;
+                let same_activation = s.tenant_id == t.tenant_id
+                    && s.license_id == t.license_id
+                    && s.machine_fingerprint == t.machine_fingerprint;
+                let server_time = server_time_of(t.envelope.as_ref());
+                let token_unbound = t
+                    .activation_token
+                    .as_deref()
+                    .is_some_and(|token| !activation_token_bound(s, token, server_time));
+                if seeds_demo || !same_activation || token_unbound {
+                    needed = Some(AdminNeeded::Change);
+                } else {
+                    let extended = claim_terms_extended(s, t, forced_update_installed(r, t))
+                        || denial_lifted(r, t)
+                        || match t.envelope.as_ref() {
+                            Some(envelope) => envelope_extended(db, envelope, s.offline_grace_hours).await?,
+                            None => false,
+                        };
+                    if extended {
+                        needed = Some(AdminNeeded::Extension);
+                    }
+                }
+            }
+            // Nothing stored to compare the organisation and terms with.
+            (Some(_), _, _) => needed = Some(AdminNeeded::Change),
+            // A key without a claim would forget the activation stored here.
+            (None, Some(_), _) if change == LicenceChange::KeyEntry => needed = Some(AdminNeeded::Change),
+            (None, _, _) => {}
+        }
     }
-    if state.session.read().await.current.is_none() {
-        return Err(AppError::Auth(
-            "Une session administrateur est requise pour remplacer une licence active.              (An administrator session is required to replace an active licence.)"
-                .into(),
-        ));
+    if needed.is_none() && usable_activation && change == LicenceChange::KeyEntry {
+        needed = Some(AdminNeeded::Change);
     }
-    let user = require_session!(state);
-    crate::require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::ADM_SETTINGS,
-        crate::auth::rbac::PermissionScope::Global
-    );
-    crate::require_step_up!(state);
-    Ok(())
+    let Some(needed) = needed else {
+        return Ok(if !administered {
+            LicenceAuthority::FirstStart
+        } else if caller.may_administer && caller.step_up {
+            LicenceAuthority::Administrator
+        } else {
+            LicenceAuthority::KeepOrReduce
+        });
+    };
+    if !caller.may_administer {
+        return Err(match needed {
+            AdminNeeded::Change => reconcile_admin_required(),
+            AdminNeeded::Extension => extension_admin_required(),
+        });
+    }
+    if !caller.step_up {
+        return Err(AppError::StepUpRequired);
+    }
+    Ok(LicenceAuthority::Administrator)
+}
+
+/// Whether a key entry bringing the licence the control plane previewed would be accepted on this
+/// PC, asked before the licence is taken on the server (a device slot) and before local data is
+/// wiped. Changes nothing; answers as `submit_product_license_key` would (same rule, same coded
+/// refusal), so it reveals nothing the real submit does not.
+#[tauri::command]
+pub async fn check_product_license_key_entry(preview_json: String, state: State<'_, AppState>) -> AppResult<()> {
+    let caller = caller_of(&state).await?;
+    check_product_license_key_entry_in(&state.db, caller, &preview_json).await
+}
+
+pub(crate) async fn check_product_license_key_entry_in(
+    db: &DatabaseConnection,
+    caller: LicenceCaller,
+    preview_json: &str,
+) -> AppResult<()> {
+    let mut value: serde_json::Value = serde_json::from_str(preview_json)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("previewJson must be valid JSON: {e}")]))?;
+    let envelope = match value
+        .as_object_mut()
+        .and_then(|obj| obj.remove("entitlement_envelope"))
+        .filter(|v| !v.is_null())
+    {
+        Some(env_value) => Some(
+            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(env_value)
+                .map_err(|e| AppError::ValidationFailed(vec![format!("entitlement_envelope is invalid: {e}")]))?,
+        ),
+        None => None,
+    };
+    if let Some(obj) = value.as_object_mut() {
+        sanitize_activation_claim_object(obj);
+    }
+    let mut target: LicenceChangeTarget = serde_json::from_value(value).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "previewJson must name the tenant, licence and machine: {e}"
+        )])
+    })?;
+    // As `extract_claim_and_envelope` does for the claim.
+    if target.license_plan.is_none() {
+        target.license_plan = target.license_tier.clone();
+    }
+    if target.license_tier.is_none() {
+        target.license_tier = target.license_plan.clone();
+    }
+    target.envelope = envelope;
+    let current = load_state_record_from_db(db).await?;
+    authorize_licence_change(db, current.as_ref(), Some(&target), LicenceChange::KeyEntry, caller)
+        .await
+        .map(|_| ())
+}
+
+/// A claim let through signed out ([`LicenceAuthority::KeepOrReduce`]) keeps the organisation's
+/// display name and slug stored here: the claim is not signed, so it never renames the plant's root
+/// organisation or the company shown on screen.
+fn keep_stored_display(claim: &mut ProductActivationClaimRecord, stored: Option<&ProductLicenseStateRecord>) {
+    let stored_claim = stored.and_then(|r| r.activation_claim.as_ref());
+    claim.tenant_display_name = stored_claim.and_then(|c| c.tenant_display_name.clone());
+    claim.tenant_slug = stored_claim.and_then(|c| c.tenant_slug.clone());
 }
 
 #[tauri::command]
@@ -984,14 +2033,20 @@ pub async fn submit_product_license_key(
     app_version: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    authorize_license_key_submission(&state).await?;
-    let changed_by_id = state
-        .session
-        .read()
-        .await
-        .current
-        .as_ref()
-        .map(|session| session.user.user_id);
+    let caller = caller_of(&state).await?;
+    submit_product_license_key_in(&state.db, caller, &key, claim_json, machine_fingerprint, app_version).await
+}
+
+pub(crate) async fn submit_product_license_key_in(
+    db: &DatabaseConnection,
+    caller: LicenceCaller,
+    key: &str,
+    claim_json: Option<String>,
+    machine_fingerprint: Option<String>,
+    app_version: Option<String>,
+) -> AppResult<()> {
+    let changed_by_id = caller.user_id;
+    let _record_lock = LICENCE_RECORD_LOCK.lock().await;
     let trimmed = key.trim();
     if trimmed.len() < 8 {
         return Err(AppError::ValidationFailed(vec![
@@ -1016,6 +2071,18 @@ pub async fn submit_product_license_key(
         }
         None => None,
     };
+    let current = load_state_record_from_db(db).await?;
+    let target = parsed_claim
+        .as_ref()
+        .map(|claim| LicenceChangeTarget::from_claim(claim, entitlement_envelope.as_ref()));
+    let authority =
+        authorize_licence_change(db, current.as_ref(), target.as_ref(), LicenceChange::KeyEntry, caller).await?;
+    let mut parsed_claim = parsed_claim;
+    if authority == LicenceAuthority::KeepOrReduce {
+        if let Some(claim) = parsed_claim.as_mut() {
+            keep_stored_display(claim, current.as_ref());
+        }
+    }
 
     let mut record = ProductLicenseStateRecord {
         schema_version: 1,
@@ -1033,7 +2100,14 @@ pub async fn submit_product_license_key(
         last_reconciled_at: parsed_claim.as_ref().map(|_| Utc::now().to_rfc3339()),
         reconciliation: ProductLicenseReconciliationPolicy::default(),
         diagnostics: vec![],
-        company_display_name: parsed_claim.as_ref().and_then(|c| c.tenant_display_name.clone()),
+        company_display_name: if authority == LicenceAuthority::KeepOrReduce {
+            current.as_ref().and_then(|r| r.company_display_name.clone())
+        } else {
+            parsed_claim.as_ref().and_then(|c| c.tenant_display_name.clone())
+        },
+        forced_update_lift_allowed: parsed_claim
+            .as_ref()
+            .is_some_and(|claim| forced_update_lift_allowed(current.as_ref(), claim, authority)),
     };
     if let Some(claim) = parsed_claim {
         if claim.force_update_required.unwrap_or(false) {
@@ -1087,15 +2161,15 @@ pub async fn submit_product_license_key(
             .unwrap_or(0),
         "Product license key submit processed"
     );
-    persist_state_record(
-        &state,
+    persist_state_record_in(
+        db,
         changed_by_id,
         &record,
         "product license key submitted (state machine)",
     )
     .await?;
-    apply_claim_entitlement_envelope(&state.db, entitlement_envelope).await?;
-    crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, changed_by_id).await?;
+    apply_claim_entitlement_envelope(db, entitlement_envelope).await?;
+    crate::db::tenant_bootstrap::bootstrap_from_activation_claim(db, changed_by_id).await?;
     Ok(())
 }
 
@@ -1104,17 +2178,21 @@ pub async fn apply_product_license_reconciliation(
     outcome_json: String,
     state: State<'_, AppState>,
 ) -> AppResult<ProductLicenseOnboardingState> {
-    let changed_by_id = state
-        .session
-        .read()
-        .await
-        .current
-        .as_ref()
-        .map(|session| session.user.user_id);
-    let mut record = load_state_record(&state)
+    let caller = caller_of(&state).await?;
+    apply_product_license_reconciliation_in(&state.db, caller, &outcome_json).await
+}
+
+pub(crate) async fn apply_product_license_reconciliation_in(
+    db: &DatabaseConnection,
+    caller: LicenceCaller,
+    outcome_json: &str,
+) -> AppResult<ProductLicenseOnboardingState> {
+    let changed_by_id = caller.user_id;
+    let _record_lock = LICENCE_RECORD_LOCK.lock().await;
+    let mut record = load_state_record_from_db(db)
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["No local product license state found.".into()]))?;
-    let outcome_value: serde_json::Value = serde_json::from_str(&outcome_json)
+    let outcome_value: serde_json::Value = serde_json::from_str(outcome_json)
         .map_err(|e| AppError::ValidationFailed(vec![format!("outcomeJson must be valid JSON: {e}")]))?;
     let entitlement_envelope = match outcome_value
         .get("entitlement_envelope")
@@ -1149,6 +2227,16 @@ pub async fn apply_product_license_reconciliation(
         )])
     })?;
     outcome.entitlement_envelope = entitlement_envelope;
+    let mut forced_update_liftable = false;
+    if let (ProductLicenseReconciliationOutcomeKind::Success, Some(claim)) = (&outcome.kind, outcome.claim.as_mut()) {
+        let target = LicenceChangeTarget::from_claim(claim, outcome.entitlement_envelope.as_ref());
+        let authority =
+            authorize_licence_change(db, Some(&record), Some(&target), LicenceChange::Reconciliation, caller).await?;
+        if authority == LicenceAuthority::KeepOrReduce {
+            keep_stored_display(claim, Some(&record));
+        }
+        forced_update_liftable = forced_update_lift_allowed(Some(&record), claim, authority);
+    }
 
     let now = Utc::now().to_rfc3339();
     record.reconciliation.last_attempt_at = Some(now.clone());
@@ -1161,6 +2249,8 @@ pub async fn apply_product_license_reconciliation(
             let claim = outcome.claim.ok_or_else(|| {
                 AppError::ValidationFailed(vec!["Reconciliation success requires claim payload.".into()])
             })?;
+            // Signed out, `keep_stored_display` already put back the stored name (None when none
+            // was stored), so the company name shown is only replaced by a name the claim states.
             record.activation_claim = Some(claim.clone());
             if let Some(name) = claim.tenant_display_name.clone() {
                 record.company_display_name = Some(name);
@@ -1174,6 +2264,7 @@ pub async fn apply_product_license_reconciliation(
             record.reconciliation.last_success_at = Some(now.clone());
             record.reconciliation.last_error_code = None;
             record.reconciliation.last_error_message = None;
+            record.forced_update_lift_allowed = forced_update_liftable;
             if claim.force_update_required.unwrap_or(false) {
                 record.status = ProductLicenseActivationStatus::DeniedForceUpdateRequired;
                 record.deny_reason_code = Some("force_update_required".into());
@@ -1192,7 +2283,38 @@ pub async fn apply_product_license_reconciliation(
         }
         ProductLicenseReconciliationOutcomeKind::Denied => {
             let denied_code = outcome.error_code.clone().unwrap_or_else(|| "license_denied".into());
-            record.status = map_denied_status(Some(&denied_code));
+            let denied_status = map_denied_status(Some(&denied_code));
+            if denial_severity(&denied_status) < denial_severity(&record.status) {
+                // A denial outcome carries no claim and anyone can report one signed out: it never
+                // lowers the denial recorded here (a forced update, which an update would lift, in
+                // place of a revocation, an expiry, a slot limit or an invalid licence). The recorded
+                // denial, its reason and the stored claim stay as they are; only a diagnostic is kept.
+                tracing::warn!(
+                    event = "desktop_activation_denial_downgrade_ignored",
+                    recorded = ?record.status,
+                    received = ?denied_status,
+                    "Denial outcome less severe than the recorded denial ignored"
+                );
+                record.push_diagnostic(
+                    "deny_kept",
+                    Some(denied_code),
+                    format!(
+                        "Denial ignored: it is less severe than the denial recorded here ({:?}), which is kept.",
+                        record.status
+                    ),
+                );
+                persist_state_record_in(
+                    db,
+                    changed_by_id,
+                    &record,
+                    "product license reconciliation: less severe denial ignored",
+                )
+                .await?;
+                return Ok(onboarding_state_from_record(&record));
+            }
+            record.status = denied_status;
+            // A forced update recorded from a bare denial names no minimum: never lifted by an update.
+            record.forced_update_lift_allowed = false;
             record.pending_online_validation = false;
             record.deny_reason_code = Some(denied_code.clone());
             record.deny_message = Some(
@@ -1215,14 +2337,18 @@ pub async fn apply_product_license_reconciliation(
             );
         }
         ProductLicenseReconciliationOutcomeKind::NetworkError | ProductLicenseReconciliationOutcomeKind::HttpError => {
-            record.pending_online_validation = true;
-            record.status = ProductLicenseActivationStatus::DegradedApiUnavailable;
-            record.degraded_reason = Some(
-                outcome
-                    .error_message
-                    .clone()
-                    .unwrap_or_else(|| "Activation API unavailable; running in degraded mode.".into()),
-            );
+            // An unreachable control plane never lifts a denial recorded here (anyone can report
+            // one signed out): only the retry bookkeeping is updated then.
+            if !status_is_denied(&record.status) {
+                record.pending_online_validation = true;
+                record.status = ProductLicenseActivationStatus::DegradedApiUnavailable;
+                record.degraded_reason = Some(
+                    outcome
+                        .error_message
+                        .clone()
+                        .unwrap_or_else(|| "Activation API unavailable; running in degraded mode.".into()),
+                );
+            }
             record.reconciliation.retry_attempt = record.reconciliation.retry_attempt.saturating_add(1);
             record.reconciliation.next_retry_at =
                 Some(compute_backoff_at(record.reconciliation.retry_attempt).to_rfc3339());
@@ -1249,17 +2375,17 @@ pub async fn apply_product_license_reconciliation(
         "Product license reconciliation outcome applied"
     );
 
-    persist_state_record(
-        &state,
+    persist_state_record_in(
+        db,
         changed_by_id,
         &record,
         "product license reconciliation state updated",
     )
     .await?;
     if matches!(outcome.kind, ProductLicenseReconciliationOutcomeKind::Success) {
-        apply_claim_entitlement_envelope(&state.db, outcome.entitlement_envelope).await?;
+        apply_claim_entitlement_envelope(db, outcome.entitlement_envelope).await?;
     }
-    crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, changed_by_id).await?;
+    crate::db::tenant_bootstrap::bootstrap_from_activation_claim(db, changed_by_id).await?;
 
     Ok(onboarding_state_from_record(&record))
 }
@@ -1304,15 +2430,8 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
         );
         crate::require_step_up!(state);
     } else {
-        let tenant_id = load_state_record(&state)
-            .await?
-            .and_then(|r| r.activation_claim.as_ref().map(|c| c.tenant_id.clone()));
-        let has_admin = if let Some(ref tid) = tenant_id {
-            tenant_has_administrator_for_id(&state.db, tid).await?
-        } else {
-            false
-        };
-        if has_admin {
+        // The administrators decide, not the stored claim (which a signed-out key entry can empty).
+        if plant_has_administrator(&state.db).await? {
             return Err(AppError::Auth(
                 "Session requise pour réinitialiser l'activation une fois un administrateur créé.".into(),
             ));
@@ -1338,6 +2457,9 @@ pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str
         .current
         .as_ref()
         .map(|session| session.user.user_id);
+    // Same lock as key entry and reconciliation, so a check in flight cannot write the
+    // licence record back after it is forgotten here.
+    let _record_lock = LICENCE_RECORD_LOCK.lock().await;
     let wiped_rows = reset_local_tenant_runtime_data_impl(state).await?;
     let _ = settings::delete_setting(
         &state.db,
@@ -1375,15 +2497,8 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
         );
         crate::require_step_up!(state);
     } else {
-        let tenant_id = load_state_record(&state)
-            .await?
-            .and_then(|r| r.activation_claim.as_ref().map(|c| c.tenant_id.clone()));
-        let has_admin = if let Some(ref tid) = tenant_id {
-            tenant_has_administrator_for_id(&state.db, tid).await?
-        } else {
-            false
-        };
-        if has_admin {
+        // The administrators decide, not the stored claim (which a signed-out key entry can empty).
+        if plant_has_administrator(&state.db).await? {
             return Err(AppError::Auth(
                 "Session requise pour réinitialiser les données runtime une fois un administrateur créé.".into(),
             ));
@@ -1660,3 +2775,7 @@ pub(crate) async fn record_activation_claim_for_tests(
     )
     .await
 }
+
+#[cfg(test)]
+#[path = "product_license_first_start_tests.rs"]
+mod first_start_tests;

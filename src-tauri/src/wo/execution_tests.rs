@@ -884,8 +884,9 @@ mod tests {
         // "needs shutdown" on a work order (`set_wo_requires_shutdown`). Migration 233: clearing the
         // permit flag a plant rule set at conversion (`clear_wo_permit_rule_flag`, ptw.issue). OT types
         // without a maintenance nature, for review (`list_work_order_types_to_review`), and giving one
-        // its nature (`set_work_order_type_nature`).
-        assert_eq!(wo_lines.len(), 72, "invoke_handler must contain exactly 72 WO commands");
+        // its nature (`set_work_order_type_nature`). Planned part lines: cancel (`cancel_planned_part`)
+        // and the required / optional switch (`set_planned_part_required`).
+        assert_eq!(wo_lines.len(), 74, "invoke_handler must contain exactly 74 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {

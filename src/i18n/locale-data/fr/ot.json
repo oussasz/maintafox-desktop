@@ -352,7 +352,13 @@
       "stockLocation": "Emplacement de stock",
       "locationPlaceholder": "Emplacement",
       "plannedQty": "Qté prévue",
-      "unitCost": "Coût unitaire"
+      "unitCost": "Coût unitaire",
+      "cancelLine": "Annuler la ligne",
+      "cancelTitle": "Annuler cette ligne de pièce ?",
+      "cancelDescription": "{{part}} × {{qty}} {{unit}} sort du plan : sa réservation de stock est libérée et la ligne reste dans l’historique de l’OT avec le statut Annulée. Pour replanifier la pièce, ajoutez une nouvelle ligne.",
+      "cancelConfirm": "Annuler la ligne de pièce",
+      "cancelledStatus": "Annulée",
+      "cancelledHint": "Annulée pendant la préparation de l’OT : hors totaux, disponibilité et réservations."
     },
     "stockReserved": "Stock réservé",
     "noStockReservation": "Pas de réservation de stock sur cette ligne.",
@@ -552,6 +558,7 @@
     },
     "parts": {
       "plannedTitle": "Planifié",
+      "cancelledTitle": "Lignes planifiées annulées",
       "actualTitle": "Réellement utilisées",
       "actualEmpty": "Aucune pièce enregistrée comme utilisée.",
       "nonePlanned": "Aucune pièce planifiée",
@@ -648,6 +655,9 @@
       "empty": "Aucun événement d'exécution pour le moment.",
       "partUsed": "Pièce utilisée : {{label}}",
       "partNotUsed": "Pièce marquée non utilisée : {{label}}",
+      "partCancelled": "Ligne de pièce planifiée annulée : {{label}}",
+      "partSetRequired": "Ligne de pièce rendue obligatoire : {{label}}",
+      "partSetOptional": "Ligne de pièce rendue optionnelle : {{label}}",
       "partAdded": "Pièce ajoutée en cours : {{label}}",
       "partPlanned": "Pièce planifiée : {{label}}",
       "taskAdded": "Tâche ajoutée : {{label}}",

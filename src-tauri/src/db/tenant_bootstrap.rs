@@ -85,6 +85,25 @@ pub async fn bootstrap_from_activation_claim(db: &DatabaseConnection, changed_by
     Ok(())
 }
 
+/// Whether applying a claim for `tenant_id` would seed the demo sandbox here
+/// (`bootstrap_from_activation_claim`): a tenant not initialised elsewhere (`is_initialized`),
+/// asking for demo data (`has_demo_data`) not seeded yet.
+pub(crate) async fn claim_would_seed_demo(
+    db: &DatabaseConnection,
+    tenant_id: &str,
+    has_demo_data: Option<bool>,
+    is_initialized: Option<bool>,
+) -> AppResult<bool> {
+    if is_initialized.unwrap_or(false) || !has_demo_data.unwrap_or(false) {
+        return Ok(false);
+    }
+    let tenant_id = tenant_id.trim();
+    let seeded = load_bootstrap_state(db)
+        .await?
+        .is_some_and(|s| s.tenant_id == tenant_id && s.demo_seeded);
+    Ok(!seeded)
+}
+
 async fn load_bootstrap_state(db: &DatabaseConnection) -> AppResult<Option<TenantBootstrapState>> {
     let setting = settings::get_setting(db, TENANT_BOOTSTRAP_KEY, TENANT_BOOTSTRAP_SCOPE).await?;
     let Some(setting) = setting else {

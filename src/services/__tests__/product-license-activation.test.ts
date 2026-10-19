@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  type ProductActivationClaim,
   assertClaimSerializableForDesktop,
   claimProductActivation,
   getActivationLicenseMetadata,
@@ -17,7 +18,6 @@ import {
   refreshProductActivationPolicy,
   toDesktopActivationClaimRecord,
   toUserFacingActivationError,
-  type ProductActivationClaim,
 } from "@/services/product-license-service";
 
 const ipc = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -305,6 +305,28 @@ describe("tenant status, initialisation and policy refresh", () => {
     await expect(refreshProductActivationPolicy("tok-1")).rejects.toMatchObject({
       code: "license_revoked",
     });
+  });
+
+  it("sends the running app version with the policy refresh only when it is well formed", async () => {
+    const sentBody = (call: number): unknown =>
+      JSON.parse(String((fetchMock.mock.calls[call]?.[1] as RequestInit).body)) as unknown;
+    fetchMock.mockImplementation(async () => respond(200, { ...BASE }));
+
+    await refreshProductActivationPolicy("tok-1", "0.4.0-dev");
+    expect(sentBody(0)).toEqual({ app_version: "0.4.0-dev" });
+    await refreshProductActivationPolicy("tok-1", " 1.2.3 ");
+    expect(sentBody(1)).toEqual({ app_version: "1.2.3" });
+
+    // Unknown or malformed: nothing is sent, so the server applies a forced update as it would
+    // to a PC that does not say its version.
+    await refreshProductActivationPolicy("tok-1");
+    expect(sentBody(2)).toEqual({});
+    await refreshProductActivationPolicy("tok-1", "1.2");
+    expect(sentBody(3)).toEqual({});
+    await refreshProductActivationPolicy("tok-1", "v1.2.3");
+    expect(sentBody(4)).toEqual({});
+    await refreshProductActivationPolicy("tok-1", `1.2.3-${"a".repeat(30)}`);
+    expect(sentBody(5)).toEqual({});
   });
 });
 

@@ -695,7 +695,8 @@ async fn planned_parts<C: ConnectionTrait>(db: &C, wo_id: i64) -> AppResult<Opti
                                  (SELECT AVG(sb.moving_avg_unit_cost) FROM stock_balances sb
                                    WHERE sb.article_id = wop.article_id AND sb.moving_avg_unit_cost IS NOT NULL), 0)) AS amount
              FROM work_order_parts wop
-             WHERE wop.work_order_id = ? AND COALESCE(wop.origin, 'planned') = 'planned'",
+             WHERE wop.work_order_id = ? AND COALESCE(wop.origin, 'planned') = 'planned'
+               AND wop.consumption_status <> 'cancelled'",
             [wo_id.into()],
         ))
         .await?;

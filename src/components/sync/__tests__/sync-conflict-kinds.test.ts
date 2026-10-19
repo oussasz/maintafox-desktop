@@ -28,6 +28,7 @@ describe("sync conflict kinds", () => {
       "PERMIT_REQUIRED_TO_START",
       "QUALIFICATION_OVERRIDE_UNAUTHORISED",
       "SYNC_STATE_TIME_MISSING",
+      "WO_PART_LINE_HAS_USE",
     ]) {
       expect(KNOWN_CONFLICT_KINDS.has(code)).toBe(true);
     }
