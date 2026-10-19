@@ -107,6 +107,19 @@ describe("PermitHandoverForm", () => {
     expect(svc.appendPermitHandoverLog).not.toHaveBeenCalled();
   });
 
+  it("counts the note like the server: trimmed, one character per code point", async () => {
+    renderForm();
+    await screen.findByRole("combobox", { name: enPermits.handover.from });
+    // Five characters outside the first plane (ten UTF-16 units) are five, not ten.
+    fireEvent.change(noteBox(), { target: { value: "  𝒜𝒜𝒜𝒜𝒜  " } });
+    expect(
+      screen.getByText(fill(enPermits.handover.noteCount, { length: 5, min: HANDOVER_NOTE_MIN })),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(fill(enPermits.handover.noteMin, { min: HANDOVER_NOTE_MIN })),
+    ).toBeInTheDocument();
+  });
+
   it("checks the note length while it is typed", async () => {
     renderForm();
     await screen.findByRole("combobox", { name: enPermits.handover.from });

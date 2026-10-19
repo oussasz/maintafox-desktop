@@ -35,7 +35,12 @@ import type {
   PermitHandoverRoleOption,
 } from "@shared/ipc-types";
 
-/** Shortest confirmation note the server accepts (`MIN_HANDOVER_NOTE_CHARS`). */
+import { serverTextLength, serverTrim } from "./permit-rules";
+
+/**
+ * Shortest confirmation note the server accepts: `MIN_HANDOVER_NOTE_CHARS` in
+ * `src-tauri/src/permit/domain.rs` (counted trimmed, in code points; a test pins both values).
+ */
 export const HANDOVER_NOTE_MIN = 10;
 /** Value of the "nobody named" receiver choice. */
 const NO_RECEIVER = "__none__";
@@ -131,8 +136,9 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
     }
   };
 
-  const note = draft.note.trim();
-  const noteTooShort = note.length < HANDOVER_NOTE_MIN;
+  const note = serverTrim(draft.note);
+  const noteLength = serverTextLength(draft.note);
+  const noteTooShort = noteLength < HANDOVER_NOTE_MIN;
   const noRoles = roles != null && roles.length === 0;
 
   // The listed people, plus the chosen one when the current search does not list them.
@@ -280,7 +286,7 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
         name="handover-note"
         label={t("handover.note")}
         required
-        description={t("handover.noteCount", { length: note.length, min: HANDOVER_NOTE_MIN })}
+        description={t("handover.noteCount", { length: noteLength, min: HANDOVER_NOTE_MIN })}
         error={
           (submitted || noteTouched) && noteTooShort
             ? t("handover.noteMin", { min: HANDOVER_NOTE_MIN })

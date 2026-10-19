@@ -17,9 +17,13 @@ import { appErrorReason } from "@/lib/app-error";
 import { type PermitTypeRecord, upsertPermitType } from "@/services/permit-service";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { serverTextLength, serverTrim } from "./permit-rules";
 import { usePermitTypeName } from "./permit-type-name";
 
-/** Shortest reason the server accepts for a three-person change (`MIN_REASON_CHARS`). */
+/**
+ * Shortest reason the server accepts for a three-person change: `MIN_REASON_CHARS` in
+ * `src-tauri/src/settings/catalog.rs` (counted trimmed, in code points; a test pins both values).
+ */
 export const THREE_PERSON_REASON_MIN = 10;
 
 /** The step-up dialog was closed without confirming: nothing to report. */
@@ -113,8 +117,9 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
   const canChangeThreePerson = can(P.ADM_SETTINGS);
 
   const changingThreePerson = draft.threePerson !== draft.savedThreePerson;
-  const threePersonReason = draft.threePersonReason.trim();
-  const threePersonReasonShort = threePersonReason.length < THREE_PERSON_REASON_MIN;
+  const threePersonReason = serverTrim(draft.threePersonReason);
+  const threePersonReasonShort =
+    serverTextLength(draft.threePersonReason) < THREE_PERSON_REASON_MIN;
 
   const relaxing = draft.id != null && draft.savedEnergyIsolation && !draft.energyIsolation;
   const maxHoursValue = draft.maxHours.trim() === "" ? null : Number(draft.maxHours);
