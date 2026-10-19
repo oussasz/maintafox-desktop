@@ -15,10 +15,12 @@
 //!   recorded send none); a log naming a person not applied here yet waits for that person (the
 //!   generic apply);
 //! - a permit never changes its permit type (as no local edit does);
-//! - a permit's equipment or linked work order changes only while the copy held here is a draft or
-//!   waiting for review, with no lock fitted under it here without a verified removal and no
-//!   isolation point planned on it here; its work order is on its equipment, and its node is the
-//!   one derived from them as at creation (`equipment_change_check`);
+//! - a permit's equipment, linked work order or site changes only while the copy held here is a
+//!   draft or waiting for review (a change of equipment or work order there needs the versions of a
+//!   return to draft), with no lock fitted under it here without a verified removal and no
+//!   isolation point planned on it here for a change of equipment or work order; its linked work
+//!   order is never removed, its work order is on its equipment, and its node is the one derived
+//!   from them or a level above it, by the local rule (`equipment_change_check`);
 //! - a permit never leaves `closed`, `handed_back`, `cancelled` or `expired` except along the lifecycle
 //!   (`closed` → `handed_back`, `handed_back` → `cancelled`);
 //! - an isolation (`isolation_rule_breach`): verified after it was applied and by someone other than
@@ -514,27 +516,52 @@ async fn permit_transition(
     Ok((local, permit))
 }
 
-/// One text of a local row found by its sync identity: `None` when no such row is here, `Some(None)`
-/// when the row is here without that value.
-async fn local_text(conn: &impl ConnectionTrait, sql: &str, sync_id: &str) -> AppResult<Option<Option<String>>> {
-    match conn
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [sync_id.into()]))
-        .await?
-    {
-        Some(row) => Ok(Some(row.try_get::<Option<String>>("", "v").map_err(sync_err)?)),
-        None => Ok(None),
-    }
+/// The local id of a row of `table` (fixed names, never received text) found by its sync identity.
+async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> AppResult<Option<i64>> {
+    conn.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        format!("SELECT id FROM \"{table}\" WHERE entity_sync_id = ?"),
+        [sync_id.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<i64>("", "id"))
+    .transpose()
+    .map_err(sync_err)
 }
 
-/// A received permit whose equipment or linked work order differs from the one held here
-/// (`permit::queries::update_work_permit`, CMMS Advisor decision A): the copy held here is a draft
-/// or waiting for review (a permit approved here was approved for its equipment: the sending PC
-/// held that version too, or its change is older and is not applied); no lock fitted under it here
-/// without a verified removal, and no isolation point planned on it here (they name the former
-/// equipment's points); the work order's equipment is the permit's; and its node is the one derived
-/// as at creation (the work order's node, else the equipment's installed node). A work order or
-/// equipment not applied here yet: the row waits. Rows that keep the equipment and work order are
-/// not judged here (an edit of the node alone is allowed on this PC too).
+/// The fewest changes a permit sent back to draft takes to reach `status` again: the return to
+/// draft, then one change per lifecycle step (`pending_review` 2, `approved` 3, `issued` 4, `active`
+/// 5); any other status after draft at least 2.
+fn min_versions_after_reset(status: &str) -> i64 {
+    const STEPS: &[&str] = &["draft", "pending_review", "approved", "issued", "active"];
+    STEPS
+        .iter()
+        .position(|s| *s == status)
+        .map_or(2, |i| i64::try_from(i).unwrap_or(i64::MAX).saturating_add(1))
+}
+
+/// A received permit whose equipment, linked work order or site differs from the copy held here
+/// (`permit::queries::update_work_permit`, CMMS Advisor decision A), judged as an edit on this PC is:
+/// - a linked work order is never removed (no edit on this PC removes it);
+/// - the copy held here is a draft or waiting for review (a permit approved here was approved for
+///   its equipment at its site: the sending PC held that version too, or its change is older and is
+///   not applied here);
+/// - held here waiting for review, a change of equipment, work order or site sends the permit back
+///   to draft: a received row with such a change and another status must be at least as many versions
+///   above the one applied here as the return to draft and the steps since take (two to wait for
+///   review again, three to be approved); an envelope version or a version applied here that cannot
+///   be read refuses it;
+/// - for a change of equipment or work order, no lock fitted under it here without a verified
+///   removal and no isolation point planned on it here (they name the former equipment's points).
+///   Isolation rows received just before the permit row (planned on the other PC for the new
+///   equipment) count too: nothing on the rows tells which PC made them or for which version of the
+///   permit, so a person decides (`docs/KNOWN_LIMITS.md`);
+/// - the work order's equipment is the permit's;
+/// - its node is the one derived from its equipment and work order or a level above it
+///   (`permit::queries::derived_permit_node` and `node_on_permit_chain`, the local rule itself): a
+///   work order recording no usable node is refused, never replaced by the equipment's node.
+///
+/// Equipment, a work order or a node not applied here yet: the row waits.
 async fn equipment_change_check(
     conn: &impl ConnectionTrait,
     permit_sync_id: &str,
@@ -547,114 +574,154 @@ async fn equipment_change_check(
         field(permit, "linked_work_order_sync_id"),
     );
     let (held_asset, held_wo) = (field(local, "asset_sync_id"), field(local, "linked_work_order_sync_id"));
-    if asset == held_asset && wo == held_wo {
+    let (node, held_node) = (field(permit, "entity_sync_id"), field(local, "entity_sync_id"));
+    if let (Some(held_wo), None) = (held_wo, wo) {
+        return conflict(
+            "PERMIT_WO_UNLINKED",
+            format!("permit {code}: its work order {held_wo} was removed from it (no edit removes it)"),
+        );
+    }
+    let equipment_changes = asset != held_asset || wo != held_wo;
+    if !equipment_changes && node == held_node {
         return Ok(None);
     }
     let held = field(local, "status").unwrap_or_default();
     if !crate::permit::queries::WP_EQUIPMENT_CHANGE_STATUSES.contains(&held) {
-        return conflict(
-            "PERMIT_EQUIPMENT_LOCKED",
-            format!(
-                "permit {code} is '{held}' here: it was approved for its equipment, which cannot change \
-                 (here {} / work order {}, received {} / work order {})",
-                held_asset.unwrap_or("none"),
-                held_wo.unwrap_or("none"),
-                asset.unwrap_or("none"),
-                wo.unwrap_or("none")
-            ),
-        );
+        return if equipment_changes {
+            conflict(
+                "PERMIT_EQUIPMENT_LOCKED",
+                format!(
+                    "permit {code} is '{held}' here: it was approved for its equipment, which cannot change \
+                     (here {} / work order {}, received {} / work order {})",
+                    held_asset.unwrap_or("none"),
+                    held_wo.unwrap_or("none"),
+                    asset.unwrap_or("none"),
+                    wo.unwrap_or("none")
+                ),
+            )
+        } else {
+            conflict(
+                "PERMIT_SITE_LOCKED",
+                format!(
+                    "permit {code} is '{held}' here: it was approved at its site, which cannot change \
+                     (here {}, received {})",
+                    held_node.unwrap_or("none"),
+                    node.unwrap_or("none")
+                ),
+            )
+        };
     }
-    let count = |condition: &str| {
-        format!(
-            "SELECT COUNT(*) AS c FROM permit_isolations pi JOIN work_permits wp ON wp.id = pi.permit_id \
-             WHERE wp.entity_sync_id = ? AND {condition}"
-        )
-    };
-    for (condition, refusal, what) in [
-        (
-            "pi.applied_at IS NOT NULL AND pi.removal_verified_at IS NULL",
-            "PERMIT_EQUIPMENT_LOCK_FITTED",
-            "lock(s) fitted here without a verified removal",
-        ),
-        (
-            "pi.applied_at IS NULL",
-            "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED",
-            "isolation point(s) planned here for its former equipment",
-        ),
-    ] {
-        let n: i64 = conn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                count(condition),
-                [permit_sync_id.into()],
-            ))
+    let to = field(permit, "status").unwrap_or_default();
+    // Held waiting for review, any change of equipment, work order or site sends it back to draft.
+    if held == "pending_review" && to != "draft" {
+        let received = crate::sync::materialize::INBOUND_ROW_VERSION.try_with(|v| *v).ok();
+        let applied = crate::sync::queries::synced_row_version(conn, "work_permits", permit_sync_id)
             .await?
-            .map(|r| r.try_get::<i64>("", "c"))
-            .transpose()
-            .map_err(sync_err)?
-            .unwrap_or(0);
-        if n > 0 {
+            .map(|(v, _)| v);
+        let needed = min_versions_after_reset(to);
+        let enough = matches!((received, applied), (Some(r), Some(a)) if r.saturating_sub(a) >= needed);
+        if !enough {
             return conflict(
-                refusal,
-                format!("permit {code}: its equipment or work order changed while it has {n} {what}"),
+                "PERMIT_EQUIPMENT_REVIEW_SKIPPED",
+                format!(
+                    "permit {code} waits for review here; its equipment, work order or site changed and it arrives \
+                     '{to}' at version {} over version {} applied here: going back to draft and to '{to}' \
+                     takes at least {needed} versions",
+                    received.map_or_else(|| "unknown".to_string(), |v| v.to_string()),
+                    applied.map_or_else(|| "unknown".to_string(), |v| v.to_string()),
+                ),
             );
+        }
+    }
+    if equipment_changes {
+        let count = |condition: &str| {
+            format!(
+                "SELECT COUNT(*) AS c FROM permit_isolations pi JOIN work_permits wp ON wp.id = pi.permit_id \
+                 WHERE wp.entity_sync_id = ? AND {condition}"
+            )
+        };
+        for (condition, refusal, what) in [
+            (
+                "pi.applied_at IS NOT NULL AND pi.removal_verified_at IS NULL",
+                "PERMIT_EQUIPMENT_LOCK_FITTED",
+                "lock(s) fitted here without a verified removal",
+            ),
+            (
+                "pi.applied_at IS NULL",
+                "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED",
+                "isolation point(s) planned here for its former equipment",
+            ),
+        ] {
+            let n: i64 = conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    count(condition),
+                    [permit_sync_id.into()],
+                ))
+                .await?
+                .map(|r| r.try_get::<i64>("", "c"))
+                .transpose()
+                .map_err(sync_err)?
+                .unwrap_or(0);
+            if n > 0 {
+                return conflict(
+                    refusal,
+                    format!("permit {code}: its equipment or work order changed while it has {n} {what}"),
+                );
+            }
         }
     }
     let Some(asset) = asset else {
         // No equipment: malformed, refused by the generic apply (the column is required).
         return Ok(None);
     };
-    let mut expected: Option<String> = None;
+    let Some(asset_id) = local_id(conn, "equipment", asset).await? else {
+        return wait(format!("permit {code}: its equipment {asset} is not applied yet"));
+    };
+    let mut wo_id = None;
     if let Some(wo) = wo {
-        let Some(wo_equipment) = local_text(
-            conn,
-            "SELECT e.entity_sync_id AS v FROM work_orders w LEFT JOIN equipment e ON e.id = w.equipment_id \
-             WHERE w.entity_sync_id = ?",
-            wo,
-        )
-        .await?
-        else {
+        let Some(id) = local_id(conn, "work_orders", wo).await? else {
             return wait(format!("permit {code}: its work order {wo} is not applied yet"));
         };
-        if wo_equipment.as_deref() != Some(asset) {
+        let wo_equipment = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT equipment_id AS v FROM work_orders WHERE id = ?",
+                [id.into()],
+            ))
+            .await?
+            .map(|r| r.try_get::<Option<i64>>("", "v"))
+            .transpose()
+            .map_err(sync_err)?
+            .flatten();
+        if wo_equipment != Some(asset_id) {
             return conflict(
                 "PERMIT_WO_EQUIPMENT_MISMATCH",
-                format!(
-                    "permit {code} is on equipment {asset} but its work order {wo} is on {}",
-                    wo_equipment.as_deref().unwrap_or("no equipment")
-                ),
+                format!("permit {code} is on equipment {asset} but its work order {wo} is on other equipment"),
             );
         }
-        expected = local_text(
-            conn,
-            "SELECT n.entity_sync_id AS v FROM work_orders w JOIN org_nodes n ON n.id = w.entity_id \
-             WHERE w.entity_sync_id = ? AND w.entity_id > 0",
-            wo,
-        )
-        .await?
-        .flatten();
+        wo_id = Some(id);
     }
-    if expected.is_none() {
-        let Some(node) = local_text(
-            conn,
-            "SELECT n.entity_sync_id AS v FROM equipment e LEFT JOIN org_nodes n ON n.id = e.installed_at_node_id \
-             WHERE e.entity_sync_id = ?",
-            asset,
-        )
-        .await?
-        else {
-            return wait(format!("permit {code}: its equipment {asset} is not applied yet"));
-        };
-        expected = node;
-    }
-    let received_node = field(permit, "entity_sync_id");
-    if expected.is_none() || expected.as_deref() != received_node {
+    let derived = crate::permit::queries::derived_permit_node(conn, asset_id, wo_id).await?;
+    let node_id = match node {
+        Some(n) => match local_id(conn, "org_nodes", n).await? {
+            Some(id) => Some(id),
+            None => return wait(format!("permit {code}: its site {n} is not applied yet")),
+        },
+        None => None,
+    };
+    let on_chain = match (derived, node_id) {
+        (Some(d), Some(n)) => crate::permit::queries::node_on_permit_chain(conn, d, n).await?,
+        _ => false,
+    };
+    if !on_chain {
         return conflict(
             "PERMIT_SITE_NOT_EQUIPMENT_SITE",
             format!(
-                "permit {code}: its equipment or work order changed, so its site must be theirs ({}), received {}",
-                expected.as_deref().unwrap_or("none"),
-                received_node.unwrap_or("none")
+                "permit {code}: its site must be the one of its equipment or work order ({}) or a level above \
+                 it, received {}",
+                derived.map_or_else(|| "none usable".to_string(), |d| format!("node {d}")),
+                node.unwrap_or("none")
             ),
         );
     }

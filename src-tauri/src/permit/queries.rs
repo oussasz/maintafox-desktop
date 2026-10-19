@@ -1291,16 +1291,104 @@ pub(crate) fn asset_required_error() -> AppError {
     ])
 }
 
-/// Resolves `(asset_id, entity_id)` for a new permit: explicit values win, then the
-/// linked WO (equipment + entity), then the asset's installation node for the entity.
-async fn resolve_permit_scope(db: &impl ConnectionTrait, input: &WorkPermitCreateInput) -> AppResult<(i64, i64)> {
+/// A permit whose equipment and work order give it no usable site (see [`derived_permit_node`]).
+fn undetermined_site_error() -> AppError {
+    AppError::ValidationFailed(vec![
+        "The permit's organisational entity could not be determined from the work order or asset.".into(),
+    ])
+}
+
+/// The org node a permit's site follows (CMMS Advisor decision A), one rule for the creation, an
+/// edit and a permit received by sync (`permit::sync_check`): the linked work order's node when the
+/// work order records one, else the equipment's installed node. `None` when that node is not usable
+/// (a work order recording `0` or a negative node, equipment installed nowhere or on `0`): such a
+/// permit is refused, it never falls back to another node. Equipment or a linked work order that
+/// does not exist is not found.
+pub(crate) async fn derived_permit_node(
+    db: &impl ConnectionTrait,
+    asset_id: i64,
+    linked_work_order_id: Option<i64>,
+) -> AppResult<Option<i64>> {
+    let installed: Option<i64> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT installed_at_node_id FROM equipment WHERE id = ?",
+            [asset_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "Equipment".into(),
+            id: asset_id.to_string(),
+        })?
+        .try_get("", "installed_at_node_id")
+        .map_err(|e| decode_err("installed_at_node_id", e))?;
+    if let Some(wo_id) = linked_work_order_id {
+        let wo_node: Option<i64> = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT entity_id FROM work_orders WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::NotFound {
+                entity: "WorkOrder".into(),
+                id: wo_id.to_string(),
+            })?
+            .try_get("", "entity_id")
+            .map_err(|e| decode_err("entity_id", e))?;
+        if let Some(node) = wo_node {
+            return Ok(Some(node).filter(|n| *n > 0));
+        }
+    }
+    Ok(installed.filter(|n| *n > 0))
+}
+
+/// Whether a permit whose site follows `derived` may be recorded on `node`: that node or one of its
+/// parents (never a sibling, a node below it or another site).
+pub(crate) async fn node_on_permit_chain(db: &impl ConnectionTrait, derived: i64, node: i64) -> AppResult<bool> {
+    Ok(crate::auth::scope::ancestor_chain(db, derived).await?.contains(&node))
+}
+
+/// The node a permit on `asset_id` (and `linked_work_order_id`) is recorded on: `given` when it is
+/// the derived node or one of its parents, the derived node when none is given. Refused when the
+/// derived node is not usable, or when `given` is off its chain.
+async fn checked_permit_node(
+    db: &impl ConnectionTrait,
+    asset_id: i64,
+    linked_work_order_id: Option<i64>,
+    given: Option<i64>,
+) -> AppResult<i64> {
+    let derived = derived_permit_node(db, asset_id, linked_work_order_id)
+        .await?
+        .ok_or_else(undetermined_site_error)?;
+    match given {
+        None => Ok(derived),
+        Some(node) if node_on_permit_chain(db, derived, node).await? => Ok(node),
+        Some(node) => Err(refused(
+            "PERMIT_SITE_NOT_EQUIPMENT_SITE",
+            format!(
+                "A permit is recorded on the site of its equipment or work order ({derived}) or a level above it, \
+                 not on {node}."
+            ),
+            &[("org_node_id", node.to_string())],
+        )),
+    }
+}
+
+/// Resolves `(asset_id, entity_id)` for a new permit: the equipment given, else the linked work
+/// order's; the node given when it is on the derived node's chain ([`checked_permit_node`]), else
+/// the derived node. The scope check of the creation (`access::check_create_at`) applies the same
+/// rule.
+pub(crate) async fn resolve_permit_scope(
+    db: &impl ConnectionTrait,
+    input: &WorkPermitCreateInput,
+) -> AppResult<(i64, i64)> {
     let mut asset_id = input.asset_id;
-    let mut entity_id = input.entity_id;
     if let Some(wo_id) = input.linked_work_order_id {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT equipment_id, entity_id FROM work_orders WHERE id = ?",
+                "SELECT equipment_id FROM work_orders WHERE id = ?",
                 [wo_id.into()],
             ))
             .await?
@@ -1311,32 +1399,10 @@ async fn resolve_permit_scope(db: &impl ConnectionTrait, input: &WorkPermitCreat
         let wo_equipment: Option<i64> = row
             .try_get("", "equipment_id")
             .map_err(|e| decode_err("equipment_id", e))?;
-        let wo_entity: Option<i64> = row.try_get("", "entity_id").map_err(|e| decode_err("entity_id", e))?;
         asset_id = asset_id.or(wo_equipment);
-        entity_id = entity_id.or(wo_entity);
     }
     let asset_id = asset_id.ok_or_else(asset_required_error)?;
-    if entity_id.is_none() {
-        let row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT installed_at_node_id FROM equipment WHERE id = ?",
-                [asset_id.into()],
-            ))
-            .await?
-            .ok_or_else(|| AppError::NotFound {
-                entity: "Equipment".into(),
-                id: asset_id.to_string(),
-            })?;
-        entity_id = row
-            .try_get("", "installed_at_node_id")
-            .map_err(|e| decode_err("installed_at_node_id", e))?;
-    }
-    let entity_id = entity_id.ok_or_else(|| {
-        AppError::ValidationFailed(vec![
-            "The permit's organisational entity could not be determined from the work order or asset.".into(),
-        ])
-    })?;
+    let entity_id = checked_permit_node(db, asset_id, input.linked_work_order_id, input.entity_id).await?;
     Ok((asset_id, entity_id))
 }
 
@@ -1403,17 +1469,19 @@ async fn create_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitCreat
 }
 
 /// What an edit of a permit stores: its equipment, linked work order and org node, and whether
-/// the equipment or the linked work order changes. When either changes, the node follows them,
-/// derived as at creation (`access::new_permit_node`: the linked work order's node, else the
-/// equipment's installed node; `None` when it cannot be determined); otherwise it is the node the
-/// edit gives, else the current one. The scope check (`access::check_update`) and the save use
-/// this one rule, so the right is checked at the node actually stored.
+/// the equipment or linked work order, or the node, changes. The node is the one the edit gives;
+/// without one, when the equipment or the linked work order changes, the node derived from them
+/// ([`derived_permit_node`]; `None` when not usable), else the current one. The scope check
+/// (`access::check_update`) and the save use this one rule, so the right is checked at the node
+/// actually stored; the save refuses a target other than the one checked (the permit or its work
+/// order changed in between).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PermitEditTarget {
+pub struct PermitEditTarget {
     pub asset_id: i64,
     pub linked_work_order_id: Option<i64>,
     pub entity_id: Option<i64>,
     pub equipment_changes: bool,
+    pub site_changes: bool,
 }
 
 pub(crate) async fn permit_edit_target(
@@ -1424,88 +1492,82 @@ pub(crate) async fn permit_edit_target(
     let asset_id = input.asset_id.unwrap_or(current.asset_id);
     let linked = input.linked_work_order_id.or(current.linked_work_order_id);
     let equipment_changes = asset_id != current.asset_id || linked != current.linked_work_order_id;
-    let entity_id = if equipment_changes {
-        let (node, _) = super::access::new_permit_node(
-            db,
-            &WorkPermitCreateInput {
-                permit_type_id: current.permit_type_id,
-                asset_id: Some(asset_id),
-                entity_id: None,
-                linked_work_order_id: linked,
-                expires_at: None,
-            },
-        )
-        .await?;
-        node.filter(|n| *n > 0)
+    // Derived whenever the equipment or work order changes: equipment or a work order that does
+    // not exist is not found, even when a node is given.
+    let derived = if equipment_changes {
+        derived_permit_node(db, asset_id, linked).await?
     } else {
-        Some(input.entity_id.unwrap_or(current.entity_id))
+        None
+    };
+    let entity_id = match input.entity_id {
+        Some(given) => Some(given),
+        None if equipment_changes => derived,
+        None => Some(current.entity_id),
     };
     Ok(PermitEditTarget {
         asset_id,
         linked_work_order_id: linked,
         entity_id,
         equipment_changes,
+        site_changes: entity_id != Some(current.entity_id),
     })
 }
 
-/// The rules of a change of a permit's equipment or linked work order (CMMS Advisor decision A):
-/// only while the permit is a draft or waiting for review; never while a lock fitted under it has
-/// not had its removal verified; never while isolation points are planned on it (they name the
-/// current equipment's points); its node is the one derived from the new equipment or work order
-/// (an edit cannot give another one). Returns that node.
-async fn ensure_equipment_change_allowed(
+/// The rules of a change of a permit's equipment, linked work order or site (CMMS Advisor decision
+/// A): only while the permit is a draft or waiting for review (from approved on, the permit was
+/// approved for that equipment at that site); for an equipment or work-order change, never while a
+/// lock fitted under it has not had its removal verified, nor while isolation points are planned
+/// on it (they name the current equipment's points); its node is the derived one or a level above
+/// it ([`checked_permit_node`]: never a sibling, a level below or another site). Returns that node.
+async fn ensure_move_allowed(
     db: &impl ConnectionTrait,
     current: &WorkPermit,
-    input: &WorkPermitUpdateInput,
     target: &PermitEditTarget,
 ) -> AppResult<i64> {
     let code = || ("permit", current.code.clone());
     if !WP_EQUIPMENT_CHANGE_STATUSES.contains(&current.status.as_str()) {
-        return Err(refused(
-            "PERMIT_EQUIPMENT_LOCKED",
-            "This permit was approved for this equipment. Cancel it and raise a new permit.",
-            &[code(), ("status", current.status.clone())],
-        ));
+        return Err(if target.equipment_changes {
+            refused(
+                "PERMIT_EQUIPMENT_LOCKED",
+                "This permit was approved for this equipment. Cancel it and raise a new permit.",
+                &[code(), ("status", current.status.clone())],
+            )
+        } else {
+            refused(
+                "PERMIT_SITE_LOCKED",
+                "This permit was approved at this site: its site can no longer change. Cancel it and raise a new permit.",
+                &[code(), ("status", current.status.clone())],
+            )
+        });
     }
-    let fitted =
-        count_isolations_where(db, current.id, "applied_at IS NOT NULL AND removal_verified_at IS NULL").await?;
-    if fitted > 0 {
-        return Err(refused(
-            "PERMIT_EQUIPMENT_LOCK_FITTED",
-            format!(
-                "{fitted} lock(s) are fitted under this permit and their removal is not verified: its equipment cannot be changed."
-            ),
-            &[code(), ("locks", fitted.to_string())],
-        ));
+    if target.equipment_changes {
+        let fitted =
+            count_isolations_where(db, current.id, "applied_at IS NOT NULL AND removal_verified_at IS NULL").await?;
+        if fitted > 0 {
+            return Err(refused(
+                "PERMIT_EQUIPMENT_LOCK_FITTED",
+                format!(
+                    "{fitted} lock(s) are fitted under this permit and their removal is not verified: its equipment cannot be changed."
+                ),
+                &[code(), ("locks", fitted.to_string())],
+            ));
+        }
+        let planned = count_isolations_where(db, current.id, "applied_at IS NULL").await?;
+        if planned > 0 {
+            return Err(refused(
+                "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED",
+                format!(
+                    "{planned} isolation point(s) are planned on this permit for its current equipment: its equipment cannot be changed."
+                ),
+                &[code(), ("isolations", planned.to_string())],
+            ));
+        }
     }
-    let planned = count_isolations_where(db, current.id, "applied_at IS NULL").await?;
-    if planned > 0 {
-        return Err(refused(
-            "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED",
-            format!(
-                "{planned} isolation point(s) are planned on this permit for its current equipment: its equipment cannot be changed."
-            ),
-            &[code(), ("isolations", planned.to_string())],
-        ));
-    }
-    let node = target.entity_id.ok_or_else(|| {
-        AppError::ValidationFailed(vec![
-            "The permit's organisational entity could not be determined from the work order or asset.".into(),
-        ])
-    })?;
-    if let Some(given) = input.entity_id.filter(|e| *e != node) {
-        return Err(refused(
-            "PERMIT_SITE_NOT_EQUIPMENT_SITE",
-            format!(
-                "When the equipment or work order of a permit changes, its site is the one of the new equipment or work order ({node}), not {given}."
-            ),
-            &[code()],
-        ));
-    }
-    Ok(node)
+    let node = target.entity_id.ok_or_else(undetermined_site_error)?;
+    checked_permit_node(db, target.asset_id, target.linked_work_order_id, Some(node)).await
 }
 
-/// Records a change of a permit's equipment or linked work order (who, when, old and new
+/// Records a change of a permit's equipment, linked work order or site (who, when, old and new
 /// equipment, work order and site), and, when it sent a permit waiting for review back to draft,
 /// that reset, in the save's transaction.
 async fn audit_equipment_change(
@@ -1515,6 +1577,8 @@ async fn audit_equipment_change(
     actor_id: i64,
 ) -> AppResult<()> {
     let site_moved = before.entity_id != after.entity_id;
+    let equipment_changed =
+        before.asset_id != after.asset_id || before.linked_work_order_id != after.linked_work_order_id;
     let review_reset = before.status == "pending_review" && after.status == "draft";
     let event = |action_code: &str, details: serde_json::Value| crate::audit::writer::AuditEventInput {
         action_code: action_code.to_string(),
@@ -1559,7 +1623,7 @@ async fn audit_equipment_change(
                 "permit.review_reset",
                 serde_json::json!({
                     "code": after.code,
-                    "reason": "equipment_changed",
+                    "reason": if equipment_changed { "equipment_changed" } else { "site_changed" },
                     "status_before": before.status,
                     "status_after": after.status,
                 }),
@@ -1571,14 +1635,32 @@ async fn audit_equipment_change(
 }
 
 /// `actor_id` is the session user: it is recorded as the person who changed the permit's
-/// equipment or linked work order.
+/// equipment, linked work order or site. Without a scope check before it (the command uses
+/// [`update_work_permit_checked`]).
 pub async fn update_work_permit(
     db: &DatabaseConnection,
     input: WorkPermitUpdateInput,
     actor_id: i64,
 ) -> AppResult<WorkPermit> {
     let txn = db.begin().await?;
-    let out = update_work_permit_in(&txn, input, actor_id).await?;
+    let out = update_work_permit_in(&txn, input, actor_id, None).await?;
+    txn.commit().await?;
+    Ok(out)
+}
+
+/// [`update_work_permit`] after the scope check (`access::require_update`): `checked` is the
+/// target that check judged. The save computes the target again inside its transaction and
+/// refuses the edit as a concurrent update when it differs (the permit, its work order or the
+/// equipment changed between the check and the save), so the node stored is always the node
+/// checked.
+pub(crate) async fn update_work_permit_checked(
+    db: &DatabaseConnection,
+    input: WorkPermitUpdateInput,
+    actor_id: i64,
+    checked: &PermitEditTarget,
+) -> AppResult<WorkPermit> {
+    let txn = db.begin().await?;
+    let out = update_work_permit_in(&txn, input, actor_id, Some(checked)).await?;
     txn.commit().await?;
     Ok(out)
 }
@@ -1587,6 +1669,7 @@ async fn update_work_permit_in(
     db: &impl ConnectionTrait,
     input: WorkPermitUpdateInput,
     actor_id: i64,
+    checked: Option<&PermitEditTarget>,
 ) -> AppResult<WorkPermit> {
     let current = require_work_permit(db, input.id).await?;
     if input.expected_row_version != current.row_version {
@@ -1602,10 +1685,15 @@ async fn update_work_permit_in(
         ));
     }
     let target = permit_edit_target(db, &current, &input).await?;
-    let entity_id = if target.equipment_changes {
-        ensure_equipment_change_allowed(db, &current, &input, &target).await?
+    if checked.is_some_and(|c| *c != target) {
+        return Err(AppError::ValidationFailed(vec![
+            "Concurrent update on work_permits.".into()
+        ]));
+    }
+    let entity_id = if target.equipment_changes || target.site_changes {
+        ensure_move_allowed(db, &current, &target).await?
     } else {
-        target.entity_id.unwrap_or(current.entity_id)
+        current.entity_id
     };
     let asset_id = target.asset_id;
     let linked = target.linked_work_order_id;
@@ -1628,9 +1716,10 @@ async fn update_work_permit_in(
         Some(e) => Some(checked_expiry(db, current.permit_type_id, Some(e)).await?),
         None => Some(checked_expiry_present(&current)?),
     };
-    // A change while waiting for review sends the permit back to draft: the review it waited for
-    // was of the former equipment (permits record no reviewer: the review is the status itself).
-    let status = if target.equipment_changes && current.status == "pending_review" {
+    // A change of equipment, work order or site while waiting for review sends the permit back to
+    // draft: the review it waited for judged the former equipment at the former site, and who
+    // issues it may change (permits record no reviewer: the review is the status itself).
+    let status = if (target.equipment_changes || target.site_changes) && current.status == "pending_review" {
         "draft".to_string()
     } else {
         current.status.clone()
@@ -1661,7 +1750,7 @@ async fn update_work_permit_in(
         ]));
     }
     let updated = require_work_permit(db, input.id).await?;
-    if target.equipment_changes {
+    if target.equipment_changes || target.site_changes {
         audit_equipment_change(db, &current, &updated, actor_id).await?;
     }
     Ok(updated)

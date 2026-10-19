@@ -108,6 +108,14 @@
       "PERMIT_TYPE_THREE_PERSON_UNAUDITED": "A permit type's third-person lock-removal rule changed on another PC without who, when or why",
       "PERMIT_TYPE_CHANGED": "A permit moved to another permit type",
       "PERMIT_TYPE_THREE_PERSON_STALE": "A permit type's third-person lock-removal rule received with a change older than the one recorded here",
+      "PERMIT_EQUIPMENT_LOCKED": "The equipment or work order of a permit approved here was changed on another PC",
+      "PERMIT_SITE_LOCKED": "The site of a permit approved here was changed on another PC",
+      "PERMIT_EQUIPMENT_LOCK_FITTED": "A permit's equipment changed on another PC while a lock is fitted under it here without a verified removal",
+      "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED": "A permit's equipment changed on another PC while isolation points are planned on it here (also when the new equipment's points arrived just before the permit)",
+      "PERMIT_EQUIPMENT_REVIEW_SKIPPED": "A permit waiting for review here had its equipment or site changed on another PC without going back to draft",
+      "PERMIT_SITE_NOT_EQUIPMENT_SITE": "A permit received on a site other than its equipment's (or work order's), or a level above it",
+      "PERMIT_WO_EQUIPMENT_MISMATCH": "A permit received on other equipment than its work order's",
+      "PERMIT_WO_UNLINKED": "A permit's work order was removed from it on another PC",
       "other": "Needs review"
     },
     "history": {

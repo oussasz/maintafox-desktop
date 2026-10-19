@@ -171,9 +171,10 @@ pub async fn update_work_permit(input: WorkPermitUpdateInput, state: State<'_, A
     let user = require_session!(state);
     // Rule §2.7: at the permit's node, and at the node it will have, its new equipment's and its new
     // work order's. A change of equipment or work order (draft or waiting for review only) moves the
-    // permit to their site and is audited with the session user.
-    access::require_update(&state.db, &state.permission_cache, user.user_id, &input).await?;
-    queries::update_work_permit(&state.db, input, i64::from(user.user_id)).await
+    // permit to their site and is audited with the session user. The save stores only the node that
+    // was checked (else a concurrent update).
+    let checked = access::require_update(&state.db, &state.permission_cache, user.user_id, &input).await?;
+    queries::update_work_permit_checked(&state.db, input, i64::from(user.user_id), &checked).await
 }
 
 #[tauri::command]

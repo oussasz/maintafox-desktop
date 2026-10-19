@@ -549,40 +549,64 @@ async fn creating_a_permit_needs_the_right_at_its_site_its_equipment_and_its_wor
             .unwrap_or_else(|e| panic!("{input:?}: {e:?}"));
     }
     // Refused: equipment, node or work order of site B; a work order or equipment without site.
-    for (input, expected) in [
-        (create_input(ty, Some(f.eq_b), None, None), "SCOPE_OUTSIDE_SITE"),
+    // Plant-wide: the scope passes, then the create's own site rule decides (the same function as
+    // the create: `None` allowed, else the refusal code, `VALIDATION` for a site not derivable).
+    for (input, expected, plant_wide) in [
+        (create_input(ty, Some(f.eq_b), None, None), "SCOPE_OUTSIDE_SITE", None),
         (
             create_input(ty, Some(f.eq_b), Some(f.t.site_a), None),
             "SCOPE_OUTSIDE_SITE",
+            Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"),
         ),
         (
             create_input(ty, Some(f.eq_a), Some(f.t.site_b), None),
             "SCOPE_OUTSIDE_SITE",
+            Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"),
         ),
+        // The work order's site (B) is the derived one: site A is off its chain.
         (
             create_input(ty, Some(f.eq_a), Some(f.t.site_a), Some(f.wo_b)),
             "SCOPE_OUTSIDE_SITE",
+            Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"),
         ),
+        // A work order recording no node: the equipment's site (A) is the derived one.
         (
             create_input(ty, Some(f.eq_a), Some(f.t.site_a), Some(f.wo_none)),
             "SCOPE_RECORD_WITHOUT_SITE",
+            None,
         ),
         (
             create_input(ty, Some(f.eq_none), None, None),
             "SCOPE_RECORD_WITHOUT_SITE",
+            Some("VALIDATION"),
         ),
         // Equipment installed nowhere on a node of the user's site: refused as an edit refuses it.
         (
             create_input(ty, Some(f.eq_none), Some(f.t.site_a), None),
             "SCOPE_RECORD_WITHOUT_SITE",
+            Some("VALIDATION"),
         ),
     ] {
         let err = access::check_create_at(&f.db, &site, &input).await.unwrap_err();
         assert_eq!(code_of(&err), expected, "{input:?}");
-        // Plant-wide: unchanged.
-        access::check_create_at(&f.db, &plant, &input)
-            .await
-            .unwrap_or_else(|e| panic!("plant {input:?}: {e:?}"));
+        let plant_result = access::check_create_at(&f.db, &plant, &input).await;
+        let create_result = queries::create_work_permit(&f.db, input.clone()).await;
+        match plant_wide {
+            None => {
+                plant_result.unwrap_or_else(|e| panic!("plant {input:?}: {e:?}"));
+                create_result.unwrap_or_else(|e| panic!("create {input:?}: {e:?}"));
+            }
+            Some("VALIDATION") => {
+                let err = plant_result.unwrap_err();
+                assert!(matches!(err, AppError::ValidationFailed(_)), "{input:?}: {err:?}");
+                // The check and the create agree.
+                assert_eq!(format!("{err:?}"), format!("{:?}", create_result.unwrap_err()));
+            }
+            Some(code) => {
+                assert_eq!(code_of(&plant_result.unwrap_err()), code, "plant {input:?}");
+                assert_eq!(code_of(&create_result.unwrap_err()), code, "create {input:?}");
+            }
+        }
     }
     // The view right alone does not issue.
     let err = access::check_create_at(&f.db, &viewer, &create_input(ty, Some(f.eq_a), None, None))
@@ -974,6 +998,30 @@ async fn hand_over_receivers_follow_the_same_assignment_rules_as_the_access_map(
     )
     .await;
     assert!(!eligible_as_the_access_map_says(&f.db, &p_zone, area_closer).await);
+
+    // A reference beyond `i64` is no node (Rust's parse refuses it; a bare SQL cast would read it as
+    // the largest id). Last: a node with the largest id ends the table's id sequence.
+    let top = crate::auth::scope_tests::node(&f.db, "RCV-TOP", Some(f.t.plant)).await;
+    exec(
+        &f.db,
+        &format!("UPDATE org_nodes SET id = {} WHERE id = {top}", i64::MAX),
+    )
+    .await;
+    let p_top = permit(&f.db, equipment(&f.db, "RCV-TOP", Some(i64::MAX)).await).await;
+    assert_eq!(p_top.entity_id, i64::MAX);
+    let at_max = assigned_on(&f.db, "ptw_rcv_at_max", close_role, i64::MAX, None).await;
+    assert!(eligible_as_the_access_map_says(&f.db, &p_top, at_max).await);
+    for (name, reference) in [
+        ("ptw_rcv_overflow", "9223372036854775808"),
+        ("ptw_rcv_overflow_long", "99999999999999999999"),
+    ] {
+        let set = format!("scope_reference = '{reference}'");
+        let overflow = assigned_on(&f.db, name, close_role, i64::MAX, Some(&set)).await;
+        assert!(
+            !eligible_as_the_access_map_says(&f.db, &p_top, overflow).await,
+            "{reference} is no node"
+        );
+    }
 }
 
 /// LOTO card print: the isolation must belong to the permit named before the LOTO role is judged
@@ -1081,7 +1129,8 @@ async fn changing_a_permits_equipment_moves_it_to_the_equipments_site_with_the_r
     let to_b = edit(&f.p_a, Some(f.eq_b), None, None);
     let err = access::check_update(&f.db, &site, &to_b).await.unwrap_err();
     assert_eq!(code_of(&err), "SCOPE_OUTSIDE_SITE");
-    // Giving site A with equipment of site B does not help: the node stored is site B's anyway.
+    // Giving site A with equipment of site B does not help: the right is needed at the new
+    // equipment's site too (and the save refuses site A, off site B's chain).
     let err = access::check_update(&f.db, &site, &edit(&f.p_a, Some(f.eq_b), Some(f.t.site_a), None))
         .await
         .unwrap_err();
@@ -1139,6 +1188,15 @@ async fn changing_a_permits_equipment_moves_it_to_the_equipments_site_with_the_r
     .await
     .expect("the equipment's own site");
     assert_eq!(ok.entity_id, f.t.line_a1);
+    // A level above the new equipment's site may be given too.
+    let above = queries::update_work_permit(
+        &f.db,
+        edit(&ok, Some(f.eq_a), Some(f.t.plant), None),
+        i64::from(f.plant),
+    )
+    .await
+    .expect("a level above the equipment's site");
+    assert_eq!((above.asset_id, above.entity_id), (f.eq_a, f.t.plant));
 
     // Linked to a work order of site B (on equipment of site B): the permit takes the work order's site.
     let q = permit(&f.db, f.eq_a).await;
@@ -1229,4 +1287,252 @@ async fn permits_on_equipment_of_another_site_are_listed_for_review_not_rewritte
         .await
         .expect("detectors again");
     assert_eq!(scalar(&f.db, &listed(on_b.id)).await, 1);
+}
+
+/// The edit of a permit's site alone (same equipment and work order): before approval, the node
+/// given must be its equipment's (or work order's) or a level above it — never a sibling, a level
+/// below or another site; from approved on, the site is fixed. Audited like an equipment change.
+#[tokio::test]
+async fn a_permits_site_follows_its_equipments_chain_and_is_fixed_once_approved() {
+    let f = fixture().await;
+    let line_a2 = crate::auth::scope_tests::node(&f.db, "PTW-A2", Some(f.t.site_a)).await;
+    let site_edit = |wp: &WorkPermit, entity: i64| WorkPermitUpdateInput {
+        id: wp.id,
+        linked_work_order_id: None,
+        asset_id: None,
+        entity_id: Some(entity),
+        expires_at: None,
+        expected_row_version: wp.row_version,
+    };
+    let actor = i64::from(f.plant);
+
+    // Draft on line A1: up to site A and the plant, allowed and audited.
+    let draft = permit(&f.db, f.eq_a1).await;
+    let up = queries::update_work_permit(&f.db, site_edit(&draft, f.t.site_a), actor)
+        .await
+        .expect("a level above");
+    assert_eq!(up.entity_id, f.t.site_a);
+    let audited = scalar(
+        &f.db,
+        &format!(
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'permit.site_moved' AND target_id = '{}' \
+             AND json_extract(details_json, '$.old_entity_id') = {} \
+             AND json_extract(details_json, '$.new_entity_id') = {}",
+            up.id, f.t.line_a1, f.t.site_a
+        ),
+    )
+    .await;
+    assert_eq!(audited, 1);
+    let up = queries::update_work_permit(&f.db, site_edit(&up, f.t.plant), actor)
+        .await
+        .expect("the plant");
+    // Back down to its equipment's own line: allowed (the derived node).
+    let back = queries::update_work_permit(&f.db, site_edit(&up, f.t.line_a1), actor)
+        .await
+        .expect("its equipment's node");
+    assert_eq!(back.entity_id, f.t.line_a1);
+    // A sibling line, another site: refused, nothing written.
+    for node in [line_a2, f.t.site_b] {
+        let err = queries::update_work_permit(&f.db, site_edit(&back, node), actor)
+            .await
+            .unwrap_err();
+        assert_eq!(code_of(&err), "PERMIT_SITE_NOT_EQUIPMENT_SITE", "node {node}");
+    }
+    // A level below the equipment's site: refused.
+    let on_site = permit(&f.db, f.eq_a).await;
+    let err = queries::update_work_permit(&f.db, site_edit(&on_site, f.t.line_a1), actor)
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "PERMIT_SITE_NOT_EQUIPMENT_SITE");
+    let kept = queries::get_work_permit(&f.db, on_site.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!(kept.entity_id, f.t.site_a);
+
+    // Waiting for review: a level above is allowed and sends the permit back to draft (the review
+    // judged it at its former site, and who issues it changes), audited as a review reset.
+    let review = set_status(&f.db, &permit(&f.db, f.eq_a1).await, "pending_review").await;
+    let moved = queries::update_work_permit(&f.db, site_edit(&review, f.t.site_a), actor)
+        .await
+        .expect("waiting for review");
+    assert_eq!((moved.entity_id, moved.status.as_str()), (f.t.site_a, "draft"));
+    let reset = scalar(
+        &f.db,
+        &format!(
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'permit.review_reset' AND target_id = '{}' \
+             AND json_extract(details_json, '$.reason') = 'site_changed'",
+            moved.id
+        ),
+    )
+    .await;
+    assert_eq!(reset, 1);
+    // The former review no longer counts: approving now is refused, it is submitted again.
+    let err = queries::set_work_permit_status(
+        &f.db,
+        WorkPermitStatusInput {
+            id: moved.id,
+            status: "approved".into(),
+            expected_row_version: moved.row_version,
+        },
+        1,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(code_of(&err), "PERMIT_TRANSITION_NOT_ALLOWED");
+    let moved = set_status(&f.db, &moved, "pending_review").await;
+
+    // Approved, issued: the site is fixed, even to a level above; the same site given passes.
+    let mut wp = set_status(&f.db, &moved, "approved").await;
+    for status in ["approved", "issued"] {
+        if status == "issued" {
+            wp = set_status(&f.db, &wp, "issued").await;
+        }
+        for node in [f.t.plant, f.t.line_a1, f.t.site_b] {
+            let err = queries::update_work_permit(&f.db, site_edit(&wp, node), actor)
+                .await
+                .unwrap_err();
+            assert_eq!(code_of(&err), "PERMIT_SITE_LOCKED", "{status} to {node}");
+        }
+        wp = queries::update_work_permit(&f.db, site_edit(&wp, f.t.site_a), actor)
+            .await
+            .unwrap_or_else(|e| panic!("same site, {status}: {e:?}"));
+        assert_eq!(wp.entity_id, f.t.site_a);
+    }
+}
+
+/// The create refuses a node given off its equipment's (or work order's) chain, as the edit does.
+#[tokio::test]
+async fn creating_a_permit_on_a_node_off_its_equipments_chain_is_refused() {
+    let f = fixture().await;
+    let line_a2 = crate::auth::scope_tests::node(&f.db, "PTW-A2C", Some(f.t.site_a)).await;
+    let plant = map_of(&f.db, f.plant).await;
+    let ty = hot_work(&f.db).await;
+    for (asset, node) in [(f.eq_a1, f.t.line_a1), (f.eq_a1, f.t.site_a), (f.eq_a1, f.t.plant)] {
+        let input = create_input(ty, Some(asset), Some(node), None);
+        access::check_create_at(&f.db, &plant, &input)
+            .await
+            .unwrap_or_else(|e| panic!("check {input:?}: {e:?}"));
+        let wp = queries::create_work_permit(&f.db, input).await.expect("on the chain");
+        assert_eq!(wp.entity_id, node);
+    }
+    for (asset, node) in [
+        (f.eq_a1, line_a2),
+        (f.eq_a1, f.t.site_b),
+        (f.eq_a, f.t.line_a1),
+        (f.eq_a, 0),
+    ] {
+        let input = create_input(ty, Some(asset), Some(node), None);
+        let err = access::check_create_at(&f.db, &plant, &input).await.unwrap_err();
+        assert_eq!(code_of(&err), "PERMIT_SITE_NOT_EQUIPMENT_SITE", "check {input:?}");
+        let err = queries::create_work_permit(&f.db, input.clone()).await.unwrap_err();
+        assert_eq!(code_of(&err), "PERMIT_SITE_NOT_EQUIPMENT_SITE", "create {input:?}");
+    }
+}
+
+/// A work order recording no usable node (`0`): its permit's site cannot be derived, so the create
+/// and the edit refuse it (no fall-back to the equipment's site, as on arrival by sync). A work
+/// order recording no node at all (`NULL`) leaves the equipment's site as the derived one.
+#[tokio::test]
+async fn a_work_order_without_a_usable_site_gives_its_permit_no_site() {
+    let f = fixture().await;
+    let ty = hot_work(&f.db).await;
+    let wo_zero = work_order(&f.db, f.eq_a, f.plant, "Work order on node 0").await;
+    exec(
+        &f.db,
+        &format!("UPDATE work_orders SET entity_id = 0 WHERE id = {wo_zero}"),
+    )
+    .await;
+    let err = queries::create_work_permit(&f.db, create_input(ty, None, None, Some(wo_zero)))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ValidationFailed(_)), "{err:?}");
+    let draft = permit(&f.db, f.eq_a).await;
+    let err = queries::update_work_permit(
+        &f.db,
+        WorkPermitUpdateInput {
+            id: draft.id,
+            linked_work_order_id: Some(wo_zero),
+            asset_id: None,
+            entity_id: None,
+            expires_at: None,
+            expected_row_version: draft.row_version,
+        },
+        i64::from(f.plant),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AppError::ValidationFailed(_)), "{err:?}");
+    // NULL: the equipment's site.
+    let on_null = queries::create_work_permit(&f.db, create_input(ty, None, None, Some(f.wo_none)))
+        .await
+        .expect("work order without a node");
+    assert_eq!(on_null.entity_id, f.t.site_a);
+}
+
+/// The save stores only the target the scope check judged: when the equipment's site changes
+/// between the check and the save, the edit is refused as a concurrent update, nothing written.
+#[tokio::test]
+async fn the_save_refuses_a_node_other_than_the_one_checked() {
+    let f = fixture().await;
+    let plant = map_of(&f.db, f.plant).await;
+    let wp = permit(&f.db, f.eq_a).await;
+    let input = WorkPermitUpdateInput {
+        id: wp.id,
+        linked_work_order_id: None,
+        asset_id: Some(f.eq_a1),
+        entity_id: None,
+        expires_at: None,
+        expected_row_version: wp.row_version,
+    };
+    let checked = access::check_update(&f.db, &plant, &input).await.expect("check");
+    assert_eq!(checked.entity_id, Some(f.t.line_a1));
+    // The equipment is moved to site B after the check.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE equipment SET installed_at_node_id = {} WHERE id = {}",
+            f.t.site_b, f.eq_a1
+        ),
+    )
+    .await;
+    let err = queries::update_work_permit_checked(&f.db, input.clone(), i64::from(f.plant), &checked)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::ValidationFailed(m) if m.iter().any(|t| t.contains("Concurrent update"))),
+        "{err:?}"
+    );
+    let kept = queries::get_work_permit(&f.db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!((kept.asset_id, kept.entity_id), (f.eq_a, f.t.site_a));
+    // Checked again: the target now names site B, and is saved as checked.
+    let checked = access::check_update(&f.db, &plant, &input).await.expect("check again");
+    assert_eq!(checked.entity_id, Some(f.t.site_b));
+    let saved = queries::update_work_permit_checked(&f.db, input, i64::from(f.plant), &checked)
+        .await
+        .expect("saved as checked");
+    assert_eq!((saved.asset_id, saved.entity_id), (f.eq_a1, f.t.site_b));
+}
+
+/// Unknown new equipment is not found before any site refusal (as the create reports it), even
+/// with a node given.
+#[tokio::test]
+async fn editing_onto_unknown_equipment_is_not_found_before_the_site() {
+    let f = fixture().await;
+    let site = map_of(&f.db, f.site).await;
+    for entity in [None, Some(f.t.site_b)] {
+        let input = WorkPermitUpdateInput {
+            id: f.p_a.id,
+            linked_work_order_id: None,
+            asset_id: Some(9_999_999),
+            entity_id: entity,
+            expires_at: None,
+            expected_row_version: f.p_a.row_version,
+        };
+        let err = access::check_update(&f.db, &site, &input).await.unwrap_err();
+        assert!(is_not_found(&err), "{entity:?}: {err:?}");
+    }
 }

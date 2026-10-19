@@ -25,6 +25,7 @@ use tokio::sync::RwLock;
 use crate::auth::scope::{self, AccessMap, AccessScope, Anchor};
 use crate::errors::{AppError, AppResult};
 use crate::permit::domain::{WorkPermitCreateInput, WorkPermitUpdateInput};
+use crate::permit::queries::PermitEditTarget;
 use crate::rbac::cache::PermissionCache;
 use crate::rbac::permissions::{PTW_CLOSE, PTW_ISSUE};
 use crate::wo::access::{check_anywhere, equipment_node, wo_anchor};
@@ -129,48 +130,47 @@ pub async fn child_anchor(db: &impl ConnectionTrait, child: PermitChild, id: i64
     Ok(Anchor::of(node))
 }
 
-/// The equipment and node of a work order (`None`: no such work order).
-async fn wo_fields(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Option<(Option<i64>, Option<i64>)>> {
+/// The equipment of a work order (`None` inside: none recorded); `None`: no such work order.
+async fn wo_equipment(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Option<Option<i64>>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT equipment_id, entity_id FROM work_orders WHERE id = ?",
+            "SELECT equipment_id FROM work_orders WHERE id = ?",
             [wo_id.into()],
         ))
         .await?;
     match row {
-        Some(row) => Ok(Some((
-            row.try_get::<Option<i64>>("", "equipment_id")?,
-            row.try_get::<Option<i64>>("", "entity_id")?,
-        ))),
+        Some(row) => Ok(Some(row.try_get::<Option<i64>>("", "equipment_id")?)),
         None => Ok(None),
     }
 }
 
-/// The org node and equipment a new permit gets, derived exactly as
-/// `queries::resolve_permit_scope` does: the node given, else the linked work order's node, else
-/// the equipment's installed node; the equipment given, else the linked work order's. A linked work
-/// order that does not exist is not found (as the create reports it).
+/// The org node and equipment a new permit gets, as `queries::resolve_permit_scope` takes them:
+/// the node given, else the node derived from the equipment and work order
+/// (`queries::derived_permit_node`, `None` when not usable); the equipment given, else the linked
+/// work order's. Equipment or a linked work order that does not exist is not found (as the create
+/// reports it). Whether a given node is allowed (on the derived node's chain) is the create's rule,
+/// checked last by [`check_create_at`].
 pub async fn new_permit_node(
     db: &impl ConnectionTrait,
     input: &WorkPermitCreateInput,
 ) -> AppResult<(Option<i64>, Option<i64>)> {
     let mut asset_id = input.asset_id;
-    let mut entity_id = input.entity_id;
     if let Some(wo_id) = input.linked_work_order_id {
-        let (wo_equipment, wo_entity) = wo_fields(db, wo_id).await?.ok_or_else(|| AppError::NotFound {
+        let wo_equipment = wo_equipment(db, wo_id).await?.ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: wo_id.to_string(),
         })?;
         asset_id = asset_id.or(wo_equipment);
-        entity_id = entity_id.or(wo_entity);
     }
-    if entity_id.is_none() {
-        if let Some(asset) = asset_id {
-            entity_id = equipment_node(db, asset).await?;
+    let node = match (input.entity_id, asset_id) {
+        (Some(node), _) => Some(node),
+        (None, Some(asset)) => {
+            crate::permit::queries::derived_permit_node(db, asset, input.linked_work_order_id).await?
         }
-    }
-    Ok((entity_id, asset_id))
+        (None, None) => None,
+    };
+    Ok((node, asset_id))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -240,12 +240,14 @@ async fn existing_equipment_anchor(db: &impl ConnectionTrait, equipment_id: i64)
 /// create does), at its equipment's installed node when that is another one (equipment installed
 /// nowhere: plant-wide users only, as an edit), and — when it is linked to a work order — at that
 /// work order's node (a site user never attaches a permit to another site's work order, nor to one
-/// without a site). Without a derivable node: plant-wide users only (the create then refuses it
-/// for everyone, as before: a permit needs a node).
+/// without a site). Without a derivable node: plant-wide users only.
 ///
 /// The refusals keep the order of the other checks: the right held nowhere, then what the create
 /// itself reports first (a work order or equipment that does not exist: not found; no equipment
-/// given nor on the work order: the create's validation error), then the sites.
+/// given nor on the work order: the create's validation error), then the sites, then the create's
+/// site rule (`queries::resolve_permit_scope`, the same function as the save: the node given must be
+/// the one derived from the equipment or work order, or a level above it; without a usable derived
+/// node the permit is refused), so the check and the create agree.
 pub async fn check_create_at(
     db: &impl ConnectionTrait,
     map: &AccessMap,
@@ -266,17 +268,24 @@ pub async fn check_create_at(
             scope::check_anchor(db, &scope, PTW_ISSUE, wo).await?;
         }
     }
+    crate::permit::queries::resolve_permit_scope(db, input).await?;
     Ok(())
 }
 
 /// Rule §2.7: `ptw.issue` on the permit at its current node, and at every new place an edit
-/// gives it: the node the save will store (`queries::permit_edit_target`, one rule for both: when
-/// the equipment or the linked work order changes, the node follows them, derived as at creation;
-/// a node that cannot be derived is for plant-wide users only), the installed node of new
+/// gives it: the node the save will store (`queries::permit_edit_target`, one rule for both: the
+/// node given, else, when the equipment or the linked work order changes, the node derived from
+/// them; a node that cannot be derived is for plant-wide users only), the installed node of new
 /// equipment when that is another one (equipment not installed anywhere: plant-wide users only),
-/// the node of a newly linked work order (not found when it does not exist). The rules of the
-/// change itself (status, locks, planned isolations) are the save's.
-pub async fn check_update(db: &impl ConnectionTrait, map: &AccessMap, input: &WorkPermitUpdateInput) -> AppResult<()> {
+/// the node of a newly linked work order. New equipment or a work order that does not exist is not
+/// found, before any site. The rules of the change itself (status, locks, planned isolations, the
+/// node on the derived node's chain) are the save's. Returns the target checked: the save refuses
+/// to store another one (`queries::update_work_permit_checked`).
+pub async fn check_update(
+    db: &impl ConnectionTrait,
+    map: &AccessMap,
+    input: &WorkPermitUpdateInput,
+) -> AppResult<PermitEditTarget> {
     let scope = map.scope_of(PTW_ISSUE);
     let current_anchor = check_on_permit(db, map, PTW_ISSUE, input.id).await?;
     let current = crate::permit::queries::get_work_permit(db, input.id)
@@ -285,6 +294,11 @@ pub async fn check_update(db: &impl ConnectionTrait, map: &AccessMap, input: &Wo
             entity: "WorkPermit".into(),
             id: input.id.to_string(),
         })?;
+    // Not found before any site: unknown new equipment (even with a node given) or work order
+    // (`permit_edit_target` derives the node from them).
+    if let Some(asset) = input.asset_id.filter(|a| *a != current.asset_id) {
+        existing_equipment_anchor(db, asset).await?;
+    }
     let target = crate::permit::queries::permit_edit_target(db, &current, input).await?;
     let stored_anchor = Anchor::of(target.entity_id);
     if stored_anchor != current_anchor {
@@ -305,7 +319,7 @@ pub async fn check_update(db: &impl ConnectionTrait, map: &AccessMap, input: &Wo
             scope::check_anchor(db, &scope, PTW_ISSUE, wo).await?;
         }
     }
-    Ok(())
+    Ok(target)
 }
 
 /// A new isolation is checked at the permit it is added to; an existing one at its own permit
@@ -461,15 +475,16 @@ pub async fn require_create_at(
     enforce(db, user_id, PTW_ISSUE).await
 }
 
-/// [`check_update`], then entitlement and licence.
+/// [`check_update`], then entitlement and licence; returns the target checked.
 pub async fn require_update(
     db: &DatabaseConnection,
     cache: &RwLock<PermissionCache>,
     user_id: i32,
     input: &WorkPermitUpdateInput,
-) -> AppResult<()> {
-    check_update(db, &access_map(db, cache, user_id).await?, input).await?;
-    enforce(db, user_id, PTW_ISSUE).await
+) -> AppResult<PermitEditTarget> {
+    let target = check_update(db, &access_map(db, cache, user_id).await?, input).await?;
+    enforce(db, user_id, PTW_ISSUE).await?;
+    Ok(target)
 }
 
 /// [`check_isolation_upsert`], then entitlement and licence.

@@ -36,6 +36,13 @@ pub(crate) const DEFER_MISSING_FIELD: &str = "MISSING_FIELD";
 /// Deferral code for an entity type this version of the app does not know.
 pub(crate) const DEFER_UNKNOWN_ENTITY_TYPE: &str = "UNKNOWN_ENTITY_TYPE";
 
+tokio::task_local! {
+    /// The envelope version of the received row being applied ([`apply_inbound_payload`]), for the
+    /// re-checks that judge how many changes one received row may carry since the version applied
+    /// here (`permit::sync_check`). Not set outside that apply.
+    pub(crate) static INBOUND_ROW_VERSION: i64;
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct InboxRow {
     pub(crate) id: i64,
@@ -703,7 +710,12 @@ pub(crate) async fn apply_inbound_payload(
     if crate::sync::row_spec::row_spec(entity_type).is_some() {
         let layout = crate::sync::row_layout::layout(conn, entity_type).await?;
         crate::sync::capture::begin_suppression(conn).await?;
-        let applied = crate::sync::row_codec::apply_row(conn, &layout, entity_sync_id, operation, payload_json).await;
+        let applied = INBOUND_ROW_VERSION
+            .scope(
+                row_version,
+                crate::sync::row_codec::apply_row(conn, &layout, entity_sync_id, operation, payload_json),
+            )
+            .await;
         crate::sync::capture::end_suppression(conn).await?;
         return applied;
     }

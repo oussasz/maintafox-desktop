@@ -3020,3 +3020,270 @@ async fn a_received_equipment_change_is_rechecked_against_the_permit_held_here()
     let outcome = apply(&db, "work_permits", &free.entity_sync_id, &aligned).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
 }
+
+/// A line under the first site (sync id `permit-test-org-003`, node 3) and equipment installed on it.
+async fn equipment_on_line_of_first_site(db: &DatabaseConnection, code: &str) -> i64 {
+    let _ = insert_equipment(db, &format!("{code}-FIRST")).await;
+    exec(
+        db,
+        "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, parent_id, status, created_at, \
+         updated_at, structure_model_id) VALUES (3, 'permit-test-org-003', 'LINE-PTW-3', 'Permit Test Line 3', 1, 1, \
+         'active', datetime('now'), datetime('now'), 1)",
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO equipment (entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+             created_at, updated_at) VALUES ('eq-sync-{code}', '{code}', 'Line asset', 'active_in_service', 3, \
+             datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+    super::tests::scalar_i64(db, &format!("SELECT id FROM equipment WHERE asset_id_code = '{code}'")).await
+}
+
+/// [`apply`] as the inbox pass applies a row of envelope version `version`.
+async fn apply_at(db: &DatabaseConnection, version: i64, sync_id: &str, payload: &Payload) -> ApplyOutcome {
+    crate::sync::materialize::INBOUND_ROW_VERSION
+        .scope(version, apply(db, "work_permits", sync_id, payload))
+        .await
+}
+
+/// The version the server holds for a permit, as recorded when it was last synced here.
+async fn synced_at(db: &DatabaseConnection, wp: &WorkPermit, version: i64) {
+    crate::sync::queries::record_synced_state(db, "work_permits", &wp.entity_sync_id, version, "test-hash", "test")
+        .await
+        .expect("synced state");
+}
+
+/// The site of a permit received alone (same equipment and work order) is judged as on this PC:
+/// approved here, it is fixed; before, it must be the equipment's site or a level above it.
+#[tokio::test]
+async fn a_received_site_change_is_rechecked_against_the_permit_held_here() {
+    let db = setup().await;
+    let on_line = equipment_on_line_of_first_site(&db, "EQ-SYNC-SITE1").await;
+    let _ = equipment_on_second_site(&db, "EQ-SYNC-SITE2").await;
+    let node = |id: i64| json!(format!("permit-test-org-00{id}"));
+
+    // Approved here: any other site is a conflict, nothing written.
+    let approved = create_permit(&db, "hot_work", on_line).await;
+    assert_eq!(approved.entity_id, 1, "recorded on the site above its line");
+    let approved = set_status(&db, &approved, "pending_review").await.expect("submit");
+    let approved = set_status(&db, &approved, "approved").await.expect("approve");
+    for to in [2, 3] {
+        let moved = with(
+            wire(&db, "work_permits", &approved.entity_sync_id).await,
+            &[("entity_sync_id", node(to))],
+        );
+        let outcome = apply(&db, "work_permits", &approved.entity_sync_id, &moved).await;
+        assert_eq!(code(&outcome), Some("PERMIT_SITE_LOCKED"), "to node {to}: {outcome:?}");
+    }
+    let kept = queries::get_work_permit(&db, approved.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!(kept.entity_id, 1, "nothing written");
+
+    // A draft here: another site is a conflict; its equipment's line, then the site above: applied.
+    let draft = create_permit(&db, "hot_work", on_line).await;
+    let held = wire(&db, "work_permits", &draft.entity_sync_id).await;
+    let outcome = apply(
+        &db,
+        "work_permits",
+        &draft.entity_sync_id,
+        &with(held.clone(), &[("entity_sync_id", node(2))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"), "{outcome:?}");
+    for to in [3, 1] {
+        let outcome = apply(
+            &db,
+            "work_permits",
+            &draft.entity_sync_id,
+            &with(
+                wire(&db, "work_permits", &draft.entity_sync_id).await,
+                &[("entity_sync_id", node(to))],
+            ),
+        )
+        .await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "to node {to}: {outcome:?}");
+        let now = queries::get_work_permit(&db, draft.id)
+            .await
+            .expect("read")
+            .expect("permit");
+        assert_eq!(now.entity_id, to);
+    }
+    // A level below the equipment's site: a permit on equipment of site 1 moved to line 3.
+    let on_site = create_permit(&db, "hot_work", insert_equipment(&db, "EQ-SYNC-SITE3").await).await;
+    let outcome = apply(
+        &db,
+        "work_permits",
+        &on_site.entity_sync_id,
+        &with(
+            wire(&db, "work_permits", &on_site.entity_sync_id).await,
+            &[("entity_sync_id", node(3))],
+        ),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"), "{outcome:?}");
+}
+
+/// Held here waiting for review, a permit received with other equipment and another status than
+/// draft must carry the versions of the return to draft and the steps since (two to wait for
+/// review again, three to be approved); an unknown version is refused.
+#[tokio::test]
+async fn a_received_equipment_change_skipping_the_return_to_draft_is_refused() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-RV1").await;
+    let _ = insert_equipment(&db, "EQ-SYNC-RV2").await;
+    let other = json!("eq-sync-EQ-SYNC-RV2");
+    for (status, too_few, enough) in [("pending_review", 1, 2), ("approved", 2, 3)] {
+        let wp = create_permit(&db, "hot_work", asset).await;
+        let wp = set_status(&db, &wp, "pending_review").await.expect("submit");
+        synced_at(&db, &wp, 5).await;
+        let changed = with(
+            wire(&db, "work_permits", &wp.entity_sync_id).await,
+            &[("asset_sync_id", other.clone()), ("status", json!(status))],
+        );
+        let outcome = apply_at(&db, 5 + too_few, &wp.entity_sync_id, &changed).await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_EQUIPMENT_REVIEW_SKIPPED"),
+            "{status} at +{too_few}: {outcome:?}"
+        );
+        // Outside an inbox apply the version is unknown: refused too.
+        let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &changed).await;
+        assert_eq!(code(&outcome), Some("PERMIT_EQUIPMENT_REVIEW_SKIPPED"), "{outcome:?}");
+        let outcome = apply_at(&db, 5 + enough, &wp.entity_sync_id, &changed).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied),
+            "{status} at +{enough}: {outcome:?}"
+        );
+    }
+    // Without a version applied here: refused.
+    let wp = create_permit(&db, "hot_work", asset).await;
+    let wp = set_status(&db, &wp, "pending_review").await.expect("submit");
+    let changed = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("asset_sync_id", other.clone())],
+    );
+    let outcome = apply_at(&db, 9, &wp.entity_sync_id, &changed).await;
+    assert_eq!(code(&outcome), Some("PERMIT_EQUIPMENT_REVIEW_SKIPPED"), "{outcome:?}");
+    // Sent back to draft (one version): applied whatever the versions.
+    let outcome = apply(
+        &db,
+        "work_permits",
+        &wp.entity_sync_id,
+        &with(changed, &[("status", json!("draft"))]),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+
+    // The site alone (to its equipment's line, on the chain) sends it back to draft too: the same
+    // minimum versions.
+    let on_line = equipment_on_line_of_first_site(&db, "EQ-SYNC-RV3").await;
+    let wp = create_permit(&db, "hot_work", on_line).await;
+    assert_eq!(wp.entity_id, 1);
+    let wp = set_status(&db, &wp, "pending_review").await.expect("submit");
+    synced_at(&db, &wp, 5).await;
+    let moved = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("entity_sync_id", json!("permit-test-org-003"))],
+    );
+    let outcome = apply_at(&db, 6, &wp.entity_sync_id, &moved).await;
+    assert_eq!(code(&outcome), Some("PERMIT_EQUIPMENT_REVIEW_SKIPPED"), "{outcome:?}");
+    let outcome = apply_at(&db, 7, &wp.entity_sync_id, &moved).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let now = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!((now.entity_id, now.status.as_str()), (3, "pending_review"));
+}
+
+/// A work order is never removed from a permit by a received row, and a work order recording no
+/// usable node (`0`) gives the permit no site: a conflict, as the edit on this PC refuses it.
+#[tokio::test]
+async fn a_received_permit_never_drops_its_work_order_nor_takes_one_without_a_site() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-WO1").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let linked = create_from_wo(&db, "hot_work", wo_id)
+        .await
+        .expect("permit on the work order");
+    let unlinked = with(
+        wire(&db, "work_permits", &linked.entity_sync_id).await,
+        &[("linked_work_order_sync_id", Value::Null)],
+    );
+    let outcome = apply(&db, "work_permits", &linked.entity_sync_id, &unlinked).await;
+    assert_eq!(code(&outcome), Some("PERMIT_WO_UNLINKED"), "{outcome:?}");
+
+    let (wo_zero, _) = assigned_wo_requiring_permit(&db, asset).await;
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET entity_id = 0 WHERE id = {wo_zero}"),
+    )
+    .await;
+    let wo_zero_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_zero}"),
+    )
+    .await
+    .expect("work order sync id");
+    let free = create_permit(&db, "hot_work", asset).await;
+    let onto = with(
+        wire(&db, "work_permits", &free.entity_sync_id).await,
+        &[("linked_work_order_sync_id", json!(wo_zero_sync))],
+    );
+    let outcome = apply(&db, "work_permits", &free.entity_sync_id, &onto).await;
+    assert_eq!(code(&outcome), Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"), "{outcome:?}");
+    // The same edit on this PC: refused too (no usable site).
+    let err = queries::update_work_permit(
+        &db,
+        crate::permit::domain::WorkPermitUpdateInput {
+            id: free.id,
+            linked_work_order_id: Some(wo_zero),
+            asset_id: None,
+            entity_id: None,
+            expires_at: None,
+            expected_row_version: free.row_version,
+        },
+        APPLIER,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, crate::errors::AppError::ValidationFailed(_)), "{err:?}");
+}
+
+/// Known limit (fail-safe): isolation rows received just before the permit row that changes its
+/// equipment (points planned on the other PC for the new equipment) are held here when the permit
+/// row is judged; nothing tells which PC planned them or for which version of the permit, so the
+/// change is a conflict for a person to decide, with nothing written (`docs/KNOWN_LIMITS.md`).
+#[tokio::test]
+async fn isolations_received_before_the_equipment_change_make_it_a_conflict() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-ISO1").await;
+    let _ = insert_equipment(&db, "EQ-SYNC-ISO2").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let held = wire(&db, "work_permits", &wp.entity_sync_id).await;
+    // The isolation planned on the other PC for the new equipment, received first.
+    let iso = add_isolation(&db, wp.id, "New pump breaker").await;
+    let iso_wire = wire(&db, "permit_isolations", &iso.entity_sync_id).await;
+    exec(&db, &format!("DELETE FROM permit_isolations WHERE id = {}", iso.id)).await;
+    let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &iso_wire).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // Then the permit row with the new equipment.
+    let changed = with(held, &[("asset_sync_id", json!("eq-sync-EQ-SYNC-ISO2"))]);
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &changed).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_EQUIPMENT_ISOLATIONS_PLANNED"),
+        "{outcome:?}"
+    );
+    let kept = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!(kept.asset_id, asset, "nothing written");
+}

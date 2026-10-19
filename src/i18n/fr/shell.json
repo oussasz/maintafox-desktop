@@ -108,6 +108,14 @@
       "PERMIT_TYPE_THREE_PERSON_UNAUDITED": "La règle de la troisième personne au retrait des cadenas d'un type de permis modifiée sur un autre poste sans qui, quand ou pourquoi",
       "PERMIT_TYPE_CHANGED": "Un permis passé à un autre type de permis",
       "PERMIT_TYPE_THREE_PERSON_STALE": "La règle de la troisième personne au retrait des cadenas d'un type de permis reçue avec une modification plus ancienne que celle enregistrée ici",
+      "PERMIT_EQUIPMENT_LOCKED": "L'équipement ou l'ordre de travail d'un permis approuvé ici a été changé sur un autre poste",
+      "PERMIT_SITE_LOCKED": "Le site d'un permis approuvé ici a été changé sur un autre poste",
+      "PERMIT_EQUIPMENT_LOCK_FITTED": "L'équipement d'un permis changé sur un autre poste alors qu'un cadenas est posé ici sous ce permis sans dépose vérifiée",
+      "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED": "L'équipement d'un permis changé sur un autre poste alors que des points d'isolement sont prévus ici sur ce permis (aussi quand les points du nouvel équipement sont arrivés juste avant le permis)",
+      "PERMIT_EQUIPMENT_REVIEW_SKIPPED": "Un permis en attente de revue ici dont l'équipement ou le site a été changé sur un autre poste sans repasser en brouillon",
+      "PERMIT_SITE_NOT_EQUIPMENT_SITE": "Un permis reçu sur un autre site que celui de son équipement (ou de son ordre de travail), ou qu'un niveau au-dessus",
+      "PERMIT_WO_EQUIPMENT_MISMATCH": "Un permis reçu sur un autre équipement que celui de son ordre de travail",
+      "PERMIT_WO_UNLINKED": "L'ordre de travail d'un permis lui a été retiré sur un autre poste",
       "other": "À examiner"
     },
     "history": {

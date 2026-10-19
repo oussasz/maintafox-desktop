@@ -10698,17 +10698,21 @@ export interface WorkPermitCreateInput {
   permit_type_id: number;
   /** Omit when `linked_work_order_id` is set: the WO equipment is used. */
   asset_id: number | null;
-  /** Omit to derive from the WO entity or the asset installation node. */
+  /** Omit to derive from the WO entity or the asset installation node. When given, it must be that
+   * node or a level above it (`PERMIT_SITE_NOT_EQUIPMENT_SITE` otherwise); a WO or asset without a
+   * usable node is refused. */
   entity_id: number | null;
   linked_work_order_id: number | null;
   /** RFC 3339, must be in the future. */
   expires_at: string | null;
 }
 
-/** Edit of a permit (`update_work_permit`); `null` keeps the current value. The equipment or the
- * linked work order changes only in `draft` or `pending_review` (a change in `pending_review` sends
- * the permit back to `draft`); the permit then moves to their site (an `entity_id` other than that
- * site is refused). Coded refusals (`errors:scope`): `PERMIT_EQUIPMENT_LOCKED` (approved or later),
+/** Edit of a permit (`update_work_permit`); `null` keeps the current value. The equipment, the
+ * linked work order or the site changes only in `draft` or `pending_review` (any of these changes in
+ * `pending_review` sends the permit back to `draft`); the permit then moves to their
+ * site, and an `entity_id` given must be that site or a level above it (never a sibling, a level
+ * below or another site). Coded refusals (`errors:scope`): `PERMIT_EQUIPMENT_LOCKED` (approved or
+ * later), `PERMIT_SITE_LOCKED` (site change, approved or later),
  * `PERMIT_EQUIPMENT_LOCK_FITTED` (a lock fitted, removal not verified),
  * `PERMIT_EQUIPMENT_ISOLATIONS_PLANNED` (isolation points planned), `PERMIT_SITE_NOT_EQUIPMENT_SITE`,
  * `PERMIT_WO_EQUIPMENT_MISMATCH` (the work order is on other equipment). Expiry edits are allowed
