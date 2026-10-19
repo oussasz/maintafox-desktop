@@ -3081,3 +3081,40 @@ async fn a_received_isolation_switch_off_is_rechecked_and_loto_stays_locked() {
     let outcome = apply(&db, "permit_types", "type-new-iso-off", &new_off).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
 }
+
+/// A permit type received from another PC never changes its code (compared exactly, as stored);
+/// its other fields are applied as received.
+#[tokio::test]
+async fn a_received_permit_type_never_changes_its_code() {
+    let db = setup().await;
+    let ty = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'hot_work'")
+        .await
+        .expect("type sync id");
+    let held = wire(&db, "permit_types", &ty).await;
+    for changed in ["hot_work_2", "hot_work ", "HOT_WORK"] {
+        let outcome = apply(
+            &db,
+            "permit_types",
+            &ty,
+            &with(held.clone(), &[("code", json!(changed))]),
+        )
+        .await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_TYPE_CODE_LOCKED"),
+            "{changed}: {outcome:?}"
+        );
+    }
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT code FROM permit_types WHERE entity_sync_id = '{ty}'")
+        )
+        .await
+        .as_deref(),
+        Some("hot_work")
+    );
+    let renamed = with(held, &[("name", json!("Hot work (renamed)"))]);
+    let outcome = apply(&db, "permit_types", &ty, &renamed).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}

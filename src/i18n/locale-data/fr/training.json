@@ -401,6 +401,7 @@
     "PERMIT_EXPIRY_PAST": "L’expiration du permis doit être dans le futur.",
     "PERMIT_EXPIRY_TOO_LONG": "Ce type de permis dure au plus {{hours}} h : choisissez une expiration plus proche.",
     "PERMIT_TYPE_LOTO_ISOLATION_LOCKED": "Le type de permis LOTO exige toujours une isolation d’énergie : cela ne peut pas être désactivé.",
+    "PERMIT_TYPE_CODE_LOCKED": "Le code du type de permis {{type}} ne peut pas être modifié : les permis et les règles de l’usine s’y réfèrent. Gardez {{type}}, ou créez un nouveau type avec le code {{code}}.",
     "PERMIT_TYPE_ISOLATION_RELAX_FORBIDDEN": "Seul un administrateur, après avoir ressaisi son mot de passe, peut ne plus exiger d’isolation d’énergie pour le type de permis {{type}}.",
     "PERMIT_TYPE_ISOLATION_RELAX_REASON": "Indiquez pourquoi le type de permis {{type}} n’exige plus d’isolation d’énergie (au moins {{min}} caractères).",
     "PERMIT_TYPE_ISOLATION_CLOCK_BEHIND": "La règle d’isolation d’énergie du type de permis {{type}} a été modifiée en dernier le {{last}}, ce qui n’est pas antérieur à l’heure de ce poste : vérifiez la date et l’heure de ce poste, puis refaites la modification.",

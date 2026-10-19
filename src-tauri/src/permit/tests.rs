@@ -2184,3 +2184,38 @@ async fn wo_gate_refuses_a_permit_expiring_before_the_planned_end() {
     set_planned_end(Some((chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339())).await;
     resume(paused.row_version).await.expect("covered by the permit");
 }
+
+/// A permit type's code is fixed once the type exists (plant rules, permits and work orders name the
+/// type by it): a save that changes it is refused; the same code with spaces around it is kept as
+/// stored.
+#[tokio::test]
+async fn a_permit_types_code_cannot_be_changed() {
+    let db = setup().await;
+    let hot = queries::list_permit_types(&db)
+        .await
+        .expect("types")
+        .into_iter()
+        .find(|t| t.code == "hot_work")
+        .expect("hot_work");
+    let mut renamed = type_input(&hot, None, None);
+    renamed.code = "hot_work_2".into();
+    let err = queries::upsert_permit_type(&db, renamed, EDITOR)
+        .await
+        .expect_err("code change");
+    match err {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, "PERMIT_TYPE_CODE_LOCKED");
+            assert_eq!(issues[0].params.get("type").map(String::as_str), Some("hot_work"));
+            assert_eq!(issues[0].params.get("code").map(String::as_str), Some("hot_work_2"));
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+    let mut padded = type_input(&hot, None, None);
+    padded.code = "  hot_work ".into();
+    padded.name = "Hot work (renamed)".into();
+    let saved = queries::upsert_permit_type(&db, padded, EDITOR)
+        .await
+        .expect("same code");
+    assert_eq!(saved.code, "hot_work");
+    assert_eq!(saved.name, "Hot work (renamed)");
+}

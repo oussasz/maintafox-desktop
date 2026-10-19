@@ -129,6 +129,10 @@ fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
         .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be an RFC 3339 timestamp.")]))
 }
 
+/// Stable code: a permit type's code cannot change once the type exists (here and on a row
+/// received from another PC).
+pub const CODE_PERMIT_TYPE_CODE_LOCKED: &str = "PERMIT_TYPE_CODE_LOCKED";
+
 /// Sync identity of the shipped LOTO permit type (migration 67): its energy-isolation rule is locked.
 const SHIPPED_LOTO_TYPE_SYNC_ID: &str = "11111111-1111-4111-8111-111111111111";
 
@@ -1081,6 +1085,22 @@ async fn upsert_permit_type_in(
             entity: "PermitType".into(),
             id: id.to_string(),
         })?;
+        // A type's code is fixed once created: plant rules, permits and work orders name the type by
+        // it (the stored code is kept as it is, spaces included).
+        if input.code.trim() != current.code.trim() {
+            return Err(crate::errors::org_validation_failed(
+                CODE_PERMIT_TYPE_CODE_LOCKED,
+                format!(
+                    "The code of permit type {} cannot be changed (asked: {}).",
+                    current.code,
+                    input.code.trim()
+                ),
+                std::collections::HashMap::from([
+                    ("type".to_string(), current.code.clone()),
+                    ("code".to_string(), input.code.trim().to_string()),
+                ]),
+            ));
+        }
         let new_rv = current.row_version + 1;
         let affected = db
             .execute(Statement::from_sql_and_values(
@@ -1097,7 +1117,7 @@ async fn upsert_permit_type_in(
                  isolation_change_reason = COALESCE(?, isolation_change_reason), row_version = ? \
                  WHERE id = ? AND row_version = ?",
                 [
-                    input.code.into(),
+                    current.code.clone().into(),
                     input.name.into(),
                     desc.into(),
                     i64::from(input.requires_hse_approval).into(),

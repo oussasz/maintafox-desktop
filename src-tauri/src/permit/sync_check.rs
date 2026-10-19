@@ -33,7 +33,7 @@
 //!   whose energy-isolation rule is switched off, or whose record of such a change changes, says who
 //!   changed it, when (later than the change recorded here) and why, and that person holds the
 //!   settings and permit-issue rights here; the shipped LOTO type's energy-isolation rule is never
-//!   switched off (`inbound_permit_type_check`);
+//!   switched off, and a type's code never changes (`inbound_permit_type_check`);
 //! - deletes (this device never deletes them): a permit, its isolations and suspensions only while
 //!   the permit is a draft (the LOTO history of any other permit is kept); a permit type or a
 //!   qualification requirement never (they are deactivated or edited).
@@ -901,7 +901,8 @@ const ISOLATION_SETTING: SettingRecord = SettingRecord {
     off_only: true,
 };
 
-/// Re-check of a permit type received by synchronisation. The shipped LOTO type's energy-isolation
+/// Re-check of a permit type received by synchronisation. Its code never changes once the type exists
+/// (`PERMIT_TYPE_CODE_LOCKED`, as the local save refuses it). The shipped LOTO type's energy-isolation
 /// rule is never switched off (`PERMIT_TYPE_LOTO_ISOLATION_LOCKED`, as the local save refuses it).
 /// Its two safety settings — the three-person lock-removal chain (a change either way, or a new type
 /// with it on) and the energy-isolation rule (switching it off) — are administrator actions with
@@ -933,6 +934,19 @@ pub(crate) async fn inbound_permit_type_check(
     received: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
     let local = local_wire(conn, "permit_types", entity_sync_id).await?;
+    // A type's code is fixed once created (`permit::queries::CODE_PERMIT_TYPE_CODE_LOCKED`): plant
+    // rules, permits and work orders name the type by it. Compared exactly, as stored.
+    if let (Some(held), Some(Value::String(sent))) = (
+        local.as_ref().and_then(|l| l.get("code")).and_then(Value::as_str),
+        received.get("code"),
+    ) {
+        if held != sent {
+            return conflict(
+                crate::permit::queries::CODE_PERMIT_TYPE_CODE_LOCKED,
+                format!("permit type {held}: its code cannot be changed (received: {sent})"),
+            );
+        }
+    }
     let ty = overlay(local.as_ref(), received);
     let code = field(&ty, "code").unwrap_or(entity_sync_id).to_string();
     // The shipped LOTO type always requires an energy isolation (`permit::queries::
