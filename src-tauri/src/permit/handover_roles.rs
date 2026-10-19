@@ -102,7 +102,8 @@ pub async fn seed_starter_roles(db: &impl ConnectionTrait) -> AppResult<()> {
 }
 
 /// Adopts the stored "from" / "to" texts that are not in the list (exact text kept, flagged
-/// "à revoir"). Migration 235 and the integrity pass (texts received by sync).
+/// "à revoir"). Migration 235, the integrity pass, and each hand-over log received by sync
+/// (`sync::apply_hooks::after_upsert`).
 pub async fn adopt_stored_roles(db: &impl ConnectionTrait) -> AppResult<()> {
     ensure_handover_roles(db).await?;
     for column in ["handed_from_role", "handed_to_role"] {

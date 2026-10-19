@@ -2219,3 +2219,58 @@ async fn a_permit_types_code_cannot_be_changed() {
     assert_eq!(saved.code, "hot_work");
     assert_eq!(saved.name, "Hot work (renamed)");
 }
+
+/// The hand-over receiver search ignores case and accents and reads "%" and "_" as plain
+/// characters; the total counts every match, whatever the page.
+#[tokio::test]
+async fn the_receiver_search_ignores_case_and_accents_and_has_no_wildcards() {
+    let db = setup().await;
+    for (id, login, name) in [
+        (501, "elodie.m", "Élodie Martin"),
+        (502, "elodie.x", "elodie_x"),
+        (503, "zoe", "Zoé 100%"),
+    ] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO user_accounts (id, entity_sync_id, username, display_name, identity_mode, is_active, \
+             is_admin, force_password_change, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, 'local', 1, 0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [
+                id.into(),
+                format!("user-sync-{login}").into(),
+                login.into(),
+                name.into(),
+            ],
+        ))
+        .await
+        .expect("account");
+    }
+    let names = |search: &'static str, limit: Option<u64>, offset: Option<u64>| {
+        let db = &db;
+        async move {
+            let page = queries::list_handover_receivers(db, APPLIER, Some(search.into()), limit, offset)
+                .await
+                .expect("receivers");
+            (
+                page.items.into_iter().map(|r| r.display_name).collect::<Vec<_>>(),
+                page.total,
+            )
+        }
+    };
+    assert_eq!(
+        names("ELODIE", None, None).await,
+        (vec!["Élodie Martin".to_string(), "elodie_x".to_string()], 2)
+    );
+    assert_eq!(
+        names("élodie m", None, None).await,
+        (vec!["Élodie Martin".to_string()], 1)
+    );
+    assert_eq!(names("_", None, None).await, (vec!["elodie_x".to_string()], 1));
+    assert_eq!(names("%", None, None).await, (vec!["Zoé 100%".to_string()], 1));
+    assert_eq!(names("ZOE", None, None).await, (vec!["Zoé 100%".to_string()], 1));
+    // One page of one, the second match: the total still counts both.
+    assert_eq!(
+        names("elodie", Some(1), Some(1)).await,
+        (vec!["elodie_x".to_string()], 2)
+    );
+}

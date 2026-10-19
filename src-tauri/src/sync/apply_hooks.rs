@@ -35,6 +35,9 @@
 //!   (`inbound_permit_type_check`);
 //! - `permit_handover_logs`: a hand-over received by the person who signed it is refused as a
 //!   conflict (`permit::sync_check::inbound_handover_check`); one without a signer is accepted;
+//! - `permit_handover_logs`: after the apply, a "from" / "to" role that is not in the plant's list
+//!   (free text from a PC that has not upgraded) is added to it flagged "à revoir"
+//!   (`permit::handover_roles::adopt_stored_roles`);
 //! - `qualification_overrides`: reason, subject, context, no self-override and the approver's
 //!   certification right (`qualification::sync_check`);
 //! - `media_attachments`: the file is queued for download from object storage
@@ -243,6 +246,9 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "node not found after apply"))?;
             recompute_org_paths(conn, id).await
         }
+        // A free-text hand-over role from a PC that has not upgraded joins the plant's list now,
+        // flagged "à revoir" (`permit::handover_roles`), not only at the next start of this PC.
+        "permit_handover_logs" => crate::permit::handover_roles::adopt_stored_roles(conn).await,
         "user_dismissals" => {
             let id = located_row_id(conn, layout, row)
                 .await?

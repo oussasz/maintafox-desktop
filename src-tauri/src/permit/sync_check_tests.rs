@@ -3219,3 +3219,39 @@ async fn a_clearing_is_judged_against_a_received_start_and_a_start_without_time(
         Some("1")
     );
 }
+
+/// A hand-over log received from a PC that has not upgraded, with free-text roles, adds those roles
+/// to the plant's list (flagged "à revoir") when it arrives, not at the next start of this PC.
+#[tokio::test]
+async fn a_received_free_text_handover_role_joins_the_list_on_arrival() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-90").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    let log = json!({
+        "permit_sync_id": wp.entity_sync_id,
+        "handed_from_role": "Équipe nuit",
+        "handed_to_role": "Maintenance",
+        "confirmation_note": "Zone left clean",
+        "signed_at": now(),
+        "row_version": 1,
+        "_sync_format": "row.v1",
+    })
+    .as_object()
+    .cloned()
+    .expect("object");
+    let outcome = apply(&db, "permit_handover_logs", "ho-from-old-pc", &log).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let roles = crate::permit::handover_roles::list_handover_roles(&db)
+        .await
+        .expect("roles");
+    let night = roles
+        .iter()
+        .find(|r| r.code == "Équipe nuit")
+        .expect("adopted on arrival");
+    assert!(night.review_required);
+    assert_eq!(
+        roles.iter().filter(|r| r.code == "Maintenance").count(),
+        1,
+        "already in the list"
+    );
+}

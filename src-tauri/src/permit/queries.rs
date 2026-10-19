@@ -1791,8 +1791,9 @@ pub struct HandoverReceiverPage {
 pub const HANDOVER_RECEIVERS_PAGE_MAX: u64 = 200;
 
 /// Active, non-deleted accounts that may receive a hand-over, excluding the person asking (who
-/// signs it), optionally filtered by name, ordered by name, paged. The person asking holds
-/// `ptw.close` (checked here as well as by the command).
+/// signs it), optionally filtered by name (case and accents ignored, no wildcards), ordered by name,
+/// paged, with the total that match. The person asking holds `ptw.close` (checked here as well as
+/// by the command).
 pub async fn list_handover_receivers(
     db: &impl ConnectionTrait,
     actor_id: i64,
@@ -1806,49 +1807,48 @@ pub async fn list_handover_receivers(
         ));
     }
     let name = handover_person_name_sql("ua");
-    let filter = format!(
-        "ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? \
-         AND (? IS NULL OR LOWER({name}) LIKE '%' || LOWER(?) || '%')"
-    );
-    let search = search.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    let binds = || -> Vec<sea_orm::Value> { vec![actor_id.into(), search.clone().into(), search.clone().into()] };
-    let total: i64 = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!("SELECT COUNT(*) AS n FROM user_accounts ua WHERE {filter}"),
-            binds(),
-        ))
-        .await?
-        .map(|r| r.try_get::<i64>("", "n"))
-        .transpose()?
-        .unwrap_or(0);
-    let limit = limit
-        .unwrap_or(HANDOVER_RECEIVERS_PAGE_MAX)
-        .clamp(1, HANDOVER_RECEIVERS_PAGE_MAX);
-    let mut values = binds();
-    values.push(i64::try_from(limit).unwrap_or(200).into());
-    values.push(i64::try_from(offset.unwrap_or(0)).unwrap_or(0).into());
+    // Filtered here rather than by SQL LIKE: "%" and "_" are plain characters, and case and accents
+    // are ignored the way the asset search ignores them (`assets::search::fold_search_text`).
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT ua.id, {name} AS display_name FROM user_accounts ua WHERE {filter} \
-                 ORDER BY LOWER({name}) ASC, ua.id ASC LIMIT ? OFFSET ?"
+                "SELECT ua.id, {name} AS display_name FROM user_accounts ua \
+                 WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ?"
             ),
-            values,
+            [actor_id.into()],
         ))
         .await?;
-    let items = rows
-        .iter()
-        .map(|r| {
-            Ok(HandoverReceiver {
-                id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
-                display_name: r
-                    .try_get("", "display_name")
-                    .map_err(|e| decode_err("display_name", e))?,
-            })
-        })
-        .collect::<AppResult<Vec<_>>>()?;
+    let wanted = search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(crate::assets::search::fold_search_text);
+    let mut matching: Vec<(String, HandoverReceiver)> = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let receiver = HandoverReceiver {
+            id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
+            display_name: r
+                .try_get("", "display_name")
+                .map_err(|e| decode_err("display_name", e))?,
+        };
+        let folded = crate::assets::search::fold_search_text(&receiver.display_name);
+        if wanted.as_deref().is_none_or(|w| folded.contains(w)) {
+            matching.push((folded, receiver));
+        }
+    }
+    // By name (case and accents ignored), then by account.
+    matching.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.id.cmp(&b.1.id)));
+    let total = i64::try_from(matching.len()).unwrap_or(i64::MAX);
+    let limit = limit
+        .unwrap_or(HANDOVER_RECEIVERS_PAGE_MAX)
+        .clamp(1, HANDOVER_RECEIVERS_PAGE_MAX);
+    let items = matching
+        .into_iter()
+        .skip(usize::try_from(offset.unwrap_or(0)).unwrap_or(usize::MAX))
+        .take(usize::try_from(limit).unwrap_or(usize::MAX))
+        .map(|(_, receiver)| receiver)
+        .collect();
     Ok(HandoverReceiverPage { items, total })
 }
 
