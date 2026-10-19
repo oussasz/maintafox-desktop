@@ -489,6 +489,7 @@
     "nature": "Maintenance nature",
     "naturePlaceholder": "Choose a nature…",
     "natureRequired": "Choose a nature.",
+    "naturesUnavailable": "The maintenance natures could not be read. Check the list “WORK.MAINTENANCE_NATURES” in reference data.",
     "reason": "Reason",
     "reasonMin": "Write at least {{min}} characters.",
     "cancel": "Cancel",

@@ -56,28 +56,24 @@ const NATURES = {
   preventive_predetermined: "Preventive — predetermined",
   improvement: "Improvement / modification",
 };
-vi.mock("@/services/reference-service", () => ({
-  listPublishedReferenceValuesByDomainCode: vi.fn().mockResolvedValue(
-    [
-      ["preventive_predetermined", "Preventive — predetermined"],
-      ["improvement", "Improvement / modification"],
-    ].map(([code, label], i) => ({
-      id: i + 1,
-      set_id: 1,
-      parent_id: null,
-      code,
-      label,
-      description: null,
-      sort_order: i + 1,
-      color_hex: null,
-      icon_name: null,
-      semantic_tag: null,
-      external_code: null,
-      is_active: true,
-      metadata_json: JSON.stringify({ label_en: label }),
-    })),
-  ),
-}));
+const refSvc = vi.hoisted(() => ({ listPublishedReferenceValuesByDomainCode: vi.fn() }));
+vi.mock("@/services/reference-service", () => refSvc);
+const natureRows = () =>
+  Object.entries(NATURES).map(([code, label], i) => ({
+    id: i + 1,
+    set_id: 1,
+    parent_id: null,
+    code,
+    label,
+    description: null,
+    sort_order: i + 1,
+    color_hex: null,
+    icon_name: null,
+    semantic_tag: null,
+    external_code: null,
+    is_active: true,
+    metadata_json: JSON.stringify({ label_en: label }),
+  }));
 
 const perms = vi.hoisted(() => ({ denied: new Set<string>() }));
 vi.mock("@/hooks/use-permissions", () => ({
@@ -104,6 +100,20 @@ describe("WorkOrderTypeNatureReview", () => {
     perms.denied = new Set();
     svc.listWorkOrderTypesToReview.mockResolvedValue([PLANT_TYPE]);
     svc.setWorkOrderTypeNature.mockResolvedValue({});
+    refSvc.listPublishedReferenceValuesByDomainCode.mockResolvedValue(natureRows());
+  });
+
+  it.each([
+    ["is empty", () => refSvc.listPublishedReferenceValuesByDomainCode.mockResolvedValue([])],
+    [
+      "cannot be read",
+      () => refSvc.listPublishedReferenceValuesByDomainCode.mockRejectedValue(new Error("x")),
+    ],
+  ])("says so when the list of natures %s", async (_name, arrange) => {
+    arrange();
+    render(<WorkOrderTypeNatureReview />);
+    await openDialog();
+    expect(await screen.findByText(nr.naturesUnavailable)).toBeInTheDocument();
   });
 
   it("shows nothing when every type has a nature", async () => {

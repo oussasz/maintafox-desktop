@@ -157,6 +157,7 @@ export function WorkOrderTypeNatureReview() {
               label={t("natureReview.nature")}
               required
               error={submitted && !nature ? t("natureReview.natureRequired") : undefined}
+              description={natures.length === 0 ? t("natureReview.naturesUnavailable") : undefined}
             >
               <Select value={nature} onValueChange={setNature}>
                 <SelectTrigger id="wo-type-nature" aria-label={t("natureReview.nature")}>

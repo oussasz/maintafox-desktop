@@ -489,6 +489,7 @@
     "nature": "Nature de maintenance",
     "naturePlaceholder": "Choisir une nature…",
     "natureRequired": "Choisissez une nature.",
+    "naturesUnavailable": "Les natures de maintenance n’ont pas pu être lues. Vérifiez la liste « WORK.MAINTENANCE_NATURES » dans les données de référence.",
     "reason": "Motif",
     "reasonMin": "Écrivez au moins {{min}} caractères.",
     "cancel": "Annuler",
