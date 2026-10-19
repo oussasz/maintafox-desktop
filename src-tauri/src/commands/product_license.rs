@@ -679,9 +679,37 @@ pub async fn tenant_has_administrator_for_id(db: &impl ConnectionTrait, tenant_i
 /// True when this PC has an administrator, whatever the organisation (same rule as
 /// [`tenant_has_administrator_for_id`], any scope). This, not the licence claim stored here, tells
 /// a true first start apart: the stored claim can be replaced by a key entry, the administrators
-/// cannot.
+/// cannot. Once an administrator has been created on this PC it stays true even if every
+/// administrator is later disabled or deleted (`auth::builtin_admin::first_admin_marker_closes`).
 pub(crate) async fn plant_has_administrator(db: &impl ConnectionTrait) -> AppResult<bool> {
-    Ok(count_tenant_administrators(db, AdministratorScope::Any, AdministratorTime::Ever).await? > 0)
+    Ok(
+        count_tenant_administrators(db, AdministratorScope::Any, AdministratorTime::Ever).await? > 0
+            || crate::auth::builtin_admin::first_admin_marker_closes(db).await?,
+    )
+}
+
+/// Review E-1 (L3): this PC holds a licence claim and is still reached through the built-in "admin"
+/// account, active and never used (its forced password change pending, its password never
+/// changed: `auth::builtin_admin::BuiltinAdminRow::is_default_password_account`). Such a PC is not
+/// administered (`plant_has_administrator`), yet whoever knows the built-in password must not be
+/// able to swap its organisation or wipe it while signed out. So signed-out licence changes are
+/// limited exactly as on an administered plant (`authorize_licence_change`: keep or reduce the
+/// same activation only) and signed-out resets are refused (`authorize_signed_out_reset`).
+/// Creating the first administrator stays open (`bootstrap_initial_tenant_admin` reads only
+/// `plant_has_administrator`): it is how the built-in account gets replaced.
+pub(crate) async fn pre_administered_by_builtin_account(
+    db: &impl ConnectionTrait,
+    record: Option<&ProductLicenseStateRecord>,
+) -> AppResult<bool> {
+    let holds_claim = record
+        .and_then(|r| r.activation_claim.as_ref())
+        .is_some_and(activation_claim_is_complete);
+    if !holds_claim {
+        return Ok(false);
+    }
+    Ok(crate::auth::builtin_admin::builtin_admin_row(db)
+        .await?
+        .is_some_and(|row| row.is_default_password_account()))
 }
 
 /// Which assignments of `adm.settings` an administrator count reads.
@@ -1004,6 +1032,10 @@ fn first_admin_retry() -> AppError {
 /// an administrator once one exists). The check and the account, role and scope rows are one
 /// write transaction that holds the write lock from its start (`begin_write_transaction`): two
 /// submissions at once make one administrator, the other waits and gets the coded refusal.
+/// The password meets the plant password policy (`builtin_admin::validate_first_admin_password`);
+/// the same transaction records the "first administrator created" marker, which keeps this screen
+/// closed for good; once committed, a built-in "admin" never used is retired
+/// (`builtin_admin::retire_after_administration_change`).
 #[tauri::command]
 pub async fn bootstrap_initial_tenant_admin(
     input: BootstrapInitialAdminInput,
@@ -1031,7 +1063,7 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
     if email.is_empty() || !email.contains('@') || !email.contains('.') {
         return Err(AppError::ValidationFailed(vec!["A valid email is required.".into()]));
     }
-    crate::commands::admin_users::validate_password_strength(&input.password)?;
+    crate::auth::builtin_admin::validate_first_admin_password(db, &input.password).await?;
     let password_hash = crate::auth::password::hash_password(&input.password)?;
 
     let written = async {
@@ -1079,7 +1111,7 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
                  created_at, updated_at, row_version)
              VALUES (?, ?, ?, 'local', ?, 1, 1, 1, 0, ?, ?, 1)",
             vec![
-                entity_sync_id.into(),
+                entity_sync_id.clone().into(),
                 username.to_string().into(),
                 display_name.into(),
                 password_hash.into(),
@@ -1117,6 +1149,7 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
             ],
         ))
         .await?;
+        crate::auth::builtin_admin::record_first_administrator_in(&txn, &entity_sync_id).await?;
         txn.commit().await?;
         Ok::<(), AppError>(())
     }
@@ -1150,6 +1183,7 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
         },
     )
     .await;
+    crate::auth::builtin_admin::retire_after_administration_change(db).await;
 
     Ok(())
 }
@@ -1856,8 +1890,9 @@ fn status_is_denied(status: &ProductLicenseActivationStatus) -> bool {
 /// empty or carries surrounding spaces (`claim_invalid`).
 ///
 /// Needs a signed-in user with `adm.settings` and a valid step-up:
-/// - on a plant that has an administrator (`plant_has_administrator`), whatever the licence state
-///   (usable, denied, offline):
+/// - on a plant that has an administrator (`plant_has_administrator`), or that holds a claim and is
+///   still reached through the never-used built-in account (`pre_administered_by_builtin_account`),
+///   whatever the licence state (usable, denied, offline):
 ///   - a claim for another activation than the one stored here (another organisation, licence or
 ///     machine, compared exactly), or any claim when none is stored (nothing to compare it with);
 ///   - a new activation token not bound to this activation (`activation_token_bound`);
@@ -1901,7 +1936,9 @@ pub(crate) async fn authorize_licence_change(
                 ProductLicenseActivationStatus::Active | ProductLicenseActivationStatus::DegradedApiUnavailable
             )
     });
-    let administered = plant_has_administrator(db).await?;
+    // A PC still reached through the never-used built-in account, with a claim stored, is limited
+    // as an administered plant (`pre_administered_by_builtin_account`).
+    let administered = plant_has_administrator(db).await? || pre_administered_by_builtin_account(db, record).await?;
     let mut needed: Option<AdminNeeded> = None;
     if administered {
         match (target, stored, record) {
@@ -2412,6 +2449,33 @@ pub async fn get_product_license_diagnostics(
     }))
 }
 
+/// A signed-out local reset refused because this PC holds a licence and is still reached through
+/// its never-used built-in administrator account (coded, translated on screen).
+fn reset_builtin_admin_pending() -> AppError {
+    crate::errors::org_validation_failed(
+        "LICENSE_RESET_BUILTIN_ADMIN_PENDING",
+        "This PC holds a licence and is still reached through its built-in administrator account: create the \
+         first administrator, then sign in with that account to reset local data.",
+        std::collections::HashMap::new(),
+    )
+}
+
+/// The rule for a reset asked without a session (`reset_product_license_activation`,
+/// `reset_local_tenant_runtime_data`): allowed only on a true first start. The administrators
+/// decide, not the stored claim (which a signed-out key entry can empty): refused once the plant
+/// has an administrator (`administered_refusal`), and refused on a PC that holds a claim and is
+/// still reached through the never-used built-in account (`pre_administered_by_builtin_account`).
+pub(crate) async fn authorize_signed_out_reset(db: &DatabaseConnection, administered_refusal: &str) -> AppResult<()> {
+    if plant_has_administrator(db).await? {
+        return Err(AppError::Auth(administered_refusal.into()));
+    }
+    let record = load_state_record_from_db(db).await?;
+    if pre_administered_by_builtin_account(db, record.as_ref()).await? {
+        return Err(reset_builtin_admin_pending());
+    }
+    Ok(())
+}
+
 /// Wipes device-scoped product license onboarding (SQLite `app_settings`).
 ///
 /// Authorization:
@@ -2430,12 +2494,11 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
         );
         crate::require_step_up!(state);
     } else {
-        // The administrators decide, not the stored claim (which a signed-out key entry can empty).
-        if plant_has_administrator(&state.db).await? {
-            return Err(AppError::Auth(
-                "Session requise pour réinitialiser l'activation une fois un administrateur créé.".into(),
-            ));
-        }
+        authorize_signed_out_reset(
+            &state.db,
+            "Session requise pour réinitialiser l'activation une fois un administrateur créé.",
+        )
+        .await?;
     }
 
     let wiped_rows = reset_to_first_run(&state, "recovery").await?;
@@ -2497,12 +2560,11 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
         );
         crate::require_step_up!(state);
     } else {
-        // The administrators decide, not the stored claim (which a signed-out key entry can empty).
-        if plant_has_administrator(&state.db).await? {
-            return Err(AppError::Auth(
-                "Session requise pour réinitialiser les données runtime une fois un administrateur créé.".into(),
-            ));
-        }
+        authorize_signed_out_reset(
+            &state.db,
+            "Session requise pour réinitialiser les données runtime une fois un administrateur créé.",
+        )
+        .await?;
     }
 
     tracing::warn!(

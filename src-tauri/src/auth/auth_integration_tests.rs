@@ -82,8 +82,8 @@ mod tests {
             "V1 FAIL: hash does not start with $argon2id$"
         );
 
-        let password_ok =
-            password::verify_password("Admin#2026!", &stored_hash).expect("V1 FAIL: verify_password returned Err");
+        let password_ok = password::verify_password(crate::auth::builtin_admin::DEV_ADMIN_PASSWORD, &stored_hash)
+            .expect("V1 FAIL: verify_password returned Err");
         assert!(password_ok, "V1 FAIL: correct password did not verify");
 
         // 3. Create session

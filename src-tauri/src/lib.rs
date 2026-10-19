@@ -262,6 +262,7 @@ pub fn run() {
             commands::product_license::get_product_activation_token,
             commands::product_license::get_activation_bootstrap_state,
             commands::product_license::bootstrap_initial_tenant_admin,
+            auth::builtin_admin::get_builtin_admin_warning,
             commands::product_license::reset_product_license_activation,
             commands::product_license::reset_local_tenant_runtime_data,
             commands::product_license::get_activation_license_metadata,

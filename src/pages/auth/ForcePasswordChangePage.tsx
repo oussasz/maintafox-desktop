@@ -2,11 +2,13 @@ import { Lock } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { BuiltinAdminWarning } from "@/components/auth/BuiltinAdminWarning";
 import { AuthField } from "@/components/auth/shell/AuthField";
 import { AuthAlert, AuthButton } from "@/components/auth/shell/AuthPrimitives";
 import { AuthShell } from "@/components/auth/shell/AuthShell";
 import { mfAuth } from "@/design-system/tokens";
 import { describeAppError } from "@/lib/app-error";
+import { useSessionStore } from "@/store/session-store";
 
 interface ForcePasswordChangePageProps {
   onComplete: (newPassword: string) => Promise<void>;
@@ -22,6 +24,7 @@ const MIN_LENGTH = 8;
  */
 export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageProps) {
   const { t } = useTranslation("auth");
+  const sessionUserId = useSessionStore((s) => s.info?.user_id ?? null);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [fieldError, setFieldError] = useState<{ field: "new" | "confirm"; text: string } | null>(
@@ -69,6 +72,7 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
     <AuthShell width="sm">
       <h1 className={mfAuth.title}>{t("session.forcePasswordChange.title")}</h1>
       <p className={mfAuth.subtitle}>{t("session.forcePasswordChange.message")}</p>
+      <BuiltinAdminWarning sessionUserId={sessionUserId} className="mt-4" />
 
       <form onSubmit={(e) => void handleSubmit(e)} className="mt-6 space-y-4">
         <AuthField

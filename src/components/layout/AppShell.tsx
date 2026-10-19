@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
+import { BuiltinAdminWarning } from "@/components/auth/BuiltinAdminWarning";
 import { AppToastHost } from "@/components/shell/AppToastHost";
 import { DatabaseRecoveryScreen } from "@/components/startup/DatabaseRecoveryScreen";
 import { useStartupBridge } from "@/hooks/use-startup-bridge";
@@ -34,6 +35,7 @@ export function AppShell({ children }: AppShellProps) {
   const refreshCurrency = useLocaleStore((s) => s.refreshCurrency);
   const sessionAuthenticated = useSessionStore((s) => s.info?.is_authenticated === true);
   const sessionLocked = useSessionStore((s) => s.info?.is_locked === true);
+  const sessionUserId = useSessionStore((s) => s.info?.user_id ?? null);
 
   // Bridge Tauri startup events → app store
   useStartupBridge();
@@ -111,6 +113,7 @@ export function AppShell({ children }: AppShellProps) {
             collapsed ? "ml-sidebar-sm" : "ml-sidebar",
           )}
         >
+          <BuiltinAdminWarning sessionUserId={sessionUserId} className="m-4" />
           {children}
         </main>
       </div>

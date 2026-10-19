@@ -267,7 +267,7 @@ ACCEPTANCE CRITERIA
 **V1 — Login writes audit row.**
 Log in successfully via DevTools:
 ```javascript
-window.__TAURI__.core.invoke('login', { payload: { username: 'admin', password: 'Admin#2026!' } });
+window.__TAURI__.core.invoke('login', { payload: { username: 'admin', password: '<DEV_ADMIN_PASSWORD>' } });
 ```
 Then in DBeaver: `SELECT event_type, actor_user_id, description, is_flagged FROM audit_events ORDER BY id DESC LIMIT 5;`
 The most recent row should have `event_type = 'login.success'`, `is_flagged = 0`.
@@ -284,7 +284,7 @@ path calls `audit::emit()` before returning the Err.
 **V3 — Step-up writes audit row.**
 Run step-up verification:
 ```javascript
-window.__TAURI__.core.invoke('verify_step_up', { payload: { password: 'Admin#2026!' } });
+window.__TAURI__.core.invoke('verify_step_up', { payload: { password: '<DEV_ADMIN_PASSWORD>' } });
 ```
 DBeaver: confirm a row with `event_type = 'step_up.success'` and `is_flagged = 0`.
 
@@ -365,7 +365,7 @@ async fn test_login_success_creates_session() {
     .expect("hash row must exist");
 
     let hash: String = hash_row.try_get("", "password_hash").unwrap();
-    let ok = maintafox_desktop::auth::password::verify_password("Admin#2026!", &hash)
+    let ok = maintafox_desktop::auth::password::verify_password("<DEV_ADMIN_PASSWORD>", &hash)
         .expect("verify must not error");
     assert!(ok, "admin password should verify with seeded hash");
 }
@@ -756,7 +756,7 @@ SELECT
 
 | # | Check | Status |
 |---|-------|--------|
-| 3.1 | `login` with admin/Admin#2026! succeeds and returns SessionInfo | |
+| 3.1 | `login` with admin/<DEV_ADMIN_PASSWORD> succeeds and returns SessionInfo | |
 | 3.2 | `login` with wrong password returns the same opaque error string as non-existent user | |
 | 3.3 | `logout` clears the session and subsequent `get_session_info` returns unauthenticated | |
 | 3.4 | `get_session_info` returns `null` / error when no session is active | |
@@ -945,7 +945,7 @@ Desktop. Here is the total deliverable count across all four files:
 - 68 system permissions (seed_permissions)
 - 4 system roles: Administrator, Supervisor, Operator, Readonly (seed_system_roles)
 - Full role–permission mapping for all 4 roles
-- Admin account: admin / Admin#2026! with force_password_change = 1
+- Admin account: admin / <DEV_ADMIN_PASSWORD> with force_password_change = 1
 
 ### TypeScript / React modules created
 - `shared/ipc-types.ts` — SessionInfo, LoginRequest, LoginResponse, DeviceTrustStatus, TrustedDevice, PermissionRecord, StepUpRequest, StepUpResponse

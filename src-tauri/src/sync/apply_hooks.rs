@@ -46,6 +46,9 @@
 //!   certification right (`qualification::sync_check`);
 //! - `media_attachments`: the file is queued for download from object storage
 //!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download.
+//! - `user_accounts`: the built-in "admin" account received with its password never changed is
+//!   disabled on arrival when this PC has another administrator or did not have the account
+//!   (`auth::builtin_admin::after_inbound_user_account`).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -283,6 +286,18 @@ pub(crate) async fn after_upsert(
                 .await?
                 .ok_or_else(|| hook_err(layout.table(), "media row not found after insert"))?;
             queue_received_media(conn, id).await
+        }
+        "user_accounts" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "account not found after apply"))?;
+            crate::auth::builtin_admin::after_inbound_user_account(
+                conn,
+                id,
+                inserted,
+                crate::auth::builtin_admin::BuildProfile::current(),
+            )
+            .await
         }
         _ => Ok(()),
     }

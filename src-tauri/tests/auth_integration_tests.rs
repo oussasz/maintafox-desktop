@@ -27,7 +27,8 @@ async fn t1_login_success_creates_session() {
             .expect("T1 FAIL: admin user not seeded");
 
     let stored_hash = pw_hash.expect("T1 FAIL: admin has no password_hash");
-    let ok = password::verify_password("Admin#2026!", &stored_hash).expect("T1 FAIL: verify_password returned Err");
+    let ok = password::verify_password(maintafox_lib::auth::builtin_admin::DEV_ADMIN_PASSWORD, &stored_hash)
+        .expect("T1 FAIL: verify_password returned Err");
     assert!(ok, "T1 FAIL: correct password did not verify");
 
     let mut mgr = SessionManager::new();

@@ -668,7 +668,7 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
             PermissionScope::Global
         );
         require_step_up!(state);
-        create_user_impl(&state, &caller, input).await
+        create_user_then_retire_builtin_admin(&state, &caller, input).await
     }
     .await;
     crate::commands::admin_governance::record_blocked_admin_action(
@@ -684,6 +684,19 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
         notify_rbac_user_change(&app, &state, created.id, "user_created").await;
     }
     result
+}
+
+/// [`create_user_impl`], then, once the account is committed, retirement of a built-in "admin"
+/// never used that the new account supersedes (review E-1,
+/// `auth::builtin_admin::retire_after_administration_change`).
+pub(crate) async fn create_user_then_retire_builtin_admin(
+    state: &AppState,
+    caller: &AuthenticatedUser,
+    input: CreateUserInput,
+) -> AppResult<IdPayload> {
+    let created = create_user_impl(state, caller, input).await?;
+    crate::auth::builtin_admin::retire_after_administration_change(&state.db).await;
+    Ok(created)
 }
 
 pub(crate) async fn create_user_impl(
@@ -1754,7 +1767,7 @@ pub async fn assign_role_scope(
             PermissionScope::Global
         );
         require_step_up!(state);
-        assign_role_scope_impl(state.inner(), &caller, input, true, Some(&app)).await
+        assign_role_scope_then_retire_builtin_admin(state.inner(), &caller, input, Some(&app)).await
     }
     .await;
     crate::commands::admin_governance::record_blocked_admin_action(
@@ -1767,6 +1780,20 @@ pub async fn assign_role_scope(
     )
     .await;
     result
+}
+
+/// [`assign_role_scope_impl`] (frontend notified when `app` is given), then, once the assignment is
+/// committed, retirement of a built-in "admin" never used that the assignment supersedes (review
+/// E-1, `auth::builtin_admin::retire_after_administration_change`).
+pub(crate) async fn assign_role_scope_then_retire_builtin_admin(
+    state: &AppState,
+    caller: &AuthenticatedUser,
+    input: AssignRoleScopeInput,
+    app: Option<&AppHandle>,
+) -> AppResult<IdPayload> {
+    let assigned = assign_role_scope_impl(state, caller, input, app.is_some(), app).await?;
+    crate::auth::builtin_admin::retire_after_administration_change(&state.db).await;
+    Ok(assigned)
 }
 
 /// Revoke a role-scope assignment (soft-delete). The optional reason is kept in the ledger.
