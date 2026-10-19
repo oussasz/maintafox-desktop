@@ -835,37 +835,40 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
 // E) update_wo_draft_fields — optimistic concurrency + draft guard
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// A draft moving to another site must not carry items tied to its old site along silently:
-/// stock still reserved for it, or a permit (with its isolations / LOTO) still open on it. The
-/// user removes them first.
+/// A draft moving to another location must not carry items tied to its old one along silently:
+/// stock still reserved for it (any work-order reservation type, preventive included), a permit
+/// still open on it, or a lock still fitted under one of its permits whatever that permit's status
+/// (a cancelled or expired permit can leave locks on the plant until their removal is verified).
+/// The user deals with them first.
 async fn refuse_site_move_with_old_site_items(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<()> {
+    let wo_sources = crate::finance::wo_costing::WO_SOURCE_TYPES_SQL;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT \
-               (SELECT COUNT(*) FROM stock_reservations r \
-                 WHERE r.source_id = ? AND r.source_type IN ('WO', 'WORK_ORDER', 'WORK_ORDER_PART', 'work_order') \
-                   AND LOWER(r.status) <> 'released' AND r.released_at IS NULL) AS reservations, \
-               (SELECT COUNT(*) FROM work_permits p \
-                 WHERE p.linked_work_order_id = ? \
-                   AND p.status NOT IN ('closed', 'handed_back', 'cancelled', 'expired')) AS permits",
-            [wo_id.into(), wo_id.into()],
+            format!(
+                "SELECT (SELECT COUNT(*) FROM stock_reservations r WHERE r.source_id = ? AND r.source_type IN ({wo_sources}) AND LOWER(r.status) IN ('active', 'partial')) AS reservations, (SELECT COUNT(*) FROM work_permits p WHERE p.linked_work_order_id = ? AND p.status NOT IN ('closed', 'handed_back', 'cancelled', 'expired')) AS permits, (SELECT COUNT(*) FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id WHERE p.linked_work_order_id = ? AND pi.applied_at IS NOT NULL AND pi.removal_verified_at IS NULL) AS locks"
+            ),
+            [wo_id.into(), wo_id.into(), wo_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("site move check returned no row")))?;
     let reservations: i64 = row.try_get("", "reservations")?;
     let permits: i64 = row.try_get("", "permits")?;
+    let locks: i64 = row.try_get("", "locks")?;
     let mut errors = Vec::new();
     if reservations > 0 {
         errors.push(format!(
-            "Cet OT a {reservations} réservation(s) de stock sur son site actuel : libérez-les avant de \
-             choisir un équipement d'un autre site."
+            "Cet OT a {reservations} réservation(s) de stock en cours : libérez-les avant de choisir un équipement installé ailleurs."
         ));
     }
     if permits > 0 {
         errors.push(format!(
-            "Cet OT a {permits} permis de travail ouvert(s) (avec ses consignations) sur son site actuel : \
-             annulez-les ou clôturez-les avant de choisir un équipement d'un autre site."
+            "Cet OT a {permits} permis de travail encore ouvert(s) : menez-les à leur clôture avant de choisir un équipement installé ailleurs."
+        ));
+    }
+    if locks > 0 {
+        errors.push(format!(
+            "{locks} consignation(s) posée(s) sous les permis de cet OT n'ont pas leur dépose vérifiée : faites vérifier la dépose avant de choisir un équipement installé ailleurs."
         ));
     }
     if errors.is_empty() {

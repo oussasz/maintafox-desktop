@@ -700,3 +700,103 @@ async fn a_draft_moves_to_the_site_of_its_new_equipment() {
         .expect("back to site A once the permit is closed");
     assert_eq!(back.entity_id, Some(f.t.site_a));
 }
+
+#[tokio::test]
+async fn a_draft_with_stock_reserved_or_locks_fitted_does_not_move() {
+    let f = fixture().await;
+    let refused_because = |err: AppError, word: &str| {
+        assert!(
+            matches!(&err, AppError::ValidationFailed(m) if m.iter().any(|e| e.contains(word))),
+            "expected a refusal about {word}: {err:?}"
+        );
+    };
+    let wo = queries::get_work_order(&f.db, f.wo_a1)
+        .await
+        .expect("read")
+        .expect("wo_a1");
+
+    // Stock reserved for the order, under the preventive source type ("PM_WO"): refused.
+    exec(
+        &f.db,
+        "INSERT INTO warehouses (entity_sync_id, code, name, is_active, row_version)
+         VALUES ('wo-move-wh', 'WO-MOVE-WH', 'Store of line A1', 1, 1)",
+    )
+    .await;
+    exec(
+        &f.db,
+        "INSERT INTO stock_locations (entity_sync_id, warehouse_id, code, name, is_default, is_active)
+         SELECT 'wo-move-loc', id, 'WO-MOVE-BIN', 'Bin', 1, 1 FROM warehouses WHERE code = 'WO-MOVE-WH'",
+    )
+    .await;
+    exec(
+        &f.db,
+        "INSERT INTO articles (entity_sync_id, article_code, article_name, unit_value_id)
+         VALUES ('wo-move-art', 'WO-MOVE-ART', 'Bearing',
+                 (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id
+                    JOIN reference_domains d ON d.id = s.domain_id
+                   WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'U'))",
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO stock_reservations (entity_sync_id, article_id, warehouse_id, location_id, source_type, source_id,
+                quantity_reserved, status)
+             SELECT 'wo-move-res', a.id, w.id, l.id, 'PM_WO', {}, 1, 'active'
+               FROM articles a, warehouses w, stock_locations l
+              WHERE a.article_code = 'WO-MOVE-ART' AND w.code = 'WO-MOVE-WH' AND l.code = 'WO-MOVE-BIN'",
+            f.wo_a1
+        ),
+    )
+    .await;
+    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a1, wo.row_version, f.eq_b))
+        .await
+        .unwrap_err();
+    refused_because(err, "réservation");
+
+    // Released: no longer holds it back. A lock fitted under a CANCELLED permit, its removal not
+    // verified, still does (the lock stays on the plant whatever the permit's status).
+    exec(
+        &f.db,
+        "UPDATE stock_reservations SET status = 'released', released_at = datetime('now')
+          WHERE entity_sync_id = 'wo-move-res'",
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, status, row_version)
+             SELECT 'wo-move-permit', 'PTW-WO-MOVE', wo.id, pt.id, wo.equipment_id, wo.entity_id, 'cancelled', 1
+               FROM work_orders wo, permit_types pt WHERE wo.id = {} AND pt.code = 'hot_work'",
+            f.wo_a1
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, isolation_method, applied_at)
+         SELECT 'wo-move-iso', id, 'Q7 disconnector', 'electrical', 'lock', datetime('now')
+           FROM work_permits WHERE code = 'PTW-WO-MOVE'",
+    )
+    .await;
+    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a1, wo.row_version, f.eq_b))
+        .await
+        .unwrap_err();
+    refused_because(err, "consignation");
+    let kept = queries::get_work_order(&f.db, f.wo_a1)
+        .await
+        .expect("read")
+        .expect("wo_a1");
+    assert_eq!(kept.entity_id, Some(f.t.line_a1), "not moved while refused");
+
+    // Lock removal verified: the draft moves.
+    exec(
+        &f.db,
+        "UPDATE permit_isolations SET removal_verified_at = datetime('now') WHERE entity_sync_id = 'wo-move-iso'",
+    )
+    .await;
+    let moved = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a1, kept.row_version, f.eq_b))
+        .await
+        .expect("moves once nothing ties it to its old location");
+    assert_eq!(moved.entity_id, Some(f.t.site_b));
+}
