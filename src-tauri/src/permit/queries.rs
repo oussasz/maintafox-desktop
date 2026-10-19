@@ -1527,7 +1527,7 @@ pub(crate) async fn derived_permit_node(
 }
 
 /// Whether `node` is an org node that exists here and is not deleted.
-async fn live_org_node(db: &impl ConnectionTrait, node: i64) -> AppResult<bool> {
+pub(crate) async fn live_org_node(db: &impl ConnectionTrait, node: i64) -> AppResult<bool> {
     Ok(db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2374,7 +2374,8 @@ pub async fn list_handover_receivers(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT ua.id, {name} AS display_name FROM user_accounts ua                  WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? AND {eligible}"
+                "SELECT ua.id, {name} AS display_name FROM user_accounts ua \
+                 WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? AND {eligible}"
             ),
             values,
         ))

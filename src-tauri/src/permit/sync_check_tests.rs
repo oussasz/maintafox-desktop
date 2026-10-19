@@ -683,10 +683,12 @@ async fn permits_isolations_and_suspensions_are_not_deleted_by_sync_while_they_p
     // An archive is a delete: refused the same way.
     let outcome = delete_as(&db, "permit_isolations", &iso.entity_sync_id, "archive").await;
     assert_eq!(code(&outcome), Some("PERMIT_DELETE_REFUSED"), "{outcome:?}");
-    // A draft permit (never protected anything) may be deleted.
+    // A draft permit is not deleted either: no screen deletes a permit (it is cancelled), and its
+    // lines would be left without it.
     let draft = create_permit(&db, "loto", asset).await;
     let outcome = delete(&db, "work_permits", &draft.entity_sync_id).await;
-    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(code(&outcome), Some("PERMIT_DELETE_REFUSED"), "{outcome:?}");
+    assert!(count("work_permits", draft.entity_sync_id.clone()).await, "draft kept");
     // The isolations of a finished permit are its LOTO history: kept too.
     exec(
         &db,
@@ -3122,6 +3124,77 @@ async fn a_received_site_change_is_rechecked_against_the_permit_held_here() {
     assert_eq!(code(&outcome), Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"), "{outcome:?}");
 }
 
+/// A new organisation structure published on another PC deletes the former nodes and moves every
+/// permit (approved ones included) to the node replacing its own (`org::validation`): received
+/// here once its former node is deleted here, the move is judged on the equipment's chain whatever
+/// the permit's status; an equipment change stays locked, and a site off the chain is refused.
+#[tokio::test]
+async fn a_received_site_move_off_a_deleted_node_is_accepted_on_the_equipment_chain() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-REORG1").await;
+    let far = equipment_on_second_site(&db, "EQ-SYNC-REORG2").await;
+    let _ = equipment_on_line_of_first_site(&db, "EQ-SYNC-REORG3").await;
+    let node = |id: i64| json!(format!("permit-test-org-00{id}"));
+    let approved = create_permit(&db, "hot_work", asset).await;
+    assert_eq!(approved.entity_id, 1);
+    let approved = set_status(&db, &approved, "pending_review").await.expect("submit");
+    let approved = set_status(&db, &approved, "approved").await.expect("approve");
+
+    // The publish as received here: node 1 deleted, the equipment moved to the node replacing it.
+    exec(&db, "UPDATE org_nodes SET deleted_at = datetime('now') WHERE id = 1").await;
+    exec(
+        &db,
+        &format!("UPDATE equipment SET installed_at_node_id = 2 WHERE id = {asset}"),
+    )
+    .await;
+
+    // Its equipment changed too: still locked.
+    let far_sync = text(&db, &format!("SELECT entity_sync_id FROM equipment WHERE id = {far}"))
+        .await
+        .expect("far equipment sync id");
+    let outcome = apply(
+        &db,
+        "work_permits",
+        &approved.entity_sync_id,
+        &with(
+            wire(&db, "work_permits", &approved.entity_sync_id).await,
+            &[("asset_sync_id", json!(far_sync)), ("entity_sync_id", node(2))],
+        ),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_EQUIPMENT_LOCKED"), "{outcome:?}");
+    // A site off its equipment's chain (line 3, under the deleted node): refused.
+    let outcome = apply(
+        &db,
+        "work_permits",
+        &approved.entity_sync_id,
+        &with(
+            wire(&db, "work_permits", &approved.entity_sync_id).await,
+            &[("entity_sync_id", node(3))],
+        ),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"), "{outcome:?}");
+    // The node replacing its own, its equipment's node: applied.
+    let outcome = apply(
+        &db,
+        "work_permits",
+        &approved.entity_sync_id,
+        &with(
+            wire(&db, "work_permits", &approved.entity_sync_id).await,
+            &[("entity_sync_id", node(2))],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let moved = queries::get_work_permit(&db, approved.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!(moved.entity_id, 2);
+    assert_eq!(moved.status, "approved");
+}
+
 /// A permit held here waiting for review, as last synced at `version`, with nothing of this PC still
 /// to send (its own saves are on the server).
 async fn held_in_review_synced_at(db: &DatabaseConnection, asset: i64, version: i64) -> WorkPermit {
@@ -3551,6 +3624,51 @@ async fn a_cancelled_line_is_never_deleted_or_rewritten_by_sync() {
     );
     let outcome = delete(&db, "permit_isolations", &planned.entity_sync_id).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// A received delete of a draft permit is refused (its lines have no foreign key to it and would be
+/// left without it), and a cancelled line is still refused when its permit is not held here (a row
+/// left from before permit deletes were refused): the cancellation's trace cannot be removed in two
+/// steps.
+#[tokio::test]
+async fn a_permit_delete_then_a_cancelled_line_delete_are_both_refused() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-CX6").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let cancelled = add_isolation(&db, wp.id, "Line cancelled in draft").await;
+    queries::cancel_permit_isolation(&db, cancel_input(&cancelled), VERIFIER)
+        .await
+        .expect("cancel in draft");
+    assert_eq!(permit_status(&db, &wp).await, "draft");
+
+    let outcome = delete(&db, "work_permits", &wp.entity_sync_id).await;
+    assert_eq!(code(&outcome), Some("PERMIT_DELETE_REFUSED"), "{outcome:?}");
+    assert!(
+        text(
+            &db,
+            &format!("SELECT entity_sync_id FROM work_permits WHERE id = {}", wp.id)
+        )
+        .await
+        .is_some(),
+        "the draft permit is kept"
+    );
+
+    // Its permit gone all the same (as an older received delete left it): the line still stays.
+    exec(&db, &format!("DELETE FROM work_permits WHERE id = {}", wp.id)).await;
+    let outcome = delete(&db, "permit_isolations", &cancelled.entity_sync_id).await;
+    assert_eq!(code(&outcome), Some("PERMIT_DELETE_REFUSED"), "{outcome:?}");
+    assert!(
+        text(
+            &db,
+            &format!(
+                "SELECT cancelled_at FROM permit_isolations WHERE entity_sync_id = '{}'",
+                cancelled.entity_sync_id
+            )
+        )
+        .await
+        .is_some(),
+        "the cancelled line is kept"
+    );
 }
 
 /// The flag `key` of `p` set the other way, in the form the row carries it (number or boolean).

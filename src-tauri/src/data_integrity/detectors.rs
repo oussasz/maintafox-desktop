@@ -296,8 +296,9 @@ const PERMIT_SITE_CHECKED_STATUSES_SQL: &str = "('approved', 'issued', 'active',
 /// `node_on_permit_chain`): the work order's node when it records one, else the equipment's, or a
 /// level above it. Listed: another site, a level below, a sibling, or a site deleted since. Before a
 /// permit's site followed its equipment, an edit could change the equipment and keep the former
-/// site. A permit without a site, or whose equipment and work order give no usable node, is not
-/// judged here (the permit lists count permits without a site).
+/// site. A permit without a site, or whose equipment and work order give no usable node (none, or
+/// a node deleted or missing here), is not judged here (the permit lists count permits without a
+/// site).
 async fn permit_site_findings(db: &impl ConnectionTrait) -> AppResult<i64> {
     let rows = db
         .query_all(Statement::from_string(
@@ -327,6 +328,11 @@ async fn permit_site_findings(db: &impl ConnectionTrait) -> AppResult<i64> {
             Ok(None) | Err(crate::errors::AppError::NotFound { .. }) => continue,
             Err(e) => return Err(e),
         };
+        // Equipment or work order on a node deleted (or missing) here: no usable node, not judged
+        // either (the creation and an edit refuse such a permit as "site undetermined").
+        if !crate::permit::queries::live_org_node(db, derived).await? {
+            continue;
+        }
         if crate::permit::queries::node_on_permit_chain(db, derived, permit_node).await? {
             continue;
         }

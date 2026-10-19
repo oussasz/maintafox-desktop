@@ -583,13 +583,28 @@ async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> Ap
     .map_err(sync_err)
 }
 
+/// Whether the site a permit holds here (`entity_sync_id` of the copy held here) is an org node
+/// that exists here and is deleted. A node missing here, or no node, is not: nothing tells it apart
+/// from a site change.
+async fn site_node_deleted_here(conn: &impl ConnectionTrait, held_node: Option<&str>) -> AppResult<bool> {
+    let Some(held_node) = held_node else {
+        return Ok(false);
+    };
+    let Some(id) = local_id(conn, "org_nodes", held_node).await? else {
+        return Ok(false);
+    };
+    Ok(!crate::permit::queries::live_org_node(conn, id).await?)
+}
+
 /// A received permit whose equipment, linked work order or site differs from the copy held here
 /// (`permit::queries::update_work_permit_checked`, CMMS Advisor decision A), judged as an edit on
 /// this PC is:
 /// - a linked work order is never removed (no edit on this PC removes it);
 /// - the copy held here is a draft or waiting for review (a permit approved here was approved for
 ///   its equipment at its site: the sending PC held that version too, or its change is older and is
-///   not applied here);
+///   not applied here), except a permit whose site alone moved off a node deleted here (a new
+///   organisation structure was published: its former nodes are deleted and every permit moved to
+///   the node that replaces its own), judged on the rules below whatever its status;
 /// - held here waiting for review, a change of equipment, work order or site sent the permit back to
 ///   draft on the other PC; it may arrive already submitted or approved again, since the journal
 ///   folds every save made there before a sync into one row whose version says nothing of how many
@@ -631,7 +646,12 @@ async fn equipment_change_check(
         return Ok(None);
     }
     let held = field(local, "status").unwrap_or_default();
-    if !crate::permit::queries::WP_EQUIPMENT_CHANGE_STATUSES.contains(&held) {
+    // Its site alone moved off a node deleted here: the publish of a new organisation structure
+    // moves every permit off the former nodes (`org::validation::publish_model_with_remap`, which
+    // deletes them before it moves the permits). Whatever its status, it is judged on the rules
+    // below (its site on its equipment's or work order's chain).
+    let site_reanchored = !equipment_changes && site_node_deleted_here(conn, held_node).await?;
+    if !site_reanchored && !crate::permit::queries::WP_EQUIPMENT_CHANGE_STATUSES.contains(&held) {
         return if equipment_changes {
             conflict(
                 "PERMIT_EQUIPMENT_LOCKED",
@@ -1465,16 +1485,22 @@ async fn judge_setting_record(
 }
 
 /// Re-check of a delete received by synchronisation. This device never deletes these rows: a
-/// permit, its isolations and suspensions may go only while the permit is a draft (the LOTO history
-/// of any other permit is kept); a cancelled isolation line never, whatever its permit's status (it
-/// is kept, greyed, as the trace of its cancellation); a permit type and a qualification requirement
-/// never (they are edited or deactivated, which keeps their history).
+/// permit never (no screen deletes one, a draft included: it is cancelled; its lines and
+/// suspensions would not go with it, `permit_isolations.permit_id` has no foreign key); its
+/// isolations and suspensions only while the permit is a draft (the LOTO history of any other
+/// permit is kept); a cancelled isolation line never, whatever its permit's status and whether its
+/// permit is held here or not (it is kept, greyed, as the trace of its cancellation); a permit type
+/// and a qualification requirement never (they are edited or deactivated, which keeps their
+/// history).
 pub(crate) async fn inbound_delete_check(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
 ) -> AppResult<Option<InboundVerdict>> {
-    if entity_type == "qualification_requirements" || entity_type == "permit_types" {
+    if matches!(
+        entity_type,
+        "qualification_requirements" | "permit_types" | "work_permits"
+    ) {
         let held = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -1485,6 +1511,14 @@ pub(crate) async fn inbound_delete_check(
             .is_some();
         return if !held {
             Ok(None)
+        } else if entity_type == "work_permits" {
+            conflict(
+                "PERMIT_DELETE_REFUSED",
+                format!(
+                    "permit {entity_sync_id} cannot be deleted by synchronisation: a permit is cancelled, never \
+                     deleted (its isolation lines and suspensions would be left without it)"
+                ),
+            )
         } else if entity_type == "permit_types" {
             conflict(
                 "PERMIT_DELETE_REFUSED",
@@ -1498,10 +1532,10 @@ pub(crate) async fn inbound_delete_check(
         };
     }
     let sql = match entity_type {
-        "work_permits" => "SELECT status, code, NULL AS cancelled_at FROM work_permits WHERE entity_sync_id = ?",
+        // LEFT JOIN: a cancelled line is refused even when its permit is not held here.
         "permit_isolations" => {
             "SELECT p.status, p.code, c.cancelled_at FROM permit_isolations c \
-             JOIN work_permits p ON p.id = c.permit_id WHERE c.entity_sync_id = ?"
+             LEFT JOIN work_permits p ON p.id = c.permit_id WHERE c.entity_sync_id = ?"
         }
         "permit_suspensions" => {
             "SELECT p.status, p.code, NULL AS cancelled_at FROM permit_suspensions c \
@@ -1519,18 +1553,25 @@ pub(crate) async fn inbound_delete_check(
     else {
         return Ok(None);
     };
-    let status: String = row.try_get("", "status").map_err(sync_err)?;
-    let code: String = row.try_get("", "code").map_err(sync_err)?;
+    let status: Option<String> = row.try_get("", "status").map_err(sync_err)?;
+    let code: Option<String> = row.try_get("", "code").map_err(sync_err)?;
     let cancelled_at: Option<String> = row.try_get("", "cancelled_at").map_err(sync_err)?;
     if cancelled_at.is_some() {
         return conflict(
             "PERMIT_DELETE_REFUSED",
             format!(
-                "a cancelled isolation line of permit {code} ('{status}') cannot be deleted by synchronisation: \
-                 it is kept as the trace of its cancellation"
+                "a cancelled isolation line of permit {} ('{}') cannot be deleted by synchronisation: it is \
+                 kept as the trace of its cancellation",
+                code.as_deref().unwrap_or("not held here"),
+                status.as_deref().unwrap_or("unknown")
             ),
         );
     }
+    // A planned line whose permit is not held here (rows left from before permit deletes were
+    // refused): nothing left to protect, as before.
+    let (Some(status), Some(code)) = (status, code) else {
+        return Ok(None);
+    };
     if status != "draft" {
         return conflict(
             "PERMIT_DELETE_REFUSED",

@@ -835,6 +835,38 @@ async fn hand_over_receivers_hold_the_close_right_at_the_permits_site() {
     assert_eq!(page.empty_reason.as_deref(), Some(queries::NO_RECEIVER_AT_SITE));
 }
 
+/// A search matching nobody is an empty page, not "nobody at the site"; nobody eligible at the site
+/// is said so whatever the search.
+#[tokio::test]
+async fn hand_over_receivers_search_matching_none_is_not_nobody_at_the_site() {
+    let f = fixture().await;
+    let (site, closer_b) = (i64::from(f.site), i64::from(f.closer_b));
+    let none_named = Some("zz-no-person-is-named-this-qx".to_string());
+
+    // People are eligible at site A (the plant-wide holders), none matches the search.
+    let page = queries::list_handover_receivers(&f.db, site, f.p_a.id, none_named.clone(), None, None)
+        .await
+        .expect("receivers");
+    assert!(page.items.is_empty());
+    assert_eq!(page.total, 0);
+    assert_eq!(page.empty_reason, None);
+
+    // Nobody but the person asking is eligible at site B: the coded reason, search or not.
+    exec(
+        &f.db,
+        &format!("UPDATE user_accounts SET is_active = 0 WHERE id <> {closer_b}"),
+    )
+    .await;
+    for search in [none_named, Some("a".to_string())] {
+        let page = queries::list_handover_receivers(&f.db, closer_b, f.p_b.id, search, None, None)
+            .await
+            .expect("receivers");
+        assert!(page.items.is_empty());
+        assert_eq!(page.total, 0);
+        assert_eq!(page.empty_reason.as_deref(), Some(queries::NO_RECEIVER_AT_SITE));
+    }
+}
+
 /// Whether `u` may receive `permit`, asserted to agree with the user's real access map (the
 /// close right at the permit's node, as every other check reads it).
 async fn eligible_as_the_access_map_says(db: &DatabaseConnection, permit: &WorkPermit, u: i32) -> bool {
@@ -1292,6 +1324,33 @@ async fn permits_on_equipment_of_another_site_are_listed_for_review_not_rewritte
         &format!("UPDATE work_permits SET asset_id = {} WHERE id = {}", f.eq_b, draft.id),
     )
     .await;
+    // Its equipment's node deleted since: no usable node, not judged (as on creation). Its own site
+    // deleted since (the area above its equipment's cell): listed.
+    let area = crate::auth::scope_tests::node(&f.db, "PTW-DI-AREA", Some(f.t.site_a)).await;
+    let cell = crate::auth::scope_tests::node(&f.db, "PTW-DI-CELL", Some(area)).await;
+    let dead = crate::auth::scope_tests::node(&f.db, "PTW-DI-DEAD", Some(f.t.site_a)).await;
+    let eq_cell = equipment(&f.db, "DI-CELL", Some(cell)).await;
+    let eq_dead = equipment(&f.db, "DI-DEAD", Some(dead)).await;
+    let on_dead_equipment_node = set_status(
+        &f.db,
+        &set_status(&f.db, &permit(&f.db, eq_dead).await, "pending_review").await,
+        "approved",
+    )
+    .await;
+    let on_deleted_site = queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), Some(area), None))
+        .await
+        .expect("permit on the area");
+    let on_deleted_site = set_status(
+        &f.db,
+        &set_status(&f.db, &on_deleted_site, "pending_review").await,
+        "approved",
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!("UPDATE org_nodes SET deleted_at = '2026-01-02T00:00:00Z' WHERE id IN ({dead}, {area})"),
+    )
+    .await;
 
     crate::data_integrity::run_data_integrity_detectors(&f.db)
         .await
@@ -1307,6 +1366,8 @@ async fn permits_on_equipment_of_another_site_are_listed_for_review_not_rewritte
     assert_eq!(scalar(&f.db, &listed(below.id)).await, 1);
     assert_eq!(scalar(&f.db, &listed(follows_wo.id)).await, 0);
     assert_eq!(scalar(&f.db, &listed(draft.id)).await, 0);
+    assert_eq!(scalar(&f.db, &listed(on_dead_equipment_node.id)).await, 0);
+    assert_eq!(scalar(&f.db, &listed(on_deleted_site.id)).await, 1);
     // Never rewritten.
     assert_eq!(
         scalar(
