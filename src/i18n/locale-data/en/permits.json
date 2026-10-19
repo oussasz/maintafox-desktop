@@ -136,7 +136,8 @@
       "pending": "Not applied",
       "applied": "Applied",
       "verified": "Verified",
-      "removed": "Removed"
+      "removed": "Removed",
+      "cancelled": "Cancelled"
     },
     "editLocked": "Isolations can only be added while the permit is not active.",
     "loadError": "The isolations of this permit could not be loaded",
@@ -151,7 +152,14 @@
     "listsHint": "Energy types follow ISO 14118 / OSHA 1910.147; isolation methods are your site’s list (Reference data).",
     "threePersonNotice": "Three-person rule: {{name}} verified this isolation and may not confirm its removal.",
     "threePersonNoticeUnknown": "Three-person rule: the person who verified this isolation may not confirm its removal.",
-    "threePersonSelf": "You verified this isolation — a third person must confirm its removal."
+    "threePersonSelf": "You verified this isolation — a third person must confirm its removal.",
+    "cancel": "Cancel the line",
+    "cancelTitle": "Cancel the isolation line",
+    "cancelConfirm": "The line “{{point}}” ({{energy}} · {{method}}) was never applied. It will be marked “Cancelled” and kept in the permit's history: it can no longer be applied, verified or edited.",
+    "cancelResetNotice": "This permit is waiting for review: it will go back to draft and must be submitted again.",
+    "cancelHint": "A line never applied can be cancelled while the permit is a draft or waiting for review; a fitted lock is removed with a verified removal.",
+    "cancelledBy": "Cancelled by {{name}} on {{date}}",
+    "cancelledAt": "Cancelled on {{date}}"
   },
   "card": {
     "title": "LOTO card",

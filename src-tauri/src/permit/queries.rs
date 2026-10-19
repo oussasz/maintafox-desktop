@@ -6,9 +6,9 @@ use crate::errors::{AppError, AppResult};
 
 use super::domain::{
     LotoCardPrintInput, LotoCardPrintJob, LotoCardView, PermitComplianceKpi30d, PermitHandoverLog,
-    PermitHandoverLogInput, PermitIsolation, PermitIsolationActionInput, PermitIsolationUpsertInput,
-    PermitSuspendInput, PermitSuspension, PermitType, PermitTypeUpsertInput, WorkPermit, WorkPermitCreateInput,
-    WorkPermitListFilter, WorkPermitListPage, WorkPermitStatusInput, WorkPermitUpdateInput,
+    PermitHandoverLogInput, PermitIsolation, PermitIsolationActionInput, PermitIsolationCancelInput,
+    PermitIsolationUpsertInput, PermitSuspendInput, PermitSuspension, PermitType, PermitTypeUpsertInput, WorkPermit,
+    WorkPermitCreateInput, WorkPermitListFilter, WorkPermitListPage, WorkPermitStatusInput, WorkPermitUpdateInput,
 };
 use crate::auth::scope::AccessScope;
 
@@ -57,6 +57,17 @@ const WP_EDITABLE_STATUSES: &[&str] = &["draft", "pending_review", "approved", "
 /// `pending_review` sends the permit back to `draft` (a fresh review is needed).
 pub(crate) const WP_EQUIPMENT_CHANGE_STATUSES: &[&str] = &["draft", "pending_review"];
 
+/// Statuses in which a planned isolation line (never applied) may be cancelled (CMMS Advisor
+/// decision): those in which the permit's equipment may still change. A cancellation in
+/// `pending_review` sends the permit back to `draft`, as an equipment change does.
+pub(crate) const ISOLATION_CANCEL_STATUSES: &[&str] = WP_EQUIPMENT_CHANGE_STATUSES;
+
+/// SQL condition (columns of `permit_isolations`, unqualified) of a line that counts as an
+/// isolation of its permit: every line except a cancelled one never applied (migration 239). A
+/// cancelled line is never applied here nor accepted applied by sync; a line that would hold both
+/// still counts (fail-safe: a fitted lock is never hidden).
+pub(crate) const COUNTED_ISOLATION_SQL: &str = "(cancelled_at IS NULL OR applied_at IS NOT NULL)";
+
 const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.linked_work_order_id, \
      wp.permit_type_id, wp.asset_id, wp.entity_id, wp.status, wp.requested_at, wp.issued_at, \
      wp.activated_at, wp.expires_at, wp.closed_at, wp.handed_back_at, wp.row_version, \
@@ -74,15 +85,18 @@ const PERMIT_ISOLATION_SELECT: &str = "SELECT pi.id, pi.entity_sync_id, pi.permi
      et.label AS energy_type_label, pi.isolation_method_id, im.label AS isolation_method_label, \
      pi.mapping_review_required, pi.lock_number, pi.applied_by_id, pi.verified_by_id, \
      pi.applied_at, pi.verified_at, pi.removal_verified_at, pi.removal_verified_by_id, pi.row_version, \
+     pi.cancelled_at, pi.cancelled_by_id, \
      COALESCE(ua.display_name, ua.username) AS applied_by_name, \
      COALESCE(uv.display_name, uv.username) AS verified_by_name, \
-     COALESCE(ur.display_name, ur.username) AS removal_verified_by_name \
+     COALESCE(ur.display_name, ur.username) AS removal_verified_by_name, \
+     COALESCE(uc.display_name, uc.username) AS cancelled_by_name \
      FROM permit_isolations pi \
      LEFT JOIN reference_values et ON et.id = pi.energy_type_id \
      LEFT JOIN reference_values im ON im.id = pi.isolation_method_id \
      LEFT JOIN user_accounts ua ON ua.id = pi.applied_by_id \
      LEFT JOIN user_accounts uv ON uv.id = pi.verified_by_id \
-     LEFT JOIN user_accounts ur ON ur.id = pi.removal_verified_by_id";
+     LEFT JOIN user_accounts ur ON ur.id = pi.removal_verified_by_id \
+     LEFT JOIN user_accounts uc ON uc.id = pi.cancelled_by_id";
 
 const PERMIT_SUSPENSION_SELECT: &str = "SELECT ps.id, ps.entity_sync_id, ps.permit_id, ps.reason, \
      ps.suspended_by_id, ps.suspended_at, ps.reinstated_by_id, ps.reinstated_at, \
@@ -322,6 +336,9 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
         applied_by_name: row.try_get("", "applied_by_name").ok(),
         verified_by_name: row.try_get("", "verified_by_name").ok(),
         removal_verified_by_name: row.try_get("", "removal_verified_by_name").ok(),
+        cancelled_at: row.try_get("", "cancelled_at").ok().flatten(),
+        cancelled_by_id: row.try_get("", "cancelled_by_id").ok().flatten(),
+        cancelled_by_name: row.try_get("", "cancelled_by_name").ok().flatten(),
     })
 }
 
@@ -528,7 +545,7 @@ async fn count_isolations(db: &impl ConnectionTrait, permit_id: i64) -> AppResul
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM permit_isolations WHERE permit_id = ?",
+            format!("SELECT COUNT(*) AS c FROM permit_isolations WHERE permit_id = ? AND {COUNTED_ISOLATION_SQL}"),
             [permit_id.into()],
         ))
         .await?
@@ -540,7 +557,10 @@ async fn count_verified_isolations(db: &impl ConnectionTrait, permit_id: i64) ->
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM permit_isolations WHERE permit_id = ? AND verified_at IS NOT NULL",
+            format!(
+                "SELECT COUNT(*) AS c FROM permit_isolations WHERE permit_id = ? AND verified_at IS NOT NULL \
+                 AND {COUNTED_ISOLATION_SQL}"
+            ),
             [permit_id.into()],
         ))
         .await?
@@ -634,9 +654,15 @@ pub(crate) async fn activation_ready(db: &impl ConnectionTrait, wp: &WorkPermit)
     Ok(())
 }
 
-/// Close gate (P0-8): every isolation must have its lock removal verified.
+/// Close gate (P0-8): every isolation must have its lock removal verified (a cancelled planned line
+/// was never fitted: nothing to remove).
 async fn close_ready(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
-    let pending = count_isolations_where(db, permit_id, "removal_verified_at IS NULL").await?;
+    let pending = count_isolations_where(
+        db,
+        permit_id,
+        &format!("removal_verified_at IS NULL AND {COUNTED_ISOLATION_SQL}"),
+    )
+    .await?;
     if pending > 0 {
         return Err(refused(
             "PERMIT_REMOVAL_PENDING",
@@ -1552,12 +1578,13 @@ async fn ensure_move_allowed(
                 &[code(), ("locks", fitted.to_string())],
             ));
         }
-        let planned = count_isolations_where(db, current.id, "applied_at IS NULL").await?;
+        // A cancelled line no longer names a point to isolate (CMMS Advisor decision).
+        let planned = count_isolations_where(db, current.id, "applied_at IS NULL AND cancelled_at IS NULL").await?;
         if planned > 0 {
             return Err(refused(
                 "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED",
                 format!(
-                    "{planned} isolation point(s) are planned on this permit for its current equipment: its equipment cannot be changed."
+                    "{planned} isolation point(s) are planned on this permit for its current equipment: its equipment cannot be changed. Cancel the planned isolation lines, or cancel the permit."
                 ),
                 &[code(), ("isolations", planned.to_string())],
             ));
@@ -1580,18 +1607,8 @@ async fn audit_equipment_change(
     let equipment_changed =
         before.asset_id != after.asset_id || before.linked_work_order_id != after.linked_work_order_id;
     let review_reset = before.status == "pending_review" && after.status == "draft";
-    let event = |action_code: &str, details: serde_json::Value| crate::audit::writer::AuditEventInput {
-        action_code: action_code.to_string(),
-        target_type: Some("work_permit".to_string()),
-        target_id: Some(after.id.to_string()),
-        actor_id: Some(actor_id),
-        auth_context: "session".to_string(),
-        result: "success".to_string(),
-        before_hash: None,
-        after_hash: None,
-        retention_class: "standard".to_string(),
-        details_json: Some(details),
-    };
+    let event =
+        |action_code: &str, details: serde_json::Value| permit_audit_event(action_code, after.id, actor_id, details);
     crate::audit::writer::write_audit_event_in(
         db,
         event(
@@ -1617,21 +1634,69 @@ async fn audit_equipment_change(
     )
     .await?;
     if review_reset {
-        crate::audit::writer::write_audit_event_in(
+        audit_review_reset(
             db,
-            event(
-                "permit.review_reset",
-                serde_json::json!({
-                    "code": after.code,
-                    "reason": if equipment_changed { "equipment_changed" } else { "site_changed" },
-                    "status_before": before.status,
-                    "status_after": after.status,
-                }),
-            ),
+            &before.status,
+            after,
+            if equipment_changed {
+                "equipment_changed"
+            } else {
+                "site_changed"
+            },
+            actor_id,
         )
         .await?;
     }
     Ok(())
+}
+
+/// Records that a change sent a permit waiting for review back to draft (`permit.review_reset`):
+/// the review it waited for judged what changed. `reason`: `equipment_changed`, `site_changed` or
+/// `isolation_cancelled`.
+async fn audit_review_reset(
+    db: &impl ConnectionTrait,
+    status_before: &str,
+    after: &WorkPermit,
+    reason: &str,
+    actor_id: i64,
+) -> AppResult<()> {
+    crate::audit::writer::write_audit_event_in(
+        db,
+        permit_audit_event(
+            "permit.review_reset",
+            after.id,
+            actor_id,
+            serde_json::json!({
+                "code": after.code,
+                "reason": reason,
+                "status_before": status_before,
+                "status_after": after.status,
+            }),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// An audit event on a permit by the session user.
+fn permit_audit_event(
+    action_code: &str,
+    permit_id: i64,
+    actor_id: i64,
+    details: serde_json::Value,
+) -> crate::audit::writer::AuditEventInput {
+    crate::audit::writer::AuditEventInput {
+        action_code: action_code.to_string(),
+        target_type: Some("work_permit".to_string()),
+        target_id: Some(permit_id.to_string()),
+        actor_id: Some(actor_id),
+        auth_context: "session".to_string(),
+        result: "success".to_string(),
+        before_hash: None,
+        after_hash: None,
+        retention_class: "standard".to_string(),
+        details_json: Some(details),
+    }
 }
 
 /// `actor_id` is the session user: it is recorded as the person who changed the permit's
@@ -2311,6 +2376,7 @@ async fn upsert_permit_isolation_in(
                 &[],
             ));
         }
+        refuse_if_cancelled(&current)?;
         let new_rv = current.row_version + 1;
         let affected = db
             .execute(Statement::from_sql_and_values(
@@ -2319,7 +2385,7 @@ async fn upsert_permit_isolation_in(
                 // are not touched (history).
                 "UPDATE permit_isolations SET isolation_point = ?, energy_type_id = ?, \
                  isolation_method_id = ?, mapping_review_required = 0, lock_number = ?, row_version = ? \
-                 WHERE id = ? AND row_version = ? AND applied_at IS NULL",
+                 WHERE id = ? AND row_version = ? AND applied_at IS NULL AND cancelled_at IS NULL",
                 [
                     point.into(),
                     energy_id.into(),
@@ -2411,6 +2477,149 @@ async fn write_isolation_action(
     Ok(out)
 }
 
+fn isolation_cancelled_error() -> AppError {
+    refused(
+        "PERMIT_ISOLATION_CANCELLED",
+        "This isolation line is cancelled: it is kept as history only.",
+        &[],
+    )
+}
+
+/// A cancelled line is kept as history: it is never edited, applied, verified or cancelled again.
+fn refuse_if_cancelled(iso: &PermitIsolation) -> AppResult<()> {
+    if iso.cancelled_at.is_some() {
+        return Err(isolation_cancelled_error());
+    }
+    Ok(())
+}
+
+/// Cancels a planned isolation line (CMMS Advisor decision): the line is marked cancelled by
+/// `actor_id` (the session user) and kept, never deleted. Only a line never applied (no fitter, no
+/// verification, no removal) on a permit that is a draft or waiting for review; an applied line
+/// keeps the lock-removal path. In `pending_review` the permit goes back to `draft` (the review
+/// judged the former lines). Audited in the same transaction (who, when, the line's content, and
+/// the review reset). Returns the permit and the cancelled line. Without a scope check before it
+/// (the command checks `ptw.issue` at the permit's site, `access::require_isolation_cancel`).
+pub async fn cancel_permit_isolation(
+    db: &DatabaseConnection,
+    input: PermitIsolationCancelInput,
+    actor_id: i64,
+) -> AppResult<(WorkPermit, PermitIsolation)> {
+    let txn = db.begin().await?;
+    let out = cancel_permit_isolation_in(&txn, input, actor_id).await?;
+    txn.commit().await?;
+    Ok(out)
+}
+
+async fn cancel_permit_isolation_in(
+    db: &impl ConnectionTrait,
+    input: PermitIsolationCancelInput,
+    actor_id: i64,
+) -> AppResult<(WorkPermit, PermitIsolation)> {
+    let iso = get_permit_isolation(db, input.isolation_id).await?;
+    if iso.row_version != input.expected_row_version {
+        return Err(AppError::ValidationFailed(vec![
+            "row_version mismatch on permit_isolations.".into(),
+        ]));
+    }
+    let permit = require_work_permit(db, iso.permit_id).await?;
+    refuse_if_cancelled(&iso)?;
+    let acted = iso.applied_at.is_some()
+        || iso.applied_by_id.is_some()
+        || iso.verified_at.is_some()
+        || iso.verified_by_id.is_some()
+        || iso.removal_verified_at.is_some()
+        || iso.removal_verified_by_id.is_some();
+    if acted {
+        return Err(refused(
+            "PERMIT_ISOLATION_CANCEL_APPLIED",
+            "Only a planned isolation line never applied can be cancelled; a fitted lock is removed with a verified removal.",
+            &[],
+        ));
+    }
+    if !ISOLATION_CANCEL_STATUSES.contains(&permit.status.as_str()) {
+        return Err(refused(
+            "PERMIT_ISOLATION_CANCEL_WRONG_STATUS",
+            format!(
+                "Planned isolation lines can be cancelled while the permit is a draft or waiting for review; it is '{}'.",
+                permit.status
+            ),
+            &[("status", permit.status.clone())],
+        ));
+    }
+    let cancelled_at = now_ts();
+    let affected = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE permit_isolations SET cancelled_at = ?, cancelled_by_id = ?, row_version = row_version + 1 \
+             WHERE id = ? AND row_version = ? AND cancelled_at IS NULL AND applied_at IS NULL \
+               AND verified_at IS NULL AND removal_verified_at IS NULL",
+            [
+                cancelled_at.clone().into(),
+                actor_id.into(),
+                iso.id.into(),
+                iso.row_version.into(),
+            ],
+        ))
+        .await?;
+    if affected.rows_affected() != 1 {
+        return Err(AppError::ValidationFailed(vec![
+            "Concurrent update on permit_isolations.".into(),
+        ]));
+    }
+    // Waiting for review: back to draft, it must be submitted again.
+    let after = if permit.status == "pending_review" {
+        let affected = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_permits SET status = 'draft', row_version = row_version + 1 \
+                 WHERE id = ? AND row_version = ? AND status = 'pending_review'",
+                [permit.id.into(), permit.row_version.into()],
+            ))
+            .await?;
+        if affected.rows_affected() != 1 {
+            return Err(AppError::ValidationFailed(vec![
+                "Concurrent update on work_permits.".into()
+            ]));
+        }
+        require_work_permit(db, permit.id).await?
+    } else {
+        permit.clone()
+    };
+    crate::audit::writer::write_audit_event_in(
+        db,
+        permit_audit_event(
+            "permit.isolation_cancelled",
+            permit.id,
+            actor_id,
+            serde_json::json!({
+                "code": permit.code,
+                "isolation_id": iso.id,
+                "isolation_sync_id": iso.entity_sync_id,
+                "isolation_point": iso.isolation_point,
+                "energy_type_id": iso.energy_type_id,
+                "energy_type_code": iso.energy_type_code,
+                "energy_type_label": iso.energy_type_label,
+                "isolation_method_id": iso.isolation_method_id,
+                "isolation_method_label": iso.isolation_method_label,
+                "original_energy_type": iso.energy_type,
+                "original_isolation_method": iso.isolation_method,
+                "lock_number": iso.lock_number,
+                "mapping_review_required": iso.mapping_review_required,
+                "cancelled_at": cancelled_at,
+                "status_before": permit.status,
+                "status_after": after.status,
+            }),
+        ),
+    )
+    .await?;
+    if after.status != permit.status {
+        audit_review_reset(db, &permit.status, &after, "isolation_cancelled", actor_id).await?;
+    }
+    let cancelled = get_permit_isolation(db, iso.id).await?;
+    Ok((after, cancelled))
+}
+
 /// Locks must never come off under running work: removal is refused while the linked
 /// work order is still being executed.
 async fn ensure_linked_work_not_running(db: &impl ConnectionTrait, permit: &WorkPermit) -> AppResult<()> {
@@ -2459,6 +2668,7 @@ async fn apply_permit_isolation_in(
 ) -> AppResult<PermitIsolation> {
     let (iso, permit) = load_isolation_for_action(db, &input).await?;
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "apply isolations")?;
+    refuse_if_cancelled(&iso)?;
     enforce_loto_role(db, actor_id, permit.id, "isolation_apply").await?;
     if iso.applied_at.is_some() {
         return Err(refused(
@@ -2525,6 +2735,7 @@ async fn verify_permit_isolation_in(
 ) -> AppResult<PermitIsolation> {
     let (iso, permit) = load_isolation_for_action(db, &input).await?;
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "verify isolations")?;
+    refuse_if_cancelled(&iso)?;
     enforce_loto_role(db, actor_id, permit.id, "isolation_verify").await?;
     let Some(applied_by) = iso.applied_by_id.filter(|_| iso.applied_at.is_some()) else {
         return Err(refused(
@@ -2576,6 +2787,7 @@ async fn verify_permit_isolation_removal_in(
 ) -> AppResult<PermitIsolation> {
     let (iso, permit) = load_isolation_for_action(db, &input).await?;
     ensure_permit_status_in(&permit, ISOLATION_REMOVAL_STATUSES, "verify isolation removal")?;
+    refuse_if_cancelled(&iso)?;
     enforce_loto_role(db, actor_id, permit.id, "removal_verify").await?;
     if iso.verified_at.is_none() {
         return Err(refused(
@@ -2645,7 +2857,7 @@ pub async fn get_loto_card_view(
             DbBackend::Sqlite,
             "SELECT wp.code AS permit_code, wp.expires_at AS permit_expires, pi.id AS isolation_id, \
              pi.isolation_point, COALESCE(et.label, pi.energy_type) AS energy_type, pi.lock_number, \
-             pi.verified_by_id, pi.verified_at, \
+             pi.verified_by_id, pi.verified_at, pi.cancelled_at, \
              e.asset_id_code, e.name AS equipment_name, ua.username AS verifier_username \
              FROM permit_isolations pi \
              JOIN work_permits wp ON wp.id = pi.permit_id \
@@ -2660,6 +2872,15 @@ pub async fn get_loto_card_view(
             entity: "PermitIsolation".into(),
             id: isolation_id.to_string(),
         })?;
+    // A cancelled line is no lock: it has no LOTO card.
+    if row
+        .try_get::<Option<String>>("", "cancelled_at")
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return Err(isolation_cancelled_error());
+    }
     let permit_code: String = row
         .try_get("", "permit_code")
         .map_err(|e| decode_err("permit_code", e))?;
@@ -2718,7 +2939,7 @@ async fn record_loto_card_print_in(
     let iso = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT verified_at FROM permit_isolations WHERE id = ? AND permit_id = ?",
+            "SELECT verified_at, cancelled_at FROM permit_isolations WHERE id = ? AND permit_id = ?",
             [input.isolation_id.into(), input.permit_id.into()],
         ))
         .await?
@@ -2726,6 +2947,14 @@ async fn record_loto_card_print_in(
             entity: "PermitIsolation".into(),
             id: input.isolation_id.to_string(),
         })?;
+    if iso
+        .try_get::<Option<String>>("", "cancelled_at")
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return Err(isolation_cancelled_error());
+    }
     // The lock card is issued by someone authorised to apply the isolation.
     enforce_loto_role(db, actor_id, input.permit_id, "isolation_apply").await?;
     let verified_at: Option<String> = iso.try_get("", "verified_at").ok().flatten();

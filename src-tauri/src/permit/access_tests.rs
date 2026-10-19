@@ -1536,3 +1536,52 @@ async fn editing_onto_unknown_equipment_is_not_found_before_the_site() {
         assert!(is_not_found(&err), "{entity:?}: {err:?}");
     }
 }
+
+/// Cancelling a planned isolation line needs the permit-issue right at the permit's site, as apply
+/// and verify (addressed by the line's own id); a user of another site, or holding only the close
+/// right, is refused before anything is judged.
+#[tokio::test]
+async fn cancelling_an_isolation_line_is_checked_at_its_permits_site() {
+    let f = fixture().await;
+    let site = map_of(&f.db, f.site).await;
+    let plant = map_of(&f.db, f.plant).await;
+    let closer_b = map_of(&f.db, f.closer_b).await;
+    let nobody = map_of(&f.db, f.nobody).await;
+    let iso_a = super::tests::add_isolation(&f.db, f.p_a.id, "Breaker A").await;
+    let iso_b = super::tests::add_isolation(&f.db, f.p_b.id, "Breaker B").await;
+    let iso_none = super::tests::add_isolation(&f.db, f.p_none.id, "Breaker without site").await;
+
+    access::check_isolation_cancel(&f.db, &site, iso_a.id)
+        .await
+        .expect("site A user, site A line");
+    let err = access::check_isolation_cancel(&f.db, &site, iso_b.id)
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "SCOPE_OUTSIDE_SITE");
+    let err = access::check_isolation_cancel(&f.db, &site, iso_none.id)
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "SCOPE_RECORD_WITHOUT_SITE");
+    let err = access::check_isolation_cancel(&f.db, &closer_b, iso_b.id)
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "PERMISSION_DENIED");
+    let err = access::check_isolation_cancel(&f.db, &nobody, iso_a.id)
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "PERMISSION_DENIED");
+    let err = access::check_isolation_cancel(&f.db, &site, i64::MAX)
+        .await
+        .unwrap_err();
+    assert!(is_not_found(&err), "{err:?}");
+    for iso in [&iso_a, &iso_b, &iso_none] {
+        access::check_isolation_cancel(&f.db, &plant, iso.id)
+            .await
+            .expect("plant-wide");
+    }
+    // Nothing was cancelled by the checks.
+    for (permit, iso) in [(&f.p_a, &iso_a), (&f.p_b, &iso_b)] {
+        let lines = queries::list_permit_isolations(&f.db, permit.id).await.expect("list");
+        assert!(lines.iter().any(|l| l.id == iso.id && l.cancelled_at.is_none()));
+    }
+}

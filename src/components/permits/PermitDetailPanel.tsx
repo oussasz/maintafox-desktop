@@ -36,6 +36,7 @@ import {
   type PermitSuspensionRecord,
   type WorkPermitRecord,
   applyPermitIsolation,
+  cancelPermitIsolation,
   getLotoCardView,
   listPermitHandoverLogs,
   listPermitHandoverRoles,
@@ -63,6 +64,7 @@ import {
   PERMIT_EDITABLE_STATUSES,
   activationBlocker,
   canCancel,
+  canCancelIsolation,
   closeBlocker,
   formatAssetLabel,
   isolationState,
@@ -109,6 +111,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [suspendDraft, setSuspendDraft] = useState({ reason: "", conditions: "" });
   const [cancelOpen, setCancelOpen] = useState(false);
+  /** The planned isolation line whose cancellation is being confirmed. */
+  const [cancelLine, setCancelLine] = useState<PermitIsolationRecord | null>(null);
   const [editingExpiry, setEditingExpiry] = useState<string | null>(null);
 
   const fmt = (v: string | null) => (v ? formatDateTime(v, i18n.language) : t("detail.none"));
@@ -489,10 +493,21 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                 <li
                   key={iso.id}
                   data-testid="permit-isolation"
-                  className="space-y-1 rounded-md border border-surface-border p-2 text-sm"
+                  data-cancelled={state === "cancelled" ? "true" : undefined}
+                  className={`space-y-1 rounded-md border border-surface-border p-2 text-sm${
+                    state === "cancelled" ? " bg-surface-0 opacity-60" : ""
+                  }`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-text-primary">{iso.isolation_point}</span>
+                    <span
+                      className={
+                        state === "cancelled"
+                          ? "font-medium text-text-muted line-through"
+                          : "font-medium text-text-primary"
+                      }
+                    >
+                      {iso.isolation_point}
+                    </span>
                     <span className="text-text-muted">
                       {energyLabel(iso)} · {methodLabel(iso)}
                     </span>
@@ -533,6 +548,16 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         {t("isolation.removalVerifiedBy", { name: iso.removal_verified_by_name })}
                       </span>
                     ) : null}
+                    {iso.cancelled_at ? (
+                      <span data-testid="isolation-cancelled-by">
+                        {iso.cancelled_by_name
+                          ? t("isolation.cancelledBy", {
+                              name: iso.cancelled_by_name,
+                              date: fmt(iso.cancelled_at),
+                            })
+                          : t("isolation.cancelledAt", { date: fmt(iso.cancelled_at) })}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {state === "pending" && setupOpen && canIssue ? (
@@ -570,6 +595,17 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                     {state === "verified" || state === "removed" ? (
                       <Button size="sm" variant="ghost" onClick={() => void showCard(iso)}>
                         {t("card.show")}
+                      </Button>
+                    ) : null}
+                    {canIssue && canCancelIsolation(permit.status, iso) ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy}
+                        title={t("isolation.cancelHint")}
+                        onClick={() => setCancelLine(iso)}
+                      >
+                        {t("isolation.cancel")}
                       </Button>
                     ) : null}
                     {appliedByMe && (state === "applied" || state === "verified") ? (
@@ -872,6 +908,43 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           if (!ok) throw new Error("cancel refused");
         }}
       />
+      <ConfirmDialog
+        open={cancelLine != null}
+        onOpenChange={(open) => {
+          if (!open) setCancelLine(null);
+        }}
+        title={t("isolation.cancelTitle")}
+        description={
+          cancelLine
+            ? t("isolation.cancelConfirm", {
+                point: cancelLine.isolation_point,
+                energy: energyLabel(cancelLine),
+                method: methodLabel(cancelLine),
+              })
+            : ""
+        }
+        confirmLabel={t("isolation.cancel")}
+        destructive
+        onConfirm={async () => {
+          const line = cancelLine;
+          if (!line) return;
+          const ok = await run(async () => {
+            const res = await cancelPermitIsolation({
+              isolation_id: line.id,
+              expected_row_version: line.row_version,
+            });
+            return res.permit;
+          });
+          // Keep the dialog open on failure (the message is shown on the permit).
+          if (!ok) throw new Error("isolation cancel refused");
+        }}
+      >
+        {permit.status === "pending_review" ? (
+          <p className="text-sm text-tone-warning-fg" data-testid="isolation-cancel-reset-notice">
+            {t("isolation.cancelResetNotice")}
+          </p>
+        ) : null}
+      </ConfirmDialog>
     </section>
   );
 }

@@ -919,6 +919,7 @@ pub fn run() {
             commands::permit::apply_permit_isolation,
             commands::permit::verify_permit_isolation,
             commands::permit::verify_permit_isolation_removal,
+            commands::permit::cancel_permit_isolation,
             commands::permit::suspend_work_permit,
             commands::permit::append_permit_handover_log,
             commands::permit::list_permit_suspensions,

@@ -336,6 +336,13 @@ pub async fn check_isolation_upsert(
     check_on_permit(db, map, PTW_ISSUE, permit_id).await.map(|_| ())
 }
 
+/// Cancelling a planned isolation line: `ptw.issue` at the permit the line belongs to (addressed
+/// by the line's own id, as apply and verify). The rules of the cancellation itself (line never
+/// applied, permit a draft or waiting for review) are the save's.
+pub async fn check_isolation_cancel(db: &impl ConnectionTrait, map: &AccessMap, isolation_id: i64) -> AppResult<()> {
+    check_on_child(db, map, PTW_ISSUE, PermitChild::Isolation, isolation_id).await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Hand-over receivers (CMMS Advisor decision, option A)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -496,5 +503,16 @@ pub async fn require_isolation_upsert(
     permit_id: i64,
 ) -> AppResult<()> {
     check_isolation_upsert(db, &access_map(db, cache, user_id).await?, isolation_id, permit_id).await?;
+    enforce(db, user_id, PTW_ISSUE).await
+}
+
+/// [`check_isolation_cancel`], then entitlement and licence.
+pub async fn require_isolation_cancel(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+    isolation_id: i64,
+) -> AppResult<()> {
+    check_isolation_cancel(db, &access_map(db, cache, user_id).await?, isolation_id).await?;
     enforce(db, user_id, PTW_ISSUE).await
 }

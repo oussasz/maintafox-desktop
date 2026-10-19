@@ -140,6 +140,14 @@ pub struct PermitIsolation {
     pub verified_by_name: Option<String>,
     #[serde(default)]
     pub removal_verified_by_name: Option<String>,
+    /// Set when a planned line (never applied) was cancelled: kept as history, "Annulée", never a
+    /// lock to fit (migration 239).
+    #[serde(default)]
+    pub cancelled_at: Option<String>,
+    #[serde(default)]
+    pub cancelled_by_id: Option<i64>,
+    #[serde(default)]
+    pub cancelled_by_name: Option<String>,
 }
 
 /// One list of permits limited to the reader's sites (`list_work_permits`, the open-permits
@@ -277,6 +285,13 @@ pub struct PermitIsolationActionInput {
     /// Only for `apply`: lock number fitted at application time.
     #[serde(default)]
     pub lock_number: Option<String>,
+}
+
+/// Cancel a planned isolation line (`cancel_permit_isolation`): the session user is recorded.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermitIsolationCancelInput {
+    pub isolation_id: i64,
+    pub expected_row_version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

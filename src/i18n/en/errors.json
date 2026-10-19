@@ -158,7 +158,7 @@
     "PERMIT_HANDOVER_RECEIVER_NO_RIGHT": "The receiving person does not hold the permit close right at this permit's site.",
     "PERMIT_EQUIPMENT_LOCKED": "This permit was approved for this equipment. Cancel it and raise a new permit.",
     "PERMIT_EQUIPMENT_LOCK_FITTED": "A lock is fitted under this permit and its removal has not been verified: its equipment cannot be changed. Cancel the permit, have the lock removal verified, then raise a new permit.",
-    "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED": "Isolation points are already planned on this permit for its current equipment: its equipment cannot be changed. Cancel it and raise a new permit for the new equipment.",
+    "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED": "Isolation points are planned on this permit for its current equipment: its equipment cannot be changed. Cancel the planned isolation lines, or cancel the permit and raise a new one for the new equipment.",
     "PERMIT_SITE_NOT_EQUIPMENT_SITE": "A permit is recorded at the site of its equipment (or of its work order), or at a level above it: another site, or a level below, cannot be given.",
     "PERMIT_SITE_LOCKED": "This permit was approved at this site: its site can no longer change. Cancel it and raise a new permit.",
     "PERMIT_WO_EQUIPMENT_MISMATCH": "The permit's equipment must be the equipment of its work order."

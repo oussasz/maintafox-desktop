@@ -2238,3 +2238,282 @@ async fn a_permit_stays_on_its_work_orders_equipment() {
         .unwrap_err();
     assert_eq!(refusal_code(err), "PERMIT_WO_EQUIPMENT_MISMATCH");
 }
+
+// ── Cancelling a planned isolation line (CMMS Advisor decision) ──────
+
+fn cancel_input(iso: &PermitIsolation) -> crate::permit::domain::PermitIsolationCancelInput {
+    crate::permit::domain::PermitIsolationCancelInput {
+        isolation_id: iso.id,
+        expected_row_version: iso.row_version,
+    }
+}
+
+async fn isolation_now(db: &DatabaseConnection, permit_id: i64, id: i64) -> PermitIsolation {
+    queries::list_permit_isolations(db, permit_id)
+        .await
+        .expect("list")
+        .into_iter()
+        .find(|i| i.id == id)
+        .expect("the line is kept")
+}
+
+/// In draft, a planned line is cancelled, never deleted: who and when are on the line, its content
+/// is kept, the cancellation is audited with that content, and the line is then frozen (no second
+/// cancellation, no edit, no apply, no LOTO card).
+#[tokio::test]
+async fn a_planned_isolation_line_is_cancelled_kept_and_audited_in_draft() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-CX1").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, wp.id, "MCC-9 breaker").await;
+
+    let (permit, cancelled) = queries::cancel_permit_isolation(&db, cancel_input(&iso), VERIFIER)
+        .await
+        .expect("cancel a planned line in draft");
+    assert_eq!(permit.status, "draft");
+    assert!(cancelled.cancelled_at.is_some());
+    assert_eq!(cancelled.cancelled_by_id, Some(VERIFIER));
+    assert_eq!(cancelled.cancelled_by_name.as_deref(), Some("PTW Verifier"));
+    assert_eq!(cancelled.isolation_point, "MCC-9 breaker");
+    assert_eq!(
+        (cancelled.energy_type_id, cancelled.isolation_method_id),
+        (iso.energy_type_id, iso.isolation_method_id)
+    );
+    assert_eq!(cancelled.row_version, iso.row_version + 1);
+    let kept = isolation_now(&db, wp.id, iso.id).await;
+    assert!(kept.cancelled_at.is_some(), "kept, marked cancelled");
+
+    assert_eq!(audit_count_of(&db, "permit.isolation_cancelled", wp.id).await, 1);
+    assert_eq!(audit_count_of(&db, "permit.review_reset", wp.id).await, 0);
+    let details = scalar_text(
+        &db,
+        &format!(
+            "SELECT details_json FROM audit_events WHERE action_code = 'permit.isolation_cancelled' \
+             AND target_id = '{}'",
+            wp.id
+        ),
+    )
+    .await;
+    let details: serde_json::Value = serde_json::from_str(&details).expect("details");
+    assert_eq!(details["isolation_point"], "MCC-9 breaker");
+    assert_eq!(details["isolation_id"], iso.id);
+    assert_eq!(details["energy_type_id"], serde_json::json!(iso.energy_type_id));
+    assert_eq!(
+        details["isolation_method_id"],
+        serde_json::json!(iso.isolation_method_id)
+    );
+    assert!(details["cancelled_at"].is_string());
+
+    let err = queries::cancel_permit_isolation(&db, cancel_input(&cancelled), VERIFIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_ISOLATION_CANCELLED");
+    let err = queries::apply_permit_isolation(&db, action(&cancelled), APPLIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_ISOLATION_CANCELLED");
+    let err = queries::verify_permit_isolation(&db, action(&cancelled), VERIFIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_ISOLATION_CANCELLED");
+    let err = queries::upsert_permit_isolation(
+        &db,
+        PermitIsolationUpsertInput {
+            id: Some(cancelled.id),
+            permit_id: wp.id,
+            isolation_point: "Renamed".into(),
+            energy_type_id: energy(&db, "ELECTRICAL").await,
+            isolation_method_id: method(&db, "BREAKER_LOCKOUT").await,
+            lock_number: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_ISOLATION_CANCELLED");
+    let err = queries::get_loto_card_view(&db, wp.id, cancelled.id).await.unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_ISOLATION_CANCELLED");
+    assert_eq!(
+        isolation_now(&db, wp.id, iso.id).await.isolation_point,
+        "MCC-9 breaker",
+        "content unchanged"
+    );
+}
+
+/// Waiting for review, a cancellation sends the permit back to draft (audited as a review reset
+/// with its reason): it must be submitted again.
+#[tokio::test]
+async fn cancelling_a_line_while_waiting_for_review_sends_the_permit_back_to_draft() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-CX2").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, wp.id, "MCC-10 breaker").await;
+    let wp = set_status(&db, &wp, "pending_review").await.expect("submit");
+
+    let (permit, _) = queries::cancel_permit_isolation(&db, cancel_input(&iso), VERIFIER)
+        .await
+        .expect("cancel while waiting for review");
+    assert_eq!(permit.status, "draft");
+    assert_eq!(permit.row_version, wp.row_version + 1);
+    assert_eq!(audit_count_of(&db, "permit.isolation_cancelled", wp.id).await, 1);
+    assert_eq!(audit_count_of(&db, "permit.review_reset", wp.id).await, 1);
+    let reason = scalar_text(
+        &db,
+        &format!(
+            "SELECT json_extract(details_json, '$.reason') FROM audit_events \
+             WHERE action_code = 'permit.review_reset' AND target_id = '{}'",
+            wp.id
+        ),
+    )
+    .await;
+    assert_eq!(reason, "isolation_cancelled");
+    let err = set_status(&db, &permit, "approved").await.unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_TRANSITION_NOT_ALLOWED");
+}
+
+/// An applied line is never cancelled (the lock-removal path stays the only one), nor any line of
+/// a permit approved or further on; a stale version is refused. Nothing is written.
+#[tokio::test]
+async fn an_applied_line_or_an_approved_permit_refuses_the_cancellation() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-CX3").await;
+
+    let draft = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, draft.id, "MCC-11 breaker").await;
+    let applied = queries::apply_permit_isolation(&db, action(&iso), APPLIER)
+        .await
+        .expect("fit the lock");
+    let err = queries::cancel_permit_isolation(&db, cancel_input(&applied), VERIFIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_ISOLATION_CANCEL_APPLIED");
+    let verified = queries::verify_permit_isolation(&db, action(&applied), VERIFIER)
+        .await
+        .expect("verify");
+    let err = queries::cancel_permit_isolation(&db, cancel_input(&verified), APPLIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_ISOLATION_CANCEL_APPLIED");
+
+    let mut wp = create_permit(&db, "loto", asset).await;
+    let planned = add_isolation(&db, wp.id, "MCC-12 breaker").await;
+    for status in ["pending_review", "approved", "issued"] {
+        wp = set_status(&db, &wp, status).await.expect("advance");
+        if status == "pending_review" {
+            continue;
+        }
+        let err = queries::cancel_permit_isolation(&db, cancel_input(&planned), VERIFIER)
+            .await
+            .unwrap_err();
+        assert_eq!(refusal_code(err), "PERMIT_ISOLATION_CANCEL_WRONG_STATUS", "{status}");
+    }
+    let stale = crate::permit::domain::PermitIsolationCancelInput {
+        isolation_id: planned.id,
+        expected_row_version: planned.row_version + 7,
+    };
+    let err = queries::cancel_permit_isolation(&db, stale, VERIFIER)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ValidationFailed(_)), "{err:?}");
+    assert!(isolation_now(&db, wp.id, planned.id).await.cancelled_at.is_none());
+    assert_eq!(audit_count_of(&db, "permit.isolation_cancelled", wp.id).await, 0);
+    assert_eq!(audit_count_of(&db, "permit.isolation_cancelled", draft.id).await, 0);
+}
+
+/// A cancelled line no longer blocks a change of the permit's equipment.
+#[tokio::test]
+async fn a_cancelled_line_no_longer_blocks_the_equipment_change() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-CX4").await;
+    let other = insert_equipment(&db, "EQ-PTW-CX5").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, wp.id, "Old pump breaker").await;
+    let err = queries::update_work_permit(&db, equipment_edit(&wp, Some(other), None, None), VERIFIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED");
+    queries::cancel_permit_isolation(&db, cancel_input(&iso), VERIFIER)
+        .await
+        .expect("cancel");
+    let wp = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    let moved = queries::update_work_permit(&db, equipment_edit(&wp, Some(other), None, None), VERIFIER)
+        .await
+        .expect("equipment change once the planned line is cancelled");
+    assert_eq!(moved.asset_id, other);
+    // The cancelled line stays on the permit as history.
+    assert_eq!(
+        queries::list_permit_isolations(&db, wp.id).await.expect("list").len(),
+        1
+    );
+}
+
+/// A cancelled line is no isolation to fit: activation, close, the planning readiness and the
+/// lockout count leave it out; a LOTO permit whose only line is cancelled has no isolation.
+#[tokio::test]
+async fn a_cancelled_line_is_not_counted_by_the_lockout_and_readiness_readers() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-CX6").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wp = create_from_wo(&db, "loto", wo_id)
+        .await
+        .expect("permit on the work order");
+    let kept = add_isolation(&db, wp.id, "MCC-13 breaker").await;
+    let dropped = add_isolation(&db, wp.id, "Valve V-13 (not needed)").await;
+    let kept = apply_and_verify(&db, &kept).await;
+    let loto_codes = |findings: Vec<crate::planning::readiness::Finding>| {
+        findings
+            .into_iter()
+            .filter(|f| f.reason_code == "LOTO_NOT_VERIFIED")
+            .count()
+    };
+    let before = crate::planning::readiness::permit_findings(&db, "work_order", wo_id, None)
+        .await
+        .expect("findings");
+    assert_eq!(loto_codes(before), 1, "the planned line is not verified yet");
+    queries::cancel_permit_isolation(&db, cancel_input(&dropped), VERIFIER)
+        .await
+        .expect("cancel");
+    let after = crate::planning::readiness::permit_findings(&db, "work_order", wo_id, None)
+        .await
+        .expect("findings");
+    assert_eq!(loto_codes(after), 0, "the cancelled line is no isolation to fit");
+
+    let locks_before = queries::isolation_locks_in_place(&db).await.expect("locks");
+    let wp = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    let wp = advance_to_issued(&db, wp).await;
+    let wp = set_status(&db, &wp, "active")
+        .await
+        .expect("activation counts the verified line only");
+    queries::verify_permit_isolation_removal(&db, action(&kept), VERIFIER)
+        .await
+        .expect("remove the fitted lock");
+    let closed = set_status(&db, &wp, "closed")
+        .await
+        .expect("close: the cancelled line has no lock");
+    assert_eq!(closed.status, "closed");
+    let locks_after = queries::isolation_locks_in_place(&db).await.expect("locks");
+    assert_eq!(
+        locks_after.1,
+        locks_before.1 - 1,
+        "only the fitted lock was counted, never the cancelled line"
+    );
+
+    // A LOTO permit whose only line is cancelled has no isolation: activation refused.
+    let only = create_permit(&db, "loto", asset).await;
+    let line = add_isolation(&db, only.id, "MCC-14 breaker").await;
+    queries::cancel_permit_isolation(&db, cancel_input(&line), VERIFIER)
+        .await
+        .expect("cancel");
+    let only = queries::get_work_permit(&db, only.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    let only = advance_to_issued(&db, only).await;
+    let err = set_status(&db, &only, "active").await.unwrap_err();
+    assert_eq!(refusal_code(err), "LOTO_NO_ISOLATION");
+}

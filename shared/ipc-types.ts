@@ -10806,6 +10806,13 @@ export interface PermitIsolationActionInput {
   lock_number: string | null;
 }
 
+/** `cancel_permit_isolation`: cancels a planned line never applied (draft or waiting for review);
+ * the session user is recorded, the line is kept as "cancelled". */
+export interface PermitIsolationCancelInput {
+  isolation_id: number;
+  expected_row_version: number;
+}
+
 /** Counts of a permit list the user's sites leave out (`list_work_permits`,
  * `list_open_permits_report`), whatever the filters; both 0 plant-wide. */
 export interface WorkPermitHiddenCounts {

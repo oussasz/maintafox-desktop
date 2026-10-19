@@ -8,6 +8,7 @@ import type {
   PermitHandoverReceiverPage,
   PermitHandoverRoleOption,
   PermitIsolationActionInput,
+  PermitIsolationCancelInput,
   PermitIsolationUpsertInput,
   PermitSuspendInput,
   PermitTypeUpsertInput,
@@ -131,6 +132,10 @@ const PermitIsolationSchema = z.object({
   applied_by_name: z.string().nullable(),
   verified_by_name: z.string().nullable(),
   removal_verified_by_name: z.string().nullable(),
+  /** A planned line cancelled (never applied): kept as history, never a lock to fit. */
+  cancelled_at: z.string().nullable(),
+  cancelled_by_id: z.number().nullable(),
+  cancelled_by_name: z.string().nullable(),
 });
 
 const LotoCardViewSchema = z.object({
@@ -354,6 +359,19 @@ export async function verifyPermitIsolation(
 ): Promise<PermitIsolationRecord> {
   const raw = await invoke<unknown>("verify_permit_isolation", { input });
   return PermitIsolationSchema.parse(raw);
+}
+
+/**
+ * Cancels a planned isolation line never applied (permit draft or waiting for review; ptw.issue at
+ * the permit's site). The line is kept as cancelled; a permit waiting for review goes back to
+ * draft, so the permit is returned with the line.
+ */
+export async function cancelPermitIsolation(
+  input: PermitIsolationCancelInput,
+): Promise<{ permit: WorkPermitRecord; isolation: PermitIsolationRecord }> {
+  const raw = await invoke<unknown>("cancel_permit_isolation", { input });
+  const [permit, isolation] = z.tuple([WorkPermitSchema, PermitIsolationSchema]).parse(raw);
+  return { permit, isolation };
 }
 
 export async function verifyPermitIsolationRemoval(

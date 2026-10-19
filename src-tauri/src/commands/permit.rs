@@ -16,9 +16,9 @@ use crate::errors::{AppError, AppResult};
 use crate::permit::access::{self, PermitChild};
 use crate::permit::domain::{
     LotoCardPrintInput, LotoCardPrintJob, LotoCardView, PermitComplianceKpi30d, PermitHandoverLog,
-    PermitHandoverLogInput, PermitIsolation, PermitIsolationActionInput, PermitIsolationUpsertInput,
-    PermitSuspendInput, PermitSuspension, PermitType, PermitTypeUpsertInput, WorkPermit, WorkPermitCreateInput,
-    WorkPermitListFilter, WorkPermitListPage, WorkPermitStatusInput, WorkPermitUpdateInput,
+    PermitHandoverLogInput, PermitIsolation, PermitIsolationActionInput, PermitIsolationCancelInput,
+    PermitIsolationUpsertInput, PermitSuspendInput, PermitSuspension, PermitType, PermitTypeUpsertInput, WorkPermit,
+    WorkPermitCreateInput, WorkPermitListFilter, WorkPermitListPage, WorkPermitStatusInput, WorkPermitUpdateInput,
 };
 use crate::permit::queries;
 use crate::rbac::permissions::{PTW_CLOSE, PTW_ISSUE, PTW_VIEW};
@@ -250,6 +250,19 @@ pub async fn verify_permit_isolation(
     let user = require_session!(state);
     require_on_isolation(&state, user.user_id, PTW_ISSUE, input.isolation_id).await?;
     queries::verify_permit_isolation(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Cancels a planned isolation line (never applied) of a permit that is a draft or waiting for
+/// review: kept as cancelled with the session user and time, audited; a permit waiting for review
+/// goes back to draft. Requires `ptw.issue` at the permit's site. Returns the permit and the line.
+#[tauri::command]
+pub async fn cancel_permit_isolation(
+    input: PermitIsolationCancelInput,
+    state: State<'_, AppState>,
+) -> AppResult<(WorkPermit, PermitIsolation)> {
+    let user = require_session!(state);
+    access::require_isolation_cancel(&state.db, &state.permission_cache, user.user_id, input.isolation_id).await?;
+    queries::cancel_permit_isolation(&state.db, input, i64::from(user.user_id)).await
 }
 
 /// Records verified lock removal by the session user (part of closing a permit).

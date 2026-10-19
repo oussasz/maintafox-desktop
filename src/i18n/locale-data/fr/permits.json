@@ -136,7 +136,8 @@
       "pending": "Non posée",
       "applied": "Posée",
       "verified": "Vérifiée",
-      "removed": "Retirée"
+      "removed": "Retirée",
+      "cancelled": "Annulée"
     },
     "editLocked": "Les isolations ne peuvent être ajoutées que si le permis n'est pas actif.",
     "loadError": "Les isolations de ce permis n’ont pas pu être chargées",
@@ -151,7 +152,14 @@
     "listsHint": "Types d’énergie selon ISO 14118 / OSHA 1910.147 ; les méthodes d’isolement sont la liste de votre site (Données de référence).",
     "threePersonNotice": "Règle des trois personnes : {{name}} a vérifié cette isolation et ne peut pas confirmer son retrait.",
     "threePersonNoticeUnknown": "Règle des trois personnes : la personne qui a vérifié cette isolation ne peut pas confirmer son retrait.",
-    "threePersonSelf": "Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait."
+    "threePersonSelf": "Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait.",
+    "cancel": "Annuler la ligne",
+    "cancelTitle": "Annuler la ligne d'isolement",
+    "cancelConfirm": "La ligne « {{point}} » ({{energy}} · {{method}}) n'a jamais été posée. Elle sera marquée « Annulée » et gardée dans l'historique du permis : elle ne pourra plus être posée, vérifiée ni modifiée.",
+    "cancelResetNotice": "Ce permis attend sa revue : il repassera en brouillon et devra être soumis de nouveau.",
+    "cancelHint": "Une ligne jamais posée peut être annulée tant que le permis est en brouillon ou en attente de revue ; un cadenas posé se retire avec une dépose vérifiée.",
+    "cancelledBy": "Annulée par {{name}} le {{date}}",
+    "cancelledAt": "Annulée le {{date}}"
   },
   "card": {
     "title": "Fiche LOTO",

@@ -341,6 +341,11 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // active (its generic times are in order: fitted, verified, activated, lock removed, expiry),
     // so its generic isolations arrive with it as a valid group.
     ("work_permits", "status", "'active'"),
+    // The generic isolation is fitted, verified and removed under that active permit: a line in
+    // use, never cancelled (a cancelled line is one never applied, on a draft or a permit waiting
+    // for review, `permit::sync_check::cancellation_check`).
+    ("permit_isolations", "cancelled_at", "NULL"),
+    ("permit_isolations", "cancelled_by_id", "NULL"),
     // A generic work order carries no plant-rule permit flag (that trace is written at conversion and
     // judged on arrival, `permit::sync_check::inbound_permit_rule_check`).
     ("work_orders", "permit_rule_code", "NULL"),

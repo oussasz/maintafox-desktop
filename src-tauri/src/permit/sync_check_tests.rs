@@ -3287,3 +3287,202 @@ async fn isolations_received_before_the_equipment_change_make_it_a_conflict() {
         .expect("permit");
     assert_eq!(kept.asset_id, asset, "nothing written");
 }
+
+// ── Cancelled planned isolation lines (CMMS Advisor decision) ────────
+
+/// The line as received cancelled by `by` now.
+async fn cancelled_wire(db: &DatabaseConnection, sync_id: &str, by: i64) -> Payload {
+    with(
+        wire(db, "permit_isolations", sync_id).await,
+        &[
+            ("cancelled_at", json!(now())),
+            ("cancelled_by_sync_id", json!(user_sync(db, by).await)),
+        ],
+    )
+}
+
+async fn held_cancelled_at(db: &DatabaseConnection, sync_id: &str) -> Option<String> {
+    text(
+        db,
+        &format!("SELECT cancelled_at FROM permit_isolations WHERE entity_sync_id = '{sync_id}'"),
+    )
+    .await
+}
+
+fn cancel_input(iso: &crate::permit::domain::PermitIsolation) -> crate::permit::domain::PermitIsolationCancelInput {
+    crate::permit::domain::PermitIsolationCancelInput {
+        isolation_id: iso.id,
+        expected_row_version: iso.row_version,
+    }
+}
+
+/// A cancellation received for a line never applied, on a permit held here as a draft or waiting
+/// for review, is applied (who and when kept); the line held cancelled is then kept as it was: never
+/// un-cancelled, applied or changed by a received row.
+#[tokio::test]
+async fn a_received_cancellation_of_a_planned_line_is_applied_and_never_undone() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-CX1").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, wp.id, "MCC-21 breaker").await;
+    let planned = wire(&db, "permit_isolations", &iso.entity_sync_id).await;
+    assert!(planned.contains_key("cancelled_at") && planned.contains_key("cancelled_by_sync_id"));
+
+    let cancelled = cancelled_wire(&db, &iso.entity_sync_id, VERIFIER).await;
+    let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &cancelled).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert!(held_cancelled_at(&db, &iso.entity_sync_id).await.is_some());
+    assert_eq!(
+        super::tests::scalar_i64(
+            &db,
+            &format!("SELECT cancelled_by_id FROM permit_isolations WHERE id = {}", iso.id)
+        )
+        .await,
+        VERIFIER
+    );
+
+    // The same cancellation again: nothing changes.
+    let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &cancelled).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+        "{outcome:?}"
+    );
+    // Un-cancelled, applied or renamed: refused, the line stays cancelled.
+    let applied = with(
+        cancelled.clone(),
+        &[
+            ("applied_at", json!(now())),
+            ("applied_by_sync_id", json!(user_sync(&db, APPLIER).await)),
+        ],
+    );
+    for received in [
+        planned.clone(),
+        applied,
+        with(cancelled.clone(), &[("isolation_point", json!("Another point"))]),
+    ] {
+        let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &received).await;
+        assert_eq!(code(&outcome), Some("PERMIT_ISOLATION_CANCELLED"), "{outcome:?}");
+    }
+    assert!(held_cancelled_at(&db, &iso.entity_sync_id).await.is_some());
+
+    // Waiting for review here: accepted too, and the permit's return to draft follows.
+    let review = create_permit(&db, "loto", asset).await;
+    let line = add_isolation(&db, review.id, "MCC-22 breaker").await;
+    let review = set_status(&db, &review, "pending_review").await.expect("submit");
+    let reset = with(
+        wire(&db, "work_permits", &review.entity_sync_id).await,
+        &[("status", json!("draft"))],
+    );
+    let received = cancelled_wire(&db, &line.entity_sync_id, VERIFIER).await;
+    let outcome = apply(&db, "permit_isolations", &line.entity_sync_id, &received).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let outcome = apply(&db, "work_permits", &review.entity_sync_id, &reset).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(permit_status(&db, &review).await, "draft");
+
+    // A line planned and cancelled on the other PC, new here, on a draft: applied.
+    let fresh = add_isolation(&db, wp.id, "MCC-23 breaker").await;
+    let fresh_wire = cancelled_wire(&db, &fresh.entity_sync_id, VERIFIER).await;
+    exec(&db, &format!("DELETE FROM permit_isolations WHERE id = {}", fresh.id)).await;
+    let outcome = apply(&db, "permit_isolations", &fresh.entity_sync_id, &fresh_wire).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert!(held_cancelled_at(&db, &fresh.entity_sync_id).await.is_some());
+}
+
+/// A received cancellation of a line applied (in the row or here), on a permit approved or further
+/// on here, or without who or when, is a conflict with nothing written; a delete stays refused.
+#[tokio::test]
+async fn a_received_cancellation_of_an_applied_line_or_an_approved_permit_is_refused() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-CX2").await;
+
+    // Applied here, while the other PC still had it planned.
+    let draft = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, draft.id, "MCC-24 breaker").await;
+    let planned_there = cancelled_wire(&db, &iso.entity_sync_id, VERIFIER).await;
+    queries::apply_permit_isolation(&db, super::tests::action(&iso), APPLIER)
+        .await
+        .expect("fit the lock here");
+    let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &planned_there).await;
+    assert_eq!(code(&outcome), Some("PERMIT_ISOLATION_CANCEL_APPLIED"), "{outcome:?}");
+    // Applied in the row itself.
+    let applied_row = cancelled_wire(&db, &iso.entity_sync_id, VERIFIER).await;
+    let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &applied_row).await;
+    assert_eq!(code(&outcome), Some("PERMIT_ISOLATION_CANCEL_APPLIED"), "{outcome:?}");
+    assert!(held_cancelled_at(&db, &iso.entity_sync_id).await.is_none());
+
+    // Approved here.
+    let approved = create_permit(&db, "loto", asset).await;
+    let line = add_isolation(&db, approved.id, "MCC-25 breaker").await;
+    let approved = set_status(&db, &approved, "pending_review").await.expect("submit");
+    set_status(&db, &approved, "approved").await.expect("approve");
+    let received = cancelled_wire(&db, &line.entity_sync_id, VERIFIER).await;
+    let outcome = apply(&db, "permit_isolations", &line.entity_sync_id, &received).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_ISOLATION_CANCEL_WRONG_STATUS"),
+        "{outcome:?}"
+    );
+    assert!(held_cancelled_at(&db, &line.entity_sync_id).await.is_none());
+
+    // Without who, or dated in the future.
+    let other = create_permit(&db, "loto", asset).await;
+    let planned = add_isolation(&db, other.id, "MCC-26 breaker").await;
+    let base = cancelled_wire(&db, &planned.entity_sync_id, VERIFIER).await;
+    for received in [
+        with(base.clone(), &[("cancelled_by_sync_id", Value::Null)]),
+        with(base.clone(), &[("cancelled_at", json!("2999-01-01T00:00:00Z"))]),
+    ] {
+        let outcome = apply(&db, "permit_isolations", &planned.entity_sync_id, &received).await;
+        assert_eq!(code(&outcome), Some("PERMIT_ISOLATION_CANCEL_INVALID"), "{outcome:?}");
+    }
+    assert!(held_cancelled_at(&db, &planned.entity_sync_id).await.is_none());
+
+    // A delete of the line stays refused once its permit is past draft (a cancellation is an update).
+    let outcome = delete(&db, "permit_isolations", &line.entity_sync_id).await;
+    assert_eq!(code(&outcome), Some("PERMIT_DELETE_REFUSED"), "{outcome:?}");
+}
+
+/// A planned line cancelled here no longer blocks a received change of the permit's equipment, and
+/// a cancelled line is no isolation of a permit received active.
+#[tokio::test]
+async fn a_cancelled_line_does_not_block_a_received_equipment_change_or_activation() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-CX3").await;
+    let _ = insert_equipment(&db, "EQ-SYNC-CX4").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, wp.id, "Old pump breaker").await;
+    let held = wire(&db, "work_permits", &wp.entity_sync_id).await;
+    let moved = with(held, &[("asset_sync_id", json!("eq-sync-EQ-SYNC-CX4"))]);
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &moved).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_EQUIPMENT_ISOLATIONS_PLANNED"),
+        "{outcome:?}"
+    );
+    queries::cancel_permit_isolation(&db, cancel_input(&iso), VERIFIER)
+        .await
+        .expect("cancel here");
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &moved).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+
+    // Received active with one verified line and one cancelled line: the cancelled one is not
+    // counted as an isolation left unverified.
+    let other = create_permit(&db, "loto", asset).await;
+    let dropped = add_isolation(&db, other.id, "Valve not needed").await;
+    queries::cancel_permit_isolation(&db, cancel_input(&dropped), VERIFIER)
+        .await
+        .expect("cancel in draft");
+    let other = queries::get_work_permit(&db, other.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    let other = advance_to_issued(&db, other).await;
+    apply_and_verify(&db, &add_isolation(&db, other.id, "MCC-27 breaker").await).await;
+    let active = with(
+        wire(&db, "work_permits", &other.entity_sync_id).await,
+        &[("status", json!("active")), ("activated_at", json!(now()))],
+    );
+    let outcome = apply(&db, "work_permits", &other.entity_sync_id, &active).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}

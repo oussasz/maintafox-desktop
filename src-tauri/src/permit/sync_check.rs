@@ -31,6 +31,11 @@
 //!   a permit protecting the work, it must date from before the permit started protecting it; its
 //!   lock removal is verified only once the permit was active (`ISOLATION_SETUP_STATUSES` and
 //!   `ISOLATION_REMOVAL_STATUSES` of `permit::queries`);
+//! - an isolation line cancelled (migration 239, `cancellation_check`): only a line never applied
+//!   (not here, not in the row), with who and when, on a permit held here as a draft or waiting for
+//!   review (as before the change when it arrives with its permit's change); a line cancelled here
+//!   is kept as it was (never un-cancelled, applied or edited). A cancelled line never applied is
+//!   no isolation of its permit: not counted by the activation, close and equipment-change checks;
 //! - a work order entering `in_progress` passes the permit gate (`permit::wo_gate`) at the time it
 //!   started, resumed or was reopened: a permit when it requires one (of the type a plant rule named,
 //!   when a rule flagged it), every permit live at that time active, not suspended, not expired, with
@@ -160,6 +165,12 @@ pub(crate) fn overlay(local: Option<&Payload>, received: &Payload) -> Payload {
 pub(crate) fn isolation_rule_breach(iso: &Payload, three_person: bool) -> Option<(&'static str, String)> {
     let point = field(iso, "isolation_point").unwrap_or("?");
     let applier = field(iso, "applied_by_sync_id");
+    if field(iso, "cancelled_at").is_some() && ISOLATION_ACTION_KEYS.iter().any(|k| field(iso, k).is_some()) {
+        return Some((
+            "PERMIT_ISOLATION_CANCEL_APPLIED",
+            format!("isolation '{point}' is cancelled but was applied, verified or removed"),
+        ));
+    }
     if field(iso, "verified_at").is_some() {
         if applier.is_none() || field(iso, "applied_at").is_none() {
             return Some((
@@ -198,6 +209,27 @@ pub(crate) fn isolation_rule_breach(iso: &Payload, three_person: bool) -> Option
         }
     }
     None
+}
+
+/// The keys of an isolation's actions (who fitted, verified and verified the removal, and when).
+const ISOLATION_ACTION_KEYS: &[&str] = &[
+    "applied_by_sync_id",
+    "applied_at",
+    "verified_by_sync_id",
+    "verified_at",
+    "removal_verified_by_sync_id",
+    "removal_verified_at",
+];
+
+/// A cancelled line never applied (migration 239): no isolation of its permit, never a lock to fit
+/// (`permit::queries::COUNTED_ISOLATION_SQL`). A line that would hold both still counts.
+fn cancelled_line(iso: &Payload) -> bool {
+    field(iso, "cancelled_at").is_some() && field(iso, "applied_at").is_none()
+}
+
+/// The lines that count as isolations of their permit (cancelled planned lines left out).
+fn counted_isolations<'a>(isolations: &[&'a Payload]) -> Vec<&'a Payload> {
+    isolations.iter().copied().filter(|i| !cancelled_line(i)).collect()
 }
 
 /// The hand-over rule a state of a handover log breaks, if any (`permit::queries`: append a
@@ -647,7 +679,8 @@ async fn equipment_change_check(
                 "lock(s) fitted here without a verified removal",
             ),
             (
-                "pi.applied_at IS NULL",
+                // A cancelled line no longer names a point (CMMS Advisor decision).
+                "pi.applied_at IS NULL AND pi.cancelled_at IS NULL",
                 "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED",
                 "isolation point(s) planned here for its former equipment",
             ),
@@ -810,14 +843,15 @@ pub(crate) async fn inbound_permit_check(
                 return wait(format!("permit {code}: its permit type is not applied yet"));
             };
             let three_person = type_three_person(conn, &permit).await?;
-            if let Some((c, m)) = isolations_ready(&code, needs, three_person, &payloads(&isolations), at) {
+            let counted = counted_isolations(&payloads(&isolations));
+            if let Some((c, m)) = isolations_ready(&code, needs, three_person, &counted, at) {
                 return conflict(c, m);
             }
         }
         "closed" | "handed_back" => {
             let pending = payloads(&isolations)
                 .iter()
-                .filter(|i| field(i, "removal_verified_at").is_none())
+                .filter(|i| field(i, "removal_verified_at").is_none() && !cancelled_line(i))
                 .count();
             if pending > 0 {
                 return conflict(
@@ -943,6 +977,90 @@ fn isolation_actions(p: &Payload) -> [Option<&str>; 7] {
     ]
 }
 
+/// What a line cancelled here keeps as it was: its permit, content, actions and cancellation.
+const CANCELLED_LINE_KEPT: &[&str] = &[
+    "permit_sync_id",
+    "isolation_point",
+    "energy_type_sync_id",
+    "isolation_method_sync_id",
+    "lock_number",
+    "applied_by_sync_id",
+    "applied_at",
+    "verified_by_sync_id",
+    "verified_at",
+    "removal_verified_by_sync_id",
+    "removal_verified_at",
+    "cancelled_at",
+    "cancelled_by_sync_id",
+];
+
+/// The cancellation rules of a received isolation line (`permit::queries::cancel_permit_isolation`,
+/// CMMS Advisor decision), judged on the copies held here:
+/// - a line cancelled here is kept as it was: a row un-cancelling it, applying it or changing it is
+///   refused (`PERMIT_ISOLATION_CANCELLED`);
+/// - a line received cancelled was never applied, neither in the row nor here
+///   (`PERMIT_ISOLATION_CANCEL_APPLIED`), says who cancelled it and when, at a readable time not in
+///   the future (`PERMIT_ISOLATION_CANCEL_INVALID`), and its permit is held here as a draft or waiting
+///   for review (`PERMIT_ISOLATION_CANCEL_WRONG_STATUS`) — when it arrives with its permit's change,
+///   as the permit was here before that change. A permit not here yet: the apply waits for it.
+async fn cancellation_check(
+    conn: &impl ConnectionTrait,
+    local: Option<&Payload>,
+    iso: &Payload,
+) -> AppResult<Option<InboundVerdict>> {
+    let point = field(iso, "isolation_point").unwrap_or("?").to_string();
+    if let Some(held) = local.filter(|l| field(l, "cancelled_at").is_some()) {
+        if CANCELLED_LINE_KEPT.iter().any(|k| field(held, k) != field(iso, k)) {
+            return conflict(
+                "PERMIT_ISOLATION_CANCELLED",
+                format!(
+                    "isolation '{point}' is cancelled here: it is kept as it was (never un-cancelled, applied or changed)"
+                ),
+            );
+        }
+        return Ok(None);
+    }
+    if field(iso, "cancelled_at").is_none() {
+        return Ok(None);
+    }
+    let acted = |p: &Payload| ISOLATION_ACTION_KEYS.iter().any(|k| field(p, k).is_some());
+    if acted(iso) || local.is_some_and(acted) {
+        return conflict(
+            "PERMIT_ISOLATION_CANCEL_APPLIED",
+            format!("isolation '{point}' was cancelled but it was applied (here or on the other PC): an applied lock is removed with a verified removal"),
+        );
+    }
+    if field(iso, "cancelled_by_sync_id").is_none() || time(iso, "cancelled_at").is_none_or(|t| t > future_bound()) {
+        return conflict(
+            "PERMIT_ISOLATION_CANCEL_INVALID",
+            format!("isolation '{point}' was cancelled without who or when, or at a time unreadable or in the future"),
+        );
+    }
+    let Some(permit_sync) = field(iso, "permit_sync_id") else {
+        return Ok(None);
+    };
+    let Some(permit) = local_wire(conn, "work_permits", permit_sync).await? else {
+        return Ok(None);
+    };
+    let current = field(&permit, "status").unwrap_or_default().to_string();
+    let held = GROUP_PARENT
+        .try_with(|(parent, previous)| (parent == permit_sync).then(|| previous.clone()))
+        .ok()
+        .flatten()
+        .map_or(current, |previous| previous.unwrap_or_else(|| "draft".into()));
+    if !crate::permit::queries::ISOLATION_CANCEL_STATUSES.contains(&held.as_str()) {
+        let code = field(&permit, "code").unwrap_or(permit_sync);
+        return conflict(
+            "PERMIT_ISOLATION_CANCEL_WRONG_STATUS",
+            format!(
+                "isolation '{point}' was cancelled while permit {code} is '{held}' here: a planned line is cancelled \
+                 only while its permit is a draft or waiting for review"
+            ),
+        );
+    }
+    Ok(None)
+}
+
 /// Re-check of an isolation received by synchronisation (see the module documentation).
 pub(crate) async fn inbound_isolation_check(
     conn: &impl ConnectionTrait,
@@ -951,6 +1069,9 @@ pub(crate) async fn inbound_isolation_check(
 ) -> AppResult<Option<InboundVerdict>> {
     let local = local_wire(conn, "permit_isolations", entity_sync_id).await?;
     let iso = overlay(local.as_ref(), received);
+    if let Some(verdict) = cancellation_check(conn, local.as_ref(), &iso).await? {
+        return Ok(Some(verdict));
+    }
     if local
         .as_ref()
         .is_some_and(|l| isolation_actions(l) == isolation_actions(&iso))

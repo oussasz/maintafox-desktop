@@ -19,9 +19,23 @@ export const PERMIT_QUERY_CREATE_FOR_WO = "createForWo";
  */
 export const PERMIT_REFUSAL_NAMESPACES = ["training"] as const;
 
-export type IsolationState = "pending" | "applied" | "verified" | "removed";
+export type IsolationState = "pending" | "applied" | "verified" | "removed" | "cancelled";
+
+/**
+ * A planned line cancelled and never applied (`COUNTED_ISOLATION_SQL` on the server): kept as
+ * history, no isolation of its permit. A line that would hold both still counts.
+ */
+export function isCancelledLine(iso: PermitIsolationRecord): boolean {
+  return iso.cancelled_at != null && iso.applied_at == null;
+}
+
+/** The lines that count as isolations of the permit (cancelled planned lines left out). */
+export function countedIsolations(isolations: PermitIsolationRecord[]): PermitIsolationRecord[] {
+  return isolations.filter((i) => !isCancelledLine(i));
+}
 
 export function isolationState(iso: PermitIsolationRecord): IsolationState {
+  if (isCancelledLine(iso)) return "cancelled";
   if (iso.removal_verified_at) return "removed";
   if (iso.verified_at) return "verified";
   if (iso.applied_at) return "applied";
@@ -45,6 +59,24 @@ export const ISOLATION_REMOVAL_STATUSES: ReadonlySet<string> = new Set([
   "expired",
 ]);
 
+/**
+ * Statuses in which a planned line may be cancelled (`ISOLATION_CANCEL_STATUSES`): a cancellation
+ * while waiting for review sends the permit back to draft.
+ */
+export const ISOLATION_CANCEL_STATUSES: ReadonlySet<string> = new Set(["draft", "pending_review"]);
+
+/** Whether the line may be cancelled (rights aside): never applied, not cancelled, permit prepared. */
+export function canCancelIsolation(permitStatus: string, iso: PermitIsolationRecord): boolean {
+  return (
+    ISOLATION_CANCEL_STATUSES.has(permitStatus) &&
+    iso.cancelled_at == null &&
+    iso.applied_at == null &&
+    iso.applied_by_id == null &&
+    iso.verified_at == null &&
+    iso.removal_verified_at == null
+  );
+}
+
 /** Header fields (expiry) are editable only before activation. */
 export const PERMIT_EDITABLE_STATUSES: ReadonlySet<string> = new Set([
   "draft",
@@ -60,8 +92,9 @@ export function isPermitExpired(permit: WorkPermitRecord, now: Date = new Date()
 /** i18n key (in the `permits` namespace) explaining why activation is blocked, or null. */
 export function activationBlocker(
   permit: WorkPermitRecord,
-  isolations: PermitIsolationRecord[],
+  allIsolations: PermitIsolationRecord[],
 ): string | null {
+  const isolations = countedIsolations(allIsolations);
   if (isPermitExpired(permit)) return "gate.expired";
   // The type's own rule (`requires_energy_isolation`, set for LOTO), never a code in the program.
   if (permit.permit_type_requires_energy_isolation && isolations.length === 0)
@@ -73,7 +106,9 @@ export function activationBlocker(
 
 /** i18n key explaining why closing is blocked, or null. */
 export function closeBlocker(isolations: PermitIsolationRecord[]): string | null {
-  return isolations.some((i) => !i.removal_verified_at) ? "gate.pendingRemoval" : null;
+  return countedIsolations(isolations).some((i) => !i.removal_verified_at)
+    ? "gate.pendingRemoval"
+    : null;
 }
 
 export interface PermitTransition {

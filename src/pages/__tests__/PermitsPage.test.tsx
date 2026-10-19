@@ -213,6 +213,9 @@ function isolation(overrides: Partial<PermitIsolationRecord> = {}): PermitIsolat
     applied_by_name: "Amine Tech",
     verified_by_name: null,
     removal_verified_by_name: null,
+    cancelled_at: null,
+    cancelled_by_id: null,
+    cancelled_by_name: null,
     ...overrides,
   };
 }
