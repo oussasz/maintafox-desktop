@@ -949,12 +949,14 @@ pub(crate) async fn inbound_permit_type_check(
 ) -> AppResult<Option<InboundVerdict>> {
     let local = local_wire(conn, "permit_types", entity_sync_id).await?;
     // A type's code is fixed once created (`permit::queries::CODE_PERMIT_TYPE_CODE_LOCKED`): plant
-    // rules, permits and work orders name the type by it. Compared exactly, as stored.
-    if let (Some(held), Some(Value::String(sent))) = (
+    // rules, permits and work orders name the type by it. Compared exactly, as stored: a received
+    // code that is not text (a number or true/false, which would be stored as text, or null) is a
+    // change too.
+    if let (Some(held), Some(sent)) = (
         local.as_ref().and_then(|l| l.get("code")).and_then(Value::as_str),
         received.get("code"),
     ) {
-        if held != sent {
+        if sent.as_str() != Some(held) {
             return conflict(
                 crate::permit::queries::CODE_PERMIT_TYPE_CODE_LOCKED,
                 format!("permit type {held}: its code cannot be changed (received: {sent})"),

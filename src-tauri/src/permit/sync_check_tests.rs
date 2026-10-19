@@ -3292,8 +3292,9 @@ async fn a_received_isolation_switch_off_is_rechecked_and_loto_stays_locked() {
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
 }
 
-/// A permit type received from another PC never changes its code (compared exactly, as stored);
-/// its other fields are applied as received.
+/// A permit type received from another PC never changes its code (compared exactly, as stored, and
+/// only text can match: a number, true/false or null is refused too); its other fields are applied
+/// as received.
 #[tokio::test]
 async fn a_received_permit_type_never_changes_its_code() {
     let db = setup().await;
@@ -3307,6 +3308,20 @@ async fn a_received_permit_type_never_changes_its_code() {
             "permit_types",
             &ty,
             &with(held.clone(), &[("code", json!(changed))]),
+        )
+        .await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_TYPE_CODE_LOCKED"),
+            "{changed}: {outcome:?}"
+        );
+    }
+    for changed in [json!(123), json!(0), json!(1.5), json!(true), json!(false), Value::Null] {
+        let outcome = apply(
+            &db,
+            "permit_types",
+            &ty,
+            &with(held.clone(), &[("code", changed.clone())]),
         )
         .await;
         assert_eq!(
