@@ -2274,3 +2274,30 @@ async fn the_receiver_search_ignores_case_and_accents_and_has_no_wildcards() {
         (vec!["elodie_x".to_string()], 2)
     );
 }
+
+/// The three-person change reason refusal names the minimum the server applies, so the screen can
+/// show it whatever its own copy of the rule.
+#[tokio::test]
+async fn the_three_person_reason_refusal_names_the_minimum() {
+    let db = setup().await;
+    let hot = queries::list_permit_types(&db)
+        .await
+        .expect("types")
+        .into_iter()
+        .find(|t| t.code == "hot_work")
+        .expect("hot_work");
+    let err = queries::upsert_permit_type(&db, chain_input(&hot, Some(true), Some("too short")), ADMIN_STEP_UP)
+        .await
+        .expect_err("short");
+    match err {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, "PERMIT_TYPE_THREE_PERSON_REASON");
+            assert_eq!(
+                issues[0].params.get("min"),
+                Some(&crate::settings::catalog::MIN_REASON_CHARS.to_string())
+            );
+            assert_eq!(issues[0].params.get("type").map(String::as_str), Some("hot_work"));
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+}

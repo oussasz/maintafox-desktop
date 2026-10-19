@@ -906,7 +906,9 @@ fn guard_three_person_change(
         return Ok(None);
     }
     let type_label = current.map_or_else(|| input.code.trim().to_string(), |c| c.code.clone());
-    let params = std::collections::HashMap::from([("type".to_string(), type_label)]);
+    let min = crate::settings::catalog::MIN_REASON_CHARS;
+    let params =
+        std::collections::HashMap::from([("type".to_string(), type_label), ("min".to_string(), min.to_string())]);
     if !writer.may_change_three_person {
         return Err(crate::errors::org_validation_failed(
             "PERMIT_TYPE_THREE_PERSON_FORBIDDEN",
@@ -918,11 +920,11 @@ fn guard_three_person_change(
         .three_person_change_reason
         .as_deref()
         .map(str::trim)
-        .filter(|r| r.chars().count() >= crate::settings::catalog::MIN_REASON_CHARS)
+        .filter(|r| r.chars().count() >= min)
         .ok_or_else(|| {
             crate::errors::org_validation_failed(
                 "PERMIT_TYPE_THREE_PERSON_REASON",
-                "Give the reason for changing the three-person lock-removal rule.",
+                format!("Give the reason (at least {min} characters) for changing the three-person lock-removal rule."),
                 params,
             )
         })?;
