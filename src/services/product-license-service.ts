@@ -726,6 +726,37 @@ export function assertClaimSerializableForDesktop(claim: ProductActivationClaim)
   }
 }
 
+/**
+ * Asks this PC whether entering the previewed licence would be accepted (same rule as
+ * `submitProductLicenseKey`), before the licence is taken on the server or local data is wiped.
+ * Resolves when accepted; rejects with the same coded refusal the submit would give. Changes nothing.
+ */
+export async function checkProductLicenseKeyEntry(
+  preview: ProductActivationPreview,
+): Promise<void> {
+  await invoke<void>("check_product_license_key_entry", {
+    previewJson: JSON.stringify({
+      tenant_id: preview.tenant_id,
+      license_id: preview.license_id,
+      machine_fingerprint: preview.machine_fingerprint,
+      has_demo_data: preview.has_demo_data ?? null,
+      is_initialized: preview.is_initialized ?? null,
+      // The licence terms, mapped as `toDesktopActivationClaimRecord` maps the claim's.
+      expires_at: preview.expires_at ?? null,
+      device_limit: preview.device_limit ?? null,
+      license_tier: preview.edition ?? preview.license_tier ?? preview.license_plan ?? null,
+      offline_grace_hours: preview.offline_grace_hours ?? null,
+      force_update_required: preview.force_update_required ?? null,
+      force_min_app_version: preview.force_min_app_version ?? null,
+      update_channel: preview.update_channel ?? null,
+      trust_revocation_disconnects_immediately:
+        preview.trust_revocation_disconnects_immediately ?? null,
+      reconnect_requires_fresh_heartbeat: preview.reconnect_requires_fresh_heartbeat ?? null,
+      entitlement_envelope: preview.entitlement_envelope ?? null,
+    }),
+  });
+}
+
 export async function submitProductLicenseKey(input: {
   key: string;
   claim?: ProductActivationClaim | null;
@@ -742,6 +773,21 @@ export async function submitProductLicenseKey(input: {
     appVersion: input.app_version ?? null,
   });
 }
+
+/**
+ * The licence server's denial codes, the ones `map_denied_status` (product_license.rs) records as a
+ * licence denial; once recorded, only an administrator with step-up lifts it. Only these are
+ * reported as `denied`: any other 4xx (a malformed request, a licence not found, a proxy's rate
+ * limit) is reported as `http_error`, which never needs an administrator to clear.
+ */
+export const LICENCE_DENIAL_CODES: ReadonlySet<string> = new Set([
+  "activation_revoked",
+  "tenant_inactive",
+  "license_revoked",
+  "license_expired",
+  "slot_limit_reached",
+  "force_update_required",
+]);
 
 const ReconciliationOutcomeInputSchema = z.object({
   kind: z.enum(["success", "network_error", "http_error", "denied"]),

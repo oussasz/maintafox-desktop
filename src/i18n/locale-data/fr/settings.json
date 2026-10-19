@@ -503,6 +503,9 @@
     "SITE_SETTING_NOT_A_SITE": "Ce nœud d'organisation n'est pas un site de planification (son type ne peut pas porter de travaux).",
     "SITE_SETTING_UNKNOWN": "Règle de site inconnue.",
     "FIRST_ADMIN_ALREADY_EXISTS": "Un administrateur existe déjà pour cette organisation : connectez-vous avec ce compte.",
-    "LICENSE_RECONCILE_ADMIN_REQUIRED": "Ce changement de licence demande un administrateur : connectez-vous en tant qu'administrateur, puis réessayez."
+    "LICENSE_RECONCILE_ADMIN_REQUIRED": "Ce changement de licence demande un administrateur : connectez-vous en tant qu'administrateur ; l'écran de licence vous demande alors de confirmer votre identité et applique le changement.",
+    "LICENSE_EXTENSION_ADMIN_REQUIRED": "Cette mise à jour de licence étend les conditions de la licence ou lève un refus (échéance, postes, édition, droits) : connectez-vous en tant qu'administrateur ; l'écran de licence vous demande alors de confirmer votre identité et applique la mise à jour.",
+    "LICENSE_CLAIM_INVALID": "Les données de licence reçues sont incomplètes ou mal formées (organisation, licence, poste ou jeton d'activation) : rien n'a été modifié.",
+    "LICENSE_FIRST_ADMIN_RETRY": "Le premier administrateur n'a pas pu être enregistré car un autre est en cours de création au même moment : patientez un instant, puis réessayez."
   }
 }
