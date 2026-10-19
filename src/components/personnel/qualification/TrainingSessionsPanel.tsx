@@ -8,19 +8,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { EntityFormDialog, EntityFormFooter, EntityFormSection } from "@/components/entity-form";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { DateTimeLocalField } from "@/components/ui/date-time-local-field";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import {
@@ -463,15 +456,26 @@ export function TrainingSessionsPanel({
         )}
       </section>
 
-      <Dialog open={draft != null} onOpenChange={(o) => !o && !saving && setDraft(null)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>
-              {draft?.id ? t("sessions.editTitle") : t("sessions.addTitle")}
-            </DialogTitle>
-            <DialogDescription>{t("sessions.formDescription")}</DialogDescription>
-          </DialogHeader>
-          {draft ? (
+      <EntityFormDialog
+        open={draft != null}
+        onOpenChange={(o) => !o && !saving && setDraft(null)}
+        title={draft?.id ? t("sessions.editTitle") : t("sessions.addTitle")}
+        description={t("sessions.formDescription")}
+        footer={
+          <EntityFormFooter
+            cancelLabel={t("action.cancel")}
+            primaryLabel={t("action.save")}
+            onCancel={() => setDraft(null)}
+            cancelDisabled={saving}
+            primaryType="button"
+            onPrimary={() => void saveSession()}
+            primaryDisabled={!draftValid}
+            primaryLoading={saving}
+          />
+        }
+      >
+        {draft ? (
+          <EntityFormSection title={t("sessions.formSection")}>
             <div className="grid gap-3 sm:grid-cols-2">
               <FormField name="ts-cert" label={t("sessions.leadsTo")} className="sm:col-span-2">
                 <Select
@@ -574,26 +578,9 @@ export function TrainingSessionsPanel({
                 ) : null}
               </FormField>
             </div>
-          ) : null}
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              className="h-11"
-              onClick={() => setDraft(null)}
-              disabled={saving}
-            >
-              {t("action.cancel")}
-            </Button>
-            <Button
-              className="h-11"
-              onClick={() => void saveSession()}
-              disabled={!draftValid || saving}
-            >
-              {t("action.save")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </EntityFormSection>
+        ) : null}
+      </EntityFormDialog>
     </div>
   );
 }

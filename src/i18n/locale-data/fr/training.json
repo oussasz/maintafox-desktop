@@ -264,6 +264,7 @@
     "add": "Nouvelle session",
     "addTitle": "Nouvelle session de formation",
     "editTitle": "Modifier la session",
+    "formSection": "Détails de la session",
     "edit": "Modifier",
     "formDescription": "Quand une session mène à une habilitation, chaque personne reçue l'obtient automatiquement pour la durée de validité de l'habilitation.",
     "leadsTo": "Mène à l'habilitation",

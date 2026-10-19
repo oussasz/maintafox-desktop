@@ -1,15 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { EntityFormDialog, EntityFormFooter, EntityFormSection } from "@/components/entity-form";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { mfVisualMetric } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
@@ -218,27 +212,111 @@ export function DashboardCustomizeDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{t("layout.customizeTitle")}</DialogTitle>
-        </DialogHeader>
-        <div className="max-h-[60vh] space-y-4 overflow-y-auto py-2">
-          <div className="space-y-3">
-            {orderedWidgets.map((w, index) => (
-              <div key={w.id} className="flex items-center gap-2">
+    <EntityFormDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={t("layout.customizeTitle")}
+      footer={
+        <EntityFormFooter
+          leading={
+            <Button
+              type="button"
+              variant="ghost"
+              className="sm:me-auto"
+              onClick={() => {
+                setDraft(cloneDashboardLayout(DEFAULT_DASHBOARD_LAYOUT));
+                setKpiDraft(buildFullKpiDraft([], allowedKpiIds));
+              }}
+            >
+              {t("layout.reset")}
+            </Button>
+          }
+          cancelLabel={t("layout.cancel")}
+          primaryLabel={t("layout.save")}
+          onCancel={() => onOpenChange(false)}
+          primaryType="button"
+          onPrimary={() => void onSave()}
+          primaryLoading={saving}
+        />
+      }
+    >
+      <EntityFormSection title={t("layout.pageSectionsHeading")}>
+        {orderedWidgets.map((w, index) => (
+          <div key={w.id} className="flex items-center gap-2">
+            <Checkbox
+              checked={w.visible}
+              onCheckedChange={(c) => onToggleWidget(w.id, Boolean(c))}
+              aria-label={labelForWidget(w.id)}
+            />
+            <span className="flex-1 text-sm">{labelForWidget(w.id)}</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={index === 0}
+              onClick={() => onMoveWidget(index, -1)}
+              aria-label={t("layout.moveUp")}
+            >
+              ↑
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={index === orderedWidgets.length - 1}
+              onClick={() => onMoveWidget(index, 1)}
+              aria-label={t("layout.moveDown")}
+            >
+              ↓
+            </Button>
+          </div>
+        ))}
+      </EntityFormSection>
+      <EntityFormSection title={t("layout.metricCardsHeading")}>
+        {orderedKpis.map((w, index) => {
+          const reg = OVERVIEW_KPI_REGISTRY.find((r) => r.semanticKey === w.id);
+          if (!reg) return null;
+          const accent = w.accent ?? OVERVIEW_KPI_ACCENTS.DEFAULT;
+          return (
+            <div key={w.id} className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
                 <Checkbox
                   checked={w.visible}
-                  onCheckedChange={(c) => onToggleWidget(w.id, Boolean(c))}
-                  aria-label={labelForWidget(w.id)}
+                  onCheckedChange={(c) => onToggleKpi(w.id, Boolean(c))}
+                  aria-label={t(reg.labelKey as never)}
                 />
-                <span className="flex-1 text-sm">{labelForWidget(w.id)}</span>
+                <span className="min-w-0 flex-1 truncate text-sm">{t(reg.labelKey as never)}</span>
+              </div>
+              <div
+                className="flex items-center gap-1 ps-7 sm:ps-0"
+                role="group"
+                aria-label={t("layout.accentPicker")}
+              >
+                {OVERVIEW_KPI_ACCENT_OPTIONS.map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    title={t(`layout.accent.${opt}` as never)}
+                    aria-label={t(`layout.accent.${opt}` as never)}
+                    aria-pressed={accent === opt}
+                    className={cn(
+                      "h-4 w-4 rounded-full border border-surface-border transition-transform",
+                      mfVisualMetric.accentDot[opt],
+                      accent === opt
+                        ? "ring-2 ring-ring ring-offset-1 ring-offset-background scale-110"
+                        : "opacity-70 hover:opacity-100",
+                    )}
+                    onClick={() => onAccentKpi(w.id, opt)}
+                  />
+                ))}
+              </div>
+              <div className="flex items-center gap-1 ps-7 sm:ps-0">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   disabled={index === 0}
-                  onClick={() => onMoveWidget(index, -1)}
+                  onClick={() => onMoveKpi(index, -1)}
                   aria-label={t("layout.moveUp")}
                 >
                   ↑
@@ -247,104 +325,17 @@ export function DashboardCustomizeDialog({
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={index === orderedWidgets.length - 1}
-                  onClick={() => onMoveWidget(index, 1)}
+                  disabled={index === orderedKpis.length - 1}
+                  onClick={() => onMoveKpi(index, 1)}
                   aria-label={t("layout.moveDown")}
                 >
                   ↓
                 </Button>
               </div>
-            ))}
-          </div>
-          <div className="space-y-3 border-t border-surface-border pt-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
-              {t("layout.metricCardsHeading")}
-            </p>
-            {orderedKpis.map((w, index) => {
-              const reg = OVERVIEW_KPI_REGISTRY.find((r) => r.semanticKey === w.id);
-              if (!reg) return null;
-              const accent = w.accent ?? OVERVIEW_KPI_ACCENTS.DEFAULT;
-              return (
-                <div
-                  key={w.id}
-                  className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2"
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <Checkbox
-                      checked={w.visible}
-                      onCheckedChange={(c) => onToggleKpi(w.id, Boolean(c))}
-                      aria-label={t(reg.labelKey as never)}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-sm">
-                      {t(reg.labelKey as never)}
-                    </span>
-                  </div>
-                  <div
-                    className="flex items-center gap-1 ps-7 sm:ps-0"
-                    role="group"
-                    aria-label={t("layout.accentPicker")}
-                  >
-                    {OVERVIEW_KPI_ACCENT_OPTIONS.map((opt) => (
-                      <button
-                        key={opt}
-                        type="button"
-                        title={t(`layout.accent.${opt}` as never)}
-                        aria-label={t(`layout.accent.${opt}` as never)}
-                        aria-pressed={accent === opt}
-                        className={cn(
-                          "h-4 w-4 rounded-full border border-surface-border transition-transform",
-                          mfVisualMetric.accentDot[opt],
-                          accent === opt
-                            ? "ring-2 ring-ring ring-offset-1 ring-offset-background scale-110"
-                            : "opacity-70 hover:opacity-100",
-                        )}
-                        onClick={() => onAccentKpi(w.id, opt)}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-1 ps-7 sm:ps-0">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={index === 0}
-                      onClick={() => onMoveKpi(index, -1)}
-                      aria-label={t("layout.moveUp")}
-                    >
-                      ↑
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={index === orderedKpis.length - 1}
-                      onClick={() => onMoveKpi(index, 1)}
-                      aria-label={t("layout.moveDown")}
-                    >
-                      ↓
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <DialogFooter className="gap-2 sm:gap-0">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => {
-              setDraft(cloneDashboardLayout(DEFAULT_DASHBOARD_LAYOUT));
-              setKpiDraft(buildFullKpiDraft([], allowedKpiIds));
-            }}
-          >
-            {t("layout.reset")}
-          </Button>
-          <Button type="button" onClick={() => void onSave()} disabled={saving}>
-            {t("layout.save")}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+            </div>
+          );
+        })}
+      </EntityFormSection>
+    </EntityFormDialog>
   );
 }

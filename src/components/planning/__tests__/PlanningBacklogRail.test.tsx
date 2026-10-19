@@ -144,6 +144,32 @@ describe("planning blockers", () => {
   });
 });
 
+describe("backlog card shutdown badge", () => {
+  function renderReady(c: ScheduleCandidate) {
+    render(
+      <MemoryRouter>
+        <PlanningBacklogRail
+          ready={[c]}
+          blocked={[]}
+          conflictSummary={[]}
+          selectedCandidateId={null}
+          onSelectReady={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  it("shows the shutdown badge when the job needs the equipment stopped", () => {
+    renderReady(candidate({ readiness_status: "ready", shutdown_requirement: "required" }));
+    expect(screen.getByText("shutdownRequirement.badge")).toBeInTheDocument();
+  });
+
+  it("shows no shutdown badge when the job does not need a shutdown", () => {
+    renderReady(candidate({ readiness_status: "ready", shutdown_requirement: null }));
+    expect(screen.queryByText("shutdownRequirement.badge")).toBeNull();
+  });
+});
+
 const tPlanning = ((key: string, opts?: Record<string, unknown>) =>
   (
     lookup(key) ?? (typeof opts?.["defaultValue"] === "string" ? opts["defaultValue"] : key)
