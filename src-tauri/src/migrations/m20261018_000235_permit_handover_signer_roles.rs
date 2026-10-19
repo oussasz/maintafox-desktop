@@ -4,7 +4,8 @@
 //!   from the session (never from the screen). `received_by_id`: the receiving person, optional,
 //!   picked from the user accounts. Both nullable: hand-overs recorded before keep NULL — nobody is
 //!   invented after the fact. Both sync with the row as user references.
-//! - `PERMIT.HANDOVER_ROLES` (COMPANY list, Données de référence) is created **empty**. The free
+//! - `PERMIT.HANDOVER_ROLES` (COMPANY list, Données de référence) is created **empty** here
+//!   (migration 239 then adds three starter roles to review). The free
 //!   texts already stored as "from" / "to" roles are adopted with their exact text and flagged
 //!   "à revoir"; no stored hand-over is rewritten (`permit::handover_roles`, same pattern as 229).
 //!   The integrity pass runs the same adoption for texts received later by sync.

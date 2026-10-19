@@ -1950,8 +1950,9 @@ async fn a_change_of_the_three_person_chain_is_recorded_on_the_type() {
     assert_eq!(trace(plain.id).await, (None, None, None));
 }
 
-/// A plant-wide role holding `permissions`, granted to a new active account.
-async fn user_with(db: &DatabaseConnection, username: &str, permissions: &[&str]) -> i64 {
+/// A plant-wide role holding `permissions`, granted to a new active account (sync id
+/// `<username>-sync`).
+pub(super) async fn user_with(db: &DatabaseConnection, username: &str, permissions: &[&str]) -> i64 {
     for (sql, values) in [
         (
             "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \

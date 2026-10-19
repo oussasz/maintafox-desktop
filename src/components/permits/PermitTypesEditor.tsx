@@ -2,7 +2,8 @@
  * Work-permit types editor — hosted in Données de référence (catalog `PERMIT.TYPES`), the one
  * place they are managed. Saves go through `upsert_permit_type` (permit issuer; administrator +
  * step-up + a reason of at least ISOLATION_REASON_MIN characters to stop requiring an energy
- * isolation; the LOTO type keeps it). The
+ * isolation; the LOTO type keeps it: without `adm.settings` the box of a type that requires it is
+ * shown but disabled). The
  * three-person lock-removal setting is shown to everyone and changed only by an administrator
  * (`adm.settings`), with a reason of at least THREE_PERSON_REASON_MIN characters and a step-up.
  */
@@ -122,6 +123,9 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const { can } = usePermissions();
   const canChangeThreePerson = can(P.ADM_SETTINGS);
+  // Stopping to require an energy isolation needs the settings right (`upsert_permit_type`);
+  // requiring it is a plain edit, so the box is disabled only on a saved type that requires it.
+  const isolationAdminOnly = !can(P.ADM_SETTINGS) && draft.id != null && draft.savedEnergyIsolation;
 
   const changingThreePerson = draft.threePerson !== draft.savedThreePerson;
   const threePersonReason = serverTrim(draft.threePersonReason);
@@ -313,11 +317,23 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
                 <Checkbox checked disabled aria-describedby="type-loto-locked" />
                 {t("types.energyIsolation")}
               </label>
+            ) : isolationAdminOnly ? (
+              <label className="flex items-center gap-2 text-sm text-text-primary">
+                <Checkbox
+                  checked={draft.energyIsolation}
+                  disabled
+                  aria-describedby="type-loto-locked"
+                />
+                {t("types.energyIsolation")}
+              </label>
             ) : (
               flag("energyIsolation", t("types.energyIsolation"))
             )}
             <p id="type-loto-locked" className="pl-6 text-xs text-text-muted">
               {draft.lotoLocked ? t("types.energyIsolationLocked") : t("types.energyIsolationHint")}
+              {!draft.lotoLocked && isolationAdminOnly
+                ? ` ${t("types.energyIsolationAdminOnly")}`
+                : null}
             </p>
             {relaxing ? (
               <FormField

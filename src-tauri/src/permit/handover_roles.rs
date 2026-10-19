@@ -21,7 +21,8 @@ pub const DOMAIN: &str = "PERMIT.HANDOVER_ROLES";
 /// Stable code: a hand-over role that is not an active value of the list.
 pub const CODE_ROLE_NOT_IN_LIST: &str = "PERMIT_HANDOVER_ROLE_NOT_IN_LIST";
 
-/// The list with its published set (empty). Idempotent (migration 235, integrity pass).
+/// The list with its published set (its starter roles are added once by migration 239). Idempotent
+/// (migration 235, integrity pass).
 pub async fn ensure_handover_roles(db: &impl ConnectionTrait) -> AppResult<()> {
     ensure_domain(
         db,

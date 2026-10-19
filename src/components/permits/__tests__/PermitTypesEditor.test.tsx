@@ -33,9 +33,11 @@ vi.mock("react-i18next", () => ({
 const svc = vi.hoisted(() => ({ upsertPermitType: vi.fn() }));
 vi.mock("@/services/permit-service", () => svc);
 vi.mock("@/services/rbac-service", () => ({ verifyStepUp: vi.fn() }));
+const rights = vi.hoisted(() => ({ settings: false }));
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({
-    can: (p: string) => p === P.PTW_VIEW || p === P.PTW_ISSUE,
+    can: (p: string) =>
+      p === P.PTW_VIEW || p === P.PTW_ISSUE || (rights.settings && p === P.ADM_SETTINGS),
     canAny: () => true,
     isLoading: false,
   }),
@@ -79,5 +81,54 @@ describe("PermitTypesEditor — the code of an existing type", () => {
     fireEvent.change(code, { target: { value: "work_at_height" } });
     await waitFor(() => expect(code).toHaveValue("work_at_height"));
     expect(screen.queryByText(enPermits.types.codeLocked)).toBeNull();
+  });
+});
+
+describe("PermitTypesEditor — energy isolation without the settings right", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    rights.settings = false;
+  });
+
+  const isolationBox = () =>
+    screen.getByRole("checkbox", { name: enPermits.types.energyIsolation });
+
+  it("cannot be switched off on a type that requires it, with the reason said", async () => {
+    render(
+      <PermitTypesEditor
+        types={[{ ...HOT_WORK, requires_energy_isolation: true }]}
+        canEdit
+        onSaved={vi.fn()}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: enPermits.actions.edit }));
+    expect(isolationBox()).toBeDisabled();
+    expect(isolationBox()).toBeChecked();
+    expect(
+      screen.getByText(
+        `${enPermits.types.energyIsolationHint} ${enPermits.types.energyIsolationAdminOnly}`,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("can still be switched on (a plain edit)", async () => {
+    render(<PermitTypesEditor types={[HOT_WORK]} canEdit onSaved={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: enPermits.actions.edit }));
+    expect(isolationBox()).toBeEnabled();
+    expect(screen.queryByText(new RegExp(enPermits.types.energyIsolationAdminOnly))).toBeNull();
+  });
+
+  it("is open to an administrator", async () => {
+    rights.settings = true;
+    render(
+      <PermitTypesEditor
+        types={[{ ...HOT_WORK, requires_energy_isolation: true }]}
+        canEdit
+        onSaved={vi.fn()}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: enPermits.actions.edit }));
+    expect(isolationBox()).toBeEnabled();
+    expect(screen.queryByText(new RegExp(enPermits.types.energyIsolationAdminOnly))).toBeNull();
   });
 });

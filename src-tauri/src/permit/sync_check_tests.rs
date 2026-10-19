@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 
 use super::tests::{
     add_isolation, advance_to_issued, apply_and_verify, assigned_wo_requiring_permit, create_from_wo, create_permit,
-    insert_equipment, set_status, setup, APPLIER, VERIFIER,
+    insert_equipment, set_status, setup, user_with, APPLIER, VERIFIER,
 };
 use crate::permit::domain::WorkPermit;
 use crate::permit::queries;
@@ -3389,6 +3389,71 @@ async fn the_updates_loto_isolation_restore_passes_both_ways() {
         code(&outcome),
         Some("PERMIT_TYPE_ISOLATION_UNAUTHORISED"),
         "{outcome:?}"
+    );
+}
+
+/// Owner decision 5: a received change of either safety setting needs an author who holds both the
+/// settings right and the permit-issue right here; the settings right alone is refused.
+#[tokio::test]
+async fn a_received_setting_change_by_a_settings_holder_without_the_permit_issue_right_is_refused() {
+    let db = setup().await;
+    user_with(&db, "settings_only", &[crate::rbac::permissions::ADM_SETTINGS]).await;
+    let hot = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'hot_work'")
+        .await
+        .expect("hot work");
+    exec(
+        &db,
+        &format!(
+            "UPDATE permit_types SET requires_energy_isolation = 1, requires_three_person_removal = 1 \
+             WHERE entity_sync_id = '{hot}'"
+        ),
+    )
+    .await;
+    let held = wire(&db, "permit_types", &hot).await;
+    let author = json!("settings_only-sync");
+    let reason = json!("Changed by the settings holder only");
+    let isolation_off = with(
+        held.clone(),
+        &[
+            ("requires_energy_isolation", json!(0)),
+            ("isolation_changed_by_sync_id", author.clone()),
+            ("isolation_changed_at", json!(now())),
+            ("isolation_change_reason", reason.clone()),
+        ],
+    );
+    let outcome = apply(&db, "permit_types", &hot, &isolation_off).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_ISOLATION_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+    let three_person_off = with(
+        held,
+        &[
+            ("requires_three_person_removal", json!(0)),
+            ("three_person_changed_by_sync_id", author),
+            ("three_person_changed_at", json!(now())),
+            ("three_person_change_reason", reason),
+        ],
+    );
+    let outcome = apply(&db, "permit_types", &hot, &three_person_off).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_THREE_PERSON_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT CAST(requires_energy_isolation AS TEXT) || CAST(requires_three_person_removal AS TEXT) \
+                 FROM permit_types WHERE entity_sync_id = '{hot}'"
+            )
+        )
+        .await
+        .as_deref(),
+        Some("11"),
+        "nothing written"
     );
 }
 
