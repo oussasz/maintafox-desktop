@@ -1014,14 +1014,20 @@ async fn judge_setting_record(
         );
     };
     // The update's own restore of the shipped LOTO type's isolation rule (migration 241: nobody, a
-    // fixed reason, made by each PC at its own upgrade) is no change by anyone: read as no record,
+    // fixed reason, made by each PC at its own upgrade, at a readable time not in the future, with
+    // the same tolerance as every other received time) is no change by anyone: read as no record,
     // so the rows of PCs that needed it and of PCs that did not are accepted both ways. Only for
-    // that type and that rule; switching it off stays refused above.
+    // that type and that rule; switching it off stays refused above. A record with an unreadable or
+    // future time is not the update's: judged as any record (and refused for its time).
     let restore =
         s.setting == ISOLATION_SETTING.setting && crate::permit::queries::is_shipped_loto_type(entity_sync_id, code);
     let record = |p: &Payload| {
         let r = [s.by, s.at, s.why].map(|k| field(p, k).map(str::to_string));
-        if restore && crate::permit::queries::is_loto_isolation_restore_record(r[0].as_deref(), r[2].as_deref()) {
+        let timely = r[1].as_deref().and_then(instant).is_some_and(|at| at <= future_bound());
+        if restore
+            && timely
+            && crate::permit::queries::is_loto_isolation_restore_record(r[0].as_deref(), r[2].as_deref())
+        {
             [None, None, None]
         } else {
             r

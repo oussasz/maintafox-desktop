@@ -133,9 +133,11 @@ pub async fn adopt_received_roles(db: &impl ConnectionTrait, log_id: i64) -> App
     };
     let mut roles: Vec<String> = Vec::new();
     for column in ["handed_from_role", "handed_to_role"] {
+        // Blank as the integrity pass judges it (SQLite `TRIM`: spaces only), so a role is adopted
+        // on arrival exactly when the start-up pass would adopt it.
         if let Some(role) = row
             .try_get::<Option<String>>("", column)?
-            .filter(|r| !r.trim().is_empty())
+            .filter(|r| !r.trim_matches(' ').is_empty())
         {
             if !roles.contains(&role) {
                 roles.push(role);

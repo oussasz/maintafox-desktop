@@ -3595,6 +3595,31 @@ async fn the_updates_loto_isolation_restore_passes_both_ways() {
     );
     let outcome = apply(&db, "permit_types", &loto, &unrecorded).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // The fixed reason naming a person is no restore by the update: judged as usual (here: an
+    // author without the settings right, refused), nothing written.
+    let held = wire(&db, "permit_types", &loto).await;
+    user_with(&db, "no_settings_right", &[crate::rbac::permissions::PTW_ISSUE]).await;
+    let named = restore(&held, json!("no_settings_right-sync"), &now());
+    let outcome = apply(&db, "permit_types", &loto, &named).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_ISOLATION_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+    // Nor is a restore record with a time in the future (beyond the tolerated clock difference) or
+    // a time that cannot be read (review N1): judged, and refused for its time.
+    let future = (chrono::Utc::now() + chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    for at in [future.as_str(), "9999-01-01T00:00:00Z", "someday"] {
+        let outcome = apply(&db, "permit_types", &loto, &restore(&held, Value::Null, at)).await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_TYPE_ISOLATION_UNAUDITED"),
+            "{at}: {outcome:?}"
+        );
+    }
+    assert_eq!(record(loto.clone()).await.as_deref(), Some("-|-"), "nothing written");
     // Switching LOTO off stays refused, whatever record it carries.
     let off = with(
         restore(&wire(&db, "permit_types", &loto).await, Value::Null, &now()),
@@ -3656,6 +3681,15 @@ async fn a_received_setting_change_by_a_settings_holder_without_the_permit_issue
         Some("PERMIT_TYPE_ISOLATION_UNAUTHORISED"),
         "{outcome:?}"
     );
+    // Refused for the missing permit-issue right, not the settings right (review N6).
+    let refused_for = |outcome: &ApplyOutcome| match outcome {
+        ApplyOutcome::Conflict { message, .. } => message.clone(),
+        other => panic!("expected a conflict, got {other:?}"),
+    };
+    assert!(
+        refused_for(&outcome).contains("without the permit-issue right"),
+        "{outcome:?}"
+    );
     let three_person_off = with(
         held,
         &[
@@ -3669,6 +3703,10 @@ async fn a_received_setting_change_by_a_settings_holder_without_the_permit_issue
     assert_eq!(
         code(&outcome),
         Some("PERMIT_TYPE_THREE_PERSON_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+    assert!(
+        refused_for(&outcome).contains("without the permit-issue right"),
         "{outcome:?}"
     );
     assert_eq!(
@@ -3942,6 +3980,58 @@ async fn a_received_handover_log_adopts_only_its_own_roles() {
         .map(|r| r.code)
         .collect();
     assert!(codes.contains(&"Ancien texte".to_string()), "{codes:?}");
+}
+
+/// Review NOTE 2a: a hand-over role that only Rust would call blank (a tab) is judged on arrival as
+/// the start-up integrity pass judges it (SQLite `TRIM`: spaces only): adopted by both, once; a
+/// role of spaces only is skipped by both.
+#[tokio::test]
+async fn arrival_and_the_integrity_pass_agree_on_blank_handover_roles() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-92").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+             confirmation_note, signed_at, row_version) VALUES ('ho-blank-roles', {}, char(9), '   ', \
+             'Zone left clean', '2026-10-03T00:00:00Z', 1)",
+            wp.id
+        ),
+    )
+    .await;
+    let log_id = text(
+        &db,
+        "SELECT CAST(id AS TEXT) FROM permit_handover_logs WHERE entity_sync_id = 'ho-blank-roles'",
+    )
+    .await
+    .and_then(|id| id.parse::<i64>().ok())
+    .expect("log");
+    let adopted = |code_sql: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT CAST(COUNT(*) AS TEXT) FROM reference_values WHERE code = {code_sql}"),
+            )
+            .await
+        }
+    };
+    crate::permit::handover_roles::adopt_received_roles(&db, log_id)
+        .await
+        .expect("arrival");
+    assert_eq!(
+        adopted("char(9)").await.as_deref(),
+        Some("1"),
+        "the tab role is adopted on arrival"
+    );
+    assert_eq!(adopted("'   '").await.as_deref(), Some("0"), "spaces only: skipped");
+    // The integrity pass finds the tab role already listed and skips the spaces, as arrival did.
+    crate::permit::handover_roles::adopt_stored_roles(&db)
+        .await
+        .expect("integrity");
+    assert_eq!(adopted("char(9)").await.as_deref(), Some("1"));
+    assert_eq!(adopted("'   '").await.as_deref(), Some("0"));
 }
 
 /// A problem with the list itself (here: no published version left) never turns the received
