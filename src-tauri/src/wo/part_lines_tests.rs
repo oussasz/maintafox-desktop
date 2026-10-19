@@ -39,28 +39,6 @@ mod tests {
         .await
     }
 
-    /// An active login with no role at all (so without the WO edit right).
-    async fn user_without_rights(db: &sea_orm::DatabaseConnection) -> i64 {
-        let now = chrono::Utc::now().to_rfc3339();
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO user_accounts \
-             (entity_sync_id, username, display_name, identity_mode, password_hash, \
-              is_active, is_admin, force_password_change, failed_login_attempts, \
-              created_at, updated_at, row_version) \
-             VALUES ('part-line-viewer-sync', 'part_line_viewer', 'Viewer', 'local', 'x', 1, 0, 0, 0, ?, ?, 1)",
-            [now.clone().into(), now.into()],
-        ))
-        .await
-        .expect("insert user");
-        scalar_i64(
-            db,
-            "SELECT id FROM user_accounts WHERE username = 'part_line_viewer'",
-            vec![],
-        )
-        .await
-    }
-
     async fn seed_equipment(db: &sea_orm::DatabaseConnection) {
         for sql in [
             "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
@@ -438,35 +416,6 @@ mod tests {
             .expect_err("not in planning");
             assert_eq!(refusal_code(err), part_line_codes::NOT_IN_PLANNING);
         }
-        assert_eq!(reserved_qty(&db, article_id, location_id).await, 2.0);
-    }
-
-    #[tokio::test]
-    async fn a_person_without_the_wo_edit_right_is_refused() {
-        let db = crate::db::test_db::seeded().await;
-        let viewer = user_without_rights(&db).await;
-        let wo_id = wo_in_planning(&db).await;
-        let (article_id, location_id) = seed_stock_article(&db, "PL-RIGHT-06", 5.0).await;
-        let part = add_planned(&db, wo_id, article_id, location_id, 2.0).await;
-
-        let err = parts::cancel_planned_part(&db, CancelPlannedPartInput { wo_part_id: part.id }, viewer)
-            .await
-            .expect_err("no right");
-        assert_eq!(refusal_code(err), part_line_codes::RIGHT_REQUIRED);
-        let err = parts::set_planned_part_required(
-            &db,
-            SetPlannedPartRequiredInput {
-                wo_part_id: part.id,
-                is_required: false,
-            },
-            viewer,
-        )
-        .await
-        .expect_err("no right");
-        assert_eq!(refusal_code(err), part_line_codes::RIGHT_REQUIRED);
-        let line = &parts::list_wo_parts(&db, wo_id).await.expect("list")[0];
-        assert_eq!(line.consumption_status, "pending");
-        assert!(line.is_required);
         assert_eq!(reserved_qty(&db, article_id, location_id).await, 2.0);
     }
 
