@@ -116,6 +116,16 @@ pub struct DiQueueCounts {
 }
 
 pub async fn count_di_queues(db: &impl ConnectionTrait, user_id: i64) -> AppResult<DiQueueCounts> {
+    count_di_queues_in_scope(db, user_id, &super::access::ScopeSql::everywhere()).await
+}
+
+/// [`count_di_queues`] over the requests of the reader's scope (`di::access`): a site user's
+/// badges count the requests of their sites only.
+pub async fn count_di_queues_in_scope(
+    db: &impl ConnectionTrait,
+    user_id: i64,
+    scope: &super::access::ScopeSql,
+) -> AppResult<DiQueueCounts> {
     let mut arms: Vec<String> = Vec::new();
     for queue in DI_QUEUES.iter().filter(|q| **q != "mine") {
         if let Some(pred) = queue_predicate(queue)? {
@@ -130,15 +140,16 @@ pub async fn count_di_queues(db: &impl ConnectionTrait, user_id: i64) -> AppResu
                 COALESCE(SUM(CASE WHEN ir.submitter_id = ? AND {mine} THEN 1 ELSE 0 END), 0) AS mine, \
                 COALESCE(SUM(CASE WHEN ir.submitter_id = ? AND ir.status = 'returned_for_clarification' \
                                   THEN 1 ELSE 0 END), 0) AS mine_awaiting_info \
-           FROM intervention_requests ir",
-        arms.join(", ")
+           FROM intervention_requests ir \
+          WHERE {}",
+        arms.join(", "),
+        scope.predicate
     );
+    // The submitter binds (SELECT) come before the scope's (WHERE).
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into(), user_id.into()];
+    values.extend(scope.binds.iter().cloned());
     let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            [user_id.into(), user_id.into()],
-        ))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("DI queue count returned no row")))?;
     let get = |col: &str| row.try_get::<i64>("", col).map_err(|e| decode_err(col, e));
@@ -160,6 +171,12 @@ pub async fn count_di_queues(db: &impl ConnectionTrait, user_id: i64) -> AppResu
 pub struct DiListPage {
     pub items: Vec<InterventionRequest>,
     pub total: i64,
+    /// Requests matching the filters that the reader's sites do not cover (rule §2.4: shown as a
+    /// count, never silently left out). Always 0 for a plant-wide reader.
+    pub hidden_outside_scope: i64,
+    /// Requests matching the filters that have no org node (rows from before decision O7):
+    /// plant-wide readers only. Always 0 for a plant-wide reader.
+    pub hidden_without_site: i64,
 }
 
 /// Row from `di_state_transition_log`.
@@ -296,6 +313,16 @@ fn map_summary_row(row: &QueryResult) -> AppResult<DiSummaryRow> {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListFilter) -> AppResult<DiListPage> {
+    list_intervention_requests_in_scope(db, filter, &crate::auth::scope::AccessScope::Everywhere).await
+}
+
+/// [`list_intervention_requests`] limited to the reader's scope (where they hold `di.view`), in
+/// SQL before paging, with the count of the matching requests left out and why.
+pub async fn list_intervention_requests_in_scope(
+    db: &DatabaseConnection,
+    filter: DiListFilter,
+    scope: &crate::auth::scope::AccessScope,
+) -> AppResult<DiListPage> {
     let mut where_clauses: Vec<String> = vec!["1 = 1".to_string()];
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
@@ -377,7 +404,42 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
         }
     }
 
-    let where_sql = where_clauses.join(" AND ");
+    let filters_sql = where_clauses.join(" AND ");
+
+    // ── Site scope (rule §2.5): last predicate, so its binds follow the filters' ──
+    let scope_sql = super::access::ScopeSql::of(scope);
+    let (hidden_outside_scope, hidden_without_site) = if scope.is_everywhere() {
+        (0, 0)
+    } else {
+        // Every request the scope leaves out (a NULL predicate — no node — counts as left out),
+        // whatever the user's filters: a count that followed the search or the person filters
+        // would let a site user probe other sites' request texts and people.
+        let hidden_sql = format!(
+            "SELECT COALESCE(SUM(CASE WHEN {without} THEN 1 ELSE 0 END), 0) AS without_site, \
+                    COALESCE(SUM(CASE WHEN {without} THEN 0 ELSE 1 END), 0) AS outside_scope \
+               FROM intervention_requests ir \
+              WHERE NOT COALESCE(({scope_pred}), 0)",
+            without = super::access::DI_WITHOUT_SITE_SQL,
+            scope_pred = scope_sql.predicate,
+        );
+        let hidden_binds = scope_sql.binds.clone();
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                &hidden_sql,
+                hidden_binds,
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("DI hidden count query returned no rows")))?;
+        (
+            row.try_get::<i64>("", "outside_scope")
+                .map_err(|e| decode_err("outside_scope", e))?,
+            row.try_get::<i64>("", "without_site")
+                .map_err(|e| decode_err("without_site", e))?,
+        )
+    };
+    let where_sql = format!("{filters_sql} AND ({})", scope_sql.predicate);
+    binds.extend(scope_sql.binds);
 
     // ── Count query (same WHERE, no joins needed for count) ───────────────
     let count_sql = format!("SELECT COUNT(*) AS total FROM intervention_requests ir WHERE {where_sql}");
@@ -421,7 +483,12 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
         .map(map_intervention_request)
         .collect::<AppResult<Vec<_>>>()?;
 
-    Ok(DiListPage { items, total })
+    Ok(DiListPage {
+        items,
+        total,
+        hidden_outside_scope,
+        hidden_without_site,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -480,6 +547,24 @@ pub async fn get_recent_similar_dis(
     symptom_code_id: Option<i64>,
     days: i64,
 ) -> AppResult<Vec<DiSummaryRow>> {
+    get_recent_similar_dis_in_scope(
+        db,
+        equipment_id,
+        symptom_code_id,
+        days,
+        &crate::auth::scope::AccessScope::Everywhere,
+    )
+    .await
+}
+
+/// [`get_recent_similar_dis`] among the requests the reader may see.
+pub async fn get_recent_similar_dis_in_scope(
+    db: &DatabaseConnection,
+    equipment_id: i64,
+    symptom_code_id: Option<i64>,
+    days: i64,
+    scope: &crate::auth::scope::AccessScope,
+) -> AppResult<Vec<DiSummaryRow>> {
     let mut where_clauses = vec![
         "equipment_id = ?".to_string(),
         format!("submitted_at >= datetime('now', '-{} days')", days.max(1)),
@@ -490,6 +575,9 @@ pub async fn get_recent_similar_dis(
         where_clauses.push("symptom_code_id = ?".to_string());
         binds.push(symptom_id.into());
     }
+    let scope_sql = super::access::ScopeSql::on(scope, "intervention_requests.org_node_id");
+    where_clauses.push(format!("({})", scope_sql.predicate));
+    binds.extend(scope_sql.binds);
 
     let where_sql = where_clauses.join(" AND ");
     let sql = format!(
@@ -522,9 +610,9 @@ pub async fn create_intervention_request(
     // Shared DI / OT urgency scale (`WORK.URGENCY`).
     let reported_urgency = crate::reference::urgency_scale::validate_urgency_code(&input.reported_urgency)?;
 
-    if input.org_node_id != 0 {
-        crate::org::model_scope::assert_org_node_active(db, input.org_node_id).await?;
-    }
+    // Decision O7: every new request names its org node (its anchor for site-scoped roles).
+    super::access::require_org_node(input.org_node_id)?;
+    crate::org::model_scope::assert_org_node_active(db, input.org_node_id).await?;
 
     let code = generate_di_code(db).await?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();

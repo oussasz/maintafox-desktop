@@ -9,13 +9,13 @@ use crate::rbac::permissions::{ADM_USERS, EQ_VIEW};
 
 const NOW: &str = "2026-01-01T00:00:00Z";
 
-async fn exec(db: &DatabaseConnection, sql: &str) {
+pub(crate) async fn exec(db: &DatabaseConnection, sql: &str) {
     db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
         .await
         .expect(sql);
 }
 
-async fn scalar(db: &DatabaseConnection, sql: &str) -> i64 {
+pub(crate) async fn scalar(db: &DatabaseConnection, sql: &str) -> i64 {
     db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
         .await
         .expect("query")
@@ -24,11 +24,11 @@ async fn scalar(db: &DatabaseConnection, sql: &str) -> i64 {
         .expect("value")
 }
 
-struct Tree {
-    plant: i64,
-    site_a: i64,
-    line_a1: i64,
-    site_b: i64,
+pub(crate) struct Tree {
+    pub(crate) plant: i64,
+    pub(crate) site_a: i64,
+    pub(crate) line_a1: i64,
+    pub(crate) site_b: i64,
 }
 
 /// An active structure model with one node type (the seeded test database has no org tree).
@@ -53,7 +53,7 @@ async fn ensure_node_type(db: &DatabaseConnection) {
     .await;
 }
 
-async fn node(db: &DatabaseConnection, code: &str, parent: Option<i64>) -> i64 {
+pub(crate) async fn node(db: &DatabaseConnection, code: &str, parent: Option<i64>) -> i64 {
     ensure_node_type(db).await;
     let parent_sql = parent.map_or_else(|| "NULL".to_string(), |p| p.to_string());
     exec(
@@ -74,7 +74,7 @@ async fn node(db: &DatabaseConnection, code: &str, parent: Option<i64>) -> i64 {
     .await
 }
 
-async fn tree(db: &DatabaseConnection) -> Tree {
+pub(crate) async fn tree(db: &DatabaseConnection) -> Tree {
     let plant = node(db, "PLANT", None).await;
     let site_a = node(db, "A", Some(plant)).await;
     let line_a1 = node(db, "A1", Some(site_a)).await;
@@ -87,7 +87,7 @@ async fn tree(db: &DatabaseConnection) -> Tree {
     }
 }
 
-async fn user(db: &DatabaseConnection, name: &str) -> i32 {
+pub(crate) async fn user(db: &DatabaseConnection, name: &str) -> i32 {
     exec(
         db,
         &format!(
@@ -100,7 +100,7 @@ async fn user(db: &DatabaseConnection, name: &str) -> i32 {
     i32::try_from(scalar(db, &format!("SELECT id FROM user_accounts WHERE username = '{name}'")).await).expect("id")
 }
 
-async fn role(db: &DatabaseConnection, name: &str, permissions: &[&str]) -> i64 {
+pub(crate) async fn role(db: &DatabaseConnection, name: &str, permissions: &[&str]) -> i64 {
     exec(
         db,
         &format!(
@@ -123,7 +123,13 @@ async fn role(db: &DatabaseConnection, name: &str, permissions: &[&str]) -> i64 
     id
 }
 
-async fn assign(db: &DatabaseConnection, user_id: i32, role_id: i64, scope_type: &str, reference: Option<i64>) {
+pub(crate) async fn assign(
+    db: &DatabaseConnection,
+    user_id: i32,
+    role_id: i64,
+    scope_type: &str,
+    reference: Option<i64>,
+) {
     let reference = reference.map_or_else(|| "NULL".to_string(), |r| format!("'{r}'"));
     exec(
         db,
@@ -137,7 +143,7 @@ async fn assign(db: &DatabaseConnection, user_id: i32, role_id: i64, scope_type:
     .await;
 }
 
-fn code_of(err: &AppError) -> String {
+pub(crate) fn code_of(err: &AppError) -> String {
     match err {
         AppError::OrgValidationFailed(issues) => issues.first().map(|i| i.code.clone()).unwrap_or_default(),
         AppError::PermissionDenied(_) => "PERMISSION_DENIED".to_string(),

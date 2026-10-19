@@ -24,6 +24,7 @@ import type {
   DiCreateInput,
   DiDraftUpdateInput,
   DiListFilter,
+  DiListPage,
   DiQueueCounts,
   DiResubmitInput,
   DiTriageSubmittedInput,
@@ -45,10 +46,24 @@ const DEFAULT_FILTER: DiListFilter = { limit: DI_LIST_PAGE_SIZE, offset: 0 };
 
 const requests = createLatestRequestGuard();
 
+/** The list part of the store from one loaded page (rows, total, what the user's sites leave out). */
+function pageState(page: DiListPage) {
+  return {
+    items: page.items,
+    total: page.total,
+    hiddenOutsideScope: page.hidden_outside_scope,
+    hiddenWithoutSite: page.hidden_without_site,
+  };
+}
+
 interface DiStoreState {
   // List
   items: InterventionRequest[];
   total: number;
+  /** Requests matching the filters outside the user's sites (not listed, shown as a count). */
+  hiddenOutsideScope: number;
+  /** Requests matching the filters without an org node (plant-wide users only). */
+  hiddenWithoutSite: number;
   // Detail
   activeDi: DiDetailPayload | null;
   // Create / edit form
@@ -91,6 +106,8 @@ interface DiStoreState {
 export const useDiStore = create<DiStoreState>()((set, get) => ({
   items: [],
   total: 0,
+  hiddenOutsideScope: 0,
+  hiddenWithoutSite: 0,
   activeDi: null,
   showCreateForm: false,
   editingDi: null,
@@ -138,7 +155,7 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
     try {
       const page = await listDis({ ...get().filter, offset: 0 });
       if (!isCurrent()) return;
-      set({ items: page.items, total: page.total, loading: false });
+      set({ ...pageState(page), loading: false });
     } catch (err) {
       if (!isCurrent()) return;
       set({ error: toErrorMessage(err), listError: err, loading: false });
@@ -155,8 +172,8 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
       if (!isCurrent()) return;
       const known = new Set(items.map((d) => d.id));
       set({
+        ...pageState(page),
         items: [...items, ...page.items.filter((d) => !known.has(d.id))],
-        total: page.total,
         loadingMore: false,
       });
     } catch {
@@ -189,7 +206,7 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
       const di = await createDi(input);
       // Reload list to include the new DI
       const page = await listDis(get().filter);
-      set({ items: page.items, total: page.total });
+      set(pageState(page));
       void get().loadQueueCounts();
       return di;
     } catch (err) {
@@ -212,8 +229,7 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
           transitions: detail.transitions,
           similar: detail.similar,
         },
-        items: page.items,
-        total: page.total,
+        ...pageState(page),
       });
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -239,8 +255,7 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
       const di = await resubmitDi(input);
       const [page, detail] = await Promise.all([listDis(get().filter), getDi(di.id)]);
       set({
-        items: page.items,
-        total: page.total,
+        ...pageState(page),
         activeDi: { di: detail.di, transitions: detail.transitions, similar: detail.similar },
       });
       void get().loadQueueCounts();
@@ -258,7 +273,7 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
     try {
       const di = await triageSubmittedDiCommand(input);
       const page = await listDis(get().filter);
-      set({ items: page.items, total: page.total });
+      set(pageState(page));
       void get().loadQueueCounts();
       if (get().activeDi?.di.id === di.id) {
         const detail = await getDi(di.id);

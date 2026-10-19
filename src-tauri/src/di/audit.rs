@@ -150,10 +150,13 @@ pub async fn list_di_change_events(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Return audit events across all DIs with optional filters.
-/// Used by di.admin users in the global audit log view.
+/// Used by di.admin users in the global audit log view, limited to the requests of the reader's
+/// scope (`di::access::ScopeSql` on the event's request; an event without a request, or whose
+/// request is gone, has no site: plant-wide readers only).
 pub async fn list_all_change_events(
     db: &DatabaseConnection,
     filter: DiAuditFilter,
+    scope: &super::access::ScopeSql,
 ) -> crate::errors::AppResult<Vec<DiChangeEvent>> {
     let limit = filter.limit.unwrap_or(50).min(500);
     let offset = filter.offset.unwrap_or(0);
@@ -179,11 +182,11 @@ pub async fn list_all_change_events(
         values.push(date_to.clone().into());
     }
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
+    // Last condition: its binds follow the filters' and precede LIMIT / OFFSET.
+    conditions.push(format!("({})", scope.predicate));
+    values.extend(scope.binds.iter().cloned());
+
+    let where_clause = format!("WHERE {}", conditions.join(" AND "));
 
     values.push(limit.into());
     values.push(offset.into());
@@ -195,6 +198,7 @@ pub async fn list_all_change_events(
                  e.requires_step_up, e.apply_result
             FROM di_change_events e
             LEFT JOIN user_accounts ua ON ua.id = e.actor_id
+            LEFT JOIN intervention_requests ir ON ir.id = e.di_id
            {where_clause}
            ORDER BY e.acted_at DESC, e.id DESC
            LIMIT ? OFFSET ?"

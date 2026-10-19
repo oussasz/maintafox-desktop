@@ -139,7 +139,12 @@ describe("di-service — Supervisor Verification S3", () => {
   // ── Smoke: well-formed responses parse correctly ──────────────────────────
 
   it("listDis parses a valid page response", async () => {
-    const page = { items: [makeDiResponse()], total: 1 };
+    const page = {
+      items: [makeDiResponse()],
+      total: 1,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
+    };
     mockInvoke.mockResolvedValueOnce(page);
 
     const result = await listDis({ limit: 50, offset: 0 });
@@ -222,6 +227,8 @@ describe("di-service — work queues, answer to the reviewer, duplicates", () =>
         }),
       ],
       total: 1,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
     });
     const page = await listDis({ queue: "sla_at_risk", limit: 50, offset: 0 });
     expect(page.items[0]?.source_inspection_round_id).toBe(9);
@@ -287,6 +294,8 @@ describe("di-service — work queues, answer to the reviewer, duplicates", () =>
         makeDiResponse({ id: 3, symptom_code_id: 3 }),
       ],
       total: 3,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
     });
     const found = await findPossibleDuplicateDis({
       equipmentId: 10,
@@ -303,7 +312,12 @@ describe("di-service — work queues, answer to the reviewer, duplicates", () =>
   });
 
   it("findPossibleDuplicateDis without a symptom flags none as same symptom", async () => {
-    mockInvoke.mockResolvedValueOnce({ items: [makeDiResponse({ symptom_code_id: 3 })], total: 1 });
+    mockInvoke.mockResolvedValueOnce({
+      items: [makeDiResponse({ symptom_code_id: 3 })],
+      total: 1,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
+    });
     const found = await findPossibleDuplicateDis({ equipmentId: 10, symptomCodeId: null });
     expect(found).toHaveLength(1);
     expect(found[0]?.sameSymptom).toBe(false);

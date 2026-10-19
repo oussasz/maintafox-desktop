@@ -2,6 +2,9 @@
  * Which decisions the signed-in user may take on a request, from its status and their
  * permissions. Mirrors the backend gates (`commands/di.rs`) so no button is shown that the
  * backend would refuse; the backend stays the authority.
+ *
+ * `can` answers at the request's site (`useAccessAt(di.org_node_id)`): a right held on another
+ * site only does not offer a decision on this request.
  */
 
 import type { InterventionRequest } from "@shared/ipc-types";
@@ -45,7 +48,12 @@ export function diActions(
     returnForInfo: di.status === "in_review" && can(P.DI_REVIEW),
     resubmit: di.status === "returned_for_clarification" && isOwner && can(P.DI_CREATE_OWN),
     approve: di.status === "awaiting_approval" && can(P.DI_APPROVE),
-    convert: di.status === "approved" && di.converted_to_wo_id == null && can(P.DI_CONVERT),
+    // The work order is created where the request is: the work-order create right is needed too.
+    convert:
+      di.status === "approved" &&
+      di.converted_to_wo_id == null &&
+      can(P.DI_CONVERT) &&
+      can(P.OT_CREATE),
     defer:
       (di.status === "in_review" ||
         di.status === "awaiting_approval" ||

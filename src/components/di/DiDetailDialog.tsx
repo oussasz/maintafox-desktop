@@ -34,6 +34,7 @@ import { DiNextStepLabel } from "@/components/di/DiNextStepLabel";
 import { printDiFiche } from "@/components/di/DiPrintFiche";
 import { DiResubmitDialog } from "@/components/di/DiResubmitDialog";
 import { DiScreenDialog } from "@/components/di/DiScreenDialog";
+import { DiNoSiteBadge } from "@/components/di/DiSiteScope";
 import { DiSlaStatusBadge } from "@/components/di/DiSlaStatusBadge";
 import { diActions } from "@/components/di/di-actions";
 import {
@@ -55,7 +56,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { StatusChip } from "@/components/ui/status-chip";
 import { DI_STATUS_TONE, mfTone, toneOf } from "@/design-system/tone";
-import { usePermissions } from "@/hooks/use-permissions";
+import { useAccessAt } from "@/hooks/use-access-at";
 import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel, formatOrgNodeLabel, formatPersonLabel } from "@/lib/display";
@@ -107,7 +108,9 @@ export function DiDetailDialog({
     includeSymptoms: true,
   });
   const { returnReasonLabel } = useDiDecisionReasonLabels();
-  const { can } = usePermissions();
+  // The decisions offered are the user's rights at this request's site (its org node), not
+  // anywhere in the plant; the backend checks the same and stays the authority.
+  const { can } = useAccessAt(di?.org_node_id);
   const { info } = useSession();
   const triageSubmittedDi = useDiStore((s) => s.triageSubmittedDi);
   const openDi = useDiStore((s) => s.openDi);
@@ -302,6 +305,7 @@ export function DiDetailDialog({
                 status={slaStatus?.status ?? di.sla_state ?? null}
                 requestStatus={di.status}
               />
+              <DiNoSiteBadge di={di} size="md" />
               {di.safety_flag && (
                 <StatusChip label={t("detail.safety")} tone="danger" icon={Shield} size="md" />
               )}

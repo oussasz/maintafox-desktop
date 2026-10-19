@@ -9,6 +9,7 @@ import enCommon from "@/i18n/en/common.json";
 import enDi from "@/i18n/locale-data/en/di.json";
 import { useAppToastStore } from "@/store/app-toast-store";
 import type { InterventionRequest } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { DiApprovalDialog } from "../DiApprovalDialog";
 
@@ -43,7 +44,17 @@ vi.mock("@/components/di/di-reference-labels", () => ({
   loadDiOriginLabelMap: vi.fn(),
   resolveDiOriginLabel: vi.fn(),
 }));
-vi.mock("@/hooks/use-permissions", () => ({ usePermissions: () => ({ can: () => true }) }));
+// Rights at the request's site (`useAccessAt`): every right here; the gating is tested below.
+const accessAt = vi.hoisted(() => ({
+  nodes: [] as (number | null | undefined)[],
+  can: (_permission: string): boolean => true,
+}));
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: (node: number | null | undefined) => {
+    accessAt.nodes.push(node);
+    return { can: (p: string) => accessAt.can(p), loading: false };
+  },
+}));
 vi.mock("@/hooks/use-session", () => ({
   useSession: () => ({ info: { user_id: 5, display_name: "Amina", username: "amina" } }),
 }));
@@ -82,6 +93,7 @@ function di(overrides: Partial<InterventionRequest> = {}): InterventionRequest {
     submitter_display_name: "Karim",
     asset_code: "P-101",
     asset_label: "Feed pump",
+    org_node_id: 12,
     org_node_code: "UTL",
     org_node_label: "Utilities",
     reviewer_note: null,
@@ -96,6 +108,8 @@ describe("DiApprovalDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     review.saving = false;
+    accessAt.nodes = [];
+    accessAt.can = () => true;
   });
 
   it("approves after a confirmation that names the request, without asking for a password", async () => {
@@ -178,5 +192,19 @@ describe("DiApprovalDialog", () => {
           "The rule PUMP_HOT calls for a HOT_WORK permit: the work order will not start without an active permit.",
       }),
     ]);
+  });
+
+  it("offers the conversion from the rights at the request's site, work-order create included", () => {
+    review.approvalDi = di({ status: "approved" } as unknown as Partial<InterventionRequest>);
+    // di.convert at this site, but not the right to create the work order there.
+    accessAt.can = (p) => p === P.DI_CONVERT;
+    const { unmount } = render(<DiApprovalDialog />);
+    expect(accessAt.nodes).toContain(12);
+    expect(screen.queryByRole("button", { name: enDi.review.convertToWo })).toBeNull();
+    unmount();
+
+    accessAt.can = (p) => p === P.DI_CONVERT || p === P.OT_CREATE;
+    render(<DiApprovalDialog />);
+    expect(screen.getByRole("button", { name: enDi.review.convertToWo })).toBeInTheDocument();
   });
 });
