@@ -877,9 +877,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         onConfirm={async () => {
           const iso = removalConfirm;
           if (!iso) return;
-          const ok = await isolationAction(iso, verifyPermitIsolationRemoval);
-          // Keep the dialog open on failure (the message is shown on the permit).
-          if (!ok) throw new Error("removal refused");
+          // A refusal is shown on the permit (translated); the dialog closes so it is visible.
+          await isolationAction(iso, verifyPermitIsolationRemoval);
         }}
       />
 

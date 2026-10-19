@@ -230,6 +230,8 @@ describe("PermitDetailPanel — lock removal with a third person", () => {
     expect(
       await screen.findByText(String(lookup(enTraining, "errors.PERMIT_THREE_PERSON_REMOVAL"))),
     ).toBeInTheDocument();
+    // The dialog does not stay open over the reason.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });
 
