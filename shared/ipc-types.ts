@@ -10758,10 +10758,14 @@ export interface PermitHandoverReceiver {
   display_name: string;
 }
 
-/** One page of hand-over receivers with the total that match. */
+/** One page of hand-over receivers with the total that match. Receivers hold the permit close
+ * right at the permit's site (plant-wide holders included). */
 export interface PermitHandoverReceiverPage {
   items: PermitHandoverReceiver[];
   total: number;
+  /** `PERMIT_HANDOVER_NO_RECEIVER_AT_SITE` when nobody but the signer holds the permit close right
+   * at the permit's site (whatever the search; `errors:scope`), else null. */
+  empty_reason: string | null;
 }
 
 /** One permit hand-over role of the plant (`list_permit_handover_roles`). */
@@ -10788,6 +10792,15 @@ export interface PermitIsolationActionInput {
   expected_row_version: number;
   /** Only used by apply: lock number fitted at application time. */
   lock_number: string | null;
+}
+
+/** Counts of a permit list the user's sites leave out (`list_work_permits`,
+ * `list_open_permits_report`), whatever the filters; both 0 plant-wide. */
+export interface WorkPermitHiddenCounts {
+  /** Permits outside the user's sites (site-scoped roles). */
+  hidden_outside_scope: number;
+  /** Permits without an org node (plant-wide users only). */
+  hidden_without_site: number;
 }
 
 export interface WorkPermitListFilter {

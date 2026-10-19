@@ -272,6 +272,13 @@ async fn full_lifecycle_to_handed_back_stamps_timestamps() {
     assert!(wp.handed_back_at.is_some());
 }
 
+/// Gives `user_id` a plant-wide role carrying `permission` (a hand-over receiver holds
+/// `ptw.close` at the permit's site: CMMS Advisor decision, option A).
+pub(super) async fn grant_tenant_right(db: &DatabaseConnection, user_id: i64, permission: &str) {
+    let role = crate::auth::scope_tests::role(db, &format!("PTW test {permission} {user_id}"), &[permission]).await;
+    crate::auth::scope_tests::assign(db, i32::try_from(user_id).expect("id"), role, "tenant", None).await;
+}
+
 /// A role of the plant's hand-over list (`PERMIT.HANDOVER_ROLES`), as Données de référence adds it.
 pub(super) async fn add_handover_role(db: &DatabaseConnection, code: &str) {
     crate::permit::handover_roles::ensure_handover_roles(db)
@@ -347,6 +354,16 @@ async fn a_handover_is_signed_from_the_session_with_listed_roles_and_a_note() {
     .await
     .expect_err("unknown receiver");
     assert_eq!(refusal_code(err), "PERMIT_HANDOVER_RECEIVER_UNKNOWN");
+    // The receiver holds the permit close right at the permit's site (never left to the picker).
+    let err = queries::append_permit_handover_log(
+        &db,
+        input("Maintenance", "Operations", "Zone left clean", Some(VERIFIER)),
+        APPLIER,
+    )
+    .await
+    .expect_err("receiver without ptw.close");
+    assert_eq!(refusal_code(err), "PERMIT_HANDOVER_RECEIVER_NO_RIGHT");
+    grant_tenant_right(&db, VERIFIER, crate::rbac::permissions::PTW_CLOSE).await;
 
     let log = queries::append_permit_handover_log(
         &db,
@@ -422,6 +439,7 @@ async fn a_handover_refuses_inactive_receivers_and_never_shows_a_blank_name() {
     }
 
     // Signed by an account with an empty display name, received by one with a blank one.
+    grant_tenant_right(&db, id_of("op.blank").await, crate::rbac::permissions::PTW_CLOSE).await;
     let log = queries::append_permit_handover_log(&db, input(id_of("op.blank").await), id_of("op.empty").await)
         .await
         .expect("handover");
@@ -436,7 +454,7 @@ async fn a_handover_refuses_inactive_receivers_and_never_shows_a_blank_name() {
         (Some("op.empty"), Some("op.blank"))
     );
     // The receiver list shows the same name for the same person.
-    let page = queries::list_handover_receivers(&db, APPLIER, Some("op.blank".into()), None, None)
+    let page = queries::list_handover_receivers(&db, APPLIER, wp.id, Some("op.blank".into()), None, None)
         .await
         .expect("receivers");
     assert_eq!(
@@ -1226,17 +1244,20 @@ async fn permit_search_runs_on_the_server_over_every_permit() {
     };
     let hits = queries::list_work_permits(&db, filter("search-a"))
         .await
-        .expect("search");
+        .expect("search")
+        .items;
     assert_eq!(hits.iter().map(|p| p.id).collect::<Vec<_>>(), vec![pa.id]);
     // LIKE wildcards in the text are literal.
     assert!(queries::list_work_permits(&db, filter("%"))
         .await
         .expect("literal")
+        .items
         .is_empty());
     assert_eq!(
         queries::list_work_permits(&db, filter("Hot work"))
             .await
             .expect("type")
+            .items
             .len(),
         1
     );
@@ -1429,16 +1450,20 @@ async fn editing_a_permit_cannot_link_a_second_open_permit_to_a_work_order() {
     assert_validation(set_status(&db, &other, "active").await, "PERMIT_TRANSITION_NOT_ALLOWED");
 }
 
-/// Hand-over receivers: refused without the permit close right; active accounts only, never the
-/// person asking; names only; paged with the real total.
+/// Hand-over receivers: active accounts holding the permit close right at the permit's site
+/// (here plant-wide), never the person asking; names only; paged with the real total. Asking
+/// without the right is refused by the command (`permit::access`, `access_tests`).
 #[tokio::test]
 async fn handover_receivers_are_other_active_accounts_by_name() {
     let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-RCV").await;
+    let wp = create_permit(&db, "hot_work", asset).await;
     for (sync, user, name, active) in [
         ("rcv-1", "op.ali", "Ali Operations", 1),
         ("rcv-2", "op.bea", "Béa Operations", 1),
         ("rcv-3", "op.old", "Old Operator", 0),
         ("rcv-4", "noname", "", 1),
+        ("rcv-5", "op.none", "Nora Operations", 1),
     ] {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1460,30 +1485,36 @@ async fn handover_receivers_are_other_active_accounts_by_name() {
         .try_get_by_index(0)
         .expect("id");
 
-    // Ali holds no permit right.
-    let err = queries::list_handover_receivers(&db, ali, None, None, None)
-        .await
-        .expect_err("no ptw.close");
-    assert!(matches!(err, AppError::PermissionDenied(_)), "{err:?}");
+    // Every one of them holds the permit close right except Nora.
+    for user in ["op.ali", "op.bea", "op.old", "noname"] {
+        let id = scalar_i64(&db, &format!("SELECT id FROM user_accounts WHERE username = '{user}'")).await;
+        grant_tenant_right(&db, id, crate::rbac::permissions::PTW_CLOSE).await;
+    }
+    assert!(ali > 0);
 
-    // The administrator (APPLIER) asks: everyone active but himself.
-    let page = queries::list_handover_receivers(&db, APPLIER, None, None, None)
+    // The administrator (APPLIER) asks: every active holder of the right but himself.
+    let page = queries::list_handover_receivers(&db, APPLIER, wp.id, None, None, None)
         .await
         .expect("list");
     let names: Vec<&str> = page.items.iter().map(|r| r.display_name.as_str()).collect();
     assert!(page.items.iter().all(|r| r.id != APPLIER), "the signer is excluded");
     assert!(names.contains(&"Ali Operations") && names.contains(&"Béa Operations"));
+    assert!(
+        !names.contains(&"Nora Operations"),
+        "without the permit close right: not a receiver"
+    );
+    assert_eq!(page.empty_reason, None);
     assert!(!names.contains(&"Old Operator"), "inactive accounts are excluded");
     assert!(names.contains(&"noname"), "no display name: the login name stands in");
     assert_eq!(page.total, i64::try_from(page.items.len()).expect("len"));
 
-    let first = queries::list_handover_receivers(&db, APPLIER, Some("operations".into()), Some(1), None)
+    let first = queries::list_handover_receivers(&db, APPLIER, wp.id, Some("operations".into()), Some(1), None)
         .await
         .expect("page 1");
     assert_eq!(first.total, 2, "the total counts every match, not the page");
     assert_eq!(first.items.len(), 1);
     assert_eq!(first.items[0].display_name, "Ali Operations");
-    let second = queries::list_handover_receivers(&db, APPLIER, Some("operations".into()), Some(1), Some(1))
+    let second = queries::list_handover_receivers(&db, APPLIER, wp.id, Some("operations".into()), Some(1), Some(1))
         .await
         .expect("page 2");
     assert_eq!(second.items[0].display_name, "Béa Operations");

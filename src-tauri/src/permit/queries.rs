@@ -8,8 +8,9 @@ use super::domain::{
     LotoCardPrintInput, LotoCardPrintJob, LotoCardView, PermitComplianceKpi30d, PermitHandoverLog,
     PermitHandoverLogInput, PermitIsolation, PermitIsolationActionInput, PermitIsolationUpsertInput,
     PermitSuspendInput, PermitSuspension, PermitType, PermitTypeUpsertInput, WorkPermit, WorkPermitCreateInput,
-    WorkPermitListFilter, WorkPermitStatusInput, WorkPermitUpdateInput,
+    WorkPermitListFilter, WorkPermitListPage, WorkPermitStatusInput, WorkPermitUpdateInput,
 };
+use crate::auth::scope::AccessScope;
 
 const WP_STATUSES: &[&str] = &[
     "draft",
@@ -1149,7 +1150,52 @@ async fn upsert_permit_type_in(
     Ok(created)
 }
 
-pub async fn list_work_permits(db: &impl ConnectionTrait, filter: WorkPermitListFilter) -> AppResult<Vec<WorkPermit>> {
+/// Permits the reader's scope leaves out, as `(outside their sites, without a site)`, whatever the
+/// user's filters (only the scope's binds): a count that followed the search or the filters would
+/// let a site user probe other sites' permits. `(0, 0)` plant-wide.
+async fn hidden_permit_counts(db: &impl ConnectionTrait, scope: &AccessScope) -> AppResult<(i64, i64)> {
+    if scope.is_everywhere() {
+        return Ok((0, 0));
+    }
+    let scope_sql = super::access::scope_sql(scope);
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT COALESCE(SUM(CASE WHEN {without} THEN 1 ELSE 0 END), 0) AS without_site, \
+                        COALESCE(SUM(CASE WHEN {without} THEN 0 ELSE 1 END), 0) AS outside_scope \
+                   FROM work_permits wp \
+                  WHERE NOT COALESCE(({pred}), 0)",
+                without = super::access::PERMIT_WITHOUT_SITE_SQL,
+                pred = scope_sql.predicate,
+            ),
+            scope_sql.binds,
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("permit hidden count query returned no rows")))?;
+    Ok((
+        row.try_get("", "outside_scope")
+            .map_err(|e| decode_err("outside_scope", e))?,
+        row.try_get("", "without_site")
+            .map_err(|e| decode_err("without_site", e))?,
+    ))
+}
+
+/// Every permit matching the filter (plant-wide: the internal callers and the tests).
+pub async fn list_work_permits(
+    db: &impl ConnectionTrait,
+    filter: WorkPermitListFilter,
+) -> AppResult<WorkPermitListPage> {
+    list_work_permits_in_scope(db, filter, &AccessScope::Everywhere).await
+}
+
+/// [`list_work_permits`] limited to the reader's scope (where they hold `ptw.view`), in SQL before
+/// the limit, with the count of the permits left out and why.
+pub async fn list_work_permits_in_scope(
+    db: &impl ConnectionTrait,
+    filter: WorkPermitListFilter,
+    scope: &AccessScope,
+) -> AppResult<WorkPermitListPage> {
     let limit = filter.limit.unwrap_or(200).clamp(1, 2000);
     let mut sql = format!("{WORK_PERMIT_SELECT} WHERE 1=1");
     let mut params: Vec<sea_orm::Value> = Vec::new();
@@ -1181,16 +1227,27 @@ pub async fn list_work_permits(db: &impl ConnectionTrait, filter: WorkPermitList
             params.push(pattern.clone().into());
         }
     }
+    // Site scope (rule §2.5): last predicate, so its binds follow the filters' and precede the limit.
+    let scope_sql = super::access::scope_sql(scope);
+    sql.push_str(" AND (");
+    sql.push_str(&scope_sql.predicate);
+    sql.push(')');
+    params.extend(scope_sql.binds);
     sql.push_str(" ORDER BY wp.id DESC LIMIT ?");
     params.push(limit.into());
 
     let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, &sql, params);
     let rows = db.query_all(stmt).await?;
-    let mut out = Vec::with_capacity(rows.len());
+    let mut items = Vec::with_capacity(rows.len());
     for row in rows {
-        out.push(map_work_permit(&row)?);
+        items.push(map_work_permit(&row)?);
     }
-    Ok(out)
+    let (hidden_outside_scope, hidden_without_site) = hidden_permit_counts(db, scope).await?;
+    Ok(WorkPermitListPage {
+        items,
+        hidden_outside_scope,
+        hidden_without_site,
+    })
 }
 
 pub async fn get_work_permit(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<WorkPermit>> {
@@ -1650,6 +1707,15 @@ async fn append_permit_handover_log_in(
                 &[("userId", receiver.to_string())],
             ));
         }
+        // CMMS Advisor decision (option A): the receiver holds the permit close right at the
+        // permit's site — checked here, never left to the picker.
+        if !super::access::may_receive_handover(db, input.permit_id, receiver).await? {
+            return Err(refused(
+                "PERMIT_HANDOVER_RECEIVER_NO_RIGHT",
+                "The receiving person does not hold the permit close right at this permit's site.",
+                &[("userId", receiver.to_string())],
+            ));
+        }
     }
     let signed = now_ts();
     let sync_id = Uuid::new_v4().to_string();
@@ -1722,43 +1788,72 @@ pub struct HandoverReceiver {
 pub struct HandoverReceiverPage {
     pub items: Vec<HandoverReceiver>,
     pub total: i64,
+    /// [`NO_RECEIVER_AT_SITE`] when nobody but the person asking holds the permit close right at
+    /// the permit's site (whatever the search): the screen says so instead of an empty list.
+    #[serde(default)]
+    pub empty_reason: Option<String>,
 }
 
 /// Largest page of hand-over receivers.
 pub const HANDOVER_RECEIVERS_PAGE_MAX: u64 = 200;
 
-/// Active, non-deleted accounts that may receive a hand-over, excluding the person asking (who
-/// signs it), optionally filtered by name, ordered by name, paged. The person asking holds
-/// `ptw.close` (checked here as well as by the command).
+/// Nobody (other than the signer) holds `ptw.close` at the permit's site: no hand-over can be
+/// received there (translated on screen, `errors:scope`).
+pub const NO_RECEIVER_AT_SITE: &str = "PERMIT_HANDOVER_NO_RECEIVER_AT_SITE";
+
+/// `SELECT COUNT(*) AS n …` read as a number (0 when no row).
+async fn count_n(db: &impl ConnectionTrait, sql: String, values: Vec<sea_orm::Value>) -> AppResult<i64> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+        .await?
+        .map(|r| r.try_get::<i64>("", "n"))
+        .transpose()?
+        .unwrap_or(0))
+}
+
+/// Active, non-deleted accounts that may receive a hand-over of the permit `permit_id` (CMMS
+/// Advisor decision, option A: holding `ptw.close` at the permit's site, plant-wide holders
+/// included — `permit::access::eligible_receiver_sql`), excluding the person asking (who signs
+/// it), optionally filtered by name, ordered by name, paged. The person asking holds `ptw.close`
+/// at the permit's site (checked by the command, `permit::access`). Not found when the permit does
+/// not exist.
 pub async fn list_handover_receivers(
     db: &impl ConnectionTrait,
     actor_id: i64,
+    permit_id: i64,
     search: Option<String>,
     limit: Option<u64>,
     offset: Option<u64>,
 ) -> AppResult<HandoverReceiverPage> {
-    if !crate::settings::site::holds_tenant_right(db, actor_id, crate::rbac::permissions::PTW_CLOSE).await? {
-        return Err(AppError::PermissionDenied(
-            "Listing hand-over receivers needs the permit close right.".into(),
-        ));
-    }
+    let anchor = super::access::permit_anchor(db, permit_id).await?;
+    let (eligible, eligible_binds) = super::access::eligible_receiver_sql(db, anchor).await?;
     let name = handover_person_name_sql("ua");
-    let filter = format!(
-        "ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? \
-         AND (? IS NULL OR LOWER({name}) LIKE '%' || LOWER(?) || '%')"
-    );
+    let base = format!("ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? AND {eligible}");
+    let base_binds = || -> Vec<sea_orm::Value> {
+        let mut v: Vec<sea_orm::Value> = vec![actor_id.into()];
+        v.extend(eligible_binds.iter().cloned());
+        v
+    };
+    let eligible_total = count_n(
+        db,
+        format!("SELECT COUNT(*) AS n FROM user_accounts ua WHERE {base}"),
+        base_binds(),
+    )
+    .await?;
+    let filter = format!("{base} AND (? IS NULL OR LOWER({name}) LIKE '%' || LOWER(?) || '%')");
     let search = search.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    let binds = || -> Vec<sea_orm::Value> { vec![actor_id.into(), search.clone().into(), search.clone().into()] };
-    let total: i64 = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!("SELECT COUNT(*) AS n FROM user_accounts ua WHERE {filter}"),
-            binds(),
-        ))
-        .await?
-        .map(|r| r.try_get::<i64>("", "n"))
-        .transpose()?
-        .unwrap_or(0);
+    let binds = || -> Vec<sea_orm::Value> {
+        let mut v = base_binds();
+        v.push(search.clone().into());
+        v.push(search.clone().into());
+        v
+    };
+    let total = count_n(
+        db,
+        format!("SELECT COUNT(*) AS n FROM user_accounts ua WHERE {filter}"),
+        binds(),
+    )
+    .await?;
     let limit = limit
         .unwrap_or(HANDOVER_RECEIVERS_PAGE_MAX)
         .clamp(1, HANDOVER_RECEIVERS_PAGE_MAX);
@@ -1786,7 +1881,11 @@ pub async fn list_handover_receivers(
             })
         })
         .collect::<AppResult<Vec<_>>>()?;
-    Ok(HandoverReceiverPage { items, total })
+    Ok(HandoverReceiverPage {
+        items,
+        total,
+        empty_reason: (eligible_total == 0).then(|| NO_RECEIVER_AT_SITE.to_string()),
+    })
 }
 
 pub async fn list_permit_handover_logs(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<Vec<PermitHandoverLog>> {
@@ -2387,8 +2486,21 @@ pub async fn isolation_locks_in_place(db: &impl ConnectionTrait) -> AppResult<(i
     ))
 }
 
-pub async fn list_open_permits_report(db: &impl ConnectionTrait) -> AppResult<Vec<WorkPermit>> {
+/// Open permits not expired, plant-wide (the home supervision count, scoped in a later stage).
+pub async fn list_open_permits_report(db: &impl ConnectionTrait) -> AppResult<WorkPermitListPage> {
+    list_open_permits_report_in_scope(db, &AccessScope::Everywhere).await
+}
+
+/// [`list_open_permits_report`] limited to the reader's scope (where they hold `ptw.view`; rule
+/// §2.8: no plant-wide figures for a site-only user), with the permits left out and why.
+pub async fn list_open_permits_report_in_scope(
+    db: &impl ConnectionTrait,
+    scope: &AccessScope,
+) -> AppResult<WorkPermitListPage> {
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let scope_sql = super::access::scope_sql(scope);
+    let mut values: Vec<sea_orm::Value> = vec![now.into()];
+    values.extend(scope_sql.binds);
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2396,27 +2508,53 @@ pub async fn list_open_permits_report(db: &impl ConnectionTrait) -> AppResult<Ve
                 "{WORK_PERMIT_SELECT} \
                  WHERE wp.status IN {OPEN_PERMIT_STATUSES_SQL} \
                  AND (wp.expires_at IS NULL OR wp.expires_at > ?) \
-                 ORDER BY wp.id DESC"
+                 AND ({pred}) \
+                 ORDER BY wp.id DESC",
+                pred = scope_sql.predicate,
             ),
-            [now.into()],
+            values,
         ))
         .await?;
-    let mut out = Vec::with_capacity(rows.len());
+    let mut items = Vec::with_capacity(rows.len());
     for row in rows {
-        out.push(map_work_permit(&row)?);
+        items.push(map_work_permit(&row)?);
     }
-    Ok(out)
+    let (hidden_outside_scope, hidden_without_site) = hidden_permit_counts(db, scope).await?;
+    Ok(WorkPermitListPage {
+        items,
+        hidden_outside_scope,
+        hidden_without_site,
+    })
 }
 
+/// The 30-day hand-back compliance, plant-wide (internal callers and tests).
 pub async fn permit_compliance_kpi_30d(db: &impl ConnectionTrait) -> AppResult<PermitComplianceKpi30d> {
+    permit_compliance_kpi_30d_in_scope(db, &AccessScope::Everywhere).await
+}
+
+/// [`permit_compliance_kpi_30d`] on the permits of the reader's scope only (rule §2.8).
+pub async fn permit_compliance_kpi_30d_in_scope(
+    db: &impl ConnectionTrait,
+    scope: &AccessScope,
+) -> AppResult<PermitComplianceKpi30d> {
     let cutoff = (Utc::now() - Duration::days(30))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
+    let scope_sql = super::access::scope_sql(scope);
+    let binds = || -> Vec<sea_orm::Value> {
+        let mut v: Vec<sea_orm::Value> = vec![cutoff.clone().into()];
+        v.extend(scope_sql.binds.iter().cloned());
+        v
+    };
     let activated_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM work_permits WHERE activated_at IS NOT NULL AND activated_at >= ?",
-            [cutoff.clone().into()],
+            format!(
+                "SELECT COUNT(*) AS c FROM work_permits wp WHERE wp.activated_at IS NOT NULL \
+                 AND wp.activated_at >= ? AND ({})",
+                scope_sql.predicate
+            ),
+            binds(),
         ))
         .await?
         .expect("c");
@@ -2424,10 +2562,14 @@ pub async fn permit_compliance_kpi_30d(db: &impl ConnectionTrait) -> AppResult<P
     let on_time_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM work_permits WHERE activated_at IS NOT NULL AND activated_at >= ? \
-             AND handed_back_at IS NOT NULL \
-             AND (expires_at IS NULL OR handed_back_at <= expires_at)",
-            [cutoff.into()],
+            format!(
+                "SELECT COUNT(*) AS c FROM work_permits wp WHERE wp.activated_at IS NOT NULL \
+                 AND wp.activated_at >= ? \
+                 AND wp.handed_back_at IS NOT NULL \
+                 AND (wp.expires_at IS NULL OR wp.handed_back_at <= wp.expires_at) AND ({})",
+                scope_sql.predicate
+            ),
+            binds(),
         ))
         .await?
         .expect("c");

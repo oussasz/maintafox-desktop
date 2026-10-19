@@ -153,6 +153,8 @@
     "SCOPE_OUTSIDE_SITE": "Cet enregistrement appartient à un site hors de vos rôles.",
     "SCOPE_RECORD_WITHOUT_SITE": "Cet enregistrement n'a pas de site : seul un rôle valable pour toute l'usine peut agir dessus.",
     "SCOPE_PLANT_WIDE_ONLY": "Objet commun à toute l'usine : seul un rôle valable pour toute l'usine peut agir dessus.",
-    "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Les rôles d'administrateur s'appliquent à toute l'usine : ils ne peuvent pas être limités à un site."
+    "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Les rôles d'administrateur s'appliquent à toute l'usine : ils ne peuvent pas être limités à un site.",
+    "PERMIT_HANDOVER_NO_RECEIVER_AT_SITE": "Personne sur ce site ne détient le droit de clôture des permis : personne ne peut recevoir cette passation. Demandez à un administrateur d'accorder ce droit sur ce site.",
+    "PERMIT_HANDOVER_RECEIVER_NO_RIGHT": "La personne qui reçoit ne détient pas le droit de clôture des permis sur le site de ce permis."
   }
 }

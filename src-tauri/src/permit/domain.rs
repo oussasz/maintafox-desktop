@@ -142,6 +142,18 @@ pub struct PermitIsolation {
     pub removal_verified_by_name: Option<String>,
 }
 
+/// One list of permits limited to the reader's sites (`list_work_permits`, the open-permits
+/// report), with the permits left out and why (rule §2.4: shown as a count, never silently).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkPermitListPage {
+    pub items: Vec<WorkPermit>,
+    /// Permits the reader's sites do not cover, whatever the filters. Always 0 plant-wide.
+    pub hidden_outside_scope: i64,
+    /// Permits without an org node (plant-wide readers only), whatever the filters. Always 0
+    /// plant-wide.
+    pub hidden_without_site: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkPermitListFilter {
     pub status: Option<String>,

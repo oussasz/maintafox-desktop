@@ -125,7 +125,7 @@ export function PermitsPage() {
     try {
       // One extra row tells whether more permits exist beyond the current limit.
       const term = search.trim();
-      const [ty, rows] = await Promise.all([
+      const [ty, page] = await Promise.all([
         listPermitTypes(),
         listWorkPermits({
           limit: Math.min(limit + 1, BACKEND_MAX),
@@ -135,6 +135,7 @@ export function PermitsPage() {
         }),
       ]);
       setTypes(ty);
+      const rows = page.items;
       setHasMore(rows.length > limit);
       setPermits(rows.slice(0, limit));
     } catch (e) {
@@ -150,7 +151,7 @@ export function PermitsPage() {
     try {
       const [kpi, open] = await Promise.all([permitComplianceKpi30d(), listOpenPermitsReport()]);
       setKpi30d(kpi);
-      setOpenCount(open.length);
+      setOpenCount(open.items.length);
     } catch (e) {
       setKpiError(e);
       setKpi30d(null);

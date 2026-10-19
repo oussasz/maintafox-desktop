@@ -1764,6 +1764,7 @@ async fn a_received_handover_signed_and_received_by_one_person_is_refused() {
     let wp = set_status(&db, &wp, "closed").await.expect("close");
     super::tests::add_handover_role(&db, "Maintenance").await;
     super::tests::add_handover_role(&db, "Operations").await;
+    super::tests::grant_tenant_right(&db, VERIFIER, crate::rbac::permissions::PTW_CLOSE).await;
     let log = queries::append_permit_handover_log(
         &db,
         crate::permit::domain::PermitHandoverLogInput {

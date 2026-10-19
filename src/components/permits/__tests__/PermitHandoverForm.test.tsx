@@ -178,7 +178,7 @@ describe("PermitHandoverForm", () => {
     expect(
       await screen.findByText(fill(enPermits.handover.receiversPartial, { shown: 1, total: 250 })),
     ).toBeInTheDocument();
-    expect(svc.listPermitHandoverReceivers).toHaveBeenCalledWith(null);
+    expect(svc.listPermitHandoverReceivers).toHaveBeenCalledWith(42, null);
 
     svc.listPermitHandoverReceivers.mockResolvedValue({
       items: [{ id: 12, display_name: "Karim Shift" }],
@@ -187,7 +187,7 @@ describe("PermitHandoverForm", () => {
     fireEvent.change(screen.getByRole("textbox", { name: enPermits.handover.receiverSearch }), {
       target: { value: "kar" },
     });
-    await waitFor(() => expect(svc.listPermitHandoverReceivers).toHaveBeenCalledWith("kar"));
+    await waitFor(() => expect(svc.listPermitHandoverReceivers).toHaveBeenCalledWith(42, "kar"));
     expect(
       await screen.findByText(fill(enPermits.handover.receiversAll, { total: 1 })),
     ).toBeInTheDocument();

@@ -174,6 +174,11 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
   };
 }
 
+/** A permit list of the user's sites, nothing left out. */
+function page(items: WorkPermitRecord[]) {
+  return { items, hidden_outside_scope: 0, hidden_without_site: 0 };
+}
+
 /** Applied by user 7, not yet verified. */
 function isolation(overrides: Partial<PermitIsolationRecord> = {}): PermitIsolationRecord {
   return {
@@ -230,13 +235,13 @@ describe("PermitsPage", () => {
     vi.clearAllMocks();
     session.userId = 7;
     svc.listPermitTypes.mockResolvedValue([LOTO_TYPE]);
-    svc.listWorkPermits.mockResolvedValue([permit()]);
+    svc.listWorkPermits.mockResolvedValue(page([permit()]));
     svc.permitComplianceKpi30d.mockResolvedValue({
       activated_count: 0,
       handed_back_on_time_count: 0,
       rate: null,
     });
-    svc.listOpenPermitsReport.mockResolvedValue([]);
+    svc.listOpenPermitsReport.mockResolvedValue(page([]));
     svc.listPermitSuspensions.mockResolvedValue([]);
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitIsolations.mockResolvedValue([isolation()]);
@@ -295,7 +300,7 @@ describe("PermitsPage", () => {
 
   it("blocks closing until every lock removal is verified", async () => {
     session.userId = 8;
-    svc.listWorkPermits.mockResolvedValue([permit({ status: "active", row_version: 5 })]);
+    svc.listWorkPermits.mockResolvedValue(page([permit({ status: "active", row_version: 5 })]));
     svc.listPermitIsolations.mockResolvedValue([isolation({ ...VERIFIED, verified_by_id: 9 })]);
     svc.verifyPermitIsolationRemoval.mockImplementation(async () => {
       const removed = isolation({
@@ -320,7 +325,7 @@ describe("PermitsPage", () => {
   });
 
   it("opens the create dialog pre-linked to the work order from the WO launch point", async () => {
-    svc.listWorkPermits.mockResolvedValue([]);
+    svc.listWorkPermits.mockResolvedValue(page([]));
     getWo.mockResolvedValue({
       wo: { id: 5, code: "OT-0042", asset_code: "PMP-101", asset_label: "Feed pump" },
       transitions: [],
@@ -356,7 +361,7 @@ describe("PermitsPage", () => {
       asset_label: "Compressor",
     });
     svc.listWorkPermits.mockImplementation(async (filter: { search?: string }) =>
-      filter.search ? [compressor] : [permit(), compressor],
+      page(filter.search ? [compressor] : [permit(), compressor]),
     );
     renderPage();
     await screen.findByRole("button", { name: "Select PTW-2026-000042" });
@@ -405,7 +410,7 @@ describe("PermitsPage", () => {
       handed_back_on_time_count: 3,
       rate: 0.75,
     });
-    svc.listOpenPermitsReport.mockResolvedValue([permit(), permit({ id: 2 })]);
+    svc.listOpenPermitsReport.mockResolvedValue(page([permit(), permit({ id: 2 })]));
     renderPage();
     const tiles = await screen.findByTestId("permits-kpis");
     expect(within(tiles).getByText(enPermits.kpi.open)).toBeInTheDocument();

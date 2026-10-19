@@ -85,7 +85,7 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
   useEffect(() => {
     let cancelled = false;
     setReceiversError(null);
-    listPermitHandoverReceivers(search || null)
+    listPermitHandoverReceivers(permitId, search || null)
       .then((page) => {
         if (!cancelled) setReceivers(page);
       })
@@ -95,7 +95,7 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
     return () => {
       cancelled = true;
     };
-  }, [search, receiversReload]);
+  }, [permitId, search, receiversReload]);
 
   const note = draft.note.trim();
   const noteTooShort = note.length < HANDOVER_NOTE_MIN;

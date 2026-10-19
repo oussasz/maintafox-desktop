@@ -12,6 +12,7 @@ import type {
   PermitSuspendInput,
   PermitTypeUpsertInput,
   WorkPermitCreateInput,
+  WorkPermitHiddenCounts,
   WorkPermitListFilter,
   WorkPermitStatusInput,
   WorkPermitUpdateInput,
@@ -101,6 +102,7 @@ const PermitHandoverRoleOptionSchema = z.object({
 const PermitHandoverReceiverPageSchema = z.object({
   items: z.array(z.object({ id: z.number(), display_name: z.string() })),
   total: z.number(),
+  empty_reason: z.string().nullable(),
 });
 
 const PermitIsolationSchema = z.object({
@@ -171,7 +173,15 @@ const IsolationOptionsSchema = z.object({
   isolation_methods: z.array(IsolationOptionSchema),
 });
 
+/** A permit list limited to the user's sites, with the counts of what it leaves out. */
+const WorkPermitListPageSchema = z.object({
+  items: z.array(WorkPermitSchema),
+  hidden_outside_scope: z.number(),
+  hidden_without_site: z.number(),
+});
+
 export type PermitTypeRecord = z.infer<typeof PermitTypeSchema>;
+export type WorkPermitListPage = WorkPermitHiddenCounts & { items: WorkPermitRecord[] };
 export type IsolationOption = z.infer<typeof IsolationOptionSchema>;
 export type IsolationOptions = z.infer<typeof IsolationOptionsSchema>;
 export type WorkPermitRecord = z.infer<typeof WorkPermitSchema>;
@@ -187,9 +197,10 @@ export async function listPermitTypes(): Promise<PermitTypeRecord[]> {
   return z.array(PermitTypeSchema).parse(raw);
 }
 
-export async function listWorkPermits(filter: WorkPermitListFilter): Promise<WorkPermitRecord[]> {
+/** Permits of the user's sites (ptw.view), with how many are left out and why. */
+export async function listWorkPermits(filter: WorkPermitListFilter): Promise<WorkPermitListPage> {
   const raw = await invoke<unknown>("list_work_permits", { filter });
-  return z.array(WorkPermitSchema).parse(raw);
+  return WorkPermitListPageSchema.parse(raw);
 }
 
 export async function listPermitSuspensions(permitId: number): Promise<PermitSuspensionRecord[]> {
@@ -229,9 +240,10 @@ export async function recordLotoCardPrint(input: {
   return LotoCardPrintJobSchema.parse(raw);
 }
 
-export async function listOpenPermitsReport(): Promise<WorkPermitRecord[]> {
+/** Open, not expired permits of the user's sites, with how many are left out and why. */
+export async function listOpenPermitsReport(): Promise<WorkPermitListPage> {
   const raw = await invoke<unknown>("list_open_permits_report");
-  return z.array(WorkPermitSchema).parse(raw);
+  return WorkPermitListPageSchema.parse(raw);
 }
 
 export async function permitComplianceKpi30d(): Promise<PermitComplianceKpi30dRecord> {
@@ -255,7 +267,7 @@ export const TERMINAL_PERMIT_STATUSES: ReadonlySet<string> = new Set([
 
 /** Returns the permit the WO gate evaluates (active first, then newest open). */
 export async function getPermitForWorkOrder(workOrderId: number): Promise<WorkPermitRecord | null> {
-  const rows = await listWorkPermits({ linked_work_order_id: workOrderId, limit: 50 });
+  const { items: rows } = await listWorkPermits({ linked_work_order_id: workOrderId, limit: 50 });
   const rank = (p: WorkPermitRecord): number =>
     p.status === "active" ? 0 : TERMINAL_PERMIT_STATUSES.has(p.status) ? 2 : 1;
   return [...rows].sort((a, b) => rank(a) - rank(b) || b.id - a.id)[0] ?? null;
@@ -290,15 +302,18 @@ export async function suspendWorkPermit(
 }
 
 /**
- * Who may receive a hand-over: active accounts by name, never the signed-in person (ptw.close).
- * One page with the total of matches, so a cut list is never shown as complete.
+ * Who may receive the hand-over of a permit: active accounts holding the permit close right at the
+ * permit's site, by name, never the signed-in person (ptw.close at that site). One page with the
+ * total of matches, so a cut list is never shown as complete.
  */
 export async function listPermitHandoverReceivers(
+  permitId: number,
   search: string | null,
   limit?: number,
   offset?: number,
 ): Promise<PermitHandoverReceiverPage> {
   const raw = await invoke<unknown>("list_permit_handover_receivers", {
+    permitId,
     search: search && search.trim() ? search.trim() : null,
     limit: limit ?? null,
     offset: offset ?? null,
