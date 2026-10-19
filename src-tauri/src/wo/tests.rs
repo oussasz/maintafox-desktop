@@ -1342,6 +1342,7 @@ mod tests {
                 wo_id: wo.id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
+                estimated_remaining_hours: None,
             },
         )
         .await
@@ -1454,6 +1455,7 @@ mod tests {
                 expected_row_version: wo.row_version,
                 reason: "Need final adjustment".into(),
                 target_status: None, // defaults to in_progress
+                estimated_remaining_hours: None,
             },
         )
         .await

@@ -5484,6 +5484,8 @@ export interface WoResumeInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
+  /** Estimated remaining time (hours, > 0) for the permit gate instead of the full expected duration. */
+  estimated_remaining_hours?: number | null;
 }
 
 export interface WoHoldInput {

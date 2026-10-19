@@ -859,6 +859,17 @@
     "submitForPlanning": "Submit for Planning",
     "markReady": "Mark Ready"
   },
+  "remainingTime": {
+    "label": "Estimated remaining time (hours, optional)",
+    "placeholder": "e.g. 2.5",
+    "hint": "Used only to check that the permits cover the rest of the work (now + this time). Empty: the work order's full expected duration. The planned dates and the expected duration are not changed; the value is recorded in the history in your name.",
+    "invalid": "Enter a number of hours greater than 0, or leave the field empty."
+  },
+  "resumeDialog": {
+    "title": "Resume the work order",
+    "description": "The permits must cover the work until its end: the later of the planned end and now + the expected duration, or + the estimated remaining time you enter below.",
+    "cancel": "Cancel"
+  },
   "cost": {
     "title": "Cost Summary",
     "loading": "Loading costs…",

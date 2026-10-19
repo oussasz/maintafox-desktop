@@ -957,7 +957,9 @@ pub(super) async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_
             shift: None,
             shift_class_version_id: None,
             clear_shift: false,
-            expected_duration_hours: Some(8.0),
+            // Planned in the past: the permit gate judges now + this duration (CMMS Advisor rule),
+            // which the test permits (8 h from their creation) cover.
+            expected_duration_hours: Some(1.0),
             planned_crew_size: None,
             clear_crew_size: false,
             urgency_code: None,
@@ -2407,6 +2409,7 @@ async fn wo_gate_refuses_a_permit_expiring_before_the_planned_end() {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: rv,
+                estimated_remaining_hours: None,
             },
         )
     };
@@ -2477,12 +2480,28 @@ async fn wo_gate_judges_the_estimated_end_without_a_planned_end() {
     crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
         .await
         .expect("no estimate");
-    // A planned end wins over the duration: planned before the expiry, 48 h of work: judged on the
-    // planned end.
-    set_plan(Some("2026-04-10T16:00:00Z"), Some(48.0)).await;
+    // A planned end later than now + the duration wins: planned in two hours (before the 8 h
+    // expiry), one hour of work: judged on the planned end, covered.
+    let in_two_hours = (chrono::Utc::now() + chrono::Duration::hours(2))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET planned_end = ?, expected_duration_hours = 1.0 WHERE id = ?",
+        [in_two_hours.into(), wo_id.into()],
+    ))
+    .await
+    .expect("plan");
     crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
         .await
         .expect("judged on the planned end");
+    // A planned end already past no longer hides the duration (review SF1): 48 h of work from now
+    // outlives the permit.
+    set_plan(Some("2026-04-10T16:00:00Z"), Some(48.0)).await;
+    assert_validation(
+        crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await,
+        "PERMIT_EXPIRES_BEFORE_ESTIMATED_END",
+    );
 
     // Resume: judged at the resume moment.
     set_plan(None, Some(1.0)).await;
@@ -2515,6 +2534,7 @@ async fn wo_gate_judges_the_estimated_end_without_a_planned_end() {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: rv,
+                estimated_remaining_hours: None,
             },
         )
     };
@@ -2541,6 +2561,236 @@ async fn wo_gate_judges_the_estimated_end_without_a_planned_end() {
     .await
     .expect("expire");
     assert_validation(resume(paused.row_version).await, "PERMIT_EXPIRED");
+}
+
+/// An instant in the stored form (UTC, `Z`, whole seconds).
+fn z(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// Review SF1, CMMS Advisor rule: the end of the work is the later of the planned end and the
+/// moment of the start, resume or reopening plus the expected duration (or the estimated remaining
+/// time entered on a resume or reopening). The overnight case: planned yesterday 08:00-12:00 (4 h),
+/// on hold overnight, resumed this morning on a permit expiring five minutes later: refused (the
+/// old rule judged the past planned end and let it through). A remaining time entered on the
+/// resume replaces the duration for this check only: refused at 0 or less, accepted when it fits,
+/// recorded on the resume's history row (who, when, the value), the planned dates and the expected
+/// duration unchanged. A planned end already past with no duration: refused with "re-plan the
+/// dates or enter the duration / remaining time". The same on a reopening.
+#[tokio::test]
+async fn wo_gate_judges_late_work_on_the_moment_plus_the_duration_or_the_remaining_time() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-98").await;
+    let (wo_id, rv) = assigned_wo_requiring_permit(&db, asset).await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-98").await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let actor = admin_id(&db).await;
+    let now = chrono::Utc::now();
+    // Planned "yesterday 08:00-12:00": 25 h and 21 h ago.
+    let planned_start = z(now - chrono::Duration::hours(25));
+    let planned_end = z(now - chrono::Duration::hours(21));
+    let plan = |hours: Option<f64>| {
+        let db = &db;
+        let (planned_start, planned_end) = (planned_start.clone(), planned_end.clone());
+        async move {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_orders SET planned_start = ?, planned_end = ?, expected_duration_hours = ? WHERE id = ?",
+                [planned_start.into(), planned_end.into(), hours.into(), wo_id.into()],
+            ))
+            .await
+            .expect("plan");
+        }
+    };
+    let code_of = |res: Result<crate::wo::domain::WorkOrder, AppError>| match res {
+        Err(AppError::OrgValidationFailed(issues)) => issues[0].clone(),
+        other => panic!("expected a coded refusal, got {other:?}"),
+    };
+
+    // A start after the planned end with no duration: the end of the work is unknown, refused with
+    // its own code, which offers both ways out.
+    plan(None).await;
+    match crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await {
+        Err(AppError::OrgValidationFailed(issues)) => {
+            assert_eq!(issues[0].code, "WO_PLANNED_END_PASSED");
+            assert_eq!(issues[0].params.get("planned_end"), Some(&planned_end));
+            assert_eq!(issues[0].params.get("permit"), Some(&wp.code));
+            assert!(issues[0].message.contains("re-plan"), "{}", issues[0].message);
+            assert!(issues[0].message.contains("expected duration"), "{}", issues[0].message);
+        }
+        other => panic!("expected WO_PLANNED_END_PASSED, got {other:?}"),
+    }
+    // With 4 h of work: now + 4 h is covered by the 8 h permit.
+    plan(Some(4.0)).await;
+    start(&db, wo_id, rv).await.expect("4 h from now is covered");
+
+    // On hold overnight; this morning the permit expires in five minutes.
+    let reason = scalar_i64(
+        &db,
+        "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+         JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' AND rv.is_active = 1 AND rs.status = 'published' LIMIT 1",
+    )
+    .await;
+    let rv = scalar_i64(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await;
+    let paused = execution::pause_wo(
+        &db,
+        execution::WoPauseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            delay_reason_id: reason,
+            comment: None,
+        },
+    )
+    .await
+    .expect("pause");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET expires_at = ? WHERE id = ?",
+        [
+            z(chrono::Utc::now() + chrono::Duration::minutes(5)).into(),
+            wp.id.into(),
+        ],
+    ))
+    .await
+    .expect("expires in five minutes");
+    let resume = |rv: i64, remaining: Option<f64>| {
+        execution::resume_wo(
+            &db,
+            execution::WoResumeInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                estimated_remaining_hours: remaining,
+            },
+        )
+    };
+    // The full 4 h from now outlives the permit: refused, naming the hours.
+    let issue = code_of(resume(paused.row_version, None).await);
+    assert_eq!(issue.code, "PERMIT_EXPIRES_BEFORE_ESTIMATED_END");
+    assert_eq!(issue.params.get("hours").map(String::as_str), Some("4"));
+    assert!(issue.message.contains("the expected duration"), "{}", issue.message);
+    assert!(issue.message.contains("extend this permit"), "{}", issue.message);
+    // An estimated remaining time of 0 or less (or not a number) is refused.
+    for bad in [0.0, -1.0, f64::NAN] {
+        assert_eq!(
+            code_of(resume(paused.row_version, Some(bad)).await).code,
+            "WO_REMAINING_TIME_INVALID",
+            "{bad}"
+        );
+    }
+    // Two hours remaining still outlive the permit: refused, naming the remaining time.
+    let issue = code_of(resume(paused.row_version, Some(2.0)).await);
+    assert_eq!(issue.code, "PERMIT_EXPIRES_BEFORE_ESTIMATED_END");
+    assert_eq!(issue.params.get("hours").map(String::as_str), Some("2"));
+    assert!(issue.message.contains("remaining time"), "{}", issue.message);
+    // Three minutes remaining fit before the expiry: resumed.
+    let resumed = resume(paused.row_version, Some(0.05)).await.expect("three minutes fit");
+    assert_eq!(resumed.status_code.as_deref(), Some("in_progress"));
+    // Recorded on the resume's history row (who, when, the value); the planned dates and the
+    // expected duration are unchanged.
+    let recorded = |action: &'static str| {
+        let db = &db;
+        async move {
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT actor_id, acted_at, estimated_remaining_hours FROM wo_state_transition_log \
+                 WHERE wo_id = ? AND action = ? AND to_status = 'in_progress' ORDER BY id DESC LIMIT 1",
+                [wo_id.into(), action.into()],
+            ))
+            .await
+            .expect("query")
+            .map(|r| {
+                (
+                    r.try_get::<i64>("", "actor_id").expect("actor"),
+                    r.try_get::<String>("", "acted_at").expect("acted_at"),
+                    r.try_get::<Option<f64>>("", "estimated_remaining_hours")
+                        .expect("hours"),
+                )
+            })
+            .expect("transition row")
+        }
+    };
+    let (who, when, hours) = recorded("resume").await;
+    assert_eq!((who, hours), (actor, Some(0.05)));
+    assert!(crate::settings::site::instant(&when).is_some(), "{when}");
+    assert_eq!(
+        scalar_text(
+            &db,
+            &format!("SELECT planned_end || '|' || expected_duration_hours FROM work_orders WHERE id = {wo_id}")
+        )
+        .await,
+        format!("{planned_end}|4.0")
+    );
+    // A start (or a resume without a remaining time) records none.
+    assert_eq!(recorded("start").await.2, None);
+
+    // Planned end past and no duration on a resume: refused with the code that offers the
+    // remaining time; a remaining time that fits lets it resume.
+    let paused = execution::pause_wo(
+        &db,
+        execution::WoPauseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: resumed.row_version,
+            delay_reason_id: reason,
+            comment: None,
+        },
+    )
+    .await
+    .expect("pause again");
+    plan(None).await;
+    let issue = code_of(resume(paused.row_version, None).await);
+    assert_eq!(issue.code, "WO_PLANNED_END_PASSED");
+    assert!(issue.message.contains("remaining time"), "{}", issue.message);
+    let resumed = resume(paused.row_version, Some(0.05))
+        .await
+        .expect("remaining time fits");
+
+    // Reopening to in progress: the same rule, with its own remaining time.
+    let completed = scalar_i64(&db, "SELECT id FROM work_order_statuses WHERE code = 'completed'").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET status_id = ? WHERE id = ?",
+        [completed.into(), wo_id.into()],
+    ))
+    .await
+    .expect("completed");
+    let reopen = |rv: i64, remaining: Option<f64>| {
+        crate::wo::closeout::reopen_wo(
+            &db,
+            crate::wo::closeout::WoReopenInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                reason: "Leak came back".into(),
+                target_status: None,
+                estimated_remaining_hours: remaining,
+            },
+        )
+    };
+    let rv = resumed.row_version;
+    assert_eq!(code_of(reopen(rv, None).await).code, "WO_PLANNED_END_PASSED");
+    plan(Some(4.0)).await;
+    assert_eq!(
+        code_of(reopen(rv, None).await).code,
+        "PERMIT_EXPIRES_BEFORE_ESTIMATED_END"
+    );
+    assert_eq!(code_of(reopen(rv, Some(-2.0)).await).code, "WO_REMAINING_TIME_INVALID");
+    let reopened = reopen(rv, Some(0.05)).await.expect("remaining time fits");
+    assert_eq!(reopened.status_code.as_deref(), Some("in_progress"));
+    let (who, _, hours) = recorded("reopen").await;
+    assert_eq!((who, hours), (actor, Some(0.05)));
+    assert_eq!(
+        scalar_text(
+            &db,
+            &format!("SELECT CAST(expected_duration_hours AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await,
+        "4.0"
+    );
 }
 
 /// The planned dates typed in the work order form (a `datetime-local` value, no zone) are stored as

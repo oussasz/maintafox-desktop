@@ -91,6 +91,8 @@ export interface WoReopenInput {
   expected_row_version: number;
   reason: string;
   target_status?: string | null;
+  /** Reopening to in progress: estimated remaining time (hours, > 0) for the permit gate. */
+  estimated_remaining_hours?: number | null;
 }
 
 export interface UpdateWoRcaInput {

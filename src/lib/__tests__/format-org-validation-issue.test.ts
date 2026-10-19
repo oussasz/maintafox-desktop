@@ -102,10 +102,44 @@ describe("coded refusals with times", () => {
     });
     expect(text).not.toBe("Permit PTW-0002 expires ...");
     expect(text).toContain("PTW-0002");
-    expect(text).toContain("2.5 h");
+    // The hours in the user's language (review NOTE 4): a decimal comma in French.
+    expect(text).toContain(language === "fr" ? "2,5 h" : "2.5 h");
     expect(text).toContain(formatDateTime(new Date(Date.UTC(2026, 9, 19, 9, 0)), language));
     expect(text).not.toContain("2026-10-19T09:00:00Z");
   });
+
+  // Review SF1: a planned end already past with no duration asks to re-plan or enter a duration.
+  it.each(["fr", "en"])("explains a planned end already past in %s", async (language) => {
+    await i18n.changeLanguage(language);
+    await i18n.loadNamespaces("training");
+    const params = {
+      permit: "PTW-0003",
+      expires_at: "2026-10-19T08:05:00Z",
+      planned_end: "2026-10-18T11:00:00Z",
+    };
+    const text = formatOrgIssueWithI18n({
+      code: "WO_PLANNED_END_PASSED",
+      message: "The work order's planned end ...",
+      params,
+    });
+    expect(text).not.toBe("The work order's planned end ...");
+    expect(text).toContain("PTW-0003");
+    expect(text).toContain(formatDateTime(new Date(Date.UTC(2026, 9, 18, 11, 0)), language));
+    expect(text).not.toContain("2026-10-18T11:00:00Z");
+  });
+
+  it.each(["fr", "en"])(
+    "names an unreadable duration and an invalid remaining time in %s",
+    async (language) => {
+      await i18n.changeLanguage(language);
+      await i18n.loadNamespaces("training");
+      for (const code of ["WO_EXPECTED_DURATION_UNREADABLE", "WO_REMAINING_TIME_INVALID"]) {
+        const text = formatOrgIssueWithI18n({ code, message: "english", params: { value: "x" } });
+        expect(text).toBe(String(i18n.t(`training:errors.${code}`, { value: "x" })));
+        expect(text).not.toBe("english");
+      }
+    },
+  );
 
   it.each(["fr", "en"])("asks to re-plan an unreadable planned end in %s", async (language) => {
     await i18n.changeLanguage(language);

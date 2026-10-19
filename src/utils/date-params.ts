@@ -4,7 +4,7 @@
  * calendar days); the screens show them in the reader's language and time zone.
  */
 
-import { formatDateTime } from "@/utils/formatters";
+import { formatDateTime, formatNumber } from "@/utils/formatters";
 
 /** Parameters holding an instant (stored UTC timestamp): shown as local date and time. */
 export const DATE_TIME_PARAMS: ReadonlySet<string> = new Set([
@@ -19,6 +19,15 @@ export const DATE_TIME_PARAMS: ReadonlySet<string> = new Set([
   // Last recorded change of a safety setting (…_CLOCK_BEHIND refusals).
   "last",
 ]);
+
+/**
+ * Parameters holding a number of hours (coded refusals send it with "." as the decimal separator,
+ * at most two decimals): shown in the reader's language ("2,5" in French).
+ */
+export const DECIMAL_PARAMS: ReadonlySet<string> = new Set(["hours"]);
+
+/** A decimal number as the backend sends it. */
+const PLAIN_DECIMAL = /^-?\d+(?:\.\d+)?$/;
 
 /** Parameters holding a calendar day: shown as a local date. */
 export const DATE_PARAMS: ReadonlySet<string> = new Set(["expires_on", "date", "until"]);
@@ -37,7 +46,9 @@ export function storedInstant(value: string): Date | null {
 
 /**
  * The params with each instant ({@link DATE_TIME_PARAMS}) shown as local date and time in `locale`
- * ("fr" | "en"). A value that is not a readable time is kept as sent, never replaced.
+ * ("fr" | "en"), and each number of hours ({@link DECIMAL_PARAMS}) with the locale's decimal
+ * separator (at most two decimals). A value that is not a readable time or number is kept as sent,
+ * never replaced.
  */
 export function localizeDateTimeParams(
   params: Record<string, string>,
@@ -45,7 +56,12 @@ export function localizeDateTimeParams(
 ): Record<string, string> {
   const out: Record<string, string> = { ...params };
   for (const [name, value] of Object.entries(params)) {
-    if (!DATE_TIME_PARAMS.has(name) || typeof value !== "string") continue;
+    if (typeof value !== "string") continue;
+    if (DECIMAL_PARAMS.has(name)) {
+      if (PLAIN_DECIMAL.test(value.trim())) out[name] = formatNumber(Number(value), locale);
+      continue;
+    }
+    if (!DATE_TIME_PARAMS.has(name)) continue;
     const instant = storedInstant(value);
     if (instant) out[name] = formatDateTime(instant, locale);
   }

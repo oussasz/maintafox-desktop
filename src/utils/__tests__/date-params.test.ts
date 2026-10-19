@@ -42,6 +42,15 @@ describe("localizeDateTimeParams", () => {
     expect(formatDateTime(instant, "fr")).not.toBe(formatDateTime(instant, "en"));
   });
 
+  it("shows a number of hours with the language's decimal separator", () => {
+    expect(localizeDateTimeParams({ hours: "2.5" }, "fr")).toEqual({ hours: "2,5" });
+    expect(localizeDateTimeParams({ hours: "2.5" }, "en")).toEqual({ hours: "2.5" });
+    expect(localizeDateTimeParams({ hours: "0.33" }, "fr")).toEqual({ hours: "0,33" });
+    expect(localizeDateTimeParams({ hours: "48" }, "fr")).toEqual({ hours: "48" });
+    // Not a plain number: kept as sent.
+    expect(localizeDateTimeParams({ hours: "inf" }, "fr")).toEqual({ hours: "inf" });
+  });
+
   it("keeps an unreadable time as sent, and leaves other params alone", () => {
     expect(
       localizeDateTimeParams({ planned_end: "someday", date: "2026-10-19", code: "X" }, "fr"),

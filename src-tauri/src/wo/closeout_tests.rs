@@ -763,6 +763,7 @@ mod tests {
             expected_row_version: rv,
             reason: "Leak came back".into(),
             target_status: None,
+            estimated_remaining_hours: None,
         };
         match closeout::reopen_wo(&db, reopen(closed_wo.row_version)).await {
             Err(AppError::ValidationFailed(errors)) => assert!(

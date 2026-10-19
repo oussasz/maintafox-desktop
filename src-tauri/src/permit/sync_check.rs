@@ -65,6 +65,7 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde_json::{Map, Value};
 
 use crate::errors::{AppError, AppResult};
+use crate::permit::wo_gate::Hours;
 use crate::settings::site::{instant, InboundVerdict, MAX_CLOCK_SKEW_MINUTES};
 
 pub(crate) type Payload = Map<String, Value>;
@@ -112,13 +113,18 @@ fn time(p: &Payload, key: &str) -> Option<DateTime<Utc>> {
     field(p, key).and_then(instant)
 }
 
-/// A number field of a payload (a JSON number, or a number sent as text); `None` when absent, null
-/// or not a number.
-fn number(p: &Payload, key: &str) -> Option<f64> {
+/// A number of hours in a payload, read as this PC reads the stored column (`permit::wo_gate::Hours`):
+/// absent when missing, null or blank; a JSON number, or a number sent as text (SQLite's REAL
+/// affinity stores numeric text as that number); anything else is unreadable (refused when it is
+/// judged, as on this PC), never taken as "no value".
+fn hours(p: &Payload, key: &str) -> Hours {
     match p.get(key) {
-        Some(Value::Number(n)) => n.as_f64(),
-        Some(Value::String(s)) => s.trim().parse::<f64>().ok(),
-        _ => None,
+        None | Some(Value::Null) => Hours::Absent,
+        Some(Value::Number(n)) => n
+            .as_f64()
+            .map_or_else(|| Hours::Unreadable(n.to_string()), Hours::Value),
+        Some(Value::String(s)) => Hours::from_text(Some(s)),
+        Some(other) => Hours::Unreadable(other.to_string()),
     }
 }
 
@@ -1535,16 +1541,29 @@ pub(crate) async fn inbound_work_order_check(
     // recorded change to in progress (reopen; local rows may have no sync identity).
     let mut moments = vec![started];
     moments.extend(payloads(&segments).iter().filter_map(|s| time(s, "ended_at")));
-    moments.extend(
-        payloads(&transitions)
-            .iter()
-            .filter(|t| field(t, "to_status") == Some("in_progress"))
-            .filter_map(|t| time(t, "acted_at")),
-    );
+    // Its recorded entries into in progress: when, by which action, and the estimated remaining time
+    // entered on a resume or reopening (migration 242).
+    let mut entries: Vec<(DateTime<Utc>, Option<String>, Hours)> = payloads(&transitions)
+        .iter()
+        .filter(|t| field(t, "to_status") == Some("in_progress"))
+        .filter_map(|t| {
+            time(t, "acted_at").map(|at| {
+                (
+                    at,
+                    field(t, "action").map(str::to_string),
+                    hours(t, "estimated_remaining_hours"),
+                )
+            })
+        })
+        .collect();
     for r in conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT t.acted_at AS at FROM wo_state_transition_log t JOIN work_orders w ON w.id = t.wo_id \
+            "SELECT t.acted_at AS at, t.action AS action, \
+             CASE WHEN typeof(t.estimated_remaining_hours) IN ('real', 'integer') \
+             THEN t.estimated_remaining_hours END AS rem_number, \
+             CASE WHEN typeof(t.estimated_remaining_hours) = 'text' THEN t.estimated_remaining_hours END AS rem_text \
+             FROM wo_state_transition_log t JOIN work_orders w ON w.id = t.wo_id \
              WHERE w.entity_sync_id = ? AND t.to_status = 'in_progress'",
             [entity_sync_id.into()],
         ))
@@ -1556,9 +1575,19 @@ pub(crate) async fn inbound_work_order_check(
             .as_deref()
             .and_then(instant)
         {
-            moments.push(acted);
+            let entered = match r.try_get::<Option<f64>>("", "rem_number").map_err(sync_err)? {
+                Some(h) => Hours::Value(h),
+                None => Hours::from_text(
+                    r.try_get::<Option<String>>("", "rem_text")
+                        .map_err(sync_err)?
+                        .as_deref(),
+                ),
+            };
+            let action = r.try_get::<Option<String>>("", "action").map_err(sync_err)?;
+            entries.push((acted, action, entered));
         }
     }
+    moments.extend(entries.iter().map(|(at, _, _)| *at));
     // The row was written when it last entered in progress: a wait or status change dated after it,
     // or any time in the future, is not consistent.
     let written = time(&wo, "updated_at");
@@ -1574,6 +1603,38 @@ pub(crate) async fn inbound_work_order_check(
         );
     }
     let at = moments.into_iter().max().unwrap_or(started);
+    // The estimated remaining time entered on the resume or reopening at `at`, used instead of the
+    // expected duration as on the PC that recorded it (`permit::wo_gate`): only when every recorded
+    // entry at that moment is a resume or a reopening carrying one (the largest); otherwise (none
+    // recorded, a start, a missing value) the full expected duration. A value that is not a number of
+    // hours greater than 0 is never recorded by a PC: refused.
+    let mut remaining: Option<f64> = None;
+    let mut full_duration = false;
+    for (_, action, entered) in entries.iter().filter(|(when, _, _)| *when == at) {
+        if *entered == Hours::Absent {
+            full_duration = true;
+            continue;
+        }
+        let Some(h) = entered.usable() else {
+            let value = match entered {
+                Hours::Value(h) => h.to_string(),
+                Hours::Unreadable(raw) => raw.clone(),
+                Hours::Absent => String::new(),
+            };
+            return conflict(
+                crate::permit::wo_gate::CODE_REMAINING_TIME_INVALID,
+                format!(
+                    "work order {code}: the estimated remaining time recorded when it entered in progress at {at} ({value}) is not a number of hours greater than 0"
+                ),
+            );
+        };
+        if matches!(action.as_deref(), Some("resume" | "reopen")) {
+            remaining = Some(remaining.map_or(h, |r: f64| r.max(h)));
+        } else {
+            full_duration = true;
+        }
+    }
+    let remaining = remaining.filter(|_| !full_duration);
     if permits.rows.is_empty() && flag(&wo, "requires_permit") {
         return wait(format!(
             "work order {code} requires a work permit and none has been received yet"
@@ -1637,21 +1698,41 @@ pub(crate) async fn inbound_work_order_check(
                 );
             }
             // The work would outlive its protection (`permit::wo_gate`), judged as of the start or
-            // resume the row records (`at`, never this PC's clock): against the planned end (fixed
-            // once the order is past ready); without one, `at` plus the expected duration; without
-            // either, not judged. An unreadable planned end is refused, as locally.
+            // resume the row records (`at`, never this PC's clock): against the later of the planned
+            // end (fixed once the order is past ready) and `at` plus the hours of work (the remaining
+            // time entered on that resume or reopening, else the expected duration); a planned end
+            // already past with no hours, or an unreadable planned end or duration, is refused; with
+            // neither an end nor hours, not judged. As locally.
             if let Some(expires) = instant(expiry) {
-                use crate::permit::wo_gate::{expiry_refusal, stored, work_end, WorkEnd};
-                let end = work_end(field(&wo, "planned_end"), number(&wo, "expected_duration_hours"), at);
+                use crate::permit::wo_gate::{expiry_refusal, shown_hours, stored, work_end, WorkEnd};
+                let end = work_end(
+                    field(&wo, "planned_end"),
+                    &hours(&wo, "expected_duration_hours"),
+                    remaining,
+                    at,
+                );
                 if let Some(c) = expiry_refusal(expires, &end) {
                     let why = match &end {
                         WorkEnd::Planned(e) => format!("expires ({expiry}) before its planned end ({})", stored(*e)),
-                        WorkEnd::Estimated { end: e, hours } => format!(
-                            "expires ({expiry}) before its estimated end ({}: start or resume + {hours} h, no planned end)",
-                            stored(*e)
+                        WorkEnd::Estimated { end: e, hours, remaining } => format!(
+                            "expires ({expiry}) before its estimated end ({}: start or resume + {} h, {}; later than any planned end)",
+                            stored(*e),
+                            shown_hours(*hours),
+                            if *remaining {
+                                "the estimated remaining time entered"
+                            } else {
+                                "the expected duration"
+                            }
                         ),
                         WorkEnd::Unreadable(raw) => {
                             format!("is judged against a planned end ({raw}) that is not a readable date and time")
+                        }
+                        WorkEnd::PlannedPassed(p) => format!(
+                            "expires ({expiry}) and its planned end ({}) had passed with no expected duration or remaining time: the end of the work is unknown",
+                            stored(*p)
+                        ),
+                        WorkEnd::DurationUnreadable(raw) => {
+                            format!("is judged against an expected duration ({raw}) that is not a number of hours")
                         }
                         WorkEnd::Unknown => String::new(),
                     };

@@ -3162,6 +3162,235 @@ async fn a_received_start_without_any_end_is_not_judged_but_an_expired_permit_is
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
 }
 
+/// An instant in the stored form (UTC, `Z`, whole seconds).
+fn stored_at(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// A late work order (planned "yesterday 08:00-12:00", started then, on hold overnight) received as
+/// resumed at `resumed_at`, with its hot-work permit expiring five minutes after the resume.
+/// Returns (work order sync id, received row, local work order id).
+async fn late_wo_resumed(
+    db: &DatabaseConnection,
+    asset_code: &str,
+    resumed_at: chrono::DateTime<chrono::Utc>,
+) -> (String, Payload, i64) {
+    let started_at = resumed_at - chrono::Duration::hours(25);
+    let (wo_sync, row, _, wo_id) =
+        ready_wo_with_permit_active_since(db, asset_code, started_at - chrono::Duration::hours(1)).await;
+    exec(
+        db,
+        &format!(
+            "UPDATE work_permits SET expires_at = '{}' WHERE linked_work_order_id = {wo_id}",
+            stored_at(resumed_at + chrono::Duration::minutes(5))
+        ),
+    )
+    .await;
+    let row = with(
+        row,
+        &[
+            ("actual_start", json!(stored_at(started_at))),
+            ("planned_end", json!(stored_at(started_at + chrono::Duration::hours(4)))),
+            ("expected_duration_hours", json!(4.0)),
+        ],
+    );
+    (wo_sync, row, wo_id)
+}
+
+/// The history row of an entry into in progress at `at` (`action`, with `remaining` as the
+/// estimated remaining time): received, waiting in the inbox with the work order (`received`), or
+/// already on this PC with no sync identity (`!received`, read directly). Replaces any earlier one.
+async fn entry_into_progress(
+    db: &DatabaseConnection,
+    wo_id: i64,
+    at: &str,
+    action: &str,
+    remaining: Value,
+    received: bool,
+) {
+    exec(
+        db,
+        "DELETE FROM sync_inbox WHERE entity_type = 'wo_state_transition_log'",
+    )
+    .await;
+    exec(
+        db,
+        &format!("DELETE FROM wo_state_transition_log WHERE wo_id = {wo_id} AND to_status = 'in_progress'"),
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO wo_state_transition_log (entity_sync_id, wo_id, from_status, to_status, action, actor_id, \
+             acted_at, lifecycle_state) VALUES ('entry-{wo_id}', {wo_id}, 'on_hold', 'in_progress', '{action}', 1, \
+             '{at}', 'in_progress')"
+        ),
+    )
+    .await;
+    if received {
+        let payload = with(
+            wire(db, "wo_state_transition_log", &format!("entry-{wo_id}")).await,
+            &[("estimated_remaining_hours", remaining)],
+        );
+        exec(
+            db,
+            &format!("DELETE FROM wo_state_transition_log WHERE entity_sync_id = 'entry-{wo_id}'"),
+        )
+        .await;
+        inbox(
+            db,
+            "wo_state_transition_log",
+            &format!("entry-{wo_id}"),
+            1,
+            "pending",
+            &payload,
+        )
+        .await;
+    } else {
+        let value = match remaining {
+            Value::Null => "NULL".to_string(),
+            Value::String(s) => format!("'{s}'"),
+            other => other.to_string(),
+        };
+        exec(
+            db,
+            &format!(
+                "UPDATE wo_state_transition_log SET entity_sync_id = NULL, estimated_remaining_hours = {value} \
+                 WHERE entity_sync_id = 'entry-{wo_id}'"
+            ),
+        )
+        .await;
+    }
+}
+
+/// Review SF1 and NOTE 9, re-checked on arrival exactly as on the PC that resumed: a late resume is
+/// judged on the resume time the row records plus the expected duration (the planned end, already
+/// past, no longer hides it), or plus the estimated remaining time recorded on the resume's history
+/// row. A missing value means the full duration; one that is not a number of hours greater than 0
+/// is refused (fails safe); one recorded on a start is ignored (a start always uses the full
+/// duration, as here). The same through a received history row and one already on this PC.
+#[tokio::test]
+async fn a_received_late_resume_is_judged_on_the_duration_or_its_recorded_remaining_time() {
+    for received in [true, false] {
+        let db = setup().await;
+        let resumed_at = chrono::Utc::now() - chrono::Duration::minutes(1);
+        let at = stored_at(resumed_at);
+        let (wo_sync, row, wo_id) = late_wo_resumed(&db, "EQ-SYNC-99", resumed_at).await;
+        let status_sql = format!(
+            "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id WHERE w.id = {wo_id}"
+        );
+        let judged = |remaining: Value, action: &'static str| {
+            let (db, row, wo_sync, at) = (&db, row.clone(), wo_sync.clone(), at.clone());
+            async move {
+                entry_into_progress(db, wo_id, &at, action, remaining, received).await;
+                apply(db, "work_orders", &wo_sync, &row).await
+            }
+        };
+        // No remaining time: the full 4 h from the resume outlive the permit (the old rule judged
+        // the past planned end and let it through).
+        let outcome = judged(Value::Null, "resume").await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+            "received {received}: {outcome:?}"
+        );
+        assert_eq!(text(&db, &status_sql).await.as_deref(), Some("ready"));
+        // Two hours remaining still outlive it.
+        let outcome = judged(json!(2.0), "resume").await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+            "{outcome:?}"
+        );
+        // A value no PC records (0, negative, not a number): refused, never read as "no value".
+        for bad in [json!(0), json!(-1.5), json!("soon")] {
+            let outcome = judged(bad.clone(), "resume").await;
+            assert_eq!(
+                code(&outcome),
+                Some("WO_REMAINING_TIME_INVALID"),
+                "received {received}, {bad}: {outcome:?}"
+            );
+        }
+        // Recorded on a start (no PC does that): ignored, the full duration is judged.
+        let outcome = judged(json!(0.05), "start").await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+            "{outcome:?}"
+        );
+        // A planned end already past and no duration: unknown end, refused, unless a remaining
+        // time was recorded.
+        let no_duration = with(row.clone(), &[("expected_duration_hours", Value::Null)]);
+        entry_into_progress(&db, wo_id, &at, "resume", Value::Null, received).await;
+        let outcome = apply(&db, "work_orders", &wo_sync, &no_duration).await;
+        assert_eq!(code(&outcome), Some("WO_PLANNED_END_PASSED"), "{outcome:?}");
+        // Three minutes remaining fit before the expiry: applied, as on the PC that resumed (or
+        // reopened). A number sent as text reads as that number (SQLite stores it so).
+        let (fits, action) = if received {
+            (json!("0.05"), "resume")
+        } else {
+            (json!(0.05), "reopen")
+        };
+        let outcome = judged(fits, action).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied),
+            "received {received}: {outcome:?}"
+        );
+        assert_eq!(text(&db, &status_sql).await.as_deref(), Some("in_progress"));
+    }
+}
+
+/// Review NOTE 5: an expected duration that is not a number of hours gets the same coded refusal
+/// on this PC and on arrival (it used to be an uncoded error here and "not judged" on arrival); a
+/// number sent as text is that number on both sides.
+#[tokio::test]
+async fn an_expected_duration_that_is_not_a_number_is_refused_here_and_on_arrival() {
+    let db = setup().await;
+    let started_at = chrono::Utc::now() - chrono::Duration::minutes(10);
+    let (wo_sync, row, expiry, wo_id) =
+        ready_wo_with_permit_active_since(&db, "EQ-SYNC-100", started_at - chrono::Duration::hours(1)).await;
+    let started = with(row, &[("actual_start", json!(stored_at(started_at)))]);
+    // This PC: a duration stored as text.
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET planned_end = NULL, expected_duration_hours = 'four' WHERE id = {wo_id}"),
+    )
+    .await;
+    match crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await {
+        Err(crate::errors::AppError::OrgValidationFailed(issues)) => {
+            assert_eq!(issues[0].code, "WO_EXPECTED_DURATION_UNREADABLE");
+            assert_eq!(issues[0].params.get("value").map(String::as_str), Some("four"));
+        }
+        other => panic!("expected WO_EXPECTED_DURATION_UNREADABLE, got {other:?}"),
+    }
+    // Arrival: the same value, the same refusal.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started.clone(), &[("expected_duration_hours", json!("four"))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_EXPECTED_DURATION_UNREADABLE"), "{outcome:?}");
+    // A number sent as text: that number. Ending 30 minutes after the expiry: refused as an
+    // estimated end, exactly as the number itself.
+    let late = hours_until(started_at, expiry, -30);
+    for sent in [json!(late), json!(late.to_string())] {
+        let outcome = apply(
+            &db,
+            "work_orders",
+            &wo_sync,
+            &with(started.clone(), &[("expected_duration_hours", sent.clone())]),
+        )
+        .await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+            "{sent}: {outcome:?}"
+        );
+    }
+}
+
 /// Owner decision: switching a permit type's energy-isolation rule off on another PC is re-checked
 /// on arrival like the three-person setting (who, when, why, the settings and permit-issue rights
 /// here); switching it on is a plain edit; the shipped LOTO type's rule is never switched off.
