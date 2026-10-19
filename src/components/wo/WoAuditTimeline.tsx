@@ -57,6 +57,8 @@ const KNOWN_ACTIONS = new Set([
   "attachment_uploaded",
   "service_cost_updated",
   "permit_requirement_changed",
+  "site_moved",
+  "equipment_changed",
   "shutdown_required_set",
   "shutdown_required_cleared",
   "permit_rule_flag_cleared",

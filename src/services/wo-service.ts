@@ -199,6 +199,8 @@ export const WoTransitionRowSchema = z.object({
 const WoListPageSchema = z.object({
   items: z.array(WorkOrderSchema),
   total: z.number(),
+  hidden_outside_scope: z.number(),
+  hidden_without_site: z.number(),
 });
 
 const WoGetResponseSchema = z.object({

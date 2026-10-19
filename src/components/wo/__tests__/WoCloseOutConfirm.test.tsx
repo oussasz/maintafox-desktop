@@ -60,6 +60,10 @@ vi.mock("../use-wo-people", () => ({
   mergeWoPersonOptions: (base: unknown[]) => base,
 }));
 vi.mock("@/hooks/use-permissions", () => ({ usePermissions: () => ({ can: () => true }) }));
+// Rights at the work order’s site (`useWoAccess`): granted here.
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: () => ({ loading: false, can: () => true }),
+}));
 vi.mock("@/hooks/use-session", () => ({ useSession: () => ({ info: { user_id: 5 } }) }));
 const stepUp = vi.hoisted(() => ({ withStepUp: vi.fn() }));
 vi.mock("@/hooks/use-step-up", () => ({

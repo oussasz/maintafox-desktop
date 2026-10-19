@@ -148,14 +148,24 @@ async fn bucket(
 }
 
 /// Capacity of each day: the sum over the active crews of their capacity (`personnel::capacity`).
-async fn capacity_by_day(db: &impl ConnectionTrait, days: &[NaiveDate]) -> AppResult<Option<BTreeMap<String, f64>>> {
+/// `teams_scope` limits the crews to the reader's sites (on `teams.primary_node_id`): a site user
+/// compares their sites' planned load with their sites' crews, never with the whole plant's.
+async fn capacity_by_day(
+    db: &impl ConnectionTrait,
+    days: &[NaiveDate],
+    teams_scope: &super::access::ScopeSql,
+) -> AppResult<Option<BTreeMap<String, f64>>> {
     let (Some(first), Some(last)) = (days.iter().min(), days.iter().max()) else {
         return Ok(None);
     };
     let teams: Vec<i64> = db
-        .query_all(Statement::from_string(
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM teams WHERE status = 'active' AND deleted_at IS NULL ORDER BY id".to_string(),
+            format!(
+                "SELECT id FROM teams WHERE status = 'active' AND deleted_at IS NULL AND ({}) ORDER BY id",
+                teams_scope.predicate
+            ),
+            teams_scope.binds.clone(),
         ))
         .await?
         .iter()
@@ -183,6 +193,24 @@ pub async fn get_wo_backlog_heatmap(
     db: &impl ConnectionTrait,
     input: WoBacklogHeatmapInput,
 ) -> AppResult<WoBacklogHeatmap> {
+    get_wo_backlog_heatmap_in_scope(db, input, &crate::auth::scope::AccessScope::Everywhere).await
+}
+
+/// [`get_wo_backlog_heatmap`] over the reader's scope (where they hold `ot.view`): the work
+/// orders of their sites (`wo.entity_id`) and the crews of their sites (`teams.primary_node_id`).
+/// Plant-wide: every work order and every crew, as before.
+pub async fn get_wo_backlog_heatmap_in_scope(
+    db: &impl ConnectionTrait,
+    input: WoBacklogHeatmapInput,
+    scope: &crate::auth::scope::AccessScope,
+) -> AppResult<WoBacklogHeatmap> {
+    let wo_scope = super::access::ScopeSql::of(scope);
+    let teams_scope = super::access::ScopeSql::on(scope, "teams.primary_node_id");
+    let with_scope = |own: Vec<sea_orm::Value>| -> Vec<sea_orm::Value> {
+        let mut values = own;
+        values.extend(wo_scope.binds.iter().cloned());
+        values
+    };
     if !(1..=MAX_WEEKS).contains(&input.weeks) {
         return Err(AppError::ValidationFailed(vec![format!(
             "weeks must be between 1 and {MAX_WEEKS}."
@@ -206,12 +234,14 @@ pub async fn get_wo_backlog_heatmap(
                  FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
                  WHERE s.code IN {OPEN_STATUS_SQL} AND wo.planned_start IS NOT NULL \
                    AND date(wo.planned_start) >= ? AND date(wo.planned_start) < ? \
-                 GROUP BY date(wo.planned_start)"
+                   AND ({scope_pred}) \
+                 GROUP BY date(wo.planned_start)",
+                scope_pred = wo_scope.predicate
             ),
-            [
+            with_scope(vec![
                 start.format("%Y-%m-%d").to_string().into(),
                 end.format("%Y-%m-%d").to_string().into(),
-            ],
+            ]),
         ))
         .await?;
     let mut by_day: BTreeMap<String, (i64, f64, i64)> = BTreeMap::new();
@@ -222,7 +252,7 @@ pub async fn get_wo_backlog_heatmap(
         let u: Option<i64> = r.try_get("", "u").map_err(|e| decode_err("u", e))?;
         by_day.insert(d, (n, h, u.unwrap_or(0)));
     }
-    let capacity = capacity_by_day(db, &days).await?;
+    let capacity = capacity_by_day(db, &days, &teams_scope).await?;
     let out_days = days
         .iter()
         .map(|d| {
@@ -241,32 +271,43 @@ pub async fn get_wo_backlog_heatmap(
         .collect();
 
     let now = Utc::now().to_rfc3339();
+    // The scope predicate closes each bucket's WHERE: its binds follow the bucket's own.
     let unscheduled = bucket(
         db,
-        "wo.planned_start IS NULL AND s.code IN ('draft', 'planning', 'ready')",
-        vec![],
+        &format!(
+            "wo.planned_start IS NULL AND s.code IN ('draft', 'planning', 'ready') AND ({})",
+            wo_scope.predicate
+        ),
+        with_scope(vec![]),
     )
     .await?;
     let overdue = bucket(
         db,
-        "wo.planned_end IS NOT NULL AND wo.planned_end < ?",
-        vec![now.clone().into()],
+        &format!(
+            "wo.planned_end IS NOT NULL AND wo.planned_end < ? AND ({})",
+            wo_scope.predicate
+        ),
+        with_scope(vec![now.clone().into()]),
     )
     .await?;
 
+    // The `now` bind (SELECT) comes before the scope's (WHERE).
     let blocked_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COALESCE(rv.semantic_tag, 'unknown') AS category, COUNT(DISTINCT wo.id) AS n, \
-             COALESCE(SUM((julianday(?) - julianday(ds.started_at)) * 24.0), 0.0) AS h \
-             FROM work_orders wo \
-             JOIN work_order_statuses s ON s.id = wo.status_id \
-             LEFT JOIN work_order_delay_segments ds ON ds.work_order_id = wo.id AND ds.ended_at IS NULL \
-             LEFT JOIN reference_values rv ON rv.id = ds.delay_reason_id \
-             WHERE s.code = 'on_hold' \
-             GROUP BY COALESCE(rv.semantic_tag, 'unknown') \
-             ORDER BY n DESC, category",
-            [now.into()],
+            format!(
+                "SELECT COALESCE(rv.semantic_tag, 'unknown') AS category, COUNT(DISTINCT wo.id) AS n, \
+                 COALESCE(SUM((julianday(?) - julianday(ds.started_at)) * 24.0), 0.0) AS h \
+                 FROM work_orders wo \
+                 JOIN work_order_statuses s ON s.id = wo.status_id \
+                 LEFT JOIN work_order_delay_segments ds ON ds.work_order_id = wo.id AND ds.ended_at IS NULL \
+                 LEFT JOIN reference_values rv ON rv.id = ds.delay_reason_id \
+                 WHERE s.code = 'on_hold' AND ({}) \
+                 GROUP BY COALESCE(rv.semantic_tag, 'unknown') \
+                 ORDER BY n DESC, category",
+                wo_scope.predicate
+            ),
+            with_scope(vec![now.into()]),
         ))
         .await?;
     let mut blocked = Vec::with_capacity(blocked_rows.len());

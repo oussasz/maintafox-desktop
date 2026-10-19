@@ -10,11 +10,11 @@ import { ShieldCheck } from "lucide-react";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { PermissionGate } from "@/components/PermissionGate";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { usePlantWideAccess } from "@/components/wo/WoSiteScope";
 import { mfTone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { cn } from "@/lib/utils";
@@ -45,6 +45,9 @@ export function WoPermitRuleNote({
   const reasonId = useId();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
+  // The backend clears a rule flag for a plant-wide permit-issue right only (a site role does not
+  // lift a plant rule): the button follows the same rule.
+  const { can } = usePlantWideAccess();
 
   if (wo.permit_rule_code == null) return null;
 
@@ -83,14 +86,12 @@ export function WoPermitRuleNote({
       {active ? (
         <p className="mt-1 pl-6 text-xs text-text-secondary">{t("permitRule.clearHint")}</p>
       ) : null}
-      {clearable ? (
-        <PermissionGate permission={P.PTW_ISSUE}>
-          <div className="mt-2 pl-6">
-            <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-              {t("permitRule.clear")}
-            </Button>
-          </div>
-        </PermissionGate>
+      {clearable && can(P.PTW_ISSUE) ? (
+        <div className="mt-2 pl-6">
+          <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+            {t("permitRule.clear")}
+          </Button>
+        </div>
       ) : null}
       <ConfirmDialog
         open={open}

@@ -1,3 +1,4 @@
+pub mod access;
 pub mod analytics;
 pub mod attachments;
 pub mod audit;
@@ -24,6 +25,8 @@ pub mod tools;
 pub mod types;
 pub mod workflow;
 
+#[cfg(test)]
+mod access_tests;
 #[cfg(test)]
 mod analytics_tests;
 #[cfg(test)]

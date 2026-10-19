@@ -60,6 +60,10 @@ interface WoStoreState {
   // List
   items: WorkOrder[];
   total: number;
+  /** Work orders outside the user’s sites (not listed, shown as a count, whatever the filters). */
+  hiddenOutsideScope: number;
+  /** Work orders without an org node (plant-wide users only), whatever the filters. */
+  hiddenWithoutSite: number;
   // Detail
   activeWo: WoDetailPayload | null;
   /** True while openWo is fetching (dialog may show loading shell). */
@@ -115,6 +119,8 @@ interface WoStoreState {
 export const useWoStore = create<WoStoreState>()((set, get) => ({
   items: [],
   total: 0,
+  hiddenOutsideScope: 0,
+  hiddenWithoutSite: 0,
   activeWo: null,
   detailLoading: false,
   openingWoId: null,
@@ -166,7 +172,13 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     try {
       const page = await listWos({ ...get().filter, offset: 0 });
       if (!isCurrent()) return;
-      set({ items: page.items, total: page.total, loading: false });
+      set({
+        items: page.items,
+        total: page.total,
+        hiddenOutsideScope: page.hidden_outside_scope,
+        hiddenWithoutSite: page.hidden_without_site,
+        loading: false,
+      });
     } catch (err) {
       if (!isCurrent()) return;
       set({ error: toErrorMessage(err), listError: err, loading: false });
@@ -185,6 +197,8 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       set({
         items: [...items, ...page.items.filter((w) => !known.has(w.id))],
         total: page.total,
+        hiddenOutsideScope: page.hidden_outside_scope,
+        hiddenWithoutSite: page.hidden_without_site,
         loadingMore: false,
       });
     } catch {

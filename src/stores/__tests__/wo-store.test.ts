@@ -186,7 +186,7 @@ function makeAsset(overrides: Partial<AssetSearchResult> = {}): AssetSearchResul
 }
 
 function page(items: WorkOrder[]): WoListPage {
-  return { items, total: items.length };
+  return { items, total: items.length, hidden_outside_scope: 0, hidden_without_site: 0 };
 }
 
 function detail(wo: WorkOrder, transitions: WoTransitionRow[] = []): WoGetResponse {
@@ -289,7 +289,12 @@ describe("wo-store", () => {
       expect(useWoStore.getState().loading).toBe(true);
       expect(useWoStore.getState().error).toBeNull();
 
-      d.resolve({ items: [makeWo(), makeWo({ id: 2 })], total: 7 });
+      d.resolve({
+        items: [makeWo(), makeWo({ id: 2 })],
+        total: 7,
+        hidden_outside_scope: 0,
+        hidden_without_site: 0,
+      });
       await p;
 
       expect(listWos).toHaveBeenCalledWith({ limit: WO_LIST_PAGE_SIZE, offset: 0, search: "seal" });
@@ -297,6 +302,19 @@ describe("wo-store", () => {
       expect(s.items).toHaveLength(2);
       expect(s.total).toBe(7);
       expect(s.loading).toBe(false);
+    });
+
+    it("keeps how many work orders the user's sites leave out, and why", async () => {
+      vi.mocked(listWos).mockResolvedValueOnce({
+        items: [makeWo()],
+        total: 1,
+        hidden_outside_scope: 3,
+        hidden_without_site: 2,
+      });
+      await useWoStore.getState().loadWos();
+      const s = useWoStore.getState();
+      expect(s.hiddenOutsideScope).toBe(3);
+      expect(s.hiddenWithoutSite).toBe(2);
     });
 
     it("swallows errors, sets the message and keeps previous items", async () => {
@@ -327,6 +345,8 @@ describe("wo-store", () => {
       vi.mocked(listWos).mockResolvedValueOnce({
         items: [makeWo({ id: 2 }), makeWo({ id: 3 }), makeWo({ id: 4 })],
         total: 4,
+        hidden_outside_scope: 0,
+        hidden_without_site: 0,
       });
 
       await useWoStore.getState().loadMoreWos();
@@ -363,10 +383,20 @@ describe("wo-store", () => {
       const p1 = useWoStore.getState().loadWos();
       useWoStore.getState().setFilter({ search: "pump" });
       const p2 = useWoStore.getState().loadWos();
-      newer.resolve({ items: [makeWo({ id: 2 })], total: 1 });
+      newer.resolve({
+        items: [makeWo({ id: 2 })],
+        total: 1,
+        hidden_outside_scope: 0,
+        hidden_without_site: 0,
+      });
       await p2;
       expect(useWoStore.getState().loading).toBe(false);
-      older.resolve({ items: [makeWo({ id: 1 }), makeWo({ id: 3 })], total: 2 });
+      older.resolve({
+        items: [makeWo({ id: 1 }), makeWo({ id: 3 })],
+        total: 2,
+        hidden_outside_scope: 0,
+        hidden_without_site: 0,
+      });
       await p1;
 
       const s = useWoStore.getState();

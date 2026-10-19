@@ -3,7 +3,6 @@
  * permit-issue right and a reason of 10 characters or more, after a confirmation.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkOrder } from "@shared/ipc-types";
@@ -17,10 +16,20 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-const granted = vi.hoisted(() => ({ rights: new Set<string>() }));
-vi.mock("@/components/PermissionGate", () => ({
-  PermissionGate: ({ permission, children }: { permission: string; children: ReactNode }) =>
-    granted.rights.has(permission) ? <>{children}</> : null,
+// The plant-wide rights (the rights at no node, `useAccessAt(0)`): clearing a rule flag stays a
+// plant-wide right.
+const granted = vi.hoisted(() => ({
+  rights: new Set<string>(),
+  nodes: [] as (number | null | undefined)[],
+}));
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: (node: number | null | undefined) => {
+    granted.nodes.push(node);
+    return {
+      loading: false,
+      can: (permission: string) => node === 0 && granted.rights.has(permission),
+    };
+  },
 }));
 
 const svc = vi.hoisted(() => ({
@@ -50,6 +59,7 @@ function wo(overrides: Partial<WorkOrder> = {}): WorkOrder {
 beforeEach(() => {
   vi.clearAllMocks();
   granted.rights = new Set();
+  granted.nodes = [];
 });
 
 describe("WoPermitRuleNote", () => {
@@ -72,6 +82,9 @@ describe("WoPermitRuleNote", () => {
     svc.clearWoPermitRuleFlag.mockResolvedValue(saved);
     const onCleared = vi.fn();
     render(<WoPermitRuleNote wo={wo()} onCleared={onCleared} />);
+    // The right is read plant-wide (no node), never at the work order's site.
+    expect(granted.nodes.length).toBeGreaterThan(0);
+    expect(granted.nodes.every((n) => n === 0)).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "permitRule.clear" }));
     const confirm = screen.getByRole("button", { name: "permitRule.clearConfirm" });

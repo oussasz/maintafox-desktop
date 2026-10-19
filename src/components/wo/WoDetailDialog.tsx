@@ -57,9 +57,9 @@ import {
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
+import { WoNoSiteBadge, useWoAccess } from "@/components/wo/WoSiteScope";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { formatWoShift } from "@/components/wo/wo-shift-label";
-import { usePermissions } from "@/hooks/use-permissions";
 import { needsPlanningApproval, useWoLifecycleActions } from "@/hooks/use-wo-lifecycle-actions";
 import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel } from "@/lib/display";
@@ -94,7 +94,9 @@ interface WoDetailDialogProps {
 export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailDialogProps) {
   const { t, i18n } = useTranslation("ot");
   const { typeLabel, natureLabel } = useWoTypeLabels();
-  const { can } = usePermissions();
+  // The actions offered are the user's rights at this work order's site (its org node), not
+  // anywhere in the plant; the backend checks the same and stays the authority.
+  const { can } = useWoAccess(wo);
 
   const saving = useWoStore((s) => s.saving);
   const openCreateForm = useWoStore((s) => s.openCreateForm);
@@ -250,6 +252,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 ) : null}
                 {wo.requires_shutdown ? <WoShutdownBadge /> : null}
                 <UrgencyBadge code={wo.urgency_code} size="md" />
+                <WoNoSiteBadge wo={wo} size="md" />
               </div>
             </div>
           </DialogHeader>
@@ -665,7 +668,7 @@ function FooterActions({
         </Button>
       )}
 
-      {!CANCELLABLE_DENY.has(s) && can(P.OT_CLOSE) && (
+      {!CANCELLABLE_DENY.has(s) && can(P.OT_EDIT) && (
         <Button
           size="sm"
           variant="outline"

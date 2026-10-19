@@ -10,7 +10,6 @@ import {
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
-import { PermissionGate } from "@/components/PermissionGate";
 import { PartNecessityChoice, PartOptionalChip } from "@/components/common/PartNecessityChoice";
 import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
@@ -73,6 +72,7 @@ import { WoPermitRequirementField } from "./WoPermitRequirementField";
 import { WoPermitRuleNote, permitRuleFlagActive } from "./WoPermitRuleNote";
 import { WoShiftSelect } from "./WoShiftSelect";
 import { WoShutdownRequirementField } from "./WoShutdownRequirementField";
+import { useWoAccess } from "./WoSiteScope";
 import { useWoPeopleOptions } from "./use-wo-people";
 import { useWoTypeLabels } from "./use-wo-type-labels";
 import { shiftSaveFields } from "./wo-shift-plan";
@@ -201,6 +201,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const { info } = useSession();
     const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
     const people = useWoPeopleOptions();
+    // Emergency reassignment is offered from the user's rights at this work order's site.
+    const { can: canAtSite } = useWoAccess(wo);
+    const canEmergencyAssign = canAtSite(P.OT_EMERGENCY_ASSIGN);
 
     const [statusCode, setStatusCode] = useState(wo.status_code ?? "draft");
     const [rowVersion, setRowVersion] = useState(wo.row_version);
@@ -1231,90 +1234,86 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             </Button>
           </div>
 
-          {(isPlanningEditable || isReadyScheduleEditable) && (
-            <PermissionGate permission={P.OT_EMERGENCY_ASSIGN}>
-              <div className="space-y-3 border-t pt-3">
-                <p className="text-xs text-muted-foreground">
-                  {t("planning.emergencyReassignHint")}
-                </p>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-1">
-                    <Label>{t("planning.assignedTeamId")}</Label>
-                    <Select
-                      value={assignedTeamId || "__none"}
-                      onValueChange={(value) => {
-                        const next = value === "__none" ? "" : value;
-                        setAssignedTeamId(next);
-                        void applyTeamRoster(next, true);
-                      }}
-                      disabled={allFieldsDisabled || scheduleFrozen || emergencyBusy}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("planning.assignedTeamId")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none">—</SelectItem>
-                        {groupOptions.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label>{t("planning.primaryResponsibleId")}</Label>
-                    <Select
-                      value={primaryResponsibleId || "__none"}
-                      onValueChange={(value) => {
-                        setPrimaryResponsibleId(value === "__none" ? "" : value);
-                        setNoTeamLeadUser(false);
-                      }}
-                      disabled={allFieldsDisabled || scheduleFrozen || emergencyBusy}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("planning.primaryResponsibleId")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none">—</SelectItem>
-                        {responsibleOptions.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+          {(isPlanningEditable || isReadyScheduleEditable) && canEmergencyAssign && (
+            <div className="space-y-3 border-t pt-3">
+              <p className="text-xs text-muted-foreground">{t("planning.emergencyReassignHint")}</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>{t("planning.assignedTeamId")}</Label>
+                  <Select
+                    value={assignedTeamId || "__none"}
+                    onValueChange={(value) => {
+                      const next = value === "__none" ? "" : value;
+                      setAssignedTeamId(next);
+                      void applyTeamRoster(next, true);
+                    }}
+                    disabled={allFieldsDisabled || scheduleFrozen || emergencyBusy}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={t("planning.assignedTeamId")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">—</SelectItem>
+                      {groupOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                {!canReadTeams ? (
-                  <ListAccessNote list="teams" />
-                ) : groupOptions.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{t("planning.noTeams")}</p>
-                ) : null}
-                {noTeamLeadUser ? (
-                  <p className="text-xs text-muted-foreground">{t("planning.noTeamLeadUser")}</p>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={() => setEmergencyOpen(true)}
-                  disabled={
-                    allFieldsDisabled ||
-                    scheduleFrozen ||
-                    !assignReady ||
-                    !requireActor ||
-                    emergencyBusy
-                  }
-                >
-                  {t("planning.emergencyReassign")}
-                </Button>
-                {!requireActor && (
-                  <span className="text-sm text-muted-foreground">
-                    {t("planning.sessionRequired")}
-                  </span>
-                )}
+                <div className="space-y-1">
+                  <Label>{t("planning.primaryResponsibleId")}</Label>
+                  <Select
+                    value={primaryResponsibleId || "__none"}
+                    onValueChange={(value) => {
+                      setPrimaryResponsibleId(value === "__none" ? "" : value);
+                      setNoTeamLeadUser(false);
+                    }}
+                    disabled={allFieldsDisabled || scheduleFrozen || emergencyBusy}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={t("planning.primaryResponsibleId")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">—</SelectItem>
+                      {responsibleOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            </PermissionGate>
+              {!canReadTeams ? (
+                <ListAccessNote list="teams" />
+              ) : groupOptions.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{t("planning.noTeams")}</p>
+              ) : null}
+              {noTeamLeadUser ? (
+                <p className="text-xs text-muted-foreground">{t("planning.noTeamLeadUser")}</p>
+              ) : null}
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => setEmergencyOpen(true)}
+                disabled={
+                  allFieldsDisabled ||
+                  scheduleFrozen ||
+                  !assignReady ||
+                  !requireActor ||
+                  emergencyBusy
+                }
+              >
+                {t("planning.emergencyReassign")}
+              </Button>
+              {!requireActor && (
+                <span className="text-sm text-muted-foreground">
+                  {t("planning.sessionRequired")}
+                </span>
+              )}
+            </div>
           )}
 
           <OverrideReasonDialog

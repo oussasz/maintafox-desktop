@@ -54,6 +54,10 @@ const stable = vi.hoisted(() => ({
   typeLabels: { typeLabel: (code: string) => code },
 }));
 vi.mock("@/hooks/use-session", () => ({ useSession: () => stable.session }));
+// Rights at the work order’s site (`useWoAccess`): granted here.
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: () => ({ loading: false, can: () => true }),
+}));
 vi.mock("@/components/wo/use-wo-people", () => ({ useWoPeopleOptions: () => stable.people }));
 vi.mock("@/components/wo/use-wo-type-labels", () => ({
   useWoTypeLabels: () => stable.typeLabels,

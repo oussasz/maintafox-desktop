@@ -1,4 +1,18 @@
 {
+  "siteScope": {
+    "hidden": {
+      "outsideScope_one": "{{count}} OT n’est pas affiché : hors de vos sites.",
+      "outsideScope_other": "{{count}} OT ne sont pas affichés : hors de vos sites.",
+      "withoutSite_one": "{{count}} OT n’est pas affiché : il n’a pas de site.",
+      "withoutSite_other": "{{count}} OT ne sont pas affichés : ils n’ont pas de site.",
+      "allWorkOrders": "Ces nombres portent sur tous les OT, quels que soient les filtres ou la recherche.",
+      "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l’usine pour les voir."
+    },
+    "noSite": {
+      "badge": "À revoir : sans site",
+      "hint": "OT enregistré sans site (son équipement n’était installé nulle part). Seuls les utilisateurs ayant un rôle valable pour toute l’usine le voient et peuvent agir dessus."
+    }
+  },
   "permitRule": {
     "requiredBy": "Permis exigé par la règle {{rule}} (type de permis {{permitType}}).",
     "requiredByNoType": "Permis exigé par la règle {{rule}}.",
@@ -768,6 +782,8 @@
       "attachment_uploaded": "Pièce jointe ajoutée",
       "service_cost_updated": "Coût de prestation mis à jour",
       "permit_requirement_changed": "Exigence de permis modifiée",
+      "site_moved": "Déplacé avec son nouvel équipement vers un autre emplacement",
+      "equipment_changed": "Équipement modifié",
       "other": "Modification enregistrée"
     },
     "created": "Créé le",
