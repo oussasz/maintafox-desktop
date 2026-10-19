@@ -856,9 +856,19 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       [laborEntries],
     );
 
-    const plannedParts = useMemo(
-      () => parts.filter((p) => !p.origin || p.origin === "planned"),
+    /** Lines cancelled while the work order was prepared: history only, out of every count. */
+    const activeParts = useMemo(
+      () => parts.filter((p) => p.consumption_status !== "cancelled"),
       [parts],
+    );
+    const cancelledParts = useMemo(
+      () => parts.filter((p) => p.consumption_status === "cancelled"),
+      [parts],
+    );
+
+    const plannedParts = useMemo(
+      () => activeParts.filter((p) => !p.origin || p.origin === "planned"),
+      [activeParts],
     );
 
     const actuallyUsedParts = useMemo(
@@ -1103,6 +1113,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                       </div>
                       <div className="text-muted-foreground tabular-nums">
                         ×{part.quantity_planned}
+                        {part.unit_symbol ? ` ${part.unit_symbol}` : ""}
                       </div>
                       {isUsed || isNotUsed ? (
                         <div className="flex items-center gap-1">
@@ -1161,6 +1172,25 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
               </div>
             )}
           </div>
+
+          {cancelledParts.length > 0 && (
+            <ul className="space-y-1" aria-label={t("execution.parts.cancelledTitle")}>
+              {cancelledParts.map((part) => (
+                <li
+                  key={part.id}
+                  className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/40 px-3 py-1.5 text-sm text-muted-foreground"
+                >
+                  <span className="flex-1 line-through">
+                    {formatOrDash(part.article_ref ?? part.article_label)} ×{part.quantity_planned}
+                    {part.unit_symbol ? ` ${part.unit_symbol}` : ""}
+                  </span>
+                  <Badge variant="outline" className="text-[10px]">
+                    {t("planning.parts.cancelledStatus")}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          )}
 
           {/* Actually used pane */}
           <div className="space-y-2 pt-1">
@@ -1223,6 +1253,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                     </span>
                     <span className="text-muted-foreground tabular-nums">
                       {t("execution.parts.usedQtyLabel", { qty: part.quantity_used ?? 0 })}
+                      {part.unit_symbol ? ` ${part.unit_symbol}` : ""}
                     </span>
                     <OriginBadge origin={part.origin} t={t} />
                   </div>
@@ -1645,7 +1676,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
             </li>
             <li>
               {t("execution.sectionParts")}:{" "}
-              {parts.filter((p) => (p.quantity_used ?? 0) > 0).length}/{parts.length}
+              {activeParts.filter((p) => (p.quantity_used ?? 0) > 0).length}/{activeParts.length}
             </li>
             <li>
               {t("execution.sectionTasks")}:{" "}

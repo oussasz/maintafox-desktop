@@ -2,6 +2,8 @@
  * WO planning without the personnel and inventory view rights: teams and articles are never
  * requested, and the form names the missing rights instead of telling the planner "no teams".
  * "Needs shutdown": confirmed, saved with the version the planner saw, locked outside preparation.
+ * Saved planned part lines: cancelled (kept, muted, out of the total) after a confirmation, and
+ * switched required / optional while the work order is in planning.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -32,6 +34,8 @@ const exec = vi.hoisted(() => ({
   addPart: vi.fn(),
   addTask: vi.fn(),
   addWoTool: vi.fn(),
+  cancelPlannedPart: vi.fn(),
+  setPlannedPartRequired: vi.fn(),
   listParts: vi.fn().mockResolvedValue([]),
   listTasks: vi.fn().mockResolvedValue([]),
   listWoTools: vi.fn().mockResolvedValue([]),
@@ -199,14 +203,120 @@ describe("WoPlanningPanel — required / optional part lines", () => {
         </PermissionContext.Provider>
       </MemoryRouter>,
     );
-    expect(await screen.findByText("partNecessity.optional")).toBeInTheDocument();
-    // A saved line cannot be re-answered here: no choice on it.
-    expect(screen.queryByRole("radiogroup", { name: "partNecessity.legendFor" })).toBeNull();
+    // In planning the saved line shows its answer and can be switched.
+    const saved = await screen.findByRole("radiogroup", { name: "partNecessity.legendFor" });
+    expect(saved.querySelectorAll("input:checked")).toHaveLength(1);
+    expect(screen.getByRole("radio", { name: "partNecessity.optional" })).toBeChecked();
 
     fireEvent.click(screen.getByRole("button", { name: "planning.addRow" }));
-    const group = await screen.findByRole("radiogroup", { name: "partNecessity.legendFor" });
-    expect(group.querySelectorAll("input:checked")).toHaveLength(0);
+    const groups = await screen.findAllByRole("radiogroup", { name: "partNecessity.legendFor" });
+    expect(groups).toHaveLength(2);
+    expect(groups[1]?.querySelectorAll("input:checked")).toHaveLength(0);
     expect(screen.getByText("partNecessity.choose")).toBeInTheDocument();
     inv.checkWoPartStockAvailability.mockResolvedValue([]);
+  });
+});
+
+function savedPart(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 41,
+    work_order_id: 12,
+    article_id: 4,
+    article_ref: "BRG-6207",
+    quantity_planned: 2,
+    quantity_used: null,
+    unit_cost: 10,
+    stock_location_id: 1,
+    reservation_id: 90,
+    quantity_reserved: 2,
+    quantity_issued: 0,
+    notes: null,
+    origin: "planned",
+    consumption_status: "pending",
+    is_required: true,
+    unit_symbol: "pc",
+    ...overrides,
+  };
+}
+
+describe("WoPlanningPanel — cancelling and switching saved part lines", () => {
+  beforeEach(() => {
+    exec.cancelPlannedPart.mockReset();
+    exec.setPlannedPartRequired.mockReset();
+    inv.checkWoPartStockAvailability.mockResolvedValue({ is_fully_available: true, shortages: [] });
+  });
+
+  function renderPanel(wo: WorkOrder = WO) {
+    return render(
+      <MemoryRouter>
+        <PermissionContext.Provider value={permissionsWithout()}>
+          <WoPlanningPanel wo={wo} canEdit />
+        </PermissionContext.Provider>
+      </MemoryRouter>,
+    );
+  }
+
+  it("cancels a saved line only after the confirmation, keeps it muted and drops it from the total", async () => {
+    exec.listParts.mockResolvedValueOnce([savedPart()]);
+    exec.cancelPlannedPart.mockResolvedValueOnce(
+      savedPart({ consumption_status: "cancelled", reservation_id: null, quantity_reserved: 0 }),
+    );
+    renderPanel();
+
+    // The stock unit is shown next to the quantity; the total counts the line.
+    expect(await screen.findByText(/planning\.parts\.plannedQty.*\(pc\)/)).toBeInTheDocument();
+    expect(screen.getByText("planning.plannedTotalCost: 20.00")).toBeInTheDocument();
+    // A saved line is not "removed" locally any more.
+    expect(screen.queryByRole("button", { name: "planning.removePart" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "planning.parts.cancelLine" }));
+    expect(exec.cancelPlannedPart).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "planning.parts.cancelConfirm" }));
+
+    await waitFor(() => expect(exec.cancelPlannedPart).toHaveBeenCalledWith(41));
+    expect(await screen.findByText("planning.parts.cancelledStatus")).toBeInTheDocument();
+    expect(screen.getByTestId("wo-part-line-part-41")).toHaveAttribute("data-status", "cancelled");
+    expect(screen.getByText("planning.plannedTotalCost: 0.00")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "planning.parts.cancelLine" })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "partNecessity.legendFor" })).toBeNull();
+  });
+
+  it("does nothing when the planner backs out of the confirmation", async () => {
+    exec.listParts.mockResolvedValueOnce([savedPart()]);
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "planning.parts.cancelLine" }));
+    fireEvent.click(screen.getByRole("button", { name: "ds.confirm.cancel" }));
+    expect(exec.cancelPlannedPart).not.toHaveBeenCalled();
+    expect(screen.getByTestId("wo-part-line-part-41")).toHaveAttribute("data-status", "pending");
+  });
+
+  it("shows a line cancelled earlier muted, without actions", async () => {
+    exec.listParts.mockResolvedValueOnce([
+      savedPart({ consumption_status: "cancelled", reservation_id: null }),
+    ]);
+    renderPanel();
+    expect(await screen.findByText("planning.parts.cancelledStatus")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "planning.parts.cancelLine" })).toBeNull();
+    expect(screen.queryByText("planning.stockReserved")).toBeNull();
+    expect(screen.getByText("planning.plannedTotalCost: 0.00")).toBeInTheDocument();
+  });
+
+  it("switches a saved line to optional through the backend", async () => {
+    exec.listParts.mockResolvedValueOnce([savedPart()]);
+    exec.setPlannedPartRequired.mockResolvedValueOnce(savedPart({ is_required: false }));
+    renderPanel();
+    fireEvent.click(await screen.findByRole("radio", { name: "partNecessity.optional" }));
+    await waitFor(() => expect(exec.setPlannedPartRequired).toHaveBeenCalledWith(41, false));
+    await waitFor(() =>
+      expect(screen.getByRole("radio", { name: "partNecessity.optional" })).toBeChecked(),
+    );
+  });
+
+  it("offers neither cancel nor switch once the work order left planning", async () => {
+    exec.listParts.mockResolvedValueOnce([savedPart()]);
+    renderPanel({ ...WO, status_code: "ready" } as WorkOrder);
+    expect(await screen.findByTestId("wo-part-line-part-41")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "planning.parts.cancelLine" })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "partNecessity.legendFor" })).toBeNull();
   });
 });

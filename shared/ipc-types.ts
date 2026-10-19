@@ -5700,7 +5700,10 @@ export interface WoExecPart {
   article_label?: string | null;
   /** "planned" | "execution_added" — origin of this part line */
   origin?: string | null | undefined;
-  /** "pending" | "used" | "not_used" | "partial" */
+  /**
+   * "pending" | "used" | "not_used" | "cancelled" (a planned line withdrawn while the work order
+   * was prepared: kept for the history, out of every count, cost and reservation).
+   */
   consumption_status?: string | null;
   not_used_reason_id?: number | null;
   not_used_comment?: string | null;
@@ -5708,6 +5711,8 @@ export interface WoExecPart {
   not_used_reason_label?: string | null;
   /** Required for the job (short: blocks the plan) or optional (short: only warns). */
   is_required: boolean;
+  /** Stock unit symbol of the article; null for a free-text line. */
+  unit_symbol?: string | null;
 }
 
 // ── Plan vs Actual adherence ──────────────────────────────────────────────────
