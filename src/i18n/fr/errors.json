@@ -153,6 +153,7 @@
     "SCOPE_OUTSIDE_SITE": "Cet enregistrement appartient à un site hors de vos rôles.",
     "SCOPE_RECORD_WITHOUT_SITE": "Cet enregistrement n'a pas de site : seul un rôle valable pour toute l'usine peut agir dessus.",
     "SCOPE_PLANT_WIDE_ONLY": "Objet commun à toute l'usine : seul un rôle valable pour toute l'usine peut agir dessus.",
-    "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Les rôles d'administrateur s'appliquent à toute l'usine : ils ne peuvent pas être limités à un site."
+    "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Les rôles d'administrateur s'appliquent à toute l'usine : ils ne peuvent pas être limités à un site.",
+    "DI_ORG_NODE_REQUIRED": "Une demande doit être rattachée à un site : choisissez un équipement installé sur un nœud de l'organisation."
   }
 }

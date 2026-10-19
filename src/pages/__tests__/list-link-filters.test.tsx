@@ -18,6 +18,7 @@ vi.mock("@/hooks/use-permissions", () => ({
 // Rights at a request's site (the detail dialog's decisions); not under test here.
 vi.mock("@/hooks/use-access-at", () => ({
   useAccessAt: () => ({ can: () => true, loading: false }),
+  useAccessAtNodes: () => ({ canAllAny: () => true, loading: false }),
 }));
 
 import { RequestsPage } from "@/pages/RequestsPage";

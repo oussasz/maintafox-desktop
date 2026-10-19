@@ -153,6 +153,7 @@
     "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",
     "SCOPE_RECORD_WITHOUT_SITE": "This record has no site: only a plant-wide role can act on it.",
     "SCOPE_PLANT_WIDE_ONLY": "This is a plant-wide object: only a plant-wide role can act on it.",
-    "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Administrator roles are plant-wide: they cannot be limited to a site."
+    "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Administrator roles are plant-wide: they cannot be limited to a site.",
+    "DI_ORG_NODE_REQUIRED": "A request must be attached to a site: choose equipment installed on an org node."
   }
 }

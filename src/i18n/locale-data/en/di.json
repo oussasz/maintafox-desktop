@@ -1,7 +1,4 @@
 {
-  "errors": {
-    "DI_ORG_NODE_REQUIRED": "A request must be attached to a site: choose equipment installed on an org node."
-  },
   "noSite": {
     "badge": "To review: no site",
     "hint": "Recorded without a site (before a site was required). Only users with a plant-wide role see this request and can act on it."
@@ -738,6 +735,7 @@
     "selected_other": "{{count}} requests selected",
     "triage_one": "Admit {{count}} request to review",
     "triage_other": "Admit {{count}} requests to review",
+    "outsideYourSites": "Some selected requests are outside your sites: you cannot admit them to review.",
     "clear": "Clear selection",
     "triageResult": "{{done}} of {{total}} admitted to review; {{failed}} could not be (changed meanwhile or no longer submitted)."
   },

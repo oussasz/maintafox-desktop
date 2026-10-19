@@ -16,7 +16,7 @@ vi.mock("@/services/rbac-service", () => ({
   getMyAccessAt: (node: number) => getMyAccessAt(node),
 }));
 
-import { useAccessAt } from "@/hooks/use-access-at";
+import { useAccessAt, useAccessAtNodes } from "@/hooks/use-access-at";
 import { P } from "@shared/rbac/permissions.generated";
 
 describe("useAccessAt", () => {
@@ -129,5 +129,40 @@ describe("useAccessAt", () => {
     rerender({ node: null });
     expect(result.current.loading).toBe(false);
     expect(result.current.can("anything")).toBe(false);
+  });
+});
+
+describe("useAccessAtNodes", () => {
+  beforeEach(() => {
+    getMyAccessAt.mockReset();
+  });
+
+  it("allows only when one of the rights is held at EVERY node", async () => {
+    getMyAccessAt.mockImplementation((node) =>
+      Promise.resolve(node === 1 ? [P.DI_SCREEN] : node === 2 ? [P.DI_REVIEW] : []),
+    );
+    const { result, rerender } = renderHook(({ nodes }) => useAccessAtNodes(nodes), {
+      initialProps: { nodes: [1, 2] },
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.canAllAny([P.DI_SCREEN, P.DI_REVIEW])).toBe(true);
+    expect(result.current.canAllAny([P.DI_SCREEN])).toBe(false);
+
+    // A third node where neither right is held (e.g. plant-wide only, node 0) refuses the lot.
+    rerender({ nodes: [1, 2, 0] });
+    expect(result.current.canAllAny([P.DI_SCREEN, P.DI_REVIEW])).toBe(false);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.canAllAny([P.DI_SCREEN, P.DI_REVIEW])).toBe(false);
+  });
+
+  it("treats an administrator as holding every right, and no node as nothing to refuse", async () => {
+    getMyAccessAt.mockResolvedValue(null);
+    const { result, rerender } = renderHook(({ nodes }) => useAccessAtNodes(nodes), {
+      initialProps: { nodes: [7] },
+    });
+    await waitFor(() => expect(result.current.canAllAny(["anything"])).toBe(true));
+    rerender({ nodes: [] });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.canAllAny(["anything"])).toBe(true);
   });
 });
