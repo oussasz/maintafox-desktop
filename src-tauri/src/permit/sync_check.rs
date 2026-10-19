@@ -27,8 +27,8 @@
 //!   `ISOLATION_REMOVAL_STATUSES` of `permit::queries`);
 //! - a work order entering `in_progress` passes the permit gate (`permit::wo_gate`) at the time it
 //!   started, resumed or was reopened: a permit when it requires one (of the type a plant rule named,
-//!   when a rule flagged it), every permit live at that time active, not suspended, not expired, with
-//!   its isolations ready;
+//!   when a rule flagged it), every permit live at that time active, not suspended, not expired, not
+//!   expiring before the work order's planned end, with its isolations ready;
 //! - a permit type whose three-person lock-removal setting changes (or a new type with it on), or
 //!   whose record of that change changes, says who changed it, when (later than the change recorded
 //!   here) and why, and that person holds the settings right here (`inbound_permit_type_check`);
@@ -1463,6 +1463,19 @@ pub(crate) async fn inbound_work_order_check(
                     "PERMIT_EXPIRED",
                     format!("work order {code} started at {at} after permit {pcode} expired ({expiry})"),
                 );
+            }
+            // The work would outlive its protection (`permit::wo_gate`): a permit expiring before the
+            // planned end refuses the start (the planned end is fixed once the order is past ready).
+            // An unreadable planned end is refused, as locally.
+            if let (Some(end), Some(expires)) = (field(&wo, "planned_end"), instant(expiry)) {
+                if instant(end).is_none_or(|e| expires < e) {
+                    return conflict(
+                        crate::permit::wo_gate::CODE_EXPIRES_BEFORE_PLANNED_END,
+                        format!(
+                            "work order {code} started at {at} while permit {pcode} expires ({expiry}) before its planned end ({end})"
+                        ),
+                    );
+                }
             }
         }
         let Some(needs) = type_requires_isolation(conn, p).await? else {

@@ -395,6 +395,7 @@
     "PERMIT_SUSPENDED": "Permit {{permit}} is suspended: revalidate it before starting or resuming the work.",
     "PERMIT_NOT_ACTIVE": "Permit {{permit}} is not active yet ({{status}}): activate it before the work starts or resumes.",
     "PERMIT_EXPIRED": "Permit {{permit}} has expired: it can no longer be activated or used to start work.",
+    "PERMIT_EXPIRES_BEFORE_PLANNED_END": "Permit {{permit}} expires ({{expires_at}}) before the work order's planned end ({{planned_end}}): issue a permit that covers the planned work, or re-plan the work, before starting or resuming it.",
     "PERMIT_EXPIRY_REQUIRED": "A work permit needs an expiry date and time.",
     "PERMIT_EXPIRY_MISSING": "Permit {{permit}} has no expiry: set one before it is activated or changed.",
     "PERMIT_EXPIRY_PAST": "The permit expiry must be in the future.",

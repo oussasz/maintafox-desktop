@@ -73,6 +73,7 @@
       "PERMIT_STATUS_BACKWARDS": "Un permis terminé reviendrait en arrière dans son cycle",
       "PERMIT_EXPIRY_MISSING": "Un permis activé sans date d'expiration",
       "PERMIT_EXPIRED": "Un permis utilisé après son expiration",
+      "PERMIT_EXPIRES_BEFORE_PLANNED_END": "Un ordre de travail démarré sur un permis qui expire avant sa fin prévue",
       "LOTO_NO_ISOLATION": "Un permis consignation activé sans point d'isolement",
       "LOTO_NOT_VERIFIED": "Un permis activé avec des isolements non vérifiés par une deuxième personne",
       "LOTO_ISOLATION_REMOVED": "Un permis activé avec un cadenas déjà retiré",

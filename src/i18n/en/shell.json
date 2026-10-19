@@ -73,6 +73,7 @@
       "PERMIT_STATUS_BACKWARDS": "A finished permit would go back in its lifecycle",
       "PERMIT_EXPIRY_MISSING": "A permit activated without an expiry",
       "PERMIT_EXPIRED": "A permit used after its expiry",
+      "PERMIT_EXPIRES_BEFORE_PLANNED_END": "A work order started on a permit that expires before its planned end",
       "LOTO_NO_ISOLATION": "A LOTO permit activated without any isolation point",
       "LOTO_NOT_VERIFIED": "A permit activated with isolations not verified by a second person",
       "LOTO_ISOLATION_REMOVED": "A permit activated with a lock already removed",

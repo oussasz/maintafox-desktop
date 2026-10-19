@@ -395,6 +395,7 @@
     "PERMIT_SUSPENDED": "Le permis {{permit}} est suspendu : revalidez-le avant de démarrer ou de reprendre le travail.",
     "PERMIT_NOT_ACTIVE": "Le permis {{permit}} n'est pas encore actif ({{status}}) : activez-le avant de démarrer ou de reprendre le travail.",
     "PERMIT_EXPIRED": "Le permis {{permit}} a expiré : il ne peut plus être activé ni servir à démarrer un travail.",
+    "PERMIT_EXPIRES_BEFORE_PLANNED_END": "Le permis {{permit}} expire ({{expires_at}}) avant la fin prévue de l’OT ({{planned_end}}) : établissez un permis qui couvre le travail prévu, ou replanifiez le travail, avant de le démarrer ou de le reprendre.",
     "PERMIT_EXPIRY_REQUIRED": "Un permis de travail doit avoir une date et une heure d’expiration.",
     "PERMIT_EXPIRY_MISSING": "Le permis {{permit}} n’a pas d’expiration : fixez-en une avant de l’activer ou de le modifier.",
     "PERMIT_EXPIRY_PAST": "L’expiration du permis doit être dans le futur.",

@@ -2027,3 +2027,86 @@ async fn backdate_three_person_change(db: &DatabaseConnection, type_id: i64) {
     .await
     .expect("backdate");
 }
+
+/// Owner decision: a work order does not start or resume on a permit that expires before its
+/// planned end (the work would outlive its protection). Without a planned end nothing is judged.
+#[tokio::test]
+async fn wo_gate_refuses_a_permit_expiring_before_the_planned_end() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-95").await;
+    let (wo_id, rv) = assigned_wo_requiring_permit(&db, asset).await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-95").await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let expires = wp.expires_at.clone().expect("expiry");
+    let set_planned_end = |end: Option<String>| {
+        let db = &db;
+        async move {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_orders SET planned_end = ? WHERE id = ?",
+                [end.into(), wo_id.into()],
+            ))
+            .await
+            .expect("planned end");
+        }
+    };
+
+    // Planned to end a day after the permit expires: refused, with the times.
+    set_planned_end(Some((chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339())).await;
+    let err = start(&db, wo_id, rv).await.expect_err("expires before the planned end");
+    match &err {
+        AppError::OrgValidationFailed(issues) => {
+            let issue = &issues[0];
+            assert_eq!(issue.code, "PERMIT_EXPIRES_BEFORE_PLANNED_END");
+            assert_eq!(issue.params.get("permit"), Some(&wp.code));
+            assert_eq!(issue.params.get("expires_at"), Some(&expires));
+            assert!(issue.params.contains_key("planned_end"));
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+    // An unreadable planned end is refused, never guessed.
+    set_planned_end(Some("someday".into())).await;
+    assert_validation(start(&db, wo_id, rv).await, "not a readable time");
+    // No planned end: not judged.
+    set_planned_end(None).await;
+    start(&db, wo_id, rv).await.expect("no planned end");
+
+    // Resume: the same gate.
+    let actor = admin_id(&db).await;
+    let rv = scalar_i64(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await;
+    let reason = scalar_i64(
+        &db,
+        "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+         JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' AND rv.is_active = 1 AND rs.status = 'published' LIMIT 1",
+    )
+    .await;
+    let paused = execution::pause_wo(
+        &db,
+        execution::WoPauseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            delay_reason_id: reason,
+            comment: None,
+        },
+    )
+    .await
+    .expect("pause");
+    set_planned_end(Some((chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339())).await;
+    let resume = |rv: i64| {
+        execution::resume_wo(
+            &db,
+            execution::WoResumeInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+            },
+        )
+    };
+    assert_validation(resume(paused.row_version).await, "PERMIT_EXPIRES_BEFORE_PLANNED_END");
+    // Planned to end before the expiry: resumes.
+    set_planned_end(Some((chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339())).await;
+    resume(paused.row_version).await.expect("covered by the permit");
+}

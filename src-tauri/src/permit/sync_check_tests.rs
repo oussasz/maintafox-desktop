@@ -2886,3 +2886,68 @@ async fn a_type_without_a_record_passes_and_an_unreadable_held_time_fails_closed
         Some("1")
     );
 }
+
+/// Owner decision, re-checked on arrival like here: a received start on a permit that expires
+/// before the work order's planned end is a conflict, nothing written.
+#[tokio::test]
+async fn a_received_start_on_a_permit_expiring_before_the_planned_end_is_refused() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-95").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let in_progress = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'in_progress'",
+    )
+    .await
+    .expect("status sync id");
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-95 breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let status_sql = format!(
+        "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id WHERE w.id = {wo_id}"
+    );
+    let started = with(
+        wire(&db, "work_orders", &wo_sync).await,
+        &[("status_sync_id", json!(in_progress)), ("actual_start", json!(now()))],
+    );
+    let later = (chrono::Utc::now() + chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started.clone(), &[("planned_end", json!(later))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_EXPIRES_BEFORE_PLANNED_END"), "{outcome:?}");
+    assert_eq!(text(&db, &status_sql).await.as_deref(), Some("ready"));
+    // An unreadable planned end is refused too, as locally.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started.clone(), &[("planned_end", json!("someday"))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_EXPIRES_BEFORE_PLANNED_END"), "{outcome:?}");
+
+    let sooner = (chrono::Utc::now() + chrono::Duration::hours(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started, &[("planned_end", json!(sooner))]),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(text(&db, &status_sql).await.as_deref(), Some("in_progress"));
+}
