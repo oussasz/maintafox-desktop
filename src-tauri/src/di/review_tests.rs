@@ -918,4 +918,47 @@ mod tests {
             "Error must mention version conflict: got '{err_str}'"
         );
     }
+
+    #[tokio::test]
+    async fn review_events_carry_actor_display_name() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("UPDATE user_accounts SET display_name = 'Reviewer Name' WHERE id = {user_id};"),
+        ))
+        .await
+        .expect("set display name");
+
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
+            .await
+            .expect("create DI");
+        advance_to_in_review(&db, di.id).await;
+        return_di_for_clarification(
+            &db,
+            DiReturnInput {
+                di_id: di.id,
+                actor_id: user_id,
+                expected_row_version: 2,
+                reviewer_note: "Please add sensor readings.".to_string(),
+                reason_code: Some("unclear_description".into()),
+            },
+        )
+        .await
+        .expect("return");
+
+        let events = get_review_events(&db, di.id).await.expect("events");
+        let returned = events
+            .iter()
+            .find(|e| e.event_type == "returned_for_clarification")
+            .expect("returned event");
+        assert_eq!(returned.actor_display_name.as_deref(), Some("Reviewer Name"));
+        assert!(
+            events
+                .iter()
+                .filter(|e| e.actor_id.is_none())
+                .all(|e| e.actor_display_name.is_none()),
+            "system events have no actor name"
+        );
+    }
 }
