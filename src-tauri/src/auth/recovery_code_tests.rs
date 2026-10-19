@@ -829,13 +829,40 @@ async fn each_administrator_acknowledges_their_own_notice() {
 }
 
 #[tokio::test]
-async fn a_former_administrator_is_not_shown_the_notice() {
+async fn a_recipient_demoted_since_still_sees_and_acknowledges_the_notice() {
     let db = administered_pc().await;
     let chef = user_id(&db, "chef").await;
     redeem_admin_recovery_code_in(&db, input(&primary_code(), "nouveau"), primary_now())
         .await
         .expect("redeemed");
     assert_eq!(notices_for(&db, Some(chef)).await.expect("chef").len(), 1);
+    // The new administrator removes chef's Administrator role: chef is no administrator any more...
+    db.execute_unprepared(&format!(
+        "DELETE FROM user_scope_assignments WHERE user_id = {chef};          UPDATE user_accounts SET is_admin = 0 WHERE id = {chef};"
+    ))
+    .await
+    .expect("demote");
+    assert!(
+        !crate::auth::rbac::user_has_elevated_admin_access(&db, i32::try_from(chef).expect("id"))
+            .await
+            .expect("rights")
+    );
+    // ...and still sees the notice at sign-in, and acknowledges it.
+    let notices = notices_for(&db, Some(chef)).await.expect("chef");
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].created_username, "nouveau");
+    acknowledge_notice_in(&db, chef, notices[0].id).await.expect("ack");
+    assert!(notices_for(&db, Some(chef)).await.expect("chef").is_empty());
+}
+
+#[tokio::test]
+async fn a_disabled_recipient_is_shown_nothing() {
+    // A disabled account cannot sign in: nothing is read for it.
+    let db = administered_pc().await;
+    let chef = user_id(&db, "chef").await;
+    redeem_admin_recovery_code_in(&db, input(&primary_code(), "nouveau"), primary_now())
+        .await
+        .expect("redeemed");
     db.execute_unprepared(&format!("UPDATE user_accounts SET is_active = 0 WHERE id = {chef}"))
         .await
         .expect("disable");
@@ -970,14 +997,32 @@ fn format_and_control_characters_are_recognised() {
         '\u{FEFF}',
         '\u{061C}',
         '\u{E0041}',
+        // Default_Ignorable_Code_Point outside Cf: Hangul fillers, combining grapheme joiner,
+        // variation selectors, Mongolian free variation selectors, Khmer inherent vowel.
+        '\u{115F}',
+        '\u{1160}',
+        '\u{3164}',
+        '\u{FFA0}',
+        '\u{034F}',
+        '\u{FE00}',
+        '\u{FE0F}',
+        '\u{E0100}',
+        '\u{E01EF}',
+        '\u{180B}',
+        '\u{17B4}',
     ] {
-        assert!(is_format_character(c), "U+{:04X}", u32::from(c));
+        assert!(is_invisible_code_point(c), "U+{:04X}", u32::from(c));
         assert!(has_invisible_character(&format!("Jean{c}Dupont")));
     }
     assert!(has_invisible_character("Jean\u{0007}Dupont"));
-    for name in ["Jean Dupont", "Hélène Çelik", "محمد", "Ørsted-Nuñez", "李雷"] {
+    for name in ["Jean Dupont", "Hélène Çelik", "محمد", "Ørsted-Nuñez", "李雷", "김민준"] {
         assert!(!has_invisible_character(name), "{name}");
     }
+    // The table is sorted and its ranges are well formed.
+    for pair in INVISIBLE_CODE_POINTS.windows(2) {
+        assert!(pair[0].1 < pair[1].0, "{pair:?}");
+    }
+    assert!(INVISIBLE_CODE_POINTS.iter().all(|(first, last)| first <= last));
 }
 
 #[tokio::test]
@@ -989,6 +1034,10 @@ async fn invisible_characters_are_refused_in_the_name_and_username() {
         "\u{2066}Chef\u{2069}",
         "Jean\u{00AD}Dupont",
         "Jean\nDupont",
+        // A variation selector, a combining grapheme joiner, a Hangul filler as a "blank" name.
+        "Jean\u{FE0F}Dupont",
+        "Jean\u{034F} Dupont",
+        "\u{3164}",
     ] {
         let mut sneaky = input(&primary_code(), "nouveau");
         sneaky.display_name = display_name.into();
@@ -997,7 +1046,17 @@ async fn invisible_characters_are_refused_in_the_name_and_username() {
             .expect_err("display name");
         assert_eq!(code_of(&err), Some(NAME_INVISIBLE_CHARACTERS), "{display_name:?}");
     }
-    for username in ["chef\u{200D}2", "\u{202E}fehc", "adm\u{FEFF}in"] {
+    // The Hangul fillers are letters (category Lo) that show nothing: "chef" + U+3164 would pass
+    // the "never had this username" check and read as "chef".
+    for username in [
+        "chef\u{200D}2",
+        "\u{202E}fehc",
+        "adm\u{FEFF}in",
+        "chef\u{3164}",
+        "chef\u{115F}",
+        "chef\u{FFA0}",
+        "chef\u{FE0F}",
+    ] {
         let err = redeem_admin_recovery_code_in(&db, input(&primary_code(), username), primary_now())
             .await
             .expect_err("username");
@@ -1144,6 +1203,10 @@ async fn two_pcs_after_recovery() -> (DatabaseConnection, DatabaseConnection, Te
     redeem_admin_recovery_code_in(&a, input(&primary_code(), "sauveur"), primary_now())
         .await
         .expect("redeemed on A");
+    // A replay, refused and audited (its audit row names the vendor's code id as target).
+    redeem_admin_recovery_code_in(&a, input(&primary_code(), "rejeu"), primary_now())
+        .await
+        .expect_err("replay");
     server.exchange("A", &a).await;
     let received = server.exchange("B", &b).await;
     assert!(
@@ -1151,7 +1214,19 @@ async fn two_pcs_after_recovery() -> (DatabaseConnection, DatabaseConnection, Te
         "{:?}",
         received.materialized.errors
     );
-    // Everything staged on A, the new administrator's role included.
+    // The refusal's audit row reached B with the code id as target.
+    assert_eq!(
+        scalar(
+            &b,
+            &format!(
+                "SELECT COUNT(*) AS n FROM audit_events WHERE action_code = '{AUDIT_REFUSED}' \
+                 AND target_type = 'admin_recovery_code' AND target_id = '3f6c1d2e-9a4b-4c7d-8e1f-2a3b4c5d6e7f'"
+            )
+        )
+        .await,
+        1
+    );
+    // Everything staged on A, the new administrator's role and the refusal's audit row included.
     assert_eq!(
         scalar(
             &a,
@@ -1454,6 +1529,31 @@ async fn nobody_edits_or_deletes_a_notice() {
     )
     .await;
     assert_eq!(conflict_code(&outcome), Some(CONFLICT_NOTICE_INVALID), "{outcome:?}");
+    // Nor one carrying a Hangul filler or a variation selector (default-ignorable, not Cf), in any
+    // field it shows.
+    for (key, value) in [
+        ("created_username", "sauveur\u{3164}"),
+        ("created_display_name", "Responsable\u{FE0F} Maintenance"),
+        ("created_display_name", "\u{115F}"),
+        ("redeemed_device_code", "7K\u{034F}Q"),
+    ] {
+        let mut ignorable = original.clone();
+        ignorable.insert(key.into(), Value::String(value.into()));
+        ignorable.insert("code_id".into(), Value::String("other-code-3".into()));
+        let outcome = receive(
+            &b,
+            NOTICE_ENTITY,
+            &uuid::Uuid::new_v4().to_string(),
+            "upsert",
+            &ignorable,
+        )
+        .await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some(CONFLICT_NOTICE_INVALID),
+            "{key} {value:?}: {outcome:?}"
+        );
+    }
 
     // On the PC itself, the database refuses any change of a notice or an acknowledgement, the
     // new administrator's or anyone's.
@@ -1532,4 +1632,163 @@ async fn the_recovered_administrator_counts_everywhere_as_a_lasting_plant_wide_a
     let notices = notices_for(&db, Some(id)).await.expect("notices");
     assert_eq!(notices.len(), 1);
     assert_eq!(notices[0].created_username, "deuxieme");
+}
+
+// ── Round 3 (review of 7d8220e9): N2 forged notices, N3 acknowledgement before its notice ────────
+
+fn deferred(outcome: &ApplyOutcome) -> bool {
+    matches!(outcome, ApplyOutcome::Deferred { .. })
+}
+
+#[tokio::test]
+async fn a_forged_notice_is_refused() {
+    let (a, _b, _server) = two_pcs_after_recovery().await;
+    let genuine = wire_of(&a, NOTICE_ENTITY, &notice_sync_id(&a, "chef").await).await;
+    let adjoint = sync_id_of(&a, "adjoint").await;
+    let chef = sync_id_of(&a, "chef").await;
+    // Each forged notice is new (its own sync id) and addressed to adjoint; it is judged before it
+    // could be written.
+    let forge = |edits: Vec<(&str, &str)>| {
+        let mut forged = genuine.clone();
+        forged.insert("recipient_user_sync_id".into(), Value::String(adjoint.clone()));
+        for (key, value) in edits {
+            forged.insert(key.into(), Value::String(value.into()));
+        }
+        forged
+    };
+    for (case, forged) in [
+        (
+            "a display name posing as someone else",
+            forge(vec![("created_display_name", "Jean Dupont")]),
+        ),
+        ("another username", forge(vec![("created_username", "chef2")])),
+        (
+            "another created account than the one redeemed",
+            forge(vec![
+                ("created_user_sync_id", chef.as_str()),
+                ("created_username", "chef"),
+                ("created_display_name", "chef"),
+            ]),
+        ),
+        (
+            "a device code of another shape",
+            forge(vec![("redeemed_device_code", "pc-1")]),
+        ),
+        ("a lowercase device code", forge(vec![("redeemed_device_code", "7kq2")])),
+        ("a date that is not RFC 3339", forge(vec![("created_at", "hier")])),
+    ] {
+        let outcome = receive(&a, NOTICE_ENTITY, &uuid::Uuid::new_v4().to_string(), "upsert", &forged).await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some(CONFLICT_NOTICE_INVALID),
+            "{case}: {outcome:?}"
+        );
+    }
+    // Nothing was written: chef's and adjoint's genuine notices only.
+    assert_eq!(scalar(&a, "SELECT COUNT(*) AS n FROM admin_recovery_notices").await, 2);
+
+    // A notice for an account or a redemption this PC has not received yet waits for it.
+    let unknown_account = forge(vec![("created_user_sync_id", "00000000-0000-4000-8000-000000000000")]);
+    let outcome = receive(
+        &a,
+        NOTICE_ENTITY,
+        &uuid::Uuid::new_v4().to_string(),
+        "upsert",
+        &unknown_account,
+    )
+    .await;
+    assert!(deferred(&outcome), "{outcome:?}");
+    // Without the redemption's audit record here, a display name other than the account's waits
+    // for that record...
+    let unknown_code = forge(vec![
+        ("code_id", "no-such-code"),
+        ("created_display_name", "Jean Dupont"),
+    ]);
+    let outcome = receive(
+        &a,
+        NOTICE_ENTITY,
+        &uuid::Uuid::new_v4().to_string(),
+        "upsert",
+        &unknown_code,
+    )
+    .await;
+    assert!(deferred(&outcome), "{outcome:?}");
+    // ...while the account's own names are accepted (the notice then describes the account truly).
+    let truthful = forge(vec![("code_id", "no-such-code")]);
+    let outcome = receive(
+        &a,
+        NOTICE_ENTITY,
+        &uuid::Uuid::new_v4().to_string(),
+        "upsert",
+        &truthful,
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn an_acknowledgement_before_its_notice_waits_and_a_renamed_account_keeps_its_notices() {
+    let (a, b, mut server) = two_pcs_after_recovery().await;
+    // The new administrator edits his own display name after the redemption: the notices must
+    // still be accepted everywhere (they are checked against the redemption's audit record).
+    let sauveur_a = user_id(&a, "sauveur").await;
+    a.execute_unprepared(&format!(
+        "UPDATE user_accounts SET display_name = 'Jean Dupont' WHERE id = {sauveur_a}"
+    ))
+    .await
+    .expect("rename");
+    server.exchange("A", &a).await;
+
+    // Chef acknowledges on B; that acknowledgement is not sent yet.
+    let chef_b = user_id(&b, "chef").await;
+    let notice_b = notices_for(&b, Some(chef_b)).await.expect("chef on B")[0].id;
+    acknowledge_notice_in(&b, chef_b, notice_b).await.expect("ack on B");
+    let ack_sync: String = b
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id AS v FROM admin_recovery_acknowledgements".to_string(),
+        ))
+        .await
+        .expect("query")
+        .and_then(|r| r.try_get::<String>("", "v").ok())
+        .expect("ack");
+    let ack = wire_of(&b, ACK_ENTITY, &ack_sync).await;
+    let notice_sync = notice_sync_id(&b, "chef").await;
+    let notice = wire_of(&b, NOTICE_ENTITY, &notice_sync).await;
+
+    // A third PC, still empty: the acknowledgement arrives before its notice and waits; so does
+    // the notice before its account.
+    let c = started_device_db().await;
+    let outcome = receive(&c, ACK_ENTITY, &ack_sync, "upsert", &ack).await;
+    assert!(deferred(&outcome), "acknowledgement before its notice: {outcome:?}");
+    let outcome = receive(&c, NOTICE_ENTITY, &notice_sync, "upsert", &notice).await;
+    assert!(deferred(&outcome), "notice before its account: {outcome:?}");
+    assert_eq!(
+        scalar(&c, "SELECT COUNT(*) AS n FROM admin_recovery_acknowledgements").await,
+        0
+    );
+
+    // C then receives everything A sent: the renamed account, the audit record and the notices.
+    let received = server.exchange("C", &c).await;
+    assert!(
+        received.materialized.errors.is_empty(),
+        "{:?}",
+        received.materialized.errors
+    );
+    assert_eq!(
+        scalar(
+            &c,
+            "SELECT COUNT(*) AS n FROM sync_conflicts WHERE entity_type LIKE 'admin_recovery%'"
+        )
+        .await,
+        0
+    );
+    let chef_c = user_id(&c, "chef").await;
+    let on_c = notices_for(&c, Some(chef_c)).await.expect("chef on C");
+    assert_eq!(on_c.len(), 1, "the notice is shown on C despite the later rename");
+    assert_eq!(on_c[0].created_display_name, "Responsable Maintenance");
+    // The waiting acknowledgement now applies, and clears the notice on C.
+    let outcome = receive(&c, ACK_ENTITY, &ack_sync, "upsert", &ack).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert!(notices_for(&c, Some(chef_c)).await.expect("chef on C").is_empty());
 }

@@ -22,6 +22,10 @@
 //! role, the code recorded as spent, the audit event, and a notice for every other active
 //! administrator.
 //!
+//! **Names**: the username and display name may not contain control, format or default-ignorable
+//! characters ([`INVISIBLE_CODE_POINTS`]: bidi controls, zero-width characters, Hangul fillers,
+//! variation selectors...), which would let the new account pose as an existing one.
+//!
 //! **Nothing for strangers**: a signed-out caller learns only "this code is refused, and why"
 //! until a genuine, current, unused code for this PC is presented; only then are the username and
 //! password examined. No existing account is read back or changed, except the retirement of a
@@ -542,39 +546,59 @@ async fn write_refusal_audit_once(db: &DatabaseConnection, refusal: Refusal, cod
     Ok(())
 }
 
-/// Unicode general category Cf (format characters: bidi controls U+202A-U+202E and
-/// U+2066-U+2069, zero-width U+200B-U+200F, soft hyphen, BOM, tags...), as of Unicode 15.1.
-/// Invisible, they let a name pose as another one (a right-to-left override shows it reversed).
-pub fn is_format_character(c: char) -> bool {
-    matches!(
-        u32::from(c),
-        0x00AD
-            | 0x0600..=0x0605
-            | 0x061C
-            | 0x06DD
-            | 0x070F
-            | 0x0890..=0x0891
-            | 0x08E2
-            | 0x180E
-            | 0x200B..=0x200F
-            | 0x202A..=0x202E
-            | 0x2060..=0x2064
-            | 0x2066..=0x206F
-            | 0xFEFF
-            | 0xFFF9..=0xFFFB
-            | 0x110BD
-            | 0x110CD
-            | 0x13430..=0x1343F
-            | 0x1BCA0..=0x1BCA3
-            | 0x1D173..=0x1D17A
-            | 0xE0001
-            | 0xE0020..=0xE007F
-    )
+/// Code points that show nothing (or almost nothing) and let a name pose as another one, as of
+/// Unicode 15.1: the union of
+/// - general category **Cf** (format characters): soft hyphen, Arabic number signs, bidi controls
+///   U+202A-U+202E and U+2066-U+2069, zero-width U+200B-U+200F, word joiner, BOM, interlinear
+///   annotation, Egyptian hieroglyph format controls, shorthand format controls, musical symbol
+///   format controls, tags; and
+/// - **Default_Ignorable_Code_Point** (`DerivedCoreProperties.txt`): adds the combining grapheme
+///   joiner U+034F, the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0 (category Lo: they pass
+///   `char::is_alphanumeric`), the Khmer inherent vowels U+17B4-U+17B5, the Mongolian free
+///   variation selectors U+180B-U+180F, the variation selectors U+FE00-U+FE0F and U+E0100-U+E01EF,
+///   and the reserved ranges U+2065, U+FFF0-U+FFF8 and U+E0000-U+E0FFF.
+///
+/// Each entry: (first, last) inclusive, sorted.
+pub const INVISIBLE_CODE_POINTS: &[(u32, u32)] = &[
+    (0x00AD, 0x00AD),   // Cf, DI: soft hyphen
+    (0x034F, 0x034F),   // DI: combining grapheme joiner
+    (0x0600, 0x0605),   // Cf: Arabic number signs
+    (0x061C, 0x061C),   // Cf, DI: Arabic letter mark
+    (0x06DD, 0x06DD),   // Cf: Arabic end of ayah
+    (0x070F, 0x070F),   // Cf: Syriac abbreviation mark
+    (0x0890, 0x0891),   // Cf: Arabic pound / piastre mark above
+    (0x08E2, 0x08E2),   // Cf: Arabic disputed end of ayah
+    (0x115F, 0x1160),   // DI: Hangul choseong / jungseong fillers
+    (0x17B4, 0x17B5),   // DI: Khmer inherent vowels
+    (0x180B, 0x180F),   // DI (U+180E also Cf): Mongolian free variation selectors, vowel separator
+    (0x200B, 0x200F),   // Cf, DI: zero-width space / non-joiner / joiner, LRM, RLM
+    (0x202A, 0x202E),   // Cf, DI: bidi embeddings and overrides
+    (0x2060, 0x206F),   // Cf, DI: word joiner, invisible operators, bidi isolates, deprecated
+    (0x3164, 0x3164),   // DI: Hangul filler
+    (0xFE00, 0xFE0F),   // DI: variation selectors 1-16
+    (0xFEFF, 0xFEFF),   // Cf, DI: zero-width no-break space (BOM)
+    (0xFFA0, 0xFFA0),   // DI: halfwidth Hangul filler
+    (0xFFF0, 0xFFFB),   // DI reserved U+FFF0-U+FFF8, Cf interlinear annotation U+FFF9-U+FFFB
+    (0x110BD, 0x110BD), // Cf: Kaithi number sign
+    (0x110CD, 0x110CD), // Cf: Kaithi number sign above
+    (0x13430, 0x1343F), // Cf: Egyptian hieroglyph format controls
+    (0x1BCA0, 0x1BCA3), // Cf, DI: shorthand format controls
+    (0x1D173, 0x1D17A), // Cf, DI: musical symbol format controls
+    (0xE0000, 0xE0FFF), // Cf tags U+E0001, U+E0020-U+E007F; DI: variation selectors 17-256, reserved
+];
+
+/// A code point of [`INVISIBLE_CODE_POINTS`] (Cf or Default_Ignorable_Code_Point).
+pub fn is_invisible_code_point(c: char) -> bool {
+    let cp = u32::from(c);
+    INVISIBLE_CODE_POINTS
+        .iter()
+        .any(|(first, last)| (*first..=*last).contains(&cp))
 }
 
-/// A control (Cc) or format (Cf) character: never part of a name shown to administrators.
+/// A control (Cc), format (Cf) or default-ignorable character: never part of a name shown to
+/// administrators.
 pub fn has_invisible_character(value: &str) -> bool {
-    value.chars().any(|c| c.is_control() || is_format_character(c))
+    value.chars().any(|c| c.is_control() || is_invisible_code_point(c))
 }
 
 fn invisible_characters_error() -> AppError {
@@ -896,7 +920,9 @@ pub struct AdminRecoveryNotice {
 const ACKNOWLEDGED_BY_RECIPIENT_SQL: &str = "EXISTS (SELECT 1 FROM admin_recovery_acknowledgements a \
      WHERE a.notice_id = n.id AND a.acknowledged_by_id = n.recipient_user_id)";
 
-/// The notices of `user_id` still to acknowledge, while that account is an administrator.
+/// The notices of `user_id` still to acknowledge, while that account is active. Whether it is
+/// still an administrator does not matter: a recipient whose role was removed since (for example by
+/// the administrator the code created) is exactly who must still be told.
 pub(crate) async fn notices_for(
     conn: &impl ConnectionTrait,
     user_id: Option<i64>,
@@ -904,19 +930,15 @@ pub(crate) async fn notices_for(
     let Some(user_id) = user_id else {
         return Ok(Vec::new());
     };
-    let Ok(user_id_i32) = i32::try_from(user_id) else {
-        return Ok(Vec::new());
-    };
-    if !crate::auth::rbac::user_has_elevated_admin_access(conn, user_id_i32).await? {
-        return Ok(Vec::new());
-    }
     let rows = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
                 "SELECT n.id, n.created_at, n.created_username, n.created_display_name, n.redeemed_device_code
                    FROM admin_recovery_notices n
-                  WHERE n.recipient_user_id = ? AND NOT {ACKNOWLEDGED_BY_RECIPIENT_SQL}
+                   JOIN user_accounts u ON u.id = n.recipient_user_id
+                  WHERE n.recipient_user_id = ? AND u.is_active = 1 AND u.deleted_at IS NULL
+                    AND NOT {ACKNOWLEDGED_BY_RECIPIENT_SQL}
                   ORDER BY n.id"
             ),
             [user_id.into()],
@@ -1049,9 +1071,102 @@ fn changed_keys(local: &Payload, received: &Payload) -> Vec<String> {
         .collect()
 }
 
+/// A 4-character device code (`sync::device_code`: Crockford base 32, capitals).
+fn is_device_code(value: &str) -> bool {
+    value.len() == crate::sync::device_code::DEVICE_CODE_LEN
+        && value.bytes().all(|b| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(&b))
+}
+
+/// What a received notice is checked against before it is written.
+enum NoticeOrigin {
+    /// Matches the created account and the audit record of the redemption.
+    Consistent,
+    /// Waits: the created account or the redemption's audit record has not arrived yet.
+    Wait(String),
+    /// Refused, with the reason.
+    Inconsistent(String),
+}
+
+/// A new notice must describe what was really redeemed: its username is the created account's
+/// (usernames never change), and its account, username and display name are those of the
+/// `admin_recovery.used` audit record of the same code (append-only, written in the redemption's
+/// transaction and synchronised before the notices: `audit_events` is a registry parent). The
+/// account's display name may have been edited since, the record's never, so an edit cannot be
+/// used to make the notices conflict. Without that record here (it never arrived), the names must
+/// be the created account's current ones; otherwise the notice waits for the record.
+async fn notice_origin(conn: &impl ConnectionTrait, payload: &Payload) -> AppResult<NoticeOrigin> {
+    let (Some(created_sync_id), Some(code_id), Some(username), Some(display_name)) = (
+        payload_text(payload, "created_user_sync_id"),
+        payload_text(payload, "code_id"),
+        payload_text(payload, "created_username"),
+        payload_text(payload, "created_display_name"),
+    ) else {
+        return Ok(NoticeOrigin::Inconsistent(
+            "a recovery notice must name the created account, the code and the names shown".into(),
+        ));
+    };
+    let account = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, username, COALESCE(display_name, '') AS display_name
+               FROM user_accounts WHERE entity_sync_id = ?",
+            [created_sync_id.into()],
+        ))
+        .await?;
+    let Some(account) = account else {
+        return Ok(NoticeOrigin::Wait(format!(
+            "created account {created_sync_id} not received yet"
+        )));
+    };
+    let account_id: i64 = account.try_get("", "id")?;
+    let account_username: String = account.try_get("", "username")?;
+    let account_display_name: String = account.try_get("", "display_name")?;
+    if account_username != username {
+        return Ok(NoticeOrigin::Inconsistent(format!(
+            "the notice names username '{username}', the created account is '{account_username}'"
+        )));
+    }
+    let record = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT target_id,
+                    json_extract(details_json, '$.username') AS username,
+                    json_extract(details_json, '$.display_name') AS display_name
+               FROM audit_events
+              WHERE action_code = ? AND target_type = 'user_account'
+                AND json_extract(details_json, '$.code_id') = ?
+              ORDER BY id LIMIT 1",
+            [AUDIT_USED.into(), code_id.into()],
+        ))
+        .await?;
+    let Some(record) = record else {
+        return Ok(if account_display_name == display_name {
+            NoticeOrigin::Consistent
+        } else {
+            NoticeOrigin::Wait(format!(
+                "audit record of recovery code {code_id} not received yet (the display name differs from the account's)"
+            ))
+        });
+    };
+    let target: Option<String> = record.try_get("", "target_id")?;
+    let recorded_username: Option<String> = record.try_get("", "username")?;
+    let recorded_display_name: Option<String> = record.try_get("", "display_name")?;
+    if target.as_deref() != Some(account_id.to_string().as_str())
+        || recorded_username.as_deref() != Some(username)
+        || recorded_display_name.as_deref() != Some(display_name)
+    {
+        return Ok(NoticeOrigin::Inconsistent(format!(
+            "the notice does not match the redemption recorded for code {code_id} (account, username or display name)"
+        )));
+    }
+    Ok(NoticeOrigin::Consistent)
+}
+
 /// A received notice (`sync::apply_hooks::before_upsert_checked`): a notice already here is never
-/// changed (any difference is a conflict, whoever sent it); a new one never names the created
-/// administrator as its recipient and carries no invisible characters in the names it shows.
+/// changed (any difference is a conflict, whoever sent it). A new one never names the created
+/// administrator as its recipient; carries no invisible characters in the fields it shows; has a
+/// device code and an RFC 3339 date; and matches the created account and the redemption's audit
+/// record ([`notice_origin`], waiting for them while they have not arrived).
 pub(crate) async fn inbound_notice_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -1075,7 +1190,7 @@ pub(crate) async fn inbound_notice_check(
             message: "A recovery notice must be addressed to an administrator other than the one created".into(),
         }));
     }
-    if ["created_username", "created_display_name"]
+    if ["created_username", "created_display_name", "redeemed_device_code"]
         .iter()
         .any(|key| payload_text(payload, key).is_some_and(has_invisible_character))
     {
@@ -1084,7 +1199,22 @@ pub(crate) async fn inbound_notice_check(
             message: "A recovery notice names the administrator with invisible or control characters".into(),
         }));
     }
-    Ok(None)
+    if !payload_text(payload, "redeemed_device_code").is_some_and(is_device_code)
+        || !payload_text(payload, "created_at").is_some_and(|t| DateTime::parse_from_rfc3339(t).is_ok())
+    {
+        return Ok(Some(InboundVerdict::Conflict {
+            code: CONFLICT_NOTICE_INVALID,
+            message: "A recovery notice must carry a 4-character device code and an RFC 3339 date".into(),
+        }));
+    }
+    Ok(match notice_origin(conn, payload).await? {
+        NoticeOrigin::Consistent => None,
+        NoticeOrigin::Wait(message) => Some(InboundVerdict::Defer(message)),
+        NoticeOrigin::Inconsistent(reason) => Some(InboundVerdict::Conflict {
+            code: CONFLICT_NOTICE_INVALID,
+            message: format!("A recovery notice does not match what was redeemed: {reason}"),
+        }),
+    })
 }
 
 /// A received acknowledgement: only the notice's recipient acknowledges it (an acknowledgement

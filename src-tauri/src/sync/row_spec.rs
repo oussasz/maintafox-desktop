@@ -939,6 +939,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("sync_conflict", LOCAL_ROW),
                         ("audit_events", LOCAL_ROW),
                         ("personnel_import_batch", LOCAL_ROW),
+                        // A refused vendor recovery code: the target is the vendor's code id
+                        // (`auth::recovery_code`), sent as it is.
+                        ("admin_recovery_code", NOT_A_ROW),
                     ],
                 ),
             ],

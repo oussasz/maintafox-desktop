@@ -28,7 +28,7 @@
       "entity_type": "admin_recovery_acknowledgements",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 2,
+      "apply_priority": 3,
       "parents": [
         "admin_recovery_notices",
         "user_accounts"
@@ -39,11 +39,13 @@
       "entity_type": "admin_recovery_notices",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 1,
+      "apply_priority": 2,
       "parents": [
-        "user_accounts"
+        "user_accounts",
+        "audit_events"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "note": "A received notice is checked against the redemption's admin_recovery.used audit record, applied first (auth::recovery_code)."
     },
     {
       "entity_type": "analytics_contract_versions",
