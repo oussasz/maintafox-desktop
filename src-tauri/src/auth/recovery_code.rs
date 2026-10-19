@@ -1074,7 +1074,7 @@ fn changed_keys(local: &Payload, received: &Payload) -> Vec<String> {
 /// A 4-character device code (`sync::device_code`: Crockford base 32, capitals).
 fn is_device_code(value: &str) -> bool {
     value.len() == crate::sync::device_code::DEVICE_CODE_LEN
-        && value.bytes().all(|b| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(&b))
+        && value.bytes().all(|b| crate::sync::device_code::ALPHABET.contains(&b))
 }
 
 /// What a received notice is checked against before it is written.
@@ -1087,13 +1087,19 @@ enum NoticeOrigin {
     Inconsistent(String),
 }
 
-/// A new notice must describe what was really redeemed: its username is the created account's
-/// (usernames never change), and its account, username and display name are those of the
-/// `admin_recovery.used` audit record of the same code (append-only, written in the redemption's
-/// transaction and synchronised before the notices: `audit_events` is a registry parent). The
-/// account's display name may have been edited since, the record's never, so an edit cannot be
-/// used to make the notices conflict. Without that record here (it never arrived), the names must
-/// be the created account's current ones; otherwise the notice waits for the record.
+/// A new notice must describe what was really redeemed. The created account must be known here
+/// (otherwise the notice waits). Then:
+/// - with the `admin_recovery.used` audit record(s) of the same code here (append-only, written in
+///   the redemption's transaction and synchronised before the notices: `audit_events` is a registry
+///   parent), the notice is accepted when ANY of them names that account (`target_id`) with the
+///   notice's username and display name, and refused otherwise. The notice is compared with the
+///   record only, never with the account's current names: both the username and the display name
+///   can be edited afterwards (`admin_users::update_user_impl`, Profile), and such an edit must not
+///   make the real notices conflict on other PCs. Several records can exist for one code when a peer
+///   forged one; a forged one never hides the real one.
+/// - without any record here (it has not arrived), a notice naming the account as it is now is
+///   accepted; one that differs waits for the record (never refused: the account may have been
+///   renamed since the redemption).
 async fn notice_origin(conn: &impl ConnectionTrait, payload: &Payload) -> AppResult<NoticeOrigin> {
     let (Some(created_sync_id), Some(code_id), Some(username), Some(display_name)) = (
         payload_text(payload, "created_user_sync_id"),
@@ -1119,15 +1125,8 @@ async fn notice_origin(conn: &impl ConnectionTrait, payload: &Payload) -> AppRes
         )));
     };
     let account_id: i64 = account.try_get("", "id")?;
-    let account_username: String = account.try_get("", "username")?;
-    let account_display_name: String = account.try_get("", "display_name")?;
-    if account_username != username {
-        return Ok(NoticeOrigin::Inconsistent(format!(
-            "the notice names username '{username}', the created account is '{account_username}'"
-        )));
-    }
-    let record = conn
-        .query_one(Statement::from_sql_and_values(
+    let records = conn
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT target_id,
                     json_extract(details_json, '$.username') AS username,
@@ -1135,31 +1134,38 @@ async fn notice_origin(conn: &impl ConnectionTrait, payload: &Payload) -> AppRes
                FROM audit_events
               WHERE action_code = ? AND target_type = 'user_account'
                 AND json_extract(details_json, '$.code_id') = ?
-              ORDER BY id LIMIT 1",
+              ORDER BY id",
             [AUDIT_USED.into(), code_id.into()],
         ))
         .await?;
-    let Some(record) = record else {
-        return Ok(if account_display_name == display_name {
-            NoticeOrigin::Consistent
-        } else {
-            NoticeOrigin::Wait(format!(
-                "audit record of recovery code {code_id} not received yet (the display name differs from the account's)"
+    if records.is_empty() {
+        let account_username: String = account.try_get("", "username")?;
+        let account_display_name: String = account.try_get("", "display_name")?;
+        return Ok(
+            if account_username == username && account_display_name == display_name {
+                NoticeOrigin::Consistent
+            } else {
+                NoticeOrigin::Wait(format!(
+                "audit record of recovery code {code_id} not received yet (the names differ from the account's current ones)"
             ))
-        });
-    };
-    let target: Option<String> = record.try_get("", "target_id")?;
-    let recorded_username: Option<String> = record.try_get("", "username")?;
-    let recorded_display_name: Option<String> = record.try_get("", "display_name")?;
-    if target.as_deref() != Some(account_id.to_string().as_str())
-        || recorded_username.as_deref() != Some(username)
-        || recorded_display_name.as_deref() != Some(display_name)
-    {
-        return Ok(NoticeOrigin::Inconsistent(format!(
-            "the notice does not match the redemption recorded for code {code_id} (account, username or display name)"
-        )));
+            },
+        );
     }
-    Ok(NoticeOrigin::Consistent)
+    let account_id = account_id.to_string();
+    for record in &records {
+        let target: Option<String> = record.try_get("", "target_id")?;
+        let recorded_username: Option<String> = record.try_get("", "username")?;
+        let recorded_display_name: Option<String> = record.try_get("", "display_name")?;
+        if target.as_deref() == Some(account_id.as_str())
+            && recorded_username.as_deref() == Some(username)
+            && recorded_display_name.as_deref() == Some(display_name)
+        {
+            return Ok(NoticeOrigin::Consistent);
+        }
+    }
+    Ok(NoticeOrigin::Inconsistent(format!(
+        "the notice does not match the redemption recorded for code {code_id} (account, username or display name)"
+    )))
 }
 
 /// A received notice (`sync::apply_hooks::before_upsert_checked`): a notice already here is never

@@ -1733,7 +1733,7 @@ async fn an_acknowledgement_before_its_notice_waits_and_a_renamed_account_keeps_
     // still be accepted everywhere (they are checked against the redemption's audit record).
     let sauveur_a = user_id(&a, "sauveur").await;
     a.execute_unprepared(&format!(
-        "UPDATE user_accounts SET display_name = 'Jean Dupont' WHERE id = {sauveur_a}"
+        "UPDATE user_accounts SET username = 'sauveur.renomme', display_name = 'Jean Dupont' WHERE id = {sauveur_a}"
     ))
     .await
     .expect("rename");
@@ -1759,6 +1759,29 @@ async fn an_acknowledgement_before_its_notice_waits_and_a_renamed_account_keeps_
     // A third PC, still empty: the acknowledgement arrives before its notice and waits; so does
     // the notice before its account.
     let c = started_device_db().await;
+    // A peer forged an earlier redemption record for the same code on C, naming other names: the
+    // real record, received later, still lets the real notice through.
+    crate::audit::writer::write_audit_event(
+        &c,
+        crate::audit::writer::AuditEventInput {
+            action_code: AUDIT_USED.to_string(),
+            target_type: Some("user_account".to_string()),
+            target_id: Some("999999".to_string()),
+            actor_id: None,
+            auth_context: "signed_out".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "security".to_string(),
+            details_json: Some(serde_json::json!({
+                "code_id": "3f6c1d2e-9a4b-4c7d-8e1f-2a3b4c5d6e7f",
+                "username": "faux",
+                "display_name": "Faux Nom",
+            })),
+        },
+    )
+    .await
+    .expect("forged record");
     let outcome = receive(&c, ACK_ENTITY, &ack_sync, "upsert", &ack).await;
     assert!(deferred(&outcome), "acknowledgement before its notice: {outcome:?}");
     let outcome = receive(&c, NOTICE_ENTITY, &notice_sync, "upsert", &notice).await;
@@ -1786,7 +1809,25 @@ async fn an_acknowledgement_before_its_notice_waits_and_a_renamed_account_keeps_
     let chef_c = user_id(&c, "chef").await;
     let on_c = notices_for(&c, Some(chef_c)).await.expect("chef on C");
     assert_eq!(on_c.len(), 1, "the notice is shown on C despite the later rename");
+    assert_eq!(on_c[0].created_username, "sauveur");
     assert_eq!(on_c[0].created_display_name, "Responsable Maintenance");
+    // C holds the renamed account, the forged record and the real one.
+    assert_eq!(
+        scalar(
+            &c,
+            "SELECT COUNT(*) AS n FROM user_accounts WHERE username = 'sauveur.renomme'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &c,
+            &format!("SELECT COUNT(*) AS n FROM audit_events WHERE action_code = '{AUDIT_USED}'")
+        )
+        .await,
+        2
+    );
     // The waiting acknowledgement now applies, and clears the notice on C.
     let outcome = receive(&c, ACK_ENTITY, &ack_sync, "upsert", &ack).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
