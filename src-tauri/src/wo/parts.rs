@@ -1072,7 +1072,20 @@ pub async fn cancel_planned_part(
     let part = check_planned_line_editable(&txn, input.wo_part_id, actor_id).await?;
 
     if let Some(reservation_id) = part.reservation_id {
-        inventory_queries::release_stock_reservation_with_connection(
+        // The store desk can issue against the WO reservation before execution (the line's own
+        // issued figure is not updated then): stock that left the store is recorded use.
+        let issued = reservation_issued_quantity(&txn, reservation_id).await?;
+        if issued > 0.0 {
+            return Err(part_line_refusal(
+                part_line_codes::HAS_USE,
+                format!(
+                    "Stock was already issued from the store against this line ({issued}): mark it not used instead."
+                ),
+                &[],
+            ));
+        }
+        // A release only lowers the reserved quantity: it works for an article deactivated since.
+        inventory_queries::release_withdrawn_reservation_with_connection(
             &txn,
             reservation_id,
             Some("WO planned part line cancelled"),
@@ -1223,15 +1236,87 @@ pub async fn set_planned_part_required(
     Ok(changed)
 }
 
-/// Inbound sync check of a received part line (`sync::apply_hooks::before_upsert`): a line
-/// received as cancelled while it carries recorded use (a used or issued quantity) breaks the
-/// rule "only a line with no recorded use is cancelled": it is a conflict, never applied silently.
-pub(crate) fn inbound_part_line_conflict(payload: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+/// Quantity already issued from the store against a reservation (0 when the row is absent).
+async fn reservation_issued_quantity<C: ConnectionTrait>(conn: &C, reservation_id: i64) -> AppResult<f64> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(quantity_issued, 0.0) AS issued FROM stock_reservations WHERE id = ?",
+            [reservation_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<f64>("", "issued"))
+        .transpose()
+        .map_err(|e| decode_err("issued", e))?
+        .unwrap_or(0.0))
+}
+
+/// Inbound sync check of a received part line (`sync::apply_hooks::before_upsert_checked`): a line
+/// received as cancelled breaks the rule "only a line with no recorded use is cancelled" when
+/// - the received row carries a used or issued quantity, or
+/// - this device's copy of the line (found by its sync id) has recorded use: a used or issued
+///   quantity, or stock issued from the store against its reservation.
+///
+/// Either is a conflict for a person to decide, never applied silently. A cancelled row carries no
+/// reservation (cancelling clears it), so when this device has no copy of the line yet the store
+/// issues cannot be determined on receipt: only the received quantities are checked then.
+pub(crate) async fn inbound_part_line_check<C: ConnectionTrait>(
+    conn: &C,
+    entity_sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<crate::settings::site::InboundVerdict>> {
+    use crate::settings::site::InboundVerdict;
     if payload.get("consumption_status").and_then(serde_json::Value::as_str) != Some(PART_STATUS_CANCELLED) {
-        return None;
+        return Ok(None);
     }
+    let conflict = |message: String| {
+        Ok(Some(InboundVerdict::Conflict {
+            code: part_line_codes::HAS_USE,
+            message,
+        }))
+    };
     let qty = |key: &str| payload.get(key).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
     let (used, issued) = (qty("quantity_used"), qty("quantity_issued"));
-    (used > 0.0 || issued > 0.0)
-        .then(|| format!("a part line received as cancelled has recorded use (used {used}, issued {issued})"))
+    if used > 0.0 || issued > 0.0 {
+        return conflict(format!(
+            "a part line received as cancelled has recorded use (used {used}, issued {issued})"
+        ));
+    }
+    let local = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT consumption_status, COALESCE(quantity_used, 0.0) AS used, \
+                    COALESCE(quantity_issued, 0.0) AS issued, reservation_id \
+               FROM work_order_parts WHERE entity_sync_id = ?",
+            [entity_sync_id.into()],
+        ))
+        .await?;
+    let Some(local) = local else {
+        return Ok(None);
+    };
+    let status: String = local
+        .try_get("", "consumption_status")
+        .map_err(|e| decode_err("consumption_status", e))?;
+    if status == PART_STATUS_CANCELLED {
+        return Ok(None);
+    }
+    let local_used: f64 = local.try_get("", "used").map_err(|e| decode_err("used", e))?;
+    let local_issued: f64 = local.try_get("", "issued").map_err(|e| decode_err("issued", e))?;
+    if status == "used" || local_used > 0.0 || local_issued > 0.0 {
+        return conflict(format!(
+            "a part line received as cancelled has recorded use on this device (used {local_used}, issued {local_issued})"
+        ));
+    }
+    let reservation_id: Option<i64> = local
+        .try_get("", "reservation_id")
+        .map_err(|e| decode_err("reservation_id", e))?;
+    if let Some(reservation_id) = reservation_id {
+        let store_issued = reservation_issued_quantity(conn, reservation_id).await?;
+        if store_issued > 0.0 {
+            return conflict(format!(
+                "a part line received as cancelled had stock issued from the store against it on this device ({store_issued})"
+            ));
+        }
+    }
+    Ok(None)
 }

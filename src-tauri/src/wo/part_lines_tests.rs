@@ -542,21 +542,256 @@ mod tests {
         assert_eq!(refusal_code(err), part_line_codes::CANCELLED);
     }
 
-    #[test]
-    fn a_line_received_as_cancelled_with_recorded_use_is_a_conflict() {
-        let payload = |status: &str, used: f64, issued: f64| {
-            serde_json::json!({
-                "consumption_status": status,
-                "quantity_used": used,
-                "quantity_issued": issued,
-            })
-            .as_object()
-            .cloned()
-            .unwrap()
+    fn payload(status: &str, used: f64, issued: f64) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::json!({
+            "consumption_status": status,
+            "quantity_used": used,
+            "quantity_issued": issued,
+        })
+        .as_object()
+        .cloned()
+        .unwrap()
+    }
+
+    fn is_conflict(verdict: &Option<crate::settings::site::InboundVerdict>) -> bool {
+        matches!(
+            verdict,
+            Some(crate::settings::site::InboundVerdict::Conflict { code, .. }) if *code == part_line_codes::HAS_USE
+        )
+    }
+
+    /// The line's sync id (given one here when capture is not installed, as in the hook tests).
+    async fn part_sync_id(db: &sea_orm::DatabaseConnection, part_id: i64) -> String {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_order_parts SET entity_sync_id = COALESCE(entity_sync_id, 'pl-test-' || id) WHERE id = ?",
+            [part_id.into()],
+        ))
+        .await
+        .expect("sync id");
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM work_order_parts WHERE id = ?",
+            [part_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get::<String>("", "entity_sync_id")
+        .expect("sync id")
+    }
+
+    async fn reservation_state(db: &sea_orm::DatabaseConnection, reservation_id: i64) -> (String, f64) {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT status, quantity_issued FROM stock_reservations WHERE id = ?",
+                [reservation_id.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("reservation");
+        (
+            row.try_get("", "status").unwrap(),
+            row.try_get("", "quantity_issued").unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_line_received_as_cancelled_with_recorded_use_is_a_conflict() {
+        let db = crate::db::test_db::seeded().await;
+        // Unknown line here: only the received quantities can be checked.
+        for (p, conflict) in [
+            (payload("cancelled", 0.0, 0.0), false),
+            (payload("cancelled", 1.0, 0.0), true),
+            (payload("cancelled", 0.0, 2.0), true),
+            (payload("used", 1.0, 1.0), false),
+        ] {
+            let verdict = parts::inbound_part_line_check(&db, "unknown-line", &p)
+                .await
+                .expect("check");
+            assert_eq!(is_conflict(&verdict), conflict, "{p:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn stock_issued_by_the_store_desk_blocks_the_cancel_but_not_the_switch() {
+        let db = crate::db::test_db::seeded().await;
+        let actor = admin_id(&db).await;
+        let wo_id = wo_in_planning(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "PL-ISSUED-08", 10.0).await;
+        let part = add_planned(&db, wo_id, article_id, location_id, 3.0).await;
+        let reservation_id = part.reservation_id.expect("reserved");
+        crate::inventory::queries::issue_reserved_stock(
+            &db,
+            crate::inventory::domain::InventoryIssueInput {
+                reservation_id,
+                quantity: 1.0,
+                source_type: Some("WO".into()),
+                source_id: Some(wo_id),
+                source_ref: None,
+                notes: Some("store desk issue before execution".into()),
+            },
+        )
+        .await
+        .expect("issue from the store");
+        let before = reservation_state(&db, reservation_id).await;
+        assert_eq!(before.1, 1.0);
+        let reserved_before = reserved_qty(&db, article_id, location_id).await;
+
+        let err = parts::cancel_planned_part(&db, CancelPlannedPartInput { wo_part_id: part.id }, actor)
+            .await
+            .expect_err("stock already issued against the line");
+        assert_eq!(refusal_code(err), part_line_codes::HAS_USE);
+        assert_eq!(
+            reservation_state(&db, reservation_id).await,
+            before,
+            "reservation untouched"
+        );
+        assert_eq!(reserved_qty(&db, article_id, location_id).await, reserved_before);
+        assert_eq!(
+            parts::list_wo_parts(&db, wo_id).await.unwrap()[0].consumption_status,
+            "pending"
+        );
+        assert_eq!(audit_count(&db, wo_id, "part_line_cancelled").await, 0);
+
+        // The same line received as cancelled from another PC is a conflict here.
+        let sync_id = part_sync_id(&db, part.id).await;
+        let verdict = parts::inbound_part_line_check(&db, &sync_id, &payload("cancelled", 0.0, 0.0))
+            .await
+            .expect("check");
+        assert!(is_conflict(&verdict), "{verdict:?}");
+
+        // Required / optional only changes the necessity: still allowed.
+        let switched = parts::set_planned_part_required(
+            &db,
+            SetPlannedPartRequiredInput {
+                wo_part_id: part.id,
+                is_required: false,
+            },
+            actor,
+        )
+        .await
+        .expect("switch on a line with store issues");
+        assert!(!switched.is_required);
+        assert_eq!(reservation_state(&db, reservation_id).await, before);
+    }
+
+    #[tokio::test]
+    async fn a_line_whose_article_was_deactivated_since_can_be_cancelled() {
+        let db = crate::db::test_db::seeded().await;
+        let actor = admin_id(&db).await;
+        let wo_id = wo_in_planning(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "PL-DEACT-09", 5.0).await;
+        let part = add_planned(&db, wo_id, article_id, location_id, 2.0).await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE articles SET is_active = 0 WHERE id = ?",
+            [article_id.into()],
+        ))
+        .await
+        .expect("deactivate article");
+
+        let cancelled = parts::cancel_planned_part(&db, CancelPlannedPartInput { wo_part_id: part.id }, actor)
+            .await
+            .expect("cancel with a deactivated article");
+        assert_eq!(cancelled.consumption_status, "cancelled");
+        assert_eq!(reserved_qty(&db, article_id, location_id).await, 0.0);
+        assert_eq!(reservation_state(&db, part.reservation_id.unwrap()).await.0, "released");
+    }
+
+    #[tokio::test]
+    async fn a_failure_after_the_release_leaves_status_reservation_and_audit_unchanged() {
+        let db = crate::db::test_db::seeded().await;
+        let actor = admin_id(&db).await;
+        let wo_id = wo_in_planning(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "PL-ROLLBACK-10", 5.0).await;
+        let part = add_planned(&db, wo_id, article_id, location_id, 2.0).await;
+        let reservation_id = part.reservation_id.unwrap();
+        // The audit write fails (after the reservation was released in the transaction).
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "CREATE TRIGGER test_fail_part_audit BEFORE INSERT ON wo_change_events \
+             WHEN NEW.action = 'part_line_cancelled' BEGIN SELECT RAISE(ABORT, 'forced audit failure'); END"
+                .to_string(),
+        ))
+        .await
+        .expect("failure trigger");
+
+        parts::cancel_planned_part(&db, CancelPlannedPartInput { wo_part_id: part.id }, actor)
+            .await
+            .expect_err("audit failure");
+
+        let line = &parts::list_wo_parts(&db, wo_id).await.unwrap()[0];
+        assert_eq!(line.consumption_status, "pending");
+        assert_eq!(line.reservation_id, Some(reservation_id));
+        assert_eq!(reservation_state(&db, reservation_id).await.0, "active");
+        assert_eq!(reserved_qty(&db, article_id, location_id).await, 2.0);
+        assert_eq!(
+            scalar_i64(
+                &db,
+                "SELECT COUNT(*) FROM inventory_transactions WHERE reservation_id = ? AND movement_type = 'RELEASE'",
+                vec![reservation_id.into()],
+            )
+            .await,
+            0
+        );
+        assert_eq!(audit_count(&db, wo_id, "part_line_cancelled").await, 0);
+        assert_eq!(
+            scalar_i64(
+                &db,
+                "SELECT COUNT(*) FROM work_order_execution_events WHERE work_order_id = ? AND event_type = 'part_cancelled'",
+                vec![wo_id.into()],
+            )
+            .await,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_and_switch_are_captured_for_sync_like_add_part() {
+        let db = crate::db::test_db::seeded().await;
+        let actor = admin_id(&db).await;
+        crate::sync::capture::install_capture(&db).await.expect("capture");
+        let wo_id = wo_in_planning(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "PL-SYNC-11", 5.0).await;
+        let part = add_planned(&db, wo_id, article_id, location_id, 2.0).await;
+        let sync_id = part_sync_id(&db, part.id).await;
+        let captured = |db: sea_orm::DatabaseConnection, sync_id: String| async move {
+            scalar_i64(
+                &db,
+                "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'work_order_parts' AND entity_sync_id = ?",
+                vec![sync_id.into()],
+            )
+            .await
         };
-        assert!(parts::inbound_part_line_conflict(&payload("cancelled", 0.0, 0.0)).is_none());
-        assert!(parts::inbound_part_line_conflict(&payload("cancelled", 1.0, 0.0)).is_some());
-        assert!(parts::inbound_part_line_conflict(&payload("cancelled", 0.0, 2.0)).is_some());
-        assert!(parts::inbound_part_line_conflict(&payload("used", 1.0, 1.0)).is_none());
+        assert!(captured(db.clone(), sync_id.clone()).await > 0, "add_part is captured");
+
+        for (step, sql_done) in [("switch", false), ("cancel", true)] {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "DELETE FROM sync_capture_journal WHERE entity_type = 'work_order_parts' AND entity_sync_id = ?",
+                [sync_id.clone().into()],
+            ))
+            .await
+            .expect("clear journal");
+            if sql_done {
+                parts::cancel_planned_part(&db, CancelPlannedPartInput { wo_part_id: part.id }, actor)
+                    .await
+                    .expect("cancel");
+            } else {
+                parts::set_planned_part_required(
+                    &db,
+                    SetPlannedPartRequiredInput {
+                        wo_part_id: part.id,
+                        is_required: false,
+                    },
+                    actor,
+                )
+                .await
+                .expect("switch");
+            }
+            assert!(captured(db.clone(), sync_id.clone()).await > 0, "{step} is captured");
+        }
     }
 }
