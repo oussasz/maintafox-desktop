@@ -14,6 +14,7 @@
 //!   signed the hand-over. A log without a signer or receiver passes (devices before signers were
 //!   recorded send none); a log naming a person not applied here yet waits for that person (the
 //!   generic apply);
+//! - a permit never changes its permit type (as no local edit does);
 //! - a permit never leaves `closed`, `handed_back`, `cancelled` or `expired` except along the lifecycle
 //!   (`closed` → `handed_back`, `handed_back` → `cancelled`);
 //! - an isolation (`isolation_rule_breach`): verified after it was applied and by someone other than
@@ -28,9 +29,10 @@
 //!   started, resumed or was reopened: a permit when it requires one (of the type a plant rule named,
 //!   when a rule flagged it), every permit live at that time active, not suspended, not expired, with
 //!   its isolations ready;
-//! - a permit type whose three-person lock-removal setting changes (or a new type with it on) says
-//!   who changed it, when and why, and that person holds the settings right here
-//!   (`inbound_permit_type_check`);
+//! - a permit type whose three-person lock-removal setting changes (or a new type with it on), or
+//!   whose record of that change changes, says who changed it, when (later than the change recorded
+//!   here) and why, and that person holds the settings right here (`inbound_permit_type_check`);
+
 //! - deletes (this device never deletes them): a permit, its isolations and suspensions only while
 //!   the permit is a draft (the LOTO history of any other permit is kept); a permit type or a
 //!   qualification requirement never (they are deactivated or edited).
@@ -38,7 +40,7 @@
 //! Judged on the state, not the path (an offline device may send several steps as one row), and at the
 //! times written in the rows, compared exactly. This device's clock is used only to refuse a time
 //! in the future, beyond the tolerated difference between device clocks (`MAX_CLOCK_SKEW_MINUTES`).
-//! A row already held here in the same status passes.
+//! A permit already held here in the same status (and of the same type) passes.
 //!
 //! Rows that arrive together are applied together. A permit's change is judged with its isolations,
 //! suspensions and handover logs still waiting in the inbox, and a work order's start with its
@@ -518,10 +520,25 @@ pub(crate) async fn inbound_permit_check(
     let (local, permit) = permit_transition(conn, entity_sync_id, received).await?;
     let to = field(&permit, "status").unwrap_or_default();
     let from = local.as_ref().and_then(|l| field(l, "status"));
+    let code = field(&permit, "code").unwrap_or(entity_sync_id).to_string();
+    // A permit keeps the type it was created with (no local edit changes it): its isolation and
+    // lock-removal rules come from that type.
+    if let Some(l) = &local {
+        let (held, got) = (field(l, "permit_type_sync_id"), field(&permit, "permit_type_sync_id"));
+        if held != got {
+            return conflict(
+                "PERMIT_TYPE_CHANGED",
+                format!(
+                    "permit {code}: its permit type cannot change (here {}, received {})",
+                    held.unwrap_or("none"),
+                    got.unwrap_or("none")
+                ),
+            );
+        }
+    }
     if from == Some(to) {
         return Ok(None);
     }
-    let code = field(&permit, "code").unwrap_or(entity_sync_id).to_string();
     if let Some(from) = from {
         let along = matches!((from, to), ("closed", "handed_back") | ("handed_back", "cancelled"));
         if TERMINAL.contains(&from) && !along {
@@ -804,60 +821,98 @@ pub(crate) async fn inbound_isolation_check(
     Ok(None)
 }
 
+/// The value of an on/off column of a received row, read as SQLite stores it in an INTEGER column:
+/// `true`/`false`, the numbers 1 and 0 (1.0 and 0.0 too) and the texts "1" and "0" (also "1.0",
+/// "0.0") give on or off; a missing key gives off (the column default). Anything else (another
+/// number, other text, text padded with spaces, null) is `None`: it is refused rather than read one
+/// way and stored another.
+fn on_off(p: &Payload, key: &str) -> Option<bool> {
+    let number = match p.get(key) {
+        None => return Some(false),
+        Some(Value::Bool(b)) => return Some(*b),
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(s)) => s.parse::<f64>().ok(),
+        Some(_) => None,
+    }?;
+    if number == 1.0 {
+        Some(true)
+    } else if number == 0.0 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// Re-check of a permit type received by synchronisation: a change of its three-person lock-removal
 /// setting (or a new type with it on) is an administrator action with step-up and a reason
-/// (`permit::queries::guard_three_person_change`). It is applied only when the row says who changed
-/// it, when and why (migration 238) — a record that is not the one already held here — the reason
-/// has at least [`crate::settings::catalog::MIN_REASON_CHARS`] characters, the time is readable and
-/// not in the future, and that person holds the settings right (`adm.settings`, plant-wide) here.
+/// (`permit::queries::guard_three_person_change`), recorded on the row as who changed it, when and
+/// why (migration 238). That record is judged whenever the received row changes the setting or the
+/// record itself (a row that leaves both alone passes; the energy-isolation rule is applied as
+/// received). It is applied only when:
+/// - the setting is a value this version reads one way and stores the same way ([`on_off`]);
+/// - the reason has at least [`crate::settings::catalog::MIN_REASON_CHARS`] characters, the time is
+///   readable, not in the future and strictly later than the change already recorded here for this
+///   type (an older record of this type is not replayed);
+/// - the record is not one already held here for another type (copied from that type);
+/// - the person named holds the settings right (`adm.settings`, plant-wide) here, judged on arrival.
+///
 /// A person not applied here yet, or whose rights are still waiting in the inbox, makes it wait;
-/// otherwise a sync conflict, nothing written. The step-up itself cannot be re-verified here.
-/// A row that does not change the setting passes (the energy-isolation rule is applied as received).
+/// otherwise a sync conflict, nothing written. The step-up itself cannot be re-verified here, and a
+/// record made up by the sending device cannot be told from a real one (docs/KNOWN_LIMITS.md).
 pub(crate) async fn inbound_permit_type_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
     const SETTING: &str = "requires_three_person_removal";
+    const BY: &str = "three_person_changed_by_sync_id";
+    const AT: &str = "three_person_changed_at";
+    const WHY: &str = "three_person_change_reason";
     let local = local_wire(conn, "permit_types", entity_sync_id).await?;
     let ty = overlay(local.as_ref(), received);
-    let wanted = flag(&ty, SETTING);
-    let changes = local.as_ref().map_or(wanted, |l| flag(l, SETTING) != wanted);
-    if !changes {
+    let code = field(&ty, "code").unwrap_or(entity_sync_id).to_string();
+    let (Some(wanted), Some(held)) = (
+        on_off(&ty, SETTING),
+        local.as_ref().map_or(Some(None), |l| on_off(l, SETTING).map(Some)),
+    ) else {
+        return conflict(
+            "INVALID_VALUE",
+            format!(
+                "permit type {code}: its three-person lock-removal rule must be on or off, got {}",
+                ty.get(SETTING).unwrap_or(&Value::Null)
+            ),
+        );
+    };
+    let record = |p: &Payload| [BY, AT, WHY].map(|k| field(p, k).map(str::to_string));
+    let held_record = local.as_ref().map_or([None, None, None], |l| record(l));
+    let changes = held.map_or(wanted, |h| h != wanted);
+    if !changes && record(&ty) == held_record {
         return Ok(None);
     }
-    let code = field(&ty, "code").unwrap_or(entity_sync_id).to_string();
-    let unaudited = |why: &str| {
+    let unaudited = |why: String| {
         conflict(
             "PERMIT_TYPE_THREE_PERSON_UNAUDITED",
             format!("permit type {code}: its three-person lock-removal rule was changed {why}"),
         )
     };
-    let trace = |p: &Payload| {
-        [
-            field(p, "three_person_changed_by_sync_id").map(str::to_string),
-            field(p, "three_person_changed_at").map(str::to_string),
-            field(p, "three_person_change_reason").map(str::to_string),
-        ]
+    let min = crate::settings::catalog::MIN_REASON_CHARS;
+    let Some(reason) = field(&ty, WHY).filter(|r| r.chars().count() >= min) else {
+        return unaudited(format!("without a reason of at least {min} characters"));
     };
-    // Every change records who, when and why: a change carrying the record already held here was
-    // not recorded as a change.
-    if local
-        .as_ref()
-        .is_some_and(|l| field(l, "three_person_changed_at").is_some() && trace(l) == trace(&ty))
-    {
-        return unaudited("without its own record of who changed it, when and why");
-    }
-    let reason_ok = field(&ty, "three_person_change_reason")
-        .is_some_and(|r| r.chars().count() >= crate::settings::catalog::MIN_REASON_CHARS);
-    if !reason_ok {
-        return unaudited("without a reason of at least 10 characters");
-    }
-    let Some(changed_at) = time(&ty, "three_person_changed_at") else {
-        return unaudited("without a readable time of the change");
+    let Some(changed_at) = time(&ty, AT) else {
+        return unaudited("without a readable time of the change".into());
     };
     if changed_at > future_bound() {
-        return unaudited("at a time in the future");
+        return unaudited("at a time in the future".into());
+    }
+    // Each change is later than the one before it: a record not later than the one held here is
+    // an earlier change of this type (or this one again), not a new one.
+    if let Some(last) = local.as_ref().and_then(|l| time(l, AT)) {
+        if changed_at <= last {
+            return unaudited(format!(
+                "with a record dated {changed_at}, not later than the change already recorded here ({last})"
+            ));
+        }
     }
     let unauthorised = |why: &str| {
         conflict(
@@ -865,7 +920,7 @@ pub(crate) async fn inbound_permit_type_check(
             format!("permit type {code}: its three-person lock-removal rule was changed {why}"),
         )
     };
-    let Some(author_sync) = field(&ty, "three_person_changed_by_sync_id") else {
+    let Some(author_sync) = field(&ty, BY) else {
         return unauthorised("without saying who changed it");
     };
     let Some(author) = conn
@@ -882,6 +937,23 @@ pub(crate) async fn inbound_permit_type_check(
             "permit type {code}: the person who changed its three-person rule is not applied yet"
         ));
     };
+    // A change is made on one type at a time: the same person, time and reason as the record held
+    // here for another type is that type's record copied.
+    let others = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT three_person_changed_at AS at, three_person_change_reason AS reason FROM permit_types              WHERE three_person_changed_by_id = ? AND entity_sync_id <> ?",
+            [author.into(), entity_sync_id.into()],
+        ))
+        .await?;
+    for other in others {
+        let at: Option<String> = other.try_get("", "at").map_err(sync_err)?;
+        let why: Option<String> = other.try_get("", "reason").map_err(sync_err)?;
+        let same_time = at.as_deref().and_then(instant) == Some(changed_at);
+        if same_time && why.as_deref().map(str::trim) == Some(reason) {
+            return unaudited("with the record of a change of another permit type".into());
+        }
+    }
     let right = crate::rbac::permissions::ADM_SETTINGS;
     if !crate::settings::site::holds_tenant_right(conn, author, right).await? {
         // The right is held before the change is made, so its rows come before this one: while

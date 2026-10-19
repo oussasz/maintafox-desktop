@@ -105,6 +105,7 @@
       "PERMIT_HANDOVER_RECEIVER_IS_SIGNER": "A permit hand-over received by the person who signed it",
       "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED": "A permit type's third-person lock-removal rule changed on another PC by someone without the settings right",
       "PERMIT_TYPE_THREE_PERSON_UNAUDITED": "A permit type's third-person lock-removal rule changed on another PC without who, when or why",
+      "PERMIT_TYPE_CHANGED": "A permit moved to another permit type",
       "other": "Needs review"
     },
     "history": {

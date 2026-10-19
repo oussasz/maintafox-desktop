@@ -2408,7 +2408,8 @@ async fn a_received_three_person_change_is_rechecked_on_its_author_and_reason() 
     );
     assert_eq!(chain(ty.clone()).await.as_deref(), Some("1"));
 
-    // A new type: off passes without a record, on is judged the same way.
+    // A new type: off passes without a record, on is judged the same way (with its own record: the
+    // record of the change above would be that change copied).
     let new_type = |code: &str, value: i64, by: Value| {
         with(
             held.clone(),
@@ -2417,7 +2418,10 @@ async fn a_received_three_person_change_is_rechecked_on_its_author_and_reason() 
                 ("requires_three_person_removal", json!(value)),
                 ("three_person_changed_by_sync_id", by),
                 ("three_person_changed_at", json!(now())),
-                ("three_person_change_reason", reason.clone()),
+                (
+                    "three_person_change_reason",
+                    json!("New type for work on the press line"),
+                ),
             ],
         )
     };
@@ -2490,6 +2494,256 @@ async fn a_three_person_change_waits_for_the_rights_of_its_author() {
     assert_eq!(
         code(&outcome),
         Some("PERMIT_TYPE_THREE_PERSON_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+}
+
+/// The record of a three-person change received from another PC must be a new change: dated later
+/// than the change recorded here for the type, and not the record held here for another type. A row
+/// that leaves the setting alone but rewrites the record is judged the same way, so the record of
+/// who last changed the setting is never overwritten unchecked.
+#[tokio::test]
+async fn a_three_person_record_is_never_replayed_copied_or_overwritten_unchecked() {
+    let db = setup().await;
+    let type_sync = |code: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT entity_sync_id FROM permit_types WHERE code = '{code}'"),
+            )
+            .await
+            .expect("type sync id")
+        }
+    };
+    let (hot, loto) = (type_sync("hot_work").await, type_sync("loto").await);
+    let record_of = |sync: String| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT CAST(requires_three_person_removal AS TEXT) || '|' || \
+                     COALESCE(three_person_changed_at, '-') || '|' || COALESCE(three_person_change_reason, '-') \
+                     FROM permit_types WHERE entity_sync_id = '{sync}'"
+                ),
+            )
+            .await
+            .expect("record")
+        }
+    };
+    let admin = json!(user_sync(&db, APPLIER).await);
+    let reason = "Site rule after the 2026 LOTO audit";
+    let earlier = "2026-01-05T08:00:00Z";
+    // Another type holds a change by the administrator at `earlier`.
+    exec(
+        &db,
+        &format!(
+            "UPDATE permit_types SET three_person_changed_by_id = {APPLIER}, three_person_changed_at = '{earlier}', \
+             three_person_change_reason = '{reason}' WHERE entity_sync_id = '{loto}'"
+        ),
+    )
+    .await;
+    let changed = |base: &Payload, value: Value, at: &str, why: &str| {
+        with(
+            base.clone(),
+            &[
+                ("requires_three_person_removal", value),
+                ("three_person_changed_by_sync_id", admin.clone()),
+                ("three_person_changed_at", json!(at)),
+                ("three_person_change_reason", json!(why)),
+            ],
+        )
+    };
+    let held = wire(&db, "permit_types", &hot).await;
+
+    // The other type's record copied onto this one: refused.
+    let copied = changed(&held, json!(1), earlier, reason);
+    let outcome = apply(&db, "permit_types", &hot, &copied).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_THREE_PERSON_UNAUDITED"),
+        "{outcome:?}"
+    );
+    assert_eq!(record_of(hot.clone()).await, "0|-|-");
+    // The same person and time with this change's own reason: applied.
+    let own = changed(&held, json!(1), earlier, "Contractor work on the press line");
+    let outcome = apply(&db, "permit_types", &hot, &own).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+
+    // Turned off with a record dated before the one held here (an earlier change of this type
+    // replayed), or at the same time: refused, the chain stays on.
+    for at in ["2026-01-01T00:00:00Z", earlier] {
+        let replayed = changed(&own, json!(0), at, "Back to two persons for the shutdown");
+        let outcome = apply(&db, "permit_types", &hot, &replayed).await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_TYPE_THREE_PERSON_UNAUDITED"),
+            "{at}: {outcome:?}"
+        );
+        assert_eq!(
+            record_of(hot.clone()).await,
+            format!("1|{earlier}|Contractor work on the press line")
+        );
+    }
+
+    // The setting left alone but its record rewritten: judged like a change. Wiped, or naming
+    // someone without the settings right: refused, the record held here is kept.
+    let current = wire(&db, "permit_types", &hot).await;
+    let wiped = with(
+        current.clone(),
+        &[
+            ("three_person_changed_by_sync_id", Value::Null),
+            ("three_person_changed_at", Value::Null),
+            ("three_person_change_reason", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "permit_types", &hot, &wiped).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_THREE_PERSON_UNAUDITED"),
+        "{outcome:?}"
+    );
+    let by_verifier = with(
+        changed(&current, json!(1), &now(), reason),
+        &[("three_person_changed_by_sync_id", json!(user_sync(&db, VERIFIER).await))],
+    );
+    let outcome = apply(&db, "permit_types", &hot, &by_verifier).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_THREE_PERSON_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        record_of(hot.clone()).await,
+        format!("1|{earlier}|Contractor work on the press line")
+    );
+    // A later, complete record by the administrator (the setting turned off and on again
+    // elsewhere): applied.
+    let later = now();
+    let outcome = apply(&db, "permit_types", &hot, &changed(&current, json!(1), &later, reason)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(record_of(hot.clone()).await, format!("1|{later}|{reason}"));
+}
+
+/// The received setting is read the way SQLite stores it: 1, 1.0, "1" and true are on; 0, 0.0, "0"
+/// and false are off; any other value is refused. A non-canonical "on" is judged like any other.
+#[tokio::test]
+async fn a_received_three_person_setting_is_read_as_it_is_stored() {
+    let db = setup().await;
+    let ty = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'hot_work'")
+        .await
+        .expect("type sync id");
+    let stored = || {
+        let db = &db;
+        let ty = ty.clone();
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT CAST(requires_three_person_removal AS TEXT) FROM permit_types WHERE entity_sync_id = '{ty}'"
+                ),
+            )
+            .await
+        }
+    };
+    let admin = json!(user_sync(&db, APPLIER).await);
+    let mut second = 0;
+    let mut change = |base: Payload, value: Value, with_record: bool| {
+        let row = with(base, &[("requires_three_person_removal", value)]);
+        if !with_record {
+            return row;
+        }
+        second += 1;
+        with(
+            row,
+            &[
+                ("three_person_changed_by_sync_id", admin.clone()),
+                (
+                    "three_person_changed_at",
+                    json!(format!("2026-02-01T08:00:{second:02}Z")),
+                ),
+                (
+                    "three_person_change_reason",
+                    json!("Site rule after the 2026 LOTO audit"),
+                ),
+            ],
+        )
+    };
+    let held = wire(&db, "permit_types", &ty).await;
+
+    // Values neither on nor off: refused, nothing written.
+    for bad in [
+        json!(2),
+        json!(0.5),
+        json!("yes"),
+        json!("true"),
+        json!(" 1"),
+        Value::Null,
+        json!([1]),
+    ] {
+        let outcome = apply(&db, "permit_types", &ty, &change(held.clone(), bad.clone(), true)).await;
+        assert_eq!(code(&outcome), Some("INVALID_VALUE"), "{bad}: {outcome:?}");
+        assert_eq!(stored().await.as_deref(), Some("0"));
+    }
+    // "1" without a record: judged as turning the chain on (not passed as unchanged).
+    let outcome = apply(&db, "permit_types", &ty, &change(held.clone(), json!("1"), false)).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_THREE_PERSON_UNAUDITED"),
+        "{outcome:?}"
+    );
+    assert_eq!(stored().await.as_deref(), Some("0"));
+    // Each spelling, with a record, is applied and stored as read.
+    for (value, expected) in [
+        (json!("1"), "1"),
+        (json!("0"), "0"),
+        (json!(1.0), "1"),
+        (json!(0.0), "0"),
+        (json!(true), "1"),
+        (json!(false), "0"),
+    ] {
+        let received = change(wire(&db, "permit_types", &ty).await, value.clone(), true);
+        let outcome = apply(&db, "permit_types", &ty, &received).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{value}: {outcome:?}");
+        assert_eq!(stored().await.as_deref(), Some(expected), "{value}");
+    }
+}
+
+/// A permit keeps the type it was created with (no local edit changes it): a received permit naming
+/// another type is refused, in draft as past it, and nothing is written.
+#[tokio::test]
+async fn a_received_permit_never_changes_its_type() {
+    let db = setup().await;
+    let loto = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'loto'")
+        .await
+        .expect("loto sync id");
+    let asset = insert_equipment(&db, "EQ-SYNC-TYPE").await;
+    let draft = create_permit(&db, "hot_work", asset).await;
+    let issued = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    for wp in [&draft, &issued] {
+        let received = with(
+            wire(&db, "work_permits", &wp.entity_sync_id).await,
+            &[("permit_type_sync_id", json!(loto))],
+        );
+        let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &received).await;
+        assert_eq!(code(&outcome), Some("PERMIT_TYPE_CHANGED"), "{outcome:?}");
+        let type_code = text(
+            &db,
+            &format!(
+                "SELECT pt.code FROM work_permits wp JOIN permit_types pt ON pt.id = wp.permit_type_id \
+                 WHERE wp.id = {}",
+                wp.id
+            ),
+        )
+        .await;
+        assert_eq!(type_code.as_deref(), Some("hot_work"));
+    }
+    // The same permit with its own type: passes.
+    let same = wire(&db, "work_permits", &issued.entity_sync_id).await;
+    let outcome = apply(&db, "work_permits", &issued.entity_sync_id, &same).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
         "{outcome:?}"
     );
 }
