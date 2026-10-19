@@ -49,8 +49,13 @@ const ISOLATION_SETUP_STATUSES: &[&str] = &[
 /// close) or when a permit was abandoned with locks still fitted.
 const ISOLATION_REMOVAL_STATUSES: &[&str] = &["active", "cancelled", "expired"];
 
-/// Header fields (asset, WO link, expiry) are frozen once the permit is active.
+/// Header fields (expiry, org node) are frozen once the permit is active.
 const WP_EDITABLE_STATUSES: &[&str] = &["draft", "pending_review", "approved", "issued"];
+
+/// Statuses in which a permit's equipment or linked work order may still change (CMMS Advisor
+/// decision A): from `approved` on, the permit was approved for that equipment. A change in
+/// `pending_review` sends the permit back to `draft` (a fresh review is needed).
+pub(crate) const WP_EQUIPMENT_CHANGE_STATUSES: &[&str] = &["draft", "pending_review"];
 
 const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.linked_work_order_id, \
      wp.permit_type_id, wp.asset_id, wp.entity_id, wp.status, wp.requested_at, wp.issued_at, \
@@ -487,9 +492,11 @@ async fn ensure_wo_asset_aligned(
         ));
     };
     if eq != asset_id {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "linked_work_order_id equipment_id ({eq}) must match permit asset_id ({asset_id})."
-        )]));
+        return Err(refused(
+            "PERMIT_WO_EQUIPMENT_MISMATCH",
+            format!("The linked work order's equipment ({eq}) must be the permit's equipment ({asset_id})."),
+            &[],
+        ));
     }
     Ok(())
 }
@@ -1383,14 +1390,192 @@ async fn create_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitCreat
     Ok(created)
 }
 
-pub async fn update_work_permit(db: &DatabaseConnection, input: WorkPermitUpdateInput) -> AppResult<WorkPermit> {
+/// What an edit of a permit stores: its equipment, linked work order and org node, and whether
+/// the equipment or the linked work order changes. When either changes, the node follows them,
+/// derived as at creation (`access::new_permit_node`: the linked work order's node, else the
+/// equipment's installed node; `None` when it cannot be determined); otherwise it is the node the
+/// edit gives, else the current one. The scope check (`access::check_update`) and the save use
+/// this one rule, so the right is checked at the node actually stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PermitEditTarget {
+    pub asset_id: i64,
+    pub linked_work_order_id: Option<i64>,
+    pub entity_id: Option<i64>,
+    pub equipment_changes: bool,
+}
+
+pub(crate) async fn permit_edit_target(
+    db: &impl ConnectionTrait,
+    current: &WorkPermit,
+    input: &WorkPermitUpdateInput,
+) -> AppResult<PermitEditTarget> {
+    let asset_id = input.asset_id.unwrap_or(current.asset_id);
+    let linked = input.linked_work_order_id.or(current.linked_work_order_id);
+    let equipment_changes = asset_id != current.asset_id || linked != current.linked_work_order_id;
+    let entity_id = if equipment_changes {
+        let (node, _) = super::access::new_permit_node(
+            db,
+            &WorkPermitCreateInput {
+                permit_type_id: current.permit_type_id,
+                asset_id: Some(asset_id),
+                entity_id: None,
+                linked_work_order_id: linked,
+                expires_at: None,
+            },
+        )
+        .await?;
+        node.filter(|n| *n > 0)
+    } else {
+        Some(input.entity_id.unwrap_or(current.entity_id))
+    };
+    Ok(PermitEditTarget {
+        asset_id,
+        linked_work_order_id: linked,
+        entity_id,
+        equipment_changes,
+    })
+}
+
+/// The rules of a change of a permit's equipment or linked work order (CMMS Advisor decision A):
+/// only while the permit is a draft or waiting for review; never while a lock fitted under it has
+/// not had its removal verified; never while isolation points are planned on it (they name the
+/// current equipment's points); its node is the one derived from the new equipment or work order
+/// (an edit cannot give another one). Returns that node.
+async fn ensure_equipment_change_allowed(
+    db: &impl ConnectionTrait,
+    current: &WorkPermit,
+    input: &WorkPermitUpdateInput,
+    target: &PermitEditTarget,
+) -> AppResult<i64> {
+    let code = || ("permit", current.code.clone());
+    if !WP_EQUIPMENT_CHANGE_STATUSES.contains(&current.status.as_str()) {
+        return Err(refused(
+            "PERMIT_EQUIPMENT_LOCKED",
+            "This permit was approved for this equipment. Cancel it and raise a new permit.",
+            &[code(), ("status", current.status.clone())],
+        ));
+    }
+    let fitted =
+        count_isolations_where(db, current.id, "applied_at IS NOT NULL AND removal_verified_at IS NULL").await?;
+    if fitted > 0 {
+        return Err(refused(
+            "PERMIT_EQUIPMENT_LOCK_FITTED",
+            format!(
+                "{fitted} lock(s) are fitted under this permit and their removal is not verified: its equipment cannot be changed."
+            ),
+            &[code(), ("locks", fitted.to_string())],
+        ));
+    }
+    let planned = count_isolations_where(db, current.id, "applied_at IS NULL").await?;
+    if planned > 0 {
+        return Err(refused(
+            "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED",
+            format!(
+                "{planned} isolation point(s) are planned on this permit for its current equipment: its equipment cannot be changed."
+            ),
+            &[code(), ("isolations", planned.to_string())],
+        ));
+    }
+    let node = target.entity_id.ok_or_else(|| {
+        AppError::ValidationFailed(vec![
+            "The permit's organisational entity could not be determined from the work order or asset.".into(),
+        ])
+    })?;
+    if let Some(given) = input.entity_id.filter(|e| *e != node) {
+        return Err(refused(
+            "PERMIT_SITE_NOT_EQUIPMENT_SITE",
+            format!(
+                "When the equipment or work order of a permit changes, its site is the one of the new equipment or work order ({node}), not {given}."
+            ),
+            &[code()],
+        ));
+    }
+    Ok(node)
+}
+
+/// Records a change of a permit's equipment or linked work order (who, when, old and new
+/// equipment, work order and site), and, when it sent a permit waiting for review back to draft,
+/// that reset, in the save's transaction.
+async fn audit_equipment_change(
+    db: &impl ConnectionTrait,
+    before: &WorkPermit,
+    after: &WorkPermit,
+    actor_id: i64,
+) -> AppResult<()> {
+    let site_moved = before.entity_id != after.entity_id;
+    let review_reset = before.status == "pending_review" && after.status == "draft";
+    let event = |action_code: &str, details: serde_json::Value| crate::audit::writer::AuditEventInput {
+        action_code: action_code.to_string(),
+        target_type: Some("work_permit".to_string()),
+        target_id: Some(after.id.to_string()),
+        actor_id: Some(actor_id),
+        auth_context: "session".to_string(),
+        result: "success".to_string(),
+        before_hash: None,
+        after_hash: None,
+        retention_class: "standard".to_string(),
+        details_json: Some(details),
+    };
+    crate::audit::writer::write_audit_event_in(
+        db,
+        event(
+            if site_moved {
+                "permit.site_moved"
+            } else {
+                "permit.equipment_changed"
+            },
+            serde_json::json!({
+                "code": after.code,
+                "old_equipment_id": before.asset_id,
+                "new_equipment_id": after.asset_id,
+                "old_equipment_code": before.asset_code,
+                "new_equipment_code": after.asset_code,
+                "old_work_order_id": before.linked_work_order_id,
+                "new_work_order_id": after.linked_work_order_id,
+                "old_entity_id": before.entity_id,
+                "new_entity_id": after.entity_id,
+                "status_before": before.status,
+                "status_after": after.status,
+            }),
+        ),
+    )
+    .await?;
+    if review_reset {
+        crate::audit::writer::write_audit_event_in(
+            db,
+            event(
+                "permit.review_reset",
+                serde_json::json!({
+                    "code": after.code,
+                    "reason": "equipment_changed",
+                    "status_before": before.status,
+                    "status_after": after.status,
+                }),
+            ),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// `actor_id` is the session user: it is recorded as the person who changed the permit's
+/// equipment or linked work order.
+pub async fn update_work_permit(
+    db: &DatabaseConnection,
+    input: WorkPermitUpdateInput,
+    actor_id: i64,
+) -> AppResult<WorkPermit> {
     let txn = db.begin().await?;
-    let out = update_work_permit_in(&txn, input).await?;
+    let out = update_work_permit_in(&txn, input, actor_id).await?;
     txn.commit().await?;
     Ok(out)
 }
 
-async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdateInput) -> AppResult<WorkPermit> {
+async fn update_work_permit_in(
+    db: &impl ConnectionTrait,
+    input: WorkPermitUpdateInput,
+    actor_id: i64,
+) -> AppResult<WorkPermit> {
     let current = require_work_permit(db, input.id).await?;
     if input.expected_row_version != current.row_version {
         return Err(AppError::ValidationFailed(vec![
@@ -1404,9 +1589,14 @@ async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdat
             &[("status", current.status.clone())],
         ));
     }
-    let asset_id = input.asset_id.unwrap_or(current.asset_id);
-    let entity_id = input.entity_id.unwrap_or(current.entity_id);
-    let linked = input.linked_work_order_id.or(current.linked_work_order_id);
+    let target = permit_edit_target(db, &current, &input).await?;
+    let entity_id = if target.equipment_changes {
+        ensure_equipment_change_allowed(db, &current, &input, &target).await?
+    } else {
+        target.entity_id.unwrap_or(current.entity_id)
+    };
+    let asset_id = target.asset_id;
+    let linked = target.linked_work_order_id;
     // Same rule as creation: a work order has at most one open permit.
     if let Some(wo_id) = linked.filter(|w| Some(*w) != current.linked_work_order_id) {
         let others = list_live_permits_linked_to_work_order(db, wo_id).await?;
@@ -1418,6 +1608,7 @@ async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdat
             ));
         }
     }
+    // Every path (equipment only, work order only, both): the permit is on its work order's equipment.
     ensure_wo_asset_aligned(db, linked, asset_id).await?;
     // The permit keeps an expiry: a new one is checked like on creation; an update that leaves it
     // unchanged needs one already (permits created before the rule must be given one).
@@ -1425,19 +1616,27 @@ async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdat
         Some(e) => Some(checked_expiry(db, current.permit_type_id, Some(e)).await?),
         None => Some(checked_expiry_present(&current)?),
     };
+    // A change while waiting for review sends the permit back to draft: the review it waited for
+    // was of the former equipment (permits record no reviewer: the review is the status itself).
+    let status = if target.equipment_changes && current.status == "pending_review" {
+        "draft".to_string()
+    } else {
+        current.status.clone()
+    };
 
     let new_rv = current.row_version + 1;
     let affected = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_permits SET linked_work_order_id = ?, asset_id = ?, entity_id = ?, \
-             expires_at = ?, row_version = ? \
+             expires_at = ?, status = ?, row_version = ? \
              WHERE id = ? AND row_version = ?",
             [
                 opt_i64(linked),
                 asset_id.into(),
                 entity_id.into(),
                 opt_string(expires),
+                status.into(),
                 new_rv.into(),
                 input.id.into(),
                 current.row_version.into(),
@@ -1450,6 +1649,9 @@ async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdat
         ]));
     }
     let updated = require_work_permit(db, input.id).await?;
+    if target.equipment_changes {
+        audit_equipment_change(db, &current, &updated, actor_id).await?;
+    }
     Ok(updated)
 }
 

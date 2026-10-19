@@ -283,6 +283,7 @@ export async function createWorkPermit(input: WorkPermitCreateInput): Promise<Wo
   return WorkPermitSchema.parse(raw);
 }
 
+/** Edits a permit; refusals of an equipment or work-order change are coded (see `WorkPermitUpdateInput`). */
 export async function updateWorkPermit(input: WorkPermitUpdateInput): Promise<WorkPermitRecord> {
   const raw = await invoke<unknown>("update_work_permit", { input });
   return WorkPermitSchema.parse(raw);

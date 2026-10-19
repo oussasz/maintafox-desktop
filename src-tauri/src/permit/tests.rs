@@ -531,6 +531,7 @@ async fn details_are_frozen_once_active() {
             expires_at: Some(future_expiry()),
             expected_row_version: wp.row_version,
         },
+        APPLIER,
     )
     .await;
     assert_validation(res, "cannot be edited");
@@ -1386,6 +1387,7 @@ async fn a_permit_always_has_a_bounded_future_expiry() {
                 expires_at: Some(too_long),
                 expected_row_version: wp.row_version,
             },
+            APPLIER,
         )
         .await,
         "PERMIT_EXPIRY_TOO_LONG",
@@ -1426,6 +1428,7 @@ async fn editing_a_permit_cannot_link_a_second_open_permit_to_a_work_order() {
             expires_at: None,
             expected_row_version: other.row_version,
         },
+        APPLIER,
     )
     .await;
     assert_validation(res, "PERMIT_WO_ALREADY_HAS_OPEN");
@@ -1441,6 +1444,7 @@ async fn editing_a_permit_cannot_link_a_second_open_permit_to_a_work_order() {
             expires_at: None,
             expected_row_version: first.row_version,
         },
+        APPLIER,
     )
     .await
     .expect("same permit, same work order");
@@ -2057,4 +2061,180 @@ async fn backdate_three_person_change(db: &DatabaseConnection, type_id: i64) {
     ))
     .await
     .expect("backdate");
+}
+
+// ── Equipment / work-order change (CMMS Advisor decision A) ──────────
+
+/// An edit of a permit's equipment (and, optionally, linked work order and expiry).
+fn equipment_edit(
+    wp: &WorkPermit,
+    asset: Option<i64>,
+    wo: Option<i64>,
+    expires: Option<String>,
+) -> WorkPermitUpdateInput {
+    WorkPermitUpdateInput {
+        id: wp.id,
+        linked_work_order_id: wo,
+        asset_id: asset,
+        entity_id: None,
+        expires_at: expires,
+        expected_row_version: wp.row_version,
+    }
+}
+
+async fn audit_count_of(db: &DatabaseConnection, action_code: &str, permit_id: i64) -> i64 {
+    scalar_i64(
+        db,
+        &format!(
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = '{action_code}' AND target_type = 'work_permit' \
+             AND target_id = '{permit_id}' AND actor_id = {VERIFIER}"
+        ),
+    )
+    .await
+}
+
+/// From `approved` on, a permit's equipment and work order are frozen ("approved for this
+/// equipment"); its expiry can still be edited up to `issued`, as before.
+#[tokio::test]
+async fn an_approved_or_issued_permit_keeps_its_equipment_but_its_expiry_can_still_change() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-EQ1").await;
+    let other = insert_equipment(&db, "EQ-PTW-EQ2").await;
+    let mut wp = create_permit(&db, "hot_work", asset).await;
+    for status in ["pending_review", "approved", "issued"] {
+        wp = set_status(&db, &wp, status).await.expect("advance");
+        if status == "pending_review" {
+            continue;
+        }
+        let err = queries::update_work_permit(&db, equipment_edit(&wp, Some(other), None, None), VERIFIER)
+            .await
+            .unwrap_err();
+        assert_eq!(refusal_code(err), "PERMIT_EQUIPMENT_LOCKED", "{status}");
+        let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+        let err = queries::update_work_permit(&db, equipment_edit(&wp, None, Some(wo_id), None), VERIFIER)
+            .await
+            .unwrap_err();
+        assert_eq!(refusal_code(err), "PERMIT_EQUIPMENT_LOCKED", "work order, {status}");
+        // The expiry alone: allowed, nothing moves, nothing audited as an equipment change.
+        let edited = queries::update_work_permit(
+            &db,
+            equipment_edit(
+                &wp,
+                Some(asset),
+                None,
+                Some((chrono::Utc::now() + chrono::Duration::hours(4)).to_rfc3339()),
+            ),
+            VERIFIER,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("expiry edit in {status}: {e:?}"));
+        assert_eq!((edited.asset_id, edited.status.as_str()), (asset, status));
+        wp = edited;
+    }
+    assert_eq!(audit_count_of(&db, "permit.equipment_changed", wp.id).await, 0);
+}
+
+/// A change while waiting for review sends the permit back to draft (audited): it must be
+/// submitted again before anyone can approve it.
+#[tokio::test]
+async fn a_change_while_waiting_for_review_sends_the_permit_back_to_draft_for_a_fresh_review() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-EQ3").await;
+    let other = insert_equipment(&db, "EQ-PTW-EQ4").await;
+    let wp = create_permit(&db, "hot_work", asset).await;
+    let wp = set_status(&db, &wp, "pending_review").await.expect("submit");
+    let changed = queries::update_work_permit(&db, equipment_edit(&wp, Some(other), None, None), VERIFIER)
+        .await
+        .expect("change while waiting for review");
+    assert_eq!((changed.asset_id, changed.status.as_str()), (other, "draft"));
+    assert_eq!(audit_count_of(&db, "permit.equipment_changed", wp.id).await, 1);
+    assert_eq!(audit_count_of(&db, "permit.review_reset", wp.id).await, 1);
+    // The former review no longer counts: approving now is refused, it must be submitted again.
+    let err = set_status(&db, &changed, "approved").await.unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_TRANSITION_NOT_ALLOWED");
+    let again = set_status(&db, &changed, "pending_review").await.expect("submit again");
+    set_status(&db, &again, "approved").await.expect("fresh review");
+
+    // In draft the change stays a draft and records no review reset.
+    let draft = create_permit(&db, "hot_work", asset).await;
+    let moved = queries::update_work_permit(&db, equipment_edit(&draft, Some(other), None, None), VERIFIER)
+        .await
+        .expect("change in draft");
+    assert_eq!(moved.status, "draft");
+    assert_eq!(audit_count_of(&db, "permit.equipment_changed", draft.id).await, 1);
+    assert_eq!(audit_count_of(&db, "permit.review_reset", draft.id).await, 0);
+}
+
+/// A lock fitted under the permit, or an isolation point planned on it, blocks the change (even
+/// in draft): the points name the current equipment.
+#[tokio::test]
+async fn fitted_locks_and_planned_isolations_block_an_equipment_change() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-EQ5").await;
+    let other = insert_equipment(&db, "EQ-PTW-EQ6").await;
+
+    let planned = create_permit(&db, "loto", asset).await;
+    add_isolation(&db, planned.id, "MCC-2 breaker").await;
+    let err = queries::update_work_permit(&db, equipment_edit(&planned, Some(other), None, None), VERIFIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED");
+
+    let fitted = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, fitted.id, "MCC-3 breaker").await;
+    queries::apply_permit_isolation(&db, action(&iso), APPLIER)
+        .await
+        .expect("fit the lock");
+    let fitted = set_status(&db, &fitted, "pending_review").await.expect("submit");
+    let err = queries::update_work_permit(&db, equipment_edit(&fitted, Some(other), None, None), VERIFIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_EQUIPMENT_LOCK_FITTED");
+    let kept = queries::get_work_permit(&db, fitted.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!((kept.asset_id, kept.status.as_str()), (asset, "pending_review"));
+    assert_eq!(audit_count_of(&db, "permit.equipment_changed", fitted.id).await, 0);
+}
+
+/// The permit's equipment is its work order's, whichever of the two the edit changes.
+#[tokio::test]
+async fn a_permit_stays_on_its_work_orders_equipment() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-EQ7").await;
+    let other = insert_equipment(&db, "EQ-PTW-EQ8").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let (other_wo, _) = assigned_wo_requiring_permit(&db, other).await;
+    let linked = create_from_wo(&db, "hot_work", wo_id)
+        .await
+        .expect("permit on the work order");
+
+    // The equipment alone: no longer the work order's.
+    let err = queries::update_work_permit(&db, equipment_edit(&linked, Some(other), None, None), VERIFIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_WO_EQUIPMENT_MISMATCH");
+    // The work order alone: on other equipment.
+    let err = queries::update_work_permit(&db, equipment_edit(&linked, None, Some(other_wo), None), VERIFIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_WO_EQUIPMENT_MISMATCH");
+    // Both together: aligned, applied.
+    let moved = queries::update_work_permit(
+        &db,
+        equipment_edit(&linked, Some(other), Some(other_wo), None),
+        VERIFIER,
+    )
+    .await
+    .expect("equipment and work order together");
+    assert_eq!((moved.asset_id, moved.linked_work_order_id), (other, Some(other_wo)));
+
+    // A permit without a work order, linked to one on other equipment.
+    let free = create_permit(&db, "hot_work", asset).await;
+    let (third_wo, _) = assigned_wo_requiring_permit(&db, other).await;
+    let err = queries::update_work_permit(&db, equipment_edit(&free, None, Some(third_wo), None), VERIFIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_WO_EQUIPMENT_MISMATCH");
 }

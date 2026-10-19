@@ -129,28 +129,6 @@ pub async fn child_anchor(db: &impl ConnectionTrait, child: PermitChild, id: i64
     Ok(Anchor::of(node))
 }
 
-/// The equipment, node and linked work order a permit holds now (`None`: no such permit).
-async fn permit_fields(
-    db: &impl ConnectionTrait,
-    permit_id: i64,
-) -> AppResult<Option<(i64, Option<i64>, Option<i64>)>> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT asset_id, entity_id, linked_work_order_id FROM work_permits WHERE id = ?",
-            [permit_id.into()],
-        ))
-        .await?;
-    match row {
-        Some(row) => Ok(Some((
-            row.try_get::<i64>("", "asset_id")?,
-            row.try_get::<Option<i64>>("", "entity_id")?,
-            row.try_get::<Option<i64>>("", "linked_work_order_id")?,
-        ))),
-        None => Ok(None),
-    }
-}
-
 /// The equipment and node of a work order (`None`: no such work order).
 async fn wo_fields(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Option<(Option<i64>, Option<i64>)>> {
     let row = db
@@ -272,30 +250,40 @@ pub async fn check_create_at(
 }
 
 /// Rule §2.7: `ptw.issue` on the permit at its current node, and at every new place an edit
-/// gives it (`queries::update_work_permit`: the node, the equipment and the linked work order may
-/// change; the node is not recomputed from the equipment): a new node, the installed node of new
-/// equipment (equipment not installed anywhere: plant-wide users only), the node of a newly linked
-/// work order (not found when it does not exist).
+/// gives it: the node the save will store (`queries::permit_edit_target`, one rule for both: when
+/// the equipment or the linked work order changes, the node follows them, derived as at creation;
+/// a node that cannot be derived is for plant-wide users only), the installed node of new
+/// equipment when that is another one (equipment not installed anywhere: plant-wide users only),
+/// the node of a newly linked work order (not found when it does not exist). The rules of the
+/// change itself (status, locks, planned isolations) are the save's.
 pub async fn check_update(db: &impl ConnectionTrait, map: &AccessMap, input: &WorkPermitUpdateInput) -> AppResult<()> {
     let scope = map.scope_of(PTW_ISSUE);
     let current_anchor = check_on_permit(db, map, PTW_ISSUE, input.id).await?;
-    let (asset_id, _entity_id, linked) = permit_fields(db, input.id).await?.ok_or_else(|| AppError::NotFound {
-        entity: "WorkPermit".into(),
-        id: input.id.to_string(),
-    })?;
-    if let Some(new_node) = input.entity_id {
-        let new_anchor = Anchor::of(Some(new_node));
-        if new_anchor != current_anchor {
-            scope::check_anchor(db, &scope, PTW_ISSUE, new_anchor).await?;
+    let current = crate::permit::queries::get_work_permit(db, input.id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkPermit".into(),
+            id: input.id.to_string(),
+        })?;
+    let target = crate::permit::queries::permit_edit_target(db, &current, input).await?;
+    let stored_anchor = Anchor::of(target.entity_id);
+    if stored_anchor != current_anchor {
+        scope::check_anchor(db, &scope, PTW_ISSUE, stored_anchor).await?;
+    }
+    if target.asset_id != current.asset_id {
+        let node = Anchor::of(equipment_node(db, target.asset_id).await?);
+        if node != stored_anchor {
+            scope::check_anchor(db, &scope, PTW_ISSUE, node).await?;
         }
     }
-    if let Some(new_asset) = input.asset_id.filter(|a| *a != asset_id) {
-        let node = equipment_node(db, new_asset).await?;
-        scope::check_anchor(db, &scope, PTW_ISSUE, Anchor::of(node)).await?;
-    }
-    if let Some(new_wo) = input.linked_work_order_id.filter(|w| Some(*w) != linked) {
+    if let Some(new_wo) = target
+        .linked_work_order_id
+        .filter(|w| Some(*w) != current.linked_work_order_id)
+    {
         let wo = wo_anchor(db, new_wo).await?;
-        scope::check_anchor(db, &scope, PTW_ISSUE, wo).await?;
+        if wo != stored_anchor {
+            scope::check_anchor(db, &scope, PTW_ISSUE, wo).await?;
+        }
     }
     Ok(())
 }

@@ -155,6 +155,11 @@
     "SCOPE_PLANT_WIDE_ONLY": "Objet commun à toute l'usine : seul un rôle valable pour toute l'usine peut agir dessus.",
     "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Les rôles d'administrateur s'appliquent à toute l'usine : ils ne peuvent pas être limités à un site.",
     "PERMIT_HANDOVER_NO_RECEIVER_AT_SITE": "Personne sur ce site ne détient le droit de clôture des permis : personne ne peut recevoir cette passation. Demandez à un administrateur d'accorder ce droit sur ce site.",
-    "PERMIT_HANDOVER_RECEIVER_NO_RIGHT": "La personne qui reçoit ne détient pas le droit de clôture des permis sur le site de ce permis."
+    "PERMIT_HANDOVER_RECEIVER_NO_RIGHT": "La personne qui reçoit ne détient pas le droit de clôture des permis sur le site de ce permis.",
+    "PERMIT_EQUIPMENT_LOCKED": "Ce permis a été approuvé pour cet équipement. Annulez-le et établissez un nouveau permis.",
+    "PERMIT_EQUIPMENT_LOCK_FITTED": "Un cadenas est posé sous ce permis et sa dépose n'a pas été vérifiée : son équipement ne peut pas être changé. Annulez le permis, faites vérifier la dépose du cadenas, puis établissez un nouveau permis.",
+    "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED": "Des points d'isolement sont déjà prévus sur ce permis pour son équipement actuel : son équipement ne peut pas être changé. Annulez-le et établissez un nouveau permis pour le nouvel équipement.",
+    "PERMIT_SITE_NOT_EQUIPMENT_SITE": "Quand l'équipement ou l'ordre de travail d'un permis change, le permis passe sur leur site : un autre site ne peut pas être indiqué.",
+    "PERMIT_WO_EQUIPMENT_MISMATCH": "L'équipement du permis doit être celui de son ordre de travail."
   }
 }

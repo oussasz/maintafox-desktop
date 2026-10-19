@@ -155,6 +155,11 @@
     "SCOPE_PLANT_WIDE_ONLY": "This is a plant-wide object: only a plant-wide role can act on it.",
     "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Administrator roles are plant-wide: they cannot be limited to a site.",
     "PERMIT_HANDOVER_NO_RECEIVER_AT_SITE": "Nobody at this site holds the permit close right: no one can receive this hand-over. Ask an administrator to give the right at this site.",
-    "PERMIT_HANDOVER_RECEIVER_NO_RIGHT": "The receiving person does not hold the permit close right at this permit's site."
+    "PERMIT_HANDOVER_RECEIVER_NO_RIGHT": "The receiving person does not hold the permit close right at this permit's site.",
+    "PERMIT_EQUIPMENT_LOCKED": "This permit was approved for this equipment. Cancel it and raise a new permit.",
+    "PERMIT_EQUIPMENT_LOCK_FITTED": "A lock is fitted under this permit and its removal has not been verified: its equipment cannot be changed. Cancel the permit, have the lock removal verified, then raise a new permit.",
+    "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED": "Isolation points are already planned on this permit for its current equipment: its equipment cannot be changed. Cancel it and raise a new permit for the new equipment.",
+    "PERMIT_SITE_NOT_EQUIPMENT_SITE": "When a permit's equipment or work order changes, the permit moves to their site: another site cannot be given.",
+    "PERMIT_WO_EQUIPMENT_MISMATCH": "The permit's equipment must be the equipment of its work order."
   }
 }

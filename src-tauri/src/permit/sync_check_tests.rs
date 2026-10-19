@@ -2887,3 +2887,136 @@ async fn a_type_without_a_record_passes_and_an_unreadable_held_time_fails_closed
         Some("1")
     );
 }
+
+/// A second site and equipment installed on it (sync ids `permit-test-org-002`, `eq-sync-<code>`).
+async fn equipment_on_second_site(db: &DatabaseConnection, code: &str) -> i64 {
+    // The first site and its scaffolding.
+    let _ = insert_equipment(db, &format!("{code}-FIRST")).await;
+    exec(
+        db,
+        "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, updated_at, \
+         structure_model_id) VALUES (2, 'permit-test-org-002', 'SITE-PTW-2', 'Permit Test Site 2', 1, 'active', \
+         datetime('now'), datetime('now'), 1)",
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO equipment (entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+             created_at, updated_at) VALUES ('eq-sync-{code}', '{code}', 'Second site asset', 'active_in_service', 2, \
+             datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+    super::tests::scalar_i64(db, &format!("SELECT id FROM equipment WHERE asset_id_code = '{code}'")).await
+}
+
+/// A permit's equipment or work order changed on another PC is judged on arrival against the copy
+/// held here: approved here, or with a lock fitted or an isolation planned here, it is a conflict
+/// with nothing written; the work order is on the equipment, and the site is theirs.
+#[tokio::test]
+async fn a_received_equipment_change_is_rechecked_against_the_permit_held_here() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-EQ1").await;
+    let same_site = insert_equipment(&db, "EQ-SYNC-EQ2").await;
+    let far = equipment_on_second_site(&db, "EQ-SYNC-EQ3").await;
+    let asset_sync = |code: &str| json!(format!("eq-sync-{code}"));
+
+    // Approved here: approved for its equipment, the change is refused.
+    let approved = create_permit(&db, "hot_work", asset).await;
+    let approved = set_status(&db, &approved, "pending_review").await.expect("submit");
+    let approved = set_status(&db, &approved, "approved").await.expect("approve");
+    let moved = with(
+        wire(&db, "work_permits", &approved.entity_sync_id).await,
+        &[("asset_sync_id", asset_sync("EQ-SYNC-EQ2"))],
+    );
+    let outcome = apply(&db, "work_permits", &approved.entity_sync_id, &moved).await;
+    assert_eq!(code(&outcome), Some("PERMIT_EQUIPMENT_LOCKED"), "{outcome:?}");
+
+    // A draft here with an isolation point planned, or with a lock fitted: refused.
+    let planned = create_permit(&db, "loto", asset).await;
+    add_isolation(&db, planned.id, "MCC-7 breaker").await;
+    let moved = with(
+        wire(&db, "work_permits", &planned.entity_sync_id).await,
+        &[("asset_sync_id", asset_sync("EQ-SYNC-EQ2"))],
+    );
+    let outcome = apply(&db, "work_permits", &planned.entity_sync_id, &moved).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_EQUIPMENT_ISOLATIONS_PLANNED"),
+        "{outcome:?}"
+    );
+    let fitted = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, fitted.id, "MCC-8 breaker").await;
+    queries::apply_permit_isolation(&db, super::tests::action(&iso), APPLIER)
+        .await
+        .expect("fit the lock");
+    let moved = with(
+        wire(&db, "work_permits", &fitted.entity_sync_id).await,
+        &[("asset_sync_id", asset_sync("EQ-SYNC-EQ2"))],
+    );
+    let outcome = apply(&db, "work_permits", &fitted.entity_sync_id, &moved).await;
+    assert_eq!(code(&outcome), Some("PERMIT_EQUIPMENT_LOCK_FITTED"), "{outcome:?}");
+
+    // A draft without isolations: the site must be the new equipment's.
+    let draft = create_permit(&db, "hot_work", asset).await;
+    let held = wire(&db, "work_permits", &draft.entity_sync_id).await;
+    let stale_site = with(held.clone(), &[("asset_sync_id", asset_sync("EQ-SYNC-EQ3"))]);
+    let outcome = apply(&db, "work_permits", &draft.entity_sync_id, &stale_site).await;
+    assert_eq!(code(&outcome), Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"), "{outcome:?}");
+    let draft_now = queries::get_work_permit(&db, draft.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!(draft_now.asset_id, asset, "nothing written");
+    // Moved with its site, and sent back to draft from review on the other PC: applied.
+    let followed = with(
+        held.clone(),
+        &[
+            ("asset_sync_id", asset_sync("EQ-SYNC-EQ3")),
+            ("entity_sync_id", json!("permit-test-org-002")),
+        ],
+    );
+    let outcome = apply(&db, "work_permits", &draft.entity_sync_id, &followed).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let draft_now = queries::get_work_permit(&db, draft.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!((draft_now.asset_id, draft_now.entity_id), (far, 2));
+
+    // Same site, same node: applied. Waiting for review here, sent back to draft there: applied.
+    let review = create_permit(&db, "hot_work", asset).await;
+    let review = set_status(&db, &review, "pending_review").await.expect("submit");
+    let back = with(
+        wire(&db, "work_permits", &review.entity_sync_id).await,
+        &[("asset_sync_id", asset_sync("EQ-SYNC-EQ2")), ("status", json!("draft"))],
+    );
+    let outcome = apply(&db, "work_permits", &review.entity_sync_id, &back).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let review_now = queries::get_work_permit(&db, review.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!((review_now.asset_id, review_now.status.as_str()), (same_site, "draft"));
+
+    // Linked to a work order on other equipment: refused.
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, same_site).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("work order sync id");
+    let free = create_permit(&db, "hot_work", asset).await;
+    let linked = with(
+        wire(&db, "work_permits", &free.entity_sync_id).await,
+        &[("linked_work_order_sync_id", json!(wo_sync))],
+    );
+    let outcome = apply(&db, "work_permits", &free.entity_sync_id, &linked).await;
+    assert_eq!(code(&outcome), Some("PERMIT_WO_EQUIPMENT_MISMATCH"), "{outcome:?}");
+    // With the work order's equipment: applied.
+    let aligned = with(linked, &[("asset_sync_id", asset_sync("EQ-SYNC-EQ2"))]);
+    let outcome = apply(&db, "work_permits", &free.entity_sync_id, &aligned).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}

@@ -772,3 +772,174 @@ async fn saving_a_hand_over_refuses_a_receiver_without_the_close_right_at_the_pe
         .expect("site A closer receives site A's permit");
     assert_eq!(log.received_by_id, Some(i64::from(f.site)));
 }
+
+/// A permit's site follows its new equipment (or work order), derived as at creation: the right is
+/// checked at the node that will be stored, and at the old one; the save stores that node, refuses
+/// another one given with the change, and records the move with the session user.
+#[tokio::test]
+async fn changing_a_permits_equipment_moves_it_to_the_equipments_site_with_the_right_at_both() {
+    let f = fixture().await;
+    let site = map_of(&f.db, f.site).await;
+    let plant = map_of(&f.db, f.plant).await;
+    let edit = |wp: &WorkPermit, asset: Option<i64>, entity: Option<i64>, wo: Option<i64>| WorkPermitUpdateInput {
+        id: wp.id,
+        linked_work_order_id: wo,
+        asset_id: asset,
+        entity_id: entity,
+        expires_at: None,
+        expected_row_version: wp.row_version,
+    };
+
+    // Site A → site B: the site user is refused (the stored node is site B), plant-wide allowed.
+    let to_b = edit(&f.p_a, Some(f.eq_b), None, None);
+    let err = access::check_update(&f.db, &site, &to_b).await.unwrap_err();
+    assert_eq!(code_of(&err), "SCOPE_OUTSIDE_SITE");
+    // Giving site A with equipment of site B does not help: the node stored is site B's anyway.
+    let err = access::check_update(&f.db, &site, &edit(&f.p_a, Some(f.eq_b), Some(f.t.site_a), None))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "SCOPE_OUTSIDE_SITE");
+    // Site B → site A: the site user holds the right at the new site but not at the old one.
+    let err = access::check_update(&f.db, &site, &edit(&f.p_b, Some(f.eq_a), None, None))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "SCOPE_OUTSIDE_SITE");
+    access::check_update(&f.db, &plant, &to_b).await.expect("plant-wide");
+
+    let moved = queries::update_work_permit(&f.db, to_b, i64::from(f.plant))
+        .await
+        .expect("move with the equipment");
+    assert_eq!((moved.asset_id, moved.entity_id), (f.eq_b, f.t.site_b));
+    let audited = scalar(
+        &f.db,
+        &format!(
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'permit.site_moved' AND target_id = '{}' \
+             AND actor_id = {} AND json_extract(details_json, '$.old_entity_id') = {} \
+             AND json_extract(details_json, '$.new_entity_id') = {} \
+             AND json_extract(details_json, '$.old_equipment_id') = {} \
+             AND json_extract(details_json, '$.new_equipment_id') = {}",
+            moved.id, f.plant, f.t.site_a, f.t.site_b, f.eq_a, f.eq_b
+        ),
+    )
+    .await;
+    assert_eq!(audited, 1);
+
+    // Within site A: to equipment of line A1, the permit moves to the line (allowed to the site user).
+    access::check_update(&f.db, &site, &edit(&f.p_a1, Some(f.eq_a), None, None))
+        .await
+        .expect("line A1 to site A, both in the user's site");
+    let back = queries::update_work_permit(&f.db, edit(&f.p_a1, Some(f.eq_a), None, None), i64::from(f.site))
+        .await
+        .expect("line to site");
+    assert_eq!(back.entity_id, f.t.site_a);
+
+    // Another site given with the change is refused, even plant-wide.
+    let p = permit(&f.db, f.eq_a).await;
+    let err = queries::update_work_permit(
+        &f.db,
+        edit(&p, Some(f.eq_a1), Some(f.t.site_b), None),
+        i64::from(f.plant),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(code_of(&err), "PERMIT_SITE_NOT_EQUIPMENT_SITE");
+    // Its own new site may be given.
+    let ok = queries::update_work_permit(
+        &f.db,
+        edit(&p, Some(f.eq_a1), Some(f.t.line_a1), None),
+        i64::from(f.plant),
+    )
+    .await
+    .expect("the equipment's own site");
+    assert_eq!(ok.entity_id, f.t.line_a1);
+
+    // Linked to a work order of site B (on equipment of site B): the permit takes the work order's site.
+    let q = permit(&f.db, f.eq_a).await;
+    let err = access::check_update(&f.db, &site, &edit(&q, Some(f.eq_b), None, Some(f.wo_b)))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "SCOPE_OUTSIDE_SITE");
+    let on_wo = queries::update_work_permit(&f.db, edit(&q, Some(f.eq_b), None, Some(f.wo_b)), i64::from(f.plant))
+        .await
+        .expect("onto the work order");
+    assert_eq!(
+        (on_wo.asset_id, on_wo.entity_id, on_wo.linked_work_order_id),
+        (f.eq_b, f.t.site_b, Some(f.wo_b))
+    );
+    // Equipment installed nowhere: plant-wide users only at the check, and no site to store.
+    let r = permit(&f.db, f.eq_a).await;
+    let err = access::check_update(&f.db, &site, &edit(&r, Some(f.eq_none), None, None))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "SCOPE_RECORD_WITHOUT_SITE");
+    assert!(
+        queries::update_work_permit(&f.db, edit(&r, Some(f.eq_none), None, None), i64::from(f.plant))
+            .await
+            .is_err()
+    );
+}
+
+/// Read-only review of permits approved before the site followed the equipment: an approved,
+/// issued or active permit whose equipment is on another site is listed by the data-integrity
+/// check, never rewritten; a permit on a site for equipment of one of its lines is not listed.
+#[tokio::test]
+async fn permits_on_equipment_of_another_site_are_listed_for_review_not_rewritten() {
+    let f = fixture().await;
+    let on_b = set_status(
+        &f.db,
+        &set_status(&f.db, &permit(&f.db, f.eq_a).await, "pending_review").await,
+        "approved",
+    )
+    .await;
+    // An old row: approved on site A while its equipment is installed on site B.
+    exec(
+        &f.db,
+        &format!("UPDATE work_permits SET asset_id = {} WHERE id = {}", f.eq_b, on_b.id),
+    )
+    .await;
+    // On site A, for equipment of line A1: the same site.
+    let line = set_status(&f.db, &permit(&f.db, f.eq_a1).await, "pending_review").await;
+    let line = set_status(&f.db, &line, "approved").await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE work_permits SET entity_id = {} WHERE id = {}",
+            f.t.site_a, line.id
+        ),
+    )
+    .await;
+    // A draft in the same case is not judged (its equipment can still change).
+    let draft = permit(&f.db, f.eq_a).await;
+    exec(
+        &f.db,
+        &format!("UPDATE work_permits SET asset_id = {} WHERE id = {}", f.eq_b, draft.id),
+    )
+    .await;
+
+    crate::data_integrity::run_data_integrity_detectors(&f.db)
+        .await
+        .expect("detectors");
+    let listed = |id: i64| {
+        format!(
+            "SELECT COUNT(*) FROM data_integrity_findings WHERE finding_code = 'PERMIT_SITE_NOT_EQUIPMENT_SITE' \
+             AND record_class = 'work_permits' AND record_id = {id} AND status = 'open'"
+        )
+    };
+    assert_eq!(scalar(&f.db, &listed(on_b.id)).await, 1);
+    assert_eq!(scalar(&f.db, &listed(line.id)).await, 0);
+    assert_eq!(scalar(&f.db, &listed(draft.id)).await, 0);
+    // Never rewritten.
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT entity_id FROM work_permits WHERE id = {}", on_b.id)
+        )
+        .await,
+        f.t.site_a
+    );
+    // Running again does not duplicate it.
+    crate::data_integrity::run_data_integrity_detectors(&f.db)
+        .await
+        .expect("detectors again");
+    assert_eq!(scalar(&f.db, &listed(on_b.id)).await, 1);
+}

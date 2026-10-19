@@ -100,7 +100,7 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
     txn.execute(Statement::from_string(
         DbBackend::Sqlite,
         "DELETE FROM data_integrity_findings WHERE status = 'open' \
-         AND domain IN ('wo_closeout', 'downtime', 'failure_coding')"
+         AND domain IN ('wo_closeout', 'downtime', 'failure_coding', 'permit_site')"
             .to_string(),
     ))
     .await?;
@@ -280,7 +280,73 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
         n += 1;
     }
 
+    n += permit_site_findings(&txn).await?;
+
     end_suppression(&txn).await?;
     txn.commit().await?;
+    Ok(n)
+}
+
+/// Permit statuses checked by [`permit_site_findings`]: approved, issued and still in force.
+const PERMIT_SITE_CHECKED_STATUSES_SQL: &str = "('approved', 'issued', 'active', 'suspended', 'revalidation_required')";
+
+/// Permits approved, issued or in force whose equipment is installed on another site than the
+/// permit's (read-only: never rewritten, CMMS Advisor decision A, point 5). Before a permit's site
+/// followed its equipment, an edit could change the equipment and keep the former site. "Another
+/// site": neither node is the other or one of its parents (a permit recorded on a site for
+/// equipment on one of its lines is on the same site). Equipment installed nowhere, or a permit
+/// without a site, is not judged here (the permit lists count permits without a site).
+async fn permit_site_findings(db: &impl ConnectionTrait) -> AppResult<i64> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wp.id, wp.code, wp.status, wp.entity_id, wp.asset_id, e.asset_id_code,                  e.installed_at_node_id                  FROM work_permits wp JOIN equipment e ON e.id = wp.asset_id                  WHERE wp.status IN {PERMIT_SITE_CHECKED_STATUSES_SQL}                    AND wp.entity_id > 0 AND e.installed_at_node_id > 0                    AND wp.entity_id <> e.installed_at_node_id"
+            ),
+        ))
+        .await?;
+    let mut n = 0;
+    for row in &rows {
+        let permit_id: i64 = row.try_get("", "id").map_err(|e| map_err("id", e))?;
+        let permit_node: i64 = row.try_get("", "entity_id").map_err(|e| map_err("entity_id", e))?;
+        let equipment_node: i64 = row
+            .try_get("", "installed_at_node_id")
+            .map_err(|e| map_err("installed_at_node_id", e))?;
+        let related = crate::auth::scope::ancestor_chain(db, equipment_node)
+            .await?
+            .contains(&permit_node)
+            || crate::auth::scope::ancestor_chain(db, permit_node)
+                .await?
+                .contains(&equipment_node);
+        if related {
+            continue;
+        }
+        let code: String = row.try_get("", "code").map_err(|e| map_err("code", e))?;
+        let status: String = row.try_get("", "status").map_err(|e| map_err("status", e))?;
+        let asset_id: i64 = row.try_get("", "asset_id").map_err(|e| map_err("asset_id", e))?;
+        let asset_code: Option<String> = row
+            .try_get("", "asset_id_code")
+            .map_err(|e| map_err("asset_id_code", e))?;
+        insert_finding(
+            db,
+            "warning",
+            "permit_site",
+            "work_permits",
+            permit_id,
+            "PERMIT_SITE_NOT_EQUIPMENT_SITE",
+            None,
+            json!({
+                "permit_id": permit_id,
+                "permit_code": code,
+                "status": status,
+                "permit_entity_id": permit_node,
+                "equipment_id": asset_id,
+                "equipment_code": asset_code,
+                "equipment_entity_id": equipment_node,
+            }),
+        )
+        .await?;
+        n += 1;
+    }
     Ok(n)
 }

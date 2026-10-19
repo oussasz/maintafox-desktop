@@ -169,9 +169,11 @@ pub async fn create_work_permit(input: WorkPermitCreateInput, state: State<'_, A
 #[tauri::command]
 pub async fn update_work_permit(input: WorkPermitUpdateInput, state: State<'_, AppState>) -> AppResult<WorkPermit> {
     let user = require_session!(state);
-    // Rule §2.7: at the permit's node, and at every new node, equipment or work order it is given.
+    // Rule §2.7: at the permit's node, and at the node it will have, its new equipment's and its new
+    // work order's. A change of equipment or work order (draft or waiting for review only) moves the
+    // permit to their site and is audited with the session user.
     access::require_update(&state.db, &state.permission_cache, user.user_id, &input).await?;
-    queries::update_work_permit(&state.db, input).await
+    queries::update_work_permit(&state.db, input, i64::from(user.user_id)).await
 }
 
 #[tauri::command]

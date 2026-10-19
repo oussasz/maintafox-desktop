@@ -10705,6 +10705,14 @@ export interface WorkPermitCreateInput {
   expires_at: string | null;
 }
 
+/** Edit of a permit (`update_work_permit`); `null` keeps the current value. The equipment or the
+ * linked work order changes only in `draft` or `pending_review` (a change in `pending_review` sends
+ * the permit back to `draft`); the permit then moves to their site (an `entity_id` other than that
+ * site is refused). Coded refusals (`errors:scope`): `PERMIT_EQUIPMENT_LOCKED` (approved or later),
+ * `PERMIT_EQUIPMENT_LOCK_FITTED` (a lock fitted, removal not verified),
+ * `PERMIT_EQUIPMENT_ISOLATIONS_PLANNED` (isolation points planned), `PERMIT_SITE_NOT_EQUIPMENT_SITE`,
+ * `PERMIT_WO_EQUIPMENT_MISMATCH` (the work order is on other equipment). Expiry edits are allowed
+ * from `draft` to `issued`. */
 export interface WorkPermitUpdateInput {
   id: number;
   linked_work_order_id: number | null;
