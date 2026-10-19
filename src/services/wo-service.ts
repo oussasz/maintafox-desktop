@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  SetWorkOrderTypeNatureInput,
   UpdateWorkOrderStatusInput,
   WoApprovePlanningInput,
   WoAssignInput,
@@ -41,6 +42,7 @@ import type {
   WorkOrderStatusOption,
   WorkOrderSubtypeOption,
   WorkOrderTypeOption,
+  WorkOrderTypeToReview,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -328,6 +330,28 @@ export async function listWos(filter: WoListFilter): Promise<WoListPage> {
 export async function getWo(id: number): Promise<WoGetResponse> {
   const raw = await invoke<unknown>("get_wo", { id });
   return WoGetResponseSchema.parse(raw) as WoGetResponse;
+}
+
+const WorkOrderTypeToReviewSchema = z.object({
+  id: z.number(),
+  code: z.string(),
+  label: z.string(),
+  is_active: z.boolean(),
+  work_order_count: z.number(),
+});
+
+/** OT types without a maintenance nature, with their use (reference or OT view right). */
+export async function listWorkOrderTypesToReview(): Promise<WorkOrderTypeToReview[]> {
+  const raw = await invoke<unknown>("list_work_order_types_to_review");
+  return z.array(WorkOrderTypeToReviewSchema).parse(raw);
+}
+
+/** Give a plant's own OT type its nature (ref.manage, reason, audited). */
+export async function setWorkOrderTypeNature(
+  input: SetWorkOrderTypeNatureInput,
+): Promise<WorkOrderTypeOption> {
+  const raw = await invoke<unknown>("set_work_order_type_nature", { input });
+  return WorkOrderTypeOptionSchema.parse(raw) as WorkOrderTypeOption;
 }
 
 export async function listWorkOrderTypes(): Promise<WorkOrderTypeOption[]> {

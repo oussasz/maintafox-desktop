@@ -40,6 +40,7 @@ import { DiNextStepLabel } from "@/components/di/DiNextStepLabel";
 import { printDiFiche } from "@/components/di/DiPrintFiche";
 import { DiQueueBar, type DiQueueSelection, useVisibleDiQueues } from "@/components/di/DiQueueBar";
 import { DiReturnDialog } from "@/components/di/DiReturnDialog";
+import { DiHiddenRequestsNotice, DiNoSiteBadge } from "@/components/di/DiSiteScope";
 import { DiSlaRulesPanel } from "@/components/di/DiSlaRulesPanel";
 import { DiSlaStatusBadge } from "@/components/di/DiSlaStatusBadge";
 import { DI_DISPOSITION_FILTER_CODES } from "@/components/di/disposition-meta";
@@ -119,6 +120,8 @@ export function RequestsPage() {
   const items = useDiStore((s) => s.items);
   const listFilter = useDiStore((s) => s.filter);
   const total = useDiStore((s) => s.total);
+  const hiddenOutsideScope = useDiStore((s) => s.hiddenOutsideScope);
+  const hiddenWithoutSite = useDiStore((s) => s.hiddenWithoutSite);
   const loading = useDiStore((s) => s.loading);
   const loadingMore = useDiStore((s) => s.loadingMore);
   const listError = useDiStore((s) => s.listError);
@@ -594,6 +597,7 @@ export function RequestsPage() {
               title={row.original.converted_to_wo_title}
               className="text-[10px] px-1.5 py-0"
             />
+            <DiNoSiteBadge di={row.original} />
           </span>
         ),
       },
@@ -824,6 +828,13 @@ export function RequestsPage() {
             </span>
           ) : null}
         </div>
+      ) : null}
+      {recordView && !showListError ? (
+        <DiHiddenRequestsNotice
+          outsideScope={hiddenOutsideScope}
+          withoutSite={hiddenWithoutSite}
+          className="mx-4 mt-3"
+        />
       ) : null}
       {recordView && !showListError && items.length < total ? (
         <div className="px-4 pt-3">

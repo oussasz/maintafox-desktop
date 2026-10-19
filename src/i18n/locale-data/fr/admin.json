@@ -166,7 +166,7 @@
     "create.title": "Nouvel utilisateur",
     "create.description": "Créez un compte utilisateur, attribuez un rôle initial à l’échelle du tenant et définissez le mode d’authentification.",
     "create.roleLabel": "Rôle initial",
-    "create.roleHint": "Ce rôle est attribué à l’échelle du tenant pour l’organisation active. Il définit les permissions de l’utilisateur.",
+    "create.roleHint": "Ce rôle définit les permissions de l'utilisateur, sur toute l'usine ou sur le site choisi ci-dessous.",
     "create.rolePlaceholder": "Choisir un rôle…",
     "create.roleRequired": "Sélectionnez un rôle pour cet utilisateur.",
     "create.roleSystemBadge": "système",
@@ -213,7 +213,9 @@
       "emailPlaceholder": "nom@entreprise.com",
       "success": "Utilisateur mis à jour",
       "error": "Échec de la mise à jour de l'utilisateur"
-    }
+    },
+    "create.scopeLabel": "Où ce rôle s'applique",
+    "create.scopeHint": "Toute l'usine, ou un seul site / nœud et ce qui est en dessous. Un utilisateur limité à un site ne voit et n'agit que sur ce site. Les rôles d'administrateur s'appliquent toujours à toute l'usine."
   },
   "profile": {
     "memberSince": "Membre depuis",

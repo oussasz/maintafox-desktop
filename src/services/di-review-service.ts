@@ -31,6 +31,7 @@ const DiReviewEventSchema = z.object({
   di_id: z.number(),
   event_type: z.string(),
   actor_id: z.number().nullable(),
+  actor_display_name: z.string().nullable(),
   acted_at: z.string(),
   from_status: z.string(),
   to_status: z.string(),

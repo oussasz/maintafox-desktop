@@ -8,6 +8,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PLANT_SCOPE, ScopeNodeSelect, type ScopeChoice } from "@/components/admin/ScopeNodeSelect";
 import { PersonnelPickerCombobox } from "@/components/personnel/PersonnelCard";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -31,9 +32,14 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { describeAppError } from "@/lib/app-error";
 import { listPersonnel } from "@/services/personnel-service";
-import { createUser, listAssignableRoles } from "@/services/rbac-service";
+import { createUser, listAssignableRoles, listAssignableScopeNodes } from "@/services/rbac-service";
 import { pushAppToast } from "@/store/app-toast-store";
-import type { AssignableRoleSummary, CreateUserInput, Personnel } from "@shared/ipc-types";
+import type {
+  AssignableRoleSummary,
+  AssignableScopeNode,
+  CreateUserInput,
+  Personnel,
+} from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 // ── Password strength ─────────────────────────────────────────────────────
@@ -113,15 +119,19 @@ export function CreateUserDialog({
   const [rolesLoading, setRolesLoading] = useState(false);
   const [rolesLoadError, setRolesLoadError] = useState<string | null>(null);
   const [roleIdStr, setRoleIdStr] = useState("");
+  const [scopeNodes, setScopeNodes] = useState<AssignableScopeNode[]>([]);
+  const [scope, setScope] = useState<ScopeChoice>(PLANT_SCOPE);
 
   const loadAssignableRoles = useCallback(async () => {
     setRolesLoading(true);
     setRolesLoadError(null);
     try {
-      const list = await listAssignableRoles();
+      const [list, nodes] = await Promise.all([listAssignableRoles(), listAssignableScopeNodes()]);
       setAssignableRoles(list);
+      setScopeNodes(nodes);
     } catch {
       setAssignableRoles([]);
+      setScopeNodes([]);
       const msg = t("users.create.rolesLoadError");
       setRolesLoadError(msg);
       toast({ title: msg, variant: "destructive" });
@@ -134,6 +144,7 @@ export function CreateUserDialog({
     if (!open) {
       setAssignableRoles([]);
       setRoleIdStr("");
+      setScope(PLANT_SCOPE);
       setRolesLoadError(null);
       return;
     }
@@ -227,6 +238,7 @@ export function CreateUserDialog({
         username: username.trim(),
         identity_mode: identityMode,
         role_id: rid,
+        ...(scope !== PLANT_SCOPE ? { scope_node_id: Number.parseInt(scope, 10) } : {}),
         ...(personnelId != null ? { personnel_id: personnelId } : {}),
         ...(showPasswordFields && password
           ? { initial_password: password, force_password_change: forceChange }
@@ -243,6 +255,7 @@ export function CreateUserDialog({
       setForceChange(true);
       if (!lockPersonnel) setPersonnelId(null);
       setRoleIdStr("");
+      setScope(PLANT_SCOPE);
     } catch (err) {
       const msg = describeAppError(err).title;
       if (!msg.includes("Step-up cancelled")) {
@@ -325,6 +338,21 @@ export function CreateUserDialog({
                 </SelectContent>
               </Select>
             )}
+          </div>
+
+          {/* Where the role applies: the whole plant, or one site / node and below */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium" htmlFor="create-user-scope">
+              {t("users.create.scopeLabel")} *
+            </label>
+            <p className="text-xs text-text-secondary">{t("users.create.scopeHint")}</p>
+            <ScopeNodeSelect
+              id="create-user-scope"
+              nodes={scopeNodes}
+              value={scope}
+              onChange={setScope}
+              disabled={submitting || rolesLoading}
+            />
           </div>
 
           {/* Optional link to personnel */}

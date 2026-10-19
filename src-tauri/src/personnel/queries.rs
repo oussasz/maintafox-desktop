@@ -1029,9 +1029,14 @@ pub async fn deactivate_personnel(
     expected_row_version: i64,
     actor_id: i64,
 ) -> AppResult<Personnel> {
-    let blockers = collect_deactivation_blockers(db, id).await?;
-    if !blockers.is_empty() {
-        return Err(AppError::ValidationFailed(vec![blockers]));
+    let open_work = collect_deactivation_blockers(db, id).await?;
+    if !open_work.is_empty() {
+        let list = open_work.join(", ");
+        return Err(crate::errors::org_validation_failed(
+            "PERSONNEL_DEACTIVATION_OPEN_WORK",
+            format!("This person is on open work orders ({list}): reassign them before deactivating."),
+            std::collections::HashMap::from([("work_orders".to_string(), list)]),
+        ));
     }
 
     let today = Utc::now().format("%Y-%m-%d").to_string();
@@ -1082,10 +1087,9 @@ pub(crate) const PERSON_ON_WO: &str = "( \
     ) \
 )";
 
-/// Open work orders the person is on (responsible or labour).
-async fn collect_deactivation_blockers(db: &DatabaseConnection, personnel_id: i64) -> AppResult<String> {
-    let mut parts: Vec<String> = Vec::new();
-
+/// Codes of the open work orders the person is on (responsible or labour): deactivation is refused
+/// while there is one (`PERSONNEL_DEACTIVATION_OPEN_WORK`, translated on screen).
+async fn collect_deactivation_blockers(db: &DatabaseConnection, personnel_id: i64) -> AppResult<Vec<String>> {
     let wo_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1101,21 +1105,10 @@ async fn collect_deactivation_blockers(db: &DatabaseConnection, personnel_id: i6
         ))
         .await?;
 
-    if !wo_rows.is_empty() {
-        let codes: Vec<String> = wo_rows
-            .iter()
-            .filter_map(|r| r.try_get::<String>("", "code").ok())
-            .collect();
-        parts.push(format!("Ordres de travail actifs : {}.", codes.join(", ")));
-    }
-
-    // Work permit schema (6.23) not yet in local DB — no SQL guard here.
-
-    if parts.is_empty() {
-        Ok(String::new())
-    } else {
-        Ok(format!("Désactivation impossible : {}", parts.join(" ")))
-    }
+    Ok(wo_rows
+        .iter()
+        .filter_map(|r| r.try_get::<String>("", "code").ok())
+        .collect())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

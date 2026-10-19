@@ -148,5 +148,11 @@
     "GATE_INSP_SCHEDULE_TEMPLATE_NOT_PUBLISHED": "Schedule: the checklist is inactive or has no published version.",
     "GATE_INSP_SCHEDULE_INCOMPLETE": "Schedule: its recurrence is incomplete; edit and save it again.",
     "GATE_INSP_SCHEDULE_TOO_MANY_ROUNDS": "Schedule: generation stopped at 1000 rounds; shorten the look-ahead or lengthen the interval."
+  },
+  "scope": {
+    "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",
+    "SCOPE_RECORD_WITHOUT_SITE": "This record has no site: only a plant-wide role can act on it.",
+    "SCOPE_PLANT_WIDE_ONLY": "This is a plant-wide object: only a plant-wide role can act on it.",
+    "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Administrator roles are plant-wide: they cannot be limited to a site."
   }
 }

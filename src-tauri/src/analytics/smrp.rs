@@ -91,6 +91,9 @@ pub struct SmrpWorkMix {
     pub emergency: SmrpMetric,
     /// Completed work orders in the window (all types).
     pub work_orders: i64,
+    /// Of those, work orders whose type carries no maintenance nature: they count in no share
+    /// (planned, reactive, emergency) until the type is given one (`list_work_order_types_to_review`).
+    pub without_nature: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -198,6 +201,7 @@ struct MixTotals {
     reactive_hours: f64,
     emergency_hours: f64,
     total_count: f64,
+    without_nature_count: f64,
     planned_count: f64,
     reactive_count: f64,
     emergency_count: f64,
@@ -239,6 +243,9 @@ async fn work_mix_totals(db: &DatabaseConnection, window: SmrpWindow, org: Optio
         let h = f(&r, "hours")?;
         m.total_hours += h;
         m.total_count += n;
+        if nature.is_none() {
+            m.without_nature_count += n;
+        }
         if nature.is_some_and(|n| n.is_planned()) {
             m.planned_hours += h;
             m.planned_count += n;
@@ -292,6 +299,7 @@ pub async fn work_mix(db: &DatabaseConnection, window: SmrpWindow, org: Option<i
             previous: pe,
         },
         work_orders: cur.total_count as i64,
+        without_nature: cur.without_nature_count as i64,
     })
 }
 

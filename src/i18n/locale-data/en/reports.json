@@ -17,6 +17,7 @@
       "customizeTitle": "Dashboard layout",
       "saveLayout": "Save layout",
       "cancel": "Cancel",
+      "widgetsSection": "Blocks shown",
       "reliabilityHint": "Pooled fleet figures from reliability snapshots over the last {{days}} days (limited to the selected organization). Changes compare with the previous {{days}} days.",
       "vsPrior": "vs prior",
       "pmEmpty": "No open PM due-queue in this scope.",

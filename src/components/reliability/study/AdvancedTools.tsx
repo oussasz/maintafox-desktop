@@ -11,7 +11,9 @@ import { KpiTile } from "@/components/metrics/KpiTile";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useFormatters } from "@/hooks/use-formatters";
+import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
+import { listAssetCostHistory } from "@/services/finance-cost-service";
 import {
   type EquipmentLife,
   type EventTreeResult,
@@ -23,6 +25,7 @@ import {
   evaluateReliabilityMarkov,
   simulateReliabilityStudySystem,
 } from "@/services/reliability-model-service";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { newNodeId } from "./SystemRbdEditor";
 import { RAMS_SELECT_CLASS, RAMS_TABLE_FRAME, RamsCallout, RamsCard } from "./rams-ui";
@@ -68,7 +71,12 @@ export function AdvancedTools({
       </div>
       {tool === "markov" ? <MarkovTool equipment={equipment} /> : null}
       {tool === "simulation" ? (
-        <SimulationTool studyId={studyId} rbd={rbd} missionHours={missionHours} />
+        <SimulationTool
+          studyId={studyId}
+          rbd={rbd}
+          missionHours={missionHours}
+          equipment={equipment}
+        />
       ) : null}
       {tool === "event_tree" ? <EventTreeTool /> : null}
     </div>
@@ -409,21 +417,36 @@ function MarkovTool({ equipment }: { equipment: EquipmentLife[] }) {
   );
 }
 
+/** Where a repair cost taken from Finance came from (shown next to the field, never hidden). */
+interface RepairCostSource {
+  code: string;
+  count: number;
+  currency: string | null;
+  lastClosedAt: string | null;
+}
+
 function SimulationTool({
   studyId,
   rbd,
   missionHours,
+  equipment,
 }: {
   studyId: number;
   rbd: RbdSpec | null;
   missionHours: number | null;
+  equipment: EquipmentLife[];
 }) {
   const { t } = useTranslation("reliability");
-  const { formatDecimal, formatNumber, formatCurrency } = useFormatters();
+  const { formatDecimal, formatNumber, formatCurrency, formatDate } = useFormatters();
+  const { can } = usePermissions();
+  const canReadCosts = can(P.FIN_VIEW);
   const [trials, setTrials] = useState("10000");
   const [seed, setSeed] = useState("");
   const [costH, setCostH] = useState("");
   const [costR, setCostR] = useState("");
+  const [costSource, setCostSource] = useState<RepairCostSource | null>(null);
+  const [costNote, setCostNote] = useState<string | null>(null);
+  const [costBusy, setCostBusy] = useState(false);
   const [result, setResult] = useState<SimulationResult | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => setResult(null), [trials, seed, costH, costR, rbd, missionHours]);
@@ -438,6 +461,36 @@ function SimulationTool({
     );
   }
   const trialsN = Math.round(num(trials));
+  // Fills the (editable) repair cost with the mean cost of the equipment's closed corrective
+  // work orders, from the Finance asset-cost history. Only on click: the field is never filled
+  // silently, and nothing is filled when the equipment has no such work order.
+  const fillMeanCorrectiveCost = async (eq: EquipmentLife) => {
+    setCostBusy(true);
+    setCostNote(null);
+    try {
+      const history = await listAssetCostHistory({
+        search: eq.asset_code,
+        only_with_cost: false,
+        limit: 50,
+      });
+      const row = history.rows.find((r) => r.equipment_id === eq.equipment_id);
+      if (!row || row.avg_corrective_cost == null) {
+        setCostNote(t("rams.advanced.simulation.meanCostNone", { code: eq.asset_code }));
+        return;
+      }
+      setCostR(String(row.avg_corrective_cost));
+      setCostSource({
+        code: eq.asset_code,
+        count: row.corrective_work_orders,
+        currency: history.currency_code,
+        lastClosedAt: row.last_closed_at,
+      });
+    } catch {
+      setCostNote(t("rams.advanced.simulation.meanCostError"));
+    } finally {
+      setCostBusy(false);
+    }
+  };
   const spread = (
     s: { mean: number; p05: number; p50: number; p95: number },
     f: (v: number) => string,
@@ -487,9 +540,57 @@ function SimulationTool({
             className="h-10"
             inputMode="decimal"
             value={costR}
-            onChange={(e) => setCostR(e.target.value)}
+            onChange={(e) => {
+              setCostR(e.target.value);
+              // A typed value no longer comes from Finance.
+              setCostSource(null);
+              setCostNote(null);
+            }}
           />
         </label>
+      </div>
+      <div className="mt-2 grid gap-1">
+        {canReadCosts ? (
+          equipment.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {equipment.map((eq) => (
+                <Button
+                  key={eq.equipment_id}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={costBusy}
+                  onClick={() => void fillMeanCorrectiveCost(eq)}
+                >
+                  {t("rams.advanced.simulation.useMeanCost", { code: eq.asset_code })}
+                </Button>
+              ))}
+            </div>
+          ) : null
+        ) : (
+          <p className="text-xs text-text-muted">
+            {t("rams.advanced.simulation.meanCostRestricted")}
+          </p>
+        )}
+        {costSource ? (
+          <p className="text-xs text-text-muted">
+            {t("rams.advanced.simulation.meanCostSource", {
+              code: costSource.code,
+              count: costSource.count,
+              currency: costSource.currency ?? "",
+              period: costSource.lastClosedAt
+                ? t("rams.advanced.simulation.meanCostPeriodTo", {
+                    date: formatDate(costSource.lastClosedAt),
+                  })
+                : t("rams.advanced.simulation.meanCostPeriodAll"),
+            })}
+          </p>
+        ) : null}
+        {costNote ? (
+          <p className="text-xs text-status-warning" role="status">
+            {costNote}
+          </p>
+        ) : null}
       </div>
       <p className="mt-2 text-xs text-text-muted">
         {t("rams.advanced.simulation.method", { hours: formatNumber(missionHours) })}

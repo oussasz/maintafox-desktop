@@ -25,6 +25,24 @@ pub async fn get_my_permissions(state: State<'_, AppState>) -> AppResult<Vec<rba
     rbac::get_user_permissions(&state.db, user.user_id).await
 }
 
+/// Where the current user holds each permission (step 6): plant-wide, or only on some org nodes
+/// (and below). `get_my_permissions` stays the "held anywhere" list used to show modules.
+#[tauri::command]
+pub async fn get_my_access(state: State<'_, AppState>) -> AppResult<crate::auth::scope::MyAccess> {
+    let user = require_session!(state);
+    let map = crate::auth::scope::access_map_cached(&state.db, &state.permission_cache, user.user_id).await?;
+    Ok(crate::auth::scope::my_access(&map))
+}
+
+/// The permissions that apply to the current user at one org node (plant-wide ones plus those
+/// held on the node or above it); `None` for an administrator, who holds every permission.
+#[tauri::command]
+pub async fn get_my_access_at(org_node_id: i64, state: State<'_, AppState>) -> AppResult<Option<Vec<String>>> {
+    let user = require_session!(state);
+    let map = crate::auth::scope::access_map_cached(&state.db, &state.permission_cache, user.user_id).await?;
+    crate::auth::scope::permissions_at_node(&state.db, &map, org_node_id).await
+}
+
 /// Input for the `verify_step_up` command.
 #[derive(Debug, Deserialize)]
 pub struct StepUpRequest {

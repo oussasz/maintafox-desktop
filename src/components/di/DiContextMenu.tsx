@@ -2,7 +2,8 @@
  * DiContextMenu.tsx
  *
  * Row action menu of a request (list view). Only the decisions the signed-in user may take on
- * this request are listed (`diActions`); decisions that need a form open their dialog.
+ * this request are listed (`diActions`), from their rights at the request's site
+ * (`useAccessAt`, loaded when the menu opens); decisions that need a form open their dialog.
  */
 
 import {
@@ -25,7 +26,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { usePermissions } from "@/hooks/use-permissions";
+import { useAccessAt } from "@/hooks/use-access-at";
 import { useSession } from "@/hooks/use-session";
 import type { InterventionRequest } from "@shared/ipc-types";
 
@@ -42,9 +43,20 @@ interface DiContextMenuProps {
   onPrint: (di: InterventionRequest) => void;
 }
 
-export function DiContextMenu({
+export function DiContextMenu({ children, ...items }: DiContextMenuProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        {/* Mounted only while the menu is open: one rights lookup per opened menu, not per row. */}
+        <DiContextMenuItems {...items} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function DiContextMenuItems({
   di,
-  children,
   onViewDetail,
   onEdit,
   onTriage,
@@ -52,61 +64,58 @@ export function DiContextMenu({
   onReturn,
   onClose,
   onPrint,
-}: DiContextMenuProps) {
+}: Omit<DiContextMenuProps, "children">) {
   const { t } = useTranslation("di");
-  const { can } = usePermissions();
+  const { can } = useAccessAt(di.org_node_id);
   const { info } = useSession();
   const actions = diActions(di, info?.user_id, can);
   const decisions = actions.triage || actions.approve || actions.convert || actions.returnForInfo;
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuItem onClick={() => onViewDetail(di)} className="gap-2">
-          <Eye className="h-3.5 w-3.5" aria-hidden />
-          {t("contextMenu.viewDetail")}
+    <>
+      <DropdownMenuItem onClick={() => onViewDetail(di)} className="gap-2">
+        <Eye className="h-3.5 w-3.5" aria-hidden />
+        {t("contextMenu.viewDetail")}
+      </DropdownMenuItem>
+      {actions.edit && (
+        <DropdownMenuItem onClick={() => onEdit(di)} className="gap-2">
+          <Pencil className="h-3.5 w-3.5" aria-hidden />
+          {t("contextMenu.edit")}
         </DropdownMenuItem>
-        {actions.edit && (
-          <DropdownMenuItem onClick={() => onEdit(di)} className="gap-2">
-            <Pencil className="h-3.5 w-3.5" aria-hidden />
-            {t("contextMenu.edit")}
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem onClick={() => onPrint(di)} className="gap-2">
-          <Printer className="h-3.5 w-3.5" aria-hidden />
-          {t("action.print")}
-        </DropdownMenuItem>
+      )}
+      <DropdownMenuItem onClick={() => onPrint(di)} className="gap-2">
+        <Printer className="h-3.5 w-3.5" aria-hidden />
+        {t("action.print")}
+      </DropdownMenuItem>
 
-        {decisions && <DropdownMenuSeparator />}
-        {actions.triage && (
-          <DropdownMenuItem onClick={() => onTriage(di)} className="gap-2">
-            <ClipboardCheck className="h-3.5 w-3.5" aria-hidden />
-            {t("triage.acceptForReview")}
+      {decisions && <DropdownMenuSeparator />}
+      {actions.triage && (
+        <DropdownMenuItem onClick={() => onTriage(di)} className="gap-2">
+          <ClipboardCheck className="h-3.5 w-3.5" aria-hidden />
+          {t("triage.acceptForReview")}
+        </DropdownMenuItem>
+      )}
+      {(actions.approve || actions.convert) && (
+        <DropdownMenuItem onClick={() => onApprove(di)} className="gap-2">
+          <CheckCircle className="h-3.5 w-3.5 text-tone-success-fg" aria-hidden />
+          {actions.approve ? t("contextMenu.approve") : t("action.convertToWO")}
+        </DropdownMenuItem>
+      )}
+      {actions.returnForInfo && (
+        <DropdownMenuItem onClick={() => onReturn(di)} className="gap-2">
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+          {t("contextMenu.return")}
+        </DropdownMenuItem>
+      )}
+      {actions.close && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => onClose(di)} className="gap-2">
+            <XCircle className="h-3.5 w-3.5 text-tone-danger-fg" aria-hidden />
+            {t("contextMenu.closeRequest")}
           </DropdownMenuItem>
-        )}
-        {(actions.approve || actions.convert) && (
-          <DropdownMenuItem onClick={() => onApprove(di)} className="gap-2">
-            <CheckCircle className="h-3.5 w-3.5 text-tone-success-fg" aria-hidden />
-            {actions.approve ? t("contextMenu.approve") : t("action.convertToWO")}
-          </DropdownMenuItem>
-        )}
-        {actions.returnForInfo && (
-          <DropdownMenuItem onClick={() => onReturn(di)} className="gap-2">
-            <RotateCcw className="h-3.5 w-3.5" aria-hidden />
-            {t("contextMenu.return")}
-          </DropdownMenuItem>
-        )}
-        {actions.close && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => onClose(di)} className="gap-2">
-              <XCircle className="h-3.5 w-3.5 text-tone-danger-fg" aria-hidden />
-              {t("contextMenu.closeRequest")}
-            </DropdownMenuItem>
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </>
+      )}
+    </>
   );
 }

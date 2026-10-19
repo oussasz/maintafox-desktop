@@ -127,7 +127,12 @@ describe("di-store — Supervisor Verification S3", () => {
       expect(useDiStore.getState().error).toBeNull();
 
       // Resolve the invoke call
-      resolveInvoke({ items: [makeDi()], total: 1 });
+      resolveInvoke({
+        items: [makeDi()],
+        total: 1,
+        hidden_outside_scope: 0,
+        hidden_without_site: 0,
+      });
 
       // Wait for loadDis to complete
       await loadPromise;
@@ -151,7 +156,12 @@ describe("di-store — Supervisor Verification S3", () => {
     it("loadDis uses the current filter from state", async () => {
       useDiStore.getState().setFilter({ status: ["in_review"], limit: 25 });
 
-      mockInvoke.mockResolvedValueOnce({ items: [], total: 0 });
+      mockInvoke.mockResolvedValueOnce({
+        items: [],
+        total: 0,
+        hidden_outside_scope: 0,
+        hidden_without_site: 0,
+      });
 
       await useDiStore.getState().loadDis();
 
@@ -208,7 +218,12 @@ describe("di-store — Supervisor Verification S3", () => {
 
   it("submitNewDi creates and reloads list", async () => {
     const newDi = makeDi({ id: 3, code: "DI-0003" });
-    const pageAfter = { items: [makeDi(), newDi], total: 2 };
+    const pageAfter = {
+      items: [makeDi(), newDi],
+      total: 2,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
+    };
 
     mockInvoke
       .mockResolvedValueOnce(newDi) // create_di
@@ -239,7 +254,12 @@ describe("di-store — Supervisor Verification S3", () => {
 describe("di-store — paging and load errors", () => {
   it("loads pages of DI_LIST_PAGE_SIZE from the first record", async () => {
     useDiStore.setState({ filter: { limit: DI_LIST_PAGE_SIZE, offset: 400 } });
-    mockInvoke.mockResolvedValueOnce({ items: [makeDi()], total: 1 });
+    mockInvoke.mockResolvedValueOnce({
+      items: [makeDi()],
+      total: 1,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
+    });
 
     await useDiStore.getState().loadDis();
 
@@ -255,6 +275,8 @@ describe("di-store — paging and load errors", () => {
     mockInvoke.mockResolvedValueOnce({
       items: [makeDi({ id: 2, code: "DI-0002" }), makeDi({ id: 3, code: "DI-0003" })],
       total: 3,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
     });
 
     await useDiStore.getState().loadMoreDis();
@@ -277,13 +299,21 @@ describe("di-store — paging and load errors", () => {
 
   it("keeps the list of the latest load when an older load answers last", async () => {
     let resolveOlder!: (v: unknown) => void;
-    mockInvoke
-      .mockReturnValueOnce(new Promise((r) => (resolveOlder = r)))
-      .mockResolvedValueOnce({ items: [makeDi({ id: 7, code: "DI-0007" })], total: 1 });
+    mockInvoke.mockReturnValueOnce(new Promise((r) => (resolveOlder = r))).mockResolvedValueOnce({
+      items: [makeDi({ id: 7, code: "DI-0007" })],
+      total: 1,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
+    });
 
     const older = useDiStore.getState().loadDis();
     await useDiStore.getState().loadDis();
-    resolveOlder({ items: [makeDi({ id: 1 }), makeDi({ id: 2, code: "DI-0002" })], total: 2 });
+    resolveOlder({
+      items: [makeDi({ id: 1 }), makeDi({ id: 2, code: "DI-0002" })],
+      total: 2,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
+    });
     await older;
 
     expect(useDiStore.getState().items.map((d) => d.id)).toEqual([7]);
@@ -328,7 +358,12 @@ describe("di-store — work queues and the requester's answer", () => {
         case "resubmit_di":
           return Promise.resolve(back);
         case "list_di":
-          return Promise.resolve({ items: [back], total: 1 });
+          return Promise.resolve({
+            items: [back],
+            total: 1,
+            hidden_outside_scope: 0,
+            hidden_without_site: 0,
+          });
         case "get_di":
           return Promise.resolve({ di: back, transitions: [], similar: [] });
         case "get_di_queue_counts":

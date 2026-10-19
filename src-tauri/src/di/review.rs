@@ -137,6 +137,8 @@ pub struct DiReviewEvent {
     pub di_id: i64,
     pub event_type: String,
     pub actor_id: Option<i64>,
+    /// Display name (else username) of the actor; `None` for system events.
+    pub actor_display_name: Option<String>,
     pub acted_at: String,
     pub from_status: String,
     pub to_status: String,
@@ -169,6 +171,9 @@ fn map_review_event(row: &QueryResult) -> AppResult<DiReviewEvent> {
         actor_id: row
             .try_get::<Option<i64>>("", "actor_id")
             .map_err(|e| decode_err("actor_id", e))?,
+        actor_display_name: row
+            .try_get::<Option<String>>("", "actor_display_name")
+            .map_err(|e| decode_err("actor_display_name", e))?,
         acted_at: row
             .try_get::<String>("", "acted_at")
             .map_err(|e| decode_err("acted_at", e))?,
@@ -1304,12 +1309,15 @@ pub async fn get_review_events(db: &DatabaseConnection, di_id: i64) -> AppResult
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, di_id, event_type, actor_id, acted_at, from_status, to_status, \
-                    reason_code, notes, sla_target_hours, sla_deadline, \
-                    sla_resolution_target_hours, sla_resolution_deadline, step_up_used \
-             FROM di_review_events \
-             WHERE di_id = ? \
-             ORDER BY acted_at ASC, id ASC",
+            "SELECT e.id, e.di_id, e.event_type, e.actor_id, \
+                    COALESCE(ua.display_name, ua.username) AS actor_display_name, \
+                    e.acted_at, e.from_status, e.to_status, \
+                    e.reason_code, e.notes, e.sla_target_hours, e.sla_deadline, \
+                    e.sla_resolution_target_hours, e.sla_resolution_deadline, e.step_up_used \
+             FROM di_review_events e \
+             LEFT JOIN user_accounts ua ON ua.id = e.actor_id \
+             WHERE e.di_id = ? \
+             ORDER BY e.acted_at ASC, e.id ASC",
             [di_id.into()],
         ))
         .await?;

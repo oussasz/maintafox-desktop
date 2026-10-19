@@ -356,6 +356,14 @@ pub async fn resolve_tenant_scope_for_user(
         .await?;
 
     if rows.is_empty() {
+        // A site-only user (roles on org nodes only, step 6) signs in on this activated tenant:
+        // org nodes belong to this tenant's database, and every check limits them to their sites.
+        if crate::auth::scope::has_node_assignment(db, user_id).await? {
+            return Ok(Some(TenantScopeResolution {
+                tenant_id: activated_tenant_id.to_string(),
+                token_tenant_id: activated_tenant_id.to_string(),
+            }));
+        }
         return Ok(None);
     }
 

@@ -16,6 +16,7 @@ import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { DomainBrowserPanel } from "@/components/lookups/DomainBrowserPanel";
 import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor";
+import { WorkOrderTypeNatureReview } from "@/components/lookups/WorkOrderTypeNatureReview";
 import { FmecaRatingScalesHost } from "@/components/lookups/adapters/FmecaRatingScalesHost";
 import { InventoryArticleFamilyHost } from "@/components/lookups/adapters/InventoryArticleFamilyHost";
 import { InventoryTaxCategoryHost } from "@/components/lookups/adapters/InventoryTaxCategoryHost";
@@ -245,7 +246,10 @@ export function ReferenceManagerPage() {
       actions={<RefreshButton onRefresh={handleRefresh} loading={domainsLoading} />}
       bodyClassName={null}
     >
-      {workspace}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <WorkOrderTypeNatureReview />
+        {workspace}
+      </div>
     </ModulePageShell>
   );
 }

@@ -15,10 +15,13 @@ pub mod password;
 pub mod password_policy;
 pub mod pin;
 pub mod rbac;
+pub mod scope;
 pub mod session_manager;
 
 #[cfg(test)]
 mod auth_integration_tests;
+#[cfg(test)]
+pub(crate) mod scope_tests;
 
 /// Short-circuit an IPC command if there is no active authenticated session.
 ///
@@ -98,6 +101,22 @@ macro_rules! require_permission {
         // `require_step_up!(state)` macro in commands that perform
         // dangerous write operations.  Read-only commands that merely
         // check a permission should never demand step-up.
+    }};
+}
+
+/// Short-circuit an IPC command unless the user holds the permission at the record's anchor
+/// (`auth::scope`): plant-wide, or on the record's org node or one above it. A record without a
+/// site, or a plant-wide object, needs a plant-wide role; the refusal is coded
+/// (`SCOPE_OUTSIDE_SITE`, `SCOPE_RECORD_WITHOUT_SITE`, `SCOPE_PLANT_WIDE_ONLY`). Entitlement and
+/// licence checks as in [`require_permission!`].
+///
+/// ```ignore
+/// require_permission_at!(state, &user, crate::rbac::permissions::OT_EDIT, Anchor::of(wo.entity_id));
+/// ```
+#[macro_export]
+macro_rules! require_permission_at {
+    ($state:expr, $user:expr, $perm:expr, $anchor:expr) => {{
+        $crate::auth::scope::require_at(&$state.db, &$state.permission_cache, $user.user_id, $perm, $anchor).await?;
     }};
 }
 

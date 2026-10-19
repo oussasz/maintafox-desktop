@@ -152,11 +152,14 @@ const WO_COLS: &str = "\
     wo.no_downtime_attestation, wo.no_downtime_attestation_reason, \
     wo.row_version, wo.created_at, wo.updated_at";
 
-/// Join columns appended when full joins are present.
-const WO_JOIN_COLS: &str = "\
+/// Join columns appended when full joins are present. `nature_code` is the nature the type's tag
+/// names (`wo::types::nature_code_sql`), NULL when it names none, never the raw tag.
+fn wo_join_cols() -> String {
+    format!(
+        "\
     wos.code  AS status_code,  wos.label AS status_label,  wos.color AS status_color, \
     wot.code  AS type_code,    wot.label AS type_label, \
-    wot.semantic_tag AS nature_code, wnat.label AS nature_label, \
+    {nature} AS nature_code, wnat.label AS nature_label, \
     wst.code AS subtype_code, wst.label AS subtype_label, \
     ul.code AS urgency_code, ul.sort_order AS urgency_rank, ul.label AS urgency_label, ul.color_hex AS urgency_color, \
     src_round.id AS source_inspection_round_id, src_tpl.code AS source_inspection_round_code, \
@@ -179,16 +182,21 @@ const WO_JOIN_COLS: &str = "\
       ORDER BY sc.id DESC LIMIT 1) AS schedule_commitment_id, \
     CASE WHEN (SELECT sc.frozen_at FROM schedule_commitments sc \
       WHERE sc.source_type = 'work_order' AND sc.source_id = wo.id \
-      ORDER BY sc.id DESC LIMIT 1) IS NOT NULL THEN 1 ELSE 0 END AS schedule_frozen";
+      ORDER BY sc.id DESC LIMIT 1) IS NOT NULL THEN 1 ELSE 0 END AS schedule_frozen",
+        nature = crate::wo::types::nature_code_sql("wot.semantic_tag")
+    )
+}
 
 /// JOIN clause used by list and get queries.
 /// Derived lifecycle state (`wo::lifecycle::SQL_CASE`).
 const LIFECYCLE: &str = crate::wo::lifecycle::SQL_CASE;
 
-const WO_JOINS: &str = "\
+fn wo_joins() -> String {
+    format!(
+        "\
     LEFT JOIN work_order_statuses wos ON wos.id = wo.status_id \
     LEFT JOIN reference_values    wot ON wot.id = wo.type_id \
-    LEFT JOIN reference_values    wnat ON wnat.code = wot.semantic_tag AND wnat.set_id IN ( \
+    LEFT JOIN reference_values    wnat ON wnat.code = {nature} AND wnat.set_id IN ( \
         SELECT nrs.id FROM reference_sets nrs JOIN reference_domains nd ON nd.id = nrs.domain_id \
          WHERE nd.code = 'WORK.MAINTENANCE_NATURES' AND nrs.status = 'published') \
     LEFT JOIN reference_values    ul  ON ul.id  = wo.urgency_id \
@@ -210,7 +218,10 @@ const WO_JOINS: &str = "\
           JOIN pm_plans pp ON pp.id = po.pm_plan_id \
          WHERE pf.follow_up_work_order_id IS NOT NULL \
          GROUP BY pf.follow_up_work_order_id) src_pm ON src_pm.wo_id = wo.id \
-    LEFT JOIN teams tm ON tm.id = wo.assigned_team_id AND tm.deleted_at IS NULL";
+    LEFT JOIN teams tm ON tm.id = wo.assigned_team_id AND tm.deleted_at IS NULL",
+        nature = crate::wo::types::nature_code_sql("wot.semantic_tag")
+    )
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) list_work_orders — paginated, filtered
@@ -336,7 +347,8 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
     let where_sql = where_clauses.join(" AND ");
 
     // ── Count query ──────────────────────────────────────────────────────
-    let count_sql = format!("SELECT COUNT(*) AS total FROM work_orders wo {WO_JOINS} WHERE {where_sql}");
+    let (join_cols, joins) = (wo_join_cols(), wo_joins());
+    let count_sql = format!("SELECT COUNT(*) AS total FROM work_orders wo {joins} WHERE {where_sql}");
     let count_binds = binds.clone();
     let count_row = db
         .query_one(Statement::from_sql_and_values(
@@ -355,9 +367,9 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
     let offset = filter.offset.max(0);
 
     let data_sql = format!(
-        "SELECT {WO_COLS}, {WO_JOIN_COLS}, {LIFECYCLE} AS lifecycle_state \
+        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state \
          FROM work_orders wo \
-         {WO_JOINS} \
+         {joins} \
          WHERE {where_sql} \
          ORDER BY wo.created_at DESC \
          LIMIT {row_limit} OFFSET {offset}"
@@ -376,10 +388,11 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn get_work_order(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<WorkOrder>> {
+    let (join_cols, joins) = (wo_join_cols(), wo_joins());
     let sql = format!(
-        "SELECT {WO_COLS}, {WO_JOIN_COLS}, {LIFECYCLE} AS lifecycle_state \
+        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state \
          FROM work_orders wo \
-         {WO_JOINS} \
+         {joins} \
          WHERE wo.id = ?"
     );
     let row = db

@@ -17,6 +17,7 @@
       "customizeTitle": "Disposition du tableau de bord",
       "saveLayout": "Enregistrer",
       "cancel": "Annuler",
+      "widgetsSection": "Blocs affichés",
       "reliabilityHint": "Valeurs regroupées du parc à partir des instantanés de fiabilité des {{days}} derniers jours (limitées à l’organisation choisie). Les écarts comparent aux {{days}} jours précédents.",
       "vsPrior": "vs préc.",
       "pmEmpty": "Aucune PM ouverte dans la file d’échéance pour ce périmètre.",
