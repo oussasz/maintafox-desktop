@@ -215,6 +215,13 @@
     "noViewRight": "Consulter les types de permis demande le droit de lecture des permis de travail.",
     "readOnly": "Modifier les types de permis demande le droit d'émettre des permis.",
     "title": "Types de permis",
+    "shipped": {
+      "loto": "Consignation / déconsignation (LOTO)",
+      "hot_work": "Travail par point chaud",
+      "confined_space": "Espace confiné",
+      "cold_work": "Travail à froid",
+      "electrical_lv": "Électricité basse tension"
+    },
     "new": "Nouveau type",
     "code": "Code",
     "name": "Nom",

@@ -17,6 +17,8 @@ import { appErrorReason } from "@/lib/app-error";
 import { type PermitTypeRecord, upsertPermitType } from "@/services/permit-service";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { usePermitTypeName } from "./permit-type-name";
+
 /** Shortest reason the server accepts for a three-person change (`MIN_REASON_CHARS`). */
 export const THREE_PERSON_REASON_MIN = 10;
 
@@ -101,6 +103,7 @@ function toDraft(ty: PermitTypeRecord): TypeDraft {
 
 export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditorProps) {
   const { t } = useTranslation("permits");
+  const typeName = usePermitTypeName();
   const [draft, setDraft] = useState<TypeDraft>(EMPTY);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -189,7 +192,7 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
             {types.map((ty) => (
               <tr key={ty.id} className="border-b border-surface-border/60">
                 <td className="px-2 py-1.5 font-mono text-xs">{ty.code}</td>
-                <td className="px-2 py-1.5">{ty.name}</td>
+                <td className="px-2 py-1.5">{typeName(ty.code, ty.name)}</td>
                 <td className="px-2 py-1.5">{ty.max_duration_hours ?? t("detail.none")}</td>
                 <td className="px-2 py-1.5">
                   {ty.requires_energy_isolation ? t("types.yes") : t("types.no")}

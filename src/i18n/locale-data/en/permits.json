@@ -215,6 +215,13 @@
     "noViewRight": "Viewing permit types needs the work-permit view right.",
     "readOnly": "Changing permit types needs the permit issuer right.",
     "title": "Permit types",
+    "shipped": {
+      "loto": "LOTO",
+      "hot_work": "Hot work",
+      "confined_space": "Confined space",
+      "cold_work": "Cold work",
+      "electrical_lv": "Electrical LV"
+    },
     "new": "New type",
     "code": "Code",
     "name": "Name",

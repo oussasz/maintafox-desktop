@@ -71,6 +71,7 @@ import {
   optionLabel,
   toLocalInputValue,
 } from "./permit-rules";
+import { usePermitTypeName } from "./permit-type-name";
 
 interface PermitDetailPanelProps {
   permit: WorkPermitRecord;
@@ -83,6 +84,7 @@ const EMPTY_ISOLATION = { point: "", energy: "", method: "", lock: "" };
 
 export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps) {
   const { t, i18n } = useTranslation("permits");
+  const typeName = usePermitTypeName();
   const { can } = usePermissions();
   const { info: session } = useSession();
   const canIssue = can(P.PTW_ISSUE);
@@ -312,7 +314,11 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           </h2>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-sm">
             <dt className="text-text-muted">{t("detail.type")}</dt>
-            <dd>{permit.permit_type_name ?? t("detail.none")}</dd>
+            <dd>
+              {permit.permit_type_name == null
+                ? t("detail.none")
+                : typeName(permit.permit_type_code, permit.permit_type_name)}
+            </dd>
             <dt className="text-text-muted">{t("detail.asset")}</dt>
             <dd>{formatAssetLabel(permit) ?? t("detail.none")}</dd>
             <dt className="text-text-muted">{t("detail.workOrder")}</dt>
