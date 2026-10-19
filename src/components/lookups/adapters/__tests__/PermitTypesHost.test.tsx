@@ -102,7 +102,14 @@ describe("PermitTypesHost (Données de référence)", () => {
     svc.upsertPermitType.mockResolvedValue(HOT_WORK);
   });
 
-  it("asks a reason to stop requiring an isolation and locks it on the LOTO type", async () => {
+  it("asks a reason of at least 10 characters to stop requiring an isolation, then saves through the step-up, and locks it on the LOTO type", async () => {
+    perms.granted = new Set<string>([P.PTW_VIEW, P.PTW_ISSUE, P.ADM_SETTINGS]);
+    // The server asks for the password once, then accepts.
+    svc.upsertPermitType
+      .mockRejectedValueOnce({ code: "STEP_UP_REQUIRED", message: "StepUpRequired" })
+      .mockResolvedValue({ ...HOT_WORK, requires_energy_isolation: false });
+    rbac.verifyStepUp.mockResolvedValue(undefined);
+    const reasonMin = enPermits.types.reasonMin.replace("{{min}}", "10");
     render(<PermitTypesHost />);
     const editButtons = await screen.findAllByRole("button", { name: enPermits.actions.edit });
 
@@ -114,22 +121,36 @@ describe("PermitTypesHost (Données de référence)", () => {
     fireEvent.click(editButtons[1] as HTMLElement);
     fireEvent.click(screen.getByRole("checkbox", { name: enPermits.types.energyIsolation }));
     expect(screen.getByText(enPermits.types.disableReason)).toBeInTheDocument();
+    // The hint gives the minimum before anything is typed.
+    expect(
+      screen.getByText(enPermits.types.disableReasonHint.replace("{{min}}", "10")),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: enPermits.types.save }));
-    expect(await screen.findByText(enPermits.errors.required)).toBeInTheDocument();
+    expect(await screen.findByText(reasonMin)).toBeInTheDocument();
     expect(svc.upsertPermitType).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByLabelText(new RegExp(enPermits.types.disableReason)), {
-      target: { value: "Isolated lines only" },
-    });
+    // Counted like the server: trimmed, so nine letters inside spaces are still too short.
+    const reason = screen.getByLabelText(new RegExp(enPermits.types.disableReason));
+    fireEvent.change(reason, { target: { value: "   nine char   " } });
+    expect(screen.getByText(reasonMin)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: enPermits.types.save }));
-    await waitFor(() =>
-      expect(svc.upsertPermitType).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 2,
-          requires_energy_isolation: false,
-          disable_isolation_reason: "Isolated lines only",
-        }),
-      ),
+    expect(svc.upsertPermitType).not.toHaveBeenCalled();
+
+    fireEvent.change(reason, { target: { value: "  Isolated lines only  " } });
+    expect(screen.queryByText(reasonMin)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: enPermits.types.save }));
+
+    // The step-up dialog opens; once the password is confirmed the save is retried.
+    const password = await screen.findByPlaceholderText("stepUp.passwordLabel");
+    fireEvent.change(password, { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "stepUp.submit" }));
+    await waitFor(() => expect(svc.upsertPermitType).toHaveBeenCalledTimes(2));
+    expect(svc.upsertPermitType).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: 2,
+        requires_energy_isolation: false,
+        disable_isolation_reason: "Isolated lines only",
+      }),
     );
   });
 
@@ -235,6 +256,9 @@ describe("PermitTypesHost (Données de référence)", () => {
             // null = unchanged: the server keeps its current value.
             requires_three_person_removal: null,
             three_person_change_reason: null,
+            // The isolation rule is left as it is: no switch-off reason is sent.
+            requires_energy_isolation: true,
+            disable_isolation_reason: null,
           }),
         ),
       );

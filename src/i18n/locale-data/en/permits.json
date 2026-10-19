@@ -238,7 +238,7 @@
     "energyIsolationHint": "A permit of this type cannot start without at least one isolation applied and verified by a second person.",
     "energyIsolationLocked": "The LOTO type always requires an energy isolation.",
     "disableReason": "Why no longer require an isolation?",
-    "disableReasonHint": "Only an administrator can do this; the password is asked again and the change is recorded in the audit log.",
+    "disableReasonHint": "At least {{min}} characters. Only an administrator can do this; the password is asked again and the change is recorded in the audit log.",
     "energyIsolationShort": "Isolation",
     "yes": "Yes",
     "no": "No",

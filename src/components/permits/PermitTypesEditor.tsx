@@ -1,7 +1,8 @@
 /**
  * Work-permit types editor — hosted in Données de référence (catalog `PERMIT.TYPES`), the one
  * place they are managed. Saves go through `upsert_permit_type` (permit issuer; administrator +
- * step-up + reason to stop requiring an energy isolation; the LOTO type keeps it). The
+ * step-up + a reason of at least ISOLATION_REASON_MIN characters to stop requiring an energy
+ * isolation; the LOTO type keeps it). The
  * three-person lock-removal setting is shown to everyone and changed only by an administrator
  * (`adm.settings`), with a reason of at least THREE_PERSON_REASON_MIN characters and a step-up.
  */
@@ -25,6 +26,12 @@ import { usePermitTypeName } from "./permit-type-name";
  * `src-tauri/src/settings/catalog.rs` (counted trimmed, in code points; a test pins both values).
  */
 export const THREE_PERSON_REASON_MIN = 10;
+
+/**
+ * Shortest reason the server accepts to stop requiring an energy isolation: also
+ * `MIN_REASON_CHARS` (counted trimmed, in code points; a test pins both values).
+ */
+export const ISOLATION_REASON_MIN = 10;
 
 /** The step-up dialog was closed without confirming: nothing to report. */
 function isStepUpCancelled(err: unknown): boolean {
@@ -122,6 +129,8 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
     serverTextLength(draft.threePersonReason) < THREE_PERSON_REASON_MIN;
 
   const relaxing = draft.id != null && draft.savedEnergyIsolation && !draft.energyIsolation;
+  const disableReason = serverTrim(draft.disableReason);
+  const disableReasonShort = serverTextLength(draft.disableReason) < ISOLATION_REASON_MIN;
   const maxHoursValue = draft.maxHours.trim() === "" ? null : Number(draft.maxHours);
   const maxHoursInvalid =
     maxHoursValue != null && (!Number.isFinite(maxHoursValue) || maxHoursValue <= 0);
@@ -130,7 +139,7 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
     e.preventDefault();
     setSubmitted(true);
     if (!draft.code.trim() || !draft.name.trim() || maxHoursInvalid) return;
-    if (relaxing && !draft.disableReason.trim()) return;
+    if (relaxing && disableReasonShort) return;
     if (changingThreePerson && threePersonReasonShort) return;
     setBusy(true);
     setError(null);
@@ -150,7 +159,8 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
           mandatory_ppe_ids_json: draft.ppeJson,
           mandatory_control_rules_json: draft.rulesJson,
           requires_energy_isolation: draft.energyIsolation,
-          disable_isolation_reason: relaxing ? draft.disableReason.trim() : null,
+          // Sent only when the save switches the isolation rule off (trimmed like the server).
+          disable_isolation_reason: relaxing ? disableReason : null,
           // Sent only when the user changed it: null keeps the server's current value, so a
           // value changed elsewhere since the form loaded is not rewritten by an unrelated edit.
           requires_three_person_removal: changingThreePerson ? draft.threePerson : null,
@@ -313,9 +323,13 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
               <FormField
                 name="type-disable-reason"
                 label={t("types.disableReason")}
-                description={t("types.disableReasonHint")}
+                description={t("types.disableReasonHint", { min: ISOLATION_REASON_MIN })}
                 required
-                error={submitted && !draft.disableReason.trim() ? t("errors.required") : undefined}
+                error={
+                  (submitted || disableReason.length > 0) && disableReasonShort
+                    ? t("types.reasonMin", { min: ISOLATION_REASON_MIN })
+                    : undefined
+                }
               >
                 <Textarea
                   id="type-disable-reason"

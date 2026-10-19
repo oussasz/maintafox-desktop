@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { HANDOVER_NOTE_MIN } from "../PermitHandoverForm";
-import { THREE_PERSON_REASON_MIN } from "../PermitTypesEditor";
+import { ISOLATION_REASON_MIN, THREE_PERSON_REASON_MIN } from "../PermitTypesEditor";
 import { serverTextLength, serverTrim } from "../permit-rules";
 
 function rustConstant(file: string, name: string): number {
@@ -29,6 +29,16 @@ describe("minimum text lengths follow the server", () => {
     expect(THREE_PERSON_REASON_MIN).toBe(
       rustConstant("src-tauri/src/settings/catalog.rs", "MIN_REASON_CHARS"),
     );
+  });
+
+  it("energy-isolation switch-off reason: same minimum as MIN_REASON_CHARS", () => {
+    expect(ISOLATION_REASON_MIN).toBe(
+      rustConstant("src-tauri/src/settings/catalog.rs", "MIN_REASON_CHARS"),
+    );
+    // The server checks this reason against that constant (guard_isolation_relax).
+    const queries = readFileSync("src-tauri/src/permit/queries.rs", "utf8");
+    const guard = /async fn guard_isolation_relax[\s\S]*?\r?\n\}\r?\n/.exec(queries)?.[0];
+    expect(guard).toContain("let min = crate::settings::catalog::MIN_REASON_CHARS;");
   });
 });
 
