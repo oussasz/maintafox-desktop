@@ -738,6 +738,94 @@ async fn tenant_wide_assignment_with_tenant_id_reaches_other_devices() {
     assert_eq!(on_b.as_deref(), Some("tenant:tenant-plant-01"));
 }
 
+/// The `STAGE_ERROR` conflict follows the change: closed when it stages, open again when it fails
+/// again later; a person who resolves it keeps the decision and is recorded as its author.
+#[tokio::test]
+async fn stage_failure_reopens_and_keeps_the_operator_choice() {
+    use super::domain::ResolveSyncConflictInput;
+    use super::queries::resolve_sync_conflict;
+    use super::test_support::scalar_opt_text;
+
+    let a = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let assignment = factory.create(&a, "user_scope_assignments").await.expect("assignment");
+    server.exchange("A", &a).await;
+    let state = |a: &DatabaseConnection, id: String| {
+        let a = a.clone();
+        async move {
+            scalar_opt_text(
+                &a,
+                "SELECT status || ':' || COALESCE(resolution_action, '-') FROM sync_conflicts
+                 WHERE conflict_type = 'STAGE_ERROR' AND entity_sync_id = ?",
+                vec![id.into()],
+            )
+            .await
+        }
+    };
+    let set_scope = |scope_type: &'static str| {
+        exec(
+            &a,
+            "UPDATE user_scope_assignments SET scope_type = ?, scope_reference = 'x' WHERE id = ?",
+            vec![scope_type.into(), assignment.rowid.into()],
+        )
+    };
+    let id = assignment.entity_sync_id.clone();
+
+    set_scope("unknown_scope").await;
+    server.exchange("A", &a).await;
+    assert_eq!(state(&a, id.clone()).await.as_deref(), Some("new:-"));
+    set_scope("tenant").await;
+    server.exchange("A", &a).await;
+    assert_eq!(state(&a, id.clone()).await.as_deref(), Some("resolved_local:auto_restaged"));
+    set_scope("unknown_scope").await;
+    server.exchange("A", &a).await;
+    assert_eq!(
+        state(&a, id.clone()).await.as_deref(),
+        Some("new:-"),
+        "a new failure opens the conflict again"
+    );
+
+    // The person fixes the record and keeps the local version: the drain inside the resolution
+    // stages the change, and the conflict records the person's choice, not the automatic close.
+    set_scope("tenant").await;
+    let (conflict_id, version) = (
+        scalar_i64(
+            &a,
+            "SELECT id FROM sync_conflicts WHERE conflict_type = 'STAGE_ERROR' AND entity_sync_id = ?",
+            vec![id.clone().into()],
+        )
+        .await,
+        scalar_i64(
+            &a,
+            "SELECT row_version FROM sync_conflicts WHERE conflict_type = 'STAGE_ERROR' AND entity_sync_id = ?",
+            vec![id.clone().into()],
+        )
+        .await,
+    );
+    let operator = scalar_i64(&a, "SELECT id FROM user_accounts ORDER BY id LIMIT 1", vec![]).await;
+    resolve_sync_conflict(
+        &a,
+        operator,
+        ResolveSyncConflictInput {
+            conflict_id,
+            expected_row_version: version,
+            action: "accept_local".into(),
+            resolution_note: Some("scope corrected".into()),
+        },
+    )
+    .await
+    .expect("resolve");
+    assert_eq!(state(&a, id.clone()).await.as_deref(), Some("resolved_local:accept_local"));
+    let author = scalar_i64(
+        &a,
+        "SELECT resolved_by_id FROM sync_conflicts WHERE id = ?",
+        vec![conflict_id.into()],
+    )
+    .await;
+    assert_eq!(author, operator);
+}
+
 /// Every domain list above, in domain order.
 const DOMAIN_TYPES: &[&[&str]] = &[
     FOUNDATION_TYPES,
