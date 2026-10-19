@@ -483,8 +483,15 @@ pub async fn get_wo_transition_log(db: &DatabaseConnection, wo_id: i64) -> AppRe
 // D) create_work_order — full insert + transition log
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) -> AppResult<WorkOrder> {
+pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput) -> AppResult<WorkOrder> {
     crate::wo::domain::validate_wo_shift(input.shift.as_deref())?;
+    // Planned dates in their stored form (UTC), never a zone-less text (`wo::time`).
+    input.planned_start = super::time::stored_planned_time(
+        input.planned_start.as_deref(),
+        super::time::CODE_PLANNED_START_UNREADABLE,
+    )?;
+    input.planned_end =
+        super::time::stored_planned_time(input.planned_end.as_deref(), super::time::CODE_PLANNED_END_UNREADABLE)?;
     ensure_work_order_statuses_if_needed(db).await?;
     let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(db).await?;
 
@@ -983,11 +990,15 @@ pub async fn update_wo_draft_fields(
     }
     if let Some(ref planned_start) = input.planned_start {
         sets.push("planned_start = ?".into());
-        values.push(planned_start.clone().into());
+        values.push(
+            super::time::stored_planned_time(Some(planned_start), super::time::CODE_PLANNED_START_UNREADABLE)?.into(),
+        );
     }
     if let Some(ref planned_end) = input.planned_end {
         sets.push("planned_end = ?".into());
-        values.push(planned_end.clone().into());
+        values.push(
+            super::time::stored_planned_time(Some(planned_end), super::time::CODE_PLANNED_END_UNREADABLE)?.into(),
+        );
     }
     if let Some(ref shift) = input.shift {
         sets.push("shift = ?".into());

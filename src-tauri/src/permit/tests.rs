@@ -315,14 +315,14 @@ async fn a_handover_is_signed_from_the_session_with_listed_roles_and_a_note() {
         received_by_id: receiver,
     };
 
-    // The list ships empty: no role is accepted until the plant adds its own.
+    // A role that is not in the list is refused (the list starts with the three starter roles).
     let err = queries::append_permit_handover_log(
         &db,
         input("Maintenance", "Operations", "Zone left clean", None),
         APPLIER,
     )
     .await
-    .expect_err("empty list");
+    .expect_err("Operations is not in the list");
     assert_eq!(refusal_code(err), crate::permit::handover_roles::CODE_ROLE_NOT_IN_LIST);
 
     add_handover_role(&db, "Maintenance").await;
@@ -471,10 +471,206 @@ async fn stored_handover_roles_are_adopted_and_flagged_without_rewrite() {
         .await
         .expect("roles");
     let codes: Vec<_> = roles.iter().map(|r| (r.code.as_str(), r.review_required)).collect();
-    assert_eq!(codes, [("Exploitation", true), ("Équipe nuit", true)]);
+    // The starter roles (migration 239) first; "Exploitation" is one of them, so it is not added twice.
+    assert_eq!(
+        codes,
+        [
+            ("Maintenance", true),
+            ("Exploitation", true),
+            ("HSE", true),
+            ("Équipe nuit", true)
+        ]
+    );
     let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
     assert_eq!(listed[0].handed_from_role, "Équipe nuit");
+    assert_eq!(listed[0].handed_from_label.as_deref(), Some("Équipe nuit"));
     assert_eq!(listed[0].signed_by_id, None, "no signer invented");
+}
+
+/// A stored hand-over shows its roles' labels from the plant's list even after a role is
+/// deactivated or left out of a newer published version of the list; the newest published version
+/// gives the label, a draft never does, and a code in no version has no label (shown as stored).
+#[tokio::test]
+async fn handover_role_labels_resolve_over_inactive_roles_and_older_versions() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-HO4").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let wp = set_status(&db, &wp, "closed").await.expect("close");
+    add_handover_role(&db, "Operations").await;
+    let exec = |sql: &'static str| {
+        let db = &db;
+        async move {
+            db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+                .await
+                .expect(sql);
+        }
+    };
+    exec(
+        "UPDATE reference_values SET label = 'Opérations' WHERE code = 'Operations' AND set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+         WHERE d.code = 'PERMIT.HANDOVER_ROLES')",
+    )
+    .await;
+    queries::append_permit_handover_log(
+        &db,
+        PermitHandoverLogInput {
+            permit_id: wp.id,
+            handed_from_role: "maintenance".into(),
+            handed_to_role: "Operations".into(),
+            confirmation_note: "Zone left clean".into(),
+            received_by_id: None,
+        },
+        APPLIER,
+    )
+    .await
+    .expect("handover");
+    let labels =
+        |log: &crate::permit::domain::PermitHandoverLog| (log.handed_from_label.clone(), log.handed_to_label.clone());
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    assert_eq!(
+        labels(&listed[0]),
+        (Some("Maintenance".into()), Some("Opérations".into()))
+    );
+
+    // "Operations" is deactivated, then a new version of the list is published without it and
+    // with "Maintenance" renamed; a draft version renames "Operations" again.
+    exec(
+        "UPDATE reference_values SET is_active = 0 WHERE code = 'Operations' AND set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+         WHERE d.code = 'PERMIT.HANDOVER_ROLES')",
+    )
+    .await;
+    exec(
+        "UPDATE reference_sets SET status = 'superseded' WHERE status = 'published' AND domain_id = \
+         (SELECT id FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES')",
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_sets (domain_id, version_no, status, effective_from, created_at, published_at) \
+         SELECT id, 2, 'published', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z' \
+           FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES'",
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_sets (domain_id, version_no, status, effective_from, created_at) \
+         SELECT id, 3, 'draft', '2026-10-02T00:00:00Z', '2026-10-02T00:00:00Z' \
+           FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES'",
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active) \
+         SELECT rs.id, 'Maintenance', 'Maintenance mécanique', 1, 1 FROM reference_sets rs \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'PERMIT.HANDOVER_ROLES' AND rs.version_no = 2",
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active) \
+         SELECT rs.id, 'Operations', 'Brouillon', 1, 1 FROM reference_sets rs \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'PERMIT.HANDOVER_ROLES' AND rs.version_no = 3",
+    )
+    .await;
+    let roles = crate::permit::handover_roles::list_handover_roles(&db)
+        .await
+        .expect("roles");
+    assert_eq!(
+        roles.iter().map(|r| r.code.as_str()).collect::<Vec<_>>(),
+        ["Maintenance"],
+        "the form lists only active roles of the current version"
+    );
+
+    // A role code that no version of the list holds (e.g. written by hand) has no label.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+         confirmation_note, signed_at, row_version) VALUES ('ho4-unknown', ?, 'Inconnu', 'Operations', \
+         'Zone left clean', '2026-10-03T00:00:00Z', 1)",
+        [wp.id.into()],
+    ))
+    .await
+    .expect("log");
+
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    assert_eq!(listed.len(), 2);
+    assert_eq!(
+        labels(&listed[0]),
+        (Some("Maintenance mécanique".into()), Some("Opérations".into())),
+        "newest published version first; a role left out keeps its label; a draft is ignored"
+    );
+    assert_eq!(labels(&listed[1]), (None, Some("Opérations".into())));
+}
+
+/// A stored role whose exact code is in no version of the list (a free text in another case) gets
+/// the label of the code that matches it ignoring case; a code whose exact match is held only by an
+/// older version keeps that exact match's label, even when the newest version holds the same code
+/// in another case.
+#[tokio::test]
+async fn handover_role_labels_fall_back_to_the_code_ignoring_case_only_without_an_exact_match() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-HO5").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    let exec = |sql: String| {
+        let db = &db;
+        async move {
+            db.execute(Statement::from_string(DbBackend::Sqlite, sql.clone()))
+                .await
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+    };
+    // Written raw (an older version or another PC stored the text as typed): the hand-over form
+    // would store the list's own code.
+    exec(format!(
+        "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+         confirmation_note, signed_at, row_version) VALUES ('ho5-lower', {}, 'exploitation', 'Chef', \
+         'Zone left clean', '2026-10-03T00:00:00Z', 1)",
+        wp.id
+    ))
+    .await;
+    // "Chef" (exact) in the current version 1; then version 2 replaces it with "CHEF".
+    exec(
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active) \
+         SELECT rs.id, 'Chef', 'Chef (ancien)', 5, 1 FROM reference_sets rs \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'PERMIT.HANDOVER_ROLES' AND rs.status = 'published'"
+            .to_string(),
+    )
+    .await;
+    exec(
+        "UPDATE reference_sets SET status = 'superseded' WHERE status = 'published' AND domain_id = \
+         (SELECT id FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES')"
+            .to_string(),
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_sets (domain_id, version_no, status, effective_from, created_at, published_at) \
+         SELECT d.id, (SELECT MAX(version_no) + 1 FROM reference_sets WHERE domain_id = d.id), 'published', \
+                '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z' \
+           FROM reference_domains d WHERE d.code = 'PERMIT.HANDOVER_ROLES'"
+            .to_string(),
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active) \
+         SELECT rs.id, v.code, v.label, v.sort_order, 1 FROM reference_sets rs \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+           JOIN (SELECT 'Exploitation' AS code, 'Exploitation (nouveau)' AS label, 2 AS sort_order \
+                 UNION ALL SELECT 'CHEF', 'Chef (nouveau)', 5) v \
+          WHERE d.code = 'PERMIT.HANDOVER_ROLES' AND rs.status = 'published'"
+            .to_string(),
+    )
+    .await;
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    let log = listed.iter().find(|l| l.entity_sync_id == "ho5-lower").expect("log");
+    assert_eq!(
+        log.handed_from_label.as_deref(),
+        Some("Exploitation (nouveau)"),
+        "no exact match anywhere: the code ignoring case, from the newest version"
+    );
+    assert_eq!(
+        log.handed_to_label.as_deref(),
+        Some("Chef (ancien)"),
+        "the exact match of an older version wins over another case in the newest one"
+    );
 }
 
 #[tokio::test]
@@ -761,7 +957,9 @@ pub(super) async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_
             shift: None,
             shift_class_version_id: None,
             clear_shift: false,
-            expected_duration_hours: Some(8.0),
+            // Planned in the past: the permit gate judges now + this duration (CMMS Advisor rule),
+            // which the test permits (8 h from their creation) cover.
+            expected_duration_hours: Some(1.0),
             planned_crew_size: None,
             clear_crew_size: false,
             urgency_code: None,
@@ -1287,6 +1485,20 @@ async fn switching_the_isolation_rule_off_is_guarded_and_loto_is_locked() {
         queries::upsert_permit_type(&db, type_input(&hot, Some(false), Some("  ")), ADMIN_STEP_UP).await,
         "PERMIT_TYPE_ISOLATION_RELAX_REASON",
     );
+    // Shorter than the minimum (counted after trimming): refused, naming the minimum.
+    let err = queries::upsert_permit_type(&db, type_input(&hot, Some(false), Some("  too short ")), ADMIN_STEP_UP)
+        .await
+        .expect_err("short reason");
+    match err {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, "PERMIT_TYPE_ISOLATION_RELAX_REASON");
+            assert_eq!(
+                issues[0].params.get("min"),
+                Some(&crate::settings::catalog::MIN_REASON_CHARS.to_string())
+            );
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
     let before = scalar_i64(
         &db,
         "SELECT COUNT(*) FROM audit_events WHERE action_code = 'permit_type.energy_isolation.disabled'",
@@ -1306,6 +1518,57 @@ async fn switching_the_isolation_rule_off_is_guarded_and_loto_is_locked() {
     )
     .await;
     assert_eq!(after, before + 1, "audited");
+    // The type records who switched it off, when and why (sent with it, re-checked on arrival).
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM permit_types WHERE id = {} AND isolation_changed_by_id = {APPLIER} \
+                 AND isolation_changed_at IS NOT NULL \
+                 AND isolation_change_reason = 'Hot work on isolated lines only'",
+                hot.id
+            ),
+        )
+        .await,
+        1
+    );
+    // Turning it on again is a plain edit and keeps that record.
+    let on_again = queries::upsert_permit_type(&db, type_input(&off, Some(true), None), EDITOR)
+        .await
+        .expect("on again");
+    assert!(on_again.requires_energy_isolation);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM permit_types WHERE id = {} AND isolation_changed_by_id = {APPLIER}",
+                hot.id
+            ),
+        )
+        .await,
+        1
+    );
+    // Off again while the recorded switch-off is later than this PC's time (its clock is behind):
+    // refused, naming the time of the last change.
+    let ahead = (chrono::Utc::now() + chrono::Duration::minutes(5))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE permit_types SET isolation_changed_at = ? WHERE id = ?",
+        [ahead.into(), hot.id.into()],
+    ))
+    .await
+    .expect("record ahead");
+    assert_validation(
+        queries::upsert_permit_type(
+            &db,
+            type_input(&on_again, Some(false), Some("Hot work on isolated lines only")),
+            ADMIN_STEP_UP,
+        )
+        .await,
+        "PERMIT_TYPE_ISOLATION_CLOCK_BEHIND",
+    );
 
     // The shipped LOTO type can never stop requiring an isolation.
     assert_validation(
@@ -1762,8 +2025,9 @@ async fn a_change_of_the_three_person_chain_is_recorded_on_the_type() {
     assert_eq!(trace(plain.id).await, (None, None, None));
 }
 
-/// A plant-wide role holding `permissions`, granted to a new active account.
-async fn user_with(db: &DatabaseConnection, username: &str, permissions: &[&str]) -> i64 {
+/// A plant-wide role holding `permissions`, granted to a new active account (sync id
+/// `<username>-sync`).
+pub(super) async fn user_with(db: &DatabaseConnection, username: &str, permissions: &[&str]) -> i64 {
     for (sql, values) in [
         (
             "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
@@ -2026,4 +2290,719 @@ async fn backdate_three_person_change(db: &DatabaseConnection, type_id: i64) {
     ))
     .await
     .expect("backdate");
+}
+
+/// Owner decision: a work order does not start or resume on a permit that expires before its
+/// planned end (the work would outlive its protection). Without a planned end or an expected
+/// duration nothing is judged.
+#[tokio::test]
+async fn wo_gate_refuses_a_permit_expiring_before_the_planned_end() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-95").await;
+    let (wo_id, rv) = assigned_wo_requiring_permit(&db, asset).await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-95").await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let expires = wp.expires_at.clone().expect("expiry");
+    let set_planned_end = |end: Option<String>| {
+        let db = &db;
+        async move {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_orders SET planned_end = ? WHERE id = ?",
+                [end.into(), wo_id.into()],
+            ))
+            .await
+            .expect("planned end");
+        }
+    };
+
+    // Planned to end a day after the permit expires: refused, with the times.
+    set_planned_end(Some((chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339())).await;
+    let err = start(&db, wo_id, rv).await.expect_err("expires before the planned end");
+    match &err {
+        AppError::OrgValidationFailed(issues) => {
+            let issue = &issues[0];
+            assert_eq!(issue.code, "PERMIT_EXPIRES_BEFORE_PLANNED_END");
+            assert_eq!(issue.params.get("permit"), Some(&wp.code));
+            assert_eq!(issue.params.get("expires_at"), Some(&expires));
+            assert!(issue.params.contains_key("planned_end"));
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+    // A planned end typed without a zone (a form's local date and time) is read in this computer's
+    // time zone, as planning reads it, and judged; the refusal gives it as a stored (UTC) time.
+    let typed = (chrono::Local::now() + chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
+    set_planned_end(Some(typed.clone())).await;
+    let err = start(&db, wo_id, rv)
+        .await
+        .expect_err("typed local end after the expiry");
+    match &err {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, "PERMIT_EXPIRES_BEFORE_PLANNED_END");
+            assert_eq!(issues[0].params.get("planned_end"), Some(&utc_of_local(&typed)));
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+    // Typed without a zone, before the expiry: not refused as unreadable (checked on the gate
+    // itself, so the order stays ready for the cases below).
+    let typed_soon = (chrono::Local::now() + chrono::Duration::hours(1))
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
+    set_planned_end(Some(typed_soon)).await;
+    crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .expect("typed local end before the expiry");
+    // An unreadable planned end (text, or a bare day with no time) is refused with its own code
+    // ("re-plan the dates"), never guessed.
+    for bad in ["someday", "2026-10-20"] {
+        set_planned_end(Some(bad.into())).await;
+        let err = start(&db, wo_id, rv).await.expect_err("unreadable planned end");
+        match &err {
+            AppError::OrgValidationFailed(issues) => {
+                assert_eq!(issues[0].code, "WO_PLANNED_END_UNREADABLE", "{bad}");
+                assert_eq!(issues[0].params.get("value").map(String::as_str), Some(bad));
+            }
+            other => panic!("expected a coded refusal for {bad}, got {other:?}"),
+        }
+    }
+    // No planned end and no expected duration: not judged.
+    set_planned_end(None).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET expected_duration_hours = NULL WHERE id = ?",
+        [wo_id.into()],
+    ))
+    .await
+    .expect("no duration");
+    start(&db, wo_id, rv).await.expect("no planned end");
+
+    // Resume: the same gate.
+    let actor = admin_id(&db).await;
+    let rv = scalar_i64(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await;
+    let reason = scalar_i64(
+        &db,
+        "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+         JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' AND rv.is_active = 1 AND rs.status = 'published' LIMIT 1",
+    )
+    .await;
+    let paused = execution::pause_wo(
+        &db,
+        execution::WoPauseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            delay_reason_id: reason,
+            comment: None,
+        },
+    )
+    .await
+    .expect("pause");
+    set_planned_end(Some((chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339())).await;
+    let resume = |rv: i64| {
+        execution::resume_wo(
+            &db,
+            execution::WoResumeInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                estimated_remaining_hours: None,
+            },
+        )
+    };
+    assert_validation(resume(paused.row_version).await, "PERMIT_EXPIRES_BEFORE_PLANNED_END");
+    // Planned to end before the expiry: resumes.
+    set_planned_end(Some((chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339())).await;
+    resume(paused.row_version).await.expect("covered by the permit");
+}
+
+/// A date and time typed without a zone (`YYYY-MM-DDTHH:MM`), as the UTC instant this computer's
+/// time zone gives it, in the stored form.
+fn utc_of_local(typed: &str) -> String {
+    let local = chrono::NaiveDateTime::parse_from_str(typed, "%Y-%m-%dT%H:%M").expect("typed");
+    chrono::TimeZone::from_local_datetime(&chrono::Local, &local)
+        .earliest()
+        .expect("local time")
+        .with_timezone(&chrono::Utc)
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+/// CMMS Advisor decision (2026-10-19): without a planned end, the end of the work is the moment of
+/// the start or resume plus the expected duration; the refusal names that estimated end. Without
+/// either nothing is judged, but an expired permit is always refused.
+#[tokio::test]
+async fn wo_gate_judges_the_estimated_end_without_a_planned_end() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-96").await;
+    let (wo_id, rv) = assigned_wo_requiring_permit(&db, asset).await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-96").await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let expires = wp.expires_at.clone().expect("expiry");
+    let set_plan = |end: Option<&'static str>, hours: Option<f64>| {
+        let db = &db;
+        async move {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_orders SET planned_end = ?, expected_duration_hours = ? WHERE id = ?",
+                [end.into(), hours.into(), wo_id.into()],
+            ))
+            .await
+            .expect("plan");
+        }
+    };
+
+    // No planned end; 48 h of work from now outlives the permit (8 h): refused, naming the
+    // estimated end and the duration it was computed with.
+    set_plan(None, Some(48.0)).await;
+    let before = chrono::Utc::now();
+    let err = start(&db, wo_id, rv).await.expect_err("estimated end after the expiry");
+    match &err {
+        AppError::OrgValidationFailed(issues) => {
+            let issue = &issues[0];
+            assert_eq!(issue.code, "PERMIT_EXPIRES_BEFORE_ESTIMATED_END");
+            assert_eq!(issue.params.get("permit"), Some(&wp.code));
+            assert_eq!(issue.params.get("expires_at"), Some(&expires));
+            assert_eq!(issue.params.get("hours").map(String::as_str), Some("48"));
+            let end = crate::settings::site::instant(issue.params.get("end_at").expect("end_at")).expect("time");
+            assert!(end >= before + chrono::Duration::hours(48) - chrono::Duration::seconds(1));
+            assert!(end <= chrono::Utc::now() + chrono::Duration::hours(48));
+            assert!(issue.message.contains("estimated end"), "{}", issue.message);
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+    // A zero duration is no estimate: not judged.
+    set_plan(None, Some(0.0)).await;
+    crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .expect("no estimate");
+    // A planned end later than now + the duration wins: planned in two hours (before the 8 h
+    // expiry), one hour of work: judged on the planned end, covered.
+    let in_two_hours = (chrono::Utc::now() + chrono::Duration::hours(2))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET planned_end = ?, expected_duration_hours = 1.0 WHERE id = ?",
+        [in_two_hours.into(), wo_id.into()],
+    ))
+    .await
+    .expect("plan");
+    crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .expect("judged on the planned end");
+    // A planned end already past no longer hides the duration (review SF1): 48 h of work from now
+    // outlives the permit.
+    set_plan(Some("2026-04-10T16:00:00Z"), Some(48.0)).await;
+    assert_validation(
+        crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await,
+        "PERMIT_EXPIRES_BEFORE_ESTIMATED_END",
+    );
+
+    // Resume: judged at the resume moment.
+    set_plan(None, Some(1.0)).await;
+    start(&db, wo_id, rv).await.expect("one hour of work is covered");
+    let actor = admin_id(&db).await;
+    let rv = scalar_i64(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await;
+    let reason = scalar_i64(
+        &db,
+        "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+         JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' AND rv.is_active = 1 AND rs.status = 'published' LIMIT 1",
+    )
+    .await;
+    let pause = |rv: i64| {
+        execution::pause_wo(
+            &db,
+            execution::WoPauseInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                delay_reason_id: reason,
+                comment: None,
+            },
+        )
+    };
+    let resume = |rv: i64| {
+        execution::resume_wo(
+            &db,
+            execution::WoResumeInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                estimated_remaining_hours: None,
+            },
+        )
+    };
+    let paused = pause(rv).await.expect("pause");
+    set_plan(None, Some(10.0)).await;
+    assert_validation(resume(paused.row_version).await, "PERMIT_EXPIRES_BEFORE_ESTIMATED_END");
+    // Neither a planned end nor a duration: not judged.
+    set_plan(None, None).await;
+    let resumed = resume(paused.row_version).await.expect("not judged");
+
+    // An expired permit is always refused, with or without an end.
+    let paused = pause(resumed.row_version).await.expect("pause again");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET expires_at = ? WHERE id = ?",
+        [
+            (chrono::Utc::now() - chrono::Duration::minutes(1))
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string()
+                .into(),
+            wp.id.into(),
+        ],
+    ))
+    .await
+    .expect("expire");
+    assert_validation(resume(paused.row_version).await, "PERMIT_EXPIRED");
+}
+
+/// An instant in the stored form (UTC, `Z`, whole seconds).
+fn z(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// Review SF1, CMMS Advisor rule: the end of the work is the later of the planned end and the
+/// moment of the start, resume or reopening plus the expected duration (or the estimated remaining
+/// time entered on a resume or reopening). The overnight case: planned yesterday 08:00-12:00 (4 h),
+/// on hold overnight, resumed this morning on a permit expiring five minutes later: refused (the
+/// old rule judged the past planned end and let it through). A remaining time entered on the
+/// resume replaces the duration for this check only: refused at 0 or less, accepted when it fits,
+/// recorded on the resume's history row (who, when, the value), the planned dates and the expected
+/// duration unchanged. A planned end already past with no duration: refused with "re-plan the
+/// dates or enter the duration / remaining time". The same on a reopening.
+#[tokio::test]
+async fn wo_gate_judges_late_work_on_the_moment_plus_the_duration_or_the_remaining_time() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-98").await;
+    let (wo_id, rv) = assigned_wo_requiring_permit(&db, asset).await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-98").await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let actor = admin_id(&db).await;
+    let now = chrono::Utc::now();
+    // Planned "yesterday 08:00-12:00": 25 h and 21 h ago.
+    let planned_start = z(now - chrono::Duration::hours(25));
+    let planned_end = z(now - chrono::Duration::hours(21));
+    let plan = |hours: Option<f64>| {
+        let db = &db;
+        let (planned_start, planned_end) = (planned_start.clone(), planned_end.clone());
+        async move {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_orders SET planned_start = ?, planned_end = ?, expected_duration_hours = ? WHERE id = ?",
+                [planned_start.into(), planned_end.into(), hours.into(), wo_id.into()],
+            ))
+            .await
+            .expect("plan");
+        }
+    };
+    let code_of = |res: Result<crate::wo::domain::WorkOrder, AppError>| match res {
+        Err(AppError::OrgValidationFailed(issues)) => issues[0].clone(),
+        other => panic!("expected a coded refusal, got {other:?}"),
+    };
+
+    // A start after the planned end with no duration: the end of the work is unknown, refused with
+    // its own code, which offers both ways out.
+    plan(None).await;
+    match crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await {
+        Err(AppError::OrgValidationFailed(issues)) => {
+            assert_eq!(issues[0].code, "WO_PLANNED_END_PASSED");
+            assert_eq!(issues[0].params.get("planned_end"), Some(&planned_end));
+            assert_eq!(issues[0].params.get("permit"), Some(&wp.code));
+            assert!(issues[0].message.contains("re-plan"), "{}", issues[0].message);
+            assert!(issues[0].message.contains("expected duration"), "{}", issues[0].message);
+        }
+        other => panic!("expected WO_PLANNED_END_PASSED, got {other:?}"),
+    }
+    // With 4 h of work: now + 4 h is covered by the 8 h permit.
+    plan(Some(4.0)).await;
+    start(&db, wo_id, rv).await.expect("4 h from now is covered");
+
+    // On hold overnight; this morning the permit expires in five minutes.
+    let reason = scalar_i64(
+        &db,
+        "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+         JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' AND rv.is_active = 1 AND rs.status = 'published' LIMIT 1",
+    )
+    .await;
+    let rv = scalar_i64(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await;
+    let paused = execution::pause_wo(
+        &db,
+        execution::WoPauseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            delay_reason_id: reason,
+            comment: None,
+        },
+    )
+    .await
+    .expect("pause");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET expires_at = ? WHERE id = ?",
+        [
+            z(chrono::Utc::now() + chrono::Duration::minutes(5)).into(),
+            wp.id.into(),
+        ],
+    ))
+    .await
+    .expect("expires in five minutes");
+    let resume = |rv: i64, remaining: Option<f64>| {
+        execution::resume_wo(
+            &db,
+            execution::WoResumeInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                estimated_remaining_hours: remaining,
+            },
+        )
+    };
+    // The full 4 h from now outlives the permit: refused, naming the hours.
+    let issue = code_of(resume(paused.row_version, None).await);
+    assert_eq!(issue.code, "PERMIT_EXPIRES_BEFORE_ESTIMATED_END");
+    assert_eq!(issue.params.get("hours").map(String::as_str), Some("4"));
+    assert!(issue.message.contains("the expected duration"), "{}", issue.message);
+    assert!(issue.message.contains("extend this permit"), "{}", issue.message);
+    // An estimated remaining time of 0 or less (or not a number) is refused.
+    for bad in [0.0, -1.0, f64::NAN] {
+        assert_eq!(
+            code_of(resume(paused.row_version, Some(bad)).await).code,
+            "WO_REMAINING_TIME_INVALID",
+            "{bad}"
+        );
+    }
+    // Two hours remaining still outlive the permit: refused, naming the remaining time.
+    let issue = code_of(resume(paused.row_version, Some(2.0)).await);
+    assert_eq!(issue.code, "PERMIT_EXPIRES_BEFORE_ESTIMATED_END");
+    assert_eq!(issue.params.get("hours").map(String::as_str), Some("2"));
+    assert!(issue.message.contains("remaining time"), "{}", issue.message);
+    // Three minutes remaining fit before the expiry: resumed.
+    let resumed = resume(paused.row_version, Some(0.05)).await.expect("three minutes fit");
+    assert_eq!(resumed.status_code.as_deref(), Some("in_progress"));
+    // Recorded on the resume's history row (who, when, the value); the planned dates and the
+    // expected duration are unchanged.
+    let recorded = |action: &'static str| {
+        let db = &db;
+        async move {
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT actor_id, acted_at, estimated_remaining_hours FROM wo_state_transition_log \
+                 WHERE wo_id = ? AND action = ? AND to_status = 'in_progress' ORDER BY id DESC LIMIT 1",
+                [wo_id.into(), action.into()],
+            ))
+            .await
+            .expect("query")
+            .map(|r| {
+                (
+                    r.try_get::<i64>("", "actor_id").expect("actor"),
+                    r.try_get::<String>("", "acted_at").expect("acted_at"),
+                    r.try_get::<Option<f64>>("", "estimated_remaining_hours")
+                        .expect("hours"),
+                )
+            })
+            .expect("transition row")
+        }
+    };
+    let (who, when, hours) = recorded("resume").await;
+    assert_eq!((who, hours), (actor, Some(0.05)));
+    assert!(crate::settings::site::instant(&when).is_some(), "{when}");
+    assert_eq!(
+        scalar_text(
+            &db,
+            &format!("SELECT planned_end || '|' || expected_duration_hours FROM work_orders WHERE id = {wo_id}")
+        )
+        .await,
+        format!("{planned_end}|4.0")
+    );
+    // A start (or a resume without a remaining time) records none.
+    assert_eq!(recorded("start").await.2, None);
+
+    // Planned end past and no duration on a resume: refused with the code that offers the
+    // remaining time; a remaining time that fits lets it resume.
+    let paused = execution::pause_wo(
+        &db,
+        execution::WoPauseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: resumed.row_version,
+            delay_reason_id: reason,
+            comment: None,
+        },
+    )
+    .await
+    .expect("pause again");
+    plan(None).await;
+    let issue = code_of(resume(paused.row_version, None).await);
+    assert_eq!(issue.code, "WO_PLANNED_END_PASSED");
+    assert!(issue.message.contains("remaining time"), "{}", issue.message);
+    let resumed = resume(paused.row_version, Some(0.05))
+        .await
+        .expect("remaining time fits");
+
+    // Reopening to in progress: the same rule, with its own remaining time.
+    let completed = scalar_i64(&db, "SELECT id FROM work_order_statuses WHERE code = 'completed'").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET status_id = ? WHERE id = ?",
+        [completed.into(), wo_id.into()],
+    ))
+    .await
+    .expect("completed");
+    let reopen = |rv: i64, remaining: Option<f64>| {
+        crate::wo::closeout::reopen_wo(
+            &db,
+            crate::wo::closeout::WoReopenInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                reason: "Leak came back".into(),
+                target_status: None,
+                estimated_remaining_hours: remaining,
+            },
+        )
+    };
+    let rv = resumed.row_version;
+    assert_eq!(code_of(reopen(rv, None).await).code, "WO_PLANNED_END_PASSED");
+    plan(Some(4.0)).await;
+    assert_eq!(
+        code_of(reopen(rv, None).await).code,
+        "PERMIT_EXPIRES_BEFORE_ESTIMATED_END"
+    );
+    assert_eq!(code_of(reopen(rv, Some(-2.0)).await).code, "WO_REMAINING_TIME_INVALID");
+    let reopened = reopen(rv, Some(0.05)).await.expect("remaining time fits");
+    assert_eq!(reopened.status_code.as_deref(), Some("in_progress"));
+    let (who, _, hours) = recorded("reopen").await;
+    assert_eq!((who, hours), (actor, Some(0.05)));
+    assert_eq!(
+        scalar_text(
+            &db,
+            &format!("SELECT CAST(expected_duration_hours AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await,
+        "4.0"
+    );
+}
+
+/// The planned dates typed in the work order form (a `datetime-local` value, no zone) are stored as
+/// UTC instants read in this computer's time zone (never read as UTC); text that is not a date and
+/// time is refused with a coded "re-plan the dates", at create and at draft edit.
+#[tokio::test]
+async fn planned_dates_typed_without_a_zone_are_stored_as_instants() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-97").await;
+    let actor = admin_id(&db).await;
+    let input = |start: Option<&str>, end: Option<&str>| WoCreateInput {
+        type_code: "corrective".into(),
+        equipment_id: Some(asset),
+        location_id: None,
+        source_di_id: None,
+        source_inspection_anomaly_id: None,
+        source_ram_ishikawa_diagram_id: None,
+        source_ishikawa_flow_node_id: None,
+        source_rca_cause_text: None,
+        entity_id: Some(1),
+        planner_id: None,
+        urgency_code: Some("normal".into()),
+        subtype_code: None,
+        title: "Typed dates".into(),
+        description: None,
+        notes: None,
+        planned_start: start.map(str::to_string),
+        planned_end: end.map(str::to_string),
+        shift: None,
+        expected_duration_hours: None,
+        creator_id: actor,
+        requires_permit: Some(false),
+    };
+    let planned = |column: &'static str, id: i64| {
+        let db = &db;
+        async move { scalar_text(db, &format!("SELECT {column} FROM work_orders WHERE id = {id}")).await }
+    };
+    let wo = crate::wo::queries::create_work_order(&db, input(Some("2026-10-20T08:00"), Some("2026-10-20T14:30")))
+        .await
+        .expect("create");
+    assert_eq!(planned("planned_start", wo.id).await, utc_of_local("2026-10-20T08:00"));
+    assert_eq!(planned("planned_end", wo.id).await, utc_of_local("2026-10-20T14:30"));
+    // An instant with an offset is stored in UTC.
+    let other = crate::wo::queries::create_work_order(&db, input(None, Some("2026-10-20T14:30:00+02:00")))
+        .await
+        .expect("create");
+    assert_eq!(planned("planned_end", other.id).await, "2026-10-20T12:30:00Z");
+    for (start, end, code) in [
+        (Some("tomorrow"), None, "WO_PLANNED_START_UNREADABLE"),
+        (None, Some("2026-10-20"), "WO_PLANNED_END_UNREADABLE"),
+    ] {
+        match crate::wo::queries::create_work_order(&db, input(start, end)).await {
+            Err(AppError::OrgValidationFailed(issues)) => assert_eq!(issues[0].code, code),
+            other => panic!("expected {code}, got {other:?}"),
+        }
+    }
+
+    // Draft edit: the same; a blank date clears it.
+    let draft = |id: i64, rv: i64, end: &str| crate::wo::domain::WoDraftUpdateInput {
+        id,
+        expected_row_version: rv,
+        title: None,
+        type_code: None,
+        equipment_id: None,
+        location_id: None,
+        description: None,
+        planned_start: None,
+        planned_end: Some(end.to_string()),
+        shift: None,
+        expected_duration_hours: None,
+        notes: None,
+        urgency_code: None,
+        subtype_code: None,
+        requires_permit: None,
+    };
+    let edited = crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, wo.row_version, "2026-10-21T09:15"))
+        .await
+        .expect("edit");
+    assert_eq!(planned("planned_end", wo.id).await, utc_of_local("2026-10-21T09:15"));
+    match crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, edited.row_version, "soon")).await {
+        Err(AppError::OrgValidationFailed(issues)) => assert_eq!(issues[0].code, "WO_PLANNED_END_UNREADABLE"),
+        other => panic!("expected WO_PLANNED_END_UNREADABLE, got {other:?}"),
+    }
+    crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, edited.row_version, "  "))
+        .await
+        .expect("clear");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM work_orders WHERE id = {} AND planned_end IS NULL",
+                wo.id
+            )
+        )
+        .await,
+        1
+    );
+}
+
+/// A permit type's code is fixed once the type exists (plant rules, permits and work orders name the
+/// type by it): a save that changes it is refused; the same code with spaces around it is kept as
+/// stored.
+#[tokio::test]
+async fn a_permit_types_code_cannot_be_changed() {
+    let db = setup().await;
+    let hot = queries::list_permit_types(&db)
+        .await
+        .expect("types")
+        .into_iter()
+        .find(|t| t.code == "hot_work")
+        .expect("hot_work");
+    let mut renamed = type_input(&hot, None, None);
+    renamed.code = "hot_work_2".into();
+    let err = queries::upsert_permit_type(&db, renamed, EDITOR)
+        .await
+        .expect_err("code change");
+    match err {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, "PERMIT_TYPE_CODE_LOCKED");
+            assert_eq!(issues[0].params.get("type").map(String::as_str), Some("hot_work"));
+            assert_eq!(issues[0].params.get("code").map(String::as_str), Some("hot_work_2"));
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+    let mut padded = type_input(&hot, None, None);
+    padded.code = "  hot_work ".into();
+    padded.name = "Hot work (renamed)".into();
+    let saved = queries::upsert_permit_type(&db, padded, EDITOR)
+        .await
+        .expect("same code");
+    assert_eq!(saved.code, "hot_work");
+    assert_eq!(saved.name, "Hot work (renamed)");
+}
+
+/// The hand-over receiver search ignores case and accents and reads "%" and "_" as plain
+/// characters; the total counts every match, whatever the page.
+#[tokio::test]
+async fn the_receiver_search_ignores_case_and_accents_and_has_no_wildcards() {
+    let db = setup().await;
+    for (id, login, name) in [
+        (501, "elodie.m", "Élodie Martin"),
+        (502, "elodie.x", "elodie_x"),
+        (503, "zoe", "Zoé 100%"),
+    ] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO user_accounts (id, entity_sync_id, username, display_name, identity_mode, is_active, \
+             is_admin, force_password_change, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, 'local', 1, 0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [
+                id.into(),
+                format!("user-sync-{login}").into(),
+                login.into(),
+                name.into(),
+            ],
+        ))
+        .await
+        .expect("account");
+    }
+    let names = |search: &'static str, limit: Option<u64>, offset: Option<u64>| {
+        let db = &db;
+        async move {
+            let page = queries::list_handover_receivers(db, APPLIER, Some(search.into()), limit, offset)
+                .await
+                .expect("receivers");
+            (
+                page.items.into_iter().map(|r| r.display_name).collect::<Vec<_>>(),
+                page.total,
+            )
+        }
+    };
+    assert_eq!(
+        names("ELODIE", None, None).await,
+        (vec!["Élodie Martin".to_string(), "elodie_x".to_string()], 2)
+    );
+    assert_eq!(
+        names("élodie m", None, None).await,
+        (vec!["Élodie Martin".to_string()], 1)
+    );
+    assert_eq!(names("_", None, None).await, (vec!["elodie_x".to_string()], 1));
+    assert_eq!(names("%", None, None).await, (vec!["Zoé 100%".to_string()], 1));
+    assert_eq!(names("ZOE", None, None).await, (vec!["Zoé 100%".to_string()], 1));
+    // One page of one, the second match: the total still counts both.
+    assert_eq!(
+        names("elodie", Some(1), Some(1)).await,
+        (vec!["elodie_x".to_string()], 2)
+    );
+}
+
+/// The three-person change reason refusal names the minimum the server applies, so the screen can
+/// show it whatever its own copy of the rule.
+#[tokio::test]
+async fn the_three_person_reason_refusal_names_the_minimum() {
+    let db = setup().await;
+    let hot = queries::list_permit_types(&db)
+        .await
+        .expect("types")
+        .into_iter()
+        .find(|t| t.code == "hot_work")
+        .expect("hot_work");
+    let err = queries::upsert_permit_type(&db, chain_input(&hot, Some(true), Some("too short")), ADMIN_STEP_UP)
+        .await
+        .expect_err("short");
+    match err {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, "PERMIT_TYPE_THREE_PERSON_REASON");
+            assert_eq!(
+                issues[0].params.get("min"),
+                Some(&crate::settings::catalog::MIN_REASON_CHARS.to_string())
+            );
+            assert_eq!(issues[0].params.get("type").map(String::as_str), Some("hot_work"));
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
 }

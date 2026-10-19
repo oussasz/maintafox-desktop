@@ -41,6 +41,7 @@ import {
   WoCompletionGatesChecklist,
   completionGatesProgress,
 } from "@/components/wo/WoCompletionGatesChecklist";
+import { WoRemainingHoursField, parseRemainingHours } from "@/components/wo/WoRemainingHoursField";
 import { useWoAccess } from "@/components/wo/WoSiteScope";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useSession } from "@/hooks/use-session";
@@ -172,6 +173,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const [reopening, setReopening] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
   const [reopenTarget, setReopenTarget] = useState<"in_progress" | "planning">("in_progress");
+  // Reopening to in progress: optional estimated remaining time for the permit gate.
+  const [reopenRemaining, setReopenRemaining] = useState("");
   const [reopenError, setReopenError] = useState<string | null>(null);
   const [completionGates, setCompletionGates] = useState<WoCompletionGate[]>([]);
   const [links, setLinks] = useState<Pick<
@@ -407,6 +410,11 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
       setReopenError(t("closeout.reopenReasonRequired"));
       return;
     }
+    const remaining = reopenTarget === "in_progress" ? parseRemainingHours(reopenRemaining) : null;
+    if (remaining === "invalid") {
+      setReopenError(t("remainingTime.invalid"));
+      return;
+    }
     setReopening(true);
     setReopenError(null);
     withStepUp(() =>
@@ -416,11 +424,13 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         expected_row_version: currentWo.row_version,
         reason,
         target_status: reopenTarget,
+        estimated_remaining_hours: remaining,
       }),
     )
       .then(async (updated) => {
         setCurrentWo(updated);
         setReopenReason("");
+        setReopenRemaining("");
         await refreshActiveWo();
       })
       .catch((err: unknown) => setReopenError(describeAppError(err).title))
@@ -431,6 +441,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     info?.user_id,
     reopenReason,
     reopenTarget,
+    reopenRemaining,
     currentWo.id,
     currentWo.row_version,
     refreshActiveWo,
@@ -1041,12 +1052,25 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
                   placeholder={t("closeout.reopenReasonPlaceholder")}
                 />
               </div>
+              {reopenTarget === "in_progress" && (
+                <WoRemainingHoursField
+                  id="wo-reopen-remaining-hours"
+                  value={reopenRemaining}
+                  onChange={setReopenRemaining}
+                  disabled={reopening}
+                />
+              )}
             </div>
             {reopenError && <ErrorBanner message={reopenError} />}
             <Button
               variant="outline"
               onClick={handleReopen}
-              disabled={reopening || !reopenReason.trim()}
+              disabled={
+                reopening ||
+                !reopenReason.trim() ||
+                (reopenTarget === "in_progress" &&
+                  parseRemainingHours(reopenRemaining) === "invalid")
+              }
             >
               {reopening ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

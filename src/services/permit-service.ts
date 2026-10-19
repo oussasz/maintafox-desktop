@@ -82,6 +82,10 @@ const PermitHandoverLogSchema = z.object({
   permit_id: z.number(),
   handed_from_role: z.string(),
   handed_to_role: z.string(),
+  /** Labels of the roles in the plant's list (any published version, deactivated roles included);
+   * null when the stored code is in no version of the list. */
+  handed_from_label: z.string().nullable(),
+  handed_to_label: z.string().nullable(),
   confirmation_note: z.string(),
   signed_at: z.string(),
   /** Who recorded it (null on hand-overs recorded before the signer was kept). */

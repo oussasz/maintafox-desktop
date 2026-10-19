@@ -56,6 +56,7 @@ import {
 } from "@/components/wo/WoExecutionControls";
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
+import { WoResumeDialog } from "@/components/wo/WoResumeDialog";
 import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
 import { WoNoSiteBadge, useWoAccess } from "@/components/wo/WoSiteScope";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
@@ -103,6 +104,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
   const openCompletionDialog = useWoStore((s) => s.openCompletionDialog);
 
   const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [showResumeDialog, setShowResumeDialog] = useState(false);
   const [showReadinessDialog, setShowReadinessDialog] = useState(false);
   const [readinessDialogBlocking, setReadinessDialogBlocking] = useState<string[]>([]);
   const [closeoutGates, setCloseoutGates] = useState<WoCompletionGate[]>([]);
@@ -514,7 +516,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                   setActiveTab("execution");
                   executionRef.current?.openHoldForm();
                 }}
-                onResume={() => void lifecycle.resume()}
+                onResume={() => setShowResumeDialog(true)}
                 onComplete={openCompletionDialog}
                 onCancel={() => setShowCancelDialog(true)}
               />
@@ -550,6 +552,15 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
         </DialogContent>
       </Dialog>
 
+      <WoResumeDialog
+        open={showResumeDialog}
+        busy={footerBusy}
+        onOpenChange={setShowResumeDialog}
+        onConfirm={(remainingHours) => {
+          setShowResumeDialog(false);
+          void lifecycle.resume(remainingHours);
+        }}
+      />
       <WoCompletionDialog wo={wo} />
       <WoCancelDialog wo={wo} open={showCancelDialog} onOpenChange={setShowCancelDialog} />
     </>

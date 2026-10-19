@@ -36,6 +36,7 @@ import {
   PERMIT_REFUSAL_NAMESPACES,
   formatAssetLabel,
 } from "@/components/permits/permit-rules";
+import { usePermitTypeName } from "@/components/permits/permit-type-name";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
@@ -87,6 +88,7 @@ const BACKEND_MAX = 2000;
 
 export function PermitsPage() {
   const { t } = useTranslation("permits");
+  const typeName = usePermitTypeName();
   const { formatDateTime, formatNumber, formatPercent } = useFormatters();
   const [searchParams, setSearchParams] = useSearchParams();
   const { can } = usePermissions();
@@ -284,10 +286,14 @@ export function PermitsPage() {
       },
       {
         id: "type",
-        accessorFn: (row) => row.permit_type_name ?? "",
+        accessorFn: (row) => typeName(row.permit_type_code, row.permit_type_name),
         header: t("columns.type"),
         cell: ({ row }) => (
-          <span className="text-xs">{row.original.permit_type_name ?? t("detail.none")}</span>
+          <span className="text-xs">
+            {row.original.permit_type_name == null
+              ? t("detail.none")
+              : typeName(row.original.permit_type_code, row.original.permit_type_name)}
+          </span>
         ),
       },
       {
@@ -326,7 +332,7 @@ export function PermitsPage() {
         ),
       },
     ],
-    [t, statusLabel, formatDateTime],
+    [t, statusLabel, formatDateTime, typeName],
   );
 
   const filterDefs = useMemo<SmartFilterDef[]>(
@@ -346,7 +352,7 @@ export function PermitsPage() {
         id: "type",
         kind: "select",
         label: t("filters.type"),
-        options: types.map((ty) => ({ value: String(ty.id), label: ty.name })),
+        options: types.map((ty) => ({ value: String(ty.id), label: typeName(ty.code, ty.name) })),
         value: typeFilter,
         onChange: (v) => {
           setTypeFilter(v);
@@ -354,7 +360,7 @@ export function PermitsPage() {
         },
       },
     ],
-    [t, statusLabel, statusFilter, typeFilter, types],
+    [t, statusLabel, statusFilter, typeFilter, types, typeName],
   );
 
   const resetFilters = () => {

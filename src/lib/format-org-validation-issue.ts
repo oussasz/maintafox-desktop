@@ -1,11 +1,14 @@
 /**
  * Localize org validation / mutation issues for end users.
  * Prefer i18n by stable `code` + `params`; fall back to the English `message`.
+ * Params that carry a stored UTC timestamp (by name, `DATE_TIME_PARAMS`) are shown as local date
+ * and time in the user's language.
  */
 
 import type { TFunction } from "i18next";
 
 import { i18n } from "@/i18n/config";
+import { localizeDateTimeParams } from "@/utils/date-params";
 import type { OrgValidationIssue } from "@shared/ipc-types";
 
 export type OrgIssueLike = Pick<OrgValidationIssue, "code" | "message"> & {
@@ -31,6 +34,13 @@ function issueKeys(code: string, orgNs: string): string[] {
   ];
 }
 
+/** The issue's params for display: instants in the user's language and time zone. */
+function displayParams(params: Record<string, string> | null | undefined): Record<string, string> {
+  // "fr" | "en" (the formatters' locale codes), also when i18next reports a region ("en-US").
+  const language = (i18n.resolvedLanguage || i18n.language || "").split("-")[0] ?? "";
+  return localizeDateTimeParams(params ?? {}, language);
+}
+
 function translateIssueKey(
   code: string,
   params: Record<string, string>,
@@ -47,7 +57,7 @@ function translateIssueKey(
 }
 
 export function formatOrgValidationIssue(issue: OrgIssueLike, t: TFunction<"org">): string {
-  const params = issue.params ?? {};
+  const params = displayParams(issue.params);
   const translated = translateIssueKey(issue.code, params, (key, opts) => String(t(key, opts)));
   if (translated) return translated;
   return issue.message;
@@ -55,7 +65,7 @@ export function formatOrgValidationIssue(issue: OrgIssueLike, t: TFunction<"org"
 
 /** Same as formatOrgValidationIssue but uses the global i18n instance (stores/toasts). */
 export function formatOrgIssueWithI18n(issue: OrgIssueLike): string {
-  const params = issue.params ?? {};
+  const params = displayParams(issue.params);
   const translated = translateIssueKey(
     issue.code,
     params,

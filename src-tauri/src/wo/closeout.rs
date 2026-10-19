@@ -20,7 +20,7 @@ use crate::reliability::advanced_rams::queries as advanced_rams_queries;
 use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 use crate::reliability::queries as reliability_queries;
 use crate::wo::queries;
-use crate::wo::time::now_utc_z;
+use crate::wo::time::{now_utc_second, now_utc_z, stamp};
 use chrono::{Duration, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -176,6 +176,12 @@ pub struct WoReopenInput {
     /// Target status: `in_progress` (default) or `planning`.
     #[serde(default)]
     pub target_status: Option<String>,
+    /// Reopening to in progress: estimated remaining time (hours, > 0) for the permit gate instead
+    /// of the full expected duration (`permit::wo_gate`); recorded on the reopening's
+    /// transition-log row, never written over the planned or expected duration. Absent: the full
+    /// expected duration.
+    #[serde(default)]
+    pub estimated_remaining_hours: Option<f64>,
 }
 
 /// Input for updating root cause analysis fields on the WO.
@@ -1576,6 +1582,13 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         }
     };
 
+    // Only a reopening to in progress restarts the work: the remaining time is used (and recorded)
+    // for it alone.
+    let remaining = crate::permit::wo_gate::checked_remaining_hours(input.estimated_remaining_hours)?
+        .filter(|_| target == WoStatus::InProgress);
+    // One clock read: the moment judged by the permit gate is the reopening recorded below.
+    let at = now_utc_second();
+
     let txn = db.begin().await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
@@ -1598,11 +1611,11 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
 
     // Work restarts: the same permit / LOTO gate as starting or resuming it.
     if target == WoStatus::InProgress {
-        crate::permit::wo_gate::assert_in_progress_permit_gate(&txn, input.wo_id).await?;
+        crate::permit::wo_gate::assert_in_progress_permit_gate_with(&txn, input.wo_id, remaining, at).await?;
     }
 
     let target_status_id = resolve_status_id(&txn, target.as_str()).await?;
-    let now = now_utc_z();
+    let now = stamp(at);
 
     let result = txn
         .execute(Statement::from_sql_and_values(
@@ -1626,7 +1639,8 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         .await?;
     check_concurrency(result.rows_affected())?;
 
-    log_transition(
+    // The remaining time entered (if any) is recorded on this row: who, when, the value.
+    crate::wo::workflow::transition::log_transition_with_remaining(
         &txn,
         input.wo_id,
         &from_code,
@@ -1636,6 +1650,7 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         None,
         Some(&input.reason),
         &now,
+        remaining,
     )
     .await?;
 

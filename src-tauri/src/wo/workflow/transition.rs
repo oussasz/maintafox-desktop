@@ -63,6 +63,37 @@ pub async fn log_transition(
     notes: Option<&str>,
     acted_at: &str,
 ) -> AppResult<()> {
+    log_transition_with_remaining(
+        txn,
+        wo_id,
+        from_status,
+        to_status,
+        action,
+        actor_id,
+        reason_code,
+        notes,
+        acted_at,
+        None,
+    )
+    .await
+}
+
+/// [`log_transition`] of a resume or a reopening to in progress, with the estimated remaining time
+/// the user entered for the permit gate (`permit::wo_gate`; `None`: the full expected duration).
+/// The row is the record of who entered it, when, and the value (migration 242); it travels with
+/// the synchronised log, so another PC judges the arrival on the same value.
+pub async fn log_transition_with_remaining(
+    txn: &impl ConnectionTrait,
+    wo_id: i64,
+    from_status: &str,
+    to_status: &str,
+    action: &str,
+    actor_id: i64,
+    reason_code: Option<&str>,
+    notes: Option<&str>,
+    acted_at: &str,
+    estimated_remaining_hours: Option<f64>,
+) -> AppResult<()> {
     if to_status == WoStatus::Planning.as_str() {
         let required = crate::wo::workflow::readiness::load_approval_policy(txn).await?;
         txn.execute(Statement::from_sql_and_values(
@@ -76,8 +107,9 @@ pub async fn log_transition(
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO wo_state_transition_log \
-         (wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at, lifecycle_state) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at, lifecycle_state, \
+          estimated_remaining_hours) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             wo_id.into(),
             from_status.into(),
@@ -92,6 +124,7 @@ pub async fn log_transition(
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
             acted_at.into(),
             lifecycle.as_str().into(),
+            estimated_remaining_hours.into(),
         ],
     ))
     .await?;

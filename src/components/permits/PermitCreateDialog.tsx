@@ -27,6 +27,7 @@ import {
 import type { AssetSearchResult } from "@shared/ipc-types";
 
 import { localInputToIso, toLocalInputValue } from "./permit-rules";
+import { usePermitTypeName } from "./permit-type-name";
 
 export interface PermitCreateWorkOrder {
   id: number;
@@ -58,6 +59,7 @@ export function PermitCreateDialog({
   onCreated,
 }: PermitCreateDialogProps) {
   const { t } = useTranslation("permits");
+  const typeName = usePermitTypeName();
   const [typeId, setTypeId] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [asset, setAsset] = useState<AssetSearchResult | null>(null);
@@ -129,7 +131,7 @@ export function PermitCreateDialog({
               <SelectContent>
                 {types.map((ty) => (
                   <SelectItem key={ty.id} value={String(ty.id)}>
-                    {ty.name}
+                    {typeName(ty.code, ty.name)}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -134,7 +134,10 @@
     "listsHint": "Types d’énergie selon ISO 14118 / OSHA 1910.147 ; les méthodes d’isolement sont la liste de votre site (Données de référence).",
     "threePersonNotice": "Règle des trois personnes : {{name}} a vérifié cette isolation et ne peut pas confirmer son retrait.",
     "threePersonNoticeUnknown": "Règle des trois personnes : la personne qui a vérifié cette isolation ne peut pas confirmer son retrait.",
-    "threePersonSelf": "Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait."
+    "threePersonSelf": "Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait.",
+    "removalConfirmTitle": "Confirmer le retrait des cadenas",
+    "removalConfirmDescription": "Vous confirmez que l’isolation « {{point}} » est retirée. Posée par {{applier}}, vérifiée par {{verifier}}. Votre nom sera inscrit comme celui qui a vérifié le retrait.",
+    "personUnknown": "personne non enregistrée"
   },
   "card": {
     "title": "Fiche LOTO",
@@ -182,6 +185,7 @@
     "receiverSearch": "Rechercher un nom…",
     "receiverHint": "Vous signez vous-même la passation ; la personne qui reçoit ne peut pas être vous.",
     "receiversPartial": "{{shown}} personnes affichées sur {{total}} : tapez un nom pour affiner la liste.",
+    "receiversMore": "Afficher plus de personnes",
     "receiversAll": "Les {{total}} personnes correspondantes sont affichées.",
     "receiversNone": "Personne ne correspond à ce nom.",
     "noteMin": "Écrivez au moins {{min}} caractères.",
@@ -211,6 +215,13 @@
     "noViewRight": "Consulter les types de permis demande le droit de lecture des permis de travail.",
     "readOnly": "Modifier les types de permis demande le droit d'émettre des permis.",
     "title": "Types de permis",
+    "shipped": {
+      "loto": "Consignation / déconsignation (LOTO)",
+      "hot_work": "Travail par point chaud",
+      "confined_space": "Espace confiné",
+      "cold_work": "Travail à froid",
+      "electrical_lv": "Électricité basse tension"
+    },
     "new": "Nouveau type",
     "code": "Code",
     "name": "Nom",
@@ -218,6 +229,7 @@
     "hse": "Approbation HSE requise",
     "operations": "Approbation exploitation requise",
     "atmospheric": "Test atmosphérique requis",
+    "codeLocked": "Le code d’un type existant ne peut plus être modifié : permis et règles s’y réfèrent. Créez un nouveau type si besoin.",
     "maxHours": "Durée max (h)",
     "version": "Version",
     "save": "Enregistrer le type",
@@ -225,8 +237,9 @@
     "energyIsolation": "Isolation d’énergie obligatoire (LOTO)",
     "energyIsolationHint": "Un permis de ce type ne peut pas démarrer sans au moins une isolation posée puis vérifiée par une seconde personne.",
     "energyIsolationLocked": "Le type LOTO exige toujours une isolation d’énergie.",
+    "energyIsolationAdminOnly": "Seul un administrateur (droit paramètres) peut ne plus l’exiger.",
     "disableReason": "Pourquoi ne plus exiger d’isolation ?",
-    "disableReasonHint": "Réservé à un administrateur : le mot de passe est redemandé et la modification est tracée dans le journal d’audit.",
+    "disableReasonHint": "Au moins {{min}} caractères. Réservé à un administrateur : le mot de passe est redemandé et la modification est tracée dans le journal d’audit.",
     "energyIsolationShort": "Isolation",
     "yes": "Oui",
     "no": "Non",

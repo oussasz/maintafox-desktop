@@ -378,33 +378,46 @@ pub(crate) async fn adopt_stored_values(
     let mut adopted = Vec::new();
     for r in &rows {
         let code: String = r.try_get("", "code")?;
-        let sync_id = seeded_value_sync_id(domain, &code);
-        let meta = serde_json::json!({ "origin": "migrated", "review_required": true });
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, parent_id, code, label, \
-                description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, \
-                metadata_json) \
-             SELECT ?, rs.id, NULL, ?, ?, NULL, 900, NULL, NULL, ?, NULL, 1, ? \
-               FROM reference_domains d \
-               JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published' \
-              WHERE UPPER(TRIM(d.code)) = ? \
-                AND NOT EXISTS (SELECT 1 FROM reference_values rv WHERE rv.entity_sync_id = ?) \
-              ORDER BY rs.version_no DESC LIMIT 1",
-            [
-                sync_id.clone().into(),
-                code.clone().into(),
-                code.clone().into(),
-                tag_for.map(|f| f(&code).to_string()).into(),
-                meta.to_string().into(),
-                domain.into(),
-                sync_id.into(),
-            ],
-        ))
-        .await?;
+        adopt_value(db, domain, &code, tag_for).await?;
         adopted.push(code);
     }
     Ok(adopted)
+}
+
+/// Adds one stored `code` to the latest published set of `domain` as [`adopt_stored_values`] does
+/// (flagged, seeded sync identity), unless a value with that sync identity exists. Writes nothing
+/// when the domain has no published set; never creates the domain or a set.
+pub(crate) async fn adopt_value(
+    db: &impl ConnectionTrait,
+    domain: &str,
+    code: &str,
+    tag_for: Option<fn(&str) -> &'static str>,
+) -> AppResult<()> {
+    let sync_id = seeded_value_sync_id(domain, code);
+    let meta = serde_json::json!({ "origin": "migrated", "review_required": true });
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, parent_id, code, label, \
+            description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, \
+            metadata_json) \
+         SELECT ?, rs.id, NULL, ?, ?, NULL, 900, NULL, NULL, ?, NULL, 1, ? \
+           FROM reference_domains d \
+           JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published' \
+          WHERE UPPER(TRIM(d.code)) = ? \
+            AND NOT EXISTS (SELECT 1 FROM reference_values rv WHERE rv.entity_sync_id = ?) \
+          ORDER BY rs.version_no DESC LIMIT 1",
+        [
+            sync_id.clone().into(),
+            code.into(),
+            code.into(),
+            tag_for.map(|f| f(code).to_string()).into(),
+            meta.to_string().into(),
+            domain.into(),
+            sync_id.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
 }
 
 /// Adopts the stored employment types, position categories and absence types that are not in

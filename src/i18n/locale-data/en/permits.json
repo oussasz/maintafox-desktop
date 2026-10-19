@@ -134,7 +134,10 @@
     "listsHint": "Energy types follow ISO 14118 / OSHA 1910.147; isolation methods are your site’s list (Reference data).",
     "threePersonNotice": "Three-person rule: {{name}} verified this isolation and may not confirm its removal.",
     "threePersonNoticeUnknown": "Three-person rule: the person who verified this isolation may not confirm its removal.",
-    "threePersonSelf": "You verified this isolation — a third person must confirm its removal."
+    "threePersonSelf": "You verified this isolation — a third person must confirm its removal.",
+    "removalConfirmTitle": "Confirm lock removal",
+    "removalConfirmDescription": "You confirm that the isolation \"{{point}}\" has been removed. Applied by {{applier}}, verified by {{verifier}}. Your name will be recorded as the person who verified the removal.",
+    "personUnknown": "no one recorded"
   },
   "card": {
     "title": "LOTO card",
@@ -182,6 +185,7 @@
     "receiverSearch": "Search a name…",
     "receiverHint": "You sign the hand-over yourself; the receiving person cannot be you.",
     "receiversPartial": "{{shown}} of {{total}} people shown: type a name to narrow the list.",
+    "receiversMore": "Show more people",
     "receiversAll": "All {{total}} matching people shown.",
     "receiversNone": "Nobody matches this name.",
     "noteMin": "Write at least {{min}} characters.",
@@ -211,6 +215,13 @@
     "noViewRight": "Viewing permit types needs the work-permit view right.",
     "readOnly": "Changing permit types needs the permit issuer right.",
     "title": "Permit types",
+    "shipped": {
+      "loto": "LOTO",
+      "hot_work": "Hot work",
+      "confined_space": "Confined space",
+      "cold_work": "Cold work",
+      "electrical_lv": "Electrical LV"
+    },
     "new": "New type",
     "code": "Code",
     "name": "Name",
@@ -218,6 +229,7 @@
     "hse": "HSE approval required",
     "operations": "Operations approval required",
     "atmospheric": "Atmospheric test required",
+    "codeLocked": "The code of an existing type cannot be changed: permits and rules refer to it. Create a new type if needed.",
     "maxHours": "Max duration (h)",
     "version": "Version",
     "save": "Save type",
@@ -225,8 +237,9 @@
     "energyIsolation": "Energy isolation required (LOTO)",
     "energyIsolationHint": "A permit of this type cannot start without at least one isolation applied and verified by a second person.",
     "energyIsolationLocked": "The LOTO type always requires an energy isolation.",
+    "energyIsolationAdminOnly": "Only an administrator (settings right) can stop requiring it.",
     "disableReason": "Why no longer require an isolation?",
-    "disableReasonHint": "Only an administrator can do this; the password is asked again and the change is recorded in the audit log.",
+    "disableReasonHint": "At least {{min}} characters. Only an administrator can do this; the password is asked again and the change is recorded in the audit log.",
     "energyIsolationShort": "Isolation",
     "yes": "Yes",
     "no": "No",

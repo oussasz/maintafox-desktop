@@ -1,7 +1,9 @@
 /**
  * Work-permit types editor — hosted in Données de référence (catalog `PERMIT.TYPES`), the one
  * place they are managed. Saves go through `upsert_permit_type` (permit issuer; administrator +
- * step-up + reason to stop requiring an energy isolation; the LOTO type keeps it). The
+ * step-up + a reason of at least ISOLATION_REASON_MIN characters to stop requiring an energy
+ * isolation; the LOTO type keeps it: without `adm.settings` the box of a type that requires it is
+ * shown but disabled). The
  * three-person lock-removal setting is shown to everyone and changed only by an administrator
  * (`adm.settings`), with a reason of at least THREE_PERSON_REASON_MIN characters and a step-up.
  */
@@ -17,8 +19,20 @@ import { appErrorReason } from "@/lib/app-error";
 import { type PermitTypeRecord, upsertPermitType } from "@/services/permit-service";
 import { P } from "@shared/rbac/permissions.generated";
 
-/** Shortest reason the server accepts for a three-person change (`MIN_REASON_CHARS`). */
+import { serverTextLength, serverTrim } from "./permit-rules";
+import { usePermitTypeName } from "./permit-type-name";
+
+/**
+ * Shortest reason the server accepts for a three-person change: `MIN_REASON_CHARS` in
+ * `src-tauri/src/settings/catalog.rs` (counted trimmed, in code points; a test pins both values).
+ */
 export const THREE_PERSON_REASON_MIN = 10;
+
+/**
+ * Shortest reason the server accepts to stop requiring an energy isolation: also
+ * `MIN_REASON_CHARS` (counted trimmed, in code points; a test pins both values).
+ */
+export const ISOLATION_REASON_MIN = 10;
 
 /** The step-up dialog was closed without confirming: nothing to report. */
 function isStepUpCancelled(err: unknown): boolean {
@@ -101,6 +115,7 @@ function toDraft(ty: PermitTypeRecord): TypeDraft {
 
 export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditorProps) {
   const { t } = useTranslation("permits");
+  const typeName = usePermitTypeName();
   const [draft, setDraft] = useState<TypeDraft>(EMPTY);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -108,12 +123,18 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const { can } = usePermissions();
   const canChangeThreePerson = can(P.ADM_SETTINGS);
+  // Stopping to require an energy isolation needs the settings right (`upsert_permit_type`);
+  // requiring it is a plain edit, so the box is disabled only on a saved type that requires it.
+  const isolationAdminOnly = !can(P.ADM_SETTINGS) && draft.id != null && draft.savedEnergyIsolation;
 
   const changingThreePerson = draft.threePerson !== draft.savedThreePerson;
-  const threePersonReason = draft.threePersonReason.trim();
-  const threePersonReasonShort = threePersonReason.length < THREE_PERSON_REASON_MIN;
+  const threePersonReason = serverTrim(draft.threePersonReason);
+  const threePersonReasonShort =
+    serverTextLength(draft.threePersonReason) < THREE_PERSON_REASON_MIN;
 
   const relaxing = draft.id != null && draft.savedEnergyIsolation && !draft.energyIsolation;
+  const disableReason = serverTrim(draft.disableReason);
+  const disableReasonShort = serverTextLength(draft.disableReason) < ISOLATION_REASON_MIN;
   const maxHoursValue = draft.maxHours.trim() === "" ? null : Number(draft.maxHours);
   const maxHoursInvalid =
     maxHoursValue != null && (!Number.isFinite(maxHoursValue) || maxHoursValue <= 0);
@@ -122,7 +143,7 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
     e.preventDefault();
     setSubmitted(true);
     if (!draft.code.trim() || !draft.name.trim() || maxHoursInvalid) return;
-    if (relaxing && !draft.disableReason.trim()) return;
+    if (relaxing && disableReasonShort) return;
     if (changingThreePerson && threePersonReasonShort) return;
     setBusy(true);
     setError(null);
@@ -142,7 +163,8 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
           mandatory_ppe_ids_json: draft.ppeJson,
           mandatory_control_rules_json: draft.rulesJson,
           requires_energy_isolation: draft.energyIsolation,
-          disable_isolation_reason: relaxing ? draft.disableReason.trim() : null,
+          // Sent only when the save switches the isolation rule off (trimmed like the server).
+          disable_isolation_reason: relaxing ? disableReason : null,
           // Sent only when the user changed it: null keeps the server's current value, so a
           // value changed elsewhere since the form loaded is not rewritten by an unrelated edit.
           requires_three_person_removal: changingThreePerson ? draft.threePerson : null,
@@ -189,7 +211,7 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
             {types.map((ty) => (
               <tr key={ty.id} className="border-b border-surface-border/60">
                 <td className="px-2 py-1.5 font-mono text-xs">{ty.code}</td>
-                <td className="px-2 py-1.5">{ty.name}</td>
+                <td className="px-2 py-1.5">{typeName(ty.code, ty.name)}</td>
                 <td className="px-2 py-1.5">{ty.max_duration_hours ?? t("detail.none")}</td>
                 <td className="px-2 py-1.5">
                   {ty.requires_energy_isolation ? t("types.yes") : t("types.no")}
@@ -242,11 +264,14 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
               name="type-code"
               label={t("types.code")}
               required
+              description={draft.id != null ? t("types.codeLocked") : undefined}
               error={submitted && !draft.code.trim() ? t("errors.required") : undefined}
             >
               <Input
                 id="type-code"
                 value={draft.code}
+                readOnly={draft.id != null}
+                aria-describedby={draft.id != null ? "type-code-description" : undefined}
                 onChange={(e) => setDraft((d) => ({ ...d, code: e.target.value }))}
               />
             </FormField>
@@ -292,19 +317,35 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
                 <Checkbox checked disabled aria-describedby="type-loto-locked" />
                 {t("types.energyIsolation")}
               </label>
+            ) : isolationAdminOnly ? (
+              <label className="flex items-center gap-2 text-sm text-text-primary">
+                <Checkbox
+                  checked={draft.energyIsolation}
+                  disabled
+                  aria-describedby="type-loto-locked"
+                />
+                {t("types.energyIsolation")}
+              </label>
             ) : (
               flag("energyIsolation", t("types.energyIsolation"))
             )}
             <p id="type-loto-locked" className="pl-6 text-xs text-text-muted">
               {draft.lotoLocked ? t("types.energyIsolationLocked") : t("types.energyIsolationHint")}
+              {!draft.lotoLocked && isolationAdminOnly
+                ? ` ${t("types.energyIsolationAdminOnly")}`
+                : null}
             </p>
             {relaxing ? (
               <FormField
                 name="type-disable-reason"
                 label={t("types.disableReason")}
-                description={t("types.disableReasonHint")}
+                description={t("types.disableReasonHint", { min: ISOLATION_REASON_MIN })}
                 required
-                error={submitted && !draft.disableReason.trim() ? t("errors.required") : undefined}
+                error={
+                  (submitted || disableReason.length > 0) && disableReasonShort
+                    ? t("types.reasonMin", { min: ISOLATION_REASON_MIN })
+                    : undefined
+                }
               >
                 <Textarea
                   id="type-disable-reason"

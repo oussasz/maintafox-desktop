@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 
 use super::tests::{
     add_isolation, advance_to_issued, apply_and_verify, assigned_wo_requiring_permit, create_from_wo, create_permit,
-    insert_equipment, set_status, setup, APPLIER, VERIFIER,
+    insert_equipment, set_status, setup, user_with, APPLIER, VERIFIER,
 };
 use crate::permit::domain::WorkPermit;
 use crate::permit::queries;
@@ -2884,5 +2884,1220 @@ async fn a_type_without_a_record_passes_and_an_unreadable_held_time_fails_closed
         .await
         .as_deref(),
         Some("1")
+    );
+}
+
+/// Owner decision, re-checked on arrival like here: a received start on a permit that expires
+/// before the work order's planned end is a conflict, nothing written.
+#[tokio::test]
+async fn a_received_start_on_a_permit_expiring_before_the_planned_end_is_refused() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-95").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let in_progress = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'in_progress'",
+    )
+    .await
+    .expect("status sync id");
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-95 breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let status_sql = format!(
+        "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id WHERE w.id = {wo_id}"
+    );
+    let started = with(
+        wire(&db, "work_orders", &wo_sync).await,
+        &[("status_sync_id", json!(in_progress)), ("actual_start", json!(now()))],
+    );
+    let later = (chrono::Utc::now() + chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started.clone(), &[("planned_end", json!(later))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_EXPIRES_BEFORE_PLANNED_END"), "{outcome:?}");
+    assert_eq!(text(&db, &status_sql).await.as_deref(), Some("ready"));
+    // An unreadable planned end (text, or a bare day) is refused too, as locally, under its own code.
+    for bad in ["someday", "2026-10-20"] {
+        let outcome = apply(
+            &db,
+            "work_orders",
+            &wo_sync,
+            &with(started.clone(), &[("planned_end", json!(bad))]),
+        )
+        .await;
+        assert_eq!(code(&outcome), Some("WO_PLANNED_END_UNREADABLE"), "{bad}: {outcome:?}");
+    }
+    // A planned end typed without a zone is read in this computer's time zone, as locally.
+    let typed = (chrono::Local::now() + chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started.clone(), &[("planned_end", json!(typed))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_EXPIRES_BEFORE_PLANNED_END"), "{outcome:?}");
+
+    let sooner = (chrono::Utc::now() + chrono::Duration::hours(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started, &[("planned_end", json!(sooner))]),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(text(&db, &status_sql).await.as_deref(), Some("in_progress"));
+}
+
+/// A work order ready to start, with an active hot-work permit active since `active_since`, and its
+/// received "started" row without a planned end. Returns (work order sync id, received row, permit
+/// expiry, local work order id).
+async fn ready_wo_with_permit_active_since(
+    db: &DatabaseConnection,
+    asset_code: &str,
+    active_since: chrono::DateTime<chrono::Utc>,
+) -> (String, Payload, chrono::DateTime<chrono::Utc>, i64) {
+    let asset = insert_equipment(db, asset_code).await;
+    let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+    let wo_sync = text(
+        db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let in_progress = text(
+        db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'in_progress'",
+    )
+    .await
+    .expect("status sync id");
+    let wp = advance_to_issued(db, create_from_wo(db, "hot_work", wo_id).await.expect("permit")).await;
+    let wp = set_status(db, &wp, "active").await.expect("activate");
+    exec(
+        db,
+        &format!(
+            "UPDATE work_permits SET activated_at = '{}' WHERE id = {}",
+            active_since.format("%Y-%m-%dT%H:%M:%SZ"),
+            wp.id
+        ),
+    )
+    .await;
+    let expiry = crate::settings::site::instant(wp.expires_at.as_deref().expect("expiry")).expect("expiry time");
+    let row = with(
+        wire(db, "work_orders", &wo_sync).await,
+        &[
+            ("status_sync_id", json!(in_progress)),
+            ("planned_end", Value::Null),
+            ("updated_at", json!(now())),
+        ],
+    );
+    (wo_sync, row, expiry, wo_id)
+}
+
+/// Hours from `from` to `minutes` before (negative: after) the permit's expiry.
+fn hours_until(from: chrono::DateTime<chrono::Utc>, expiry: chrono::DateTime<chrono::Utc>, minutes: i64) -> f64 {
+    ((expiry - from).num_seconds() - minutes * 60) as f64 / 3600.0
+}
+
+/// CMMS Advisor decision (2026-10-19), re-checked on arrival like here: without a planned end, a
+/// received start is judged against the start time the row records plus the expected duration,
+/// never this PC's clock.
+#[tokio::test]
+async fn a_received_start_without_a_planned_end_is_judged_from_its_recorded_start() {
+    let db = setup().await;
+    let started_at = chrono::Utc::now() - chrono::Duration::hours(2);
+    let (wo_sync, row, expiry, wo_id) =
+        ready_wo_with_permit_active_since(&db, "EQ-SYNC-96", started_at - chrono::Duration::hours(1)).await;
+    let started = with(
+        row,
+        &[(
+            "actual_start",
+            json!(started_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        )],
+    );
+    let status_sql = format!(
+        "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id WHERE w.id = {wo_id}"
+    );
+    // The work, from its recorded start, ends 30 minutes after the expiry: refused, nothing written.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(
+            started.clone(),
+            &[("expected_duration_hours", json!(hours_until(started_at, expiry, -30)))],
+        ),
+    )
+    .await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&db, &status_sql).await.as_deref(), Some("ready"));
+    // From its recorded start it ends 30 minutes before the expiry: applied (judged from this PC's
+    // clock, two hours later, it would end after the expiry).
+    let covered = hours_until(started_at, expiry, 30);
+    assert!(chrono::Utc::now() + chrono::Duration::seconds((covered * 3600.0) as i64) > expiry);
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started, &[("expected_duration_hours", json!(covered))]),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(text(&db, &status_sql).await.as_deref(), Some("in_progress"));
+}
+
+/// The same on a resume: the moment judged is the latest return to in progress the row's history
+/// records (here a resume in the transition log), not its first start.
+#[tokio::test]
+async fn a_received_resume_without_a_planned_end_is_judged_from_its_recorded_resume() {
+    let db = setup().await;
+    let started_at = chrono::Utc::now() - chrono::Duration::hours(3);
+    let resumed_at = chrono::Utc::now() - chrono::Duration::hours(1);
+    let (wo_sync, row, expiry, wo_id) =
+        ready_wo_with_permit_active_since(&db, "EQ-SYNC-97", started_at - chrono::Duration::hours(1)).await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO wo_state_transition_log (wo_id, from_status, to_status, action, actor_id, acted_at, lifecycle_state) \
+             VALUES ({wo_id}, 'on_hold', 'in_progress', 'resume', 1, '{}', 'in_progress')",
+            resumed_at.format("%Y-%m-%dT%H:%M:%SZ")
+        ),
+    )
+    .await;
+    let started = with(
+        row,
+        &[(
+            "actual_start",
+            json!(started_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        )],
+    );
+    // Covered from the first start, not from the resume: refused.
+    let hours = hours_until(started_at, expiry, 30);
+    assert!(resumed_at + chrono::Duration::seconds((hours * 3600.0) as i64) > expiry);
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started.clone(), &[("expected_duration_hours", json!(hours))]),
+    )
+    .await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+        "{outcome:?}"
+    );
+    // Covered from the resume: applied.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(
+            started,
+            &[("expected_duration_hours", json!(hours_until(resumed_at, expiry, 30)))],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// Neither a planned end nor an expected duration: a received start is not judged on the expiry
+/// (the permit was valid when the work started); an expired permit is still refused.
+#[tokio::test]
+async fn a_received_start_without_any_end_is_not_judged_but_an_expired_permit_is() {
+    let db = setup().await;
+    let started_at = chrono::Utc::now() - chrono::Duration::hours(1);
+    let (wo_sync, row, _, wo_id) =
+        ready_wo_with_permit_active_since(&db, "EQ-SYNC-98", started_at - chrono::Duration::hours(1)).await;
+    let started = with(
+        row,
+        &[
+            ("expected_duration_hours", Value::Null),
+            (
+                "actual_start",
+                json!(started_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+            ),
+        ],
+    );
+    let set_expiry = |at: chrono::DateTime<chrono::Utc>| {
+        let db = &db;
+        async move {
+            exec(
+                db,
+                &format!(
+                    "UPDATE work_permits SET expires_at = '{}' WHERE linked_work_order_id = {wo_id}",
+                    at.format("%Y-%m-%dT%H:%M:%SZ")
+                ),
+            )
+            .await;
+        }
+    };
+    // The permit had expired when the work started: refused.
+    set_expiry(started_at - chrono::Duration::minutes(5)).await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &started).await;
+    assert_eq!(code(&outcome), Some("PERMIT_EXPIRED"), "{outcome:?}");
+    // Valid when the work started (expired since, ten minutes later): with no end to judge, applied.
+    set_expiry(started_at + chrono::Duration::minutes(10)).await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// An instant in the stored form (UTC, `Z`, whole seconds).
+fn stored_at(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// A late work order (planned "yesterday 08:00-12:00", started then, on hold overnight) received as
+/// resumed at `resumed_at`, with its hot-work permit expiring five minutes after the resume.
+/// Returns (work order sync id, received row, local work order id).
+async fn late_wo_resumed(
+    db: &DatabaseConnection,
+    asset_code: &str,
+    resumed_at: chrono::DateTime<chrono::Utc>,
+) -> (String, Payload, i64) {
+    let started_at = resumed_at - chrono::Duration::hours(25);
+    let (wo_sync, row, _, wo_id) =
+        ready_wo_with_permit_active_since(db, asset_code, started_at - chrono::Duration::hours(1)).await;
+    exec(
+        db,
+        &format!(
+            "UPDATE work_permits SET expires_at = '{}' WHERE linked_work_order_id = {wo_id}",
+            stored_at(resumed_at + chrono::Duration::minutes(5))
+        ),
+    )
+    .await;
+    let row = with(
+        row,
+        &[
+            ("actual_start", json!(stored_at(started_at))),
+            ("planned_end", json!(stored_at(started_at + chrono::Duration::hours(4)))),
+            ("expected_duration_hours", json!(4.0)),
+        ],
+    );
+    (wo_sync, row, wo_id)
+}
+
+/// The history row of an entry into in progress at `at` (`action`, with `remaining` as the
+/// estimated remaining time): received, waiting in the inbox with the work order (`received`), or
+/// already on this PC with no sync identity (`!received`, read directly). Replaces any earlier one.
+async fn entry_into_progress(
+    db: &DatabaseConnection,
+    wo_id: i64,
+    at: &str,
+    action: &str,
+    remaining: Value,
+    received: bool,
+) {
+    exec(
+        db,
+        "DELETE FROM sync_inbox WHERE entity_type = 'wo_state_transition_log'",
+    )
+    .await;
+    exec(
+        db,
+        &format!("DELETE FROM wo_state_transition_log WHERE wo_id = {wo_id} AND to_status = 'in_progress'"),
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO wo_state_transition_log (entity_sync_id, wo_id, from_status, to_status, action, actor_id, \
+             acted_at, lifecycle_state) VALUES ('entry-{wo_id}', {wo_id}, 'on_hold', 'in_progress', '{action}', 1, \
+             '{at}', 'in_progress')"
+        ),
+    )
+    .await;
+    if received {
+        let payload = with(
+            wire(db, "wo_state_transition_log", &format!("entry-{wo_id}")).await,
+            &[("estimated_remaining_hours", remaining)],
+        );
+        exec(
+            db,
+            &format!("DELETE FROM wo_state_transition_log WHERE entity_sync_id = 'entry-{wo_id}'"),
+        )
+        .await;
+        inbox(
+            db,
+            "wo_state_transition_log",
+            &format!("entry-{wo_id}"),
+            1,
+            "pending",
+            &payload,
+        )
+        .await;
+    } else {
+        let value = match remaining {
+            Value::Null => "NULL".to_string(),
+            Value::String(s) => format!("'{s}'"),
+            other => other.to_string(),
+        };
+        exec(
+            db,
+            &format!(
+                "UPDATE wo_state_transition_log SET entity_sync_id = NULL, estimated_remaining_hours = {value} \
+                 WHERE entity_sync_id = 'entry-{wo_id}'"
+            ),
+        )
+        .await;
+    }
+}
+
+/// Review SF1 and NOTE 9, re-checked on arrival exactly as on the PC that resumed: a late resume is
+/// judged on the resume time the row records plus the expected duration (the planned end, already
+/// past, no longer hides it), or plus the estimated remaining time recorded on the resume's history
+/// row. A missing value means the full duration; one that is not a number of hours greater than 0
+/// is refused (fails safe); one recorded on a start is ignored (a start always uses the full
+/// duration, as here). The same through a received history row and one already on this PC.
+#[tokio::test]
+async fn a_received_late_resume_is_judged_on_the_duration_or_its_recorded_remaining_time() {
+    for received in [true, false] {
+        let db = setup().await;
+        let resumed_at = chrono::Utc::now() - chrono::Duration::minutes(1);
+        let at = stored_at(resumed_at);
+        let (wo_sync, row, wo_id) = late_wo_resumed(&db, "EQ-SYNC-99", resumed_at).await;
+        let status_sql = format!(
+            "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id WHERE w.id = {wo_id}"
+        );
+        let judged = |remaining: Value, action: &'static str| {
+            let (db, row, wo_sync, at) = (&db, row.clone(), wo_sync.clone(), at.clone());
+            async move {
+                entry_into_progress(db, wo_id, &at, action, remaining, received).await;
+                apply(db, "work_orders", &wo_sync, &row).await
+            }
+        };
+        // No remaining time: the full 4 h from the resume outlive the permit (the old rule judged
+        // the past planned end and let it through).
+        let outcome = judged(Value::Null, "resume").await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+            "received {received}: {outcome:?}"
+        );
+        assert_eq!(text(&db, &status_sql).await.as_deref(), Some("ready"));
+        // Two hours remaining still outlive it.
+        let outcome = judged(json!(2.0), "resume").await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+            "{outcome:?}"
+        );
+        // A value no PC records (0, negative, not a number): refused, never read as "no value".
+        for bad in [json!(0), json!(-1.5), json!("soon")] {
+            let outcome = judged(bad.clone(), "resume").await;
+            assert_eq!(
+                code(&outcome),
+                Some("WO_REMAINING_TIME_INVALID"),
+                "received {received}, {bad}: {outcome:?}"
+            );
+        }
+        // Recorded on a start (no PC does that): ignored, the full duration is judged.
+        let outcome = judged(json!(0.05), "start").await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+            "{outcome:?}"
+        );
+        // A planned end already past and no duration: unknown end, refused, unless a remaining
+        // time was recorded.
+        let no_duration = with(row.clone(), &[("expected_duration_hours", Value::Null)]);
+        entry_into_progress(&db, wo_id, &at, "resume", Value::Null, received).await;
+        let outcome = apply(&db, "work_orders", &wo_sync, &no_duration).await;
+        assert_eq!(code(&outcome), Some("WO_PLANNED_END_PASSED"), "{outcome:?}");
+        // Three minutes remaining fit before the expiry: applied, as on the PC that resumed (or
+        // reopened). A number sent as text reads as that number (SQLite stores it so).
+        let (fits, action) = if received {
+            (json!("0.05"), "resume")
+        } else {
+            (json!(0.05), "reopen")
+        };
+        let outcome = judged(fits, action).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied),
+            "received {received}: {outcome:?}"
+        );
+        assert_eq!(text(&db, &status_sql).await.as_deref(), Some("in_progress"));
+    }
+}
+
+/// Review NOTE 5: an expected duration that is not a number of hours gets the same coded refusal
+/// on this PC and on arrival (it used to be an uncoded error here and "not judged" on arrival); a
+/// number sent as text is that number on both sides.
+#[tokio::test]
+async fn an_expected_duration_that_is_not_a_number_is_refused_here_and_on_arrival() {
+    let db = setup().await;
+    let started_at = chrono::Utc::now() - chrono::Duration::minutes(10);
+    let (wo_sync, row, expiry, wo_id) =
+        ready_wo_with_permit_active_since(&db, "EQ-SYNC-100", started_at - chrono::Duration::hours(1)).await;
+    let started = with(row, &[("actual_start", json!(stored_at(started_at)))]);
+    // This PC: a duration stored as text.
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET planned_end = NULL, expected_duration_hours = 'four' WHERE id = {wo_id}"),
+    )
+    .await;
+    match crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await {
+        Err(crate::errors::AppError::OrgValidationFailed(issues)) => {
+            assert_eq!(issues[0].code, "WO_EXPECTED_DURATION_UNREADABLE");
+            assert_eq!(issues[0].params.get("value").map(String::as_str), Some("four"));
+        }
+        other => panic!("expected WO_EXPECTED_DURATION_UNREADABLE, got {other:?}"),
+    }
+    // A blob is never a number either (review N5): the same refusal, never "no duration".
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET expected_duration_hours = X'34' WHERE id = {wo_id}"),
+    )
+    .await;
+    match crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await {
+        Err(crate::errors::AppError::OrgValidationFailed(issues)) => {
+            assert_eq!(issues[0].code, "WO_EXPECTED_DURATION_UNREADABLE");
+        }
+        other => panic!("expected WO_EXPECTED_DURATION_UNREADABLE for a blob, got {other:?}"),
+    }
+    // Back to text before the arrival cases (the received row is laid over this row).
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET expected_duration_hours = 'four' WHERE id = {wo_id}"),
+    )
+    .await;
+    // Arrival: the same value, the same refusal.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(started.clone(), &[("expected_duration_hours", json!("four"))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_EXPECTED_DURATION_UNREADABLE"), "{outcome:?}");
+    // A number sent as text: that number. Ending 30 minutes after the expiry: refused as an
+    // estimated end, exactly as the number itself.
+    let late = hours_until(started_at, expiry, -30);
+    for sent in [json!(late), json!(late.to_string())] {
+        let outcome = apply(
+            &db,
+            "work_orders",
+            &wo_sync,
+            &with(started.clone(), &[("expected_duration_hours", sent.clone())]),
+        )
+        .await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_EXPIRES_BEFORE_ESTIMATED_END"),
+            "{sent}: {outcome:?}"
+        );
+    }
+}
+
+/// Owner decision: switching a permit type's energy-isolation rule off on another PC is re-checked
+/// on arrival like the three-person setting (who, when, why, the settings and permit-issue rights
+/// here); switching it on is a plain edit; the shipped LOTO type's rule is never switched off.
+#[tokio::test]
+async fn a_received_isolation_switch_off_is_rechecked_and_loto_stays_locked() {
+    let db = setup().await;
+    let sync_of = |code: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT entity_sync_id FROM permit_types WHERE code = '{code}'"),
+            )
+            .await
+            .expect("type sync id")
+        }
+    };
+    let (hot, loto) = (sync_of("hot_work").await, sync_of("loto").await);
+    exec(
+        &db,
+        &format!("UPDATE permit_types SET requires_energy_isolation = 1 WHERE entity_sync_id = '{hot}'"),
+    )
+    .await;
+    let isolation = |sync: String| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT CAST(requires_energy_isolation AS TEXT) FROM permit_types WHERE entity_sync_id = '{sync}'"
+                ),
+            )
+            .await
+        }
+    };
+    let admin = json!(user_sync(&db, APPLIER).await);
+    let reason = "Hot work on isolated lines only";
+    let off = |base: &Payload, by: Value, at: Value, why: Value| {
+        with(
+            base.clone(),
+            &[
+                ("requires_energy_isolation", json!(0)),
+                ("isolation_changed_by_sync_id", by),
+                ("isolation_changed_at", at),
+                ("isolation_change_reason", why),
+            ],
+        )
+    };
+    let held = wire(&db, "permit_types", &hot).await;
+    for (row, expected) in [
+        (
+            off(&held, Value::Null, Value::Null, Value::Null),
+            "PERMIT_TYPE_ISOLATION_UNAUDITED",
+        ),
+        (
+            off(&held, admin.clone(), json!(now()), json!("short")),
+            "PERMIT_TYPE_ISOLATION_UNAUDITED",
+        ),
+        (
+            off(&held, admin.clone(), json!("2999-01-01T00:00:00Z"), json!(reason)),
+            "PERMIT_TYPE_ISOLATION_UNAUDITED",
+        ),
+        (
+            off(&held, Value::Null, json!(now()), json!(reason)),
+            "PERMIT_TYPE_ISOLATION_UNAUTHORISED",
+        ),
+        (
+            off(
+                &held,
+                json!(user_sync(&db, VERIFIER).await),
+                json!(now()),
+                json!(reason),
+            ),
+            "PERMIT_TYPE_ISOLATION_UNAUTHORISED",
+        ),
+    ] {
+        let outcome = apply(&db, "permit_types", &hot, &row).await;
+        assert_eq!(code(&outcome), Some(expected), "{row:?} -> {outcome:?}");
+        assert_eq!(isolation(hot.clone()).await.as_deref(), Some("1"), "nothing written");
+    }
+    // By an administrator, with a reason and a time: applied, with its record.
+    let first = (chrono::Utc::now() - chrono::Duration::minutes(10))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let switched = off(&held, admin.clone(), json!(first), json!(reason));
+    let outcome = apply(&db, "permit_types", &hot, &switched).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(isolation(hot.clone()).await.as_deref(), Some("0"));
+    // On again: a plain edit, applied as received (the record kept).
+    let on = with(
+        wire(&db, "permit_types", &hot).await,
+        &[("requires_energy_isolation", json!(1))],
+    );
+    let outcome = apply(&db, "permit_types", &hot, &on).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // Off again with the record already held here: an earlier change replayed.
+    let replayed = with(
+        wire(&db, "permit_types", &hot).await,
+        &[("requires_energy_isolation", json!(0))],
+    );
+    let outcome = apply(&db, "permit_types", &hot, &replayed).await;
+    assert_eq!(code(&outcome), Some("PERMIT_TYPE_ISOLATION_STALE"), "{outcome:?}");
+    assert_eq!(isolation(hot.clone()).await.as_deref(), Some("1"));
+
+    // The shipped LOTO type: refused whoever switched it off.
+    let loto_off = off(
+        &wire(&db, "permit_types", &loto).await,
+        admin.clone(),
+        json!(now()),
+        json!(reason),
+    );
+    let outcome = apply(&db, "permit_types", &loto, &loto_off).await;
+    assert_eq!(code(&outcome), Some("PERMIT_TYPE_LOTO_ISOLATION_LOCKED"), "{outcome:?}");
+    assert_eq!(isolation(loto.clone()).await.as_deref(), Some("1"));
+
+    // A type new here: off is how a type is created; its record is checked for its reason and time
+    // only, whoever made it.
+    let new_off = with(
+        off(
+            &held,
+            json!(user_sync(&db, VERIFIER).await),
+            json!(now()),
+            json!(reason),
+        ),
+        &[("code", json!("new_iso_off"))],
+    );
+    let outcome = apply(&db, "permit_types", "type-new-iso-off", &new_off).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// The update's restore of the shipped LOTO type's isolation rule (migration 241, made by each PC
+/// itself: nobody, a fixed reason) passes on arrival both ways: from a PC that needed it to one that
+/// did not, and back. The same record on another type, or naming a person, is judged as usual.
+#[tokio::test]
+async fn the_updates_loto_isolation_restore_passes_both_ways() {
+    let db = setup().await;
+    let loto = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'loto'")
+        .await
+        .expect("loto");
+    let hot = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'hot_work'")
+        .await
+        .expect("hot work");
+    let restore = |base: &Payload, by: Value, at: &str| {
+        with(
+            base.clone(),
+            &[
+                ("requires_energy_isolation", json!(1)),
+                ("isolation_changed_by_sync_id", by),
+                ("isolation_changed_at", json!(at)),
+                (
+                    "isolation_change_reason",
+                    json!(crate::permit::queries::LOTO_ISOLATION_RESTORE_REASON),
+                ),
+            ],
+        )
+    };
+    let record = |sync: String| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT COALESCE(isolation_changed_at, '-') || '|' || COALESCE(isolation_change_reason, '-') \
+                     FROM permit_types WHERE entity_sync_id = '{sync}'"
+                ),
+            )
+            .await
+        }
+    };
+    // This PC kept LOTO on (no record); a PC that needed the restore sends its LOTO row: applied.
+    let held = wire(&db, "permit_types", &loto).await;
+    let restored_there = restore(&held, Value::Null, &now());
+    let outcome = apply(
+        &db,
+        "permit_types",
+        &loto,
+        &with(restored_there.clone(), &[("name", json!("LOTO (A)"))]),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert!(
+        record(loto.clone())
+            .await
+            .is_some_and(|r| r.ends_with(crate::permit::queries::LOTO_ISOLATION_RESTORE_REASON)),
+        "the update's record travels with the row"
+    );
+    // Its own restore made later on another PC (another time): applied too.
+    let later = (chrono::Utc::now() + chrono::Duration::minutes(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let outcome = apply(&db, "permit_types", &loto, &restore(&held, Value::Null, &later)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // And back: a PC that did not need it sends its LOTO row without a record: applied.
+    let unrecorded = with(
+        wire(&db, "permit_types", &loto).await,
+        &[
+            ("isolation_changed_by_sync_id", Value::Null),
+            ("isolation_changed_at", Value::Null),
+            ("isolation_change_reason", Value::Null),
+            ("name", json!("LOTO (B)")),
+        ],
+    );
+    let outcome = apply(&db, "permit_types", &loto, &unrecorded).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // The fixed reason naming a person is no restore by the update: judged as usual (here: an
+    // author without the settings right, refused), nothing written.
+    let held = wire(&db, "permit_types", &loto).await;
+    user_with(&db, "no_settings_right", &[crate::rbac::permissions::PTW_ISSUE]).await;
+    let named = restore(&held, json!("no_settings_right-sync"), &now());
+    let outcome = apply(&db, "permit_types", &loto, &named).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_ISOLATION_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+    // Nor is a restore record with a time in the future (beyond the tolerated clock difference) or
+    // a time that cannot be read (review N1): judged, and refused for its time.
+    let future = (chrono::Utc::now() + chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    for at in [future.as_str(), "9999-01-01T00:00:00Z", "someday"] {
+        let outcome = apply(&db, "permit_types", &loto, &restore(&held, Value::Null, at)).await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_TYPE_ISOLATION_UNAUDITED"),
+            "{at}: {outcome:?}"
+        );
+    }
+    assert_eq!(record(loto.clone()).await.as_deref(), Some("-|-"), "nothing written");
+    // Switching LOTO off stays refused, whatever record it carries.
+    let off = with(
+        restore(&wire(&db, "permit_types", &loto).await, Value::Null, &now()),
+        &[("requires_energy_isolation", json!(0))],
+    );
+    let outcome = apply(&db, "permit_types", &loto, &off).await;
+    assert_eq!(code(&outcome), Some("PERMIT_TYPE_LOTO_ISOLATION_LOCKED"), "{outcome:?}");
+
+    // The same record on another type is no restore by the update: judged (nobody named).
+    let outcome = apply(
+        &db,
+        "permit_types",
+        &hot,
+        &with(
+            restore(&wire(&db, "permit_types", &hot).await, Value::Null, &now()),
+            &[("requires_energy_isolation", json!(0))],
+        ),
+    )
+    .await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_ISOLATION_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+}
+
+/// Owner decision 5: a received change of either safety setting needs an author who holds both the
+/// settings right and the permit-issue right here; the settings right alone is refused.
+#[tokio::test]
+async fn a_received_setting_change_by_a_settings_holder_without_the_permit_issue_right_is_refused() {
+    let db = setup().await;
+    user_with(&db, "settings_only", &[crate::rbac::permissions::ADM_SETTINGS]).await;
+    let hot = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'hot_work'")
+        .await
+        .expect("hot work");
+    exec(
+        &db,
+        &format!(
+            "UPDATE permit_types SET requires_energy_isolation = 1, requires_three_person_removal = 1 \
+             WHERE entity_sync_id = '{hot}'"
+        ),
+    )
+    .await;
+    let held = wire(&db, "permit_types", &hot).await;
+    let author = json!("settings_only-sync");
+    let reason = json!("Changed by the settings holder only");
+    let isolation_off = with(
+        held.clone(),
+        &[
+            ("requires_energy_isolation", json!(0)),
+            ("isolation_changed_by_sync_id", author.clone()),
+            ("isolation_changed_at", json!(now())),
+            ("isolation_change_reason", reason.clone()),
+        ],
+    );
+    let outcome = apply(&db, "permit_types", &hot, &isolation_off).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_ISOLATION_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+    // Refused for the missing permit-issue right, not the settings right (review N6).
+    let refused_for = |outcome: &ApplyOutcome| match outcome {
+        ApplyOutcome::Conflict { message, .. } => message.clone(),
+        other => panic!("expected a conflict, got {other:?}"),
+    };
+    assert!(
+        refused_for(&outcome).contains("without the permit-issue right"),
+        "{outcome:?}"
+    );
+    let three_person_off = with(
+        held,
+        &[
+            ("requires_three_person_removal", json!(0)),
+            ("three_person_changed_by_sync_id", author),
+            ("three_person_changed_at", json!(now())),
+            ("three_person_change_reason", reason),
+        ],
+    );
+    let outcome = apply(&db, "permit_types", &hot, &three_person_off).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_THREE_PERSON_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+    assert!(
+        refused_for(&outcome).contains("without the permit-issue right"),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT CAST(requires_energy_isolation AS TEXT) || CAST(requires_three_person_removal AS TEXT) \
+                 FROM permit_types WHERE entity_sync_id = '{hot}'"
+            )
+        )
+        .await
+        .as_deref(),
+        Some("11"),
+        "nothing written"
+    );
+}
+
+/// A permit type received from another PC never changes its code (compared exactly, as stored, and
+/// only text can match: a number, true/false or null is refused too); its other fields are applied
+/// as received.
+#[tokio::test]
+async fn a_received_permit_type_never_changes_its_code() {
+    let db = setup().await;
+    let ty = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'hot_work'")
+        .await
+        .expect("type sync id");
+    let held = wire(&db, "permit_types", &ty).await;
+    for changed in ["hot_work_2", "hot_work ", "HOT_WORK"] {
+        let outcome = apply(
+            &db,
+            "permit_types",
+            &ty,
+            &with(held.clone(), &[("code", json!(changed))]),
+        )
+        .await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_TYPE_CODE_LOCKED"),
+            "{changed}: {outcome:?}"
+        );
+    }
+    for changed in [json!(123), json!(0), json!(1.5), json!(true), json!(false), Value::Null] {
+        let outcome = apply(
+            &db,
+            "permit_types",
+            &ty,
+            &with(held.clone(), &[("code", changed.clone())]),
+        )
+        .await;
+        assert_eq!(
+            code(&outcome),
+            Some("PERMIT_TYPE_CODE_LOCKED"),
+            "{changed}: {outcome:?}"
+        );
+    }
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT code FROM permit_types WHERE entity_sync_id = '{ty}'")
+        )
+        .await
+        .as_deref(),
+        Some("hot_work")
+    );
+    let renamed = with(held, &[("name", json!("Hot work (renamed)"))]);
+    let outcome = apply(&db, "permit_types", &ty, &renamed).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// A clearing of a rule permit flag is valid only before the work started: a clearing held here is
+/// judged again when a received row moves the start before it, and a work order past "ready" with
+/// no start time counts as started (a clearing received with it is refused).
+#[tokio::test]
+async fn a_clearing_is_judged_against_a_received_start_and_a_start_without_time() {
+    let db = setup().await;
+    let status_sync = |code: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT entity_sync_id FROM work_order_statuses WHERE code = '{code}'"),
+            )
+            .await
+            .expect("status sync id")
+        }
+    };
+    let (in_progress, on_hold) = (status_sync("in_progress").await, status_sync("on_hold").await);
+    let admin = json!(user_sync(&db, APPLIER).await);
+    let reason = json!("Consignation faite par l'exploitant");
+    let at = |minutes_ago: i64| {
+        (chrono::Utc::now() - chrono::Duration::minutes(minutes_ago))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string()
+    };
+    let flagged_wo = |asset: &'static str| {
+        let db = &db;
+        async move {
+            let asset = insert_equipment(db, asset).await;
+            let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+            exec(
+                db,
+                &format!(
+                    "UPDATE work_orders SET permit_rule_code = 'rule-elec', requires_permit = 1 WHERE id = {wo_id}"
+                ),
+            )
+            .await;
+            text(
+                db,
+                &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+            )
+            .await
+            .expect("wo sync id")
+        }
+    };
+    let clearing = |base: Payload, cleared_at: String| {
+        with(
+            base,
+            &[
+                ("requires_permit", json!(0)),
+                ("permit_rule_cleared_by_sync_id", admin.clone()),
+                ("permit_rule_cleared_at", json!(cleared_at)),
+                ("permit_rule_clear_reason", reason.clone()),
+            ],
+        )
+    };
+
+    // A clearing recorded here an hour ago, then a received start half an hour before it: refused.
+    let wo = flagged_wo("EQ-SYNC-48A").await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo,
+        &clearing(wire(&db, "work_orders", &wo).await, at(60)),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let held = wire(&db, "work_orders", &wo).await;
+    let early = with(
+        held.clone(),
+        &[("status_sync_id", json!(in_progress)), ("actual_start", json!(at(90)))],
+    );
+    let outcome = apply(&db, "work_orders", &wo, &early).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    // Started after the clearing: applied.
+    let later = with(
+        held,
+        &[("status_sync_id", json!(in_progress)), ("actual_start", json!(at(30)))],
+    );
+    let outcome = apply(&db, "work_orders", &wo, &later).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+
+    // A clearing received with the work order on hold and no start time: it counts as started.
+    let wo = flagged_wo("EQ-SYNC-48B").await;
+    let base = with(
+        wire(&db, "work_orders", &wo).await,
+        &[("status_sync_id", json!(on_hold))],
+    );
+    let outcome = apply(&db, "work_orders", &wo, &clearing(base, at(5))).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(requires_permit AS TEXT) FROM work_orders WHERE entity_sync_id = '{wo}'")
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
+
+/// A hand-over log received from a PC that has not upgraded, with free-text roles, adds those roles
+/// to the plant's list (flagged "à revoir") when it arrives, not at the next start of this PC.
+#[tokio::test]
+async fn a_received_free_text_handover_role_joins_the_list_on_arrival() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-90").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    let log = json!({
+        "permit_sync_id": wp.entity_sync_id,
+        "handed_from_role": "Équipe nuit",
+        "handed_to_role": "Maintenance",
+        "confirmation_note": "Zone left clean",
+        "signed_at": now(),
+        "row_version": 1,
+        "_sync_format": "row.v1",
+    })
+    .as_object()
+    .cloned()
+    .expect("object");
+    let outcome = apply(&db, "permit_handover_logs", "ho-from-old-pc", &log).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let roles = crate::permit::handover_roles::list_handover_roles(&db)
+        .await
+        .expect("roles");
+    let night = roles
+        .iter()
+        .find(|r| r.code == "Équipe nuit")
+        .expect("adopted on arrival");
+    assert!(night.review_required);
+    assert_eq!(
+        roles.iter().filter(|r| r.code == "Maintenance").count(),
+        1,
+        "already in the list"
+    );
+}
+
+/// A received hand-over log adopts only its own two roles (not every stored text, which the
+/// start-up integrity pass handles), and writes nothing when both are already in the list.
+#[tokio::test]
+async fn a_received_handover_log_adopts_only_its_own_roles() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-91").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    // A free text stored here earlier (an older version wrote it), not adopted yet.
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+             confirmation_note, signed_at, row_version) VALUES ('ho-stored-text', {}, 'Ancien texte', 'HSE', \
+             'Zone left clean', '2026-10-03T00:00:00Z', 1)",
+            wp.id
+        ),
+    )
+    .await;
+    let log = |from: &str, to: &str| {
+        json!({
+            "permit_sync_id": wp.entity_sync_id,
+            "handed_from_role": from,
+            "handed_to_role": to,
+            "confirmation_note": "Zone left clean",
+            "signed_at": now(),
+            "row_version": 1,
+            "_sync_format": "row.v1",
+        })
+        .as_object()
+        .cloned()
+        .expect("object")
+    };
+    let values = || text(&db, "SELECT CAST(COUNT(*) AS TEXT) FROM reference_values");
+    // Both roles already in the list: nothing is written to the list.
+    let before = values().await;
+    let outcome = apply(&db, "permit_handover_logs", "ho-listed", &log("Maintenance", "HSE")).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(values().await, before);
+
+    // One free text: that one only joins the list (the older stored text waits for the integrity pass).
+    let outcome = apply(
+        &db,
+        "permit_handover_logs",
+        "ho-free",
+        &log("Chef de quart", "Maintenance"),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let codes: Vec<String> = crate::permit::handover_roles::list_handover_roles(&db)
+        .await
+        .expect("roles")
+        .into_iter()
+        .map(|r| r.code)
+        .collect();
+    assert!(codes.contains(&"Chef de quart".to_string()), "{codes:?}");
+    assert!(!codes.contains(&"Ancien texte".to_string()), "{codes:?}");
+    // The integrity pass at start-up stays the catch-all.
+    crate::permit::handover_roles::adopt_stored_roles(&db)
+        .await
+        .expect("integrity");
+    let codes: Vec<String> = crate::permit::handover_roles::list_handover_roles(&db)
+        .await
+        .expect("roles")
+        .into_iter()
+        .map(|r| r.code)
+        .collect();
+    assert!(codes.contains(&"Ancien texte".to_string()), "{codes:?}");
+}
+
+/// Review NOTE 2a: a hand-over role that only Rust would call blank (a tab) is judged on arrival as
+/// the start-up integrity pass judges it (SQLite `TRIM`: spaces only): adopted by both, once; a
+/// role of spaces only is skipped by both.
+#[tokio::test]
+async fn arrival_and_the_integrity_pass_agree_on_blank_handover_roles() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-92").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+             confirmation_note, signed_at, row_version) VALUES ('ho-blank-roles', {}, char(9), '   ', \
+             'Zone left clean', '2026-10-03T00:00:00Z', 1)",
+            wp.id
+        ),
+    )
+    .await;
+    let log_id = text(
+        &db,
+        "SELECT CAST(id AS TEXT) FROM permit_handover_logs WHERE entity_sync_id = 'ho-blank-roles'",
+    )
+    .await
+    .and_then(|id| id.parse::<i64>().ok())
+    .expect("log");
+    let adopted = |code_sql: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT CAST(COUNT(*) AS TEXT) FROM reference_values WHERE code = {code_sql}"),
+            )
+            .await
+        }
+    };
+    crate::permit::handover_roles::adopt_received_roles(&db, log_id)
+        .await
+        .expect("arrival");
+    assert_eq!(
+        adopted("char(9)").await.as_deref(),
+        Some("1"),
+        "the tab role is adopted on arrival"
+    );
+    assert_eq!(adopted("'   '").await.as_deref(), Some("0"), "spaces only: skipped");
+    // The integrity pass finds the tab role already listed and skips the spaces, as arrival did.
+    crate::permit::handover_roles::adopt_stored_roles(&db)
+        .await
+        .expect("integrity");
+    assert_eq!(adopted("char(9)").await.as_deref(), Some("1"));
+    assert_eq!(adopted("'   '").await.as_deref(), Some("0"));
+}
+
+/// A problem with the list itself (here: no published version left) never turns the received
+/// hand-over logs into sync conflicts: the log is applied, the list is not created or changed on
+/// arrival, and the role waits for the integrity pass.
+#[tokio::test]
+async fn a_list_problem_does_not_refuse_received_handover_logs() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-92").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    exec(
+        &db,
+        "UPDATE reference_sets SET status = 'superseded' WHERE domain_id = \
+         (SELECT id FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES')",
+    )
+    .await;
+    let sets = || {
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM reference_sets WHERE domain_id = \
+             (SELECT id FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES')",
+        )
+    };
+    let before = sets().await;
+    for (n, role) in ["Équipe A", "Équipe B"].iter().enumerate() {
+        let log = json!({
+            "permit_sync_id": wp.entity_sync_id,
+            "handed_from_role": role,
+            "handed_to_role": "Maintenance",
+            "confirmation_note": "Zone left clean",
+            "signed_at": now(),
+            "row_version": 1,
+            "_sync_format": "row.v1",
+        })
+        .as_object()
+        .cloned()
+        .expect("object");
+        let outcome = apply(&db, "permit_handover_logs", &format!("ho-no-list-{n}"), &log).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{role}: {outcome:?}");
+    }
+    assert_eq!(sets().await, before, "no list version created on arrival");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM permit_handover_logs WHERE entity_sync_id LIKE 'ho-no-list-%'"
+        )
+        .await
+        .as_deref(),
+        Some("2")
     );
 }

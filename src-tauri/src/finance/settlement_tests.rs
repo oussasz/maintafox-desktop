@@ -566,6 +566,7 @@ async fn reopen(db: &DatabaseConnection, wo_id: i64) {
             expected_row_version: wo_row_version(db, wo_id).await,
             reason: "Fuite revenue".into(),
             target_status: None,
+            estimated_remaining_hours: None,
         },
     )
     .await

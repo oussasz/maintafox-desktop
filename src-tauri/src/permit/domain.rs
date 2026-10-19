@@ -85,6 +85,13 @@ pub struct PermitHandoverLog {
     pub permit_id: i64,
     pub handed_from_role: String,
     pub handed_to_role: String,
+    /// Labels of the two roles in the plant's list (`PERMIT.HANDOVER_ROLES`), looked up over every
+    /// published version of the list, roles since deactivated included; `None` when the stored
+    /// code is in no version of the list.
+    #[serde(default)]
+    pub handed_from_label: Option<String>,
+    #[serde(default)]
+    pub handed_to_label: Option<String>,
     pub confirmation_note: String,
     pub signed_at: String,
     /// Who recorded the hand-over (the session user; NULL on hand-overs recorded before 235).

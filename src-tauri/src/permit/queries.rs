@@ -129,6 +129,10 @@ fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
         .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be an RFC 3339 timestamp.")]))
 }
 
+/// Stable code: a permit type's code cannot change once the type exists (here and on a row
+/// received from another PC).
+pub const CODE_PERMIT_TYPE_CODE_LOCKED: &str = "PERMIT_TYPE_CODE_LOCKED";
+
 /// Sync identity of the shipped LOTO permit type (migration 67): its energy-isolation rule is locked.
 const SHIPPED_LOTO_TYPE_SYNC_ID: &str = "11111111-1111-4111-8111-111111111111";
 
@@ -397,15 +401,37 @@ fn handover_person_name_sql(alias: &str) -> String {
     format!("COALESCE(NULLIF(TRIM({alias}.display_name), ''), {alias}.username)")
 }
 
-/// Columns of a hand-over log with the signer's and receiver's names (alias `h`).
+/// The label of the hand-over role stored in `column`, from the plant's list: looked up over every
+/// published version of the list (the current one and those it replaced), roles since deactivated
+/// included, so a stored hand-over keeps its role's name. The exact code first, else the code
+/// ignoring case (adopted free texts); each from the most recent version that holds it. NULL when
+/// no published version holds it.
+fn handover_role_label_sql(column: &str) -> String {
+    let lookup = |matches: String| {
+        format!(
+            "(SELECT rv.label FROM reference_values rv                 JOIN reference_sets rs ON rs.id = rv.set_id                 JOIN reference_domains d ON d.id = rs.domain_id                WHERE UPPER(TRIM(d.code)) = '{domain}' AND rs.status IN ('published', 'superseded')                  AND {matches}                ORDER BY rs.version_no DESC, rv.is_active DESC, rv.id DESC LIMIT 1)",
+            domain = super::handover_roles::DOMAIN,
+        )
+    };
+    format!(
+        "COALESCE({}, {})",
+        lookup(format!("rv.code = {column}")),
+        lookup(format!("UPPER(TRIM(rv.code)) = UPPER(TRIM({column}))")),
+    )
+}
+
+/// Columns of a hand-over log with the role labels and the signer's and receiver's names (alias `h`).
 fn handover_select() -> String {
     format!(
         "SELECT h.id, h.entity_sync_id, h.permit_id, h.handed_from_role, h.handed_to_role, \
+         {} AS handed_from_label, {} AS handed_to_label, \
          h.confirmation_note, h.signed_at, h.signed_by_id, h.received_by_id, h.row_version, \
          {} AS signed_by_name, {} AS received_by_name \
          FROM permit_handover_logs h \
          LEFT JOIN user_accounts us ON us.id = h.signed_by_id \
          LEFT JOIN user_accounts ur ON ur.id = h.received_by_id",
+        handover_role_label_sql("h.handed_from_role"),
+        handover_role_label_sql("h.handed_to_role"),
         handover_person_name_sql("us"),
         handover_person_name_sql("ur"),
     )
@@ -424,6 +450,12 @@ fn map_permit_handover_log(row: &sea_orm::QueryResult) -> AppResult<PermitHandov
         handed_to_role: row
             .try_get("", "handed_to_role")
             .map_err(|e| decode_err("handed_to_role", e))?,
+        handed_from_label: row
+            .try_get("", "handed_from_label")
+            .map_err(|e| decode_err("handed_from_label", e))?,
+        handed_to_label: row
+            .try_get("", "handed_to_label")
+            .map_err(|e| decode_err("handed_to_label", e))?,
         confirmation_note: row
             .try_get("", "confirmation_note")
             .map_err(|e| decode_err("confirmation_note", e))?,
@@ -818,20 +850,96 @@ pub async fn upsert_permit_type(
     Ok(out)
 }
 
+/// The shipped LOTO permit type (migration 67), by its sync identity or its code: its
+/// energy-isolation rule is never switched off, here or by a row received from another PC.
+pub(crate) fn is_shipped_loto_type(entity_sync_id: &str, code: &str) -> bool {
+    entity_sync_id == SHIPPED_LOTO_TYPE_SYNC_ID || code.trim().eq_ignore_ascii_case("loto")
+}
+
+/// The reason recorded when the update switches the shipped LOTO type's energy-isolation rule back
+/// on (migration 241). Fixed text, the same on every PC.
+pub(crate) const LOTO_ISOLATION_RESTORE_REASON: &str = "Mise à jour Maintafox : le type LOTO livré exige toujours une isolation énergétique (rétablie). / Maintafox update: the shipped LOTO type always requires an energy isolation (restored).";
+
+/// The record of that restore: written by nobody (the update itself) with the fixed reason.
+pub(crate) fn is_loto_isolation_restore_record(by: Option<&str>, reason: Option<&str>) -> bool {
+    by.is_none() && reason.map(str::trim) == Some(LOTO_ISOLATION_RESTORE_REASON)
+}
+
+/// Migration 241: the shipped LOTO type (identified as [`is_shipped_loto_type`] does) requires an
+/// energy isolation again where a switch-off received from another PC before migration 240 left it
+/// off. Touches that row only, and only while it is off (idempotent): the rule on, the record says
+/// the update did it (nobody, now, [`LOTO_ISOLATION_RESTORE_REASON`]), audited as a system change
+/// in the same transaction. Returns how many rows it switched back on.
+pub(crate) async fn restore_shipped_loto_isolation(db: &impl ConnectionTrait) -> AppResult<u64> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, code FROM permit_types \
+              WHERE (entity_sync_id = ? OR LOWER(TRIM(code)) = 'loto') \
+                AND COALESCE(requires_energy_isolation, 0) = 0",
+            [SHIPPED_LOTO_TYPE_SYNC_ID.into()],
+        ))
+        .await?;
+    let mut restored = 0;
+    for row in &rows {
+        let id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        let code: String = row.try_get("", "code").map_err(|e| decode_err("code", e))?;
+        let at = now_ts();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE permit_types SET requires_energy_isolation = 1, isolation_changed_by_id = NULL, \
+             isolation_changed_at = ?, isolation_change_reason = ?, row_version = row_version + 1 \
+             WHERE id = ? AND COALESCE(requires_energy_isolation, 0) = 0",
+            [at.clone().into(), LOTO_ISOLATION_RESTORE_REASON.into(), id.into()],
+        ))
+        .await?;
+        crate::audit::writer::write_audit_event_in(
+            db,
+            crate::audit::writer::AuditEventInput {
+                action_code: "permit_type.energy_isolation.restored".to_string(),
+                target_type: Some("permit_type".to_string()),
+                target_id: Some(id.to_string()),
+                actor_id: None,
+                auth_context: "system".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "standard".to_string(),
+                details_json: Some(serde_json::json!({
+                    "summary": "Shipped LOTO permit type requires an energy isolation again",
+                    "code": code,
+                    "reason": LOTO_ISOLATION_RESTORE_REASON,
+                    "origin": "migration_241",
+                    "at": at,
+                })),
+            },
+        )
+        .await?;
+        restored += 1;
+    }
+    Ok(restored)
+}
+
 /// Switching the energy-isolation rule off weakens the start gate: never for the shipped LOTO
-/// type, otherwise only for an administrator with step-up and a reason, audited in the same
-/// transaction. Switching it on is a plain edit.
+/// type, otherwise only for an administrator with step-up and a reason of at least
+/// [`crate::settings::catalog::MIN_REASON_CHARS`] characters, audited in the same transaction.
+/// Returns the reason when the save switches it off (recorded on the row as who, when and why:
+/// migration 240, re-checked on arrival). Switching it on is a plain edit.
 async fn guard_isolation_relax(
     db: &impl ConnectionTrait,
     current: &PermitType,
     input: &PermitTypeUpsertInput,
     writer: PermitTypeWriter,
-) -> AppResult<()> {
+) -> AppResult<Option<String>> {
     if !relaxes_energy_isolation(current, input) {
-        return Ok(());
+        return Ok(None);
     }
-    let params = std::collections::HashMap::from([("type".to_string(), current.code.clone())]);
-    if current.entity_sync_id == SHIPPED_LOTO_TYPE_SYNC_ID || current.code.trim().eq_ignore_ascii_case("loto") {
+    let min = crate::settings::catalog::MIN_REASON_CHARS;
+    let params = std::collections::HashMap::from([
+        ("type".to_string(), current.code.clone()),
+        ("min".to_string(), min.to_string()),
+    ]);
+    if is_shipped_loto_type(&current.entity_sync_id, &current.code) {
         return Err(crate::errors::org_validation_failed(
             "PERMIT_TYPE_LOTO_ISOLATION_LOCKED",
             "The LOTO permit type always requires an energy isolation.",
@@ -849,14 +957,15 @@ async fn guard_isolation_relax(
         .disable_isolation_reason
         .as_deref()
         .map(str::trim)
-        .filter(|r| !r.is_empty())
+        .filter(|r| r.chars().count() >= min)
         .ok_or_else(|| {
             crate::errors::org_validation_failed(
                 "PERMIT_TYPE_ISOLATION_RELAX_REASON",
-                "Give the reason for no longer requiring an energy isolation.",
+                format!("Give the reason (at least {min} characters) for no longer requiring an energy isolation."),
                 params.clone(),
             )
         })?;
+    guard_change_clock(db, current, ISOLATION_CHANGE).await?;
     crate::audit::writer::write_audit_event_in(
         db,
         crate::audit::writer::AuditEventInput {
@@ -873,7 +982,7 @@ async fn guard_isolation_relax(
         },
     )
     .await?;
-    Ok(())
+    Ok(Some(reason.to_string()))
 }
 
 /// The three-person lock-removal chain changes who may confirm that locks came off: changing it
@@ -889,7 +998,9 @@ fn guard_three_person_change(
         return Ok(None);
     }
     let type_label = current.map_or_else(|| input.code.trim().to_string(), |c| c.code.clone());
-    let params = std::collections::HashMap::from([("type".to_string(), type_label)]);
+    let min = crate::settings::catalog::MIN_REASON_CHARS;
+    let params =
+        std::collections::HashMap::from([("type".to_string(), type_label), ("min".to_string(), min.to_string())]);
     if !writer.may_change_three_person {
         return Err(crate::errors::org_validation_failed(
             "PERMIT_TYPE_THREE_PERSON_FORBIDDEN",
@@ -901,11 +1012,11 @@ fn guard_three_person_change(
         .three_person_change_reason
         .as_deref()
         .map(str::trim)
-        .filter(|r| r.chars().count() >= crate::settings::catalog::MIN_REASON_CHARS)
+        .filter(|r| r.chars().count() >= min)
         .ok_or_else(|| {
             crate::errors::org_validation_failed(
                 "PERMIT_TYPE_THREE_PERSON_REASON",
-                "Give the reason for changing the three-person lock-removal rule.",
+                format!("Give the reason (at least {min} characters) for changing the three-person lock-removal rule."),
                 params,
             )
         })?;
@@ -949,23 +1060,44 @@ async fn audit_three_person_change(
     Ok(())
 }
 
-/// A change of the three-person setting is recorded at this PC's time, and every other PC applies
-/// it only when that time is later than the change it holds (`permit::sync_check::
-/// inbound_permit_type_check`). When the change already recorded here is not earlier than now, this
-/// PC's clock is behind: the change would be refused everywhere else while shown as made here, so
-/// it is refused here, naming the time to wait for (no time is made up). A recorded time that cannot
-/// be read is not compared: the new record (readable) replaces it.
-async fn guard_three_person_clock(db: &impl ConnectionTrait, current: &PermitType) -> AppResult<()> {
+/// The recorded time of a change of one safety setting of a permit type: its column, refusal code
+/// and the setting's name in the message.
+struct ChangeClock {
+    column: &'static str,
+    code: &'static str,
+    setting: &'static str,
+}
+
+const THREE_PERSON_CHANGE: ChangeClock = ChangeClock {
+    column: "three_person_changed_at",
+    code: "PERMIT_TYPE_THREE_PERSON_CLOCK_BEHIND",
+    setting: "three-person lock-removal rule",
+};
+
+const ISOLATION_CHANGE: ChangeClock = ChangeClock {
+    column: "isolation_changed_at",
+    code: "PERMIT_TYPE_ISOLATION_CLOCK_BEHIND",
+    setting: "energy-isolation rule",
+};
+
+/// A change of the three-person or energy-isolation setting is recorded at this PC's time, and
+/// every other PC applies it only when that time is later than the change it holds
+/// (`permit::sync_check::inbound_permit_type_check`). When the change already recorded here is not
+/// earlier than now, this PC's clock is behind (or the type was already changed within this second):
+/// the change would be refused everywhere else while shown as made here, so it is refused here,
+/// naming the time to wait for (no time is made up). A recorded time that cannot be read is not
+/// compared: the new record (readable) replaces it.
+async fn guard_change_clock(db: &impl ConnectionTrait, current: &PermitType, clock: ChangeClock) -> AppResult<()> {
     let held: Option<String> = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT three_person_changed_at FROM permit_types WHERE id = ?",
+            format!("SELECT {} AS at FROM permit_types WHERE id = ?", clock.column),
             [current.id.into()],
         ))
         .await?
-        .map(|r| r.try_get::<Option<String>>("", "three_person_changed_at"))
+        .map(|r| r.try_get::<Option<String>>("", "at"))
         .transpose()
-        .map_err(|e| decode_err("three_person_changed_at", e))?
+        .map_err(|e| decode_err(clock.column, e))?
         .flatten();
     let Some(held) = held.as_deref().map(str::trim).filter(|h| !h.is_empty()) else {
         return Ok(());
@@ -977,10 +1109,10 @@ async fn guard_three_person_clock(db: &impl ConnectionTrait, current: &PermitTyp
     let now = crate::settings::site::instant(&now_ts()).unwrap_or_else(Utc::now);
     if last >= now {
         return Err(crate::errors::org_validation_failed(
-            "PERMIT_TYPE_THREE_PERSON_CLOCK_BEHIND",
+            clock.code,
             format!(
-                "The three-person lock-removal rule of permit type {} was last changed at {held}, not earlier than this PC's time: check this PC's clock, then change it again.",
-                current.code
+                "The {} of permit type {} was last changed at {held}, not earlier than this PC's time: check this PC's clock, then change it again.",
+                clock.setting, current.code
             ),
             std::collections::HashMap::from([
                 ("type".to_string(), current.code.clone()),
@@ -991,9 +1123,9 @@ async fn guard_three_person_clock(db: &impl ConnectionTrait, current: &PermitTyp
     Ok(())
 }
 
-/// The author, time and reason of a change of the three-person setting (migration 238); all `None`
-/// when the save does not change it.
-struct ThreePersonTrace {
+/// The author, time and reason of a change of a safety setting (three-person: migration 238;
+/// energy-isolation switch-off: migration 240); all `None` when the save does not change it.
+struct ChangeTrace {
     by: Option<i64>,
     at: Option<String>,
     reason: Option<String>,
@@ -1010,24 +1142,27 @@ async fn upsert_permit_type_in(
         Some(id) => get_permit_type(db, id).await?,
         None => None,
     };
-    if let Some(current) = &existing {
-        guard_isolation_relax(db, current, &input, writer).await?;
-    }
+    let isolation_reason = match &existing {
+        Some(current) => guard_isolation_relax(db, current, &input, writer).await?,
+        None => None,
+    };
     let three_person_reason = if input.id.is_none() || existing.is_some() {
         guard_three_person_change(existing.as_ref(), &input, writer)?
     } else {
         None
     };
     if let (Some(_), Some(current)) = (&three_person_reason, &existing) {
-        guard_three_person_clock(db, current).await?;
+        guard_change_clock(db, current, THREE_PERSON_CHANGE).await?;
     }
     // Who changed the setting, when and why, written with the row (sent with it by sync and
     // re-checked on arrival: `permit::sync_check::inbound_permit_type_check`); kept otherwise.
-    let trace = ThreePersonTrace {
-        by: three_person_reason.as_ref().map(|_| writer.actor_id),
-        at: three_person_reason.as_ref().map(|_| now_ts()),
-        reason: three_person_reason.clone(),
+    let traced = |reason: &Option<String>| ChangeTrace {
+        by: reason.as_ref().map(|_| writer.actor_id),
+        at: reason.as_ref().map(|_| now_ts()),
+        reason: reason.clone(),
     };
+    let trace = traced(&three_person_reason);
+    let isolation_trace = traced(&isolation_reason);
     let ppe = input.mandatory_ppe_ids_json.unwrap_or_else(|| "[]".to_string());
     let rules = input.mandatory_control_rules_json.unwrap_or_else(|| "{}".to_string());
     let desc = input.description.unwrap_or_default();
@@ -1044,6 +1179,22 @@ async fn upsert_permit_type_in(
             entity: "PermitType".into(),
             id: id.to_string(),
         })?;
+        // A type's code is fixed once created: plant rules, permits and work orders name the type by
+        // it (the stored code is kept as it is, spaces included).
+        if input.code.trim() != current.code.trim() {
+            return Err(crate::errors::org_validation_failed(
+                CODE_PERMIT_TYPE_CODE_LOCKED,
+                format!(
+                    "The code of permit type {} cannot be changed (asked: {}).",
+                    current.code,
+                    input.code.trim()
+                ),
+                std::collections::HashMap::from([
+                    ("type".to_string(), current.code.clone()),
+                    ("code".to_string(), input.code.trim().to_string()),
+                ]),
+            ));
+        }
         let new_rv = current.row_version + 1;
         let affected = db
             .execute(Statement::from_sql_and_values(
@@ -1054,10 +1205,13 @@ async fn upsert_permit_type_in(
                  requires_energy_isolation = ?, requires_three_person_removal = ?, \
                  three_person_changed_by_id = COALESCE(?, three_person_changed_by_id), \
                  three_person_changed_at = COALESCE(?, three_person_changed_at), \
-                 three_person_change_reason = COALESCE(?, three_person_change_reason), row_version = ? \
+                 three_person_change_reason = COALESCE(?, three_person_change_reason), \
+                 isolation_changed_by_id = COALESCE(?, isolation_changed_by_id), \
+                 isolation_changed_at = COALESCE(?, isolation_changed_at), \
+                 isolation_change_reason = COALESCE(?, isolation_change_reason), row_version = ? \
                  WHERE id = ? AND row_version = ?",
                 [
-                    input.code.into(),
+                    current.code.clone().into(),
                     input.name.into(),
                     desc.into(),
                     i64::from(input.requires_hse_approval).into(),
@@ -1081,6 +1235,9 @@ async fn upsert_permit_type_in(
                     trace.by.into(),
                     trace.at.clone().into(),
                     trace.reason.clone().into(),
+                    isolation_trace.by.into(),
+                    isolation_trace.at.into(),
+                    isolation_trace.reason.into(),
                     new_rv.into(),
                     id.into(),
                     current.row_version.into(),
@@ -1728,8 +1885,9 @@ pub struct HandoverReceiverPage {
 pub const HANDOVER_RECEIVERS_PAGE_MAX: u64 = 200;
 
 /// Active, non-deleted accounts that may receive a hand-over, excluding the person asking (who
-/// signs it), optionally filtered by name, ordered by name, paged. The person asking holds
-/// `ptw.close` (checked here as well as by the command).
+/// signs it), optionally filtered by name (case and accents ignored, no wildcards), ordered by name,
+/// paged, with the total that match. The person asking holds `ptw.close` (checked here as well as
+/// by the command).
 pub async fn list_handover_receivers(
     db: &impl ConnectionTrait,
     actor_id: i64,
@@ -1743,49 +1901,48 @@ pub async fn list_handover_receivers(
         ));
     }
     let name = handover_person_name_sql("ua");
-    let filter = format!(
-        "ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? \
-         AND (? IS NULL OR LOWER({name}) LIKE '%' || LOWER(?) || '%')"
-    );
-    let search = search.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    let binds = || -> Vec<sea_orm::Value> { vec![actor_id.into(), search.clone().into(), search.clone().into()] };
-    let total: i64 = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!("SELECT COUNT(*) AS n FROM user_accounts ua WHERE {filter}"),
-            binds(),
-        ))
-        .await?
-        .map(|r| r.try_get::<i64>("", "n"))
-        .transpose()?
-        .unwrap_or(0);
-    let limit = limit
-        .unwrap_or(HANDOVER_RECEIVERS_PAGE_MAX)
-        .clamp(1, HANDOVER_RECEIVERS_PAGE_MAX);
-    let mut values = binds();
-    values.push(i64::try_from(limit).unwrap_or(200).into());
-    values.push(i64::try_from(offset.unwrap_or(0)).unwrap_or(0).into());
+    // Filtered here rather than by SQL LIKE: "%" and "_" are plain characters, and case and accents
+    // are ignored the way the asset search ignores them (`assets::search::fold_search_text`).
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT ua.id, {name} AS display_name FROM user_accounts ua WHERE {filter} \
-                 ORDER BY LOWER({name}) ASC, ua.id ASC LIMIT ? OFFSET ?"
+                "SELECT ua.id, {name} AS display_name FROM user_accounts ua \
+                 WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ?"
             ),
-            values,
+            [actor_id.into()],
         ))
         .await?;
-    let items = rows
-        .iter()
-        .map(|r| {
-            Ok(HandoverReceiver {
-                id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
-                display_name: r
-                    .try_get("", "display_name")
-                    .map_err(|e| decode_err("display_name", e))?,
-            })
-        })
-        .collect::<AppResult<Vec<_>>>()?;
+    let wanted = search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(crate::assets::search::fold_search_text);
+    let mut matching: Vec<(String, HandoverReceiver)> = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let receiver = HandoverReceiver {
+            id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
+            display_name: r
+                .try_get("", "display_name")
+                .map_err(|e| decode_err("display_name", e))?,
+        };
+        let folded = crate::assets::search::fold_search_text(&receiver.display_name);
+        if wanted.as_deref().is_none_or(|w| folded.contains(w)) {
+            matching.push((folded, receiver));
+        }
+    }
+    // By name (case and accents ignored), then by account.
+    matching.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.id.cmp(&b.1.id)));
+    let total = i64::try_from(matching.len()).unwrap_or(i64::MAX);
+    let limit = limit
+        .unwrap_or(HANDOVER_RECEIVERS_PAGE_MAX)
+        .clamp(1, HANDOVER_RECEIVERS_PAGE_MAX);
+    let items = matching
+        .into_iter()
+        .skip(usize::try_from(offset.unwrap_or(0)).unwrap_or(usize::MAX))
+        .take(usize::try_from(limit).unwrap_or(usize::MAX))
+        .map(|(_, receiver)| receiver)
+        .collect();
     Ok(HandoverReceiverPage { items, total })
 }
 

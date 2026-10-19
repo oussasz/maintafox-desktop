@@ -27,11 +27,14 @@
 //!   `ISOLATION_REMOVAL_STATUSES` of `permit::queries`);
 //! - a work order entering `in_progress` passes the permit gate (`permit::wo_gate`) at the time it
 //!   started, resumed or was reopened: a permit when it requires one (of the type a plant rule named,
-//!   when a rule flagged it), every permit live at that time active, not suspended, not expired, with
-//!   its isolations ready;
+//!   when a rule flagged it), every permit live at that time active, not suspended, not expired, not
+//!   expiring before the end of the work (the planned end; without one, that time plus the
+//!   expected duration), with its isolations ready;
 //! - a permit type whose three-person lock-removal setting changes (or a new type with it on), or
-//!   whose record of that change changes, says who changed it, when (later than the change recorded
-//!   here) and why, and that person holds the settings right here (`inbound_permit_type_check`);
+//!   whose energy-isolation rule is switched off, or whose record of such a change changes, says who
+//!   changed it, when (later than the change recorded here) and why, and that person holds the
+//!   settings and permit-issue rights here; the shipped LOTO type's energy-isolation rule is never
+//!   switched off, and a type's code never changes (`inbound_permit_type_check`);
 //! - deletes (this device never deletes them): a permit, its isolations and suspensions only while
 //!   the permit is a draft (the LOTO history of any other permit is kept); a permit type or a
 //!   qualification requirement never (they are deactivated or edited).
@@ -62,9 +65,13 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde_json::{Map, Value};
 
 use crate::errors::{AppError, AppResult};
+use crate::permit::wo_gate::Hours;
 use crate::settings::site::{instant, InboundVerdict, MAX_CLOCK_SKEW_MINUTES};
 
 pub(crate) type Payload = Map<String, Value>;
+
+/// Work-order statuses past "ready": the work started (`wo::workflow::state_machine`).
+const PAST_READY: &[&str] = &["in_progress", "on_hold", "completed", "closed"];
 
 /// Permit statuses after which a permit no longer protects work (`permit::queries`).
 const TERMINAL: &[&str] = &["closed", "handed_back", "cancelled", "expired"];
@@ -104,6 +111,21 @@ fn flag(p: &Payload, key: &str) -> bool {
 
 fn time(p: &Payload, key: &str) -> Option<DateTime<Utc>> {
     field(p, key).and_then(instant)
+}
+
+/// A number of hours in a payload, read as this PC reads the stored column (`permit::wo_gate::Hours`):
+/// absent when missing, null or blank; a JSON number, or a number sent as text (SQLite's REAL
+/// affinity stores numeric text as that number); anything else is unreadable (refused when it is
+/// judged, as on this PC), never taken as "no value".
+fn hours(p: &Payload, key: &str) -> Hours {
+    match p.get(key) {
+        None | Some(Value::Null) => Hours::Absent,
+        Some(Value::Number(n)) => n
+            .as_f64()
+            .map_or_else(|| Hours::Unreadable(n.to_string()), Hours::Value),
+        Some(Value::String(s)) => Hours::from_text(Some(s)),
+        Some(other) => Hours::Unreadable(other.to_string()),
+    }
 }
 
 /// Latest time a received row may carry: this device's clock plus the tolerated difference.
@@ -842,24 +864,86 @@ fn on_off(p: &Payload, key: &str) -> Option<bool> {
     }
 }
 
-/// Re-check of a permit type received by synchronisation: a change of its three-person lock-removal
-/// setting (or a new type with it on) is an administrator action with step-up and a reason
-/// (`permit::queries::guard_three_person_change`), recorded on the row as who changed it, when and
-/// why (migration 238). That record is judged whenever the received row changes the setting or the
-/// record itself (a row that leaves both alone passes; the energy-isolation rule is applied as
-/// received). It is applied only when:
+/// A safety setting of a permit type whose change is an administrator action recorded on the row as
+/// who changed it, when and why, and re-checked on arrival ([`judge_setting_record`]).
+struct SettingRecord {
+    /// The setting's column (on / off).
+    setting: &'static str,
+    /// Wire fields of the record: author (user sync id), time, reason.
+    by: &'static str,
+    at: &'static str,
+    why: &'static str,
+    /// Columns of the record here (the copy check).
+    by_column: &'static str,
+    at_column: &'static str,
+    why_column: &'static str,
+    /// The setting's name in the messages.
+    name: &'static str,
+    unaudited: &'static str,
+    stale: &'static str,
+    unauthorised: &'static str,
+    /// Only switching it off is an administrator action (switching it on is a plain edit); otherwise
+    /// a change either way, or a new type with it on, is.
+    off_only: bool,
+}
+
+/// The three-person lock-removal setting (migrations 236, 238; `permit::queries::
+/// guard_three_person_change`).
+const THREE_PERSON_SETTING: SettingRecord = SettingRecord {
+    setting: "requires_three_person_removal",
+    by: "three_person_changed_by_sync_id",
+    at: "three_person_changed_at",
+    why: "three_person_change_reason",
+    by_column: "three_person_changed_by_id",
+    at_column: "three_person_changed_at",
+    why_column: "three_person_change_reason",
+    name: "three-person lock-removal rule",
+    unaudited: "PERMIT_TYPE_THREE_PERSON_UNAUDITED",
+    stale: "PERMIT_TYPE_THREE_PERSON_STALE",
+    unauthorised: "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED",
+    off_only: false,
+};
+
+/// The energy-isolation setting: switching it off (migration 240; `permit::queries::
+/// guard_isolation_relax`).
+const ISOLATION_SETTING: SettingRecord = SettingRecord {
+    setting: "requires_energy_isolation",
+    by: "isolation_changed_by_sync_id",
+    at: "isolation_changed_at",
+    why: "isolation_change_reason",
+    by_column: "isolation_changed_by_id",
+    at_column: "isolation_changed_at",
+    why_column: "isolation_change_reason",
+    name: "energy-isolation rule",
+    unaudited: "PERMIT_TYPE_ISOLATION_UNAUDITED",
+    stale: "PERMIT_TYPE_ISOLATION_STALE",
+    unauthorised: "PERMIT_TYPE_ISOLATION_UNAUTHORISED",
+    off_only: true,
+};
+
+/// Re-check of a permit type received by synchronisation. Its code never changes once the type exists
+/// (`PERMIT_TYPE_CODE_LOCKED`, as the local save refuses it). The shipped LOTO type's energy-isolation
+/// rule is never switched off (`PERMIT_TYPE_LOTO_ISOLATION_LOCKED`, as the local save refuses it).
+/// Its two safety settings — the three-person lock-removal chain (a change either way, or a new type
+/// with it on) and the energy-isolation rule (switching it off) — are administrator actions with
+/// step-up and a reason, recorded on the row as who changed them, when and why (migrations 238, 240).
+/// Each record is judged whenever the received row makes such a change or rewrites the record
+/// itself (a row that leaves both alone passes; switching the isolation rule on is a plain edit). It
+/// is applied only when:
 /// - the setting is a value this version reads one way and stores the same way ([`on_off`]);
 /// - the reason has at least [`crate::settings::catalog::MIN_REASON_CHARS`] characters, the time is
 ///   readable, not in the future and strictly later than the change already recorded here for this
-///   type (an older record of this type is not replayed: `PERMIT_TYPE_THREE_PERSON_STALE`; a time
-///   recorded here that cannot be read refuses every received change of the type);
+///   type (an older record of this type is not replayed: `..._STALE`; a time recorded here that
+///   cannot be read refuses every received change of the setting);
 /// - the record is not one already held here for another type (copied from that type);
-/// - the person named holds the settings right (`adm.settings`, plant-wide) here, judged on arrival.
+/// - the person named holds the settings right (`adm.settings`) and the permit-issue right
+///   (`ptw.issue`) plant-wide here, judged on arrival (the rights the local save needs).
 ///
-/// A type new here whose setting is off is applied once its record passes the reason and time
-/// checks, without judging who changed it: off is the setting every type has without a record, and
-/// a PC paired later must not be stuck on a past change by an administrator who has since lost the
-/// right.
+/// A type new here is applied once its record passes the reason and time checks, without judging
+/// who changed it, when it carries the setting every type may have without an administrator: the
+/// three-person chain off, or any energy-isolation value (a new type is created with the rule off
+/// by a plain edit). A PC paired later is so never stuck on a past change by an administrator who
+/// has since lost the right.
 ///
 /// A person not applied here yet, or whose rights are still waiting in the inbox, makes it wait;
 /// otherwise a sync conflict, nothing written. The step-up itself cannot be re-verified here, and a
@@ -869,42 +953,106 @@ pub(crate) async fn inbound_permit_type_check(
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
-    const SETTING: &str = "requires_three_person_removal";
-    const BY: &str = "three_person_changed_by_sync_id";
-    const AT: &str = "three_person_changed_at";
-    const WHY: &str = "three_person_change_reason";
     let local = local_wire(conn, "permit_types", entity_sync_id).await?;
+    // A type's code is fixed once created (`permit::queries::CODE_PERMIT_TYPE_CODE_LOCKED`): plant
+    // rules, permits and work orders name the type by it. Compared exactly, as stored: a received
+    // code that is not text (a number or true/false, which would be stored as text, or null) is a
+    // change too.
+    if let (Some(held), Some(sent)) = (
+        local.as_ref().and_then(|l| l.get("code")).and_then(Value::as_str),
+        received.get("code"),
+    ) {
+        if sent.as_str() != Some(held) {
+            return conflict(
+                crate::permit::queries::CODE_PERMIT_TYPE_CODE_LOCKED,
+                format!("permit type {held}: its code cannot be changed (received: {sent})"),
+            );
+        }
+    }
     let ty = overlay(local.as_ref(), received);
     let code = field(&ty, "code").unwrap_or(entity_sync_id).to_string();
+    // The shipped LOTO type always requires an energy isolation (`permit::queries::
+    // guard_isolation_relax`): a received switch-off is refused, whoever made it.
+    let isolation_held = local.as_ref().and_then(|l| on_off(l, ISOLATION_SETTING.setting));
+    if crate::permit::queries::is_shipped_loto_type(entity_sync_id, &code)
+        && on_off(&ty, ISOLATION_SETTING.setting) == Some(false)
+        && isolation_held != Some(false)
+    {
+        return conflict(
+            "PERMIT_TYPE_LOTO_ISOLATION_LOCKED",
+            format!("permit type {code}: the LOTO permit type always requires an energy isolation"),
+        );
+    }
+    for setting in [&THREE_PERSON_SETTING, &ISOLATION_SETTING] {
+        if let Some(verdict) = judge_setting_record(conn, entity_sync_id, &code, &ty, local.as_ref(), setting).await? {
+            return Ok(Some(verdict));
+        }
+    }
+    Ok(None)
+}
+
+/// One setting's record re-checked on arrival (`inbound_permit_type_check`).
+async fn judge_setting_record(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    code: &str,
+    ty: &Payload,
+    local: Option<&Payload>,
+    s: &SettingRecord,
+) -> AppResult<Option<InboundVerdict>> {
     let (Some(wanted), Some(held)) = (
-        on_off(&ty, SETTING),
-        local.as_ref().map_or(Some(None), |l| on_off(l, SETTING).map(Some)),
+        on_off(ty, s.setting),
+        local.map_or(Some(None), |l| on_off(l, s.setting).map(Some)),
     ) else {
         return conflict(
             "INVALID_VALUE",
             format!(
-                "permit type {code}: its three-person lock-removal rule must be on or off, got {}",
-                ty.get(SETTING).unwrap_or(&Value::Null)
+                "permit type {code}: its {} must be on or off, got {}",
+                s.name,
+                ty.get(s.setting).unwrap_or(&Value::Null)
             ),
         );
     };
-    let record = |p: &Payload| [BY, AT, WHY].map(|k| field(p, k).map(str::to_string));
-    let held_record = local.as_ref().map_or([None, None, None], record);
-    let changes = held.map_or(wanted, |h| h != wanted);
-    if !changes && record(&ty) == held_record {
+    // The update's own restore of the shipped LOTO type's isolation rule (migration 241: nobody, a
+    // fixed reason, made by each PC at its own upgrade, at a readable time not in the future, with
+    // the same tolerance as every other received time) is no change by anyone: read as no record,
+    // so the rows of PCs that needed it and of PCs that did not are accepted both ways. Only for
+    // that type and that rule; switching it off stays refused above. A record with an unreadable or
+    // future time is not the update's: judged as any record (and refused for its time).
+    let restore =
+        s.setting == ISOLATION_SETTING.setting && crate::permit::queries::is_shipped_loto_type(entity_sync_id, code);
+    let record = |p: &Payload| {
+        let r = [s.by, s.at, s.why].map(|k| field(p, k).map(str::to_string));
+        let timely = r[1].as_deref().and_then(instant).is_some_and(|at| at <= future_bound());
+        if restore
+            && timely
+            && crate::permit::queries::is_loto_isolation_restore_record(r[0].as_deref(), r[2].as_deref())
+        {
+            [None, None, None]
+        } else {
+            r
+        }
+    };
+    let held_record = local.map_or([None, None, None], record);
+    let changes = if s.off_only {
+        held == Some(true) && !wanted
+    } else {
+        held.map_or(wanted, |h| h != wanted)
+    };
+    if !changes && record(ty) == held_record {
         return Ok(None);
     }
     let unaudited = |why: String| {
         conflict(
-            "PERMIT_TYPE_THREE_PERSON_UNAUDITED",
-            format!("permit type {code}: its three-person lock-removal rule was changed {why}"),
+            s.unaudited,
+            format!("permit type {code}: its {} was changed {why}", s.name),
         )
     };
     let min = crate::settings::catalog::MIN_REASON_CHARS;
-    let Some(reason) = field(&ty, WHY).filter(|r| r.chars().count() >= min) else {
+    let Some(reason) = field(ty, s.why).filter(|r| r.chars().count() >= min) else {
         return unaudited(format!("without a reason of at least {min} characters"));
     };
-    let Some(changed_at) = time(&ty, AT) else {
+    let Some(changed_at) = time(ty, s.at) else {
         return unaudited("without a readable time of the change".into());
     };
     if changed_at > future_bound() {
@@ -913,11 +1061,11 @@ pub(crate) async fn inbound_permit_type_check(
     // Each change is later than the one before it: a record not later than the one held here is
     // an earlier change of this type (or this one again), not a new one. A time held here that
     // cannot be read cannot be compared: refused (fails closed).
-    if let Some(held_at) = local.as_ref().and_then(|l| field(l, AT)) {
+    if let Some(held_at) = local.and_then(|l| field(l, s.at)) {
         let stale = |why: String| {
             conflict(
-                "PERMIT_TYPE_THREE_PERSON_STALE",
-                format!("permit type {code}: its three-person lock-removal rule was received {why}"),
+                s.stale,
+                format!("permit type {code}: its {} was received {why}", s.name),
             )
         };
         let Some(last) = instant(held_at) else {
@@ -931,18 +1079,18 @@ pub(crate) async fn inbound_permit_type_check(
             ));
         }
     }
-    // New here and off: the setting a type has without any record; who changed it is not judged
-    // (a PC paired later is never stuck on a past change of a since-demoted administrator).
-    if local.is_none() && !wanted {
+    // New here with a value any type may have without an administrator: who changed it is not
+    // judged (a PC paired later is never stuck on a past change of a since-demoted administrator).
+    if local.is_none() && (s.off_only || !wanted) {
         return Ok(None);
     }
     let unauthorised = |why: &str| {
         conflict(
-            "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED",
-            format!("permit type {code}: its three-person lock-removal rule was changed {why}"),
+            s.unauthorised,
+            format!("permit type {code}: its {} was changed {why}", s.name),
         )
     };
-    let Some(author_sync) = field(&ty, BY) else {
+    let Some(author_sync) = field(ty, s.by) else {
         return unauthorised("without saying who changed it");
     };
     let Some(author) = conn
@@ -956,7 +1104,8 @@ pub(crate) async fn inbound_permit_type_check(
         .transpose()?
     else {
         return wait(format!(
-            "permit type {code}: the person who changed its three-person rule is not applied yet"
+            "permit type {code}: the person who changed its {} is not applied yet",
+            s.name
         ));
     };
     // A change is made on one type at a time: the same person, time and reason as the record held
@@ -964,8 +1113,10 @@ pub(crate) async fn inbound_permit_type_check(
     let others = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT three_person_changed_at AS at, three_person_change_reason AS reason FROM permit_types \
-             WHERE three_person_changed_by_id = ? AND entity_sync_id <> ?",
+            format!(
+                "SELECT {} AS at, {} AS reason FROM permit_types WHERE {} = ? AND entity_sync_id <> ?",
+                s.at_column, s.why_column, s.by_column
+            ),
             [author.into(), entity_sync_id.into()],
         ))
         .await?;
@@ -977,16 +1128,22 @@ pub(crate) async fn inbound_permit_type_check(
             return unaudited("with the record of a change of another permit type".into());
         }
     }
-    let right = crate::rbac::permissions::ADM_SETTINGS;
-    if !crate::settings::site::holds_tenant_right(conn, author, right).await? {
-        // The right is held before the change is made, so its rows come before this one: while
-        // some are still waiting here, wait; otherwise refuse (never applied without the right).
-        if rights_may_still_arrive(conn, author_sync, right).await? {
-            return wait(format!(
-                "permit type {code}: the rights of the person who changed its three-person rule are still arriving"
-            ));
+    // The rights the local save needs (`commands::permit::upsert_permit_type`). Each is held before
+    // the change is made, so its rows come before this one: while some are still waiting here, wait;
+    // otherwise refuse (never applied without the right).
+    for (right, label) in [
+        (crate::rbac::permissions::ADM_SETTINGS, "the settings right"),
+        (crate::rbac::permissions::PTW_ISSUE, "the permit-issue right"),
+    ] {
+        if !crate::settings::site::holds_tenant_right(conn, author, right).await? {
+            if rights_may_still_arrive(conn, author_sync, right).await? {
+                return wait(format!(
+                    "permit type {code}: the rights of the person who changed its {} are still arriving",
+                    s.name
+                ));
+            }
+            return unauthorised(&format!("by someone without {label} here"));
         }
-        return unauthorised("by someone without the settings right here");
     }
     Ok(None)
 }
@@ -1170,8 +1327,21 @@ pub(crate) async fn inbound_permit_rule_check(
         if flag(&wo, "requires_permit") {
             return Ok(None);
         }
-        // The cleared state held here, unchanged.
-        if local.as_ref().is_some_and(|l| !flag(l, "requires_permit")) {
+        // The cleared state held here, unchanged: judged again only when the received row moves the
+        // work's start before the clearing (a clearing is valid only before execution started).
+        if let Some(l) = local.as_ref().filter(|l| !flag(l, "requires_permit")) {
+            let start_moved = field(l, "actual_start") != field(&wo, "actual_start");
+            let cleared = time(&wo, "permit_rule_cleared_at");
+            let started = time(&wo, "actual_start");
+            if start_moved && cleared.zip(started).is_some_and(|(c, s)| c > s) {
+                return conflict(
+                    "WO_PERMIT_RULE_CLEAR_INVALID",
+                    format!(
+                        "work order {code}: the permit required by a plant rule was cleared after its execution \
+                         started (the received start is before the clearing recorded here)"
+                    ),
+                );
+            }
             return Ok(None);
         }
     }
@@ -1194,6 +1364,20 @@ pub(crate) async fn inbound_permit_rule_check(
     }
     if time(&wo, "actual_start").is_some_and(|started| cleared_at > started) {
         return invalid("after its execution started");
+    }
+    // Past "ready" without a start time: it started at a time not known here, so a clearing cannot
+    // be shown to come before it (the clear action itself refuses a work order past "ready").
+    if time(&wo, "actual_start").is_none() {
+        if let Some(status_sync) = field(&wo, "status_sync_id") {
+            let Some(status) = status_code(conn, status_sync).await? else {
+                return wait(format!("work-order status {status_sync} is not applied yet"));
+            };
+            if PAST_READY.contains(&status.as_str()) {
+                return invalid(&format!(
+                    "while it is '{status}' with no start time (it counts as started)"
+                ));
+            }
+        }
     }
     let Some(clearer_sync) = field(&wo, "permit_rule_cleared_by_sync_id") else {
         return invalid("without saying who cleared it");
@@ -1363,16 +1547,29 @@ pub(crate) async fn inbound_work_order_check(
     // recorded change to in progress (reopen; local rows may have no sync identity).
     let mut moments = vec![started];
     moments.extend(payloads(&segments).iter().filter_map(|s| time(s, "ended_at")));
-    moments.extend(
-        payloads(&transitions)
-            .iter()
-            .filter(|t| field(t, "to_status") == Some("in_progress"))
-            .filter_map(|t| time(t, "acted_at")),
-    );
+    // Its recorded entries into in progress: when, by which action, and the estimated remaining time
+    // entered on a resume or reopening (migration 242).
+    let mut entries: Vec<(DateTime<Utc>, Option<String>, Hours)> = payloads(&transitions)
+        .iter()
+        .filter(|t| field(t, "to_status") == Some("in_progress"))
+        .filter_map(|t| {
+            time(t, "acted_at").map(|at| {
+                (
+                    at,
+                    field(t, "action").map(str::to_string),
+                    hours(t, "estimated_remaining_hours"),
+                )
+            })
+        })
+        .collect();
     for r in conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT t.acted_at AS at FROM wo_state_transition_log t JOIN work_orders w ON w.id = t.wo_id \
+            "SELECT t.acted_at AS at, t.action AS action, \
+             CASE WHEN typeof(t.estimated_remaining_hours) IN ('real', 'integer') \
+             THEN t.estimated_remaining_hours END AS rem_number, \
+             CASE WHEN typeof(t.estimated_remaining_hours) = 'text' THEN t.estimated_remaining_hours END AS rem_text \
+             FROM wo_state_transition_log t JOIN work_orders w ON w.id = t.wo_id \
              WHERE w.entity_sync_id = ? AND t.to_status = 'in_progress'",
             [entity_sync_id.into()],
         ))
@@ -1384,9 +1581,19 @@ pub(crate) async fn inbound_work_order_check(
             .as_deref()
             .and_then(instant)
         {
-            moments.push(acted);
+            let entered = match r.try_get::<Option<f64>>("", "rem_number").map_err(sync_err)? {
+                Some(h) => Hours::Value(h),
+                None => Hours::from_text(
+                    r.try_get::<Option<String>>("", "rem_text")
+                        .map_err(sync_err)?
+                        .as_deref(),
+                ),
+            };
+            let action = r.try_get::<Option<String>>("", "action").map_err(sync_err)?;
+            entries.push((acted, action, entered));
         }
     }
+    moments.extend(entries.iter().map(|(at, _, _)| *at));
     // The row was written when it last entered in progress: a wait or status change dated after it,
     // or any time in the future, is not consistent.
     let written = time(&wo, "updated_at");
@@ -1402,6 +1609,38 @@ pub(crate) async fn inbound_work_order_check(
         );
     }
     let at = moments.into_iter().max().unwrap_or(started);
+    // The estimated remaining time entered on the resume or reopening at `at`, used instead of the
+    // expected duration as on the PC that recorded it (`permit::wo_gate`): only when every recorded
+    // entry at that moment is a resume or a reopening carrying one (the largest); otherwise (none
+    // recorded, a start, a missing value) the full expected duration. A value that is not a number of
+    // hours greater than 0 is never recorded by a PC: refused.
+    let mut remaining: Option<f64> = None;
+    let mut full_duration = false;
+    for (_, action, entered) in entries.iter().filter(|(when, _, _)| *when == at) {
+        if *entered == Hours::Absent {
+            full_duration = true;
+            continue;
+        }
+        let Some(h) = entered.usable() else {
+            let value = match entered {
+                Hours::Value(h) => h.to_string(),
+                Hours::Unreadable(raw) => raw.clone(),
+                Hours::Absent => String::new(),
+            };
+            return conflict(
+                crate::permit::wo_gate::CODE_REMAINING_TIME_INVALID,
+                format!(
+                    "work order {code}: the estimated remaining time recorded when it entered in progress at {at} ({value}) is not a number of hours greater than 0"
+                ),
+            );
+        };
+        if matches!(action.as_deref(), Some("resume" | "reopen")) {
+            remaining = Some(remaining.map_or(h, |r: f64| r.max(h)));
+        } else {
+            full_duration = true;
+        }
+    }
+    let remaining = remaining.filter(|_| !full_duration);
     if permits.rows.is_empty() && flag(&wo, "requires_permit") {
         return wait(format!(
             "work order {code} requires a work permit and none has been received yet"
@@ -1463,6 +1702,51 @@ pub(crate) async fn inbound_work_order_check(
                     "PERMIT_EXPIRED",
                     format!("work order {code} started at {at} after permit {pcode} expired ({expiry})"),
                 );
+            }
+            // The work would outlive its protection (`permit::wo_gate`), judged as of the start or
+            // resume the row records (`at`, never this PC's clock): against the later of the planned
+            // end (fixed once the order is past ready) and `at` plus the hours of work (the remaining
+            // time entered on that resume or reopening, else the expected duration); a planned end
+            // already past with no hours, or an unreadable planned end or duration, is refused; with
+            // neither an end nor hours, not judged. As locally.
+            if let Some(expires) = instant(expiry) {
+                use crate::permit::wo_gate::{expiry_refusal, shown_hours, stored, work_end, WorkEnd};
+                let end = work_end(
+                    field(&wo, "planned_end"),
+                    &hours(&wo, "expected_duration_hours"),
+                    remaining,
+                    at,
+                );
+                if let Some(c) = expiry_refusal(expires, &end) {
+                    let why = match &end {
+                        WorkEnd::Planned(e) => format!("expires ({expiry}) before its planned end ({})", stored(*e)),
+                        WorkEnd::Estimated { end: e, hours, remaining } => format!(
+                            "expires ({expiry}) before its estimated end ({}: start or resume + {} h, {}; later than any planned end)",
+                            stored(*e),
+                            shown_hours(*hours),
+                            if *remaining {
+                                "the estimated remaining time entered"
+                            } else {
+                                "the expected duration"
+                            }
+                        ),
+                        WorkEnd::Unreadable(raw) => {
+                            format!("is judged against a planned end ({raw}) that is not a readable date and time")
+                        }
+                        WorkEnd::PlannedPassed(p) => format!(
+                            "expires ({expiry}) and its planned end ({}) had passed with no expected duration or remaining time: the end of the work is unknown",
+                            stored(*p)
+                        ),
+                        WorkEnd::DurationUnreadable(raw) => {
+                            format!("is judged against an expected duration ({raw}) that is not a number of hours")
+                        }
+                        WorkEnd::Unknown => String::new(),
+                    };
+                    return conflict(
+                        c,
+                        format!("work order {code} started at {at} while permit {pcode} {why}"),
+                    );
+                }
             }
         }
         let Some(needs) = type_requires_isolation(conn, p).await? else {
