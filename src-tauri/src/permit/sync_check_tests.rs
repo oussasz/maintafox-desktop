@@ -3480,3 +3480,122 @@ async fn a_received_free_text_handover_role_joins_the_list_on_arrival() {
         "already in the list"
     );
 }
+
+/// A received hand-over log adopts only its own two roles (not every stored text, which the
+/// start-up integrity pass handles), and writes nothing when both are already in the list.
+#[tokio::test]
+async fn a_received_handover_log_adopts_only_its_own_roles() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-91").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    // A free text stored here earlier (an older version wrote it), not adopted yet.
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+             confirmation_note, signed_at, row_version) VALUES ('ho-stored-text', {}, 'Ancien texte', 'HSE', \
+             'Zone left clean', '2026-10-03T00:00:00Z', 1)",
+            wp.id
+        ),
+    )
+    .await;
+    let log = |from: &str, to: &str| {
+        json!({
+            "permit_sync_id": wp.entity_sync_id,
+            "handed_from_role": from,
+            "handed_to_role": to,
+            "confirmation_note": "Zone left clean",
+            "signed_at": now(),
+            "row_version": 1,
+            "_sync_format": "row.v1",
+        })
+        .as_object()
+        .cloned()
+        .expect("object")
+    };
+    let values = || text(&db, "SELECT CAST(COUNT(*) AS TEXT) FROM reference_values");
+    // Both roles already in the list: nothing is written to the list.
+    let before = values().await;
+    let outcome = apply(&db, "permit_handover_logs", "ho-listed", &log("Maintenance", "HSE")).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(values().await, before);
+
+    // One free text: that one only joins the list (the older stored text waits for the integrity pass).
+    let outcome = apply(
+        &db,
+        "permit_handover_logs",
+        "ho-free",
+        &log("Chef de quart", "Maintenance"),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let codes: Vec<String> = crate::permit::handover_roles::list_handover_roles(&db)
+        .await
+        .expect("roles")
+        .into_iter()
+        .map(|r| r.code)
+        .collect();
+    assert!(codes.contains(&"Chef de quart".to_string()), "{codes:?}");
+    assert!(!codes.contains(&"Ancien texte".to_string()), "{codes:?}");
+    // The integrity pass at start-up stays the catch-all.
+    crate::permit::handover_roles::adopt_stored_roles(&db)
+        .await
+        .expect("integrity");
+    let codes: Vec<String> = crate::permit::handover_roles::list_handover_roles(&db)
+        .await
+        .expect("roles")
+        .into_iter()
+        .map(|r| r.code)
+        .collect();
+    assert!(codes.contains(&"Ancien texte".to_string()), "{codes:?}");
+}
+
+/// A problem with the list itself (here: no published version left) never turns the received
+/// hand-over logs into sync conflicts: the log is applied, the list is not created or changed on
+/// arrival, and the role waits for the integrity pass.
+#[tokio::test]
+async fn a_list_problem_does_not_refuse_received_handover_logs() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-92").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    exec(
+        &db,
+        "UPDATE reference_sets SET status = 'superseded' WHERE domain_id = \
+         (SELECT id FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES')",
+    )
+    .await;
+    let sets = || {
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM reference_sets WHERE domain_id = \
+             (SELECT id FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES')",
+        )
+    };
+    let before = sets().await;
+    for (n, role) in ["Équipe A", "Équipe B"].iter().enumerate() {
+        let log = json!({
+            "permit_sync_id": wp.entity_sync_id,
+            "handed_from_role": role,
+            "handed_to_role": "Maintenance",
+            "confirmation_note": "Zone left clean",
+            "signed_at": now(),
+            "row_version": 1,
+            "_sync_format": "row.v1",
+        })
+        .as_object()
+        .cloned()
+        .expect("object");
+        let outcome = apply(&db, "permit_handover_logs", &format!("ho-no-list-{n}"), &log).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{role}: {outcome:?}");
+    }
+    assert_eq!(sets().await, before, "no list version created on arrival");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM permit_handover_logs WHERE entity_sync_id LIKE 'ho-no-list-%'"
+        )
+        .await
+        .as_deref(),
+        Some("2")
+    );
+}

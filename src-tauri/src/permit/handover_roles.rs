@@ -102,13 +102,60 @@ pub async fn seed_starter_roles(db: &impl ConnectionTrait) -> AppResult<()> {
 }
 
 /// Adopts the stored "from" / "to" texts that are not in the list (exact text kept, flagged
-/// "à revoir"). Migration 235, the integrity pass, and each hand-over log received by sync
-/// (`sync::apply_hooks::after_upsert`).
+/// "à revoir"). Migration 235 and the integrity pass at start-up (the catch-all); a hand-over log
+/// received by sync adopts only its own two roles ([`adopt_received_roles`]).
 pub async fn adopt_stored_roles(db: &impl ConnectionTrait) -> AppResult<()> {
     ensure_handover_roles(db).await?;
     for column in ["handed_from_role", "handed_to_role"] {
         crate::personnel::reference_lists::adopt_stored_values(db, DOMAIN, "permit_handover_logs", column, None)
             .await?;
+    }
+    Ok(())
+}
+
+/// Adopts the two roles of one hand-over log received by sync (`sync::apply_hooks::after_upsert`),
+/// as [`adopt_stored_roles`] would: only that log's "from" and "to" texts, and nothing at all when
+/// both are already codes of a published set of the list. The list and its published set are not
+/// created or touched here (they exist since migration 235, and the integrity pass ensures them):
+/// a list without a published set adopts nothing on arrival, so a list problem never refuses the
+/// received hand-overs; the next integrity pass adopts what was left.
+pub async fn adopt_received_roles(db: &impl ConnectionTrait, log_id: i64) -> AppResult<()> {
+    let Some(row) = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT handed_from_role, handed_to_role FROM permit_handover_logs WHERE id = ?",
+            [log_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(());
+    };
+    let mut roles: Vec<String> = Vec::new();
+    for column in ["handed_from_role", "handed_to_role"] {
+        if let Some(role) = row
+            .try_get::<Option<String>>("", column)?
+            .filter(|r| !r.trim().is_empty())
+        {
+            if !roles.contains(&role) {
+                roles.push(role);
+            }
+        }
+    }
+    for role in roles {
+        let listed = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS ok FROM reference_values rv \
+                   JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+                   JOIN reference_domains d ON d.id = rs.domain_id \
+                  WHERE UPPER(TRIM(d.code)) = ? AND rv.code = ? LIMIT 1",
+                [DOMAIN.into(), role.clone().into()],
+            ))
+            .await?
+            .is_some();
+        if !listed {
+            crate::personnel::reference_lists::adopt_value(db, DOMAIN, &role, None).await?;
+        }
     }
     Ok(())
 }
