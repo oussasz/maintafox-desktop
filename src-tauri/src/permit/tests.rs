@@ -507,7 +507,7 @@ async fn handover_role_labels_resolve_over_inactive_roles_and_older_versions() {
         }
     };
     exec(
-        "UPDATE reference_values SET label = 'Opérations' WHERE code = 'Operations' AND set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \r
+        "UPDATE reference_values SET label = 'Opérations' WHERE code = 'Operations' AND set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
          WHERE d.code = 'PERMIT.HANDOVER_ROLES')",
     )
     .await;
@@ -535,7 +535,7 @@ async fn handover_role_labels_resolve_over_inactive_roles_and_older_versions() {
     // "Operations" is deactivated, then a new version of the list is published without it and
     // with "Maintenance" renamed; a draft version renames "Operations" again.
     exec(
-        "UPDATE reference_values SET is_active = 0 WHERE code = 'Operations' AND set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \r
+        "UPDATE reference_values SET is_active = 0 WHERE code = 'Operations' AND set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
          WHERE d.code = 'PERMIT.HANDOVER_ROLES')",
     )
     .await;
@@ -598,6 +598,79 @@ async fn handover_role_labels_resolve_over_inactive_roles_and_older_versions() {
         "newest published version first; a role left out keeps its label; a draft is ignored"
     );
     assert_eq!(labels(&listed[1]), (None, Some("Opérations".into())));
+}
+
+/// A stored role whose exact code is in no version of the list (a free text in another case) gets
+/// the label of the code that matches it ignoring case; a code whose exact match is held only by an
+/// older version keeps that exact match's label, even when the newest version holds the same code
+/// in another case.
+#[tokio::test]
+async fn handover_role_labels_fall_back_to_the_code_ignoring_case_only_without_an_exact_match() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-HO5").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    let exec = |sql: String| {
+        let db = &db;
+        async move {
+            db.execute(Statement::from_string(DbBackend::Sqlite, sql.clone()))
+                .await
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+    };
+    // Written raw (an older version or another PC stored the text as typed): the hand-over form
+    // would store the list's own code.
+    exec(format!(
+        "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+         confirmation_note, signed_at, row_version) VALUES ('ho5-lower', {}, 'exploitation', 'Chef', \
+         'Zone left clean', '2026-10-03T00:00:00Z', 1)",
+        wp.id
+    ))
+    .await;
+    // "Chef" (exact) in the current version 1; then version 2 replaces it with "CHEF".
+    exec(
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active) \
+         SELECT rs.id, 'Chef', 'Chef (ancien)', 5, 1 FROM reference_sets rs \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'PERMIT.HANDOVER_ROLES' AND rs.status = 'published'"
+            .to_string(),
+    )
+    .await;
+    exec(
+        "UPDATE reference_sets SET status = 'superseded' WHERE status = 'published' AND domain_id = \
+         (SELECT id FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES')"
+            .to_string(),
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_sets (domain_id, version_no, status, effective_from, created_at, published_at) \
+         SELECT d.id, (SELECT MAX(version_no) + 1 FROM reference_sets WHERE domain_id = d.id), 'published', \
+                '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z' \
+           FROM reference_domains d WHERE d.code = 'PERMIT.HANDOVER_ROLES'"
+            .to_string(),
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active) \
+         SELECT rs.id, v.code, v.label, v.sort_order, 1 FROM reference_sets rs \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+           JOIN (SELECT 'Exploitation' AS code, 'Exploitation (nouveau)' AS label, 2 AS sort_order \
+                 UNION ALL SELECT 'CHEF', 'Chef (nouveau)', 5) v \
+          WHERE d.code = 'PERMIT.HANDOVER_ROLES' AND rs.status = 'published'"
+            .to_string(),
+    )
+    .await;
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    let log = listed.iter().find(|l| l.entity_sync_id == "ho5-lower").expect("log");
+    assert_eq!(
+        log.handed_from_label.as_deref(),
+        Some("Exploitation (nouveau)"),
+        "no exact match anywhere: the code ignoring case, from the newest version"
+    );
+    assert_eq!(
+        log.handed_to_label.as_deref(),
+        Some("Chef (ancien)"),
+        "the exact match of an older version wins over another case in the newest one"
+    );
 }
 
 #[tokio::test]
