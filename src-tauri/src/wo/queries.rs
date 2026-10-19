@@ -822,6 +822,46 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
 // E) update_wo_draft_fields — optimistic concurrency + draft guard
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// A draft moving to another site must not carry items tied to its old site along silently:
+/// stock still reserved for it, or a permit (with its isolations / LOTO) still open on it. The
+/// user removes them first.
+async fn refuse_site_move_with_old_site_items(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<()> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT \
+               (SELECT COUNT(*) FROM stock_reservations r \
+                 WHERE r.source_id = ? AND r.source_type IN ('WO', 'WORK_ORDER', 'WORK_ORDER_PART', 'work_order') \
+                   AND LOWER(r.status) <> 'released' AND r.released_at IS NULL) AS reservations, \
+               (SELECT COUNT(*) FROM work_permits p \
+                 WHERE p.linked_work_order_id = ? \
+                   AND p.status NOT IN ('closed', 'handed_back', 'cancelled', 'expired')) AS permits",
+            [wo_id.into(), wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("site move check returned no row")))?;
+    let reservations: i64 = row.try_get("", "reservations")?;
+    let permits: i64 = row.try_get("", "permits")?;
+    let mut errors = Vec::new();
+    if reservations > 0 {
+        errors.push(format!(
+            "Cet OT a {reservations} réservation(s) de stock sur son site actuel : libérez-les avant de \
+             choisir un équipement d'un autre site."
+        ));
+    }
+    if permits > 0 {
+        errors.push(format!(
+            "Cet OT a {permits} permis de travail ouvert(s) (avec ses consignations) sur son site actuel : \
+             annulez-les ou clôturez-les avant de choisir un équipement d'un autre site."
+        ));
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::ValidationFailed(errors))
+    }
+}
+
 pub async fn update_wo_draft_fields(
     db: &DatabaseConnection,
     input: super::domain::WoDraftUpdateInput,
@@ -907,6 +947,9 @@ pub async fn update_wo_draft_fields(
                             .into(),
                     ])
                 })?;
+            if current.entity_id != Some(node) {
+                refuse_site_move_with_old_site_items(&txn, input.id).await?;
+            }
             sets.push("entity_id = ?".into());
             values.push(node.into());
         }

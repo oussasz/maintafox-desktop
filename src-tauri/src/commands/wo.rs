@@ -353,7 +353,33 @@ pub async fn update_wo_draft(
         input.equipment_id,
     )
     .await?;
-    queries::update_wo_draft_fields(&state.db, input).await
+    let before = queries::get_work_order(&state.db, input.id).await?;
+    let wo = queries::update_wo_draft_fields(&state.db, input).await?;
+    // A draft that moved with its equipment to another site: who, when, from where to where.
+    if let Some(before) = before.filter(|b| b.entity_id != wo.entity_id) {
+        audit::record_wo_change_event(
+            &state.db,
+            audit::WoAuditInput {
+                wo_id: Some(wo.id),
+                action: "site_moved".into(),
+                actor_id: Some(i64::from(user.user_id)),
+                summary: Some("Draft moved to the site of its new equipment".into()),
+                details_json: Some(
+                    serde_json::json!({
+                        "old_entity_id": before.entity_id,
+                        "new_entity_id": wo.entity_id,
+                        "old_equipment_id": before.equipment_id,
+                        "new_equipment_id": wo.equipment_id,
+                    })
+                    .to_string(),
+                ),
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+        )
+        .await;
+    }
+    Ok(wo)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

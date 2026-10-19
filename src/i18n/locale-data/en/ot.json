@@ -10,7 +10,7 @@
     },
     "noSite": {
       "badge": "To review: no site",
-      "hint": "Recorded without a site (its equipment had no installation node). Only users with a plant-wide role see this work order and can act on it."
+      "hint": "Recorded without a site (its equipment was not installed anywhere). Only users with a plant-wide role see this work order and can act on it."
     }
   },
   "permitRule": {
@@ -782,6 +782,7 @@
       "attachment_uploaded": "Attachment added",
       "service_cost_updated": "Service cost updated",
       "permit_requirement_changed": "Permit requirement changed",
+      "site_moved": "Moved to the site of its new equipment",
       "other": "Change recorded"
     },
     "created": "Created",

@@ -10,7 +10,7 @@
     },
     "noSite": {
       "badge": "À revoir : sans site",
-      "hint": "OT enregistré sans site (son équipement n’avait pas de nœud d’installation). Seuls les utilisateurs ayant un rôle valable pour toute l’usine le voient et peuvent agir dessus."
+      "hint": "OT enregistré sans site (son équipement n’était installé nulle part). Seuls les utilisateurs ayant un rôle valable pour toute l’usine le voient et peuvent agir dessus."
     }
   },
   "permitRule": {
@@ -782,6 +782,7 @@
       "attachment_uploaded": "Pièce jointe ajoutée",
       "service_cost_updated": "Coût de prestation mis à jour",
       "permit_requirement_changed": "Exigence de permis modifiée",
+      "site_moved": "Déplacé sur le site de son nouvel équipement",
       "other": "Modification enregistrée"
     },
     "created": "Créé le",

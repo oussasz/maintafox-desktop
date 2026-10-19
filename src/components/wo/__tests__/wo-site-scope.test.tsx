@@ -145,6 +145,8 @@ describe("row menu actions", () => {
     rightsAt.asked = [];
     rightsAt.byNode = new Map([
       [5, [P.OT_VIEW, P.OT_EDIT, P.OT_CLOSE]],
+      [6, [P.OT_VIEW, P.OT_CLOSE]],
+      [7, [P.OT_VIEW, P.OT_EDIT]],
       [9, [P.OT_VIEW]],
       [0, [P.OT_VIEW]],
     ]);
@@ -174,6 +176,17 @@ describe("row menu actions", () => {
     expect(screen.queryByText(enOt.contextMenu.edit)).toBeNull();
     expect(screen.queryByText(enOt.contextMenu.cancel)).toBeNull();
     expect(rightsAt.asked).toContain(9);
+  });
+
+  it("offers cancel on the edit right (the backend's check), not on the close right", async () => {
+    openMenu(workOrder({ entity_id: 7 }));
+    expect(await screen.findByText(enOt.contextMenu.cancel)).toBeInTheDocument();
+  });
+
+  it("does not offer cancel to a user who may close but not edit", async () => {
+    openMenu(workOrder({ entity_id: 6 }));
+    expect(await screen.findByText(enOt.contextMenu.viewDetail)).toBeInTheDocument();
+    expect(screen.queryByText(enOt.contextMenu.cancel)).toBeNull();
   });
 
   it("answers a work order without a site with the plant-wide rights", async () => {

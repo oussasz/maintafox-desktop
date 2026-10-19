@@ -662,4 +662,38 @@ async fn a_draft_moves_to_the_site_of_its_new_equipment() {
         .await
         .expect("to equipment of site B");
     assert_eq!(to_b.entity_id, Some(f.t.site_b));
+
+    // A draft with a permit still open on it does not move to another site (decision of the CMMS
+    // Advisor): the user closes or cancels the permit first. A closed one does not hold it back.
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, status, row_version)
+             SELECT 'site-move-permit', 'PTW-SITE-MOVE', wo.id, pt.id, wo.equipment_id, wo.entity_id, 'draft', 1
+               FROM work_orders wo, permit_types pt WHERE wo.id = {} AND pt.code = 'hot_work'",
+            f.wo_a
+        ),
+    )
+    .await;
+    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, to_b.row_version, f.eq_a))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::ValidationFailed(m) if m.iter().any(|e| e.contains("permis"))),
+        "{err:?}"
+    );
+    let kept = queries::get_work_order(&f.db, f.wo_a)
+        .await
+        .expect("read")
+        .expect("wo_a");
+    assert_eq!((kept.equipment_id, kept.entity_id), (Some(f.eq_b), Some(f.t.site_b)));
+    exec(
+        &f.db,
+        "UPDATE work_permits SET status = 'closed' WHERE entity_sync_id = 'site-move-permit'",
+    )
+    .await;
+    let back = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, kept.row_version, f.eq_a))
+        .await
+        .expect("back to site A once the permit is closed");
+    assert_eq!(back.entity_id, Some(f.t.site_a));
 }
