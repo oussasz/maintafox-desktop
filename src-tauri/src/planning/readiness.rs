@@ -164,9 +164,13 @@ async fn one_permit_findings(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT (SELECT COUNT(*) FROM permit_isolations pi WHERE pi.permit_id = ?) AS isolations, \
-                    (SELECT COUNT(*) FROM permit_isolations pi WHERE pi.permit_id = ? \
-                        AND pi.verified_at IS NOT NULL AND pi.removal_verified_at IS NULL) AS verified",
+            // A cancelled planned line is no isolation to fit (`COUNTED_ISOLATION_SQL`).
+            format!(
+                "SELECT (SELECT COUNT(*) FROM permit_isolations pi WHERE pi.permit_id = ? AND {counted}) AS isolations, \
+                        (SELECT COUNT(*) FROM permit_isolations pi WHERE pi.permit_id = ? AND {counted} \
+                            AND pi.verified_at IS NOT NULL AND pi.removal_verified_at IS NULL) AS verified",
+                counted = crate::permit::queries::COUNTED_ISOLATION_SQL,
+            ),
             [permit.id.into(), permit.id.into()],
         ))
         .await?

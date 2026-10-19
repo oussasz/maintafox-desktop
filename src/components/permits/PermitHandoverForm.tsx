@@ -95,7 +95,7 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
   useEffect(() => {
     let cancelled = false;
     setReceiversError(null);
-    listPermitHandoverReceivers(search || null)
+    listPermitHandoverReceivers(permitId, search || null)
       .then((page) => {
         if (cancelled) return;
         setReceivers(page);
@@ -107,7 +107,7 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
     return () => {
       cancelled = true;
     };
-  }, [search, receiversReload]);
+  }, [permitId, search, receiversReload]);
 
   /** Appends the next page of the current search (the list's own offset), never a stale one. */
   const showMore = async () => {
@@ -116,6 +116,7 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
     setLoadingMore(true);
     try {
       const page = await listPermitHandoverReceivers(
+        permitId,
         asked || null,
         undefined,
         receivers.items.length,
@@ -124,7 +125,7 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
       setReceivers((prev) =>
         prev
           ? {
-              total: page.total,
+              ...page,
               items: [
                 ...prev.items,
                 ...page.items.filter((p) => !prev.items.some((r) => r.id === p.id)),
@@ -259,14 +260,16 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
           </Select>
           {receivers != null ? (
             <p className="text-xs text-text-muted" data-testid="handover-receivers-count">
-              {receivers.total > receivers.items.length
-                ? t("handover.receiversPartial", {
-                    shown: receivers.items.length,
-                    total: receivers.total,
-                  })
-                : receivers.total === 0
-                  ? t("handover.receiversNone")
-                  : t("handover.receiversAll", { total: receivers.total })}
+              {receivers.empty_reason
+                ? t(`errors:scope.${receivers.empty_reason}`)
+                : receivers.total > receivers.items.length
+                  ? t("handover.receiversPartial", {
+                      shown: receivers.items.length,
+                      total: receivers.total,
+                    })
+                  : receivers.total === 0
+                    ? t("handover.receiversNone")
+                    : t("handover.receiversAll", { total: receivers.total })}
             </p>
           ) : null}
           {receivers != null &&

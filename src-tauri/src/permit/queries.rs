@@ -6,10 +6,11 @@ use crate::errors::{AppError, AppResult};
 
 use super::domain::{
     LotoCardPrintInput, LotoCardPrintJob, LotoCardView, PermitComplianceKpi30d, PermitHandoverLog,
-    PermitHandoverLogInput, PermitIsolation, PermitIsolationActionInput, PermitIsolationUpsertInput,
-    PermitSuspendInput, PermitSuspension, PermitType, PermitTypeUpsertInput, WorkPermit, WorkPermitCreateInput,
-    WorkPermitListFilter, WorkPermitStatusInput, WorkPermitUpdateInput,
+    PermitHandoverLogInput, PermitIsolation, PermitIsolationActionInput, PermitIsolationCancelInput,
+    PermitIsolationUpsertInput, PermitSuspendInput, PermitSuspension, PermitType, PermitTypeUpsertInput, WorkPermit,
+    WorkPermitCreateInput, WorkPermitListFilter, WorkPermitListPage, WorkPermitStatusInput, WorkPermitUpdateInput,
 };
+use crate::auth::scope::AccessScope;
 
 const WP_STATUSES: &[&str] = &[
     "draft",
@@ -48,8 +49,24 @@ const ISOLATION_SETUP_STATUSES: &[&str] = &[
 /// close) or when a permit was abandoned with locks still fitted.
 const ISOLATION_REMOVAL_STATUSES: &[&str] = &["active", "cancelled", "expired"];
 
-/// Header fields (asset, WO link, expiry) are frozen once the permit is active.
+/// Header fields (expiry, org node) are frozen once the permit is active.
 const WP_EDITABLE_STATUSES: &[&str] = &["draft", "pending_review", "approved", "issued"];
+
+/// Statuses in which a permit's equipment or linked work order may still change (CMMS Advisor
+/// decision A): from `approved` on, the permit was approved for that equipment. A change in
+/// `pending_review` sends the permit back to `draft` (a fresh review is needed).
+pub(crate) const WP_EQUIPMENT_CHANGE_STATUSES: &[&str] = &["draft", "pending_review"];
+
+/// Statuses in which a planned isolation line (never applied) may be cancelled (CMMS Advisor
+/// decision): those in which the permit's equipment may still change. A cancellation in
+/// `pending_review` sends the permit back to `draft`, as an equipment change does.
+pub(crate) const ISOLATION_CANCEL_STATUSES: &[&str] = WP_EQUIPMENT_CHANGE_STATUSES;
+
+/// SQL condition (columns of `permit_isolations`, unqualified) of a line that counts as an
+/// isolation of its permit: every line except a cancelled one never applied (migration 243). A
+/// cancelled line is never applied here nor accepted applied by sync; a line that would hold both
+/// still counts (fail-safe: a fitted lock is never hidden).
+pub(crate) const COUNTED_ISOLATION_SQL: &str = "(cancelled_at IS NULL OR applied_at IS NOT NULL)";
 
 const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.linked_work_order_id, \
      wp.permit_type_id, wp.asset_id, wp.entity_id, wp.status, wp.requested_at, wp.issued_at, \
@@ -68,15 +85,18 @@ const PERMIT_ISOLATION_SELECT: &str = "SELECT pi.id, pi.entity_sync_id, pi.permi
      et.label AS energy_type_label, pi.isolation_method_id, im.label AS isolation_method_label, \
      pi.mapping_review_required, pi.lock_number, pi.applied_by_id, pi.verified_by_id, \
      pi.applied_at, pi.verified_at, pi.removal_verified_at, pi.removal_verified_by_id, pi.row_version, \
+     pi.cancelled_at, pi.cancelled_by_id, \
      COALESCE(ua.display_name, ua.username) AS applied_by_name, \
      COALESCE(uv.display_name, uv.username) AS verified_by_name, \
-     COALESCE(ur.display_name, ur.username) AS removal_verified_by_name \
+     COALESCE(ur.display_name, ur.username) AS removal_verified_by_name, \
+     COALESCE(uc.display_name, uc.username) AS cancelled_by_name \
      FROM permit_isolations pi \
      LEFT JOIN reference_values et ON et.id = pi.energy_type_id \
      LEFT JOIN reference_values im ON im.id = pi.isolation_method_id \
      LEFT JOIN user_accounts ua ON ua.id = pi.applied_by_id \
      LEFT JOIN user_accounts uv ON uv.id = pi.verified_by_id \
-     LEFT JOIN user_accounts ur ON ur.id = pi.removal_verified_by_id";
+     LEFT JOIN user_accounts ur ON ur.id = pi.removal_verified_by_id \
+     LEFT JOIN user_accounts uc ON uc.id = pi.cancelled_by_id";
 
 const PERMIT_SUSPENSION_SELECT: &str = "SELECT ps.id, ps.entity_sync_id, ps.permit_id, ps.reason, \
      ps.suspended_by_id, ps.suspended_at, ps.reinstated_by_id, ps.reinstated_at, \
@@ -320,6 +340,9 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
         applied_by_name: row.try_get("", "applied_by_name").ok(),
         verified_by_name: row.try_get("", "verified_by_name").ok(),
         removal_verified_by_name: row.try_get("", "removal_verified_by_name").ok(),
+        cancelled_at: row.try_get("", "cancelled_at").ok().flatten(),
+        cancelled_by_id: row.try_get("", "cancelled_by_id").ok().flatten(),
+        cancelled_by_name: row.try_get("", "cancelled_by_name").ok().flatten(),
     })
 }
 
@@ -518,9 +541,11 @@ async fn ensure_wo_asset_aligned(
         ));
     };
     if eq != asset_id {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "linked_work_order_id equipment_id ({eq}) must match permit asset_id ({asset_id})."
-        )]));
+        return Err(refused(
+            "PERMIT_WO_EQUIPMENT_MISMATCH",
+            format!("The linked work order's equipment ({eq}) must be the permit's equipment ({asset_id})."),
+            &[],
+        ));
     }
     Ok(())
 }
@@ -552,7 +577,7 @@ async fn count_isolations(db: &impl ConnectionTrait, permit_id: i64) -> AppResul
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM permit_isolations WHERE permit_id = ?",
+            format!("SELECT COUNT(*) AS c FROM permit_isolations WHERE permit_id = ? AND {COUNTED_ISOLATION_SQL}"),
             [permit_id.into()],
         ))
         .await?
@@ -564,7 +589,10 @@ async fn count_verified_isolations(db: &impl ConnectionTrait, permit_id: i64) ->
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM permit_isolations WHERE permit_id = ? AND verified_at IS NOT NULL",
+            format!(
+                "SELECT COUNT(*) AS c FROM permit_isolations WHERE permit_id = ? AND verified_at IS NOT NULL \
+                 AND {COUNTED_ISOLATION_SQL}"
+            ),
             [permit_id.into()],
         ))
         .await?
@@ -658,9 +686,15 @@ pub(crate) async fn activation_ready(db: &impl ConnectionTrait, wp: &WorkPermit)
     Ok(())
 }
 
-/// Close gate (P0-8): every isolation must have its lock removal verified.
+/// Close gate (P0-8): every isolation must have its lock removal verified (a cancelled planned line
+/// was never fitted: nothing to remove).
 async fn close_ready(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
-    let pending = count_isolations_where(db, permit_id, "removal_verified_at IS NULL").await?;
+    let pending = count_isolations_where(
+        db,
+        permit_id,
+        &format!("removal_verified_at IS NULL AND {COUNTED_ISOLATION_SQL}"),
+    )
+    .await?;
     if pending > 0 {
         return Err(refused(
             "PERMIT_REMOVAL_PENDING",
@@ -1306,7 +1340,61 @@ async fn upsert_permit_type_in(
     Ok(created)
 }
 
-pub async fn list_work_permits(db: &impl ConnectionTrait, filter: WorkPermitListFilter) -> AppResult<Vec<WorkPermit>> {
+/// Permits the reader's scope leaves out, as `(outside their sites, without a site)`, whatever the
+/// user's filters (only the scope's binds): a count that followed the search or the filters would
+/// let a site user probe other sites' permits. `(0, 0)` plant-wide. `shown` is the screen's own
+/// fixed condition on `wp` (never a user filter), with its binds: only the permits the screen
+/// would show are counted (`1=1` for the list, the open, non-expired ones for the open report).
+async fn hidden_permit_counts(
+    db: &impl ConnectionTrait,
+    scope: &AccessScope,
+    shown: &str,
+    shown_binds: Vec<sea_orm::Value>,
+) -> AppResult<(i64, i64)> {
+    if scope.is_everywhere() {
+        return Ok((0, 0));
+    }
+    let scope_sql = super::access::scope_sql(scope);
+    let mut values = shown_binds;
+    values.extend(scope_sql.binds);
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT COALESCE(SUM(CASE WHEN {without} THEN 1 ELSE 0 END), 0) AS without_site, \
+                        COALESCE(SUM(CASE WHEN {without} THEN 0 ELSE 1 END), 0) AS outside_scope \
+                   FROM work_permits wp \
+                  WHERE ({shown}) AND NOT COALESCE(({pred}), 0)",
+                without = super::access::PERMIT_WITHOUT_SITE_SQL,
+                pred = scope_sql.predicate,
+            ),
+            values,
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("permit hidden count query returned no rows")))?;
+    Ok((
+        row.try_get("", "outside_scope")
+            .map_err(|e| decode_err("outside_scope", e))?,
+        row.try_get("", "without_site")
+            .map_err(|e| decode_err("without_site", e))?,
+    ))
+}
+
+/// Every permit matching the filter (plant-wide: the internal callers and the tests).
+pub async fn list_work_permits(
+    db: &impl ConnectionTrait,
+    filter: WorkPermitListFilter,
+) -> AppResult<WorkPermitListPage> {
+    list_work_permits_in_scope(db, filter, &AccessScope::Everywhere).await
+}
+
+/// [`list_work_permits`] limited to the reader's scope (where they hold `ptw.view`), in SQL before
+/// the limit, with the count of the permits left out and why.
+pub async fn list_work_permits_in_scope(
+    db: &impl ConnectionTrait,
+    filter: WorkPermitListFilter,
+    scope: &AccessScope,
+) -> AppResult<WorkPermitListPage> {
     let limit = filter.limit.unwrap_or(200).clamp(1, 2000);
     let mut sql = format!("{WORK_PERMIT_SELECT} WHERE 1=1");
     let mut params: Vec<sea_orm::Value> = Vec::new();
@@ -1338,16 +1426,27 @@ pub async fn list_work_permits(db: &impl ConnectionTrait, filter: WorkPermitList
             params.push(pattern.clone().into());
         }
     }
+    // Site scope (rule §2.5): last predicate, so its binds follow the filters' and precede the limit.
+    let scope_sql = super::access::scope_sql(scope);
+    sql.push_str(" AND (");
+    sql.push_str(&scope_sql.predicate);
+    sql.push(')');
+    params.extend(scope_sql.binds);
     sql.push_str(" ORDER BY wp.id DESC LIMIT ?");
     params.push(limit.into());
 
     let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, &sql, params);
     let rows = db.query_all(stmt).await?;
-    let mut out = Vec::with_capacity(rows.len());
+    let mut items = Vec::with_capacity(rows.len());
     for row in rows {
-        out.push(map_work_permit(&row)?);
+        items.push(map_work_permit(&row)?);
     }
-    Ok(out)
+    let (hidden_outside_scope, hidden_without_site) = hidden_permit_counts(db, scope, "1=1", Vec::new()).await?;
+    Ok(WorkPermitListPage {
+        items,
+        hidden_outside_scope,
+        hidden_without_site,
+    })
 }
 
 pub async fn get_work_permit(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<WorkPermit>> {
@@ -1368,16 +1467,132 @@ async fn require_work_permit(db: &impl ConnectionTrait, id: i64) -> AppResult<Wo
     })
 }
 
-/// Resolves `(asset_id, entity_id)` for a new permit: explicit values win, then the
-/// linked WO (equipment + entity), then the asset's installation node for the entity.
-async fn resolve_permit_scope(db: &impl ConnectionTrait, input: &WorkPermitCreateInput) -> AppResult<(i64, i64)> {
+/// A new permit with no equipment given and none on its linked work order (or no work order).
+pub(crate) fn asset_required_error() -> AppError {
+    AppError::ValidationFailed(vec![
+        "An asset is required (the linked work order has no equipment).".into()
+    ])
+}
+
+/// A permit whose equipment and work order give it no usable site (see [`derived_permit_node`]).
+fn undetermined_site_error() -> AppError {
+    AppError::ValidationFailed(vec![
+        "The permit's organisational entity could not be determined from the work order or asset.".into(),
+    ])
+}
+
+/// The org node a permit's site follows (CMMS Advisor decision A), one rule for the creation, an
+/// edit and a permit received by sync (`permit::sync_check`): the linked work order's node when the
+/// work order records one, else the equipment's installed node. `None` when that node is not usable
+/// (a work order recording `0` or a negative node, equipment installed nowhere or on `0`): such a
+/// permit is refused, it never falls back to another node. Equipment or a linked work order that
+/// does not exist is not found.
+pub(crate) async fn derived_permit_node(
+    db: &impl ConnectionTrait,
+    asset_id: i64,
+    linked_work_order_id: Option<i64>,
+) -> AppResult<Option<i64>> {
+    let installed: Option<i64> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT installed_at_node_id FROM equipment WHERE id = ?",
+            [asset_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "Equipment".into(),
+            id: asset_id.to_string(),
+        })?
+        .try_get("", "installed_at_node_id")
+        .map_err(|e| decode_err("installed_at_node_id", e))?;
+    if let Some(wo_id) = linked_work_order_id {
+        let wo_node: Option<i64> = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT entity_id FROM work_orders WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::NotFound {
+                entity: "WorkOrder".into(),
+                id: wo_id.to_string(),
+            })?
+            .try_get("", "entity_id")
+            .map_err(|e| decode_err("entity_id", e))?;
+        if let Some(node) = wo_node {
+            return Ok(Some(node).filter(|n| *n > 0));
+        }
+    }
+    Ok(installed.filter(|n| *n > 0))
+}
+
+/// Whether `node` is an org node that exists here and is not deleted.
+pub(crate) async fn live_org_node(db: &impl ConnectionTrait, node: i64) -> AppResult<bool> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM org_nodes WHERE id = ? AND deleted_at IS NULL",
+            [node.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Whether a permit whose site follows `derived` may be recorded on `node`: that node or one of its
+/// parents (never a sibling, a node below it or another site). Both must exist here and not be
+/// deleted: a deleted parent is no site for a permit, and a derived node missing here gives none.
+/// (`auth::scope::ancestor_chain` follows parents whatever their status, as the rights need.)
+pub(crate) async fn node_on_permit_chain(db: &impl ConnectionTrait, derived: i64, node: i64) -> AppResult<bool> {
+    if !live_org_node(db, derived).await? || !live_org_node(db, node).await? {
+        return Ok(false);
+    }
+    Ok(crate::auth::scope::ancestor_chain(db, derived).await?.contains(&node))
+}
+
+/// The node a permit on `asset_id` (and `linked_work_order_id`) is recorded on: `given` when it is
+/// the derived node or one of its parents, the derived node when none is given. Refused when the
+/// derived node is not usable (none, missing here or deleted, whether it is given or not), or when
+/// `given` is off its chain.
+async fn checked_permit_node(
+    db: &impl ConnectionTrait,
+    asset_id: i64,
+    linked_work_order_id: Option<i64>,
+    given: Option<i64>,
+) -> AppResult<i64> {
+    let derived = derived_permit_node(db, asset_id, linked_work_order_id)
+        .await?
+        .ok_or_else(undetermined_site_error)?;
+    if !live_org_node(db, derived).await? {
+        return Err(undetermined_site_error());
+    }
+    match given {
+        None => Ok(derived),
+        Some(node) if node_on_permit_chain(db, derived, node).await? => Ok(node),
+        Some(node) => Err(refused(
+            "PERMIT_SITE_NOT_EQUIPMENT_SITE",
+            format!(
+                "A permit is recorded on the site of its equipment or work order ({derived}) or a level above it, \
+                 not on {node}."
+            ),
+            &[("org_node_id", node.to_string())],
+        )),
+    }
+}
+
+/// Resolves `(asset_id, entity_id)` for a new permit: the equipment given, else the linked work
+/// order's; the node given when it is on the derived node's chain ([`checked_permit_node`]), else
+/// the derived node. The scope check of the creation (`access::check_create_at`) applies the same
+/// rule.
+pub(crate) async fn resolve_permit_scope(
+    db: &impl ConnectionTrait,
+    input: &WorkPermitCreateInput,
+) -> AppResult<(i64, i64)> {
     let mut asset_id = input.asset_id;
-    let mut entity_id = input.entity_id;
     if let Some(wo_id) = input.linked_work_order_id {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT equipment_id, entity_id FROM work_orders WHERE id = ?",
+                "SELECT equipment_id FROM work_orders WHERE id = ?",
                 [wo_id.into()],
             ))
             .await?
@@ -1388,36 +1603,10 @@ async fn resolve_permit_scope(db: &impl ConnectionTrait, input: &WorkPermitCreat
         let wo_equipment: Option<i64> = row
             .try_get("", "equipment_id")
             .map_err(|e| decode_err("equipment_id", e))?;
-        let wo_entity: Option<i64> = row.try_get("", "entity_id").map_err(|e| decode_err("entity_id", e))?;
         asset_id = asset_id.or(wo_equipment);
-        entity_id = entity_id.or(wo_entity);
     }
-    let asset_id = asset_id.ok_or_else(|| {
-        AppError::ValidationFailed(vec![
-            "An asset is required (the linked work order has no equipment).".into()
-        ])
-    })?;
-    if entity_id.is_none() {
-        let row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT installed_at_node_id FROM equipment WHERE id = ?",
-                [asset_id.into()],
-            ))
-            .await?
-            .ok_or_else(|| AppError::NotFound {
-                entity: "Equipment".into(),
-                id: asset_id.to_string(),
-            })?;
-        entity_id = row
-            .try_get("", "installed_at_node_id")
-            .map_err(|e| decode_err("installed_at_node_id", e))?;
-    }
-    let entity_id = entity_id.ok_or_else(|| {
-        AppError::ValidationFailed(vec![
-            "The permit's organisational entity could not be determined from the work order or asset.".into(),
-        ])
-    })?;
+    let asset_id = asset_id.ok_or_else(asset_required_error)?;
+    let entity_id = checked_permit_node(db, asset_id, input.linked_work_order_id, input.entity_id).await?;
     Ok((asset_id, entity_id))
 }
 
@@ -1483,14 +1672,249 @@ async fn create_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitCreat
     Ok(created)
 }
 
-pub async fn update_work_permit(db: &DatabaseConnection, input: WorkPermitUpdateInput) -> AppResult<WorkPermit> {
+/// What an edit of a permit stores: its equipment, linked work order and org node, and whether
+/// the equipment or linked work order, or the node, changes. The node is the one the edit gives;
+/// without one, when the equipment or the linked work order changes, the node derived from them
+/// ([`derived_permit_node`]; `None` when not usable), else the current one. The scope check
+/// (`access::check_update`) and the save use this one rule, so the right is checked at the node
+/// actually stored; the save refuses a target other than the one checked (the permit or its work
+/// order changed in between).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermitEditTarget {
+    pub asset_id: i64,
+    pub linked_work_order_id: Option<i64>,
+    pub entity_id: Option<i64>,
+    pub equipment_changes: bool,
+    pub site_changes: bool,
+}
+
+pub(crate) async fn permit_edit_target(
+    db: &impl ConnectionTrait,
+    current: &WorkPermit,
+    input: &WorkPermitUpdateInput,
+) -> AppResult<PermitEditTarget> {
+    let asset_id = input.asset_id.unwrap_or(current.asset_id);
+    let linked = input.linked_work_order_id.or(current.linked_work_order_id);
+    let equipment_changes = asset_id != current.asset_id || linked != current.linked_work_order_id;
+    // Derived whenever the equipment or work order changes: equipment or a work order that does
+    // not exist is not found, even when a node is given.
+    let derived = if equipment_changes {
+        derived_permit_node(db, asset_id, linked).await?
+    } else {
+        None
+    };
+    let entity_id = match input.entity_id {
+        Some(given) => Some(given),
+        None if equipment_changes => derived,
+        None => Some(current.entity_id),
+    };
+    Ok(PermitEditTarget {
+        asset_id,
+        linked_work_order_id: linked,
+        entity_id,
+        equipment_changes,
+        site_changes: entity_id != Some(current.entity_id),
+    })
+}
+
+/// The rules of a change of a permit's equipment, linked work order or site (CMMS Advisor decision
+/// A): only while the permit is a draft or waiting for review (from approved on, the permit was
+/// approved for that equipment at that site); for an equipment or work-order change, never while a
+/// lock fitted under it has not had its removal verified, nor while isolation points are planned
+/// on it (they name the current equipment's points); its node is the derived one or a level above
+/// it ([`checked_permit_node`]: never a sibling, a level below or another site). Returns that node.
+async fn ensure_move_allowed(
+    db: &impl ConnectionTrait,
+    current: &WorkPermit,
+    target: &PermitEditTarget,
+) -> AppResult<i64> {
+    let code = || ("permit", current.code.clone());
+    if !WP_EQUIPMENT_CHANGE_STATUSES.contains(&current.status.as_str()) {
+        return Err(if target.equipment_changes {
+            refused(
+                "PERMIT_EQUIPMENT_LOCKED",
+                "This permit was approved for this equipment. Cancel it and raise a new permit.",
+                &[code(), ("status", current.status.clone())],
+            )
+        } else {
+            refused(
+                "PERMIT_SITE_LOCKED",
+                "This permit was approved at this site: its site can no longer change. Cancel it and raise a new permit.",
+                &[code(), ("status", current.status.clone())],
+            )
+        });
+    }
+    if target.equipment_changes {
+        let fitted =
+            count_isolations_where(db, current.id, "applied_at IS NOT NULL AND removal_verified_at IS NULL").await?;
+        if fitted > 0 {
+            return Err(refused(
+                "PERMIT_EQUIPMENT_LOCK_FITTED",
+                format!(
+                    "{fitted} lock(s) are fitted under this permit and their removal is not verified: its equipment cannot be changed."
+                ),
+                &[code(), ("locks", fitted.to_string())],
+            ));
+        }
+        // A cancelled line no longer names a point to isolate (CMMS Advisor decision).
+        let planned = count_isolations_where(db, current.id, "applied_at IS NULL AND cancelled_at IS NULL").await?;
+        if planned > 0 {
+            return Err(refused(
+                "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED",
+                format!(
+                    "{planned} isolation point(s) are planned on this permit for its current equipment: its equipment cannot be changed. Cancel the planned isolation lines, or cancel the permit."
+                ),
+                &[code(), ("isolations", planned.to_string())],
+            ));
+        }
+    }
+    let node = target.entity_id.ok_or_else(undetermined_site_error)?;
+    checked_permit_node(db, target.asset_id, target.linked_work_order_id, Some(node)).await
+}
+
+/// Records a change of a permit's equipment, linked work order or site (who, when, old and new
+/// equipment, work order and site), and, when it sent a permit waiting for review back to draft,
+/// that reset, in the save's transaction.
+async fn audit_equipment_change(
+    db: &impl ConnectionTrait,
+    before: &WorkPermit,
+    after: &WorkPermit,
+    actor_id: i64,
+) -> AppResult<()> {
+    let site_moved = before.entity_id != after.entity_id;
+    let equipment_changed =
+        before.asset_id != after.asset_id || before.linked_work_order_id != after.linked_work_order_id;
+    let review_reset = before.status == "pending_review" && after.status == "draft";
+    let event =
+        |action_code: &str, details: serde_json::Value| permit_audit_event(action_code, after.id, actor_id, details);
+    crate::audit::writer::write_audit_event_in(
+        db,
+        event(
+            if site_moved {
+                "permit.site_moved"
+            } else {
+                "permit.equipment_changed"
+            },
+            serde_json::json!({
+                "code": after.code,
+                "old_equipment_id": before.asset_id,
+                "new_equipment_id": after.asset_id,
+                "old_equipment_code": before.asset_code,
+                "new_equipment_code": after.asset_code,
+                "old_work_order_id": before.linked_work_order_id,
+                "new_work_order_id": after.linked_work_order_id,
+                "old_entity_id": before.entity_id,
+                "new_entity_id": after.entity_id,
+                "status_before": before.status,
+                "status_after": after.status,
+            }),
+        ),
+    )
+    .await?;
+    if review_reset {
+        audit_review_reset(
+            db,
+            &before.status,
+            after,
+            if equipment_changed {
+                "equipment_changed"
+            } else {
+                "site_changed"
+            },
+            actor_id,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Records that a change sent a permit waiting for review back to draft (`permit.review_reset`):
+/// the review it waited for judged what changed. `reason`: `equipment_changed`, `site_changed` or
+/// `isolation_cancelled`.
+async fn audit_review_reset(
+    db: &impl ConnectionTrait,
+    status_before: &str,
+    after: &WorkPermit,
+    reason: &str,
+    actor_id: i64,
+) -> AppResult<()> {
+    crate::audit::writer::write_audit_event_in(
+        db,
+        permit_audit_event(
+            "permit.review_reset",
+            after.id,
+            actor_id,
+            serde_json::json!({
+                "code": after.code,
+                "reason": reason,
+                "status_before": status_before,
+                "status_after": after.status,
+            }),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// An audit event on a permit by the session user.
+fn permit_audit_event(
+    action_code: &str,
+    permit_id: i64,
+    actor_id: i64,
+    details: serde_json::Value,
+) -> crate::audit::writer::AuditEventInput {
+    crate::audit::writer::AuditEventInput {
+        action_code: action_code.to_string(),
+        target_type: Some("work_permit".to_string()),
+        target_id: Some(permit_id.to_string()),
+        actor_id: Some(actor_id),
+        auth_context: "session".to_string(),
+        result: "success".to_string(),
+        before_hash: None,
+        after_hash: None,
+        retention_class: "standard".to_string(),
+        details_json: Some(details),
+    }
+}
+
+/// `actor_id` is the session user: it is recorded as the person who changed the permit's
+/// equipment, linked work order or site. Without a scope check before it: tests only, the command
+/// uses [`update_work_permit_checked`].
+#[cfg(test)]
+pub(crate) async fn update_work_permit(
+    db: &DatabaseConnection,
+    input: WorkPermitUpdateInput,
+    actor_id: i64,
+) -> AppResult<WorkPermit> {
     let txn = db.begin().await?;
-    let out = update_work_permit_in(&txn, input).await?;
+    let out = update_work_permit_in(&txn, input, actor_id, None).await?;
     txn.commit().await?;
     Ok(out)
 }
 
-async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdateInput) -> AppResult<WorkPermit> {
+/// The edit of a permit after the scope check (`access::require_update`): `checked` is the
+/// target that check judged. The save computes the target again inside its transaction and
+/// refuses the edit as a concurrent update when it differs (the permit, its work order or the
+/// equipment changed between the check and the save), so the node stored is always the node
+/// checked.
+pub(crate) async fn update_work_permit_checked(
+    db: &DatabaseConnection,
+    input: WorkPermitUpdateInput,
+    actor_id: i64,
+    checked: &PermitEditTarget,
+) -> AppResult<WorkPermit> {
+    let txn = db.begin().await?;
+    let out = update_work_permit_in(&txn, input, actor_id, Some(checked)).await?;
+    txn.commit().await?;
+    Ok(out)
+}
+
+async fn update_work_permit_in(
+    db: &impl ConnectionTrait,
+    input: WorkPermitUpdateInput,
+    actor_id: i64,
+    checked: Option<&PermitEditTarget>,
+) -> AppResult<WorkPermit> {
     let current = require_work_permit(db, input.id).await?;
     if input.expected_row_version != current.row_version {
         return Err(AppError::ValidationFailed(vec![
@@ -1504,9 +1928,19 @@ async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdat
             &[("status", current.status.clone())],
         ));
     }
-    let asset_id = input.asset_id.unwrap_or(current.asset_id);
-    let entity_id = input.entity_id.unwrap_or(current.entity_id);
-    let linked = input.linked_work_order_id.or(current.linked_work_order_id);
+    let target = permit_edit_target(db, &current, &input).await?;
+    if checked.is_some_and(|c| *c != target) {
+        return Err(AppError::ValidationFailed(vec![
+            "Concurrent update on work_permits.".into()
+        ]));
+    }
+    let entity_id = if target.equipment_changes || target.site_changes {
+        ensure_move_allowed(db, &current, &target).await?
+    } else {
+        current.entity_id
+    };
+    let asset_id = target.asset_id;
+    let linked = target.linked_work_order_id;
     // Same rule as creation: a work order has at most one open permit.
     if let Some(wo_id) = linked.filter(|w| Some(*w) != current.linked_work_order_id) {
         let others = list_live_permits_linked_to_work_order(db, wo_id).await?;
@@ -1518,6 +1952,7 @@ async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdat
             ));
         }
     }
+    // Every path (equipment only, work order only, both): the permit is on its work order's equipment.
     ensure_wo_asset_aligned(db, linked, asset_id).await?;
     // The permit keeps an expiry: a new one is checked like on creation; an update that leaves it
     // unchanged needs one already (permits created before the rule must be given one).
@@ -1525,19 +1960,28 @@ async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdat
         Some(e) => Some(checked_expiry(db, current.permit_type_id, Some(e)).await?),
         None => Some(checked_expiry_present(&current)?),
     };
+    // A change of equipment, work order or site while waiting for review sends the permit back to
+    // draft: the review it waited for judged the former equipment at the former site, and who
+    // issues it may change (permits record no reviewer: the review is the status itself).
+    let status = if (target.equipment_changes || target.site_changes) && current.status == "pending_review" {
+        "draft".to_string()
+    } else {
+        current.status.clone()
+    };
 
     let new_rv = current.row_version + 1;
     let affected = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_permits SET linked_work_order_id = ?, asset_id = ?, entity_id = ?, \
-             expires_at = ?, row_version = ? \
+             expires_at = ?, status = ?, row_version = ? \
              WHERE id = ? AND row_version = ?",
             [
                 opt_i64(linked),
                 asset_id.into(),
                 entity_id.into(),
                 opt_string(expires),
+                status.into(),
                 new_rv.into(),
                 input.id.into(),
                 current.row_version.into(),
@@ -1550,6 +1994,9 @@ async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdat
         ]));
     }
     let updated = require_work_permit(db, input.id).await?;
+    if target.equipment_changes || target.site_changes {
+        audit_equipment_change(db, &current, &updated, actor_id).await?;
+    }
     Ok(updated)
 }
 
@@ -1807,6 +2254,15 @@ async fn append_permit_handover_log_in(
                 &[("userId", receiver.to_string())],
             ));
         }
+        // CMMS Advisor decision (option A): the receiver holds the permit close right at the
+        // permit's site — checked here, never left to the picker.
+        if !super::access::may_receive_handover(db, input.permit_id, receiver).await? {
+            return Err(refused(
+                "PERMIT_HANDOVER_RECEIVER_NO_RIGHT",
+                "The receiving person does not hold the permit close right at this permit's site.",
+                &[("userId", receiver.to_string())],
+            ));
+        }
     }
     let signed = now_ts();
     let sync_id = Uuid::new_v4().to_string();
@@ -1879,40 +2335,53 @@ pub struct HandoverReceiver {
 pub struct HandoverReceiverPage {
     pub items: Vec<HandoverReceiver>,
     pub total: i64,
+    /// [`NO_RECEIVER_AT_SITE`] when nobody but the person asking holds the permit close right at
+    /// the permit's site (whatever the search): the screen says so instead of an empty list.
+    #[serde(default)]
+    pub empty_reason: Option<String>,
 }
 
 /// Largest page of hand-over receivers.
 pub const HANDOVER_RECEIVERS_PAGE_MAX: u64 = 200;
 
-/// Active, non-deleted accounts that may receive a hand-over, excluding the person asking (who
-/// signs it), optionally filtered by name (case and accents ignored, no wildcards), ordered by name,
-/// paged, with the total that match. The person asking holds `ptw.close` (checked here as well as
-/// by the command).
+/// Nobody (other than the signer) holds `ptw.close` at the permit's site: no hand-over can be
+/// received there (translated on screen, `errors:scope`).
+pub const NO_RECEIVER_AT_SITE: &str = "PERMIT_HANDOVER_NO_RECEIVER_AT_SITE";
+
+/// Active, non-deleted accounts that may receive a hand-over of the permit `permit_id` (CMMS
+/// Advisor decision, option A: holding `ptw.close` at the permit's site, plant-wide holders
+/// included — `permit::access::eligible_receiver_sql`), excluding the person asking (who signs
+/// it), optionally filtered by name (case and accents ignored, no wildcards), ordered by name,
+/// paged, with the total that match. The person asking holds `ptw.close` at the permit's site
+/// (checked by the command, `permit::access`). Not found when the permit does not exist.
 pub async fn list_handover_receivers(
     db: &impl ConnectionTrait,
     actor_id: i64,
+    permit_id: i64,
     search: Option<String>,
     limit: Option<u64>,
     offset: Option<u64>,
 ) -> AppResult<HandoverReceiverPage> {
-    if !crate::settings::site::holds_tenant_right(db, actor_id, crate::rbac::permissions::PTW_CLOSE).await? {
-        return Err(AppError::PermissionDenied(
-            "Listing hand-over receivers needs the permit close right.".into(),
-        ));
-    }
+    let anchor = super::access::permit_anchor(db, permit_id).await?;
+    let (eligible, eligible_binds) = super::access::eligible_receiver_sql(db, anchor).await?;
     let name = handover_person_name_sql("ua");
-    // Filtered here rather than by SQL LIKE: "%" and "_" are plain characters, and case and accents
-    // are ignored the way the asset search ignores them (`assets::search::fold_search_text`).
+    let mut values: Vec<sea_orm::Value> = vec![actor_id.into()];
+    values.extend(eligible_binds.iter().cloned());
+    // Every person eligible at the permit's site; the name filter is applied here rather than by
+    // SQL LIKE: "%" and "_" are plain characters, and case and accents are ignored the way the
+    // asset search ignores them (`assets::search::fold_search_text`).
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
                 "SELECT ua.id, {name} AS display_name FROM user_accounts ua \
-                 WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ?"
+                 WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? AND {eligible}"
             ),
-            [actor_id.into()],
+            values,
         ))
         .await?;
+    // Nobody but the person asking is eligible at the permit's site, whatever the search.
+    let empty_reason = rows.is_empty().then(|| NO_RECEIVER_AT_SITE.to_string());
     let wanted = search
         .as_deref()
         .map(str::trim)
@@ -1943,7 +2412,11 @@ pub async fn list_handover_receivers(
         .take(usize::try_from(limit).unwrap_or(usize::MAX))
         .map(|(_, receiver)| receiver)
         .collect();
-    Ok(HandoverReceiverPage { items, total })
+    Ok(HandoverReceiverPage {
+        items,
+        total,
+        empty_reason,
+    })
 }
 
 pub async fn list_permit_handover_logs(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<Vec<PermitHandoverLog>> {
@@ -2066,6 +2539,7 @@ async fn upsert_permit_isolation_in(
                 &[],
             ));
         }
+        refuse_if_cancelled(&current)?;
         let new_rv = current.row_version + 1;
         let affected = db
             .execute(Statement::from_sql_and_values(
@@ -2074,7 +2548,7 @@ async fn upsert_permit_isolation_in(
                 // are not touched (history).
                 "UPDATE permit_isolations SET isolation_point = ?, energy_type_id = ?, \
                  isolation_method_id = ?, mapping_review_required = 0, lock_number = ?, row_version = ? \
-                 WHERE id = ? AND row_version = ? AND applied_at IS NULL",
+                 WHERE id = ? AND row_version = ? AND applied_at IS NULL AND cancelled_at IS NULL",
                 [
                     point.into(),
                     energy_id.into(),
@@ -2166,6 +2640,151 @@ async fn write_isolation_action(
     Ok(out)
 }
 
+fn isolation_cancelled_error() -> AppError {
+    refused(
+        "PERMIT_ISOLATION_CANCELLED",
+        "This isolation line is cancelled: it is kept as history only.",
+        &[],
+    )
+}
+
+/// A cancelled line is kept as history: it is never edited, applied, verified or cancelled again.
+fn refuse_if_cancelled(iso: &PermitIsolation) -> AppResult<()> {
+    if iso.cancelled_at.is_some() {
+        return Err(isolation_cancelled_error());
+    }
+    Ok(())
+}
+
+/// Cancels a planned isolation line (CMMS Advisor decision): the line is marked cancelled by
+/// `actor_id` (the session user) and kept, never deleted. Only a line never applied (no fitter, no
+/// verification, no removal) on a permit that is a draft or waiting for review; an applied line
+/// keeps the lock-removal path. In `pending_review` the permit goes back to `draft` (the review
+/// judged the former lines). Audited in the same transaction (who, when, the line's content, and
+/// the review reset). Returns the permit and the cancelled line. Without a scope check before it
+/// (the command checks `ptw.issue` at the permit's site, `access::require_isolation_cancel`).
+pub async fn cancel_permit_isolation(
+    db: &DatabaseConnection,
+    input: PermitIsolationCancelInput,
+    actor_id: i64,
+) -> AppResult<(WorkPermit, PermitIsolation)> {
+    let txn = db.begin().await?;
+    let out = cancel_permit_isolation_in(&txn, input, actor_id).await?;
+    txn.commit().await?;
+    Ok(out)
+}
+
+async fn cancel_permit_isolation_in(
+    db: &impl ConnectionTrait,
+    input: PermitIsolationCancelInput,
+    actor_id: i64,
+) -> AppResult<(WorkPermit, PermitIsolation)> {
+    let iso = get_permit_isolation(db, input.isolation_id).await?;
+    if iso.row_version != input.expected_row_version {
+        return Err(AppError::ValidationFailed(vec![
+            "row_version mismatch on permit_isolations.".into(),
+        ]));
+    }
+    let permit = require_work_permit(db, iso.permit_id).await?;
+    refuse_if_cancelled(&iso)?;
+    let acted = iso.applied_at.is_some()
+        || iso.applied_by_id.is_some()
+        || iso.verified_at.is_some()
+        || iso.verified_by_id.is_some()
+        || iso.removal_verified_at.is_some()
+        || iso.removal_verified_by_id.is_some();
+    if acted {
+        return Err(refused(
+            "PERMIT_ISOLATION_CANCEL_APPLIED",
+            "Only a planned isolation line never applied can be cancelled; a fitted lock is removed with a verified removal.",
+            &[],
+        ));
+    }
+    if !ISOLATION_CANCEL_STATUSES.contains(&permit.status.as_str()) {
+        return Err(refused(
+            "PERMIT_ISOLATION_CANCEL_WRONG_STATUS",
+            format!(
+                "Planned isolation lines can be cancelled while the permit is a draft or waiting for review; it is '{}'.",
+                permit.status
+            ),
+            &[("status", permit.status.clone())],
+        ));
+    }
+    let cancelled_at = now_ts();
+    let affected = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE permit_isolations SET cancelled_at = ?, cancelled_by_id = ?, row_version = row_version + 1 \
+             WHERE id = ? AND row_version = ? AND cancelled_at IS NULL AND applied_at IS NULL \
+               AND verified_at IS NULL AND removal_verified_at IS NULL \
+               AND EXISTS (SELECT 1 FROM work_permits WHERE id = ? AND status IN ('draft', 'pending_review'))",
+            [
+                cancelled_at.clone().into(),
+                actor_id.into(),
+                iso.id.into(),
+                iso.row_version.into(),
+                permit.id.into(),
+            ],
+        ))
+        .await?;
+    if affected.rows_affected() != 1 {
+        return Err(AppError::ValidationFailed(vec![
+            "Concurrent update on permit_isolations.".into(),
+        ]));
+    }
+    // Waiting for review: back to draft, it must be submitted again.
+    let after = if permit.status == "pending_review" {
+        let affected = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_permits SET status = 'draft', row_version = row_version + 1 \
+                 WHERE id = ? AND row_version = ? AND status = 'pending_review'",
+                [permit.id.into(), permit.row_version.into()],
+            ))
+            .await?;
+        if affected.rows_affected() != 1 {
+            return Err(AppError::ValidationFailed(vec![
+                "Concurrent update on work_permits.".into()
+            ]));
+        }
+        require_work_permit(db, permit.id).await?
+    } else {
+        permit.clone()
+    };
+    crate::audit::writer::write_audit_event_in(
+        db,
+        permit_audit_event(
+            "permit.isolation_cancelled",
+            permit.id,
+            actor_id,
+            serde_json::json!({
+                "code": permit.code,
+                "isolation_id": iso.id,
+                "isolation_sync_id": iso.entity_sync_id,
+                "isolation_point": iso.isolation_point,
+                "energy_type_id": iso.energy_type_id,
+                "energy_type_code": iso.energy_type_code,
+                "energy_type_label": iso.energy_type_label,
+                "isolation_method_id": iso.isolation_method_id,
+                "isolation_method_label": iso.isolation_method_label,
+                "original_energy_type": iso.energy_type,
+                "original_isolation_method": iso.isolation_method,
+                "lock_number": iso.lock_number,
+                "mapping_review_required": iso.mapping_review_required,
+                "cancelled_at": cancelled_at,
+                "status_before": permit.status,
+                "status_after": after.status,
+            }),
+        ),
+    )
+    .await?;
+    if after.status != permit.status {
+        audit_review_reset(db, &permit.status, &after, "isolation_cancelled", actor_id).await?;
+    }
+    let cancelled = get_permit_isolation(db, iso.id).await?;
+    Ok((after, cancelled))
+}
+
 /// Locks must never come off under running work: removal is refused while the linked
 /// work order is still being executed.
 async fn ensure_linked_work_not_running(db: &impl ConnectionTrait, permit: &WorkPermit) -> AppResult<()> {
@@ -2214,6 +2833,7 @@ async fn apply_permit_isolation_in(
 ) -> AppResult<PermitIsolation> {
     let (iso, permit) = load_isolation_for_action(db, &input).await?;
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "apply isolations")?;
+    refuse_if_cancelled(&iso)?;
     enforce_loto_role(db, actor_id, permit.id, "isolation_apply").await?;
     if iso.applied_at.is_some() {
         return Err(refused(
@@ -2280,6 +2900,7 @@ async fn verify_permit_isolation_in(
 ) -> AppResult<PermitIsolation> {
     let (iso, permit) = load_isolation_for_action(db, &input).await?;
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "verify isolations")?;
+    refuse_if_cancelled(&iso)?;
     enforce_loto_role(db, actor_id, permit.id, "isolation_verify").await?;
     let Some(applied_by) = iso.applied_by_id.filter(|_| iso.applied_at.is_some()) else {
         return Err(refused(
@@ -2331,6 +2952,7 @@ async fn verify_permit_isolation_removal_in(
 ) -> AppResult<PermitIsolation> {
     let (iso, permit) = load_isolation_for_action(db, &input).await?;
     ensure_permit_status_in(&permit, ISOLATION_REMOVAL_STATUSES, "verify isolation removal")?;
+    refuse_if_cancelled(&iso)?;
     enforce_loto_role(db, actor_id, permit.id, "removal_verify").await?;
     if iso.verified_at.is_none() {
         return Err(refused(
@@ -2400,7 +3022,7 @@ pub async fn get_loto_card_view(
             DbBackend::Sqlite,
             "SELECT wp.code AS permit_code, wp.expires_at AS permit_expires, pi.id AS isolation_id, \
              pi.isolation_point, COALESCE(et.label, pi.energy_type) AS energy_type, pi.lock_number, \
-             pi.verified_by_id, pi.verified_at, \
+             pi.verified_by_id, pi.verified_at, pi.cancelled_at, \
              e.asset_id_code, e.name AS equipment_name, ua.username AS verifier_username \
              FROM permit_isolations pi \
              JOIN work_permits wp ON wp.id = pi.permit_id \
@@ -2415,6 +3037,15 @@ pub async fn get_loto_card_view(
             entity: "PermitIsolation".into(),
             id: isolation_id.to_string(),
         })?;
+    // A cancelled line is no lock: it has no LOTO card.
+    if row
+        .try_get::<Option<String>>("", "cancelled_at")
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return Err(isolation_cancelled_error());
+    }
     let permit_code: String = row
         .try_get("", "permit_code")
         .map_err(|e| decode_err("permit_code", e))?;
@@ -2468,12 +3099,12 @@ async fn record_loto_card_print_in(
     input: LotoCardPrintInput,
     actor_id: i64,
 ) -> AppResult<LotoCardPrintJob> {
-    // The lock card is issued by someone authorised to apply the isolation.
-    enforce_loto_role(db, actor_id, input.permit_id, "isolation_apply").await?;
+    // The isolation must belong to the permit named (not found otherwise) before anything is judged
+    // on that permit: a mismatched permit id never yields that permit's qualification refusals.
     let iso = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT verified_at FROM permit_isolations WHERE id = ? AND permit_id = ?",
+            "SELECT verified_at, cancelled_at FROM permit_isolations WHERE id = ? AND permit_id = ?",
             [input.isolation_id.into(), input.permit_id.into()],
         ))
         .await?
@@ -2481,6 +3112,16 @@ async fn record_loto_card_print_in(
             entity: "PermitIsolation".into(),
             id: input.isolation_id.to_string(),
         })?;
+    if iso
+        .try_get::<Option<String>>("", "cancelled_at")
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return Err(isolation_cancelled_error());
+    }
+    // The lock card is issued by someone authorised to apply the isolation.
+    enforce_loto_role(db, actor_id, input.permit_id, "isolation_apply").await?;
     let verified_at: Option<String> = iso.try_get("", "verified_at").ok().flatten();
     if verified_at.is_none() {
         return Err(refused(
@@ -2544,36 +3185,77 @@ pub async fn isolation_locks_in_place(db: &impl ConnectionTrait) -> AppResult<(i
     ))
 }
 
-pub async fn list_open_permits_report(db: &impl ConnectionTrait) -> AppResult<Vec<WorkPermit>> {
+/// Open permits not expired, plant-wide (the home supervision count, scoped in a later stage).
+pub async fn list_open_permits_report(db: &impl ConnectionTrait) -> AppResult<WorkPermitListPage> {
+    list_open_permits_report_in_scope(db, &AccessScope::Everywhere).await
+}
+
+/// [`list_open_permits_report`] limited to the reader's scope (where they hold `ptw.view`; rule
+/// §2.8: no plant-wide figures for a site-only user), with the permits left out and why.
+pub async fn list_open_permits_report_in_scope(
+    db: &impl ConnectionTrait,
+    scope: &AccessScope,
+) -> AppResult<WorkPermitListPage> {
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    // What the report shows (open, not expired): one condition for the rows and the hidden counts.
+    let open_sql = format!("wp.status IN {OPEN_PERMIT_STATUSES_SQL} AND (wp.expires_at IS NULL OR wp.expires_at > ?)");
+    let scope_sql = super::access::scope_sql(scope);
+    let mut values: Vec<sea_orm::Value> = vec![now.clone().into()];
+    values.extend(scope_sql.binds);
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
                 "{WORK_PERMIT_SELECT} \
-                 WHERE wp.status IN {OPEN_PERMIT_STATUSES_SQL} \
-                 AND (wp.expires_at IS NULL OR wp.expires_at > ?) \
-                 ORDER BY wp.id DESC"
+                 WHERE {open_sql} \
+                 AND ({pred}) \
+                 ORDER BY wp.id DESC",
+                pred = scope_sql.predicate,
             ),
-            [now.into()],
+            values,
         ))
         .await?;
-    let mut out = Vec::with_capacity(rows.len());
+    let mut items = Vec::with_capacity(rows.len());
     for row in rows {
-        out.push(map_work_permit(&row)?);
+        items.push(map_work_permit(&row)?);
     }
-    Ok(out)
+    let (hidden_outside_scope, hidden_without_site) =
+        hidden_permit_counts(db, scope, &open_sql, vec![now.into()]).await?;
+    Ok(WorkPermitListPage {
+        items,
+        hidden_outside_scope,
+        hidden_without_site,
+    })
 }
 
+/// The 30-day hand-back compliance, plant-wide (internal callers and tests).
 pub async fn permit_compliance_kpi_30d(db: &impl ConnectionTrait) -> AppResult<PermitComplianceKpi30d> {
+    permit_compliance_kpi_30d_in_scope(db, &AccessScope::Everywhere).await
+}
+
+/// [`permit_compliance_kpi_30d`] on the permits of the reader's scope only (rule §2.8).
+pub async fn permit_compliance_kpi_30d_in_scope(
+    db: &impl ConnectionTrait,
+    scope: &AccessScope,
+) -> AppResult<PermitComplianceKpi30d> {
     let cutoff = (Utc::now() - Duration::days(30))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
+    let scope_sql = super::access::scope_sql(scope);
+    let binds = || -> Vec<sea_orm::Value> {
+        let mut v: Vec<sea_orm::Value> = vec![cutoff.clone().into()];
+        v.extend(scope_sql.binds.iter().cloned());
+        v
+    };
     let activated_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM work_permits WHERE activated_at IS NOT NULL AND activated_at >= ?",
-            [cutoff.clone().into()],
+            format!(
+                "SELECT COUNT(*) AS c FROM work_permits wp WHERE wp.activated_at IS NOT NULL \
+                 AND wp.activated_at >= ? AND ({})",
+                scope_sql.predicate
+            ),
+            binds(),
         ))
         .await?
         .expect("c");
@@ -2581,10 +3263,14 @@ pub async fn permit_compliance_kpi_30d(db: &impl ConnectionTrait) -> AppResult<P
     let on_time_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM work_permits WHERE activated_at IS NOT NULL AND activated_at >= ? \
-             AND handed_back_at IS NOT NULL \
-             AND (expires_at IS NULL OR handed_back_at <= expires_at)",
-            [cutoff.into()],
+            format!(
+                "SELECT COUNT(*) AS c FROM work_permits wp WHERE wp.activated_at IS NOT NULL \
+                 AND wp.activated_at >= ? \
+                 AND wp.handed_back_at IS NOT NULL \
+                 AND (wp.expires_at IS NULL OR wp.handed_back_at <= wp.expires_at) AND ({})",
+                scope_sql.predicate
+            ),
+            binds(),
         ))
         .await?
         .expect("c");

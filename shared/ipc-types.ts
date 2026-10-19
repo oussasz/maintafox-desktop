@@ -10700,13 +10700,25 @@ export interface WorkPermitCreateInput {
   permit_type_id: number;
   /** Omit when `linked_work_order_id` is set: the WO equipment is used. */
   asset_id: number | null;
-  /** Omit to derive from the WO entity or the asset installation node. */
+  /** Omit to derive from the WO entity or the asset installation node. When given, it must be that
+   * node or a level above it (`PERMIT_SITE_NOT_EQUIPMENT_SITE` otherwise); a WO or asset without a
+   * usable node is refused. */
   entity_id: number | null;
   linked_work_order_id: number | null;
   /** RFC 3339, must be in the future. */
   expires_at: string | null;
 }
 
+/** Edit of a permit (`update_work_permit`); `null` keeps the current value. The equipment, the
+ * linked work order or the site changes only in `draft` or `pending_review` (any of these changes in
+ * `pending_review` sends the permit back to `draft`); the permit then moves to their
+ * site, and an `entity_id` given must be that site or a level above it (never a sibling, a level
+ * below or another site). Coded refusals (`errors:scope`): `PERMIT_EQUIPMENT_LOCKED` (approved or
+ * later), `PERMIT_SITE_LOCKED` (site change, approved or later),
+ * `PERMIT_EQUIPMENT_LOCK_FITTED` (a lock fitted, removal not verified),
+ * `PERMIT_EQUIPMENT_ISOLATIONS_PLANNED` (isolation points planned), `PERMIT_SITE_NOT_EQUIPMENT_SITE`,
+ * `PERMIT_WO_EQUIPMENT_MISMATCH` (the work order is on other equipment). Expiry edits are allowed
+ * from `draft` to `issued`. */
 export interface WorkPermitUpdateInput {
   id: number;
   linked_work_order_id: number | null;
@@ -10760,10 +10772,14 @@ export interface PermitHandoverReceiver {
   display_name: string;
 }
 
-/** One page of hand-over receivers with the total that match. */
+/** One page of hand-over receivers with the total that match. Receivers hold the permit close
+ * right at the permit's site (plant-wide holders included). */
 export interface PermitHandoverReceiverPage {
   items: PermitHandoverReceiver[];
   total: number;
+  /** `PERMIT_HANDOVER_NO_RECEIVER_AT_SITE` when nobody but the signer holds the permit close right
+   * at the permit's site (whatever the search; `errors:scope`), else null. */
+  empty_reason: string | null;
 }
 
 /** One permit hand-over role of the plant (`list_permit_handover_roles`). */
@@ -10790,6 +10806,22 @@ export interface PermitIsolationActionInput {
   expected_row_version: number;
   /** Only used by apply: lock number fitted at application time. */
   lock_number: string | null;
+}
+
+/** `cancel_permit_isolation`: cancels a planned line never applied (draft or waiting for review);
+ * the session user is recorded, the line is kept as "cancelled". */
+export interface PermitIsolationCancelInput {
+  isolation_id: number;
+  expected_row_version: number;
+}
+
+/** Counts of a permit list the user's sites leave out (`list_work_permits`,
+ * `list_open_permits_report`), whatever the filters; both 0 plant-wide. */
+export interface WorkPermitHiddenCounts {
+  /** Permits outside the user's sites (site-scoped roles). */
+  hidden_outside_scope: number;
+  /** Permits without an org node (plant-wide users only). */
+  hidden_without_site: number;
 }
 
 export interface WorkPermitListFilter {

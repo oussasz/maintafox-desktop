@@ -14,6 +14,23 @@
     "select": "Sélectionner {{code}}",
     "retry": "Réessayer"
   },
+  "siteScope": {
+    "hidden": {
+      "outsideScope_one": "{{count}} permis n’est pas affiché : hors de vos sites.",
+      "outsideScope_other": "{{count}} permis ne sont pas affichés : hors de vos sites.",
+      "withoutSite_one": "{{count}} permis n’est pas affiché : il n’a pas de site.",
+      "withoutSite_other": "{{count}} permis ne sont pas affichés : ils n’ont pas de site.",
+      "allPermits": "Ces nombres portent sur tous les permis, quels que soient les filtres ou la recherche.",
+      "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l’usine pour les voir."
+    },
+    "noSite": {
+      "badge": "À revoir : sans site",
+      "hint": "Permis enregistré sans site. Seuls les utilisateurs ayant un rôle valable pour toute l’usine le voient et peuvent agir dessus."
+    },
+    "openHidden_one": "{{count}} autre permis ouvert est hors de vos sites ou sans site : non compté",
+    "openHidden_other": "{{count}} autres permis ouverts sont hors de vos sites ou sans site : non comptés",
+    "noIssueRightAtSite": "Vous n’avez pas le droit de délivrer des permis sur le site de cet équipement."
+  },
   "kpi": {
     "title": "Conformité LOTO (30 j.)",
     "summary": "Activations : {{activated}} · Mainlevées à temps : {{onTime}}",
@@ -119,7 +136,8 @@
       "pending": "Non posée",
       "applied": "Posée",
       "verified": "Vérifiée",
-      "removed": "Retirée"
+      "removed": "Retirée",
+      "cancelled": "Annulée"
     },
     "editLocked": "Les isolations ne peuvent être ajoutées que si le permis n'est pas actif.",
     "loadError": "Les isolations de ce permis n’ont pas pu être chargées",
@@ -135,6 +153,14 @@
     "threePersonNotice": "Règle des trois personnes : {{name}} a vérifié cette isolation et ne peut pas confirmer son retrait.",
     "threePersonNoticeUnknown": "Règle des trois personnes : la personne qui a vérifié cette isolation ne peut pas confirmer son retrait.",
     "threePersonSelf": "Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait.",
+    "cancel": "Annuler la ligne",
+    "cancelTitle": "Annuler la ligne d'isolement",
+    "cancelKeep": "Garder la ligne",
+    "cancelConfirm": "La ligne « {{point}} » ({{energy}} · {{method}}) n'a jamais été posée. Elle sera marquée « Annulée » et gardée dans l'historique du permis : elle ne pourra plus être posée, vérifiée ni modifiée.",
+    "cancelResetNotice": "Ce permis attend sa revue : il repassera en brouillon et devra être soumis de nouveau.",
+    "cancelHint": "Une ligne jamais posée peut être annulée tant que le permis est en brouillon ou en attente de revue ; un cadenas posé se retire avec une dépose vérifiée.",
+    "cancelledBy": "Annulée par {{name}} le {{date}}",
+    "cancelledAt": "Annulée le {{date}}",
     "removalConfirmTitle": "Confirmer le retrait des cadenas",
     "removalConfirmDescription": "Vous confirmez que l’isolation « {{point}} » est retirée. Posée par {{applier}}, vérifiée par {{verifier}}. Votre nom sera inscrit comme celui qui a vérifié le retrait.",
     "personUnknown": "personne non enregistrée"

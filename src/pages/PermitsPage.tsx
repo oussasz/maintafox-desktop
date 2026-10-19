@@ -31,6 +31,11 @@ import {
 } from "@/components/permits/PermitCreateDialog";
 import { PermitDetailPanel } from "@/components/permits/PermitDetailPanel";
 import {
+  PermitHiddenNotice,
+  PermitNoSiteBadge,
+  usePermitPlantWideAccess,
+} from "@/components/permits/PermitSiteScope";
+import {
   PERMIT_QUERY_CREATE_FOR_WO,
   PERMIT_QUERY_SELECT,
   PERMIT_REFUSAL_NAMESPACES,
@@ -92,6 +97,8 @@ export function PermitsPage() {
   const { formatDateTime, formatNumber, formatPercent } = useFormatters();
   const [searchParams, setSearchParams] = useSearchParams();
   const { can } = usePermissions();
+  // Permit types are plant-wide: the issue right counts at no node only.
+  const plantWide = usePermitPlantWideAccess();
 
   useEffect(() => {
     void i18n.loadNamespaces([...PERMIT_REFUSAL_NAMESPACES]);
@@ -100,6 +107,9 @@ export function PermitsPage() {
   const [types, setTypes] = useState<PermitTypeRecord[]>([]);
   const [permits, setPermits] = useState<WorkPermitRecord[]>([]);
   const [openCount, setOpenCount] = useState<number | null>(null);
+  /** Permits the list / the open report leave out: outside the user's sites, or without a site. */
+  const [hidden, setHidden] = useState({ outsideScope: 0, withoutSite: 0 });
+  const [openHidden, setOpenHidden] = useState(0);
   const [kpi30d, setKpi30d] = useState<PermitComplianceKpi30dRecord | null>(null);
   const [kpiError, setKpiError] = useState<unknown>(null);
   const [kpiLoading, setKpiLoading] = useState(true);
@@ -127,7 +137,7 @@ export function PermitsPage() {
     try {
       // One extra row tells whether more permits exist beyond the current limit.
       const term = search.trim();
-      const [ty, rows] = await Promise.all([
+      const [ty, page] = await Promise.all([
         listPermitTypes(),
         listWorkPermits({
           limit: Math.min(limit + 1, BACKEND_MAX),
@@ -137,6 +147,11 @@ export function PermitsPage() {
         }),
       ]);
       setTypes(ty);
+      const rows = page.items;
+      setHidden({
+        outsideScope: page.hidden_outside_scope,
+        withoutSite: page.hidden_without_site,
+      });
       setHasMore(rows.length > limit);
       setPermits(rows.slice(0, limit));
     } catch (e) {
@@ -152,11 +167,13 @@ export function PermitsPage() {
     try {
       const [kpi, open] = await Promise.all([permitComplianceKpi30d(), listOpenPermitsReport()]);
       setKpi30d(kpi);
-      setOpenCount(open.length);
+      setOpenCount(open.items.length);
+      setOpenHidden(open.hidden_outside_scope + open.hidden_without_site);
     } catch (e) {
       setKpiError(e);
       setKpi30d(null);
       setOpenCount(null);
+      setOpenHidden(0);
     } finally {
       setKpiLoading(false);
     }
@@ -191,7 +208,7 @@ export function PermitsPage() {
           wo.asset_code && wo.asset_label
             ? `${wo.asset_code} — ${wo.asset_label}`
             : (wo.asset_code ?? wo.asset_label ?? null);
-        setCreateWo({ id: wo.id, code: wo.code, assetLabel });
+        setCreateWo({ id: wo.id, code: wo.code, assetLabel, siteId: wo.entity_id });
         setCreateOpen(true);
       })
       .catch(() => {
@@ -277,11 +294,14 @@ export function PermitsPage() {
         accessorFn: (row) => statusLabel(row.status),
         header: t("columns.status"),
         cell: ({ row }) => (
-          <StatusChip
-            label={statusLabel(row.original.status)}
-            tone={toneOf(PERMIT_STATUS_TONE, row.original.status)}
-            dot
-          />
+          <span className="flex flex-wrap items-center gap-1.5">
+            <StatusChip
+              label={statusLabel(row.original.status)}
+              tone={toneOf(PERMIT_STATUS_TONE, row.original.status)}
+              dot
+            />
+            <PermitNoSiteBadge permit={row.original} />
+          </span>
         ),
       },
       {
@@ -402,7 +422,7 @@ export function PermitsPage() {
                 {t("actions.manageTypes")}
               </Link>
             </Button>
-          ) : can(P.PTW_ISSUE) ? (
+          ) : plantWide.can(P.PTW_ISSUE) ? (
             <Button variant="outline" className="h-11 gap-1.5" onClick={() => setTypesOpen(true)}>
               <Settings2 className="h-4 w-4" aria-hidden />
               {t("actions.manageTypes")}
@@ -429,6 +449,11 @@ export function PermitsPage() {
               onReset={resetFilters}
             />
           ) : null}
+          <PermitHiddenNotice
+            outsideScope={hidden.outsideScope}
+            withoutSite={hidden.withoutSite}
+            className="mx-6 mt-3"
+          />
           <div className="px-6 py-3">
             {kpiError != null ? (
               <ErrorState
@@ -445,7 +470,11 @@ export function PermitsPage() {
                 <KpiTile
                   label={t("kpi.open")}
                   value={openCount != null ? formatNumber(openCount) : "—"}
-                  hint={t("kpi.openHint")}
+                  hint={
+                    openHidden > 0
+                      ? `${t("kpi.openHint")} · ${t("siteScope.openHidden", { count: openHidden })}`
+                      : t("kpi.openHint")
+                  }
                   icon={HardHat}
                 />
                 <KpiTile

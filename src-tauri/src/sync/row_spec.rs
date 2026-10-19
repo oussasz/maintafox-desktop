@@ -765,6 +765,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("applied_by_id", USER),
             r("verified_by_id", USER),
             r("removal_verified_by_id", USER),
+            // Who cancelled a planned line (migration 243).
+            r("cancelled_by_id", USER),
         ],
     ),
     spec(

@@ -1498,4 +1498,277 @@ mod tests {
             .unwrap();
         assert_eq!(active_count, clone_count);
     }
+
+    // ── Site anchors of the site-scoped rights follow their node ──────────
+
+    async fn exec(db: &sea_orm::DatabaseConnection, sql: &str) {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+
+    async fn scalar(db: &sea_orm::DatabaseConnection, sql: &str) -> i64 {
+        db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+            .unwrap_or_else(|| panic!("{sql}: no row"))
+            .try_get_by_index::<i64>(0)
+            .expect("integer")
+    }
+
+    /// Equipment `code` installed on `node`.
+    async fn equipment_on(db: &sea_orm::DatabaseConnection, code: &str, node: i64) -> i64 {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO equipment (entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+                 created_at, updated_at) VALUES ('org-remap-{code}', '{code}', '{code}', 'active_in_service', {node}, \
+                 datetime('now'), datetime('now'))"
+            ),
+        )
+        .await;
+        scalar(db, &format!("SELECT id FROM equipment WHERE asset_id_code = '{code}'")).await
+    }
+
+    /// A work order recorded on `node` (its site), on no equipment.
+    async fn work_order_on(db: &sea_orm::DatabaseConnection, code: &str, node: i64) -> i64 {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO work_orders (code, type_id, status_id, entity_id, title, row_version, created_at, updated_at) \
+                 VALUES ('{code}', \
+                 (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+                   JOIN reference_domains d ON d.id = s.domain_id \
+                   WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'corrective'), \
+                 (SELECT id FROM work_order_statuses WHERE code = 'closed'), {node}, '{code}', 1, \
+                 datetime('now'), datetime('now'))"
+            ),
+        )
+        .await;
+        scalar(db, &format!("SELECT id FROM work_orders WHERE code = '{code}'")).await
+    }
+
+    /// An approved permit recorded on `node`, on equipment `asset`.
+    async fn permit_on(db: &sea_orm::DatabaseConnection, code: &str, asset: i64, node: i64) -> i64 {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO work_permits (entity_sync_id, code, permit_type_id, asset_id, entity_id, status, row_version) \
+                 VALUES ('org-remap-{code}', '{code}', (SELECT id FROM permit_types ORDER BY id LIMIT 1), {asset}, \
+                 {node}, 'approved', 1)"
+            ),
+        )
+        .await;
+        scalar(db, &format!("SELECT id FROM work_permits WHERE code = '{code}'")).await
+    }
+
+    /// A closed intervention request recorded on `node`, on equipment `asset`.
+    async fn request_on(db: &sea_orm::DatabaseConnection, code: &str, asset: i64, node: i64) -> i64 {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO intervention_requests (code, equipment_id, org_node_id, status, title, description, \
+                 origin_type, impact_level, reported_urgency, submitted_at, submitter_id, closed_at, \
+                 created_at, updated_at) VALUES ('{code}', {asset}, {node}, 'closed', '{code}', 'd', 'operator', \
+                 'unknown', 'normal', datetime('now'), 1, datetime('now'), datetime('now'), datetime('now'))"
+            ),
+        )
+        .await;
+        scalar(
+            db,
+            &format!("SELECT id FROM intervention_requests WHERE code = '{code}'"),
+        )
+        .await
+    }
+
+    /// A crew whose site is `node`.
+    async fn crew_on(db: &sea_orm::DatabaseConnection, code: &str, node: i64) -> i64 {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
+                 VALUES ('org-remap-{code}', '{code}', '{code}', 'maintenance', {node}, 'active', \
+                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+            ),
+        )
+        .await;
+        scalar(db, &format!("SELECT id FROM teams WHERE code = '{code}'")).await
+    }
+
+    /// Publishing a new structure moves work orders, permits (approved and closed ones included,
+    /// like the equipment), requests and crews to the node replacing theirs, so the site-scoped
+    /// rights still reach them and no permit is left on a deleted node.
+    #[tokio::test]
+    async fn publish_moves_work_orders_permits_requests_and_crews_to_the_replacing_node() {
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, old_plant, old_zone) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+
+        let asset = equipment_on(&db, "ORG-REMAP-EQ", old_zone).await;
+        let wo = work_order_on(&db, "ORG-REMAP-WO", old_zone).await;
+        let permit = permit_on(&db, "ORG-REMAP-PTW", asset, old_zone).await;
+        let request = request_on(&db, "ORG-REMAP-DI", asset, old_zone).await;
+        let crew = crew_on(&db, "ORG-REMAP-CREW", old_plant).await;
+        let permit_version = scalar(
+            &db,
+            &format!("SELECT row_version FROM work_permits WHERE id = {permit}"),
+        )
+        .await;
+
+        let (draft_id, _, _, _) = create_matching_draft_model(&db).await;
+        validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect("publish with remap");
+
+        let new_plant = active_node_id_by_code(&db, "PLT1").await;
+        let new_zone = active_node_id_by_code(&db, "ZN1").await;
+        assert_ne!(new_zone, old_zone);
+        assert_ne!(new_plant, old_plant);
+        for (sql, expected, what) in [
+            (
+                format!("SELECT installed_at_node_id FROM equipment WHERE id = {asset}"),
+                new_zone,
+                "equipment",
+            ),
+            (
+                format!("SELECT entity_id FROM work_orders WHERE id = {wo}"),
+                new_zone,
+                "work order",
+            ),
+            (
+                format!("SELECT entity_id FROM work_permits WHERE id = {permit}"),
+                new_zone,
+                "permit",
+            ),
+            (
+                format!("SELECT org_node_id FROM intervention_requests WHERE id = {request}"),
+                new_zone,
+                "request",
+            ),
+            (
+                format!("SELECT primary_node_id FROM teams WHERE id = {crew}"),
+                new_plant,
+                "crew",
+            ),
+        ] {
+            assert_eq!(scalar(&db, &sql).await, expected, "{what} follows its node");
+        }
+        // The permit's change is a new version (sent by sync), its status untouched.
+        assert_eq!(
+            scalar(
+                &db,
+                &format!("SELECT row_version FROM work_permits WHERE id = {permit}")
+            )
+            .await,
+            permit_version + 1
+        );
+        assert_eq!(
+            scalar(
+                &db,
+                &format!("SELECT COUNT(*) FROM work_permits WHERE id = {permit} AND status = 'approved'")
+            )
+            .await,
+            1
+        );
+        // The former node is deleted: nothing is left on it.
+        assert_eq!(
+            scalar(
+                &db,
+                &format!("SELECT COUNT(*) FROM org_nodes WHERE id = {old_zone} AND deleted_at IS NOT NULL")
+            )
+            .await,
+            1
+        );
+    }
+
+    /// A node that a work order, a permit, a request or a crew still records refuses the publish
+    /// when the draft has no copy of it (as for equipment): nothing moves, nothing is deleted.
+    #[tokio::test]
+    async fn an_unmapped_node_recorded_by_a_work_order_permit_request_or_crew_blocks_publish() {
+        for kind in ["work order", "permit", "request", "crew"] {
+            let db = setup().await;
+            let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+            let (site, _, zone) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+            // The equipment of the permit and the request is on the site (mapped), not on the zone.
+            let asset = equipment_on(&db, "ORG-UNMAPPED-EQ", site).await;
+            let draft_id = fork_active_model(&db, "Draft without the zone's lineage").await;
+            exec(
+                &db,
+                &format!(
+                    "UPDATE org_nodes SET origin_node_id = NULL WHERE structure_model_id = {draft_id} \
+                     AND origin_node_id = {zone}"
+                ),
+            )
+            .await;
+            // Nothing records the zone yet: no unmapped issue.
+            let clean = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+                .await
+                .expect("validate");
+            assert!(
+                !clean
+                    .issues
+                    .iter()
+                    .any(|i| i.code == "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS"),
+                "{kind}: {:?}",
+                clean.issues
+            );
+
+            let (table, column, id) = match kind {
+                "work order" => (
+                    "work_orders",
+                    "entity_id",
+                    work_order_on(&db, "ORG-UNMAPPED-WO", zone).await,
+                ),
+                "permit" => (
+                    "work_permits",
+                    "entity_id",
+                    permit_on(&db, "ORG-UNMAPPED-PTW", asset, zone).await,
+                ),
+                "request" => (
+                    "intervention_requests",
+                    "org_node_id",
+                    request_on(&db, "ORG-UNMAPPED-DI", asset, zone).await,
+                ),
+                _ => (
+                    "teams",
+                    "primary_node_id",
+                    crew_on(&db, "ORG-UNMAPPED-CREW", zone).await,
+                ),
+            };
+
+            let blocked = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+                .await
+                .expect("validate");
+            assert!(!blocked.can_publish, "{kind}");
+            assert!(
+                blocked
+                    .issues
+                    .iter()
+                    .any(|i| i.code == "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS"),
+                "{kind}: {:?}",
+                blocked.issues
+            );
+            let err = validation::publish_model_with_remap(&db, draft_id as i64, 1)
+                .await
+                .expect_err("publish refused");
+            assert!(
+                matches!(err, crate::errors::AppError::OrgValidationFailed(_)),
+                "{kind}: {err:?}"
+            );
+            assert_eq!(
+                scalar(&db, &format!("SELECT {column} FROM {table} WHERE id = {id}")).await,
+                zone,
+                "{kind} kept on its node"
+            );
+            assert_eq!(
+                scalar(
+                    &db,
+                    &format!("SELECT COUNT(*) FROM org_nodes WHERE id = {zone} AND deleted_at IS NULL")
+                )
+                .await,
+                1,
+                "{kind}: the node is not deleted"
+            );
+        }
+    }
 }

@@ -15,6 +15,12 @@
 //!   recorded send none); a log naming a person not applied here yet waits for that person (the
 //!   generic apply);
 //! - a permit never changes its permit type (as no local edit does);
+//! - a permit's equipment, linked work order or site changes only while the copy held here is a
+//!   draft or waiting for review (a change of equipment or work order there needs the versions of a
+//!   return to draft), with no lock fitted under it here without a verified removal and no
+//!   isolation point planned on it here for a change of equipment or work order; its linked work
+//!   order is never removed, its work order is on its equipment, and its node is the one derived
+//!   from them or a level above it, by the local rule (`equipment_change_check`);
 //! - a permit never leaves `closed`, `handed_back`, `cancelled` or `expired` except along the lifecycle
 //!   (`closed` → `handed_back`, `handed_back` → `cancelled`);
 //! - an isolation (`isolation_rule_breach`): verified after it was applied and by someone other than
@@ -25,6 +31,11 @@
 //!   a permit protecting the work, it must date from before the permit started protecting it; its
 //!   lock removal is verified only once the permit was active (`ISOLATION_SETUP_STATUSES` and
 //!   `ISOLATION_REMOVAL_STATUSES` of `permit::queries`);
+//! - an isolation line cancelled (migration 243, `cancellation_check`): only a line never applied
+//!   (not here, not in the row), with who and when, on a permit held here as a draft or waiting for
+//!   review (as before the change when it arrives with its permit's change); a line cancelled here
+//!   is kept as it was (never un-cancelled, applied or edited). A cancelled line never applied is
+//!   no isolation of its permit: not counted by the activation, close and equipment-change checks;
 //! - a work order entering `in_progress` passes the permit gate (`permit::wo_gate`) at the time it
 //!   started, resumed or was reopened: a permit when it requires one (of the type a plant rule named,
 //!   when a rule flagged it), every permit live at that time active, not suspended, not expired, not
@@ -176,6 +187,12 @@ pub(crate) fn overlay(local: Option<&Payload>, received: &Payload) -> Payload {
 pub(crate) fn isolation_rule_breach(iso: &Payload, three_person: bool) -> Option<(&'static str, String)> {
     let point = field(iso, "isolation_point").unwrap_or("?");
     let applier = field(iso, "applied_by_sync_id");
+    if field(iso, "cancelled_at").is_some() && ISOLATION_ACTION_KEYS.iter().any(|k| field(iso, k).is_some()) {
+        return Some((
+            "PERMIT_ISOLATION_CANCEL_APPLIED",
+            format!("isolation '{point}' is cancelled but was applied, verified or removed"),
+        ));
+    }
     if field(iso, "verified_at").is_some() {
         if applier.is_none() || field(iso, "applied_at").is_none() {
             return Some((
@@ -214,6 +231,27 @@ pub(crate) fn isolation_rule_breach(iso: &Payload, three_person: bool) -> Option
         }
     }
     None
+}
+
+/// The keys of an isolation's actions (who fitted, verified and verified the removal, and when).
+const ISOLATION_ACTION_KEYS: &[&str] = &[
+    "applied_by_sync_id",
+    "applied_at",
+    "verified_by_sync_id",
+    "verified_at",
+    "removal_verified_by_sync_id",
+    "removal_verified_at",
+];
+
+/// A cancelled line never applied (migration 243): no isolation of its permit, never a lock to fit
+/// (`permit::queries::COUNTED_ISOLATION_SQL`). A line that would hold both still counts.
+fn cancelled_line(iso: &Payload) -> bool {
+    field(iso, "cancelled_at").is_some() && field(iso, "applied_at").is_none()
+}
+
+/// The lines that count as isolations of their permit (cancelled planned lines left out).
+fn counted_isolations<'a>(isolations: &[&'a Payload]) -> Vec<&'a Payload> {
+    isolations.iter().copied().filter(|i| !cancelled_line(i)).collect()
 }
 
 /// The hand-over rule a state of a handover log breaks, if any (`permit::queries`: append a
@@ -532,6 +570,208 @@ async fn permit_transition(
     Ok((local, permit))
 }
 
+/// The local id of a row of `table` (fixed names, never received text) found by its sync identity.
+async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> AppResult<Option<i64>> {
+    conn.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        format!("SELECT id FROM \"{table}\" WHERE entity_sync_id = ?"),
+        [sync_id.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<i64>("", "id"))
+    .transpose()
+    .map_err(sync_err)
+}
+
+/// Whether the site a permit holds here (`entity_sync_id` of the copy held here) is an org node
+/// that exists here and is deleted. A node missing here, or no node, is not: nothing tells it apart
+/// from a site change.
+async fn site_node_deleted_here(conn: &impl ConnectionTrait, held_node: Option<&str>) -> AppResult<bool> {
+    let Some(held_node) = held_node else {
+        return Ok(false);
+    };
+    let Some(id) = local_id(conn, "org_nodes", held_node).await? else {
+        return Ok(false);
+    };
+    Ok(!crate::permit::queries::live_org_node(conn, id).await?)
+}
+
+/// A received permit whose equipment, linked work order or site differs from the copy held here
+/// (`permit::queries::update_work_permit_checked`, CMMS Advisor decision A), judged as an edit on
+/// this PC is:
+/// - a linked work order is never removed (no edit on this PC removes it);
+/// - the copy held here is a draft or waiting for review (a permit approved here was approved for
+///   its equipment at its site: the sending PC held that version too, or its change is older and is
+///   not applied here), except a permit whose site alone moved off a node deleted here (a new
+///   organisation structure was published: its former nodes are deleted and every permit moved to
+///   the node that replaces its own), judged on the rules below whatever its status;
+/// - held here waiting for review, a change of equipment, work order or site sent the permit back to
+///   draft on the other PC; it may arrive already submitted or approved again, since the journal
+///   folds every save made there before a sync into one row whose version says nothing of how many
+///   saves it carries. It is accepted on the rules below; a sending PC that skipped the return to
+///   draft is not detected on arrival (left to step 6 stage 4, who sent the row and their rights;
+///   `docs/KNOWN_LIMITS.md`);
+/// - for a change of equipment or work order, no lock fitted under it here without a verified
+///   removal and no isolation point planned on it here (they name the former equipment's points).
+///   Isolation rows received just before the permit row (planned on the other PC for the new
+///   equipment) count too: nothing on the rows tells which PC made them or for which version of the
+///   permit, so a person decides (`docs/KNOWN_LIMITS.md`);
+/// - the work order's equipment is the permit's;
+/// - its node is the one derived from its equipment and work order or a level above it
+///   (`permit::queries::derived_permit_node` and `node_on_permit_chain`, the local rule itself): a
+///   work order recording no usable node is refused, never replaced by the equipment's node.
+///
+/// Equipment, a work order or a node not applied here yet: the row waits.
+async fn equipment_change_check(
+    conn: &impl ConnectionTrait,
+    permit_sync_id: &str,
+    local: &Payload,
+    permit: &Payload,
+    code: &str,
+) -> AppResult<Option<InboundVerdict>> {
+    let (asset, wo) = (
+        field(permit, "asset_sync_id"),
+        field(permit, "linked_work_order_sync_id"),
+    );
+    let (held_asset, held_wo) = (field(local, "asset_sync_id"), field(local, "linked_work_order_sync_id"));
+    let (node, held_node) = (field(permit, "entity_sync_id"), field(local, "entity_sync_id"));
+    if let (Some(held_wo), None) = (held_wo, wo) {
+        return conflict(
+            "PERMIT_WO_UNLINKED",
+            format!("permit {code}: its work order {held_wo} was removed from it (no edit removes it)"),
+        );
+    }
+    let equipment_changes = asset != held_asset || wo != held_wo;
+    if !equipment_changes && node == held_node {
+        return Ok(None);
+    }
+    let held = field(local, "status").unwrap_or_default();
+    // Its site alone moved off a node deleted here: the publish of a new organisation structure
+    // moves every permit off the former nodes (`org::validation::publish_model_with_remap`, which
+    // deletes them before it moves the permits). Whatever its status, it is judged on the rules
+    // below (its site on its equipment's or work order's chain).
+    let site_reanchored = !equipment_changes && site_node_deleted_here(conn, held_node).await?;
+    if !site_reanchored && !crate::permit::queries::WP_EQUIPMENT_CHANGE_STATUSES.contains(&held) {
+        return if equipment_changes {
+            conflict(
+                "PERMIT_EQUIPMENT_LOCKED",
+                format!(
+                    "permit {code} is '{held}' here: it was approved for its equipment, which cannot change \
+                     (here {} / work order {}, received {} / work order {})",
+                    held_asset.unwrap_or("none"),
+                    held_wo.unwrap_or("none"),
+                    asset.unwrap_or("none"),
+                    wo.unwrap_or("none")
+                ),
+            )
+        } else {
+            conflict(
+                "PERMIT_SITE_LOCKED",
+                format!(
+                    "permit {code} is '{held}' here: it was approved at its site, which cannot change \
+                     (here {}, received {})",
+                    held_node.unwrap_or("none"),
+                    node.unwrap_or("none")
+                ),
+            )
+        };
+    }
+    if equipment_changes {
+        let count = |condition: &str| {
+            format!(
+                "SELECT COUNT(*) AS c FROM permit_isolations pi JOIN work_permits wp ON wp.id = pi.permit_id \
+                 WHERE wp.entity_sync_id = ? AND {condition}"
+            )
+        };
+        for (condition, refusal, what) in [
+            (
+                "pi.applied_at IS NOT NULL AND pi.removal_verified_at IS NULL",
+                "PERMIT_EQUIPMENT_LOCK_FITTED",
+                "lock(s) fitted here without a verified removal",
+            ),
+            (
+                // A cancelled line no longer names a point (CMMS Advisor decision).
+                "pi.applied_at IS NULL AND pi.cancelled_at IS NULL",
+                "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED",
+                "isolation point(s) planned here for its former equipment",
+            ),
+        ] {
+            let n: i64 = conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    count(condition),
+                    [permit_sync_id.into()],
+                ))
+                .await?
+                .map(|r| r.try_get::<i64>("", "c"))
+                .transpose()
+                .map_err(sync_err)?
+                .unwrap_or(0);
+            if n > 0 {
+                return conflict(
+                    refusal,
+                    format!("permit {code}: its equipment or work order changed while it has {n} {what}"),
+                );
+            }
+        }
+    }
+    let Some(asset) = asset else {
+        // No equipment: malformed, refused by the generic apply (the column is required).
+        return Ok(None);
+    };
+    let Some(asset_id) = local_id(conn, "equipment", asset).await? else {
+        return wait(format!("permit {code}: its equipment {asset} is not applied yet"));
+    };
+    let mut wo_id = None;
+    if let Some(wo) = wo {
+        let Some(id) = local_id(conn, "work_orders", wo).await? else {
+            return wait(format!("permit {code}: its work order {wo} is not applied yet"));
+        };
+        let wo_equipment = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT equipment_id AS v FROM work_orders WHERE id = ?",
+                [id.into()],
+            ))
+            .await?
+            .map(|r| r.try_get::<Option<i64>>("", "v"))
+            .transpose()
+            .map_err(sync_err)?
+            .flatten();
+        if wo_equipment != Some(asset_id) {
+            return conflict(
+                "PERMIT_WO_EQUIPMENT_MISMATCH",
+                format!("permit {code} is on equipment {asset} but its work order {wo} is on other equipment"),
+            );
+        }
+        wo_id = Some(id);
+    }
+    let derived = crate::permit::queries::derived_permit_node(conn, asset_id, wo_id).await?;
+    let node_id = match node {
+        Some(n) => match local_id(conn, "org_nodes", n).await? {
+            Some(id) => Some(id),
+            None => return wait(format!("permit {code}: its site {n} is not applied yet")),
+        },
+        None => None,
+    };
+    let on_chain = match (derived, node_id) {
+        (Some(d), Some(n)) => crate::permit::queries::node_on_permit_chain(conn, d, n).await?,
+        _ => false,
+    };
+    if !on_chain {
+        return conflict(
+            "PERMIT_SITE_NOT_EQUIPMENT_SITE",
+            format!(
+                "permit {code}: its site must be the one of its equipment or work order ({}) or a level above \
+                 it, received {}",
+                derived.map_or_else(|| "none usable".to_string(), |d| format!("node {d}")),
+                node.unwrap_or("none")
+            ),
+        );
+    }
+    Ok(None)
+}
+
 /// Re-check of a permit received by synchronisation (see the module documentation).
 pub(crate) async fn inbound_permit_check(
     conn: &impl ConnectionTrait,
@@ -555,6 +795,9 @@ pub(crate) async fn inbound_permit_check(
                     got.unwrap_or("none")
                 ),
             );
+        }
+        if let Some(verdict) = equipment_change_check(conn, entity_sync_id, l, &permit, &code).await? {
+            return Ok(Some(verdict));
         }
     }
     if from == Some(to) {
@@ -611,14 +854,15 @@ pub(crate) async fn inbound_permit_check(
                 return wait(format!("permit {code}: its permit type is not applied yet"));
             };
             let three_person = type_three_person(conn, &permit).await?;
-            if let Some((c, m)) = isolations_ready(&code, needs, three_person, &payloads(&isolations), at) {
+            let counted = counted_isolations(&payloads(&isolations));
+            if let Some((c, m)) = isolations_ready(&code, needs, three_person, &counted, at) {
                 return conflict(c, m);
             }
         }
         "closed" | "handed_back" => {
             let pending = payloads(&isolations)
                 .iter()
-                .filter(|i| field(i, "removal_verified_at").is_none())
+                .filter(|i| field(i, "removal_verified_at").is_none() && !cancelled_line(i))
                 .count();
             if pending > 0 {
                 return conflict(
@@ -744,6 +988,95 @@ fn isolation_actions(p: &Payload) -> [Option<&str>; 7] {
     ]
 }
 
+/// What a line cancelled here keeps as it was: its permit, content (the energy and method texts and
+/// references, the mapping review mark), actions and cancellation.
+const CANCELLED_LINE_KEPT: &[&str] = &[
+    "permit_sync_id",
+    "isolation_point",
+    "energy_type",
+    "isolation_method",
+    "energy_type_sync_id",
+    "isolation_method_sync_id",
+    "lock_number",
+    "applied_by_sync_id",
+    "applied_at",
+    "verified_by_sync_id",
+    "verified_at",
+    "removal_verified_by_sync_id",
+    "removal_verified_at",
+    "cancelled_at",
+    "cancelled_by_sync_id",
+];
+
+/// The cancellation rules of a received isolation line (`permit::queries::cancel_permit_isolation`,
+/// CMMS Advisor decision), judged on the copies held here:
+/// - a line cancelled here is kept as it was: a row un-cancelling it, applying it or changing it is
+///   refused (`PERMIT_ISOLATION_CANCELLED`);
+/// - a line received cancelled was never applied, neither in the row nor here
+///   (`PERMIT_ISOLATION_CANCEL_APPLIED`), says who cancelled it and when, at a readable time not in
+///   the future (`PERMIT_ISOLATION_CANCEL_INVALID`), and its permit is held here as a draft or waiting
+///   for review (`PERMIT_ISOLATION_CANCEL_WRONG_STATUS`) — when it arrives with its permit's change,
+///   as the permit was here before that change. A permit not here yet: the apply waits for it.
+async fn cancellation_check(
+    conn: &impl ConnectionTrait,
+    local: Option<&Payload>,
+    iso: &Payload,
+) -> AppResult<Option<InboundVerdict>> {
+    let point = field(iso, "isolation_point").unwrap_or("?").to_string();
+    if let Some(held) = local.filter(|l| field(l, "cancelled_at").is_some()) {
+        if CANCELLED_LINE_KEPT.iter().any(|k| field(held, k) != field(iso, k))
+            || flag(held, "mapping_review_required") != flag(iso, "mapping_review_required")
+        {
+            return conflict(
+                "PERMIT_ISOLATION_CANCELLED",
+                format!(
+                    "isolation '{point}' is cancelled here: it is kept as it was (never un-cancelled, applied or changed)"
+                ),
+            );
+        }
+        return Ok(None);
+    }
+    if field(iso, "cancelled_at").is_none() {
+        return Ok(None);
+    }
+    let acted = |p: &Payload| ISOLATION_ACTION_KEYS.iter().any(|k| field(p, k).is_some());
+    if acted(iso) || local.is_some_and(acted) {
+        return conflict(
+            "PERMIT_ISOLATION_CANCEL_APPLIED",
+            format!("isolation '{point}' was cancelled but it was applied (here or on the other PC): an applied lock is removed with a verified removal"),
+        );
+    }
+    if field(iso, "cancelled_by_sync_id").is_none() || time(iso, "cancelled_at").is_none_or(|t| t > future_bound()) {
+        return conflict(
+            "PERMIT_ISOLATION_CANCEL_INVALID",
+            format!("isolation '{point}' was cancelled without who or when, or at a time unreadable or in the future"),
+        );
+    }
+    let Some(permit_sync) = field(iso, "permit_sync_id") else {
+        return Ok(None);
+    };
+    let Some(permit) = local_wire(conn, "work_permits", permit_sync).await? else {
+        return Ok(None);
+    };
+    let current = field(&permit, "status").unwrap_or_default().to_string();
+    let held = GROUP_PARENT
+        .try_with(|(parent, previous)| (parent == permit_sync).then(|| previous.clone()))
+        .ok()
+        .flatten()
+        .map_or(current, |previous| previous.unwrap_or_else(|| "draft".into()));
+    if !crate::permit::queries::ISOLATION_CANCEL_STATUSES.contains(&held.as_str()) {
+        let code = field(&permit, "code").unwrap_or(permit_sync);
+        return conflict(
+            "PERMIT_ISOLATION_CANCEL_WRONG_STATUS",
+            format!(
+                "isolation '{point}' was cancelled while permit {code} is '{held}' here: a planned line is cancelled \
+                 only while its permit is a draft or waiting for review"
+            ),
+        );
+    }
+    Ok(None)
+}
+
 /// Re-check of an isolation received by synchronisation (see the module documentation).
 pub(crate) async fn inbound_isolation_check(
     conn: &impl ConnectionTrait,
@@ -752,6 +1085,9 @@ pub(crate) async fn inbound_isolation_check(
 ) -> AppResult<Option<InboundVerdict>> {
     let local = local_wire(conn, "permit_isolations", entity_sync_id).await?;
     let iso = overlay(local.as_ref(), received);
+    if let Some(verdict) = cancellation_check(conn, local.as_ref(), &iso).await? {
+        return Ok(Some(verdict));
+    }
     if local
         .as_ref()
         .is_some_and(|l| isolation_actions(l) == isolation_actions(&iso))
@@ -1149,15 +1485,22 @@ async fn judge_setting_record(
 }
 
 /// Re-check of a delete received by synchronisation. This device never deletes these rows: a
-/// permit, its isolations and suspensions may go only while the permit is a draft (the LOTO history
-/// of any other permit is kept); a permit type and a qualification requirement never (they are
-/// edited or deactivated, which keeps their history).
+/// permit never (no screen deletes one, a draft included: it is cancelled; its lines and
+/// suspensions would not go with it, `permit_isolations.permit_id` has no foreign key); its
+/// isolations and suspensions only while the permit is a draft (the LOTO history of any other
+/// permit is kept); a cancelled isolation line never, whatever its permit's status and whether its
+/// permit is held here or not (it is kept, greyed, as the trace of its cancellation); a permit type
+/// and a qualification requirement never (they are edited or deactivated, which keeps their
+/// history).
 pub(crate) async fn inbound_delete_check(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
 ) -> AppResult<Option<InboundVerdict>> {
-    if entity_type == "qualification_requirements" || entity_type == "permit_types" {
+    if matches!(
+        entity_type,
+        "qualification_requirements" | "permit_types" | "work_permits"
+    ) {
         let held = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -1168,6 +1511,14 @@ pub(crate) async fn inbound_delete_check(
             .is_some();
         return if !held {
             Ok(None)
+        } else if entity_type == "work_permits" {
+            conflict(
+                "PERMIT_DELETE_REFUSED",
+                format!(
+                    "permit {entity_sync_id} cannot be deleted by synchronisation: a permit is cancelled, never \
+                     deleted (its isolation lines and suspensions would be left without it)"
+                ),
+            )
         } else if entity_type == "permit_types" {
             conflict(
                 "PERMIT_DELETE_REFUSED",
@@ -1181,14 +1532,14 @@ pub(crate) async fn inbound_delete_check(
         };
     }
     let sql = match entity_type {
-        "work_permits" => "SELECT status, code FROM work_permits WHERE entity_sync_id = ?",
+        // LEFT JOIN: a cancelled line is refused even when its permit is not held here.
         "permit_isolations" => {
-            "SELECT p.status, p.code FROM permit_isolations c JOIN work_permits p ON p.id = c.permit_id \
-             WHERE c.entity_sync_id = ?"
+            "SELECT p.status, p.code, c.cancelled_at FROM permit_isolations c \
+             LEFT JOIN work_permits p ON p.id = c.permit_id WHERE c.entity_sync_id = ?"
         }
         "permit_suspensions" => {
-            "SELECT p.status, p.code FROM permit_suspensions c JOIN work_permits p ON p.id = c.permit_id \
-             WHERE c.entity_sync_id = ?"
+            "SELECT p.status, p.code, NULL AS cancelled_at FROM permit_suspensions c \
+             JOIN work_permits p ON p.id = c.permit_id WHERE c.entity_sync_id = ?"
         }
         _ => return Ok(None),
     };
@@ -1202,8 +1553,25 @@ pub(crate) async fn inbound_delete_check(
     else {
         return Ok(None);
     };
-    let status: String = row.try_get("", "status").map_err(sync_err)?;
-    let code: String = row.try_get("", "code").map_err(sync_err)?;
+    let status: Option<String> = row.try_get("", "status").map_err(sync_err)?;
+    let code: Option<String> = row.try_get("", "code").map_err(sync_err)?;
+    let cancelled_at: Option<String> = row.try_get("", "cancelled_at").map_err(sync_err)?;
+    if cancelled_at.is_some() {
+        return conflict(
+            "PERMIT_DELETE_REFUSED",
+            format!(
+                "a cancelled isolation line of permit {} ('{}') cannot be deleted by synchronisation: it is \
+                 kept as the trace of its cancellation",
+                code.as_deref().unwrap_or("not held here"),
+                status.as_deref().unwrap_or("unknown")
+            ),
+        );
+    }
+    // A planned line whose permit is not held here (rows left from before permit deletes were
+    // refused): nothing left to protect, as before.
+    let (Some(status), Some(code)) = (status, code) else {
+        return Ok(None);
+    };
     if status != "draft" {
         return conflict(
             "PERMIT_DELETE_REFUSED",

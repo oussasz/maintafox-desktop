@@ -364,7 +364,7 @@ pub fn permit_list(candidates: Vec<crate::notifications::watchers::Candidate>) -
 
 pub async fn safety(db: &DatabaseConnection, now: DateTime<Utc>) -> AppResult<SupervisionSafety> {
     use crate::notifications::watchers;
-    let open_permits = crate::permit::queries::list_open_permits_report(db).await?.len() as i64;
+    let open_permits = crate::permit::queries::list_open_permits_report(db).await?.items.len() as i64;
     let (expiring_rule, lead) = match watchers::rule_of(db, "ptw_expiring").await? {
         None => (EXPIRING_RULE_MISSING, None),
         Some((false, _)) => (EXPIRING_RULE_DISABLED, None),

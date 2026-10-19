@@ -616,14 +616,19 @@ async fn remap_scope_reference(
 /// Returns a non-zero count if the node has any live ops references.
 async fn count_ops_references(txn: &impl ConnectionTrait, active_node_id: i64) -> AppResult<i64> {
     // Only filter `deleted_at` on tables that actually have that column
-    // (equipment, user_scope_assignments). personnel / work_orders /
-    // intervention_requests use hard deletes or status flags instead.
+    // (equipment, teams, user_scope_assignments). personnel / work_orders / work_permits /
+    // intervention_requests use hard deletes or status flags instead: every one of their rows
+    // counts, closed or not (their node is the site the site-scoped rights read,
+    // `docs/SITE_SCOPED_ROLES.md` §4).
     let check_sql = format!(
         "SELECT \
           (SELECT COUNT(*) FROM equipment WHERE installed_at_node_id = {id} AND deleted_at IS NULL) + \
           (SELECT COUNT(*) FROM equipment WHERE functional_position_node_id = {id} AND deleted_at IS NULL) + \
           (SELECT COUNT(*) FROM intervention_requests WHERE org_node_id = {id}) + \
           (SELECT COUNT(*) FROM work_orders WHERE location_id = {id}) + \
+          (SELECT COUNT(*) FROM work_orders WHERE entity_id = {id}) + \
+          (SELECT COUNT(*) FROM work_permits WHERE entity_id = {id}) + \
+          (SELECT COUNT(*) FROM teams WHERE primary_node_id = {id} AND deleted_at IS NULL) + \
           (SELECT COUNT(*) FROM personnel WHERE primary_entity_id = {id}) + \
           (SELECT COUNT(*) FROM user_scope_assignments WHERE scope_reference = '{id}' AND scope_type IN ('entity','org_node','site','team') AND deleted_at IS NULL) + \
           (SELECT COUNT(*) FROM capacity_rules WHERE entity_id = {id}) + \
@@ -710,6 +715,12 @@ async fn remap_node_ops_fks(txn: &impl ConnectionTrait, old_id: i64, new_id: i64
     remap_integer_fk(txn, "equipment", "functional_position_node_id", old_id, new_id, now).await?;
     remap_integer_fk(txn, "intervention_requests", "org_node_id", old_id, new_id, now).await?;
     remap_integer_fk(txn, "work_orders", "location_id", old_id, new_id, now).await?;
+    // The site anchors of the site-scoped rights (`docs/SITE_SCOPED_ROLES.md` §4): work orders,
+    // permits (no `updated_at` column) and crews follow their node like the equipment does, every
+    // row whatever its status (as the equipment rows above).
+    remap_integer_fk(txn, "work_orders", "entity_id", old_id, new_id, now).await?;
+    remap_integer_fk_row_version_only(txn, "work_permits", "entity_id", old_id, new_id).await?;
+    remap_integer_fk(txn, "teams", "primary_node_id", old_id, new_id, now).await?;
     remap_integer_fk(txn, "personnel", "primary_entity_id", old_id, new_id, now).await?;
     remap_integer_fk(txn, "capacity_rules", "entity_id", old_id, new_id, now).await?;
     remap_integer_fk(txn, "planning_windows", "entity_id", old_id, new_id, now).await?;
@@ -737,8 +748,8 @@ async fn remap_node_ops_fks(txn: &impl ConnectionTrait, old_id: i64, new_id: i64
 /// 3. (When prior active model exists)
 ///    a. Build active-id → draft-id map from `origin_node_id` on draft nodes.
 ///    b. Detect active nodes with no draft clone that still have ops FK refs → fail.
-///    c. Remap all ops FKs: old active node id → new draft node id.
-///    d. Soft-delete all nodes in the old active model (`deleted_at = now`).
+///    c. Soft-delete all nodes in the old active model (`deleted_at = now`).
+///    d. Remap all ops FKs: old active node id → new draft node id.
 ///    e. Supersede the old active model.
 /// 4. Activate the draft model.
 /// 5. Clear `origin_node_id` on the newly active nodes (they are now the live tree).
@@ -826,12 +837,11 @@ pub async fn publish_model_with_remap(
             return Err(org_validation_failed_issues(issues));
         }
 
-        // ── Step 3c: remap all ops FKs ───────────────────────────────────
-        for (old_id, new_id) in &remap {
-            remap_node_ops_fks(&txn, *old_id, *new_id, &now).await?;
-        }
-
-        // ── Step 3d: soft-delete all nodes in the old active model ────────
+        // ── Step 3c: soft-delete all nodes in the old active model ────────
+        // Before the remaps (same transaction, same result here): the changes are captured for sync
+        // in this order, so another PC sees the former nodes deleted before it receives the permits
+        // moved off them (`permit::sync_check`: a permit approved there keeps its site unless that
+        // site is a deleted node).
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE org_nodes \
@@ -840,6 +850,11 @@ pub async fn publish_model_with_remap(
             [now.clone().into(), now.clone().into(), old_model_id.into()],
         ))
         .await?;
+
+        // ── Step 3d: remap all ops FKs ───────────────────────────────────
+        for (old_id, new_id) in &remap {
+            remap_node_ops_fks(&txn, *old_id, *new_id, &now).await?;
+        }
 
         // ── Step 3e: supersede the old active model ───────────────────────
         txn.execute(Statement::from_sql_and_values(

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +9,7 @@ import type {
   PermitIsolationRecord,
   WorkPermitRecord,
 } from "@/services/permit-service";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { PermitDetailPanel } from "../PermitDetailPanel";
 
@@ -67,6 +68,7 @@ const svc = vi.hoisted(() => ({
   applyPermitIsolation: vi.fn(),
   verifyPermitIsolation: vi.fn(),
   verifyPermitIsolationRemoval: vi.fn(),
+  cancelPermitIsolation: vi.fn(),
 }));
 vi.mock("@/services/permit-service", () => svc);
 
@@ -78,6 +80,12 @@ vi.mock("@/hooks/use-session", () => ({
 }));
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
+}));
+
+// The rights held at the permit's site (every right unless a test withholds some).
+const siteRights = vi.hoisted(() => ({ withheld: new Set<string>() }));
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: () => ({ loading: false, can: (p: string) => !siteRights.withheld.has(p) }),
 }));
 
 function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
@@ -133,6 +141,9 @@ const VERIFIED_ISOLATION: PermitIsolationRecord = {
   applied_by_name: "Amine Tech",
   verified_by_name: "Sara Sup",
   removal_verified_by_name: null,
+  cancelled_at: null,
+  cancelled_by_id: null,
+  cancelled_by_name: null,
 };
 
 function renderPanel(p: WorkPermitRecord = permit()) {
@@ -302,5 +313,123 @@ describe("PermitDetailPanel — recorded hand-overs", () => {
     expect(screen.getAllByText("OPS")).toHaveLength(1);
     // The hand-over form is offered on a closed permit.
     expect(screen.getByRole("form", { name: enPermits.handover.add })).toBeInTheDocument();
+  });
+});
+
+describe("PermitDetailPanel — cancelling a planned isolation line", () => {
+  const planned: PermitIsolationRecord = {
+    ...VERIFIED_ISOLATION,
+    id: 310,
+    entity_sync_id: "i310",
+    isolation_point: "Valve V-7",
+    lock_number: null,
+    applied_by_id: null,
+    verified_by_id: null,
+    applied_at: null,
+    verified_at: null,
+    row_version: 1,
+    applied_by_name: null,
+    verified_by_name: null,
+  };
+  const cancelButton = (row: HTMLElement) =>
+    within(row).queryByRole("button", { name: enPermits.isolation.cancel });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    session.userId = 10;
+    siteRights.withheld = new Set();
+    svc.listPermitIsolationOptions.mockResolvedValue({ energy_types: [], isolation_methods: [] });
+    svc.listPermitSuspensions.mockResolvedValue([]);
+    svc.listPermitHandoverLogs.mockResolvedValue([]);
+    svc.listPermitHandoverRoles.mockResolvedValue([]);
+    svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+  });
+
+  it("offers it on a line never applied while the permit is a draft or waiting for review", async () => {
+    svc.listPermitIsolations.mockResolvedValue([planned]);
+    for (const status of ["draft", "pending_review"] as const) {
+      const row = await renderPanel(permit({ status }));
+      expect(cancelButton(row)).toBeInTheDocument();
+      cleanup();
+    }
+  });
+
+  it("does not offer it on an applied line, past review, or without the issue right", async () => {
+    svc.listPermitIsolations.mockResolvedValue([VERIFIED_ISOLATION]);
+    let row = await renderPanel(permit({ status: "draft" }));
+    expect(cancelButton(row)).toBeNull();
+    cleanup();
+
+    svc.listPermitIsolations.mockResolvedValue([planned]);
+    for (const status of ["approved", "issued", "suspended"] as const) {
+      row = await renderPanel(permit({ status }));
+      expect(cancelButton(row)).toBeNull();
+      cleanup();
+    }
+
+    siteRights.withheld = new Set([P.PTW_ISSUE]);
+    row = await renderPanel(permit({ status: "draft" }));
+    expect(cancelButton(row)).toBeNull();
+  });
+
+  it("confirms naming the line, then cancels it and passes on the permit sent back to draft", async () => {
+    svc.listPermitIsolations.mockResolvedValue([planned]);
+    const draft = permit({ status: "draft", row_version: 6 });
+    svc.cancelPermitIsolation.mockResolvedValue({
+      permit: draft,
+      isolation: { ...planned, cancelled_at: "2026-10-12T10:00:00Z", cancelled_by_id: 10 },
+    });
+    const onChanged = vi.fn();
+    render(
+      <MemoryRouter>
+        <PermitDetailPanel permit={permit({ status: "pending_review" })} onChanged={onChanged} />
+      </MemoryRouter>,
+    );
+    const row = await screen.findByTestId("permit-isolation");
+    fireEvent.click(cancelButton(row) as HTMLElement);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Valve V-7");
+    expect(within(dialog).getByTestId("isolation-cancel-reset-notice")).toHaveTextContent(
+      enPermits.isolation.cancelResetNotice,
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: enPermits.isolation.cancel }));
+    await waitFor(() =>
+      expect(svc.cancelPermitIsolation).toHaveBeenCalledWith({
+        isolation_id: 310,
+        expected_row_version: 1,
+      }),
+    );
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith(draft));
+  });
+
+  it("shows a cancelled line greyed as cancelled, with who and when, and no action", async () => {
+    svc.listPermitIsolations.mockResolvedValue([
+      {
+        ...planned,
+        cancelled_at: "2026-10-12T10:00:00Z",
+        cancelled_by_id: 8,
+        cancelled_by_name: "Sara Sup",
+      },
+    ]);
+    const row = await renderPanel(permit({ status: "draft" }));
+    expect(row).toHaveAttribute("data-cancelled", "true");
+    expect(row.className).toContain("opacity-60");
+    expect(within(row).getByText(enPermits.isolation.state.cancelled)).toBeInTheDocument();
+    expect(within(row).getByTestId("isolation-cancelled-by")).toHaveTextContent("Sara Sup");
+    expect(within(row).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("does not count a cancelled line as an isolation left to verify or remove", async () => {
+    svc.listPermitIsolations.mockResolvedValue([
+      { ...VERIFIED_ISOLATION, removal_verified_at: "2026-10-12T11:00:00Z" },
+      { ...planned, cancelled_at: "2026-10-12T10:00:00Z", cancelled_by_name: "Sara Sup" },
+    ]);
+    render(
+      <MemoryRouter>
+        <PermitDetailPanel permit={permit({ status: "active" })} onChanged={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await screen.findAllByTestId("permit-isolation");
+    expect(screen.queryByText(enPermits.gate.pendingRemoval)).toBeNull();
   });
 });

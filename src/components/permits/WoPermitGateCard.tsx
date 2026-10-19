@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui";
-import { usePermissions } from "@/hooks/use-permissions";
+import { useAccessAt } from "@/hooks/use-access-at";
 import { describeAppError } from "@/lib/app-error";
 import {
   TERMINAL_PERMIT_STATUSES,
@@ -17,6 +17,8 @@ import { PERMIT_QUERY_CREATE_FOR_WO, PERMIT_QUERY_SELECT } from "./permit-rules"
 
 interface WoPermitGateCardProps {
   workOrderId: number;
+  /** The work order's site (`entity_id`); rights are read there. None: plant-wide rights only. */
+  workOrderSiteId?: number | null | undefined;
   /** Bump to refetch (e.g. after the WO row version changes). */
   refreshKey?: number | string;
 }
@@ -25,9 +27,16 @@ interface WoPermitGateCardProps {
  * Shown on a WO that `requires_permit`: tells the user whether the PTW gate
  * (`permit/wo_gate.rs`) will let the WO start, and links to create / open the permit.
  */
-export function WoPermitGateCard({ workOrderId, refreshKey }: WoPermitGateCardProps) {
+export function WoPermitGateCard({
+  workOrderId,
+  workOrderSiteId,
+  refreshKey,
+}: WoPermitGateCardProps) {
   const { t } = useTranslation("permits");
-  const { can } = usePermissions();
+  // The permit rights count at the work order's site (node 0 = plant-wide rights only).
+  const { can, loading: accessLoading } = useAccessAt(
+    workOrderSiteId != null && workOrderSiteId > 0 ? workOrderSiteId : 0,
+  );
   const navigate = useNavigate();
   const [permit, setPermit] = useState<WorkPermitRecord | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -56,7 +65,7 @@ export function WoPermitGateCard({ workOrderId, refreshKey }: WoPermitGateCardPr
     };
   }, [workOrderId, refreshKey, reload]);
 
-  if (!can(P.PTW_VIEW) || !loaded) return null;
+  if (accessLoading || !can(P.PTW_VIEW) || !loaded) return null;
 
   if (loadError) {
     return (

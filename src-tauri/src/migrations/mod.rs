@@ -218,6 +218,7 @@ mod m20261019_000239_permit_handover_starter_roles;
 mod m20261019_000240_permit_type_isolation_author;
 mod m20261019_000241_permit_loto_isolation_restored;
 mod m20261019_000242_wo_transition_remaining_hours;
+mod m20261019_000243_permit_isolation_cancel;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -449,6 +450,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261019_000240_permit_type_isolation_author::Migration),
             Box::new(m20261019_000241_permit_loto_isolation_restored::Migration),
             Box::new(m20261019_000242_wo_transition_remaining_hours::Migration),
+            Box::new(m20261019_000243_permit_isolation_cancel::Migration),
         ]
     }
 }
