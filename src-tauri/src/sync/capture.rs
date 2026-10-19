@@ -620,6 +620,7 @@ async fn record_stage_failure(conn: &impl ConnectionTrait, group: &Group, error:
         "UPDATE sync_conflicts
          SET status = 'new',
              resolution_action = NULL,
+             resolved_by_id = NULL,
              resolution_note = NULL,
              resolved_at = NULL,
              row_version = row_version + 1,
@@ -641,6 +642,7 @@ async fn close_stage_failure(conn: &impl ConnectionTrait, group: &Group) -> AppR
         "UPDATE sync_conflicts
          SET status = 'resolved_local',
              resolution_action = 'auto_restaged',
+             resolved_by_id = NULL,
              resolution_note = 'The change was staged on a later attempt.',
              resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
              row_version = row_version + 1,
