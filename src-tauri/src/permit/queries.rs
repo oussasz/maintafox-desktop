@@ -949,6 +949,14 @@ async fn audit_three_person_change(
     Ok(())
 }
 
+/// The author, time and reason of a change of the three-person setting (migration 238); all `None`
+/// when the save does not change it.
+struct ThreePersonTrace {
+    by: Option<i64>,
+    at: Option<String>,
+    reason: Option<String>,
+}
+
 async fn upsert_permit_type_in(
     db: &impl ConnectionTrait,
     input: PermitTypeUpsertInput,
@@ -967,6 +975,13 @@ async fn upsert_permit_type_in(
         guard_three_person_change(existing.as_ref(), &input, writer)?
     } else {
         None
+    };
+    // Who changed the setting, when and why, written with the row (sent with it by sync and
+    // re-checked on arrival: `permit::sync_check::inbound_permit_type_check`); kept otherwise.
+    let trace = ThreePersonTrace {
+        by: three_person_reason.as_ref().map(|_| writer.actor_id),
+        at: three_person_reason.as_ref().map(|_| now_ts()),
+        reason: three_person_reason.clone(),
     };
     let ppe = input.mandatory_ppe_ids_json.unwrap_or_else(|| "[]".to_string());
     let rules = input.mandatory_control_rules_json.unwrap_or_else(|| "{}".to_string());
@@ -991,7 +1006,10 @@ async fn upsert_permit_type_in(
                 "UPDATE permit_types SET code = ?, name = ?, description = ?, \
                  requires_hse_approval = ?, requires_operations_approval = ?, requires_atmospheric_test = ?, \
                  max_duration_hours = ?, mandatory_ppe_ids_json = ?, mandatory_control_rules_json = ?, \
-                 requires_energy_isolation = ?, requires_three_person_removal = ?, row_version = ? \
+                 requires_energy_isolation = ?, requires_three_person_removal = ?, \
+                 three_person_changed_by_id = COALESCE(?, three_person_changed_by_id), \
+                 three_person_changed_at = COALESCE(?, three_person_changed_at), \
+                 three_person_change_reason = COALESCE(?, three_person_change_reason), row_version = ? \
                  WHERE id = ? AND row_version = ?",
                 [
                     input.code.into(),
@@ -1015,6 +1033,9 @@ async fn upsert_permit_type_in(
                             .unwrap_or(current.requires_three_person_removal),
                     )
                     .into(),
+                    trace.by.into(),
+                    trace.at.clone().into(),
+                    trace.reason.clone().into(),
                     new_rv.into(),
                     id.into(),
                     current.row_version.into(),
@@ -1046,8 +1067,9 @@ async fn upsert_permit_type_in(
         "INSERT INTO permit_types (entity_sync_id, code, name, description, \
          requires_hse_approval, requires_operations_approval, requires_atmospheric_test, \
          max_duration_hours, mandatory_ppe_ids_json, mandatory_control_rules_json, \
-         requires_energy_isolation, requires_three_person_removal, row_version) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+         requires_energy_isolation, requires_three_person_removal, three_person_changed_by_id, \
+         three_person_changed_at, three_person_change_reason, row_version) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             sync_id.into(),
             input.code.into(),
@@ -1061,6 +1083,9 @@ async fn upsert_permit_type_in(
             rules.into(),
             i64::from(input.requires_energy_isolation.unwrap_or(false)).into(),
             i64::from(input.requires_three_person_removal.unwrap_or(false)).into(),
+            trace.by.into(),
+            trace.at.clone().into(),
+            trace.reason.clone().into(),
         ],
     ))
     .await?;

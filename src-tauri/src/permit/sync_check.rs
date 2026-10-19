@@ -28,6 +28,9 @@
 //!   started, resumed or was reopened: a permit when it requires one (of the type a plant rule named,
 //!   when a rule flagged it), every permit live at that time active, not suspended, not expired, with
 //!   its isolations ready;
+//! - a permit type whose three-person lock-removal setting changes (or a new type with it on) says
+//!   who changed it, when and why, and that person holds the settings right here
+//!   (`inbound_permit_type_check`);
 //! - deletes (this device never deletes them): a permit, its isolations and suspensions only while
 //!   the permit is a draft (the LOTO history of any other permit is kept); a permit type or a
 //!   qualification requirement never (they are deactivated or edited).
@@ -797,6 +800,98 @@ pub(crate) async fn inbound_isolation_check(
             "PERMIT_ISOLATION_WRONG_STATUS",
             format!("isolation '{point}': lock removal verified while permit {code} is '{current}'"),
         );
+    }
+    Ok(None)
+}
+
+/// Re-check of a permit type received by synchronisation: a change of its three-person lock-removal
+/// setting (or a new type with it on) is an administrator action with step-up and a reason
+/// (`permit::queries::guard_three_person_change`). It is applied only when the row says who changed
+/// it, when and why (migration 238) — a record that is not the one already held here — the reason
+/// has at least [`crate::settings::catalog::MIN_REASON_CHARS`] characters, the time is readable and
+/// not in the future, and that person holds the settings right (`adm.settings`, plant-wide) here.
+/// A person not applied here yet, or whose rights are still waiting in the inbox, makes it wait;
+/// otherwise a sync conflict, nothing written. The step-up itself cannot be re-verified here.
+/// A row that does not change the setting passes (the energy-isolation rule is applied as received).
+pub(crate) async fn inbound_permit_type_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<Option<InboundVerdict>> {
+    const SETTING: &str = "requires_three_person_removal";
+    let local = local_wire(conn, "permit_types", entity_sync_id).await?;
+    let ty = overlay(local.as_ref(), received);
+    let wanted = flag(&ty, SETTING);
+    let changes = local.as_ref().map_or(wanted, |l| flag(l, SETTING) != wanted);
+    if !changes {
+        return Ok(None);
+    }
+    let code = field(&ty, "code").unwrap_or(entity_sync_id).to_string();
+    let unaudited = |why: &str| {
+        conflict(
+            "PERMIT_TYPE_THREE_PERSON_UNAUDITED",
+            format!("permit type {code}: its three-person lock-removal rule was changed {why}"),
+        )
+    };
+    let trace = |p: &Payload| {
+        [
+            field(p, "three_person_changed_by_sync_id").map(str::to_string),
+            field(p, "three_person_changed_at").map(str::to_string),
+            field(p, "three_person_change_reason").map(str::to_string),
+        ]
+    };
+    // Every change records who, when and why: a change carrying the record already held here was
+    // not recorded as a change.
+    if local
+        .as_ref()
+        .is_some_and(|l| field(l, "three_person_changed_at").is_some() && trace(l) == trace(&ty))
+    {
+        return unaudited("without its own record of who changed it, when and why");
+    }
+    let reason_ok = field(&ty, "three_person_change_reason")
+        .is_some_and(|r| r.chars().count() >= crate::settings::catalog::MIN_REASON_CHARS);
+    if !reason_ok {
+        return unaudited("without a reason of at least 10 characters");
+    }
+    let Some(changed_at) = time(&ty, "three_person_changed_at") else {
+        return unaudited("without a readable time of the change");
+    };
+    if changed_at > future_bound() {
+        return unaudited("at a time in the future");
+    }
+    let unauthorised = |why: &str| {
+        conflict(
+            "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED",
+            format!("permit type {code}: its three-person lock-removal rule was changed {why}"),
+        )
+    };
+    let Some(author_sync) = field(&ty, "three_person_changed_by_sync_id") else {
+        return unauthorised("without saying who changed it");
+    };
+    let Some(author) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE entity_sync_id = ?",
+            [author_sync.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<i64>("", "id").map_err(sync_err))
+        .transpose()?
+    else {
+        return wait(format!(
+            "permit type {code}: the person who changed its three-person rule is not applied yet"
+        ));
+    };
+    let right = crate::rbac::permissions::ADM_SETTINGS;
+    if !crate::settings::site::holds_tenant_right(conn, author, right).await? {
+        // The right is held before the change is made, so its rows come before this one: while
+        // some are still waiting here, wait; otherwise refuse (never applied without the right).
+        if rights_may_still_arrive(conn, author_sync, right).await? {
+            return wait(format!(
+                "permit type {code}: the rights of the person who changed its three-person rule are still arriving"
+            ));
+        }
+        return unauthorised("by someone without the settings right here");
     }
     Ok(None)
 }

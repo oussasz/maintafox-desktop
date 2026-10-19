@@ -1690,6 +1690,75 @@ async fn changing_the_three_person_chain_is_guarded_both_ways_and_an_unchanged_v
     assert_eq!(audit_count(&db, CHAIN_OFF).await, 1);
 }
 
+/// The type row itself says who last changed the three-person setting, when and why (migration
+/// 238, sent with the type and re-checked on arrival); a save that does not change it keeps them.
+#[tokio::test]
+async fn a_change_of_the_three_person_chain_is_recorded_on_the_type() {
+    let db = setup().await;
+    let types = queries::list_permit_types(&db).await.expect("types");
+    let hot = types.iter().find(|t| t.code == "hot_work").expect("hot").clone();
+    let trace = |id: i64| {
+        let db = &db;
+        async move {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT three_person_changed_by_id AS by_id, three_person_changed_at AS at, \
+                     three_person_change_reason AS reason FROM permit_types WHERE id = ?",
+                    [id.into()],
+                ))
+                .await
+                .expect("q")
+                .expect("row");
+            (
+                row.try_get::<Option<i64>>("", "by_id").expect("by"),
+                row.try_get::<Option<String>>("", "at").expect("at"),
+                row.try_get::<Option<String>>("", "reason").expect("reason"),
+            )
+        }
+    };
+    assert_eq!(
+        trace(hot.id).await,
+        (None, None, None),
+        "never changed: nobody invented"
+    );
+
+    let padded = format!("  {GOOD_REASON}  ");
+    let on = queries::upsert_permit_type(&db, chain_input(&hot, Some(true), Some(&padded)), ADMIN_STEP_UP)
+        .await
+        .expect("on");
+    let (by, at, reason) = trace(on.id).await;
+    assert_eq!(by, Some(APPLIER));
+    assert!(
+        at.as_deref().and_then(crate::settings::site::instant).is_some(),
+        "{at:?}"
+    );
+    assert_eq!(reason.as_deref(), Some(GOOD_REASON), "stored trimmed");
+
+    let renamed = queries::upsert_permit_type(&db, chain_input(&on, None, None), EDITOR)
+        .await
+        .expect("plain edit");
+    assert_eq!(
+        trace(renamed.id).await,
+        (by, at, reason),
+        "kept by a save that does not change it"
+    );
+
+    let created = queries::upsert_permit_type(
+        &db,
+        new_type_input("chain_t", Some(true), Some(GOOD_REASON)),
+        ADMIN_STEP_UP,
+    )
+    .await
+    .expect("new type with the chain");
+    let (by, _, reason) = trace(created.id).await;
+    assert_eq!((by, reason.as_deref()), (Some(APPLIER), Some(GOOD_REASON)));
+    let plain = queries::upsert_permit_type(&db, new_type_input("chain_u", None, None), EDITOR)
+        .await
+        .expect("new type without it");
+    assert_eq!(trace(plain.id).await, (None, None, None));
+}
+
 /// A plant-wide role holding `permissions`, granted to a new active account.
 async fn user_with(db: &DatabaseConnection, username: &str, permissions: &[&str]) -> i64 {
     for (sql, values) in [

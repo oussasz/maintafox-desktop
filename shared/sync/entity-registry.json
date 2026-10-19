@@ -1219,8 +1219,10 @@
       "entity_type": "permit_types",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 0,
-      "parents": [],
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
       "sync_status": "synced"
     },
     {

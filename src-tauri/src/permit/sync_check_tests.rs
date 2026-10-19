@@ -2307,3 +2307,189 @@ async fn a_different_complete_clearing_received_is_judged_and_applied() {
     let outcome = apply(&db, "work_orders", &wo_sync, &partial).await;
     assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
 }
+
+/// A change of a permit type's three-person lock-removal setting received from another PC is
+/// applied only with who changed it (holding the settings right here), when and why; a row that
+/// does not change the setting passes as received.
+#[tokio::test]
+async fn a_received_three_person_change_is_rechecked_on_its_author_and_reason() {
+    let db = setup().await;
+    let ty = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'hot_work'")
+        .await
+        .expect("type sync id");
+    let held = wire(&db, "permit_types", &ty).await;
+    let chain = |sync: String| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT CAST(requires_three_person_removal AS TEXT) FROM permit_types WHERE entity_sync_id = '{sync}'"
+                ),
+            )
+            .await
+        }
+    };
+    let changed = |value: i64, by: Value, at: Value, reason: Value| {
+        with(
+            held.clone(),
+            &[
+                ("requires_three_person_removal", json!(value)),
+                ("three_person_changed_by_sync_id", by),
+                ("three_person_changed_at", at),
+                ("three_person_change_reason", reason),
+            ],
+        )
+    };
+    let admin = json!(user_sync(&db, APPLIER).await);
+    let reason = json!("Site rule after the 2026 LOTO audit");
+
+    for (row, expected) in [
+        (
+            changed(1, Value::Null, Value::Null, Value::Null),
+            "PERMIT_TYPE_THREE_PERSON_UNAUDITED",
+        ),
+        (
+            changed(1, admin.clone(), json!(now()), json!("  too short  ")),
+            "PERMIT_TYPE_THREE_PERSON_UNAUDITED",
+        ),
+        (
+            changed(1, admin.clone(), Value::Null, reason.clone()),
+            "PERMIT_TYPE_THREE_PERSON_UNAUDITED",
+        ),
+        (
+            changed(1, admin.clone(), json!("2999-01-01T00:00:00Z"), reason.clone()),
+            "PERMIT_TYPE_THREE_PERSON_UNAUDITED",
+        ),
+        (
+            changed(1, Value::Null, json!(now()), reason.clone()),
+            "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED",
+        ),
+        (
+            changed(1, json!(user_sync(&db, VERIFIER).await), json!(now()), reason.clone()),
+            "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED",
+        ),
+    ] {
+        let outcome = apply(&db, "permit_types", &ty, &row).await;
+        assert_eq!(code(&outcome), Some(expected), "{row:?} -> {outcome:?}");
+        assert_eq!(chain(ty.clone()).await.as_deref(), Some("0"), "nothing written");
+    }
+    // The person who changed it is not here yet: waits.
+    let outcome = apply(
+        &db,
+        "permit_types",
+        &ty,
+        &changed(1, json!("user-not-here"), json!(now()), reason.clone()),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    assert_eq!(chain(ty.clone()).await.as_deref(), Some("0"));
+
+    // By an administrator, with a reason and a time: applied.
+    let on = changed(1, admin.clone(), json!(now()), reason.clone());
+    let outcome = apply(&db, "permit_types", &ty, &on).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(chain(ty.clone()).await.as_deref(), Some("1"));
+
+    // Another field changed, the setting not: passes, as received.
+    let renamed = with(
+        wire(&db, "permit_types", &ty).await,
+        &[("name", json!("Hot work (renamed)"))],
+    );
+    let outcome = apply(&db, "permit_types", &ty, &renamed).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // The setting turned off with the record already held here: not a recorded change.
+    let replayed = with(renamed, &[("requires_three_person_removal", json!(0))]);
+    let outcome = apply(&db, "permit_types", &ty, &replayed).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_THREE_PERSON_UNAUDITED"),
+        "{outcome:?}"
+    );
+    assert_eq!(chain(ty.clone()).await.as_deref(), Some("1"));
+
+    // A new type: off passes without a record, on is judged the same way.
+    let new_type = |code: &str, value: i64, by: Value| {
+        with(
+            held.clone(),
+            &[
+                ("code", json!(code)),
+                ("requires_three_person_removal", json!(value)),
+                ("three_person_changed_by_sync_id", by),
+                ("three_person_changed_at", json!(now())),
+                ("three_person_change_reason", reason.clone()),
+            ],
+        )
+    };
+    let off = with(
+        new_type("new_off", 0, Value::Null),
+        &[
+            ("three_person_changed_at", Value::Null),
+            ("three_person_change_reason", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "permit_types", "type-new-off", &off).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let outcome = apply(&db, "permit_types", "type-new-on", &new_type("new_on", 1, Value::Null)).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_THREE_PERSON_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+    let outcome = apply(&db, "permit_types", "type-new-on", &new_type("new_on", 1, admin)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(chain("type-new-on".into()).await.as_deref(), Some("1"));
+}
+
+/// The author of a received three-person change whose settings right is still waiting in the inbox
+/// makes it wait; with nothing waiting for that person, it is refused.
+#[tokio::test]
+async fn a_three_person_change_waits_for_the_rights_of_its_author() {
+    let db = setup().await;
+    let ty = text(&db, "SELECT entity_sync_id FROM permit_types WHERE code = 'hot_work'")
+        .await
+        .expect("type sync id");
+    let verifier = user_sync(&db, VERIFIER).await;
+    let on = with(
+        wire(&db, "permit_types", &ty).await,
+        &[
+            ("requires_three_person_removal", json!(1)),
+            ("three_person_changed_by_sync_id", json!(verifier)),
+            ("three_person_changed_at", json!(now())),
+            (
+                "three_person_change_reason",
+                json!("Site rule after the 2026 LOTO audit"),
+            ),
+        ],
+    );
+    let settings_role = text(
+        &db,
+        &format!(
+            "SELECT r.entity_sync_id FROM roles r JOIN role_permissions rp ON rp.role_id = r.id \
+             JOIN permissions p ON p.id = rp.permission_id WHERE p.name = '{}' ORDER BY r.id LIMIT 1",
+            crate::rbac::permissions::ADM_SETTINGS
+        ),
+    )
+    .await
+    .expect("a role carrying the settings right");
+    let assignment = json!({
+        "user_sync_id": verifier,
+        "role_sync_id": settings_role,
+        "scope_type": "tenant",
+        "is_emergency": 0,
+        "_sync_format": "row.v1",
+    })
+    .as_object()
+    .cloned()
+    .expect("object");
+    inbox(&db, "user_scope_assignments", "usa-settings", 1, "pending", &assignment).await;
+    let outcome = apply(&db, "permit_types", &ty, &on).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    exec(&db, "DELETE FROM sync_inbox").await;
+    let outcome = apply(&db, "permit_types", &ty, &on).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_TYPE_THREE_PERSON_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+}
