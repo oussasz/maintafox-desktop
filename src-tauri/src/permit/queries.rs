@@ -401,15 +401,37 @@ fn handover_person_name_sql(alias: &str) -> String {
     format!("COALESCE(NULLIF(TRIM({alias}.display_name), ''), {alias}.username)")
 }
 
-/// Columns of a hand-over log with the signer's and receiver's names (alias `h`).
+/// The label of the hand-over role stored in `column`, from the plant's list: looked up over every
+/// published version of the list (the current one and those it replaced), roles since deactivated
+/// included, so a stored hand-over keeps its role's name. The exact code first, else the code
+/// ignoring case (adopted free texts); each from the most recent version that holds it. NULL when
+/// no published version holds it.
+fn handover_role_label_sql(column: &str) -> String {
+    let lookup = |matches: String| {
+        format!(
+            "(SELECT rv.label FROM reference_values rv                 JOIN reference_sets rs ON rs.id = rv.set_id                 JOIN reference_domains d ON d.id = rs.domain_id                WHERE UPPER(TRIM(d.code)) = '{domain}' AND rs.status IN ('published', 'superseded')                  AND {matches}                ORDER BY rs.version_no DESC, rv.is_active DESC, rv.id DESC LIMIT 1)",
+            domain = super::handover_roles::DOMAIN,
+        )
+    };
+    format!(
+        "COALESCE({}, {})",
+        lookup(format!("rv.code = {column}")),
+        lookup(format!("UPPER(TRIM(rv.code)) = UPPER(TRIM({column}))")),
+    )
+}
+
+/// Columns of a hand-over log with the role labels and the signer's and receiver's names (alias `h`).
 fn handover_select() -> String {
     format!(
         "SELECT h.id, h.entity_sync_id, h.permit_id, h.handed_from_role, h.handed_to_role, \
+         {} AS handed_from_label, {} AS handed_to_label, \
          h.confirmation_note, h.signed_at, h.signed_by_id, h.received_by_id, h.row_version, \
          {} AS signed_by_name, {} AS received_by_name \
          FROM permit_handover_logs h \
          LEFT JOIN user_accounts us ON us.id = h.signed_by_id \
          LEFT JOIN user_accounts ur ON ur.id = h.received_by_id",
+        handover_role_label_sql("h.handed_from_role"),
+        handover_role_label_sql("h.handed_to_role"),
         handover_person_name_sql("us"),
         handover_person_name_sql("ur"),
     )
@@ -428,6 +450,12 @@ fn map_permit_handover_log(row: &sea_orm::QueryResult) -> AppResult<PermitHandov
         handed_to_role: row
             .try_get("", "handed_to_role")
             .map_err(|e| decode_err("handed_to_role", e))?,
+        handed_from_label: row
+            .try_get("", "handed_from_label")
+            .map_err(|e| decode_err("handed_from_label", e))?,
+        handed_to_label: row
+            .try_get("", "handed_to_label")
+            .map_err(|e| decode_err("handed_to_label", e))?,
         confirmation_note: row
             .try_get("", "confirmation_note")
             .map_err(|e| decode_err("confirmation_note", e))?,

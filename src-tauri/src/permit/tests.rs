@@ -483,7 +483,121 @@ async fn stored_handover_roles_are_adopted_and_flagged_without_rewrite() {
     );
     let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
     assert_eq!(listed[0].handed_from_role, "Équipe nuit");
+    assert_eq!(listed[0].handed_from_label.as_deref(), Some("Équipe nuit"));
     assert_eq!(listed[0].signed_by_id, None, "no signer invented");
+}
+
+/// A stored hand-over shows its roles' labels from the plant's list even after a role is
+/// deactivated or left out of a newer published version of the list; the newest published version
+/// gives the label, a draft never does, and a code in no version has no label (shown as stored).
+#[tokio::test]
+async fn handover_role_labels_resolve_over_inactive_roles_and_older_versions() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-HO4").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+    let wp = set_status(&db, &wp, "closed").await.expect("close");
+    add_handover_role(&db, "Operations").await;
+    let exec = |sql: &'static str| {
+        let db = &db;
+        async move {
+            db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+                .await
+                .expect(sql);
+        }
+    };
+    exec(
+        "UPDATE reference_values SET label = 'Opérations' WHERE code = 'Operations' AND set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \r
+         WHERE d.code = 'PERMIT.HANDOVER_ROLES')",
+    )
+    .await;
+    queries::append_permit_handover_log(
+        &db,
+        PermitHandoverLogInput {
+            permit_id: wp.id,
+            handed_from_role: "maintenance".into(),
+            handed_to_role: "Operations".into(),
+            confirmation_note: "Zone left clean".into(),
+            received_by_id: None,
+        },
+        APPLIER,
+    )
+    .await
+    .expect("handover");
+    let labels =
+        |log: &crate::permit::domain::PermitHandoverLog| (log.handed_from_label.clone(), log.handed_to_label.clone());
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    assert_eq!(
+        labels(&listed[0]),
+        (Some("Maintenance".into()), Some("Opérations".into()))
+    );
+
+    // "Operations" is deactivated, then a new version of the list is published without it and
+    // with "Maintenance" renamed; a draft version renames "Operations" again.
+    exec(
+        "UPDATE reference_values SET is_active = 0 WHERE code = 'Operations' AND set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \r
+         WHERE d.code = 'PERMIT.HANDOVER_ROLES')",
+    )
+    .await;
+    exec(
+        "UPDATE reference_sets SET status = 'superseded' WHERE status = 'published' AND domain_id = \
+         (SELECT id FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES')",
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_sets (domain_id, version_no, status, effective_from, created_at, published_at) \
+         SELECT id, 2, 'published', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z' \
+           FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES'",
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_sets (domain_id, version_no, status, effective_from, created_at) \
+         SELECT id, 3, 'draft', '2026-10-02T00:00:00Z', '2026-10-02T00:00:00Z' \
+           FROM reference_domains WHERE code = 'PERMIT.HANDOVER_ROLES'",
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active) \
+         SELECT rs.id, 'Maintenance', 'Maintenance mécanique', 1, 1 FROM reference_sets rs \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'PERMIT.HANDOVER_ROLES' AND rs.version_no = 2",
+    )
+    .await;
+    exec(
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active) \
+         SELECT rs.id, 'Operations', 'Brouillon', 1, 1 FROM reference_sets rs \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'PERMIT.HANDOVER_ROLES' AND rs.version_no = 3",
+    )
+    .await;
+    let roles = crate::permit::handover_roles::list_handover_roles(&db)
+        .await
+        .expect("roles");
+    assert_eq!(
+        roles.iter().map(|r| r.code.as_str()).collect::<Vec<_>>(),
+        ["Maintenance"],
+        "the form lists only active roles of the current version"
+    );
+
+    // A role code that no version of the list holds (e.g. written by hand) has no label.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+         confirmation_note, signed_at, row_version) VALUES ('ho4-unknown', ?, 'Inconnu', 'Operations', \
+         'Zone left clean', '2026-10-03T00:00:00Z', 1)",
+        [wp.id.into()],
+    ))
+    .await
+    .expect("log");
+
+    let listed = queries::list_permit_handover_logs(&db, wp.id).await.expect("list");
+    assert_eq!(listed.len(), 2);
+    assert_eq!(
+        labels(&listed[0]),
+        (Some("Maintenance mécanique".into()), Some("Opérations".into())),
+        "newest published version first; a role left out keeps its label; a draft is ignored"
+    );
+    assert_eq!(labels(&listed[1]), (None, Some("Opérations".into())));
 }
 
 #[tokio::test]

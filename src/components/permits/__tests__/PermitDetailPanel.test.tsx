@@ -242,6 +242,8 @@ describe("PermitDetailPanel — recorded hand-overs", () => {
     permit_id: 41,
     handed_from_role: "MAINT",
     handed_to_role: "OPS",
+    handed_from_label: "Mechanical maintenance",
+    handed_to_label: null,
     confirmation_note: "Zone left clean",
     signed_at: "2026-10-11T08:00:00Z",
     signed_by_id: 7,
@@ -271,6 +273,8 @@ describe("PermitDetailPanel — recorded hand-overs", () => {
         signed_by_name: null,
         received_by_id: null,
         received_by_name: null,
+        // A role since deactivated or left out of the current list keeps the label the server found.
+        handed_to_label: "Night shift",
       }),
     ]);
   });
@@ -291,9 +295,11 @@ describe("PermitDetailPanel — recorded hand-overs", () => {
     ).toBeInTheDocument();
     // An older hand-over without a recorded signer says so instead of inventing one.
     expect(screen.getByText(enPermits.handover.signerNotRecorded)).toBeInTheDocument();
-    // Codes of the list are shown with their label; a code no longer listed stays as stored.
-    expect((await screen.findAllByText("Maintenance")).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("OPS").length).toBe(2);
+    // Roles are shown with the label sent with the hand-over (not the form's current list); a
+    // code in no version of the list stays as stored.
+    expect(screen.getAllByText("Mechanical maintenance")).toHaveLength(2);
+    expect(screen.getByText("Night shift")).toBeInTheDocument();
+    expect(screen.getAllByText("OPS")).toHaveLength(1);
     // The hand-over form is offered on a closed permit.
     expect(screen.getByRole("form", { name: enPermits.handover.add })).toBeInTheDocument();
   });

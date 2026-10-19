@@ -39,7 +39,6 @@ import {
   applyPermitIsolation,
   getLotoCardView,
   listPermitHandoverLogs,
-  listPermitHandoverRoles,
   listPermitIsolationOptions,
   listPermitIsolations,
   listPermitSuspensions,
@@ -157,26 +156,6 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     }
     return map;
   }, [options]);
-
-  // Labels of the stored hand-over role codes (the plant's list); a code no longer in the list
-  // is shown as stored.
-  const [roleLabels, setRoleLabels] = useState<Map<string, string>>(new Map());
-  const hasHandovers = handovers.length > 0;
-  useEffect(() => {
-    if (!hasHandovers) return;
-    let cancelled = false;
-    listPermitHandoverRoles()
-      .then((roles) => {
-        if (!cancelled) setRoleLabels(new Map(roles.map((r) => [r.code, r.label])));
-      })
-      .catch(() => {
-        // The stored codes stay readable as they are; the form reports the list's failure.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [hasHandovers]);
-  const roleLabel = (code: string) => roleLabels.get(code) ?? code;
 
   const lang = i18n.resolvedLanguage || i18n.language;
   const energyLabel = (iso: PermitIsolationRecord) =>
@@ -794,12 +773,12 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
               {handovers.map((h) => (
                 <li key={h.id} className="rounded-md border border-surface-border bg-surface-1 p-2">
                   <div className="flex flex-wrap items-center gap-1.5 text-text-primary">
-                    <span className="font-medium">{roleLabel(h.handed_from_role)}</span>
+                    <span className="font-medium">{h.handed_from_label ?? h.handed_from_role}</span>
                     <span aria-hidden className="text-text-muted">
                       →
                     </span>
                     <span className="sr-only">{t("handover.handedTo")}</span>
-                    <span className="font-medium">{roleLabel(h.handed_to_role)}</span>
+                    <span className="font-medium">{h.handed_to_label ?? h.handed_to_role}</span>
                     <time className="ms-auto text-xs text-text-muted" dateTime={h.signed_at}>
                       {fmt(h.signed_at)}
                     </time>
