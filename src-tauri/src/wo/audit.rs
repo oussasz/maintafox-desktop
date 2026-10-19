@@ -64,40 +64,7 @@ pub struct WoAuditFilter {
 /// level but is NOT returned. This ensures that a transient audit-write failure
 /// never blocks the primary WO workflow.
 pub async fn record_wo_change_event(db: &DatabaseConnection, input: WoAuditInput) {
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let result = db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"INSERT INTO wo_change_events
-                   (wo_id, action, actor_id, acted_at, summary, details_json, requires_step_up, apply_result)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                input
-                    .wo_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::BigInt(None)),
-                input.action.clone().into(),
-                input
-                    .actor_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::BigInt(None)),
-                now.into(),
-                input
-                    .summary
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::String(None)),
-                input
-                    .details_json
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::String(None)),
-                i32::from(input.requires_step_up).into(),
-                input.apply_result.clone().into(),
-            ],
-        ))
-        .await;
-
-    if let Err(e) = result {
+    if let Err(e) = insert_wo_change_event(db, &input).await {
         tracing::warn!(
             wo_id = ?input.wo_id,
             action = %input.action,
@@ -106,6 +73,44 @@ pub async fn record_wo_change_event(db: &DatabaseConnection, input: WoAuditInput
             "audit::record_wo_change_event failed (non-fatal)"
         );
     }
+}
+
+/// Insert one audit event on `conn` (a transaction included) and return the failure: for a change
+/// whose audit entry must be written with it or not at all (the caller rolls back on error).
+pub async fn insert_wo_change_event<C: ConnectionTrait>(conn: &C, input: &WoAuditInput) -> Result<(), sea_orm::DbErr> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r"INSERT INTO wo_change_events
+               (wo_id, action, actor_id, acted_at, summary, details_json, requires_step_up, apply_result)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            input
+                .wo_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::BigInt(None)),
+            input.action.clone().into(),
+            input
+                .actor_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::BigInt(None)),
+            now.into(),
+            input
+                .summary
+                .clone()
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::String(None)),
+            input
+                .details_json
+                .clone()
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::String(None)),
+            i32::from(input.requires_step_up).into(),
+            input.apply_result.clone().into(),
+        ],
+    ))
+    .await
+    .map(|_| ())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

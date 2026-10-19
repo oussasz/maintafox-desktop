@@ -848,6 +848,8 @@ pub fn run() {
             commands::wo::add_part,
             commands::wo::record_part_usage,
             commands::wo::mark_part_not_used,
+            commands::wo::cancel_planned_part,
+            commands::wo::set_planned_part_required,
             commands::wo::confirm_no_parts,
             commands::wo::unconfirm_no_parts,
             commands::wo::list_wo_parts,

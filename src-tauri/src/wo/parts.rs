@@ -12,6 +12,12 @@
 //!   - The parts quality gate in `complete_wo_mechanically` requires at least one
 //!     row with `quantity_used > 0`, OR the WO's `parts_actuals_confirmed = 1` flag
 //!     set via `confirm_no_parts_used`.
+//!   - A planned line is never deleted. While the WO is prepared (draft, planning) a line with
+//!     no recorded use can be cancelled (`consumption_status = 'cancelled'`): its reservation
+//!     is released and an audit entry written in the same transaction. A cancelled line leaves
+//!     every count, cost, readiness and shortage figure and stays in the WO history; adding the
+//!     part again makes a new line with its own reservation. Required / optional can be
+//!     switched on the same lines, audited the same way.
 
 use crate::errors::{AppError, AppResult};
 use crate::inventory::domain::{InventoryIssueInput, InventoryReleaseReservationInput, InventoryReserveInput};
@@ -44,7 +50,7 @@ pub struct WoPart {
     /// `planned` | `execution_added`
     #[serde(default = "default_part_origin")]
     pub origin: String,
-    /// `pending` | `used` | `not_used`
+    /// `pending` | `used` | `not_used` | `cancelled` (planned line withdrawn before execution)
     #[serde(default = "default_consumption_status")]
     pub consumption_status: String,
     pub not_used_reason_id: Option<i64>,
@@ -53,6 +59,10 @@ pub struct WoPart {
     pub not_used_reason_label: Option<String>,
     /// Required for the job: short, it blocks the plan; optional: short, it only warns.
     pub is_required: bool,
+    /// Stock unit symbol of the article (unit list of Données de référence); `None` for a
+    /// free-text line.
+    #[serde(default)]
+    pub unit_symbol: Option<String>,
 }
 
 fn default_part_origin() -> String {
@@ -151,6 +161,9 @@ fn map_part(row: &sea_orm::QueryResult) -> AppResult<WoPart> {
             .try_get::<i64>("", "is_required")
             .map_err(|e| decode_err("is_required", e))?
             == 1,
+        unit_symbol: row
+            .try_get::<Option<String>>("", "unit_symbol")
+            .map_err(|e| decode_err("unit_symbol", e))?,
     })
 }
 
@@ -174,12 +187,16 @@ async fn load_wo_status_code(db: &DatabaseConnection, wo_id: i64) -> AppResult<S
         .map_err(|e| decode_err("status_code", e))
 }
 
-const PART_COLS: &str = "wop.id, wop.work_order_id, wop.article_id, wop.article_ref, wop.quantity_planned, \
+const PART_COLS: &str = concat!(
+    "wop.id, wop.work_order_id, wop.article_id, wop.article_ref, wop.quantity_planned, \
      wop.quantity_used, wop.unit_cost, wop.stock_location_id, wop.reservation_id, \
      wop.quantity_reserved, wop.quantity_issued, wop.notes, \
      COALESCE(NULLIF(TRIM(wop.article_ref), ''), a.article_code) AS article_label, \
      wop.origin, wop.consumption_status, wop.not_used_reason_id, wop.not_used_comment, \
-     nur.label AS not_used_reason_label, wop.is_required";
+     nur.label AS not_used_reason_label, wop.is_required, ",
+    crate::reference::units::unit_symbol_of!("a.unit_value_id"),
+    " AS unit_symbol"
+);
 
 const PART_FROM: &str = "\
     work_order_parts wop \
@@ -557,6 +574,7 @@ pub async fn record_actual_usage(
             id: wo_part_id.to_string(),
         })?;
     let part = map_part(&part_row)?;
+    refuse_if_cancelled(&part)?;
 
     let status_code = load_wo_status_code(db, part.work_order_id).await?;
     if !matches!(status_code.as_str(), "in_progress" | "on_hold" | "completed") {
@@ -693,6 +711,7 @@ pub async fn mark_part_not_used(db: &DatabaseConnection, input: MarkPartNotUsedI
             id: input.wo_part_id.to_string(),
         })?;
     let part = map_part(&part_row)?;
+    refuse_if_cancelled(&part)?;
 
     let status_code = load_wo_status_code(db, part.work_order_id).await?;
     if !matches!(status_code.as_str(), "in_progress" | "on_hold" | "completed") {
@@ -808,7 +827,8 @@ pub async fn confirm_no_parts_used(db: &DatabaseConnection, wo_id: i64, actor_id
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COUNT(*) AS cnt FROM work_order_parts \
-             WHERE work_order_id = ? AND COALESCE(origin, 'planned') = 'planned'",
+             WHERE work_order_id = ? AND COALESCE(origin, 'planned') = 'planned' \
+               AND consumption_status <> 'cancelled'",
             [wo_id.into()],
         ))
         .await?
@@ -916,4 +936,302 @@ pub async fn list_wo_parts(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec
         ))
         .await?;
     rows.iter().map(map_part).collect()
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// E) cancel_planned_part / set_planned_part_required
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// `consumption_status` of a planned line withdrawn before execution.
+pub const PART_STATUS_CANCELLED: &str = "cancelled";
+
+/// Stable codes of the refusals on a planned part line (translated in `training:errors`).
+pub mod part_line_codes {
+    pub const RIGHT_REQUIRED: &str = "WO_PART_LINE_RIGHT_REQUIRED";
+    pub const NOT_IN_PLANNING: &str = "WO_PART_LINE_NOT_IN_PLANNING";
+    pub const NOT_PLANNED_LINE: &str = "WO_PART_LINE_NOT_PLANNED";
+    pub const HAS_USE: &str = "WO_PART_LINE_HAS_USE";
+    pub const SETTLED: &str = "WO_PART_LINE_SETTLED";
+    pub const CANCELLED: &str = "WO_PART_LINE_CANCELLED";
+    pub const CHANGED: &str = "WO_PART_LINE_CHANGED";
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CancelPlannedPartInput {
+    pub wo_part_id: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetPlannedPartRequiredInput {
+    pub wo_part_id: i64,
+    pub is_required: bool,
+}
+
+fn part_line_refusal(code: &str, message: impl Into<String>, params: &[(&str, String)]) -> AppError {
+    crate::errors::org_validation_failed(code, message, crate::errors::issue_params(params))
+}
+
+/// A cancelled line takes no usage and no "not used" disposition.
+fn refuse_if_cancelled(part: &WoPart) -> AppResult<()> {
+    if part.consumption_status == PART_STATUS_CANCELLED {
+        return Err(part_line_refusal(
+            part_line_codes::CANCELLED,
+            "This part line is cancelled.",
+            &[],
+        ));
+    }
+    Ok(())
+}
+
+async fn load_part_in<C: ConnectionTrait>(conn: &C, wo_part_id: i64) -> AppResult<WoPart> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
+            [wo_part_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WoPart".into(),
+            id: wo_part_id.to_string(),
+        })?;
+    map_part(&row)
+}
+
+/// The checks shared by cancel and required/optional: the person holds the WO edit right, the WO
+/// is still prepared (draft, planning), the line is a planned line, not cancelled, not settled and
+/// with no recorded use (such a line keeps the "not used" action of execution).
+async fn check_planned_line_editable<C: ConnectionTrait>(
+    conn: &C,
+    wo_part_id: i64,
+    actor_id: i64,
+) -> AppResult<WoPart> {
+    use crate::wo::workflow::state_machine::WoStatus;
+    if !crate::settings::site::holds_tenant_right(conn, actor_id, crate::rbac::permissions::OT_EDIT).await? {
+        return Err(part_line_refusal(
+            part_line_codes::RIGHT_REQUIRED,
+            "Changing a planned part line needs the work-order edit right.",
+            &[],
+        ));
+    }
+    let part = load_part_in(conn, wo_part_id).await?;
+    let (_, status, _) = crate::wo::workflow::transition::load_wo_status(conn, part.work_order_id).await?;
+    if !matches!(status, WoStatus::Draft | WoStatus::Planning) {
+        return Err(part_line_refusal(
+            part_line_codes::NOT_IN_PLANNING,
+            format!(
+                "Planned part lines can be changed while the work order is prepared (draft, planning); it is {}.",
+                status.as_str()
+            ),
+            &[("status", status.as_str().to_string())],
+        ));
+    }
+    if part.origin != "planned" {
+        return Err(part_line_refusal(
+            part_line_codes::NOT_PLANNED_LINE,
+            "Only a planned part line can be changed here.",
+            &[],
+        ));
+    }
+    refuse_if_cancelled(&part)?;
+    if part.consumption_status == "used" || part.quantity_used.unwrap_or(0.0) > 0.0 || part.quantity_issued > 0.0 {
+        return Err(part_line_refusal(
+            part_line_codes::HAS_USE,
+            "This part line has recorded use: mark it not used instead.",
+            &[],
+        ));
+    }
+    if part.consumption_status != "pending" {
+        return Err(part_line_refusal(
+            part_line_codes::SETTLED,
+            format!("This part line is already settled ({}).", part.consumption_status),
+            &[("status", part.consumption_status.clone())],
+        ));
+    }
+    Ok(part)
+}
+
+fn part_display_label(part: &WoPart) -> String {
+    part.article_label
+        .clone()
+        .or(part.article_ref.clone())
+        .unwrap_or_else(|| format!("#{}", part.id))
+}
+
+/// Cancel a planned part line (never deleted): in one transaction its reservation is released,
+/// the line is marked `cancelled` and an audit entry (who, when, line, quantity) plus a WO history
+/// event are written. Refused, with a coded reason, for a person without the WO edit right, a WO
+/// past planning, an execution-added line, or a line with recorded use.
+pub async fn cancel_planned_part(
+    db: &DatabaseConnection,
+    input: CancelPlannedPartInput,
+    actor_id: i64,
+) -> AppResult<WoPart> {
+    use sea_orm::TransactionTrait;
+    let txn = db.begin().await?;
+    let part = check_planned_line_editable(&txn, input.wo_part_id, actor_id).await?;
+
+    if let Some(reservation_id) = part.reservation_id {
+        inventory_queries::release_stock_reservation_with_connection(
+            &txn,
+            reservation_id,
+            Some("WO planned part line cancelled"),
+        )
+        .await?;
+    }
+
+    let updated = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_order_parts SET consumption_status = ?, reservation_id = NULL, quantity_reserved = 0 \
+             WHERE id = ? AND consumption_status = 'pending'",
+            [PART_STATUS_CANCELLED.into(), part.id.into()],
+        ))
+        .await?;
+    if updated.rows_affected() != 1 {
+        // Changed by someone else between the read and the write: nothing is kept.
+        return Err(part_line_refusal(
+            part_line_codes::CHANGED,
+            "This part line was changed meanwhile: reload the work order.",
+            &[],
+        ));
+    }
+
+    let label = part_display_label(&part);
+    crate::wo::audit::insert_wo_change_event(
+        &txn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(part.work_order_id),
+            action: "part_line_cancelled".into(),
+            actor_id: Some(actor_id),
+            summary: Some(format!("Part line cancelled: {label} x {}", part.quantity_planned)),
+            details_json: Some(
+                serde_json::json!({
+                    "wo_part_id": part.id,
+                    "article_id": part.article_id,
+                    "label": label,
+                    "quantity_planned": part.quantity_planned,
+                    "unit_symbol": part.unit_symbol,
+                    "is_required": part.is_required,
+                    "released_reservation_id": part.reservation_id,
+                    "quantity_released": part.quantity_reserved,
+                })
+                .to_string(),
+            ),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    emit_execution_event(
+        &txn,
+        part.work_order_id,
+        "part_cancelled",
+        "executionLog.partCancelled",
+        part_label_json(&label),
+        Some("part"),
+        Some(part.id),
+        Some(actor_id),
+    )
+    .await?;
+
+    let cancelled = load_part_in(&txn, part.id).await?;
+    txn.commit().await?;
+    Ok(cancelled)
+}
+
+/// Switch a planned part line between required and optional while the WO is prepared. Same
+/// refusals as [`cancel_planned_part`]; the change is audited (who, when, line, old -> new) in the
+/// same transaction. Setting the value the line already has changes and records nothing.
+pub async fn set_planned_part_required(
+    db: &DatabaseConnection,
+    input: SetPlannedPartRequiredInput,
+    actor_id: i64,
+) -> AppResult<WoPart> {
+    use sea_orm::TransactionTrait;
+    let txn = db.begin().await?;
+    let part = check_planned_line_editable(&txn, input.wo_part_id, actor_id).await?;
+    if part.is_required == input.is_required {
+        return Ok(part);
+    }
+    let updated = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_order_parts SET is_required = ? \
+             WHERE id = ? AND consumption_status = 'pending' AND is_required = ?",
+            [
+                i64::from(input.is_required).into(),
+                part.id.into(),
+                i64::from(part.is_required).into(),
+            ],
+        ))
+        .await?;
+    if updated.rows_affected() != 1 {
+        return Err(part_line_refusal(
+            part_line_codes::CHANGED,
+            "This part line was changed meanwhile: reload the work order.",
+            &[],
+        ));
+    }
+    let label = part_display_label(&part);
+    let necessity = |required: bool| if required { "required" } else { "optional" };
+    crate::wo::audit::insert_wo_change_event(
+        &txn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(part.work_order_id),
+            action: "part_line_necessity_changed".into(),
+            actor_id: Some(actor_id),
+            summary: Some(format!(
+                "Part line {label}: {} -> {}",
+                necessity(part.is_required),
+                necessity(input.is_required)
+            )),
+            details_json: Some(
+                serde_json::json!({
+                    "wo_part_id": part.id,
+                    "article_id": part.article_id,
+                    "label": label,
+                    "quantity_planned": part.quantity_planned,
+                    "from_required": part.is_required,
+                    "to_required": input.is_required,
+                })
+                .to_string(),
+            ),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    let (event_type, summary_key) = if input.is_required {
+        ("part_set_required", "executionLog.partSetRequired")
+    } else {
+        ("part_set_optional", "executionLog.partSetOptional")
+    };
+    emit_execution_event(
+        &txn,
+        part.work_order_id,
+        event_type,
+        summary_key,
+        part_label_json(&label),
+        Some("part"),
+        Some(part.id),
+        Some(actor_id),
+    )
+    .await?;
+    let changed = load_part_in(&txn, part.id).await?;
+    txn.commit().await?;
+    Ok(changed)
+}
+
+/// Inbound sync check of a received part line (`sync::apply_hooks::before_upsert`): a line
+/// received as cancelled while it carries recorded use (a used or issued quantity) breaks the
+/// rule "only a line with no recorded use is cancelled": it is a conflict, never applied silently.
+pub(crate) fn inbound_part_line_conflict(payload: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    if payload.get("consumption_status").and_then(serde_json::Value::as_str) != Some(PART_STATUS_CANCELLED) {
+        return None;
+    }
+    let qty = |key: &str| payload.get(key).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+    let (used, issued) = (qty("quantity_used"), qty("quantity_issued"));
+    (used > 0.0 || issued > 0.0)
+        .then(|| format!("a part line received as cancelled has recorded use (used {used}, issued {issued})"))
 }

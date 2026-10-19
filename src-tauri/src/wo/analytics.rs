@@ -261,7 +261,7 @@ pub async fn get_wo_analytics_snapshot(db: &impl ConnectionTrait, wo_id: i64) ->
             DbBackend::Sqlite,
             "SELECT \
                 (SELECT COUNT(*) FROM work_order_interveners WHERE work_order_id = ?) AS labor_cnt, \
-                (SELECT COUNT(*) FROM work_order_parts WHERE work_order_id = ?) AS parts_cnt, \
+                (SELECT COUNT(*) FROM work_order_parts WHERE work_order_id = ? AND consumption_status <> 'cancelled') AS parts_cnt, \
                 (SELECT COUNT(*) FROM work_order_attachments WHERE work_order_id = ?) AS attach_cnt, \
                 (SELECT COUNT(*) FROM work_order_tasks WHERE work_order_id = ?) AS task_cnt, \
                 (SELECT COUNT(*) FROM work_order_tasks WHERE work_order_id = ? AND is_mandatory = 1) AS mandatory_cnt, \

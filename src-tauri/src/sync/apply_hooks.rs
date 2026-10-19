@@ -11,6 +11,9 @@
 //! - `work_order_delay_segments`: before the apply, `hold_kind` must be `pause` or `prerequisite`
 //!   (anything else is refused as a conflict) and present (a row from an older app version without
 //!   it is deferred, never written with a guessed kind: it decides the PRD lifecycle state);
+//! - `work_order_parts`: a line received as cancelled while it carries a used or issued quantity
+//!   is refused as a conflict (only a line with no recorded use is cancelled,
+//!   `wo::parts::inbound_part_line_conflict`);
 //! - `app_settings`: a tenant setting whose change is locked here (fiscal start month, currency
 //!   once postings exist) is refused as a conflict (`before_upsert_checked`);
 //! - `reliability_study_decisions`: an approval by the decision's own proposer is refused as a
@@ -60,6 +63,12 @@ pub(crate) fn before_upsert(
                 message: format!("hold_kind must be 'pause' or 'prerequisite', got {other}"),
             }),
         },
+        "work_order_parts" => {
+            crate::wo::parts::inbound_part_line_conflict(payload).map(|message| ApplyOutcome::Conflict {
+                code: crate::wo::parts::part_line_codes::HAS_USE.into(),
+                message,
+            })
+        }
         _ => None,
     }
 }
