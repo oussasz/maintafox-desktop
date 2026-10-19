@@ -131,7 +131,10 @@
     "energyPlaceholder": "Choose the energy",
     "methodPlaceholder": "Choose the method",
     "optionsError": "The energy and method lists could not be loaded.",
-    "listsHint": "Energy types follow ISO 14118 / OSHA 1910.147; isolation methods are your site’s list (Reference data)."
+    "listsHint": "Energy types follow ISO 14118 / OSHA 1910.147; isolation methods are your site’s list (Reference data).",
+    "threePersonNotice": "Three-person rule: {{name}} verified this isolation and may not confirm its removal.",
+    "threePersonNoticeUnknown": "Three-person rule: the person who verified this isolation may not confirm its removal.",
+    "threePersonSelf": "You verified this isolation — a third person must confirm its removal."
   },
   "card": {
     "title": "LOTO card",
@@ -160,7 +163,7 @@
   },
   "handover": {
     "handedTo": "handed to",
-    "rolesHint": "Enter the role of the person handing over and of the one receiving (free text).",
+    "rolesHint": "Pick the role of the person handing over and of the one receiving, from the plant's hand-over roles.",
     "onlyWhenClosed": "The hand-over is recorded once the permit is closed.",
     "title": "Handovers",
     "empty": "No handover recorded.",
@@ -168,7 +171,24 @@
     "from": "Handed from (role)",
     "to": "Handed to (role)",
     "note": "Confirmation note",
-    "submit": "Record"
+    "submit": "Record",
+    "rolePlaceholder": "Choose a role…",
+    "roleToReview": "{{label}} (to review)",
+    "noRoles": "No hand-over role yet: an administrator must fill the list “Rôles de passation de permis” (permit hand-over roles) in Reference data.",
+    "signerYou": "Signed by you: {{name}}",
+    "signerSession": "Signed by you (the signed-in user).",
+    "receiver": "Receiving person (optional)",
+    "receiverNone": "Not named",
+    "receiverSearch": "Search a name…",
+    "receiverHint": "You sign the hand-over yourself; the receiving person cannot be you.",
+    "receiversPartial": "{{shown}} of {{total}} people shown: type a name to narrow the list.",
+    "receiversAll": "All {{total}} matching people shown.",
+    "receiversNone": "Nobody matches this name.",
+    "noteMin": "Write at least {{min}} characters.",
+    "noteCount": "{{length}} characters (at least {{min}}).",
+    "signedBy": "Signed by {{name}}",
+    "receivedBy": "received by {{name}}",
+    "signerNotRecorded": "Signer not recorded (hand-over recorded before signers were kept)"
   },
   "create": {
     "title": "New work permit",
@@ -209,7 +229,14 @@
     "disableReasonHint": "Only an administrator can do this; the password is asked again and the change is recorded in the audit log.",
     "energyIsolationShort": "Isolation",
     "yes": "Yes",
-    "no": "No"
+    "no": "No",
+    "threePerson": "Three-person rule: a third person confirms lock removal",
+    "threePersonShort": "3rd person",
+    "threePersonHint": "When on, the person who verified an isolation may not confirm its removal either: a third person must.",
+    "threePersonAdminOnly": "Only an administrator (settings right) can change this setting.",
+    "threePersonReason": "Why change the three-person rule?",
+    "threePersonReasonHint": "At least {{min}} characters. Your password is asked again and the change is recorded in the audit log.",
+    "reasonMin": "Write at least {{min}} characters."
   },
   "woGate": {
     "title": "Work permit",

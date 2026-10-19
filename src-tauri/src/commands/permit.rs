@@ -3,6 +3,7 @@
 use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
+use crate::auth::session_manager::AuthenticatedUser;
 use crate::errors::{AppError, AppResult};
 use crate::permit::domain::{
     LotoCardPrintInput, LotoCardPrintJob, LotoCardView, PermitComplianceKpi30d, PermitHandoverLog,
@@ -29,9 +30,18 @@ pub async fn list_permit_types(state: State<'_, AppState>) -> AppResult<Vec<Perm
 #[tauri::command]
 pub async fn upsert_permit_type(input: PermitTypeUpsertInput, state: State<'_, AppState>) -> AppResult<PermitType> {
     let user = require_session!(state);
+    upsert_permit_type_impl(&state, &user, input).await
+}
+
+/// `upsert_permit_type` once the session is known (tests call it with a session of their own).
+pub(crate) async fn upsert_permit_type_impl(
+    state: &AppState,
+    user: &AuthenticatedUser,
+    input: PermitTypeUpsertInput,
+) -> AppResult<PermitType> {
     require_permission!(
         state,
-        &user,
+        user,
         crate::rbac::permissions::PTW_ISSUE,
         PermissionScope::Global
     );
@@ -39,29 +49,37 @@ pub async fn upsert_permit_type(input: PermitTypeUpsertInput, state: State<'_, A
     crate::reference::audience::assert_module_catalog_editable(
         crate::reference::audience::MODULE_CATALOG_PERMIT_TYPES,
     )?;
-    // Switching the energy-isolation rule off weakens the start gate: administrator + step-up
-    // (the query refuses it otherwise, needs a reason and audits it; the LOTO type stays locked).
-    let mut may_relax_isolation = false;
-    if let Some(id) = input.id {
-        if let Some(current) = queries::get_permit_type(&state.db, id).await? {
-            if queries::relaxes_energy_isolation(&current, &input) {
-                require_permission!(
-                    state,
-                    &user,
-                    crate::rbac::permissions::ADM_SETTINGS,
-                    PermissionScope::Global
-                );
-                crate::require_step_up!(state);
-                may_relax_isolation = true;
-            }
-        }
+    // Switching the energy-isolation rule off weakens the start gate, and changing the
+    // three-person lock-removal chain (either way, or a new type with it on) changes who may
+    // confirm that locks came off: administrator + step-up (the query refuses it otherwise,
+    // needs a reason and audits it; the LOTO type keeps its isolation rule).
+    let current = match input.id {
+        Some(id) => queries::get_permit_type(&state.db, id).await?,
+        None => None,
+    };
+    let relaxes_isolation = current
+        .as_ref()
+        .is_some_and(|c| queries::relaxes_energy_isolation(c, &input));
+    let changes_three_person =
+        (input.id.is_none() || current.is_some()) && queries::changes_three_person_removal(current.as_ref(), &input);
+    // Checked below only when needed: true means `adm.settings` and a valid step-up were checked.
+    let admin_step_up = relaxes_isolation || changes_three_person;
+    if admin_step_up {
+        require_permission!(
+            state,
+            user,
+            crate::rbac::permissions::ADM_SETTINGS,
+            PermissionScope::Global
+        );
+        crate::require_step_up!(state);
     }
     queries::upsert_permit_type(
         &state.db,
         input,
         queries::PermitTypeWriter {
             actor_id: i64::from(user.user_id),
-            may_relax_isolation,
+            may_relax_isolation: admin_step_up,
+            may_change_three_person: admin_step_up,
         },
     )
     .await

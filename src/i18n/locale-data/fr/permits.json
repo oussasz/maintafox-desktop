@@ -131,7 +131,10 @@
     "energyPlaceholder": "Choisir l’énergie",
     "methodPlaceholder": "Choisir la méthode",
     "optionsError": "Les listes des énergies et des méthodes n’ont pas pu être chargées.",
-    "listsHint": "Types d’énergie selon ISO 14118 / OSHA 1910.147 ; les méthodes d’isolement sont la liste de votre site (Données de référence)."
+    "listsHint": "Types d’énergie selon ISO 14118 / OSHA 1910.147 ; les méthodes d’isolement sont la liste de votre site (Données de référence).",
+    "threePersonNotice": "Règle des trois personnes : {{name}} a vérifié cette isolation et ne peut pas confirmer son retrait.",
+    "threePersonNoticeUnknown": "Règle des trois personnes : la personne qui a vérifié cette isolation ne peut pas confirmer son retrait.",
+    "threePersonSelf": "Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait."
   },
   "card": {
     "title": "Fiche LOTO",
@@ -160,7 +163,7 @@
   },
   "handover": {
     "handedTo": "remis à",
-    "rolesHint": "Indiquez la fonction de la personne qui remet et de celle qui reçoit (texte libre).",
+    "rolesHint": "Choisissez la fonction de la personne qui remet et de celle qui reçoit parmi les rôles de passation de l’usine.",
     "onlyWhenClosed": "La remise se consigne une fois le permis clôturé.",
     "title": "Mainlevées / passations",
     "empty": "Aucune passation enregistrée.",
@@ -168,7 +171,24 @@
     "from": "Remis par (rôle)",
     "to": "Remis à (rôle)",
     "note": "Note de confirmation",
-    "submit": "Enregistrer"
+    "submit": "Enregistrer",
+    "rolePlaceholder": "Choisir un rôle…",
+    "roleToReview": "{{label}} (à revoir)",
+    "noRoles": "Aucun rôle de passation : un administrateur doit remplir la liste « Rôles de passation de permis » dans Données de référence.",
+    "signerYou": "Signée par vous : {{name}}",
+    "signerSession": "Signée par vous (l’utilisateur connecté).",
+    "receiver": "Personne qui reçoit (facultatif)",
+    "receiverNone": "Non nommée",
+    "receiverSearch": "Rechercher un nom…",
+    "receiverHint": "Vous signez vous-même la passation ; la personne qui reçoit ne peut pas être vous.",
+    "receiversPartial": "{{shown}} personnes affichées sur {{total}} : tapez un nom pour affiner la liste.",
+    "receiversAll": "Les {{total}} personnes correspondantes sont affichées.",
+    "receiversNone": "Personne ne correspond à ce nom.",
+    "noteMin": "Écrivez au moins {{min}} caractères.",
+    "noteCount": "{{length}} caractères (au moins {{min}}).",
+    "signedBy": "Signée par {{name}}",
+    "receivedBy": "reçue par {{name}}",
+    "signerNotRecorded": "Signataire non enregistré (passation antérieure à l’enregistrement des signataires)"
   },
   "create": {
     "title": "Nouveau permis de travail",
@@ -209,7 +229,14 @@
     "disableReasonHint": "Réservé à un administrateur : le mot de passe est redemandé et la modification est tracée dans le journal d’audit.",
     "energyIsolationShort": "Isolation",
     "yes": "Oui",
-    "no": "Non"
+    "no": "Non",
+    "threePerson": "Règle des trois personnes : une troisième personne confirme le retrait des cadenas",
+    "threePersonShort": "3e personne",
+    "threePersonHint": "Activé : la personne qui a vérifié une isolation ne peut pas non plus confirmer son retrait ; une troisième personne doit le faire.",
+    "threePersonAdminOnly": "Seul un administrateur (droit paramètres) peut modifier ce réglage.",
+    "threePersonReason": "Pourquoi modifier la règle des trois personnes ?",
+    "threePersonReasonHint": "Au moins {{min}} caractères. Votre mot de passe est redemandé et la modification est inscrite au journal d’audit.",
+    "reasonMin": "Écrivez au moins {{min}} caractères."
   },
   "woGate": {
     "title": "Permis de travail",

@@ -65,6 +65,8 @@ const svc = vi.hoisted(() => ({
   getWorkPermit: vi.fn(),
   listPermitSuspensions: vi.fn(),
   listPermitHandoverLogs: vi.fn(),
+  listPermitHandoverRoles: vi.fn(),
+  listPermitHandoverReceivers: vi.fn(),
   getLotoCardView: vi.fn(),
   recordLotoCardPrint: vi.fn(),
   setWorkPermitStatus: vi.fn(),
@@ -112,6 +114,7 @@ const LOTO_TYPE: PermitTypeRecord = {
   mandatory_ppe_ids_json: "[]",
   mandatory_control_rules_json: "{}",
   requires_energy_isolation: true,
+  requires_three_person_removal: false,
   row_version: 1,
 };
 
@@ -166,6 +169,7 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
     asset_label: "Feed pump",
     linked_work_order_code: "OT-0042",
     permit_type_requires_energy_isolation: true,
+    permit_type_requires_three_person_removal: false,
     ...overrides,
   };
 }

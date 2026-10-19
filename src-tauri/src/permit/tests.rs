@@ -26,11 +26,13 @@ pub(super) const VERIFIER: i64 = 2;
 const EDITOR: queries::PermitTypeWriter = queries::PermitTypeWriter {
     actor_id: APPLIER,
     may_relax_isolation: false,
+    may_change_three_person: false,
 };
 /// An administrator with a valid step-up (checked by the command).
 const ADMIN_STEP_UP: queries::PermitTypeWriter = queries::PermitTypeWriter {
     actor_id: APPLIER,
     may_relax_isolation: true,
+    may_change_three_person: true,
 };
 
 pub(super) async fn setup() -> DatabaseConnection {
@@ -993,6 +995,8 @@ async fn the_isolation_rule_is_the_type_flag_and_the_loto_type_keeps_it() {
             mandatory_control_rules_json: Some(hot.mandatory_control_rules_json.clone()),
             requires_energy_isolation: Some(true),
             disable_isolation_reason: None,
+            requires_three_person_removal: None,
+            three_person_change_reason: None,
         },
         EDITOR,
     )
@@ -1019,6 +1023,8 @@ async fn the_isolation_rule_is_the_type_flag_and_the_loto_type_keeps_it() {
             mandatory_control_rules_json: None,
             requires_energy_isolation: None,
             disable_isolation_reason: None,
+            requires_three_person_removal: None,
+            three_person_change_reason: None,
         },
         EDITOR,
     )
@@ -1254,6 +1260,8 @@ fn type_input(
         mandatory_control_rules_json: None,
         requires_energy_isolation: requires,
         disable_isolation_reason: reason.map(str::to_string),
+        requires_three_person_removal: None,
+        three_person_change_reason: None,
     }
 }
 
@@ -1479,4 +1487,543 @@ async fn handover_receivers_are_other_active_accounts_by_name() {
         .await
         .expect("page 2");
     assert_eq!(second.items[0].display_name, "Béa Operations");
+}
+
+// ── Three-person LOTO chain, a setting of each permit type (migration 236) ──
+
+const CHAIN_ON: &str = "permit_type.three_person_removal.enabled";
+const CHAIN_OFF: &str = "permit_type.three_person_removal.disabled";
+const GOOD_REASON: &str = "Site rule after the 2026 LOTO audit";
+
+async fn audit_count(db: &DatabaseConnection, action_code: &str) -> i64 {
+    scalar_i64(
+        db,
+        &format!("SELECT COUNT(*) FROM audit_events WHERE action_code = '{action_code}'"),
+    )
+    .await
+}
+
+fn chain_input(
+    t: &crate::permit::domain::PermitType,
+    chain: Option<bool>,
+    reason: Option<&str>,
+) -> crate::permit::domain::PermitTypeUpsertInput {
+    let mut input = type_input(t, None, None);
+    input.requires_three_person_removal = chain;
+    input.three_person_change_reason = reason.map(str::to_string);
+    input
+}
+
+fn new_type_input(
+    code: &str,
+    chain: Option<bool>,
+    reason: Option<&str>,
+) -> crate::permit::domain::PermitTypeUpsertInput {
+    crate::permit::domain::PermitTypeUpsertInput {
+        id: None,
+        code: code.into(),
+        name: format!("Type {code}"),
+        description: None,
+        requires_hse_approval: false,
+        requires_operations_approval: false,
+        requires_atmospheric_test: false,
+        max_duration_hours: None,
+        mandatory_ppe_ids_json: None,
+        mandatory_control_rules_json: None,
+        requires_energy_isolation: None,
+        disable_isolation_reason: None,
+        requires_three_person_removal: chain,
+        three_person_change_reason: reason.map(str::to_string),
+    }
+}
+
+#[tokio::test]
+async fn the_three_person_chain_is_off_on_every_existing_type() {
+    let db = setup().await;
+    let types = queries::list_permit_types(&db).await.expect("types");
+    assert!(!types.is_empty());
+    assert!(types.iter().all(|t| !t.requires_three_person_removal), "{types:?}");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM permit_types WHERE requires_three_person_removal <> 0"
+        )
+        .await,
+        0
+    );
+    // NOT NULL DEFAULT 0, and only 0 / 1.
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM pragma_table_info('permit_types') \
+             WHERE name = 'requires_three_person_removal' AND \"notnull\" = 1 AND dflt_value = '0'"
+        )
+        .await,
+        1
+    );
+    let bad = db
+        .execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "UPDATE permit_types SET requires_three_person_removal = 2 WHERE code = 'loto'".to_string(),
+        ))
+        .await;
+    assert!(bad.is_err(), "the CHECK refuses a value other than 0 / 1");
+}
+
+#[tokio::test]
+async fn creating_a_type_with_the_three_person_chain_needs_an_administrator_a_reason_and_is_audited() {
+    let db = setup().await;
+    let before = audit_count(&db, CHAIN_ON).await;
+
+    let err = queries::upsert_permit_type(&db, new_type_input("chain_a", Some(true), Some(GOOD_REASON)), EDITOR)
+        .await
+        .expect_err("no adm.settings / step-up");
+    assert_eq!(refusal_code(err), "PERMIT_TYPE_THREE_PERSON_FORBIDDEN");
+    for reason in [None, Some("   "), Some("too short")] {
+        let err = queries::upsert_permit_type(&db, new_type_input("chain_a", Some(true), reason), ADMIN_STEP_UP)
+            .await
+            .expect_err("reason");
+        assert_eq!(refusal_code(err), "PERMIT_TYPE_THREE_PERSON_REASON", "{reason:?}");
+    }
+    assert_eq!(
+        scalar_i64(&db, "SELECT COUNT(*) FROM permit_types WHERE code = 'chain_a'").await,
+        0,
+        "nothing written on a refusal"
+    );
+
+    let created = queries::upsert_permit_type(
+        &db,
+        new_type_input("chain_a", Some(true), Some(GOOD_REASON)),
+        ADMIN_STEP_UP,
+    )
+    .await
+    .expect("administrator creates it with the chain");
+    assert!(created.requires_three_person_removal);
+    assert_eq!(audit_count(&db, CHAIN_ON).await, before + 1);
+    let details: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT details_json FROM audit_events WHERE action_code = ? AND target_id = ? \
+             AND auth_context = 'step_up' AND actor_id = ?",
+            [CHAIN_ON.into(), created.id.to_string().into(), APPLIER.into()],
+        ))
+        .await
+        .expect("q")
+        .expect("audit row of the new type")
+        .try_get("", "details_json")
+        .expect("details");
+    let details: serde_json::Value = serde_json::from_str(&details).expect("json");
+    assert_eq!(details["reason"], GOOD_REASON);
+    assert_eq!(details["after"], true);
+    assert!(details["before"].is_null(), "a new type had no setting before");
+
+    // Omitted or off on a new type: the default, no guard, nothing audited.
+    let plain = queries::upsert_permit_type(&db, new_type_input("chain_b", None, None), EDITOR)
+        .await
+        .expect("omitted");
+    assert!(!plain.requires_three_person_removal);
+    let off = queries::upsert_permit_type(&db, new_type_input("chain_c", Some(false), None), EDITOR)
+        .await
+        .expect("explicitly off");
+    assert!(!off.requires_three_person_removal);
+    assert_eq!(audit_count(&db, CHAIN_ON).await, before + 1);
+    assert_eq!(audit_count(&db, CHAIN_OFF).await, 0);
+}
+
+#[tokio::test]
+async fn changing_the_three_person_chain_is_guarded_both_ways_and_an_unchanged_value_is_not() {
+    let db = setup().await;
+    let types = queries::list_permit_types(&db).await.expect("types");
+    let hot = types.iter().find(|t| t.code == "hot_work").expect("hot").clone();
+
+    // On: refused without the administrator right + step-up, then without a long enough reason.
+    let err = queries::upsert_permit_type(&db, chain_input(&hot, Some(true), Some(GOOD_REASON)), EDITOR)
+        .await
+        .expect_err("editor");
+    assert_eq!(refusal_code(err), "PERMIT_TYPE_THREE_PERSON_FORBIDDEN");
+    let err = queries::upsert_permit_type(&db, chain_input(&hot, Some(true), Some("short")), ADMIN_STEP_UP)
+        .await
+        .expect_err("short reason");
+    assert_eq!(refusal_code(err), "PERMIT_TYPE_THREE_PERSON_REASON");
+    let hot_now = queries::get_permit_type(&db, hot.id).await.expect("read").expect("hot");
+    assert!(!hot_now.requires_three_person_removal);
+    assert_eq!(hot_now.row_version, hot.row_version, "nothing written on a refusal");
+
+    let on = queries::upsert_permit_type(&db, chain_input(&hot, Some(true), Some(GOOD_REASON)), ADMIN_STEP_UP)
+        .await
+        .expect("administrator turns it on");
+    assert!(on.requires_three_person_removal);
+    assert_eq!(audit_count(&db, CHAIN_ON).await, 1);
+
+    // Omitted: unchanged, no guard. Same value: no change, no guard. Neither is audited.
+    let renamed = queries::upsert_permit_type(&db, chain_input(&on, None, None), EDITOR)
+        .await
+        .expect("omitted");
+    assert!(
+        renamed.requires_three_person_removal,
+        "an update without the field keeps it"
+    );
+    let same = queries::upsert_permit_type(&db, chain_input(&renamed, Some(true), None), EDITOR)
+        .await
+        .expect("same value");
+    assert!(same.requires_three_person_removal);
+    assert_eq!(audit_count(&db, CHAIN_ON).await, 1);
+
+    // Off: same guards.
+    let err = queries::upsert_permit_type(&db, chain_input(&same, Some(false), Some(GOOD_REASON)), EDITOR)
+        .await
+        .expect_err("editor");
+    assert_eq!(refusal_code(err), "PERMIT_TYPE_THREE_PERSON_FORBIDDEN");
+    let err = queries::upsert_permit_type(&db, chain_input(&same, Some(false), None), ADMIN_STEP_UP)
+        .await
+        .expect_err("no reason");
+    assert_eq!(refusal_code(err), "PERMIT_TYPE_THREE_PERSON_REASON");
+    // A later change (the one above was recorded within this second: a change in the same second
+    // is refused, `a_three_person_change_is_refused_when_this_pcs_clock_is_behind_the_last_change`).
+    backdate_three_person_change(&db, same.id).await;
+    let off = queries::upsert_permit_type(&db, chain_input(&same, Some(false), Some(GOOD_REASON)), ADMIN_STEP_UP)
+        .await
+        .expect("administrator turns it off");
+    assert!(!off.requires_three_person_removal);
+    assert_eq!(audit_count(&db, CHAIN_OFF).await, 1);
+    let same_off = queries::upsert_permit_type(&db, chain_input(&off, Some(false), None), EDITOR)
+        .await
+        .expect("same value (off)");
+    assert!(!same_off.requires_three_person_removal);
+    assert_eq!(audit_count(&db, CHAIN_OFF).await, 1);
+}
+
+/// The type row itself says who last changed the three-person setting, when and why (migration
+/// 238, sent with the type and re-checked on arrival); a save that does not change it keeps them.
+#[tokio::test]
+async fn a_change_of_the_three_person_chain_is_recorded_on_the_type() {
+    let db = setup().await;
+    let types = queries::list_permit_types(&db).await.expect("types");
+    let hot = types.iter().find(|t| t.code == "hot_work").expect("hot").clone();
+    let trace = |id: i64| {
+        let db = &db;
+        async move {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT three_person_changed_by_id AS by_id, three_person_changed_at AS at, \
+                     three_person_change_reason AS reason FROM permit_types WHERE id = ?",
+                    [id.into()],
+                ))
+                .await
+                .expect("q")
+                .expect("row");
+            (
+                row.try_get::<Option<i64>>("", "by_id").expect("by"),
+                row.try_get::<Option<String>>("", "at").expect("at"),
+                row.try_get::<Option<String>>("", "reason").expect("reason"),
+            )
+        }
+    };
+    assert_eq!(
+        trace(hot.id).await,
+        (None, None, None),
+        "never changed: nobody invented"
+    );
+
+    let padded = format!("  {GOOD_REASON}  ");
+    let on = queries::upsert_permit_type(&db, chain_input(&hot, Some(true), Some(&padded)), ADMIN_STEP_UP)
+        .await
+        .expect("on");
+    let (by, at, reason) = trace(on.id).await;
+    assert_eq!(by, Some(APPLIER));
+    assert!(
+        at.as_deref().and_then(crate::settings::site::instant).is_some(),
+        "{at:?}"
+    );
+    assert_eq!(reason.as_deref(), Some(GOOD_REASON), "stored trimmed");
+
+    let renamed = queries::upsert_permit_type(&db, chain_input(&on, None, None), EDITOR)
+        .await
+        .expect("plain edit");
+    assert_eq!(
+        trace(renamed.id).await,
+        (by, at, reason),
+        "kept by a save that does not change it"
+    );
+
+    let created = queries::upsert_permit_type(
+        &db,
+        new_type_input("chain_t", Some(true), Some(GOOD_REASON)),
+        ADMIN_STEP_UP,
+    )
+    .await
+    .expect("new type with the chain");
+    let (by, _, reason) = trace(created.id).await;
+    assert_eq!((by, reason.as_deref()), (Some(APPLIER), Some(GOOD_REASON)));
+    let plain = queries::upsert_permit_type(&db, new_type_input("chain_u", None, None), EDITOR)
+        .await
+        .expect("new type without it");
+    assert_eq!(trace(plain.id).await, (None, None, None));
+}
+
+/// A plant-wide role holding `permissions`, granted to a new active account.
+async fn user_with(db: &DatabaseConnection, username: &str, permissions: &[&str]) -> i64 {
+    for (sql, values) in [
+        (
+            "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+             force_password_change, created_at, updated_at) VALUES (?, ?, ?, 'local', 1, 0, 0, datetime('now'), datetime('now'))",
+            vec![format!("{username}-sync").into(), username.into(), username.into()],
+        ),
+        (
+            "INSERT INTO roles (entity_sync_id, name, description, is_system, role_type, status, created_at, updated_at) \
+             VALUES (?, ?, '', 0, 'custom', 'active', datetime('now'), datetime('now'))",
+            vec![format!("{username}-role").into(), format!("{username}-role").into()],
+        ),
+    ] {
+        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+            .await
+            .expect("insert");
+    }
+    let user = scalar_i64(
+        db,
+        &format!("SELECT id FROM user_accounts WHERE username = '{username}'"),
+    )
+    .await;
+    let role = scalar_i64(db, &format!("SELECT id FROM roles WHERE name = '{username}-role'")).await;
+    for p in permissions {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO role_permissions (role_id, permission_id, granted_at) \
+             SELECT ?, id, datetime('now') FROM permissions WHERE name = ?",
+            [role.into(), (*p).into()],
+        ))
+        .await
+        .expect("grant");
+    }
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at) \
+         VALUES (?, ?, ?, 'tenant', datetime('now'), datetime('now'))",
+        [format!("{username}-usa").into(), user.into(), role.into()],
+    ))
+    .await
+    .expect("assign");
+    user
+}
+
+fn session_user(id: i64, username: &str, is_admin: bool) -> crate::auth::session_manager::AuthenticatedUser {
+    crate::auth::session_manager::AuthenticatedUser {
+        user_id: i32::try_from(id).expect("fits"),
+        username: username.into(),
+        display_name: None,
+        is_admin,
+        force_password_change: false,
+        tenant_id: "tenant-test".into(),
+        token_tenant_id: "tenant-test".into(),
+    }
+}
+
+/// The command asks `adm.settings` and a step-up only when the setting changes.
+#[tokio::test]
+async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_chain() {
+    let db = setup().await;
+    let hot = queries::list_permit_types(&db)
+        .await
+        .expect("types")
+        .into_iter()
+        .find(|t| t.code == "hot_work")
+        .expect("hot");
+
+    // A permit issuer without adm.settings: a plain edit passes, the chain change is refused.
+    let issuer_id = user_with(&db, "ptw_issuer_only", &[crate::rbac::permissions::PTW_ISSUE]).await;
+    let issuer = session_user(issuer_id, "ptw_issuer_only", false);
+    let state = crate::state::AppState::new(db.clone());
+    state.session.write().await.create_session(issuer.clone());
+    let renamed = crate::commands::permit::upsert_permit_type_impl(&state, &issuer, chain_input(&hot, None, None))
+        .await
+        .expect("plain edit without adm.settings");
+    let err = crate::commands::permit::upsert_permit_type_impl(
+        &state,
+        &issuer,
+        chain_input(&renamed, Some(true), Some(GOOD_REASON)),
+    )
+    .await
+    .expect_err("no adm.settings");
+    assert!(matches!(err, AppError::PermissionDenied(_)), "{err:?}");
+
+    // The administrator: refused until the step-up, then accepted (and audited).
+    let admin = session_user(APPLIER, "admin", true);
+    let state = crate::state::AppState::new(db.clone());
+    state.session.write().await.create_session(admin.clone());
+    let err = crate::commands::permit::upsert_permit_type_impl(
+        &state,
+        &admin,
+        chain_input(&renamed, Some(true), Some(GOOD_REASON)),
+    )
+    .await
+    .expect_err("no step-up");
+    assert!(matches!(err, AppError::StepUpRequired), "{err:?}");
+    let err = crate::commands::permit::upsert_permit_type_impl(
+        &state,
+        &admin,
+        new_type_input("chain_cmd", Some(true), Some(GOOD_REASON)),
+    )
+    .await
+    .expect_err("a new type with the chain: no step-up");
+    assert!(matches!(err, AppError::StepUpRequired), "{err:?}");
+    state.session.write().await.record_step_up();
+    let on = crate::commands::permit::upsert_permit_type_impl(
+        &state,
+        &admin,
+        chain_input(&renamed, Some(true), Some(GOOD_REASON)),
+    )
+    .await
+    .expect("administrator with step-up");
+    assert!(on.requires_three_person_removal);
+    assert_eq!(audit_count(&db, CHAIN_ON).await, 1);
+}
+
+/// Turns the three-person chain on for the LOTO type (administrator, step-up, reason).
+async fn loto_with_three_person_chain(db: &DatabaseConnection) {
+    let loto = queries::list_permit_types(db)
+        .await
+        .expect("types")
+        .into_iter()
+        .find(|t| t.code == "loto")
+        .expect("loto");
+    let on = queries::upsert_permit_type(db, chain_input(&loto, Some(true), Some(GOOD_REASON)), ADMIN_STEP_UP)
+        .await
+        .expect("chain on");
+    assert!(on.requires_three_person_removal);
+}
+
+#[tokio::test]
+async fn with_the_three_person_chain_the_isolation_verifier_cannot_verify_the_removal() {
+    let db = setup().await;
+    loto_with_three_person_chain(&db).await;
+    let third = user_with(&db, "ptw_third_person", &[]).await;
+    let (wp, iso) = active_loto_permit(&db, "EQ-PTW-90").await;
+    assert!(wp.permit_type_requires_three_person_removal);
+    assert_eq!(iso.verified_by_id, Some(VERIFIER));
+    assert_eq!(
+        iso.verified_by_name.as_deref(),
+        Some("PTW Verifier"),
+        "the dialog can name who may not confirm"
+    );
+
+    let err = queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER)
+        .await
+        .expect_err("verifier");
+    assert_eq!(refusal_code(err), "PERMIT_THREE_PERSON_REMOVAL");
+    // The two-person rule stays.
+    let err = queries::verify_permit_isolation_removal(&db, action(&iso), APPLIER)
+        .await
+        .expect_err("applier");
+    assert_eq!(refusal_code(err), "PERMIT_TWO_PERSON_REMOVAL");
+
+    let removed = queries::verify_permit_isolation_removal(&db, action(&iso), third)
+        .await
+        .expect("a third person verifies the removal");
+    assert_eq!(removed.removal_verified_by_id, Some(third));
+    assert!(removed.removal_verified_at.is_some());
+}
+
+#[tokio::test]
+async fn without_the_three_person_chain_the_verifier_may_verify_the_removal() {
+    let db = setup().await;
+    let (wp, iso) = active_loto_permit(&db, "EQ-PTW-91").await;
+    assert!(!wp.permit_type_requires_three_person_removal, "off by default");
+    let err = queries::verify_permit_isolation_removal(&db, action(&iso), APPLIER)
+        .await
+        .expect_err("applier");
+    assert_eq!(refusal_code(err), "PERMIT_TWO_PERSON_REMOVAL");
+    let removed = queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER)
+        .await
+        .expect("two-person rule only");
+    assert_eq!(removed.removal_verified_by_id, Some(VERIFIER));
+}
+
+/// A three-person change is recorded at this PC's time; when the change already recorded for the
+/// type is not earlier (this PC's clock is behind), it is refused here with the time to wait for,
+/// instead of being shown as made here and refused on every other PC. An unreadable recorded time
+/// is replaced by the new record.
+#[tokio::test]
+async fn a_three_person_change_is_refused_when_this_pcs_clock_is_behind_the_last_change() {
+    let db = setup().await;
+    let hot = queries::list_permit_types(&db)
+        .await
+        .expect("types")
+        .into_iter()
+        .find(|t| t.code == "hot_work")
+        .expect("hot_work");
+    let ahead = (chrono::Utc::now() + chrono::Duration::minutes(5))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let set_held = |at: &str| {
+        let db = &db;
+        let sql = format!(
+            "UPDATE permit_types SET three_person_changed_at = '{at}', three_person_changed_by_id = {APPLIER}, \
+             three_person_change_reason = 'Changed on a PC ahead in time' WHERE id = {}",
+            hot.id
+        );
+        async move {
+            db.execute(Statement::from_string(DbBackend::Sqlite, sql))
+                .await
+                .expect("held record");
+        }
+    };
+    set_held(&ahead).await;
+    let err = queries::upsert_permit_type(&db, chain_input(&hot, Some(true), Some(GOOD_REASON)), ADMIN_STEP_UP)
+        .await
+        .expect_err("clock behind");
+    match err {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, "PERMIT_TYPE_THREE_PERSON_CLOCK_BEHIND");
+            assert_eq!(issues[0].params.get("last"), Some(&ahead));
+            assert_eq!(issues[0].params.get("type"), Some(&hot.code));
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+    let still_off = queries::get_permit_type(&db, hot.id).await.expect("q").expect("type");
+    assert!(!still_off.requires_three_person_removal, "nothing written");
+    // A plain edit (setting unchanged) is not a change of the setting: allowed.
+    let mut renamed = type_input(&still_off, None, None);
+    renamed.name = "Hot work (renamed)".into();
+    queries::upsert_permit_type(&db, renamed, EDITOR)
+        .await
+        .expect("plain edit");
+
+    // An unreadable recorded time: replaced by the new, readable record.
+    set_held("not a time").await;
+    let current = queries::get_permit_type(&db, hot.id).await.expect("q").expect("type");
+    let on = queries::upsert_permit_type(&db, chain_input(&current, Some(true), Some(GOOD_REASON)), ADMIN_STEP_UP)
+        .await
+        .expect("unreadable held time");
+    assert!(on.requires_three_person_removal);
+    let at = scalar_text(
+        &db,
+        &format!("SELECT three_person_changed_at FROM permit_types WHERE id = {}", hot.id),
+    )
+    .await;
+    assert!(crate::settings::site::instant(&at).is_some(), "{at}");
+}
+
+async fn scalar_text(db: &DatabaseConnection, sql: &str) -> String {
+    db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get_by_index::<String>(0)
+        .expect("text")
+}
+
+/// Moves the recorded time of a type's last three-person change one minute back (tests that make
+/// two changes of the same type within one second).
+async fn backdate_three_person_change(db: &DatabaseConnection, type_id: i64) {
+    let earlier = (chrono::Utc::now() - chrono::Duration::minutes(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE permit_types SET three_person_changed_at = ? WHERE id = ?",
+        [earlier.into(), type_id.into()],
+    ))
+    .await
+    .expect("backdate");
 }

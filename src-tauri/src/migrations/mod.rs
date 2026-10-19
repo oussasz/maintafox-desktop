@@ -211,7 +211,9 @@ mod m20261018_000231_part_lines_required;
 mod m20261018_000232_inventory_count_tolerances;
 mod m20261018_000233_wo_permit_rule_flag;
 mod m20261018_000235_permit_handover_signer_roles;
+mod m20261018_000236_permit_three_person_removal;
 mod m20261018_000237_ram_quality_view_trimmed_nature;
+mod m20261019_000238_permit_type_three_person_author;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -436,7 +438,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20261018_000232_inventory_count_tolerances::Migration),
             Box::new(m20261018_000233_wo_permit_rule_flag::Migration),
             Box::new(m20261018_000235_permit_handover_signer_roles::Migration),
+            Box::new(m20261018_000236_permit_three_person_removal::Migration),
             Box::new(m20261018_000237_ram_quality_view_trimmed_nature::Migration),
+            Box::new(m20261019_000238_permit_type_three_person_author::Migration),
         ]
     }
 }

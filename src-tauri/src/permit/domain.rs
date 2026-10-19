@@ -17,6 +17,10 @@ pub struct PermitType {
     /// (LOTO; migration 225, formerly a rule on the code `loto`).
     #[serde(default)]
     pub requires_energy_isolation: bool,
+    /// Three-person LOTO chain (migration 236, off by default): the person who verifies a lock
+    /// removal must differ from the isolation's applier (always) and from its verifier.
+    #[serde(default)]
+    pub requires_three_person_removal: bool,
     pub row_version: i64,
 }
 
@@ -51,6 +55,9 @@ pub struct WorkPermit {
     /// The type's `requires_energy_isolation` (the start gate needs an isolation).
     #[serde(default)]
     pub permit_type_requires_energy_isolation: bool,
+    /// The type's `requires_three_person_removal` (lock removal verified by a third person).
+    #[serde(default)]
+    pub permit_type_requires_three_person_removal: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +173,13 @@ pub struct PermitTypeUpsertInput {
     /// Required (with `adm.settings` + step-up) when switching the energy-isolation rule off.
     #[serde(default)]
     pub disable_isolation_reason: Option<String>,
+    /// Three-person lock-removal chain. Omitted on update: unchanged. Omitted on create: false.
+    #[serde(default)]
+    pub requires_three_person_removal: Option<bool>,
+    /// Required (with `adm.settings` + step-up) whenever the three-person setting changes,
+    /// including creating a type with it on.
+    #[serde(default)]
+    pub three_person_change_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

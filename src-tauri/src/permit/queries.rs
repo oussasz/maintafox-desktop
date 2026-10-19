@@ -56,6 +56,7 @@ const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.l
      wp.activated_at, wp.expires_at, wp.closed_at, wp.handed_back_at, wp.row_version, \
      pt.code AS permit_type_code, pt.name AS permit_type_name, \
      COALESCE(pt.requires_energy_isolation, 0) AS permit_type_requires_energy_isolation, \
+     COALESCE(pt.requires_three_person_removal, 0) AS permit_type_requires_three_person_removal, \
      e.asset_id_code AS asset_code, e.name AS asset_label, wo.code AS linked_work_order_code \
      FROM work_permits wp \
      LEFT JOIN permit_types pt ON pt.id = wp.permit_type_id \
@@ -228,6 +229,10 @@ fn map_permit_type(row: &sea_orm::QueryResult) -> AppResult<PermitType> {
             row.try_get::<i64>("", "requires_energy_isolation")
                 .map_err(|e| decode_err("requires_energy_isolation", e))?,
         ),
+        requires_three_person_removal: i64_to_bool(
+            row.try_get::<i64>("", "requires_three_person_removal")
+                .map_err(|e| decode_err("requires_three_person_removal", e))?,
+        ),
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -265,6 +270,10 @@ fn map_work_permit(row: &sea_orm::QueryResult) -> AppResult<WorkPermit> {
         permit_type_requires_energy_isolation: i64_to_bool(
             row.try_get::<i64>("", "permit_type_requires_energy_isolation")
                 .map_err(|e| decode_err("permit_type_requires_energy_isolation", e))?,
+        ),
+        permit_type_requires_three_person_removal: i64_to_bool(
+            row.try_get::<i64>("", "permit_type_requires_three_person_removal")
+                .map_err(|e| decode_err("permit_type_requires_three_person_removal", e))?,
         ),
     })
 }
@@ -743,7 +752,8 @@ pub async fn list_permit_types(db: &impl ConnectionTrait) -> AppResult<Vec<Permi
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, code, name, description, requires_hse_approval, \
              requires_operations_approval, requires_atmospheric_test, max_duration_hours, \
-             mandatory_ppe_ids_json, mandatory_control_rules_json, requires_energy_isolation, row_version \
+             mandatory_ppe_ids_json, mandatory_control_rules_json, requires_energy_isolation, \
+             requires_three_person_removal, row_version \
              FROM permit_types ORDER BY code ASC"
                 .to_string(),
         ))
@@ -761,7 +771,8 @@ pub async fn get_permit_type(db: &impl ConnectionTrait, id: i64) -> AppResult<Op
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, code, name, description, requires_hse_approval, \
              requires_operations_approval, requires_atmospheric_test, max_duration_hours, \
-             mandatory_ppe_ids_json, mandatory_control_rules_json, requires_energy_isolation, row_version \
+             mandatory_ppe_ids_json, mandatory_control_rules_json, requires_energy_isolation, \
+             requires_three_person_removal, row_version \
              FROM permit_types WHERE id = ?",
             [id.into()],
         ))
@@ -776,11 +787,24 @@ pub struct PermitTypeWriter {
     /// The caller holds `adm.settings` and a valid step-up: only then may the energy-isolation
     /// rule of a type be switched off.
     pub may_relax_isolation: bool,
+    /// The caller holds `adm.settings` and a valid step-up: only then may the three-person
+    /// lock-removal setting of a type be changed (either way, including on a new type).
+    pub may_change_three_person: bool,
 }
 
 /// True when the save would switch the energy-isolation rule of an existing type off.
 pub fn relaxes_energy_isolation(current: &PermitType, input: &PermitTypeUpsertInput) -> bool {
     current.requires_energy_isolation && input.requires_energy_isolation == Some(false)
+}
+
+/// True when the save would change the three-person lock-removal setting: on a new type
+/// (`current` is `None`) when it asks for it, on an existing type when it sends another value.
+pub fn changes_three_person_removal(current: Option<&PermitType>, input: &PermitTypeUpsertInput) -> bool {
+    match (current, input.requires_three_person_removal) {
+        (_, None) => false,
+        (None, Some(wanted)) => wanted,
+        (Some(current), Some(wanted)) => wanted != current.requires_three_person_removal,
+    }
 }
 
 pub async fn upsert_permit_type(
@@ -852,17 +876,158 @@ async fn guard_isolation_relax(
     Ok(())
 }
 
+/// The three-person lock-removal chain changes who may confirm that locks came off: changing it
+/// (either way, or creating a type with it on) needs an administrator with step-up and a reason
+/// of at least [`crate::settings::catalog::MIN_REASON_CHARS`] characters. Returns the reason
+/// when the save changes the setting (audited once the row is written, `audit_three_person_change`).
+fn guard_three_person_change(
+    current: Option<&PermitType>,
+    input: &PermitTypeUpsertInput,
+    writer: PermitTypeWriter,
+) -> AppResult<Option<String>> {
+    if !changes_three_person_removal(current, input) {
+        return Ok(None);
+    }
+    let type_label = current.map_or_else(|| input.code.trim().to_string(), |c| c.code.clone());
+    let params = std::collections::HashMap::from([("type".to_string(), type_label)]);
+    if !writer.may_change_three_person {
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_TYPE_THREE_PERSON_FORBIDDEN",
+            "Only an administrator (with step-up) can change the three-person lock-removal rule.",
+            params,
+        ));
+    }
+    let reason = input
+        .three_person_change_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| r.chars().count() >= crate::settings::catalog::MIN_REASON_CHARS)
+        .ok_or_else(|| {
+            crate::errors::org_validation_failed(
+                "PERMIT_TYPE_THREE_PERSON_REASON",
+                "Give the reason for changing the three-person lock-removal rule.",
+                params,
+            )
+        })?;
+    Ok(Some(reason.to_string()))
+}
+
+/// Audits a change of the three-person setting in the save's transaction.
+async fn audit_three_person_change(
+    db: &impl ConnectionTrait,
+    saved: &PermitType,
+    previous: Option<bool>,
+    reason: String,
+    writer: PermitTypeWriter,
+) -> AppResult<()> {
+    let action_code = if saved.requires_three_person_removal {
+        "permit_type.three_person_removal.enabled"
+    } else {
+        "permit_type.three_person_removal.disabled"
+    };
+    crate::audit::writer::write_audit_event_in(
+        db,
+        crate::audit::writer::AuditEventInput {
+            action_code: action_code.to_string(),
+            target_type: Some("permit_type".to_string()),
+            target_id: Some(saved.id.to_string()),
+            actor_id: Some(writer.actor_id),
+            auth_context: "step_up".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "code": saved.code,
+                "reason": reason,
+                "before": previous,
+                "after": saved.requires_three_person_removal,
+            })),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// A change of the three-person setting is recorded at this PC's time, and every other PC applies
+/// it only when that time is later than the change it holds (`permit::sync_check::
+/// inbound_permit_type_check`). When the change already recorded here is not earlier than now, this
+/// PC's clock is behind: the change would be refused everywhere else while shown as made here, so
+/// it is refused here, naming the time to wait for (no time is made up). A recorded time that cannot
+/// be read is not compared: the new record (readable) replaces it.
+async fn guard_three_person_clock(db: &impl ConnectionTrait, current: &PermitType) -> AppResult<()> {
+    let held: Option<String> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT three_person_changed_at FROM permit_types WHERE id = ?",
+            [current.id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<Option<String>>("", "three_person_changed_at"))
+        .transpose()
+        .map_err(|e| decode_err("three_person_changed_at", e))?
+        .flatten();
+    let Some(held) = held.as_deref().map(str::trim).filter(|h| !h.is_empty()) else {
+        return Ok(());
+    };
+    let Some(last) = crate::settings::site::instant(held) else {
+        return Ok(());
+    };
+    // `now_ts()` has whole seconds: the record written would be `now` truncated.
+    let now = crate::settings::site::instant(&now_ts()).unwrap_or_else(Utc::now);
+    if last >= now {
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_TYPE_THREE_PERSON_CLOCK_BEHIND",
+            format!(
+                "The three-person lock-removal rule of permit type {} was last changed at {held}, not earlier than this PC's time: check this PC's clock, then change it again.",
+                current.code
+            ),
+            std::collections::HashMap::from([
+                ("type".to_string(), current.code.clone()),
+                ("last".to_string(), held.to_string()),
+            ]),
+        ));
+    }
+    Ok(())
+}
+
+/// The author, time and reason of a change of the three-person setting (migration 238); all `None`
+/// when the save does not change it.
+struct ThreePersonTrace {
+    by: Option<i64>,
+    at: Option<String>,
+    reason: Option<String>,
+}
+
 async fn upsert_permit_type_in(
     db: &impl ConnectionTrait,
     input: PermitTypeUpsertInput,
     writer: PermitTypeWriter,
 ) -> AppResult<PermitType> {
-    // Before any field is moved out of `input`: the energy-isolation off-switch guard.
-    if let Some(id) = input.id.filter(|id| *id > 0) {
-        if let Some(current) = get_permit_type(db, id).await? {
-            guard_isolation_relax(db, &current, &input, writer).await?;
-        }
+    // Before any field is moved out of `input`: the energy-isolation off-switch guard and the
+    // three-person chain guard (a new type, or an existing one; an unknown id fails below).
+    let existing = match input.id.filter(|id| *id > 0) {
+        Some(id) => get_permit_type(db, id).await?,
+        None => None,
+    };
+    if let Some(current) = &existing {
+        guard_isolation_relax(db, current, &input, writer).await?;
     }
+    let three_person_reason = if input.id.is_none() || existing.is_some() {
+        guard_three_person_change(existing.as_ref(), &input, writer)?
+    } else {
+        None
+    };
+    if let (Some(_), Some(current)) = (&three_person_reason, &existing) {
+        guard_three_person_clock(db, current).await?;
+    }
+    // Who changed the setting, when and why, written with the row (sent with it by sync and
+    // re-checked on arrival: `permit::sync_check::inbound_permit_type_check`); kept otherwise.
+    let trace = ThreePersonTrace {
+        by: three_person_reason.as_ref().map(|_| writer.actor_id),
+        at: three_person_reason.as_ref().map(|_| now_ts()),
+        reason: three_person_reason.clone(),
+    };
     let ppe = input.mandatory_ppe_ids_json.unwrap_or_else(|| "[]".to_string());
     let rules = input.mandatory_control_rules_json.unwrap_or_else(|| "{}".to_string());
     let desc = input.description.unwrap_or_default();
@@ -886,7 +1051,10 @@ async fn upsert_permit_type_in(
                 "UPDATE permit_types SET code = ?, name = ?, description = ?, \
                  requires_hse_approval = ?, requires_operations_approval = ?, requires_atmospheric_test = ?, \
                  max_duration_hours = ?, mandatory_ppe_ids_json = ?, mandatory_control_rules_json = ?, \
-                 requires_energy_isolation = ?, row_version = ? \
+                 requires_energy_isolation = ?, requires_three_person_removal = ?, \
+                 three_person_changed_by_id = COALESCE(?, three_person_changed_by_id), \
+                 three_person_changed_at = COALESCE(?, three_person_changed_at), \
+                 three_person_change_reason = COALESCE(?, three_person_change_reason), row_version = ? \
                  WHERE id = ? AND row_version = ?",
                 [
                     input.code.into(),
@@ -904,6 +1072,15 @@ async fn upsert_permit_type_in(
                             .unwrap_or(current.requires_energy_isolation),
                     )
                     .into(),
+                    i64::from(
+                        input
+                            .requires_three_person_removal
+                            .unwrap_or(current.requires_three_person_removal),
+                    )
+                    .into(),
+                    trace.by.into(),
+                    trace.at.clone().into(),
+                    trace.reason.clone().into(),
                     new_rv.into(),
                     id.into(),
                     current.row_version.into(),
@@ -916,6 +1093,16 @@ async fn upsert_permit_type_in(
             ]));
         }
         let updated = get_permit_type(db, id).await?.expect("row");
+        if let Some(reason) = three_person_reason {
+            audit_three_person_change(
+                db,
+                &updated,
+                Some(current.requires_three_person_removal),
+                reason,
+                writer,
+            )
+            .await?;
+        }
         return Ok(updated);
     }
 
@@ -925,8 +1112,9 @@ async fn upsert_permit_type_in(
         "INSERT INTO permit_types (entity_sync_id, code, name, description, \
          requires_hse_approval, requires_operations_approval, requires_atmospheric_test, \
          max_duration_hours, mandatory_ppe_ids_json, mandatory_control_rules_json, \
-         requires_energy_isolation, row_version) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+         requires_energy_isolation, requires_three_person_removal, three_person_changed_by_id, \
+         three_person_changed_at, three_person_change_reason, row_version) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             sync_id.into(),
             input.code.into(),
@@ -939,6 +1127,10 @@ async fn upsert_permit_type_in(
             ppe.into(),
             rules.into(),
             i64::from(input.requires_energy_isolation.unwrap_or(false)).into(),
+            i64::from(input.requires_three_person_removal.unwrap_or(false)).into(),
+            trace.by.into(),
+            trace.at.clone().into(),
+            trace.reason.clone().into(),
         ],
     ))
     .await?;
@@ -951,6 +1143,9 @@ async fn upsert_permit_type_in(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
     let created = get_permit_type(db, new_id).await?.expect("row");
+    if let Some(reason) = three_person_reason {
+        audit_three_person_change(db, &created, None, reason, writer).await?;
+    }
     Ok(created)
 }
 
@@ -1958,7 +2153,9 @@ async fn verify_permit_isolation_in(
 }
 
 /// Records verified lock removal. Same two-person rule as verification: the person
-/// confirming removal must not be the person who applied the isolation.
+/// confirming removal must not be the person who applied the isolation. When the permit's type
+/// requires the three-person chain (migration 236), not the isolation's verifier either (same
+/// rule as received rows, `permit::sync_check::isolation_rule_breach`).
 pub async fn verify_permit_isolation_removal(
     db: &DatabaseConnection,
     input: PermitIsolationActionInput,
@@ -1996,6 +2193,13 @@ async fn verify_permit_isolation_removal_in(
         return Err(refused(
             "PERMIT_TWO_PERSON_REMOVAL",
             "Two-person rule: the person who applied an isolation cannot verify its removal.",
+            &[],
+        ));
+    }
+    if permit.permit_type_requires_three_person_removal && iso.verified_by_id == Some(actor_id) {
+        return Err(refused(
+            "PERMIT_THREE_PERSON_REMOVAL",
+            "Three-person rule: the person who verified an isolation cannot verify its removal.",
             &[],
         ));
     }

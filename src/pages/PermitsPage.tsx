@@ -33,6 +33,7 @@ import { PermitDetailPanel } from "@/components/permits/PermitDetailPanel";
 import {
   PERMIT_QUERY_CREATE_FOR_WO,
   PERMIT_QUERY_SELECT,
+  PERMIT_REFUSAL_NAMESPACES,
   formatAssetLabel,
 } from "@/components/permits/permit-rules";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,7 @@ import { mfLayout } from "@/design-system/tokens";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { i18n } from "@/i18n";
 import { listLinks } from "@/lib/list-links";
 import {
   type PermitComplianceKpi30dRecord,
@@ -88,6 +90,10 @@ export function PermitsPage() {
   const { formatDateTime, formatNumber, formatPercent } = useFormatters();
   const [searchParams, setSearchParams] = useSearchParams();
   const { can } = usePermissions();
+
+  useEffect(() => {
+    void i18n.loadNamespaces([...PERMIT_REFUSAL_NAMESPACES]);
+  }, []);
 
   const [types, setTypes] = useState<PermitTypeRecord[]>([]);
   const [permits, setPermits] = useState<WorkPermitRecord[]>([]);

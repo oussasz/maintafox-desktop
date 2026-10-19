@@ -12,6 +12,13 @@ import { P } from "@shared/rbac/permissions.generated";
 export const PERMIT_QUERY_SELECT = "permit";
 export const PERMIT_QUERY_CREATE_FOR_WO = "createForWo";
 
+/**
+ * Namespaces holding the texts of the permit refusals (`training:errors.PERMIT_*`). They are
+ * loaded on demand, so the permit screens load them up front: a refusal shown before any other
+ * screen opened them is then in the user's language, not the server's English sentence.
+ */
+export const PERMIT_REFUSAL_NAMESPACES = ["training"] as const;
+
 export type IsolationState = "pending" | "applied" | "verified" | "removed";
 
 export function isolationState(iso: PermitIsolationRecord): IsolationState {
