@@ -198,18 +198,30 @@ pub async fn create_wo(
         Err(e) => return Err(e),
     }
 
-    // Validate source_di_id resolves if provided
+    // Validate source_di_id resolves if provided; linking a request needs the request view right
+    // at the request's site (no work order tied to another site's request).
     if let Some(di_id) = input.source_di_id {
-        let di_exists = state
+        let di_row = state
             .db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT id FROM intervention_requests WHERE id = ?",
+                "SELECT org_node_id FROM intervention_requests WHERE id = ?",
                 [di_id.into()],
             ))
             .await?;
-        if di_exists.is_none() {
-            errors.push(format!("DI introuvable (source_di_id={di_id})."));
+        match di_row {
+            None => errors.push(format!("DI introuvable (source_di_id={di_id}).")),
+            Some(row) => {
+                let di_node: Option<i64> = row.try_get("", "org_node_id")?;
+                crate::auth::scope::require_at(
+                    &state.db,
+                    &state.permission_cache,
+                    user.user_id,
+                    crate::rbac::permissions::DI_VIEW,
+                    crate::auth::scope::Anchor::of(di_node),
+                )
+                .await?;
+            }
         }
     }
 

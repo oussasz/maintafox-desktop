@@ -73,7 +73,7 @@ function WoContextMenuItems({
   const canEdit = can(P.OT_EDIT) && EDITABLE_STATES.has(wo.status_code ?? "");
   const canStart = can(P.OT_EDIT) && STARTABLE_STATES.has(wo.status_code ?? "");
   const canComplete = can(P.OT_EDIT) && COMPLETABLE_STATES.has(wo.status_code ?? "");
-  const canCancel = can(P.OT_CLOSE) && !CANCELLABLE_DENY.has(wo.status_code ?? "");
+  const canCancel = can(P.OT_EDIT) && !CANCELLABLE_DENY.has(wo.status_code ?? "");
 
   return (
     <>

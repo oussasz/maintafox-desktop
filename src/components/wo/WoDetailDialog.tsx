@@ -668,7 +668,7 @@ function FooterActions({
         </Button>
       )}
 
-      {!CANCELLABLE_DENY.has(s) && can(P.OT_CLOSE) && (
+      {!CANCELLABLE_DENY.has(s) && can(P.OT_EDIT) && (
         <Button
           size="sm"
           variant="outline"

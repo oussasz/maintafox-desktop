@@ -882,6 +882,34 @@ pub async fn update_wo_draft_fields(
     if let Some(equipment_id) = input.equipment_id {
         sets.push("equipment_id = ?".into());
         values.push(equipment_id.into());
+        if current.equipment_id != Some(equipment_id) {
+            // The order moves with its equipment: its site (the anchor of the site-scoped checks)
+            // is the new equipment's location, derived as at create.
+            let node = txn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT installed_at_node_id FROM equipment WHERE id = ? AND deleted_at IS NULL",
+                    [equipment_id.into()],
+                ))
+                .await?
+                .ok_or_else(|| {
+                    AppError::ValidationFailed(vec![format!(
+                        "Équipement introuvable ou supprimé (equipment_id={equipment_id})."
+                    )])
+                })?
+                .try_get::<Option<i64>>("", "installed_at_node_id")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.installed_at_node_id decode: {e}")))?
+                .filter(|&n| n > 0)
+                .ok_or_else(|| {
+                    AppError::ValidationFailed(vec![
+                        "L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
+                         Affectez l'équipement à une entité organisationnelle avant de le choisir."
+                            .into(),
+                    ])
+                })?;
+            sets.push("entity_id = ?".into());
+            values.push(node.into());
+        }
     }
     if let Some(location_id) = input.location_id {
         sets.push("location_id = ?".into());

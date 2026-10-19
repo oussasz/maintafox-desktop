@@ -609,3 +609,57 @@ async fn actions_and_child_records_are_checked_at_the_work_orders_site() {
         .await
         .expect("plant-wide");
 }
+
+fn draft_equipment_change(id: i64, row_version: i64, equipment_id: i64) -> crate::wo::domain::WoDraftUpdateInput {
+    crate::wo::domain::WoDraftUpdateInput {
+        id,
+        expected_row_version: row_version,
+        title: None,
+        type_code: None,
+        equipment_id: Some(equipment_id),
+        location_id: None,
+        description: None,
+        planned_start: None,
+        planned_end: None,
+        shift: None,
+        expected_duration_hours: None,
+        notes: None,
+        urgency_code: None,
+        subtype_code: None,
+        requires_permit: None,
+    }
+}
+
+#[tokio::test]
+async fn a_draft_moves_to_the_site_of_its_new_equipment() {
+    let f = fixture().await;
+    let before = queries::get_work_order(&f.db, f.wo_a)
+        .await
+        .expect("read")
+        .expect("wo_a");
+    assert_eq!(before.entity_id, Some(f.t.site_a));
+
+    // Other equipment of the same site's line: the order now belongs to the line.
+    let moved = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, before.row_version, f.eq_a1))
+        .await
+        .expect("to equipment of line A1");
+    assert_eq!(moved.entity_id, Some(f.t.line_a1));
+
+    // Equipment installed nowhere: refused, as at create; the order is unchanged.
+    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, moved.row_version, f.eq_none))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ValidationFailed(_)), "{err:?}");
+    let kept = queries::get_work_order(&f.db, f.wo_a)
+        .await
+        .expect("read")
+        .expect("wo_a");
+    assert_eq!((kept.equipment_id, kept.entity_id), (Some(f.eq_a1), Some(f.t.line_a1)));
+
+    // Equipment of site B (a plant-wide user may do it): the order moves to site B, so a site-A
+    // user no longer sees it.
+    let to_b = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, kept.row_version, f.eq_b))
+        .await
+        .expect("to equipment of site B");
+    assert_eq!(to_b.entity_id, Some(f.t.site_b));
+}
