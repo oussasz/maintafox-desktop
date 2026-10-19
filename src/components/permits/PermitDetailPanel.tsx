@@ -39,7 +39,6 @@ import {
   cancelPermitIsolation,
   getLotoCardView,
   listPermitHandoverLogs,
-  listPermitHandoverRoles,
   listPermitIsolationOptions,
   listPermitIsolations,
   listPermitSuspensions,
@@ -73,6 +72,7 @@ import {
   optionLabel,
   toLocalInputValue,
 } from "./permit-rules";
+import { usePermitTypeName } from "./permit-type-name";
 
 interface PermitDetailPanelProps {
   permit: WorkPermitRecord;
@@ -85,6 +85,7 @@ const EMPTY_ISOLATION = { point: "", energy: "", method: "", lock: "" };
 
 export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps) {
   const { t, i18n } = useTranslation("permits");
+  const typeName = usePermitTypeName();
   const { info: session } = useSession();
   // Every action is checked at the permit's site, as the backend does; no button while the rights
   // at that site load (an explicit gate, as the work-order gate card and the create dialog have).
@@ -113,6 +114,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [cancelOpen, setCancelOpen] = useState(false);
   /** The planned isolation line whose cancellation is being confirmed. */
   const [cancelLine, setCancelLine] = useState<PermitIsolationRecord | null>(null);
+  /** The isolation whose lock removal waits for the confirmation dialog. */
+  const [removalConfirm, setRemovalConfirm] = useState<PermitIsolationRecord | null>(null);
   const [editingExpiry, setEditingExpiry] = useState<string | null>(null);
 
   const fmt = (v: string | null) => (v ? formatDateTime(v, i18n.language) : t("detail.none"));
@@ -159,26 +162,6 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     }
     return map;
   }, [options]);
-
-  // Labels of the stored hand-over role codes (the plant's list); a code no longer in the list
-  // is shown as stored.
-  const [roleLabels, setRoleLabels] = useState<Map<string, string>>(new Map());
-  const hasHandovers = handovers.length > 0;
-  useEffect(() => {
-    if (!hasHandovers) return;
-    let cancelled = false;
-    listPermitHandoverRoles()
-      .then((roles) => {
-        if (!cancelled) setRoleLabels(new Map(roles.map((r) => [r.code, r.label])));
-      })
-      .catch(() => {
-        // The stored codes stay readable as they are; the form reports the list's failure.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [hasHandovers]);
-  const roleLabel = (code: string) => roleLabels.get(code) ?? code;
 
   const lang = i18n.resolvedLanguage || i18n.language;
   const energyLabel = (iso: PermitIsolationRecord) =>
@@ -319,7 +302,11 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           </div>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-sm">
             <dt className="text-text-muted">{t("detail.type")}</dt>
-            <dd>{permit.permit_type_name ?? t("detail.none")}</dd>
+            <dd>
+              {permit.permit_type_name == null
+                ? t("detail.none")
+                : typeName(permit.permit_type_code, permit.permit_type_name)}
+            </dd>
             <dt className="text-text-muted">{t("detail.asset")}</dt>
             <dd>{formatAssetLabel(permit) ?? t("detail.none")}</dd>
             <dt className="text-text-muted">{t("detail.workOrder")}</dt>
@@ -587,7 +574,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         variant="outline"
                         disabled={busy || removalBlockedForMe}
                         title={removalBlockedReason}
-                        onClick={() => void isolationAction(iso, verifyPermitIsolationRemoval)}
+                        onClick={() => setRemovalConfirm(iso)}
                       >
                         {t("isolation.verifyRemoval")}
                       </Button>
@@ -827,12 +814,12 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
               {handovers.map((h) => (
                 <li key={h.id} className="rounded-md border border-surface-border bg-surface-1 p-2">
                   <div className="flex flex-wrap items-center gap-1.5 text-text-primary">
-                    <span className="font-medium">{roleLabel(h.handed_from_role)}</span>
+                    <span className="font-medium">{h.handed_from_label ?? h.handed_from_role}</span>
                     <span aria-hidden className="text-text-muted">
                       →
                     </span>
                     <span className="sr-only">{t("handover.handedTo")}</span>
-                    <span className="font-medium">{roleLabel(h.handed_to_role)}</span>
+                    <span className="font-medium">{h.handed_to_label ?? h.handed_to_role}</span>
                     <time className="ms-auto text-xs text-text-muted" dateTime={h.signed_at}>
                       {fmt(h.signed_at)}
                     </time>
@@ -894,6 +881,26 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           </form>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={removalConfirm != null}
+        onOpenChange={(open) => {
+          if (!open) setRemovalConfirm(null);
+        }}
+        title={t("isolation.removalConfirmTitle")}
+        description={t("isolation.removalConfirmDescription", {
+          point: removalConfirm?.isolation_point ?? "",
+          applier: removalConfirm?.applied_by_name ?? t("isolation.personUnknown"),
+          verifier: removalConfirm?.verified_by_name ?? t("isolation.personUnknown"),
+        })}
+        confirmLabel={t("isolation.verifyRemoval")}
+        onConfirm={async () => {
+          const iso = removalConfirm;
+          if (!iso) return;
+          // A refusal is shown on the permit (translated); the dialog closes so it is visible.
+          await isolationAction(iso, verifyPermitIsolationRemoval);
+        }}
+      />
 
       <ConfirmDialog
         open={cancelOpen}

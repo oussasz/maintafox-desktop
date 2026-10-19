@@ -5,7 +5,7 @@
 
 use crate::errors::{AppError, AppResult};
 use crate::wo::queries;
-use crate::wo::time::now_utc_z;
+use crate::wo::time::{now_utc_second, now_utc_z, stamp};
 use crate::wo::workflow::events::emit_action_event;
 use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
@@ -94,6 +94,11 @@ pub struct WoResumeInput {
     pub wo_id: i64,
     pub actor_id: i64,
     pub expected_row_version: i64,
+    /// Estimated remaining time (hours, > 0) for the permit gate instead of the full expected
+    /// duration (`permit::wo_gate`); recorded on the resume's transition-log row, never written
+    /// over the work order's planned or expected duration. Absent: the full expected duration.
+    #[serde(default)]
+    pub estimated_remaining_hours: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -274,9 +279,11 @@ pub async fn emergency_reassign_wo(db: &DatabaseConnection, input: WoEmergencyRe
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult<WorkOrder> {
+    // One clock read: the moment judged by the permit gate is the start recorded below.
+    let at = now_utc_second();
     let txn = db.begin().await?;
     // Permit gate in the same transaction as the status change (no window in between).
-    crate::permit::wo_gate::assert_in_progress_permit_gate(&txn, input.wo_id).await?;
+    crate::permit::wo_gate::assert_in_progress_permit_gate_with(&txn, input.wo_id, None, at).await?;
     let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(&txn, input.wo_id).await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
@@ -284,7 +291,7 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
     guard_wo_transition(&current_status, &WoStatus::InProgress).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let in_progress_status_id = resolve_status_id(&txn, "in_progress").await?;
-    let now = now_utc_z();
+    let now = stamp(at);
 
     // Close any open delay segment
     txn.execute(Statement::from_sql_and_values(
@@ -489,9 +496,12 @@ async fn hold_wo(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResult<WorkOrder> {
+    let remaining = crate::permit::wo_gate::checked_remaining_hours(input.estimated_remaining_hours)?;
+    // One clock read: the moment judged by the permit gate is the resume recorded below.
+    let at = now_utc_second();
     let txn = db.begin().await?;
     // Permit gate in the same transaction as the status change (no window in between).
-    crate::permit::wo_gate::assert_in_progress_permit_gate(&txn, input.wo_id).await?;
+    crate::permit::wo_gate::assert_in_progress_permit_gate_with(&txn, input.wo_id, remaining, at).await?;
     let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(&txn, input.wo_id).await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
@@ -499,7 +509,7 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
     guard_wo_transition(&current_status, &WoStatus::InProgress).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let in_progress_status_id = resolve_status_id(&txn, "in_progress").await?;
-    let now = now_utc_z();
+    let now = stamp(at);
 
     // Close all open delay segments
     txn.execute(Statement::from_sql_and_values(
@@ -546,7 +556,8 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
         .await?;
     check_concurrency(result.rows_affected())?;
 
-    log_transition(
+    // The remaining time entered (if any) is recorded on this row: who, when, the value.
+    crate::wo::workflow::transition::log_transition_with_remaining(
         &txn,
         input.wo_id,
         &from_code,
@@ -556,6 +567,7 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
         None,
         None,
         &now,
+        remaining,
     )
     .await?;
 

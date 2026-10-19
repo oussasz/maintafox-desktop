@@ -329,6 +329,11 @@ describe("PermitsPage", () => {
     expect(within(panel).getByText(enPermits.gate.pendingRemoval)).toBeInTheDocument();
 
     fireEvent.click(within(panel).getByRole("button", { name: "Verify removal" }));
+    // The removal is recorded only after the confirmation dialog.
+    expect(svc.verifyPermitIsolationRemoval).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Verify removal" }),
+    );
     await waitFor(() => expect(svc.verifyPermitIsolationRemoval).toHaveBeenCalled());
     await waitFor(() =>
       expect(within(panel).getByRole("button", { name: "Close permit" })).toBeEnabled(),

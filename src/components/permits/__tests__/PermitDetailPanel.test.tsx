@@ -155,6 +155,7 @@ function renderPanel(p: WorkPermitRecord = permit()) {
   return screen.findByTestId("permit-isolation");
 }
 
+const confirmName = enPermits.isolation.verifyRemoval;
 const removalButton = (row: HTMLElement) =>
   within(row).getByRole("button", { name: enPermits.isolation.verifyRemoval });
 
@@ -196,10 +197,40 @@ describe("PermitDetailPanel — lock removal with a third person", () => {
     expect(removalButton(row)).toBeEnabled();
   });
 
+  it("asks for a confirmation naming the point, who applied it and who verified it", async () => {
+    const row = await renderPanel();
+    fireEvent.click(removalButton(row));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      fill(enPermits.isolation.removalConfirmDescription, {
+        point: "MCC-1 breaker",
+        applier: "Amine Tech",
+        verifier: "Sara Sup",
+      }),
+    );
+    // Nothing is recorded until the person confirms.
+    expect(svc.verifyPermitIsolationRemoval).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: confirmName }));
+    await waitFor(() => expect(svc.verifyPermitIsolationRemoval).toHaveBeenCalledTimes(1));
+  });
+
+  it("records nothing when the confirmation is cancelled", async () => {
+    const row = await renderPanel();
+    fireEvent.click(removalButton(row));
+    const dialog = await screen.findByRole("dialog");
+    // The common-namespace key stands in for the cancel label (not part of the permits catalogue).
+    fireEvent.click(within(dialog).getByRole("button", { name: "ds.confirm.cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(svc.verifyPermitIsolationRemoval).not.toHaveBeenCalled();
+  });
+
   it("shows the server's refusal in the user's language", async () => {
     svc.verifyPermitIsolationRemoval.mockRejectedValue({ code: "PERMIT_THREE_PERSON_REMOVAL" });
     const row = await renderPanel();
     fireEvent.click(removalButton(row));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: confirmName }),
+    );
     await waitFor(() =>
       expect(svc.verifyPermitIsolationRemoval).toHaveBeenCalledWith({
         isolation_id: 300,
@@ -210,6 +241,8 @@ describe("PermitDetailPanel — lock removal with a third person", () => {
     expect(
       await screen.findByText(String(lookup(enTraining, "errors.PERMIT_THREE_PERSON_REMOVAL"))),
     ).toBeInTheDocument();
+    // The dialog does not stay open over the reason.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });
 
@@ -220,6 +253,8 @@ describe("PermitDetailPanel — recorded hand-overs", () => {
     permit_id: 41,
     handed_from_role: "MAINT",
     handed_to_role: "OPS",
+    handed_from_label: "Mechanical maintenance",
+    handed_to_label: null,
     confirmation_note: "Zone left clean",
     signed_at: "2026-10-11T08:00:00Z",
     signed_by_id: 7,
@@ -249,6 +284,8 @@ describe("PermitDetailPanel — recorded hand-overs", () => {
         signed_by_name: null,
         received_by_id: null,
         received_by_name: null,
+        // A role since deactivated or left out of the current list keeps the label the server found.
+        handed_to_label: "Night shift",
       }),
     ]);
   });
@@ -269,9 +306,11 @@ describe("PermitDetailPanel — recorded hand-overs", () => {
     ).toBeInTheDocument();
     // An older hand-over without a recorded signer says so instead of inventing one.
     expect(screen.getByText(enPermits.handover.signerNotRecorded)).toBeInTheDocument();
-    // Codes of the list are shown with their label; a code no longer listed stays as stored.
-    expect((await screen.findAllByText("Maintenance")).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("OPS").length).toBe(2);
+    // Roles are shown with the label sent with the hand-over (not the form's current list); a
+    // code in no version of the list stays as stored.
+    expect(screen.getAllByText("Mechanical maintenance")).toHaveLength(2);
+    expect(screen.getByText("Night shift")).toBeInTheDocument();
+    expect(screen.getAllByText("OPS")).toHaveLength(1);
     // The hand-over form is offered on a closed permit.
     expect(screen.getByRole("form", { name: enPermits.handover.add })).toBeInTheDocument();
   });

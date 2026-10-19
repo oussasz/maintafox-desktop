@@ -85,7 +85,7 @@ import {
   recordPartUsage,
   unconfirmNoParts,
 } from "@/services/wo-execution-service";
-import { holdWo, pauseWo, resumeWo, startWo } from "@/services/wo-service";
+import { holdWo, pauseWo, startWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import { formatDateTime } from "@/utils/format-date";
 import type {
@@ -103,7 +103,6 @@ import { woActionFailureText } from "./wo-action-error";
 export interface WoExecutionControlsHandle {
   openHoldForm: () => void;
   start: () => Promise<void>;
-  resume: () => Promise<void>;
 }
 
 interface WoExecutionControlsProps {
@@ -427,24 +426,6 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       }
     }, [actorId, wo.id, rowVersion, handleRefreshState, t]);
 
-    const handleResume = useCallback(async () => {
-      if (!actorId) return;
-      setBusy(true);
-      setError(null);
-      try {
-        const next = await resumeWo({
-          wo_id: wo.id,
-          actor_id: actorId,
-          expected_row_version: rowVersion,
-        });
-        await handleRefreshState(next);
-      } catch (e) {
-        setError(woActionFailureText(t("execution.error.resumeWo"), e));
-      } finally {
-        setBusy(false);
-      }
-    }, [actorId, wo.id, rowVersion, handleRefreshState, t]);
-
     const openDelayForm = useCallback((intent: DelayIntent) => {
       setDelayIntent(intent);
       setDelayReasonId(null);
@@ -457,9 +438,8 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       () => ({
         openHoldForm: () => openDelayForm("hold"),
         start: handleStart,
-        resume: handleResume,
       }),
-      [openDelayForm, handleStart, handleResume],
+      [openDelayForm, handleStart],
     );
 
     const submitDelayAction = useCallback(async () => {

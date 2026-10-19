@@ -11,6 +11,7 @@ import type { TFunction } from "i18next";
 
 import type { Formatters } from "@/hooks/use-formatters";
 import type { NotificationSummary } from "@/services/notification-service";
+import { DATE_PARAMS, DATE_TIME_PARAMS } from "@/utils/date-params";
 
 /** Message keys this version renders (`notifications:messages.*`). */
 export const MESSAGE_KEYS = [
@@ -38,18 +39,6 @@ export const MESSAGE_KEYS = [
   "personnel_critical_block",
   "daily_digest",
 ] as const;
-
-const DATE_TIME_PARAMS = new Set([
-  "planned_end",
-  "missed_at",
-  "expires_at",
-  "deadline",
-  "due_at",
-  "start_at",
-  "end_at",
-  "created_at",
-]);
-const DATE_PARAMS = new Set(["expires_on", "date", "until"]);
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;
 

@@ -256,6 +256,7 @@ pub fn run() {
             commands::library_documents::update_library_document,
             commands::product_license::get_product_license_onboarding_state,
             commands::product_license::submit_product_license_key,
+            commands::product_license::check_product_license_key_entry,
             commands::product_license::apply_product_license_reconciliation,
             commands::product_license::get_product_license_diagnostics,
             commands::product_license::get_product_activation_token,

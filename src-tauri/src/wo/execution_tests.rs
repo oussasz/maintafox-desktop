@@ -382,6 +382,7 @@ mod tests {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
+                estimated_remaining_hours: None,
             },
         )
         .await

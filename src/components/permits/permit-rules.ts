@@ -183,3 +183,20 @@ export function optionLabel(
     ? option.label_en
     : option.label;
 }
+
+/** `char::is_whitespace` of Rust, which the server trims with (JS `trim()` differs on U+0085/U+FEFF). */
+const SERVER_WHITESPACE = "\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000";
+const SERVER_TRIM = new RegExp(`^[${SERVER_WHITESPACE}]+|[${SERVER_WHITESPACE}]+$`, "g");
+
+/** The text as the server trims it before it checks a minimum length. */
+export function serverTrim(text: string): string {
+  return text.replace(SERVER_TRIM, "");
+}
+
+/**
+ * Length of a text as the server counts it (`str::trim` then `chars().count()`): trimmed, in
+ * Unicode code points, so an emoji or a letter outside the first plane is one character, not two.
+ */
+export function serverTextLength(text: string): number {
+  return [...serverTrim(text)].length;
+}

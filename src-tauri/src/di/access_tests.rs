@@ -653,3 +653,29 @@ async fn the_draft_edit_cannot_move_a_request_to_another_site() {
     assert_eq!(updated.org_node_id, f.t.site_a, "the request stays on its site");
     assert_eq!(updated.equipment_id, f.eq_a);
 }
+
+/// The requester of a new request is always the signed-in user: whatever submitter id the screen
+/// sends is replaced before the request is stored (`create_di` calls `bind_requester`).
+#[tokio::test]
+async fn the_requester_is_the_session_user_whatever_the_screen_sends() {
+    let f = fixture().await;
+    let s = symptom(&f.db).await;
+    // The screen claims the request was filed by the plant-wide user; the session user is `site`.
+    let mut input = create_input(f.eq_a, f.t.site_a, f.plant, s, "Filed in another name");
+    assert_eq!(input.submitter_id, i64::from(f.plant));
+    input.bind_requester(f.site);
+    let created = queries::create_intervention_request(&f.db, input)
+        .await
+        .expect("create DI");
+    assert_eq!(created.submitter_id, i64::from(f.site));
+    let stored = queries::get_intervention_request(&f.db, created.id)
+        .await
+        .expect("load")
+        .expect("exists");
+    assert_eq!(
+        stored.submitter_id,
+        i64::from(f.site),
+        "stored requester is the session user"
+    );
+    assert_ne!(stored.submitter_id, i64::from(f.plant));
+}

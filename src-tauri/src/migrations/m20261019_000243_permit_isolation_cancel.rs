@@ -1,4 +1,4 @@
-//! Migration 239 — a planned isolation line can be cancelled (CMMS Advisor decision): marked
+//! Migration 243 — a planned isolation line can be cancelled (CMMS Advisor decision): marked
 //! "Annulée" and kept, never deleted.
 //!
 //! `permit_isolations.cancelled_at` and `cancelled_by_id` (the session user, a user reference sent
@@ -15,7 +15,7 @@ pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20261019_000239_permit_isolation_cancel"
+        "m20261019_000243_permit_isolation_cancel"
     }
 }
 

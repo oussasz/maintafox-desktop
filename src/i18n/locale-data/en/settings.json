@@ -501,6 +501,11 @@
     "SETTING_REASON_REQUIRED": "Give the reason for this change (at least 10 characters): it is kept in the history.",
     "SITE_SETTING_STALE": "Someone changed this site's rule meanwhile. Reload and try again.",
     "SITE_SETTING_NOT_A_SITE": "This organisation node is not a planning site (its type cannot own work).",
-    "SITE_SETTING_UNKNOWN": "Unknown site rule."
+    "SITE_SETTING_UNKNOWN": "Unknown site rule.",
+    "FIRST_ADMIN_ALREADY_EXISTS": "An administrator already exists for this organisation: sign in with that account.",
+    "LICENSE_RECONCILE_ADMIN_REQUIRED": "This licence change needs an administrator: sign in as an administrator; the licence screen then asks you to confirm your identity and applies the change.",
+    "LICENSE_EXTENSION_ADMIN_REQUIRED": "This licence update extends the licence terms or lifts a denial (expiry, devices, edition, entitlements): sign in as an administrator; the licence screen then asks you to confirm your identity and applies the update.",
+    "LICENSE_CLAIM_INVALID": "The licence data received is incomplete or malformed (organisation, licence, machine or activation token): nothing was changed.",
+    "LICENSE_FIRST_ADMIN_RETRY": "The first administrator could not be saved because another one is being created at the same time: wait a moment, then retry."
   }
 }

@@ -859,6 +859,17 @@
     "submitForPlanning": "Soumettre pour planification",
     "markReady": "Marquer comme Prêt"
   },
+  "remainingTime": {
+    "label": "Temps restant estimé (heures, facultatif)",
+    "placeholder": "ex. 2,5",
+    "hint": "Sert uniquement à vérifier que les permis couvrent la fin du travail (maintenant + ce temps). Vide : la durée prévue complète de l’OT. Les dates planifiées et la durée prévue ne sont pas modifiées ; la valeur est enregistrée dans l’historique à votre nom.",
+    "invalid": "Saisissez un nombre d’heures supérieur à 0, ou laissez le champ vide."
+  },
+  "resumeDialog": {
+    "title": "Reprendre l’ordre de travail",
+    "description": "Les permis doivent couvrir le travail jusqu’à sa fin : la plus tardive entre la fin prévue et maintenant + la durée prévue, ou + le temps restant estimé saisi ci-dessous.",
+    "cancel": "Annuler"
+  },
   "cost": {
     "title": "Résumé des coûts",
     "loading": "Chargement des coûts…",

@@ -107,6 +107,19 @@ describe("PermitHandoverForm", () => {
     expect(svc.appendPermitHandoverLog).not.toHaveBeenCalled();
   });
 
+  it("counts the note like the server: trimmed, one character per code point", async () => {
+    renderForm();
+    await screen.findByRole("combobox", { name: enPermits.handover.from });
+    // Five characters outside the first plane (ten UTF-16 units) are five, not ten.
+    fireEvent.change(noteBox(), { target: { value: "  𝒜𝒜𝒜𝒜𝒜  " } });
+    expect(
+      screen.getByText(fill(enPermits.handover.noteCount, { length: 5, min: HANDOVER_NOTE_MIN })),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(fill(enPermits.handover.noteMin, { min: HANDOVER_NOTE_MIN })),
+    ).toBeInTheDocument();
+  });
+
   it("checks the note length while it is typed", async () => {
     renderForm();
     await screen.findByRole("combobox", { name: enPermits.handover.from });
@@ -191,6 +204,59 @@ describe("PermitHandoverForm", () => {
     expect(
       await screen.findByText(fill(enPermits.handover.receiversAll, { total: 1 })),
     ).toBeInTheDocument();
+  });
+
+  it("shows more people with the list's own offset and keeps the count honest", async () => {
+    svc.listPermitHandoverReceivers.mockResolvedValueOnce({
+      items: [{ id: 9, display_name: "Ali Operations" }],
+      total: 3,
+    });
+    svc.listPermitHandoverReceivers.mockResolvedValueOnce({
+      items: [
+        { id: 10, display_name: "Bilal Shift" },
+        { id: 11, display_name: "Chaima Ops" },
+      ],
+      total: 3,
+    });
+    renderForm();
+    expect(
+      await screen.findByText(fill(enPermits.handover.receiversPartial, { shown: 1, total: 3 })),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: enPermits.handover.receiversMore }));
+    await waitFor(() =>
+      expect(svc.listPermitHandoverReceivers).toHaveBeenLastCalledWith(42, null, undefined, 1),
+    );
+    expect(
+      await screen.findByText(fill(enPermits.handover.receiversAll, { total: 3 })),
+    ).toBeInTheDocument();
+    // Everything is shown: no button left, and the added people can be picked.
+    expect(screen.queryByRole("button", { name: enPermits.handover.receiversMore })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("combobox", { name: enPermits.handover.receiver }), {
+      key: "Enter",
+    });
+    expect(await screen.findByRole("option", { name: "Chaima Ops" })).toBeInTheDocument();
+  });
+
+  it("offers no 'show more' while the list still belongs to the previous search", async () => {
+    svc.listPermitHandoverReceivers.mockResolvedValueOnce({
+      items: [{ id: 9, display_name: "Ali Operations" }],
+      total: 3,
+    });
+    renderForm();
+    await screen.findByRole("button", { name: enPermits.handover.receiversMore });
+    // The new search never answers: the old list must not be extended at the old offset.
+    svc.listPermitHandoverReceivers.mockReturnValue(new Promise(() => {}));
+    fireEvent.change(screen.getByRole("textbox", { name: enPermits.handover.receiverSearch }), {
+      target: { value: "kar" },
+    });
+    await waitFor(() => expect(svc.listPermitHandoverReceivers).toHaveBeenCalledWith(42, "kar"));
+    expect(screen.queryByRole("button", { name: enPermits.handover.receiversMore })).toBeNull();
+  });
+
+  it("offers no 'show more' when every matching person is shown", async () => {
+    renderForm();
+    await screen.findByText(fill(enPermits.handover.receiversAll, { total: 1 }));
+    expect(screen.queryByRole("button", { name: enPermits.handover.receiversMore })).toBeNull();
   });
 
   it.each([

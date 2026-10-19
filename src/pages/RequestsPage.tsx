@@ -59,8 +59,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusChip } from "@/components/ui/status-chip";
+import { usePlantWideAccess } from "@/components/wo/WoSiteScope";
 import { mfLayout } from "@/design-system/tokens";
 import { DI_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { useAccessAtNodes } from "@/hooks/use-access-at";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
@@ -509,6 +511,21 @@ export function RequestsPage() {
     [items],
   );
 
+  // The backend checks di.screen / di.review at the site of EACH request: the button is enabled
+  // only when the user holds one of them at every selected request's site (no site: plant-wide).
+  const triageNodes = useMemo(
+    () =>
+      items
+        .filter((di) => selected.has(di.id) && di.status === "submitted")
+        .map((di) => (di.org_node_id != null && di.org_node_id > 0 ? di.org_node_id : 0)),
+    [items, selected],
+  );
+  const triageAccess = useAccessAtNodes(triageNodes);
+  const triageAllowed = triageAccess.canAllAny([P.DI_SCREEN, P.DI_REVIEW]);
+  // SLA rules are plant-wide reference settings: the backend checks di.admin plant-wide.
+  const plantWide = usePlantWideAccess();
+  const canManageSla = plantWide.can(P.DI_ADMIN);
+
   const toggleRow = useCallback((id: number, on: boolean) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -757,7 +774,7 @@ export function RequestsPage() {
             onToggle={toggleFilters}
             activeCount={activeFilterCount}
           />
-          {can(P.DI_ADMIN) && (
+          {canManageSla && (
             <Button variant="outline" className="h-11" onClick={() => setSlaOpen(true)}>
               {t("sla.title")}
             </Button>
@@ -806,7 +823,8 @@ export function RequestsPage() {
               <Button
                 size="sm"
                 className="gap-1.5"
-                disabled={bulkBusy}
+                disabled={bulkBusy || !triageAllowed}
+                title={triageAllowed ? undefined : t("bulk.outsideYourSites")}
                 onClick={() => void runBulkTriage()}
               >
                 <ClipboardCheck className="h-3.5 w-3.5" aria-hidden />
@@ -820,6 +838,11 @@ export function RequestsPage() {
               >
                 {t("bulk.clear")}
               </Button>
+              {!triageAllowed && !triageAccess.loading ? (
+                <span role="status" className="text-xs text-tone-warning-fg">
+                  {t("bulk.outsideYourSites")}
+                </span>
+              ) : null}
             </>
           ) : null}
           {bulkMessage ? (
@@ -899,7 +922,7 @@ export function RequestsPage() {
       <DiCloseDialog />
       <DiReturnDialog />
 
-      {can(P.DI_ADMIN) && <DiSlaRulesPanel open={slaOpen} onClose={() => setSlaOpen(false)} />}
+      {canManageSla && <DiSlaRulesPanel open={slaOpen} onClose={() => setSlaOpen(false)} />}
     </ModulePageShell>
   );
 }

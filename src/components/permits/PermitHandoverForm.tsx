@@ -1,12 +1,12 @@
 /**
  * Records the hand-over of a closed permit: roles from the plant's list (Données de référence ›
  * PERMIT.HANDOVER_ROLES, nothing preselected, no free text), an optional receiving person picked
- * by name from a paged, searchable list (never the signer — the server signs with the session
+ * by name from a paged, searchable list ("show more" asks the next page of the same search) (never the signer — the server signs with the session
  * user, shown here read-only), and a confirmation note of at least HANDOVER_NOTE_MIN characters.
  * Refusals are shown with the server's coded, translated reason.
  */
 
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -35,7 +35,12 @@ import type {
   PermitHandoverRoleOption,
 } from "@shared/ipc-types";
 
-/** Shortest confirmation note the server accepts (`MIN_HANDOVER_NOTE_CHARS`). */
+import { serverTextLength, serverTrim } from "./permit-rules";
+
+/**
+ * Shortest confirmation note the server accepts: `MIN_HANDOVER_NOTE_CHARS` in
+ * `src-tauri/src/permit/domain.rs` (counted trimmed, in code points; a test pins both values).
+ */
 export const HANDOVER_NOTE_MIN = 10;
 /** Value of the "nobody named" receiver choice. */
 const NO_RECEIVER = "__none__";
@@ -57,8 +62,13 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
   const [receivers, setReceivers] = useState<PermitHandoverReceiverPage | null>(null);
   const [receiversError, setReceiversError] = useState<unknown>(null);
   const [receiversReload, setReceiversReload] = useState(0);
+  /** The search the listed people belong to (the list lags behind the typed search). */
+  const [receiversSearch, setReceiversSearch] = useState<string | null>(null);
   const [receiverSearch, setReceiverSearch] = useState("");
   const search = useDebouncedValue(receiverSearch.trim());
+  const searchRef = useRef(search);
+  searchRef.current = search;
+  const [loadingMore, setLoadingMore] = useState(false);
   /** The chosen receiver, kept even when a later search no longer lists them. */
   const [receiver, setReceiver] = useState<PermitHandoverReceiver | null>(null);
   const [draft, setDraft] = useState({ from: "", to: "", note: "" });
@@ -87,7 +97,9 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
     setReceiversError(null);
     listPermitHandoverReceivers(permitId, search || null)
       .then((page) => {
-        if (!cancelled) setReceivers(page);
+        if (cancelled) return;
+        setReceivers(page);
+        setReceiversSearch(search);
       })
       .catch((e: unknown) => {
         if (!cancelled) setReceiversError(e);
@@ -97,8 +109,41 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
     };
   }, [permitId, search, receiversReload]);
 
-  const note = draft.note.trim();
-  const noteTooShort = note.length < HANDOVER_NOTE_MIN;
+  /** Appends the next page of the current search (the list's own offset), never a stale one. */
+  const showMore = async () => {
+    if (!receivers || receiversSearch !== search) return;
+    const asked = search;
+    setLoadingMore(true);
+    try {
+      const page = await listPermitHandoverReceivers(
+        permitId,
+        asked || null,
+        undefined,
+        receivers.items.length,
+      );
+      if (searchRef.current !== asked) return;
+      setReceivers((prev) =>
+        prev
+          ? {
+              ...page,
+              items: [
+                ...prev.items,
+                ...page.items.filter((p) => !prev.items.some((r) => r.id === p.id)),
+              ],
+            }
+          : page,
+      );
+      setReceiversError(null);
+    } catch (e) {
+      setReceiversError(e);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const note = serverTrim(draft.note);
+  const noteLength = serverTextLength(draft.note);
+  const noteTooShort = noteLength < HANDOVER_NOTE_MIN;
   const noRoles = roles != null && roles.length === 0;
 
   // The listed people, plus the chosen one when the current search does not list them.
@@ -227,6 +272,19 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
                     : t("handover.receiversAll", { total: receivers.total })}
             </p>
           ) : null}
+          {receivers != null &&
+          receiversSearch === search &&
+          receivers.total > receivers.items.length ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={loadingMore}
+              onClick={() => void showMore()}
+            >
+              {t("handover.receiversMore")}
+            </Button>
+          ) : null}
           {receiversError != null ? (
             <ErrorState error={receiversError} onRetry={() => setReceiversReload((n) => n + 1)} />
           ) : null}
@@ -237,7 +295,7 @@ export function PermitHandoverForm({ permitId, onRecorded }: PermitHandoverFormP
         name="handover-note"
         label={t("handover.note")}
         required
-        description={t("handover.noteCount", { length: note.length, min: HANDOVER_NOTE_MIN })}
+        description={t("handover.noteCount", { length: noteLength, min: HANDOVER_NOTE_MIN })}
         error={
           (submitted || noteTouched) && noteTooShort
             ? t("handover.noteMin", { min: HANDOVER_NOTE_MIN })
