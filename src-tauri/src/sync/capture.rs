@@ -550,10 +550,12 @@ pub async fn drain_capture_journal(conn: &impl ConnectionTrait) -> AppResult<Cap
                 Ok(true) => {
                     report.staged += 1;
                     delete_journal_rows(conn, &group.ids).await?;
+                    close_stage_failure(conn, &group).await?;
                 }
                 Ok(false) => {
                     report.skipped += 1;
                     delete_journal_rows(conn, &group.ids).await?;
+                    close_stage_failure(conn, &group).await?;
                 }
                 Err(e) => {
                     report.failed += 1;
@@ -611,6 +613,27 @@ async fn record_stage_failure(conn: &impl ConnectionTrait, group: &Group, error:
         },
     )
     .await
+}
+
+/// A change that failed to stage earlier and now stages: its open `STAGE_ERROR` conflict is
+/// closed, so the conflict list (and the replay guard) no longer shows a problem that is gone.
+async fn close_stage_failure(conn: &impl ConnectionTrait, group: &Group) -> AppResult<()> {
+    conn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "UPDATE sync_conflicts
+         SET status = 'resolved_local',
+             resolution_action = 'auto_restaged',
+             resolution_note = 'The change was staged on a later attempt.',
+             resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+             row_version = row_version + 1,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         WHERE source_scope = 'outbox' AND conflict_type = 'STAGE_ERROR'
+           AND entity_type = ? AND entity_sync_id = ?
+           AND status IN ('new', 'triaged', 'escalated')",
+        [group.entity_type.clone().into(), group.entity_sync_id.clone().into()],
+    ))
+    .await?;
+    Ok(())
 }
 
 /// True when the server or the outbox already knows the entity, so its disappearance must be sent.
