@@ -1296,6 +1296,20 @@ async fn switching_the_isolation_rule_off_is_guarded_and_loto_is_locked() {
         queries::upsert_permit_type(&db, type_input(&hot, Some(false), Some("  ")), ADMIN_STEP_UP).await,
         "PERMIT_TYPE_ISOLATION_RELAX_REASON",
     );
+    // Shorter than the minimum (counted after trimming): refused, naming the minimum.
+    let err = queries::upsert_permit_type(&db, type_input(&hot, Some(false), Some("  too short ")), ADMIN_STEP_UP)
+        .await
+        .expect_err("short reason");
+    match err {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, "PERMIT_TYPE_ISOLATION_RELAX_REASON");
+            assert_eq!(
+                issues[0].params.get("min"),
+                Some(&crate::settings::catalog::MIN_REASON_CHARS.to_string())
+            );
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
     let before = scalar_i64(
         &db,
         "SELECT COUNT(*) FROM audit_events WHERE action_code = 'permit_type.energy_isolation.disabled'",
@@ -1315,6 +1329,57 @@ async fn switching_the_isolation_rule_off_is_guarded_and_loto_is_locked() {
     )
     .await;
     assert_eq!(after, before + 1, "audited");
+    // The type records who switched it off, when and why (sent with it, re-checked on arrival).
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM permit_types WHERE id = {} AND isolation_changed_by_id = {APPLIER} \
+                 AND isolation_changed_at IS NOT NULL \
+                 AND isolation_change_reason = 'Hot work on isolated lines only'",
+                hot.id
+            ),
+        )
+        .await,
+        1
+    );
+    // Turning it on again is a plain edit and keeps that record.
+    let on_again = queries::upsert_permit_type(&db, type_input(&off, Some(true), None), EDITOR)
+        .await
+        .expect("on again");
+    assert!(on_again.requires_energy_isolation);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM permit_types WHERE id = {} AND isolation_changed_by_id = {APPLIER}",
+                hot.id
+            ),
+        )
+        .await,
+        1
+    );
+    // Off again while the recorded switch-off is later than this PC's time (its clock is behind):
+    // refused, naming the time of the last change.
+    let ahead = (chrono::Utc::now() + chrono::Duration::minutes(5))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE permit_types SET isolation_changed_at = ? WHERE id = ?",
+        [ahead.into(), hot.id.into()],
+    ))
+    .await
+    .expect("record ahead");
+    assert_validation(
+        queries::upsert_permit_type(
+            &db,
+            type_input(&on_again, Some(false), Some("Hot work on isolated lines only")),
+            ADMIN_STEP_UP,
+        )
+        .await,
+        "PERMIT_TYPE_ISOLATION_CLOCK_BEHIND",
+    );
 
     // The shipped LOTO type can never stop requiring an isolation.
     assert_validation(

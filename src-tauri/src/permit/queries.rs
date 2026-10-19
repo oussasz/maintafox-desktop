@@ -818,20 +818,32 @@ pub async fn upsert_permit_type(
     Ok(out)
 }
 
+/// The shipped LOTO permit type (migration 67), by its sync identity or its code: its
+/// energy-isolation rule is never switched off, here or by a row received from another PC.
+pub(crate) fn is_shipped_loto_type(entity_sync_id: &str, code: &str) -> bool {
+    entity_sync_id == SHIPPED_LOTO_TYPE_SYNC_ID || code.trim().eq_ignore_ascii_case("loto")
+}
+
 /// Switching the energy-isolation rule off weakens the start gate: never for the shipped LOTO
-/// type, otherwise only for an administrator with step-up and a reason, audited in the same
-/// transaction. Switching it on is a plain edit.
+/// type, otherwise only for an administrator with step-up and a reason of at least
+/// [`crate::settings::catalog::MIN_REASON_CHARS`] characters, audited in the same transaction.
+/// Returns the reason when the save switches it off (recorded on the row as who, when and why:
+/// migration 240, re-checked on arrival). Switching it on is a plain edit.
 async fn guard_isolation_relax(
     db: &impl ConnectionTrait,
     current: &PermitType,
     input: &PermitTypeUpsertInput,
     writer: PermitTypeWriter,
-) -> AppResult<()> {
+) -> AppResult<Option<String>> {
     if !relaxes_energy_isolation(current, input) {
-        return Ok(());
+        return Ok(None);
     }
-    let params = std::collections::HashMap::from([("type".to_string(), current.code.clone())]);
-    if current.entity_sync_id == SHIPPED_LOTO_TYPE_SYNC_ID || current.code.trim().eq_ignore_ascii_case("loto") {
+    let min = crate::settings::catalog::MIN_REASON_CHARS;
+    let params = std::collections::HashMap::from([
+        ("type".to_string(), current.code.clone()),
+        ("min".to_string(), min.to_string()),
+    ]);
+    if is_shipped_loto_type(&current.entity_sync_id, &current.code) {
         return Err(crate::errors::org_validation_failed(
             "PERMIT_TYPE_LOTO_ISOLATION_LOCKED",
             "The LOTO permit type always requires an energy isolation.",
@@ -849,14 +861,15 @@ async fn guard_isolation_relax(
         .disable_isolation_reason
         .as_deref()
         .map(str::trim)
-        .filter(|r| !r.is_empty())
+        .filter(|r| r.chars().count() >= min)
         .ok_or_else(|| {
             crate::errors::org_validation_failed(
                 "PERMIT_TYPE_ISOLATION_RELAX_REASON",
-                "Give the reason for no longer requiring an energy isolation.",
+                format!("Give the reason (at least {min} characters) for no longer requiring an energy isolation."),
                 params.clone(),
             )
         })?;
+    guard_change_clock(db, current, ISOLATION_CHANGE).await?;
     crate::audit::writer::write_audit_event_in(
         db,
         crate::audit::writer::AuditEventInput {
@@ -873,7 +886,7 @@ async fn guard_isolation_relax(
         },
     )
     .await?;
-    Ok(())
+    Ok(Some(reason.to_string()))
 }
 
 /// The three-person lock-removal chain changes who may confirm that locks came off: changing it
@@ -949,23 +962,44 @@ async fn audit_three_person_change(
     Ok(())
 }
 
-/// A change of the three-person setting is recorded at this PC's time, and every other PC applies
-/// it only when that time is later than the change it holds (`permit::sync_check::
-/// inbound_permit_type_check`). When the change already recorded here is not earlier than now, this
-/// PC's clock is behind: the change would be refused everywhere else while shown as made here, so
-/// it is refused here, naming the time to wait for (no time is made up). A recorded time that cannot
-/// be read is not compared: the new record (readable) replaces it.
-async fn guard_three_person_clock(db: &impl ConnectionTrait, current: &PermitType) -> AppResult<()> {
+/// The recorded time of a change of one safety setting of a permit type: its column, refusal code
+/// and the setting's name in the message.
+struct ChangeClock {
+    column: &'static str,
+    code: &'static str,
+    setting: &'static str,
+}
+
+const THREE_PERSON_CHANGE: ChangeClock = ChangeClock {
+    column: "three_person_changed_at",
+    code: "PERMIT_TYPE_THREE_PERSON_CLOCK_BEHIND",
+    setting: "three-person lock-removal rule",
+};
+
+const ISOLATION_CHANGE: ChangeClock = ChangeClock {
+    column: "isolation_changed_at",
+    code: "PERMIT_TYPE_ISOLATION_CLOCK_BEHIND",
+    setting: "energy-isolation rule",
+};
+
+/// A change of the three-person or energy-isolation setting is recorded at this PC's time, and
+/// every other PC applies it only when that time is later than the change it holds
+/// (`permit::sync_check::inbound_permit_type_check`). When the change already recorded here is not
+/// earlier than now, this PC's clock is behind (or the type was already changed within this second):
+/// the change would be refused everywhere else while shown as made here, so it is refused here,
+/// naming the time to wait for (no time is made up). A recorded time that cannot be read is not
+/// compared: the new record (readable) replaces it.
+async fn guard_change_clock(db: &impl ConnectionTrait, current: &PermitType, clock: ChangeClock) -> AppResult<()> {
     let held: Option<String> = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT three_person_changed_at FROM permit_types WHERE id = ?",
+            format!("SELECT {} AS at FROM permit_types WHERE id = ?", clock.column),
             [current.id.into()],
         ))
         .await?
-        .map(|r| r.try_get::<Option<String>>("", "three_person_changed_at"))
+        .map(|r| r.try_get::<Option<String>>("", "at"))
         .transpose()
-        .map_err(|e| decode_err("three_person_changed_at", e))?
+        .map_err(|e| decode_err(clock.column, e))?
         .flatten();
     let Some(held) = held.as_deref().map(str::trim).filter(|h| !h.is_empty()) else {
         return Ok(());
@@ -977,10 +1011,10 @@ async fn guard_three_person_clock(db: &impl ConnectionTrait, current: &PermitTyp
     let now = crate::settings::site::instant(&now_ts()).unwrap_or_else(Utc::now);
     if last >= now {
         return Err(crate::errors::org_validation_failed(
-            "PERMIT_TYPE_THREE_PERSON_CLOCK_BEHIND",
+            clock.code,
             format!(
-                "The three-person lock-removal rule of permit type {} was last changed at {held}, not earlier than this PC's time: check this PC's clock, then change it again.",
-                current.code
+                "The {} of permit type {} was last changed at {held}, not earlier than this PC's time: check this PC's clock, then change it again.",
+                clock.setting, current.code
             ),
             std::collections::HashMap::from([
                 ("type".to_string(), current.code.clone()),
@@ -991,9 +1025,9 @@ async fn guard_three_person_clock(db: &impl ConnectionTrait, current: &PermitTyp
     Ok(())
 }
 
-/// The author, time and reason of a change of the three-person setting (migration 238); all `None`
-/// when the save does not change it.
-struct ThreePersonTrace {
+/// The author, time and reason of a change of a safety setting (three-person: migration 238;
+/// energy-isolation switch-off: migration 240); all `None` when the save does not change it.
+struct ChangeTrace {
     by: Option<i64>,
     at: Option<String>,
     reason: Option<String>,
@@ -1010,24 +1044,27 @@ async fn upsert_permit_type_in(
         Some(id) => get_permit_type(db, id).await?,
         None => None,
     };
-    if let Some(current) = &existing {
-        guard_isolation_relax(db, current, &input, writer).await?;
-    }
+    let isolation_reason = match &existing {
+        Some(current) => guard_isolation_relax(db, current, &input, writer).await?,
+        None => None,
+    };
     let three_person_reason = if input.id.is_none() || existing.is_some() {
         guard_three_person_change(existing.as_ref(), &input, writer)?
     } else {
         None
     };
     if let (Some(_), Some(current)) = (&three_person_reason, &existing) {
-        guard_three_person_clock(db, current).await?;
+        guard_change_clock(db, current, THREE_PERSON_CHANGE).await?;
     }
     // Who changed the setting, when and why, written with the row (sent with it by sync and
     // re-checked on arrival: `permit::sync_check::inbound_permit_type_check`); kept otherwise.
-    let trace = ThreePersonTrace {
-        by: three_person_reason.as_ref().map(|_| writer.actor_id),
-        at: three_person_reason.as_ref().map(|_| now_ts()),
-        reason: three_person_reason.clone(),
+    let traced = |reason: &Option<String>| ChangeTrace {
+        by: reason.as_ref().map(|_| writer.actor_id),
+        at: reason.as_ref().map(|_| now_ts()),
+        reason: reason.clone(),
     };
+    let trace = traced(&three_person_reason);
+    let isolation_trace = traced(&isolation_reason);
     let ppe = input.mandatory_ppe_ids_json.unwrap_or_else(|| "[]".to_string());
     let rules = input.mandatory_control_rules_json.unwrap_or_else(|| "{}".to_string());
     let desc = input.description.unwrap_or_default();
@@ -1054,7 +1091,10 @@ async fn upsert_permit_type_in(
                  requires_energy_isolation = ?, requires_three_person_removal = ?, \
                  three_person_changed_by_id = COALESCE(?, three_person_changed_by_id), \
                  three_person_changed_at = COALESCE(?, three_person_changed_at), \
-                 three_person_change_reason = COALESCE(?, three_person_change_reason), row_version = ? \
+                 three_person_change_reason = COALESCE(?, three_person_change_reason), \
+                 isolation_changed_by_id = COALESCE(?, isolation_changed_by_id), \
+                 isolation_changed_at = COALESCE(?, isolation_changed_at), \
+                 isolation_change_reason = COALESCE(?, isolation_change_reason), row_version = ? \
                  WHERE id = ? AND row_version = ?",
                 [
                     input.code.into(),
@@ -1081,6 +1121,9 @@ async fn upsert_permit_type_in(
                     trace.by.into(),
                     trace.at.clone().into(),
                     trace.reason.clone().into(),
+                    isolation_trace.by.into(),
+                    isolation_trace.at.into(),
+                    isolation_trace.reason.into(),
                     new_rv.into(),
                     id.into(),
                     current.row_version.into(),

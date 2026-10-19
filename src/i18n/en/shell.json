@@ -104,10 +104,14 @@
       "WO_PERMIT_RULE_CHANGED": "The plant rule that requires a work order's permit was removed or changed elsewhere",
       "PERMIT_THREE_PERSON_REMOVAL": "A lock removal verified by the isolation's verifier, where the permit type requires a third person",
       "PERMIT_HANDOVER_RECEIVER_IS_SIGNER": "A permit hand-over received by the person who signed it",
-      "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED": "A permit type's third-person lock-removal rule changed on another PC by someone without the settings right",
+      "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED": "A permit type's third-person lock-removal rule changed on another PC by someone without the settings and permit-issue rights",
       "PERMIT_TYPE_THREE_PERSON_UNAUDITED": "A permit type's third-person lock-removal rule changed on another PC without who, when or why",
       "PERMIT_TYPE_CHANGED": "A permit moved to another permit type",
       "PERMIT_TYPE_THREE_PERSON_STALE": "A permit type's third-person lock-removal rule received with a change older than the one recorded here",
+      "PERMIT_TYPE_ISOLATION_UNAUDITED": "A permit type's energy-isolation rule switched off on another PC without who, when or why",
+      "PERMIT_TYPE_ISOLATION_UNAUTHORISED": "A permit type's energy-isolation rule switched off on another PC by someone without the settings and permit-issue rights",
+      "PERMIT_TYPE_ISOLATION_STALE": "A permit type's energy-isolation rule received with a change older than the one recorded here",
+      "PERMIT_TYPE_LOTO_ISOLATION_LOCKED": "The LOTO permit type's energy-isolation rule switched off on another PC",
       "other": "Needs review"
     },
     "history": {

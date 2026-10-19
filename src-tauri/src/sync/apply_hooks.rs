@@ -29,8 +29,10 @@
 //!   yet makes the row wait (`permit::sync_check`);
 //!   A work order whose permit flag set by a plant rule is cleared names who cleared it (holding the
 //!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`);
-//! - `permit_types`: a change of the three-person lock-removal setting names who changed it
-//!   (holding the settings right here), when and why (`inbound_permit_type_check`);
+//! - `permit_types`: a change of the three-person lock-removal setting, or a switch-off of the
+//!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
+//!   here), when and why; the shipped LOTO type's isolation rule is never switched off
+//!   (`inbound_permit_type_check`);
 //! - `permit_handover_logs`: a hand-over received by the person who signed it is refused as a
 //!   conflict (`permit::sync_check::inbound_handover_check`); one without a signer is accepted;
 //! - `qualification_overrides`: reason, subject, context, no self-override and the approver's

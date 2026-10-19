@@ -30,8 +30,10 @@
 //!   when a rule flagged it), every permit live at that time active, not suspended, not expired, not
 //!   expiring before the work order's planned end, with its isolations ready;
 //! - a permit type whose three-person lock-removal setting changes (or a new type with it on), or
-//!   whose record of that change changes, says who changed it, when (later than the change recorded
-//!   here) and why, and that person holds the settings right here (`inbound_permit_type_check`);
+//!   whose energy-isolation rule is switched off, or whose record of such a change changes, says who
+//!   changed it, when (later than the change recorded here) and why, and that person holds the
+//!   settings and permit-issue rights here; the shipped LOTO type's energy-isolation rule is never
+//!   switched off (`inbound_permit_type_check`);
 //! - deletes (this device never deletes them): a permit, its isolations and suspensions only while
 //!   the permit is a draft (the LOTO history of any other permit is kept); a permit type or a
 //!   qualification requirement never (they are deactivated or edited).
@@ -842,24 +844,85 @@ fn on_off(p: &Payload, key: &str) -> Option<bool> {
     }
 }
 
-/// Re-check of a permit type received by synchronisation: a change of its three-person lock-removal
-/// setting (or a new type with it on) is an administrator action with step-up and a reason
-/// (`permit::queries::guard_three_person_change`), recorded on the row as who changed it, when and
-/// why (migration 238). That record is judged whenever the received row changes the setting or the
-/// record itself (a row that leaves both alone passes; the energy-isolation rule is applied as
-/// received). It is applied only when:
+/// A safety setting of a permit type whose change is an administrator action recorded on the row as
+/// who changed it, when and why, and re-checked on arrival ([`judge_setting_record`]).
+struct SettingRecord {
+    /// The setting's column (on / off).
+    setting: &'static str,
+    /// Wire fields of the record: author (user sync id), time, reason.
+    by: &'static str,
+    at: &'static str,
+    why: &'static str,
+    /// Columns of the record here (the copy check).
+    by_column: &'static str,
+    at_column: &'static str,
+    why_column: &'static str,
+    /// The setting's name in the messages.
+    name: &'static str,
+    unaudited: &'static str,
+    stale: &'static str,
+    unauthorised: &'static str,
+    /// Only switching it off is an administrator action (switching it on is a plain edit); otherwise
+    /// a change either way, or a new type with it on, is.
+    off_only: bool,
+}
+
+/// The three-person lock-removal setting (migrations 236, 238; `permit::queries::
+/// guard_three_person_change`).
+const THREE_PERSON_SETTING: SettingRecord = SettingRecord {
+    setting: "requires_three_person_removal",
+    by: "three_person_changed_by_sync_id",
+    at: "three_person_changed_at",
+    why: "three_person_change_reason",
+    by_column: "three_person_changed_by_id",
+    at_column: "three_person_changed_at",
+    why_column: "three_person_change_reason",
+    name: "three-person lock-removal rule",
+    unaudited: "PERMIT_TYPE_THREE_PERSON_UNAUDITED",
+    stale: "PERMIT_TYPE_THREE_PERSON_STALE",
+    unauthorised: "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED",
+    off_only: false,
+};
+
+/// The energy-isolation setting: switching it off (migration 240; `permit::queries::
+/// guard_isolation_relax`).
+const ISOLATION_SETTING: SettingRecord = SettingRecord {
+    setting: "requires_energy_isolation",
+    by: "isolation_changed_by_sync_id",
+    at: "isolation_changed_at",
+    why: "isolation_change_reason",
+    by_column: "isolation_changed_by_id",
+    at_column: "isolation_changed_at",
+    why_column: "isolation_change_reason",
+    name: "energy-isolation rule",
+    unaudited: "PERMIT_TYPE_ISOLATION_UNAUDITED",
+    stale: "PERMIT_TYPE_ISOLATION_STALE",
+    unauthorised: "PERMIT_TYPE_ISOLATION_UNAUTHORISED",
+    off_only: true,
+};
+
+/// Re-check of a permit type received by synchronisation. The shipped LOTO type's energy-isolation
+/// rule is never switched off (`PERMIT_TYPE_LOTO_ISOLATION_LOCKED`, as the local save refuses it).
+/// Its two safety settings — the three-person lock-removal chain (a change either way, or a new type
+/// with it on) and the energy-isolation rule (switching it off) — are administrator actions with
+/// step-up and a reason, recorded on the row as who changed them, when and why (migrations 238, 240).
+/// Each record is judged whenever the received row makes such a change or rewrites the record
+/// itself (a row that leaves both alone passes; switching the isolation rule on is a plain edit). It
+/// is applied only when:
 /// - the setting is a value this version reads one way and stores the same way ([`on_off`]);
 /// - the reason has at least [`crate::settings::catalog::MIN_REASON_CHARS`] characters, the time is
 ///   readable, not in the future and strictly later than the change already recorded here for this
-///   type (an older record of this type is not replayed: `PERMIT_TYPE_THREE_PERSON_STALE`; a time
-///   recorded here that cannot be read refuses every received change of the type);
+///   type (an older record of this type is not replayed: `..._STALE`; a time recorded here that
+///   cannot be read refuses every received change of the setting);
 /// - the record is not one already held here for another type (copied from that type);
-/// - the person named holds the settings right (`adm.settings`, plant-wide) here, judged on arrival.
+/// - the person named holds the settings right (`adm.settings`) and the permit-issue right
+///   (`ptw.issue`) plant-wide here, judged on arrival (the rights the local save needs).
 ///
-/// A type new here whose setting is off is applied once its record passes the reason and time
-/// checks, without judging who changed it: off is the setting every type has without a record, and
-/// a PC paired later must not be stuck on a past change by an administrator who has since lost the
-/// right.
+/// A type new here is applied once its record passes the reason and time checks, without judging
+/// who changed it, when it carries the setting every type may have without an administrator: the
+/// three-person chain off, or any energy-isolation value (a new type is created with the rule off
+/// by a plain edit). A PC paired later is so never stuck on a past change by an administrator who
+/// has since lost the right.
 ///
 /// A person not applied here yet, or whose rights are still waiting in the inbox, makes it wait;
 /// otherwise a sync conflict, nothing written. The step-up itself cannot be re-verified here, and a
@@ -869,42 +932,72 @@ pub(crate) async fn inbound_permit_type_check(
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
-    const SETTING: &str = "requires_three_person_removal";
-    const BY: &str = "three_person_changed_by_sync_id";
-    const AT: &str = "three_person_changed_at";
-    const WHY: &str = "three_person_change_reason";
     let local = local_wire(conn, "permit_types", entity_sync_id).await?;
     let ty = overlay(local.as_ref(), received);
     let code = field(&ty, "code").unwrap_or(entity_sync_id).to_string();
+    // The shipped LOTO type always requires an energy isolation (`permit::queries::
+    // guard_isolation_relax`): a received switch-off is refused, whoever made it.
+    let isolation_held = local.as_ref().and_then(|l| on_off(l, ISOLATION_SETTING.setting));
+    if crate::permit::queries::is_shipped_loto_type(entity_sync_id, &code)
+        && on_off(&ty, ISOLATION_SETTING.setting) == Some(false)
+        && isolation_held != Some(false)
+    {
+        return conflict(
+            "PERMIT_TYPE_LOTO_ISOLATION_LOCKED",
+            format!("permit type {code}: the LOTO permit type always requires an energy isolation"),
+        );
+    }
+    for setting in [&THREE_PERSON_SETTING, &ISOLATION_SETTING] {
+        if let Some(verdict) = judge_setting_record(conn, entity_sync_id, &code, &ty, local.as_ref(), setting).await? {
+            return Ok(Some(verdict));
+        }
+    }
+    Ok(None)
+}
+
+/// One setting's record re-checked on arrival (`inbound_permit_type_check`).
+async fn judge_setting_record(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    code: &str,
+    ty: &Payload,
+    local: Option<&Payload>,
+    s: &SettingRecord,
+) -> AppResult<Option<InboundVerdict>> {
     let (Some(wanted), Some(held)) = (
-        on_off(&ty, SETTING),
-        local.as_ref().map_or(Some(None), |l| on_off(l, SETTING).map(Some)),
+        on_off(ty, s.setting),
+        local.map_or(Some(None), |l| on_off(l, s.setting).map(Some)),
     ) else {
         return conflict(
             "INVALID_VALUE",
             format!(
-                "permit type {code}: its three-person lock-removal rule must be on or off, got {}",
-                ty.get(SETTING).unwrap_or(&Value::Null)
+                "permit type {code}: its {} must be on or off, got {}",
+                s.name,
+                ty.get(s.setting).unwrap_or(&Value::Null)
             ),
         );
     };
-    let record = |p: &Payload| [BY, AT, WHY].map(|k| field(p, k).map(str::to_string));
-    let held_record = local.as_ref().map_or([None, None, None], record);
-    let changes = held.map_or(wanted, |h| h != wanted);
-    if !changes && record(&ty) == held_record {
+    let record = |p: &Payload| [s.by, s.at, s.why].map(|k| field(p, k).map(str::to_string));
+    let held_record = local.map_or([None, None, None], record);
+    let changes = if s.off_only {
+        held == Some(true) && !wanted
+    } else {
+        held.map_or(wanted, |h| h != wanted)
+    };
+    if !changes && record(ty) == held_record {
         return Ok(None);
     }
     let unaudited = |why: String| {
         conflict(
-            "PERMIT_TYPE_THREE_PERSON_UNAUDITED",
-            format!("permit type {code}: its three-person lock-removal rule was changed {why}"),
+            s.unaudited,
+            format!("permit type {code}: its {} was changed {why}", s.name),
         )
     };
     let min = crate::settings::catalog::MIN_REASON_CHARS;
-    let Some(reason) = field(&ty, WHY).filter(|r| r.chars().count() >= min) else {
+    let Some(reason) = field(ty, s.why).filter(|r| r.chars().count() >= min) else {
         return unaudited(format!("without a reason of at least {min} characters"));
     };
-    let Some(changed_at) = time(&ty, AT) else {
+    let Some(changed_at) = time(ty, s.at) else {
         return unaudited("without a readable time of the change".into());
     };
     if changed_at > future_bound() {
@@ -913,11 +1006,11 @@ pub(crate) async fn inbound_permit_type_check(
     // Each change is later than the one before it: a record not later than the one held here is
     // an earlier change of this type (or this one again), not a new one. A time held here that
     // cannot be read cannot be compared: refused (fails closed).
-    if let Some(held_at) = local.as_ref().and_then(|l| field(l, AT)) {
+    if let Some(held_at) = local.and_then(|l| field(l, s.at)) {
         let stale = |why: String| {
             conflict(
-                "PERMIT_TYPE_THREE_PERSON_STALE",
-                format!("permit type {code}: its three-person lock-removal rule was received {why}"),
+                s.stale,
+                format!("permit type {code}: its {} was received {why}", s.name),
             )
         };
         let Some(last) = instant(held_at) else {
@@ -931,18 +1024,18 @@ pub(crate) async fn inbound_permit_type_check(
             ));
         }
     }
-    // New here and off: the setting a type has without any record; who changed it is not judged
-    // (a PC paired later is never stuck on a past change of a since-demoted administrator).
-    if local.is_none() && !wanted {
+    // New here with a value any type may have without an administrator: who changed it is not
+    // judged (a PC paired later is never stuck on a past change of a since-demoted administrator).
+    if local.is_none() && (s.off_only || !wanted) {
         return Ok(None);
     }
     let unauthorised = |why: &str| {
         conflict(
-            "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED",
-            format!("permit type {code}: its three-person lock-removal rule was changed {why}"),
+            s.unauthorised,
+            format!("permit type {code}: its {} was changed {why}", s.name),
         )
     };
-    let Some(author_sync) = field(&ty, BY) else {
+    let Some(author_sync) = field(ty, s.by) else {
         return unauthorised("without saying who changed it");
     };
     let Some(author) = conn
@@ -956,7 +1049,8 @@ pub(crate) async fn inbound_permit_type_check(
         .transpose()?
     else {
         return wait(format!(
-            "permit type {code}: the person who changed its three-person rule is not applied yet"
+            "permit type {code}: the person who changed its {} is not applied yet",
+            s.name
         ));
     };
     // A change is made on one type at a time: the same person, time and reason as the record held
@@ -964,8 +1058,10 @@ pub(crate) async fn inbound_permit_type_check(
     let others = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT three_person_changed_at AS at, three_person_change_reason AS reason FROM permit_types \
-             WHERE three_person_changed_by_id = ? AND entity_sync_id <> ?",
+            format!(
+                "SELECT {} AS at, {} AS reason FROM permit_types WHERE {} = ? AND entity_sync_id <> ?",
+                s.at_column, s.why_column, s.by_column
+            ),
             [author.into(), entity_sync_id.into()],
         ))
         .await?;
@@ -977,16 +1073,22 @@ pub(crate) async fn inbound_permit_type_check(
             return unaudited("with the record of a change of another permit type".into());
         }
     }
-    let right = crate::rbac::permissions::ADM_SETTINGS;
-    if !crate::settings::site::holds_tenant_right(conn, author, right).await? {
-        // The right is held before the change is made, so its rows come before this one: while
-        // some are still waiting here, wait; otherwise refuse (never applied without the right).
-        if rights_may_still_arrive(conn, author_sync, right).await? {
-            return wait(format!(
-                "permit type {code}: the rights of the person who changed its three-person rule are still arriving"
-            ));
+    // The rights the local save needs (`commands::permit::upsert_permit_type`). Each is held before
+    // the change is made, so its rows come before this one: while some are still waiting here, wait;
+    // otherwise refuse (never applied without the right).
+    for (right, label) in [
+        (crate::rbac::permissions::ADM_SETTINGS, "the settings right"),
+        (crate::rbac::permissions::PTW_ISSUE, "the permit-issue right"),
+    ] {
+        if !crate::settings::site::holds_tenant_right(conn, author, right).await? {
+            if rights_may_still_arrive(conn, author_sync, right).await? {
+                return wait(format!(
+                    "permit type {code}: the rights of the person who changed its {} are still arriving",
+                    s.name
+                ));
+            }
+            return unauthorised(&format!("by someone without {label} here"));
         }
-        return unauthorised("by someone without the settings right here");
     }
     Ok(None)
 }

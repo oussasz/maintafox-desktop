@@ -2951,3 +2951,133 @@ async fn a_received_start_on_a_permit_expiring_before_the_planned_end_is_refused
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     assert_eq!(text(&db, &status_sql).await.as_deref(), Some("in_progress"));
 }
+
+/// Owner decision: switching a permit type's energy-isolation rule off on another PC is re-checked
+/// on arrival like the three-person setting (who, when, why, the settings and permit-issue rights
+/// here); switching it on is a plain edit; the shipped LOTO type's rule is never switched off.
+#[tokio::test]
+async fn a_received_isolation_switch_off_is_rechecked_and_loto_stays_locked() {
+    let db = setup().await;
+    let sync_of = |code: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT entity_sync_id FROM permit_types WHERE code = '{code}'"),
+            )
+            .await
+            .expect("type sync id")
+        }
+    };
+    let (hot, loto) = (sync_of("hot_work").await, sync_of("loto").await);
+    exec(
+        &db,
+        &format!("UPDATE permit_types SET requires_energy_isolation = 1 WHERE entity_sync_id = '{hot}'"),
+    )
+    .await;
+    let isolation = |sync: String| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT CAST(requires_energy_isolation AS TEXT) FROM permit_types WHERE entity_sync_id = '{sync}'"
+                ),
+            )
+            .await
+        }
+    };
+    let admin = json!(user_sync(&db, APPLIER).await);
+    let reason = "Hot work on isolated lines only";
+    let off = |base: &Payload, by: Value, at: Value, why: Value| {
+        with(
+            base.clone(),
+            &[
+                ("requires_energy_isolation", json!(0)),
+                ("isolation_changed_by_sync_id", by),
+                ("isolation_changed_at", at),
+                ("isolation_change_reason", why),
+            ],
+        )
+    };
+    let held = wire(&db, "permit_types", &hot).await;
+    for (row, expected) in [
+        (
+            off(&held, Value::Null, Value::Null, Value::Null),
+            "PERMIT_TYPE_ISOLATION_UNAUDITED",
+        ),
+        (
+            off(&held, admin.clone(), json!(now()), json!("short")),
+            "PERMIT_TYPE_ISOLATION_UNAUDITED",
+        ),
+        (
+            off(&held, admin.clone(), json!("2999-01-01T00:00:00Z"), json!(reason)),
+            "PERMIT_TYPE_ISOLATION_UNAUDITED",
+        ),
+        (
+            off(&held, Value::Null, json!(now()), json!(reason)),
+            "PERMIT_TYPE_ISOLATION_UNAUTHORISED",
+        ),
+        (
+            off(
+                &held,
+                json!(user_sync(&db, VERIFIER).await),
+                json!(now()),
+                json!(reason),
+            ),
+            "PERMIT_TYPE_ISOLATION_UNAUTHORISED",
+        ),
+    ] {
+        let outcome = apply(&db, "permit_types", &hot, &row).await;
+        assert_eq!(code(&outcome), Some(expected), "{row:?} -> {outcome:?}");
+        assert_eq!(isolation(hot.clone()).await.as_deref(), Some("1"), "nothing written");
+    }
+    // By an administrator, with a reason and a time: applied, with its record.
+    let first = (chrono::Utc::now() - chrono::Duration::minutes(10))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let switched = off(&held, admin.clone(), json!(first), json!(reason));
+    let outcome = apply(&db, "permit_types", &hot, &switched).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(isolation(hot.clone()).await.as_deref(), Some("0"));
+    // On again: a plain edit, applied as received (the record kept).
+    let on = with(
+        wire(&db, "permit_types", &hot).await,
+        &[("requires_energy_isolation", json!(1))],
+    );
+    let outcome = apply(&db, "permit_types", &hot, &on).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // Off again with the record already held here: an earlier change replayed.
+    let replayed = with(
+        wire(&db, "permit_types", &hot).await,
+        &[("requires_energy_isolation", json!(0))],
+    );
+    let outcome = apply(&db, "permit_types", &hot, &replayed).await;
+    assert_eq!(code(&outcome), Some("PERMIT_TYPE_ISOLATION_STALE"), "{outcome:?}");
+    assert_eq!(isolation(hot.clone()).await.as_deref(), Some("1"));
+
+    // The shipped LOTO type: refused whoever switched it off.
+    let loto_off = off(
+        &wire(&db, "permit_types", &loto).await,
+        admin.clone(),
+        json!(now()),
+        json!(reason),
+    );
+    let outcome = apply(&db, "permit_types", &loto, &loto_off).await;
+    assert_eq!(code(&outcome), Some("PERMIT_TYPE_LOTO_ISOLATION_LOCKED"), "{outcome:?}");
+    assert_eq!(isolation(loto.clone()).await.as_deref(), Some("1"));
+
+    // A type new here: off is how a type is created; its record is checked for its reason and time
+    // only, whoever made it.
+    let new_off = with(
+        off(
+            &held,
+            json!(user_sync(&db, VERIFIER).await),
+            json!(now()),
+            json!(reason),
+        ),
+        &[("code", json!("new_iso_off"))],
+    );
+    let outcome = apply(&db, "permit_types", "type-new-iso-off", &new_off).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
