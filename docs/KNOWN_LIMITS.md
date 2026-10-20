@@ -188,7 +188,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Finance period-close and procurement-approval alerts have no generator yet. | UX | After pilot |
 | E-mail goes only through the existing channel; no new channel. | UX | Accepted |
 | Escalation runs per PC on the notifications that PC holds; an acknowledgement on another PC stops it once that state syncs. | UX | Accepted |
-| Notifications created before a publish of a new organisation structure keep their former unit (they are synced as records that are never rewritten, so the publish does not move them): readers limited to that site no longer see them. Plant-wide readers still do; nobody gains access. | UX | Accepted |
+| Notifications created before a publish of a new organisation structure keep their former unit (the publish does not move them): readers limited to that site no longer see them. Plant-wide readers still do; nobody gains access. | UX | Accepted |
 
 ## Administration, security, settings, currency
 
