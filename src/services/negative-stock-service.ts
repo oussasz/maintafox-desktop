@@ -1,0 +1,92 @@
+/**
+ * Stock balances below zero after sync, to reconcile (backend `inventory::negative_stock`).
+ *
+ * A movement received from another PC is applied as received; a location left below zero gets one
+ * review item per article and location, closed by a stock count recorded there (inv.manage, a
+ * reason) or by a later stock entry. More reserved than held is a warning only.
+ *
+ * IPC failures are passed on untouched so their coded reasons (`inventory:errors.*`) reach the
+ * screen (`appErrorReason`).
+ */
+import { z } from "zod";
+
+import { invoke } from "@/lib/ipc-invoke";
+
+/** Shortest reason accepted for the count (characters, trimmed): `REVIEW_REASON_MIN_CHARS`. */
+export const NEGATIVE_STOCK_REASON_MIN_CHARS = 5;
+
+export const NegativeStockReviewSchema = z.object({
+  id: z.number(),
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  location_id: z.number(),
+  location_code: z.string(),
+  warehouse_code: z.string(),
+  status: z.enum(["open", "closed"]),
+  opened_at: z.string(),
+  opening_transaction_id: z.number().nullable(),
+  opening_movement_type: z.string().nullable(),
+  closed_at: z.string().nullable(),
+  closure_kind: z.enum(["count", "receipt", "other"]).nullable(),
+  closing_transaction_id: z.number().nullable(),
+  closing_movement_type: z.string().nullable(),
+  on_hand_qty: z.number(),
+  reserved_qty: z.number(),
+  available_qty: z.number(),
+});
+export type NegativeStockReview = z.infer<typeof NegativeStockReviewSchema>;
+
+export const OverReservationWarningSchema = z.object({
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  location_id: z.number(),
+  location_code: z.string(),
+  warehouse_code: z.string(),
+  on_hand_qty: z.number(),
+  reserved_qty: z.number(),
+  available_qty: z.number(),
+});
+export type OverReservationWarning = z.infer<typeof OverReservationWarningSchema>;
+
+const NegativeStockReviewListSchema = z.object({
+  items: z.array(NegativeStockReviewSchema),
+  over_reservations: z.array(OverReservationWarningSchema),
+});
+export type NegativeStockReviewList = z.infer<typeof NegativeStockReviewListSchema>;
+
+const NegativeStockSummarySchema = z.object({
+  negative_count: z.number(),
+  over_reserved_count: z.number(),
+});
+export type NegativeStockSummary = z.infer<typeof NegativeStockSummarySchema>;
+
+export interface ResolveNegativeStockInput {
+  article_id: number;
+  location_id: number;
+  /** Quantity physically counted at the location (zero or more). */
+  counted_qty: number;
+  /** Code of the plant's variance-reason list (`inventory.variance_reason`). */
+  variance_reason_code: string;
+  reason: string;
+}
+
+export async function listNegativeStockReviews(
+  includeClosed: boolean,
+): Promise<NegativeStockReviewList> {
+  const raw = await invoke<unknown>("list_negative_stock_reviews", { includeClosed });
+  return NegativeStockReviewListSchema.parse(raw);
+}
+
+export async function getNegativeStockSummary(): Promise<NegativeStockSummary> {
+  const raw = await invoke<unknown>("get_negative_stock_summary");
+  return NegativeStockSummarySchema.parse(raw);
+}
+
+export async function resolveNegativeStockByCount(
+  input: ResolveNegativeStockInput,
+): Promise<NegativeStockReview> {
+  const raw = await invoke<unknown>("resolve_negative_stock_by_count", { input });
+  return NegativeStockReviewSchema.parse(raw);
+}

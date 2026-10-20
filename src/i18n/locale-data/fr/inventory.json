@@ -1765,5 +1765,42 @@
         "blocker": "Saisissez un montant supérieur ou égal à 0, ou laissez vide."
       }
     }
+  },
+  "negativeStock": {
+    "title": "Stock à rapprocher",
+    "description": "Les mouvements reçus d'un autre poste sont appliqués tels quels. Un emplacement passé sous zéro reste ici jusqu'à ce qu'un comptage y soit enregistré ou qu'une entrée de stock ultérieure le ramène à zéro ou plus.",
+    "showClosed": "Afficher les éléments rapprochés",
+    "noneOpen": "Aucun emplacement sous zéro.",
+    "openList": "Emplacements sous zéro à rapprocher",
+    "closedList": "Emplacements rapprochés",
+    "flag": "Négatif — à rapprocher",
+    "balance": "En stock {{onHand}}, réservé {{reserved}}, disponible {{available}}",
+    "openedAt": "Constaté sous zéro le {{date}} (dernière sortie : {{movement}})",
+    "recordCount": "Enregistrer un comptage",
+    "overReservedTitle": "Réservations supérieures au stock (avertissement)",
+    "overReservedLine": "{{article}} à {{location}} : {{reserved}} réservé(s) pour {{onHand}} en stock",
+    "closure": {
+      "count": "Rapproché par comptage le {{date}}",
+      "receipt": "Régularisé par réception le {{date}} ({{movement}})",
+      "other": "Revenu à zéro ou plus le {{date}} sans entrée de stock enregistrée"
+    },
+    "loadError": "Impossible de charger le stock à rapprocher",
+    "loading": "Chargement du stock à rapprocher…",
+    "dialog": {
+      "title": "Enregistrer un comptage",
+      "description": "{{article}} à {{location}} est à {{onHand}} sur ce poste. Comptez ce qui est physiquement présent : le stock devient la quantité comptée et l'élément est clos. Le comptage est passé comme tout inventaire et tracé dans l'audit.",
+      "counted": "Quantité comptée",
+      "varianceReason": "Motif d'écart",
+      "varianceReasonPlaceholder": "Choisir un motif",
+      "reason": "Justification",
+      "reasonPlaceholder": "Au moins {{count}} caractères : ce qui a été constaté et pourquoi",
+      "confirm": "Enregistrer le comptage"
+    }
+  },
+  "errors": {
+    "NEGATIVE_STOCK_REASON_SHORT": "Indiquez la justification du comptage (au moins {{min}} caractères).",
+    "NEGATIVE_STOCK_COUNT_INVALID": "La quantité comptée doit être supérieure ou égale à zéro.",
+    "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choisissez le motif d'écart du comptage.",
+    "NEGATIVE_STOCK_NOT_OPEN": "Le stock de cet emplacement n'est plus sous zéro : rien à rapprocher. Actualisez la liste."
   }
 }

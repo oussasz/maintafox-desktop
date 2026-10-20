@@ -17,6 +17,7 @@ import { InventoryControlsPanel } from "@/components/inventory/InventoryControls
 import { InventoryIssueDesk } from "@/components/inventory/InventoryIssueDesk";
 import { InventoryValuationPanel } from "@/components/inventory/InventoryValuationPanel";
 import { NegativeStockBadge } from "@/components/inventory/NegativeStockBadge";
+import { NegativeStockReviewPanel } from "@/components/inventory/NegativeStockReviewPanel";
 import {
   type ProcurementPanelRequest,
   ProcurementRepairablePanel,
@@ -189,11 +190,17 @@ export function InventoryPage() {
 
   // A link may ask for the articles below their reorder point (?stock=below_reorder): it opens
   // the article list with that stock filter as a visible chip, then leaves the address.
+  // The sync centre links to the stock balances to reconcile (?stock=to_reconcile): Controls tab.
   useEffect(() => {
     const stock = searchParams.get(LIST_PARAM.stock);
-    if (stock !== "below_reorder") return;
-    setInvTab("master");
-    setMasterStockFilter("below_reorder");
+    if (stock === "to_reconcile") {
+      setInvTab("controls");
+    } else if (stock === "below_reorder") {
+      setInvTab("master");
+      setMasterStockFilter("below_reorder");
+    } else {
+      return;
+    }
     setSearchParams(withoutParams(searchParams, LIST_PARAM.stock), { replace: true });
   }, [searchParams, setSearchParams]);
   // The list starts empty: only resolve the link once a load has run and finished.
@@ -916,6 +923,9 @@ export function InventoryPage() {
           />
         </TabsContent>
         <TabsContent value="controls" className="mt-4 space-y-4">
+          {invTab === "controls" ? (
+            <NegativeStockReviewPanel reloadToken={controlsReloadToken} />
+          ) : null}
           <InventoryControlsPanel reloadToken={controlsReloadToken} />
         </TabsContent>
         <TabsContent value="issueDesk" className="mt-4 space-y-4">

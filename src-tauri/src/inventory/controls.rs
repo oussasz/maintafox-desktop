@@ -43,7 +43,7 @@ async fn ensure_count_session(db: &DatabaseConnection, session_id: i64) -> AppRe
     map_count_session(row)
 }
 
-async fn ensure_lookup_variance_reason_active(db: &DatabaseConnection, code: &str) -> AppResult<()> {
+async fn ensure_lookup_variance_reason_active<C: ConnectionTrait>(db: &C, code: &str) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -90,6 +90,8 @@ async fn get_balance<C: ConnectionTrait>(db: &C, article_id: i64, location_id: i
     }
 }
 
+/// Sets the counted on-hand stock of a location; its reservations are kept, so the available stock
+/// is the new on-hand minus what is reserved there.
 async fn upsert_balance<C: ConnectionTrait>(
     db: &C,
     article_id: i64,
@@ -103,7 +105,7 @@ async fn upsert_balance<C: ConnectionTrait>(
          VALUES (?, ?, ?, ?, 0, ?, ?)
          ON CONFLICT(article_id, location_id) DO UPDATE SET
             on_hand_qty = excluded.on_hand_qty,
-            available_qty = excluded.available_qty,
+            available_qty = excluded.on_hand_qty - stock_balances.reserved_qty,
             updated_at = excluded.updated_at",
         [
             article_id.into(),
@@ -536,6 +538,165 @@ pub async fn reverse_count_session(
     .await?;
     tx.commit().await?;
     ensure_count_session(db, input.session_id).await
+}
+
+/// One location counted for one article, recorded and posted at once by the person counting.
+pub(crate) struct LocationCount<'a> {
+    pub article_id: i64,
+    pub location_id: i64,
+    pub counted_qty: f64,
+    /// Code of the plant's `inventory.variance_reason` list (required when the count differs).
+    pub variance_reason_code: &'a str,
+    /// Why the count was made: kept as the line's reviewer evidence and on the movement's audit link.
+    pub evidence: &'a str,
+    pub actor_id: i64,
+}
+
+/// What [`record_location_count_in`] wrote.
+pub(crate) struct PostedLocationCount {
+    pub session_id: i64,
+    pub session_code: String,
+    pub line_id: i64,
+    pub system_qty: f64,
+    pub variance_qty: f64,
+    /// The count movement (none when the count equals the stock on record).
+    pub transaction_id: Option<i64>,
+}
+
+/// Records a count of one article at one location as a posted count session, in the caller's
+/// transaction: a session of that location with one line, counted, approved (the evidence is the
+/// approval note) and posted by the same person, the `COUNT_ADJUST` movement of the variance and
+/// its audit link — the rows of the count workflow, so the count reaches the other PCs and shows in
+/// the count history like any posted count. Used where a count is the resolution of a review
+/// (`inventory::negative_stock`); the caller checks the right and the reason.
+pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
+    tx: &C,
+    count: &LocationCount<'_>,
+) -> AppResult<PostedLocationCount> {
+    if !count.counted_qty.is_finite() || count.counted_qty < 0.0 {
+        return Err(AppError::ValidationFailed(
+            vec!["counted_qty must be >= 0.".to_string()],
+        ));
+    }
+    let (warehouse_id, system_qty) = get_balance(tx, count.article_id, count.location_id).await?;
+    let variance_qty = count.counted_qty - system_qty;
+    let has_variance = variance_qty.abs() > f64::EPSILON;
+    if has_variance {
+        ensure_lookup_variance_reason_active(tx, count.variance_reason_code).await?;
+    }
+    let critical_abs_threshold = crate::settings::catalog::decimal_setting(tx, SETTING_COUNT_CRITICAL_VARIANCE).await?;
+    let now = now_iso();
+    let session_code = next_doc("CC");
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO inventory_count_sessions
+            (session_code, warehouse_id, location_id, status, critical_abs_threshold, opened_by_id,
+             submitted_by_id, submitted_at, posted_by_id, posted_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'posted', ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            session_code.clone().into(),
+            warehouse_id.into(),
+            count.location_id.into(),
+            critical_abs_threshold.into(),
+            count.actor_id.into(),
+            count.actor_id.into(),
+            now.clone().into(),
+            count.actor_id.into(),
+            now.clone().into(),
+            now.clone().into(),
+            now.clone().into(),
+        ],
+    ))
+    .await?;
+    let session_id = last_insert_id(tx).await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO inventory_count_lines
+            (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
+             variance_reason_code, is_critical, approval_required, approved_by_id, approved_at, approval_note,
+             created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            session_id.into(),
+            count.article_id.into(),
+            warehouse_id.into(),
+            count.location_id.into(),
+            system_qty.into(),
+            count.counted_qty.into(),
+            variance_qty.into(),
+            if has_variance {
+                Value::from(count.variance_reason_code)
+            } else {
+                Value::String(None)
+            },
+            i64::from(variance_qty.abs() >= critical_abs_threshold).into(),
+            i64::from(has_variance).into(),
+            count.actor_id.into(),
+            now.clone().into(),
+            count.evidence.into(),
+            now.clone().into(),
+            now.clone().into(),
+        ],
+    ))
+    .await?;
+    let line_id = last_insert_id(tx).await?;
+    let mut transaction_id = None;
+    if has_variance {
+        upsert_balance(tx, count.article_id, warehouse_id, count.location_id, count.counted_qty).await?;
+        let tx_id = insert_count_transaction(
+            tx,
+            count.article_id,
+            warehouse_id,
+            count.location_id,
+            variance_qty,
+            "COUNT_ADJUST",
+            session_id,
+            &session_code,
+            Some(count.variance_reason_code),
+            Some(count.actor_id),
+        )
+        .await?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE inventory_count_lines SET posted_transaction_id = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
+            [tx_id.into(), now.clone().into(), line_id.into()],
+        ))
+        .await?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inventory_mutation_audit_links
+                (transaction_id, source_entity_type, source_entity_id, reviewer_id, reviewer_evidence, created_at)
+             VALUES (?, 'inventory_count_line', ?, ?, ?, ?)",
+            [
+                tx_id.into(),
+                line_id.into(),
+                count.actor_id.into(),
+                count.evidence.into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+        transaction_id = Some(tx_id);
+    }
+    Ok(PostedLocationCount {
+        session_id,
+        session_code,
+        line_id,
+        system_qty,
+        variance_qty,
+        transaction_id,
+    })
+}
+
+async fn last_insert_id<C: ConnectionTrait>(db: &C) -> AppResult<i64> {
+    let row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT last_insert_rowid() AS id".to_string(),
+        ))
+        .await?
+        .ok_or_else(|| AppError::ValidationFailed(vec!["Could not read the new row id.".to_string()]))?;
+    Ok(row.try_get("", "id")?)
 }
 
 pub async fn run_reconciliation(

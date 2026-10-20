@@ -546,6 +546,12 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
         table: "stock_balances",
         category: LocalOnlyCategory::DerivedProjection,
     },
+    // Balances below zero to reconcile (`inventory::negative_stock`): open exactly while the
+    // location's on-hand stock is below zero, so every PC with the same ledger shows the same.
+    LocalOnlyTable {
+        table: "stock_negative_reviews",
+        category: LocalOnlyCategory::DerivedProjection,
+    },
     // Computed on each device from synchronised personnel and certification data
     // (`qualification::readiness`, `qualification::expiry_alerts`).
     LocalOnlyTable {

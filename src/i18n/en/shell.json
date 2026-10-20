@@ -320,7 +320,10 @@
       "training_sessions": "Training session",
       "failure_events": "Failure event",
       "app_settings": "Setting"
-    }
+    },
+    "negativeStock": "{{count}} stock location(s) below zero after sync, to reconcile by a count (Inventory › Controls).",
+    "overReserved": "{{count}} stock location(s) with more reserved than in stock (warning).",
+    "openNegativeStock": "Open the stock to reconcile"
   },
   "status": {
     "dbOk": "Database: OK",

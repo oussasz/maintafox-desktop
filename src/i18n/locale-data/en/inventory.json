@@ -1765,5 +1765,42 @@
         "blocker": "Enter an amount of 0 or more, or leave it empty."
       }
     }
+  },
+  "negativeStock": {
+    "title": "Stock to reconcile",
+    "description": "Movements received from another PC are applied as received. A location left below zero stays here until a stock count is recorded there or a later stock entry brings it back to zero or more.",
+    "showClosed": "Show reconciled items",
+    "noneOpen": "No location below zero.",
+    "openList": "Locations below zero to reconcile",
+    "closedList": "Reconciled locations",
+    "flag": "Negative — to reconcile",
+    "balance": "On hand {{onHand}}, reserved {{reserved}}, available {{available}}",
+    "openedAt": "Found below zero on {{date}} (last exit: {{movement}})",
+    "recordCount": "Record a count",
+    "overReservedTitle": "Reservations above stock (warning)",
+    "overReservedLine": "{{article}} at {{location}}: {{reserved}} reserved for {{onHand}} on hand",
+    "closure": {
+      "count": "Reconciled by a count on {{date}}",
+      "receipt": "Regularised by receipt on {{date}} ({{movement}})",
+      "other": "Back to zero or more on {{date}} without a stock entry on record"
+    },
+    "loadError": "The stock to reconcile could not be loaded",
+    "loading": "Loading the stock to reconcile…",
+    "dialog": {
+      "title": "Record a stock count",
+      "description": "{{article}} at {{location}} stands at {{onHand}} on this PC. Count what is physically there: the stock becomes the counted quantity and the item closes. The count is posted like any count and audited.",
+      "counted": "Quantity counted",
+      "varianceReason": "Variance reason",
+      "varianceReasonPlaceholder": "Choose a reason",
+      "reason": "Reason",
+      "reasonPlaceholder": "At least {{count}} characters: what was found and why",
+      "confirm": "Record the count"
+    }
+  },
+  "errors": {
+    "NEGATIVE_STOCK_REASON_SHORT": "Give the reason of the count (at least {{min}} characters).",
+    "NEGATIVE_STOCK_COUNT_INVALID": "The counted quantity must be zero or more.",
+    "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choose the variance reason of the count.",
+    "NEGATIVE_STOCK_NOT_OPEN": "This location's stock is no longer below zero: nothing to reconcile. Refresh the list."
   }
 }
