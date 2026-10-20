@@ -10,6 +10,45 @@
     "stockBelowReorder": "At or below reorder point",
     "stockOut": "Nothing available"
   },
+  "negativeStock": {
+    "label": "Negative stock",
+    "hint": "To be corrected: another PC may have recorded a movement",
+    "hintTotal": "Total over all stores is negative. To be corrected: another PC may have recorded a movement"
+  },
+  "transfer": {
+    "action": "Transfer",
+    "noneAvailable": "No available stock to transfer",
+    "actionHint": "Transfer this stock to another store",
+    "title": "Transfer stock to another store",
+    "description": "Moves available stock from this store to another one. Reserved stock stays where it is.",
+    "cancel": "Cancel",
+    "submit": "Transfer",
+    "sections": {
+      "source": "Article and source store",
+      "move": "Transfer"
+    },
+    "from": "Source store",
+    "to": "Destination store",
+    "toPlaceholder": "Choose the destination store",
+    "noDestination": "No other active store is available.",
+    "storesFailed": "The store list could not be loaded.",
+    "availableLine": "Available: {{available}} {{unit}} ({{onHand}} in stock, of which {{reserved}} reserved and not transferable)",
+    "lot": "Lot or serial number",
+    "lotFefo": "Automatic: the lot that expires first (FEFO)",
+    "quantity": "Quantity ({{unit}})",
+    "quantityMax": "Maximum transferable: {{max}} {{unit}}",
+    "wholeUnitsHint": "This article is serial-tracked: the quantity is transferred in whole units.",
+    "reason": "Reason",
+    "confirm": "Transfer {{qty}} {{unit}} of {{article}} from store {{from}} to {{to}}?",
+    "done": "Transfer done: {{qty}} {{unit}} of {{article}} to {{to}}",
+    "errors": {
+      "toRequired": "Choose the destination store.",
+      "quantityInvalid": "Enter a quantity greater than 0.",
+      "quantityAbove": "The quantity exceeds the available stock ({{max}} {{unit}}).",
+      "wholeUnits": "Enter a whole number of units.",
+      "reasonShort": "The reason must be at least {{min}} characters."
+    }
+  },
   "adjustStock": {
     "title": "Adjust the stock",
     "description": "Post an entry, exit, or adjustment for this article.",

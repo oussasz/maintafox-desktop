@@ -16,6 +16,7 @@ import {
 import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
 import { InventoryIssueDesk } from "@/components/inventory/InventoryIssueDesk";
 import { InventoryValuationPanel } from "@/components/inventory/InventoryValuationPanel";
+import { NegativeStockBadge } from "@/components/inventory/NegativeStockBadge";
 import {
   type ProcurementPanelRequest,
   ProcurementRepairablePanel,
@@ -292,7 +293,12 @@ export function InventoryPage() {
         cell: ({ row }) => (
           <span className="tabular-nums">
             {formatQty(row.original.on_hand_qty)}{" "}
-            <span className="text-xs text-text-muted">{row.original.unit_code}</span>
+            <span className="text-xs text-text-muted">{row.original.unit_code}</span>{" "}
+            <NegativeStockBadge
+              onHand={row.original.on_hand_qty}
+              available={row.original.available_qty}
+              total
+            />
           </span>
         ),
       },

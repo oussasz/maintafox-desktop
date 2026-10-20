@@ -12,7 +12,7 @@ record can be wrong, incomplete or need review) · **UX** (slower or less conven
 plant owner · **Release** = must be done when the version is released · **Accepted** = accepted by
 design, documented.
 
-Last updated: 2026-10-20 (four-eyes on permit approval; notice to the settings administrators when a safety rule changed on another PC).
+Last updated: 2026-10-21 (negative stock flagged on the stock screens; four-eyes on permit approval; notice to the settings administrators when a safety rule changed on another PC).
 
 ---
 
@@ -154,6 +154,8 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Purchase-order lines are ordered in the stock unit; only receipts and issues take another unit. | UX | After pilot |
 | Stock checks for planning use stock available over all locations (reservations netted); other jobs' planned-but-unreserved needs are not subtracted. | Data | After pilot |
 | Part quantities on work-order / PM lines are always in the article's stock unit (shown next to the quantity on the work-order planning, execution and print screens; PM part lines do not show it yet); no other unit can be entered. | Data | After pilot |
+| Stores have no site link, so a store-to-store stock transfer (Spare Parts › Articles › the article › Positions de stock › Transférer), like every inventory action, is plant-wide: a user limited to one site is refused (inventory is not converted to site-scoped roles yet). Before production: add a store → site column and site-scoped inventory commands; a transfer between stores of different sites then needs the stock-management right at both sites (owner-approved 2026-10-18). There is no "in transit" state or transfer reservation: the quantity leaves one store and enters the other in the same transaction; only available stock (on hand minus reserved) can move, and the reason (at least 5 characters) is recorded with the author and the date on both movements. **À corriger avant la mise en production.** | Data | Release |
+| Stock movements received by sync from another PC are applied as received and not re-checked: no available-stock check, no rights check, no reason check, so a balance can go negative. The stock screens flag a negative on-hand or available quantity with a "Stock négatif" badge (article « Positions de stock », per store, and the article list, on the total over all stores: a single negative store inside a positive total is flagged on its line only), and a negative balance breaks reservations and reorder points until it is corrected. Before any plant runs two or more PCs: a negative-balance sync conflict (refuse or queue for review). **À corriger avant la mise en production.** | Data | Release |
 | Cycle-count and reconciliation tolerances are tenant settings (Settings › Inventory), seeded with the former values (5 units / 0.01) and checked server-side; each count session keeps the tolerance it was opened with. | Data | Accepted |
 
 ## Planning and scheduling (steps A–E)

@@ -2913,7 +2913,10 @@ export interface InventoryTransferInput {
   source_type?: string | null;
   source_id?: number | null;
   source_ref?: string | null;
+  /** Required: why the stock moves (at least 5 characters). */
   notes?: string | null;
+  /** Lot to move (tracked articles); first-expired-first-out when absent. */
+  lot_id?: number | null;
 }
 
 export interface InventoryReleaseReservationInput {
