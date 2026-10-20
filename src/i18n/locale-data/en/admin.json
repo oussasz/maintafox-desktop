@@ -630,6 +630,7 @@
       "validityHint": "Without dates the role stays valid until withdrawn. The end date is included.",
       "windowInvalid": "The start date must be before the end date.",
       "replaces": "This account already has the role \"{{role}}\" on this scope: it will be replaced.",
+      "replacesMany": "This account already has the roles {{roles}} on this scope: they will all be replaced.",
       "confirm": "Assign"
     },
     "user": {

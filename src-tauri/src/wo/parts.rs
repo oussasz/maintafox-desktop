@@ -947,7 +947,6 @@ pub const PART_STATUS_CANCELLED: &str = "cancelled";
 
 /// Stable codes of the refusals on a planned part line (translated in `training:errors`).
 pub mod part_line_codes {
-    pub const RIGHT_REQUIRED: &str = "WO_PART_LINE_RIGHT_REQUIRED";
     pub const NOT_IN_PLANNING: &str = "WO_PART_LINE_NOT_IN_PLANNING";
     pub const NOT_PLANNED_LINE: &str = "WO_PART_LINE_NOT_PLANNED";
     pub const HAS_USE: &str = "WO_PART_LINE_HAS_USE";
@@ -998,22 +997,12 @@ async fn load_part_in<C: ConnectionTrait>(conn: &C, wo_part_id: i64) -> AppResul
     map_part(&row)
 }
 
-/// The checks shared by cancel and required/optional: the person holds the WO edit right, the WO
-/// is still prepared (draft, planning), the line is a planned line, not cancelled, not settled and
-/// with no recorded use (such a line keeps the "not used" action of execution).
-async fn check_planned_line_editable<C: ConnectionTrait>(
-    conn: &C,
-    wo_part_id: i64,
-    actor_id: i64,
-) -> AppResult<WoPart> {
+/// The checks shared by cancel and required/optional (the WO edit right at the work order's site
+/// is checked by the command, like the other part line actions): the WO is still prepared
+/// (draft, planning), the line is a planned line, not cancelled, not settled and with no recorded
+/// use (such a line keeps the "not used" action of execution).
+async fn check_planned_line_editable<C: ConnectionTrait>(conn: &C, wo_part_id: i64) -> AppResult<WoPart> {
     use crate::wo::workflow::state_machine::WoStatus;
-    if !crate::settings::site::holds_tenant_right(conn, actor_id, crate::rbac::permissions::OT_EDIT).await? {
-        return Err(part_line_refusal(
-            part_line_codes::RIGHT_REQUIRED,
-            "Changing a planned part line needs the work-order edit right.",
-            &[],
-        ));
-    }
     let part = load_part_in(conn, wo_part_id).await?;
     let (_, status, _) = crate::wo::workflow::transition::load_wo_status(conn, part.work_order_id).await?;
     if !matches!(status, WoStatus::Draft | WoStatus::Planning) {
@@ -1060,8 +1049,9 @@ fn part_display_label(part: &WoPart) -> String {
 
 /// Cancel a planned part line (never deleted): in one transaction its reservation is released,
 /// the line is marked `cancelled` and an audit entry (who, when, line, quantity) plus a WO history
-/// event are written. Refused, with a coded reason, for a person without the WO edit right, a WO
-/// past planning, an execution-added line, or a line with recorded use.
+/// event are written. Refused, with a coded reason, for a WO past planning, an execution-added
+/// line, or a line with recorded use. The WO edit right at the work order's site is checked by
+/// the command.
 pub async fn cancel_planned_part(
     db: &DatabaseConnection,
     input: CancelPlannedPartInput,
@@ -1069,7 +1059,7 @@ pub async fn cancel_planned_part(
 ) -> AppResult<WoPart> {
     use sea_orm::TransactionTrait;
     let txn = db.begin().await?;
-    let part = check_planned_line_editable(&txn, input.wo_part_id, actor_id).await?;
+    let part = check_planned_line_editable(&txn, input.wo_part_id).await?;
 
     if let Some(reservation_id) = part.reservation_id {
         // The store desk can issue against the WO reservation before execution (the line's own
@@ -1163,7 +1153,7 @@ pub async fn set_planned_part_required(
 ) -> AppResult<WoPart> {
     use sea_orm::TransactionTrait;
     let txn = db.begin().await?;
-    let part = check_planned_line_editable(&txn, input.wo_part_id, actor_id).await?;
+    let part = check_planned_line_editable(&txn, input.wo_part_id).await?;
     if part.is_required == input.is_required {
         return Ok(part);
     }

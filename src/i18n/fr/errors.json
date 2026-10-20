@@ -162,6 +162,14 @@
     "PERMIT_SITE_NOT_EQUIPMENT_SITE": "Un permis est enregistré sur le site de son équipement (ou de son ordre de travail), ou à un niveau au-dessus : un autre site, ou un niveau en dessous, ne peut pas être indiqué.",
     "PERMIT_SITE_LOCKED": "Ce permis a été approuvé sur ce site : son site ne peut plus changer. Annulez-le et établissez un nouveau permis.",
     "PERMIT_WO_EQUIPMENT_MISMATCH": "L'équipement du permis doit être celui de son ordre de travail.",
-    "DI_ORG_NODE_REQUIRED": "Une demande doit être rattachée à un site : choisissez un équipement installé sur un nœud de l'organisation."
+    "DI_ORG_NODE_REQUIRED": "Une demande doit être rattachée à un site : choisissez un équipement installé sur un nœud de l'organisation.",
+    "SITE_ASSIGN_REASON_REQUIRED": "Indiquez le motif (au moins {{min}} caractères) du site que vous donnez.",
+    "SITE_ASSIGN_NO_RECORDS": "Sélectionnez les enregistrements auxquels donner un site.",
+    "SITE_ASSIGN_TOO_MANY": "Au plus {{max}} enregistrements peuvent recevoir un site à la fois.",
+    "SITE_ASSIGN_ALREADY_HAS_SITE": "Ces enregistrements ont déjà un site, qui ne peut pas être changé ici : {{records}}. Rechargez la liste.",
+    "SITE_ASSIGN_NODE_INVALID": "Le site choisi n'est pas une unité de l'organisation publiée (supprimée, ou encore en brouillon).",
+    "SITE_ASSIGN_ALREADY_ASSIGNED": "Ces enregistrements ont déjà reçu un site une fois, ce qui est conservé définitivement : ils ne peuvent pas en recevoir un nouveau ici ({{records}}). Un planificateur redonne son site à une fenêtre de planification dans la fenêtre de saisie de celle-ci.",
+    "SITE_ASSIGN_PERMANENT_RIGHT_REQUIRED": "Donner un site à un enregistrement qui n'en a pas demande le droit d'administration de l'organisation pour toute l'usine par un rôle permanent : une attribution d'urgence ne suffit pas.",
+    "SITE_ASSIGN_REASON_TOO_LONG": "Le motif compte au plus {{max}} caractères."
   }
 }

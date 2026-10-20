@@ -1771,4 +1771,834 @@ mod tests {
             );
         }
     }
+
+    // ── Site rules, decision sites, location plans and site calendars follow their node ──
+
+    const SITE_RULE: &str = crate::reliability::study::decisions::SELF_APPROVAL_SETTING;
+
+    /// The seeded administrator (holds the settings right).
+    async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {
+        scalar(db, "SELECT id FROM user_accounts WHERE username = 'admin'").await
+    }
+
+    /// The site rule turned on at `site` as Settings does it (audited, under step-up), by the
+    /// administrator.
+    async fn site_rule_on(db: &sea_orm::DatabaseConnection, site: i64) {
+        let admin = i32::try_from(admin_id(db).await).expect("id");
+        crate::settings::site::set_site_setting(
+            db,
+            &crate::settings::site::SetSiteSettingInput {
+                site_node_id: site,
+                key: SITE_RULE.into(),
+                value: true,
+                reason: "Single reliability engineer on this site".into(),
+                expected_row_version: None,
+            },
+            admin,
+            true,
+        )
+        .await
+        .expect("site rule");
+    }
+
+    /// A reliability decision proposed for `site` (stored with it).
+    async fn decision_on(db: &sea_orm::DatabaseConnection, code: &str, site: i64) -> i64 {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO reliability_studies (entity_sync_id, title, period_start, period_end, created_at, \
+                 updated_at) VALUES ('org-remap-study-{code}', '{code}', '2026-01-01', '2026-06-30', datetime('now'), \
+                 datetime('now'))"
+            ),
+        )
+        .await;
+        exec(
+            db,
+            &format!(
+                "INSERT INTO reliability_study_decisions (entity_sync_id, study_id, title, action_kind, proposed_at, \
+                 created_at, updated_at, site_node_id, site_recorded) VALUES ('org-remap-{code}', \
+                 (SELECT id FROM reliability_studies WHERE entity_sync_id = 'org-remap-study-{code}'), '{code}', \
+                 'one_off_wo', datetime('now'), datetime('now'), datetime('now'), {site}, 1)"
+            ),
+        )
+        .await;
+        scalar(
+            db,
+            &format!("SELECT id FROM reliability_study_decisions WHERE entity_sync_id = 'org-remap-{code}'"),
+        )
+        .await
+    }
+
+    /// A PM plan scoped to the location `node` (its subtree).
+    async fn location_plan_on(db: &sea_orm::DatabaseConnection, code: &str, node: i64) -> i64 {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO pm_plans (entity_sync_id, code, title, asset_scope_type, asset_scope_id, strategy_type, \
+                 lifecycle_status) VALUES ('org-remap-{code}', '{code}', '{code}', 'location', {node}, 'fixed', 'active')"
+            ),
+        )
+        .await;
+        scalar(db, &format!("SELECT id FROM pm_plans WHERE code = '{code}'")).await
+    }
+
+    /// A holiday of the calendar of `node`.
+    async fn holiday_on(db: &sea_orm::DatabaseConnection, code: &str, node: i64) -> i64 {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO work_calendar_holidays (entity_sync_id, holiday_date, label, entity_id, created_at, \
+                 updated_at) VALUES ('org-remap-{code}', '2026-11-01', '{code}', {node}, datetime('now'), datetime('now'))"
+            ),
+        )
+        .await;
+        scalar(
+            db,
+            &format!("SELECT id FROM work_calendar_holidays WHERE entity_sync_id = 'org-remap-{code}'"),
+        )
+        .await
+    }
+
+    /// The working week of `node` from a date.
+    async fn work_week_on(db: &sea_orm::DatabaseConnection, code: &str, node: i64) -> i64 {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO site_work_weeks (entity_sync_id, entity_id, effective_from, weekend_days, created_at, \
+                 updated_at) VALUES ('org-remap-{code}', {node}, '2026-01-01', '5,6', datetime('now'), datetime('now'))"
+            ),
+        )
+        .await;
+        scalar(
+            db,
+            &format!("SELECT id FROM site_work_weeks WHERE entity_sync_id = 'org-remap-{code}'"),
+        )
+        .await
+    }
+
+    async fn text(db: &sea_orm::DatabaseConnection, sql: &str) -> String {
+        db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+            .unwrap_or_else(|| panic!("{sql}: no row"))
+            .try_get_by_index::<String>(0)
+            .expect("text")
+    }
+
+    /// Publishing a new structure moves the per-site rules (keeping their time and author: the move
+    /// is no change of the rule), the site a reliability decision was proposed for, PM plans scoped
+    /// to a location and the site calendars to the node replacing theirs: no site rule or calendar
+    /// silently gives way to the plant default. The rule's audit events stay where they were made.
+    #[tokio::test]
+    async fn publish_moves_site_rules_decision_sites_location_plans_and_calendars() {
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, old_plant, old_zone) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+
+        site_rule_on(&db, old_plant).await;
+        let rule_sql = format!("FROM site_settings WHERE setting_key = '{SITE_RULE}'");
+        let (rule_version, rule_time) = (
+            scalar(&db, &format!("SELECT row_version {rule_sql}")).await,
+            text(&db, &format!("SELECT updated_at {rule_sql}")).await,
+        );
+        let decision = decision_on(&db, "ORG-REMAP-DEC", old_plant).await;
+        let plan = location_plan_on(&db, "ORG-REMAP-PM", old_zone).await;
+        let holiday = holiday_on(&db, "ORG-REMAP-HOL", old_plant).await;
+        let week = work_week_on(&db, "ORG-REMAP-WEEK", old_plant).await;
+
+        let (draft_id, _, _, _) = create_matching_draft_model(&db).await;
+        validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect("publish with remap");
+
+        let new_plant = active_node_id_by_code(&db, "PLT1").await;
+        let new_zone = active_node_id_by_code(&db, "ZN1").await;
+        assert_ne!(new_plant, old_plant);
+        for (sql, expected, what) in [
+            (format!("SELECT site_node_id {rule_sql}"), new_plant, "site rule"),
+            (
+                format!("SELECT site_node_id FROM reliability_study_decisions WHERE id = {decision}"),
+                new_plant,
+                "decision site",
+            ),
+            (
+                format!("SELECT asset_scope_id FROM pm_plans WHERE id = {plan}"),
+                new_zone,
+                "location plan",
+            ),
+            (
+                format!("SELECT entity_id FROM work_calendar_holidays WHERE id = {holiday}"),
+                new_plant,
+                "holiday",
+            ),
+            (
+                format!("SELECT entity_id FROM site_work_weeks WHERE id = {week}"),
+                new_plant,
+                "working week",
+            ),
+        ] {
+            assert_eq!(scalar(&db, &sql).await, expected, "{what} follows its node");
+        }
+        // The rule is in force at the new node, a new version (sent by sync) with its time kept.
+        assert_eq!(
+            crate::settings::site::site_setting(&db, new_plant, SITE_RULE)
+                .await
+                .expect("read"),
+            Some(true)
+        );
+        assert_eq!(
+            scalar(&db, &format!("SELECT row_version {rule_sql}")).await,
+            rule_version + 1
+        );
+        assert_eq!(text(&db, &format!("SELECT updated_at {rule_sql}")).await, rule_time);
+        // Its audit event is history: it stays on the node it was made for.
+        assert_eq!(
+            scalar(
+                &db,
+                &format!("SELECT COUNT(*) FROM site_setting_events WHERE site_node_id = {old_plant}")
+            )
+            .await,
+            1
+        );
+    }
+
+    /// A node that a site rule, a decision's site, a location plan or a site calendar still
+    /// records refuses the publish when the draft has no copy of it: nothing moves, nothing is
+    /// deleted.
+    #[tokio::test]
+    async fn an_unmapped_node_recorded_by_a_site_rule_decision_plan_or_calendar_blocks_publish() {
+        for kind in ["site rule", "decision", "location plan", "holiday", "working week"] {
+            let db = setup().await;
+            let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+            let (_, plant, _) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+            let draft_id = fork_active_model(&db, "Draft without the plant's lineage").await;
+            exec(
+                &db,
+                &format!(
+                    "UPDATE org_nodes SET origin_node_id = NULL WHERE structure_model_id = {draft_id} \
+                     AND origin_node_id = {plant}"
+                ),
+            )
+            .await;
+            let clean = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+                .await
+                .expect("validate");
+            assert!(
+                !clean
+                    .issues
+                    .iter()
+                    .any(|i| i.code == "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS"),
+                "{kind}: {:?}",
+                clean.issues
+            );
+
+            let (table, column, id) = match kind {
+                "site rule" => {
+                    site_rule_on(&db, plant).await;
+                    (
+                        "site_settings",
+                        "site_node_id",
+                        scalar(&db, "SELECT id FROM site_settings ORDER BY id DESC LIMIT 1").await,
+                    )
+                }
+                "decision" => (
+                    "reliability_study_decisions",
+                    "site_node_id",
+                    decision_on(&db, "ORG-UNMAPPED-DEC", plant).await,
+                ),
+                "location plan" => (
+                    "pm_plans",
+                    "asset_scope_id",
+                    location_plan_on(&db, "ORG-UNMAPPED-PM", plant).await,
+                ),
+                "holiday" => (
+                    "work_calendar_holidays",
+                    "entity_id",
+                    holiday_on(&db, "ORG-UNMAPPED-HOL", plant).await,
+                ),
+                _ => (
+                    "site_work_weeks",
+                    "entity_id",
+                    work_week_on(&db, "ORG-UNMAPPED-WEEK", plant).await,
+                ),
+            };
+
+            let blocked = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+                .await
+                .expect("validate");
+            assert!(!blocked.can_publish, "{kind}");
+            assert!(
+                blocked
+                    .issues
+                    .iter()
+                    .any(|i| i.code == "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS"),
+                "{kind}: {:?}",
+                blocked.issues
+            );
+            let err = validation::publish_model_with_remap(&db, draft_id as i64, 1)
+                .await
+                .expect_err("publish refused");
+            assert!(
+                matches!(err, crate::errors::AppError::OrgValidationFailed(_)),
+                "{kind}: {err:?}"
+            );
+            assert_eq!(
+                scalar(&db, &format!("SELECT {column} FROM {table} WHERE id = {id}")).await,
+                plant,
+                "{kind} kept on its node"
+            );
+            assert_eq!(
+                scalar(
+                    &db,
+                    &format!("SELECT COUNT(*) FROM org_nodes WHERE id = {plant} AND deleted_at IS NULL")
+                )
+                .await,
+                1,
+                "{kind}: the node is not deleted"
+            );
+        }
+    }
+
+    /// A draft node is no site yet: a site rule cannot be set on it. A rule recorded on an active
+    /// node and on its draft copy (before that refusal existed) refuses the publish, which could
+    /// not move the rule in force onto the copy (one row per site and rule).
+    #[tokio::test]
+    async fn a_site_rule_on_a_draft_copy_is_refused_and_blocks_the_publish() {
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, plant, _) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+        site_rule_on(&db, plant).await;
+        let (draft_id, _, _, _) = create_matching_draft_model(&db).await;
+        let copy = scalar(
+            &db,
+            &format!("SELECT id FROM org_nodes WHERE structure_model_id = {draft_id} AND origin_node_id = {plant}"),
+        )
+        .await;
+
+        let refused = crate::settings::site::set_site_setting(
+            &db,
+            &crate::settings::site::SetSiteSettingInput {
+                site_node_id: copy,
+                key: SITE_RULE.into(),
+                value: false,
+                reason: "Second engineer joined the site".into(),
+                expected_row_version: None,
+            },
+            1,
+            true,
+        )
+        .await
+        .expect_err("a draft node is no site");
+        let not_a_site = matches!(
+            &refused,
+            crate::errors::AppError::ValidationFailed(codes) if codes.iter().any(|c| c == "SITE_SETTING_NOT_A_SITE")
+        );
+        assert!(not_a_site, "{refused:?}");
+        let listed = crate::settings::site::list_site_settings(&db, SITE_RULE)
+            .await
+            .expect("list");
+        assert!(listed.iter().any(|v| v.site_node_id == plant));
+        assert!(
+            !listed.iter().any(|v| v.site_node_id == copy),
+            "draft nodes are not listed"
+        );
+
+        // A row recorded on the copy before that refusal: validation and publish refuse it.
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO site_settings (entity_sync_id, site_node_id, setting_key, value_json) \
+                 VALUES ('org-remap-copy-rule', {copy}, '{SITE_RULE}', 'false')"
+            ),
+        )
+        .await;
+        let blocked = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+            .await
+            .expect("validate");
+        assert!(!blocked.can_publish);
+        assert!(
+            blocked.issues.iter().any(|i| i.code == "SITE_RULE_ON_DRAFT_COPY"),
+            "{:?}",
+            blocked.issues
+        );
+        let err = validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect_err("publish refused");
+        assert!(
+            matches!(err, crate::errors::AppError::OrgValidationFailed(_)),
+            "{err:?}"
+        );
+        assert_eq!(
+            scalar(
+                &db,
+                &format!("SELECT COUNT(*) FROM org_nodes WHERE id = {plant} AND deleted_at IS NULL")
+            )
+            .await,
+            1,
+            "nothing deleted"
+        );
+    }
+
+    /// The node replacing a deleted one, as a PC receiving a publish recognises it without the
+    /// old → new map: same code, same node-type code, another structure model, live, the held
+    /// node deleted.
+    #[tokio::test]
+    async fn the_replacing_node_is_recognised_by_code_type_and_model() {
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, old_plant, old_zone) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+        let replaces = |held: i64, received: i64| {
+            let db = &db;
+            async move {
+                validation::node_replaces_deleted_node(db, held, received)
+                    .await
+                    .expect("check")
+            }
+        };
+        let (draft_id, _, _, _) = create_matching_draft_model(&db).await;
+        let draft_zone = scalar(
+            &db,
+            &format!("SELECT id FROM org_nodes WHERE structure_model_id = {draft_id} AND origin_node_id = {old_zone}"),
+        )
+        .await;
+        // The held node is still live: nothing replaced it.
+        assert!(!replaces(old_zone, draft_zone).await);
+
+        validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect("publish with remap");
+        let new_zone = active_node_id_by_code(&db, "ZN1").await;
+        let new_plant = active_node_id_by_code(&db, "PLT1").await;
+        assert_eq!(new_zone, draft_zone);
+        assert!(replaces(old_zone, new_zone).await, "the copy");
+        assert!(
+            !replaces(old_zone, new_plant).await,
+            "another code (the plant above it)"
+        );
+        assert!(!replaces(old_zone, old_plant).await, "a deleted node");
+        assert!(!replaces(new_zone, old_zone).await, "the held node is live");
+
+        // Same code, same model as the held node (a node created again after its deletion): no.
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, status, ancestor_path, depth, \
+                 created_at, updated_at, structure_model_id) VALUES ('org-same-model-zn1', 'ZN1', 'Zone 1 again', \
+                 {zone_id}, 'active', '/', 0, datetime('now'), datetime('now'), {model_id})"
+            ),
+        )
+        .await;
+        let same_model = scalar(
+            &db,
+            "SELECT id FROM org_nodes WHERE entity_sync_id = 'org-same-model-zn1'",
+        )
+        .await;
+        assert!(!replaces(old_zone, same_model).await, "same structure model");
+
+        let awaits = |held: Option<i64>, received: i64| {
+            let db = &db;
+            async move {
+                validation::node_copy_awaits_activation(db, held, received)
+                    .await
+                    .expect("check")
+            }
+        };
+        // A node of a draft (never published here) is no copy, and while the structure in use is
+        // live nothing awaits its activation: an ordinary draft.
+        let next_draft = fork_active_model(&db, "Model v3").await;
+        let next_zone = scalar(
+            &db,
+            &format!("SELECT id FROM org_nodes WHERE structure_model_id = {next_draft} AND code = 'ZN1'"),
+        )
+        .await;
+        assert!(!replaces(old_zone, next_zone).await, "a draft node is no copy");
+        assert!(!replaces(new_zone, next_zone).await, "a draft node is no copy");
+        assert!(!awaits(Some(new_zone), next_zone).await, "an ordinary draft");
+        assert!(!awaits(None, next_zone).await, "an ordinary draft");
+        // Its publish arrived here in part (the nodes of the structure in use deleted, the draft
+        // not activated yet): the copy awaits its activation, and is still no copy.
+        exec(
+            &db,
+            &format!("UPDATE org_nodes SET deleted_at = datetime('now') WHERE id = {new_zone}"),
+        )
+        .await;
+        assert!(awaits(Some(new_zone), next_zone).await, "publish arrived in part");
+        assert!(awaits(None, next_zone).await, "publish arrived in part");
+        assert!(
+            !awaits(Some(old_zone), next_zone).await,
+            "not the node this publish deletes"
+        );
+        assert!(!replaces(new_zone, next_zone).await, "not activated yet");
+        exec(
+            &db,
+            &format!("UPDATE org_nodes SET deleted_at = NULL WHERE id = {new_zone}"),
+        )
+        .await;
+
+        // Published: the copy of the copy replaces both former nodes, publish after publish.
+        validation::publish_model_with_remap(&db, next_draft as i64, 1)
+            .await
+            .expect("publish v3");
+        assert!(
+            replaces(new_zone, next_zone).await,
+            "the copy of the structure it superseded"
+        );
+        assert!(replaces(old_zone, next_zone).await, "through every publish since");
+        assert!(!awaits(Some(new_zone), next_zone).await, "activated");
+        // A code dropped by one structure and reused by a later one names another site: the chain
+        // of structures breaks there.
+        exec(
+            &db,
+            &format!("UPDATE org_nodes SET code = 'ZN1-DROPPED' WHERE id = {new_zone}"),
+        )
+        .await;
+        assert!(
+            !replaces(old_zone, next_zone).await,
+            "a code missing from the structure in between"
+        );
+        exec(&db, &format!("UPDATE org_nodes SET code = 'ZN1' WHERE id = {new_zone}")).await;
+        assert!(replaces(old_zone, next_zone).await);
+
+        // Same code, another model, but another node type: no.
+        let next_plant_type = draft_type_id_by_code(&db, next_draft, "PLANT").await;
+        exec(
+            &db,
+            &format!("UPDATE org_nodes SET node_type_id = {next_plant_type} WHERE id = {next_zone}"),
+        )
+        .await;
+        assert!(!replaces(old_zone, next_zone).await, "another node type");
+    }
+
+    /// A site rule turned on, moved by a publish on another PC to the node replacing its own,
+    /// arrives here with no new audit event: it is applied once its former node is deleted here.
+    /// Moved off that node onto any other site, it is a conflict; held here turned off, or its
+    /// node not deleted here yet, it waits for an audit event like any rule turned on.
+    #[tokio::test]
+    async fn a_site_rule_moved_by_a_publish_is_accepted_only_onto_the_copy_of_its_site() {
+        use crate::settings::site::{inbound_site_setting_check, InboundVerdict};
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, old_plant, _) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+        site_rule_on(&db, old_plant).await;
+        let (draft_id, _, _, _) = create_matching_draft_model(&db).await;
+        validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect("publish with remap");
+        let new_plant = active_node_id_by_code(&db, "PLT1").await;
+        let new_site = active_node_id_by_code(&db, "HQ").await;
+        let rule_sync = text(
+            &db,
+            &format!("SELECT entity_sync_id FROM site_settings WHERE setting_key = '{SITE_RULE}'"),
+        )
+        .await;
+        let rule_time = text(
+            &db,
+            &format!("SELECT updated_at FROM site_settings WHERE setting_key = '{SITE_RULE}'"),
+        )
+        .await;
+        let admin_sync = text(&db, "SELECT entity_sync_id FROM user_accounts WHERE username = 'admin'").await;
+        let node_sync = |id: i64| {
+            let db = &db;
+            async move { text(db, &format!("SELECT entity_sync_id FROM org_nodes WHERE id = {id}")).await }
+        };
+        // The copy held here as the PC receiving the publish holds it: on, at the former node
+        // (deleted here: the node deletes arrive before the rows moved off them).
+        exec(
+            &db,
+            &format!("UPDATE site_settings SET site_node_id = {old_plant} WHERE entity_sync_id = '{rule_sync}'"),
+        )
+        .await;
+        let received = |site_sync: String, sync_id: String| {
+            let db = &db;
+            let rule_time = rule_time.clone();
+            let admin_sync = admin_sync.clone();
+            async move {
+                let payload = serde_json::json!({
+                    "entity_sync_id": sync_id,
+                    "site_node_sync_id": site_sync,
+                    "setting_key": SITE_RULE,
+                    "value_json": "true",
+                    "updated_by_sync_id": admin_sync,
+                    "updated_at": rule_time,
+                });
+                inbound_site_setting_check(db, &sync_id, payload.as_object().expect("object"))
+                    .await
+                    .expect("check")
+            }
+        };
+
+        // Onto the copy of its site: applied, with no new audit event.
+        assert_eq!(received(node_sync(new_plant).await, rule_sync.clone()).await, None);
+        // Onto another site (the new top site): a conflict.
+        assert!(matches!(
+            received(node_sync(new_site).await, rule_sync.clone()).await,
+            Some(InboundVerdict::Conflict {
+                code: "SITE_SETTING_MOVED",
+                ..
+            })
+        ));
+        // A PC that did not hold the rule (another row here): judged as a rule turned on, its
+        // audited change is found at the node its site replaced (same moment and author: the
+        // publish keeps them), so it is applied on the copy...
+        assert_eq!(
+            received(node_sync(new_plant).await, "org-remap-other-rule".into()).await,
+            None
+        );
+        // ... and waits on any other site, which has no audited change of its own.
+        assert!(matches!(
+            received(node_sync(new_site).await, "org-remap-other-rule".into()).await,
+            Some(InboundVerdict::Defer(_))
+        ));
+        // Another time or another author than held here: not the row as the publish moved it
+        // (it keeps both), judged as a rule turned on and refused without its own audited change.
+        let new_plant_sync = node_sync(new_plant).await;
+        let changed = |at: String, by: String| {
+            let db = &db;
+            let rule_sync = rule_sync.clone();
+            let new_plant_sync = new_plant_sync.clone();
+            async move {
+                let payload = serde_json::json!({
+                    "entity_sync_id": rule_sync,
+                    "site_node_sync_id": new_plant_sync,
+                    "setting_key": SITE_RULE,
+                    "value_json": "true",
+                    "updated_by_sync_id": by,
+                    "updated_at": at,
+                });
+                inbound_site_setting_check(db, &rule_sync, payload.as_object().expect("object"))
+                    .await
+                    .expect("check")
+            }
+        };
+        for (at, by, what) in [
+            ("2000-01-01T00:00:00Z".to_string(), admin_sync.clone(), "another time"),
+            (
+                rule_time.clone(),
+                "org-remap-no-such-user".to_string(),
+                "another author",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    changed(at, by).await,
+                    Some(InboundVerdict::Conflict {
+                        code: "SITE_SETTING_UNAUDITED",
+                        ..
+                    })
+                ),
+                "{what}"
+            );
+        }
+        // Held on at the former node, while a later audited "off" at the copy (made on another PC
+        // after the publish) is here: the "on" replayed onto the copy meets it and is refused.
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO site_setting_events (entity_sync_id, site_node_id, setting_key, old_value_json, \
+                 new_value_json, reason, changed_by_id, required_step_up, changed_at) VALUES ('org-remap-off-copy', \
+                 {new_plant}, '{SITE_RULE}', 'true', 'false', 'Second engineer joined the site', {}, 1, \
+                 '2099-01-01T00:00:00Z')",
+                admin_id(&db).await
+            ),
+        )
+        .await;
+        assert!(matches!(
+            received(node_sync(new_plant).await, rule_sync.clone()).await,
+            Some(InboundVerdict::Conflict {
+                code: "SITE_SETTING_UNAUDITED",
+                ..
+            })
+        ));
+        exec(
+            &db,
+            "DELETE FROM site_setting_events WHERE entity_sync_id = 'org-remap-off-copy'",
+        )
+        .await;
+        assert_eq!(
+            received(node_sync(new_plant).await, rule_sync.clone()).await,
+            None,
+            "without that later change, the move is applied again"
+        );
+        // Turned off later at the former node (held here off): the "on" replayed is refused, on
+        // the copy as well.
+        exec(
+            &db,
+            &format!("UPDATE site_settings SET value_json = 'false' WHERE entity_sync_id = '{rule_sync}'"),
+        )
+        .await;
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO site_setting_events (entity_sync_id, site_node_id, setting_key, old_value_json, \
+                 new_value_json, reason, changed_by_id, required_step_up, changed_at) VALUES ('org-remap-off', \
+                 {old_plant}, '{SITE_RULE}', 'true', 'false', 'Second engineer joined the site', {}, 1, \
+                 '2099-01-01T00:00:00Z')",
+                admin_id(&db).await
+            ),
+        )
+        .await;
+        assert!(matches!(
+            received(node_sync(new_plant).await, rule_sync.clone()).await,
+            Some(InboundVerdict::Conflict {
+                code: "SITE_SETTING_UNAUDITED",
+                ..
+            })
+        ));
+        // Held on at a node not deleted here yet (the node deletes not received): waits for them.
+        for sql in [
+            "DELETE FROM site_setting_events WHERE entity_sync_id = 'org-remap-off'".to_string(),
+            format!("UPDATE site_settings SET value_json = 'true' WHERE entity_sync_id = '{rule_sync}'"),
+            format!("UPDATE org_nodes SET deleted_at = NULL WHERE id = {old_plant}"),
+        ] {
+            exec(&db, &sql).await;
+        }
+        assert!(matches!(
+            received(node_sync(new_plant).await, rule_sync.clone()).await,
+            Some(InboundVerdict::Defer(_))
+        ));
+    }
+
+    /// A site rule received turned on at a node deleted here, or received (on or off) on a node of
+    /// a draft structure, is refused, as setting it here is (`set_site_setting`): neither is a
+    /// site, and a rule on a draft copy would block every later publish. A rule turned off at a
+    /// node deleted here is applied (the strict side). A rule received on the copy while the
+    /// publish of its structure arrived here only in part (its former nodes deleted, the structure
+    /// not activated yet) waits.
+    #[tokio::test]
+    async fn a_site_rule_received_on_a_deleted_or_draft_node_is_refused() {
+        use crate::settings::site::{inbound_site_setting_check, InboundVerdict};
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, old_plant, _) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+        let (draft_id, _, _, _) = create_matching_draft_model(&db).await;
+        validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect("publish with remap");
+        let new_plant = active_node_id_by_code(&db, "PLT1").await;
+        let admin_sync = text(&db, "SELECT entity_sync_id FROM user_accounts WHERE username = 'admin'").await;
+        let received = |site: i64, value: &'static str| {
+            let db = &db;
+            let admin_sync = admin_sync.clone();
+            async move {
+                let site_sync = text(db, &format!("SELECT entity_sync_id FROM org_nodes WHERE id = {site}")).await;
+                let payload = serde_json::json!({
+                    "entity_sync_id": "org-remap-not-a-site",
+                    "site_node_sync_id": site_sync,
+                    "setting_key": SITE_RULE,
+                    "value_json": value,
+                    "updated_by_sync_id": admin_sync,
+                    "updated_at": "2026-01-01T00:00:00Z",
+                });
+                inbound_site_setting_check(db, "org-remap-not-a-site", payload.as_object().expect("object"))
+                    .await
+                    .expect("check")
+            }
+        };
+        let refused = |v: Option<InboundVerdict>| {
+            matches!(
+                v,
+                Some(InboundVerdict::Conflict {
+                    code: "SITE_SETTING_NOT_A_SITE",
+                    ..
+                })
+            )
+        };
+        // The former node, deleted by the publish: on refused, off applied.
+        assert!(refused(received(old_plant, "true").await), "deleted node, on");
+        assert_eq!(received(old_plant, "false").await, None, "deleted node, off");
+        // A node of an ordinary draft (the structure in use is live): off and on refused.
+        let next_draft = fork_active_model(&db, "Model v3").await;
+        let draft_plant = scalar(
+            &db,
+            &format!("SELECT id FROM org_nodes WHERE structure_model_id = {next_draft} AND code = 'PLT1'"),
+        )
+        .await;
+        for value in ["false", "true"] {
+            assert!(refused(received(draft_plant, value).await), "draft node, {value}");
+        }
+        // The publish of that draft arrived here in part: its nodes are the copies of nodes deleted
+        // here, its activation not here yet. The rule waits for it.
+        exec(
+            &db,
+            &format!("UPDATE org_nodes SET deleted_at = datetime('now') WHERE id = {new_plant}"),
+        )
+        .await;
+        for value in ["false", "true"] {
+            assert!(
+                matches!(received(draft_plant, value).await, Some(InboundVerdict::Defer(_))),
+                "awaiting activation, {value}"
+            );
+        }
+        // A live node of the structure in use: an "off" is applied.
+        exec(
+            &db,
+            &format!("UPDATE org_nodes SET deleted_at = NULL WHERE id = {new_plant}"),
+        )
+        .await;
+        assert_eq!(received(new_plant, "false").await, None);
+    }
+
+    /// A rule turned off at a site on another PC before a publish replaced that site, received
+    /// after the publish (which moved the rule, still on, to the copy): the "off" is applied and
+    /// takes the rule off the copy, which falls to the strict default as on the PC that turned it
+    /// off. It is never a conflict leaving the copy on here.
+    #[tokio::test]
+    async fn a_site_rule_turned_off_before_a_publish_and_received_after_it_takes_the_copy_off() {
+        use crate::settings::site::{inbound_site_setting_check, site_setting};
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, old_plant, _) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+        site_rule_on(&db, old_plant).await;
+        let (draft_id, _, _, _) = create_matching_draft_model(&db).await;
+        validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect("publish with remap");
+        let new_plant = active_node_id_by_code(&db, "PLT1").await;
+        assert_eq!(
+            site_setting(&db, new_plant, SITE_RULE).await.expect("read"),
+            Some(true),
+            "the publish moved the rule, on, to the copy"
+        );
+        let rule_sync = text(
+            &db,
+            &format!("SELECT entity_sync_id FROM site_settings WHERE setting_key = '{SITE_RULE}'"),
+        )
+        .await;
+        let old_plant_sync = text(
+            &db,
+            &format!("SELECT entity_sync_id FROM org_nodes WHERE id = {old_plant}"),
+        )
+        .await;
+        let admin_sync = text(&db, "SELECT entity_sync_id FROM user_accounts WHERE username = 'admin'").await;
+        // The same row as the other PC holds it: off, at the former node, changed after the time
+        // the publish kept (the "off" was made after the rule was turned on, before the publish).
+        let payload = serde_json::json!({
+            "entity_sync_id": rule_sync,
+            "site_node_sync_id": old_plant_sync,
+            "setting_key": SITE_RULE,
+            "value_json": "false",
+            "updated_by_sync_id": admin_sync,
+            "updated_at": "2099-01-01T00:00:00Z",
+        });
+        assert_eq!(
+            inbound_site_setting_check(&db, &rule_sync, payload.as_object().expect("object"))
+                .await
+                .expect("check"),
+            None,
+            "the off is applied"
+        );
+        // Applied as received: the row back at the former node, off.
+        exec(
+            &db,
+            &format!(
+                "UPDATE site_settings SET site_node_id = {old_plant}, value_json = 'false'                  WHERE entity_sync_id = '{rule_sync}'"
+            ),
+        )
+        .await;
+        assert_eq!(
+            site_setting(&db, new_plant, SITE_RULE).await.expect("read"),
+            None,
+            "the copy falls to the strict default"
+        );
+    }
 }

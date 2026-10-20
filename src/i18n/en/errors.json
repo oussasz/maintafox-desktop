@@ -162,6 +162,14 @@
     "PERMIT_SITE_NOT_EQUIPMENT_SITE": "A permit is recorded at the site of its equipment (or of its work order), or at a level above it: another site, or a level below, cannot be given.",
     "PERMIT_SITE_LOCKED": "This permit was approved at this site: its site can no longer change. Cancel it and raise a new permit.",
     "PERMIT_WO_EQUIPMENT_MISMATCH": "The permit's equipment must be the equipment of its work order.",
-    "DI_ORG_NODE_REQUIRED": "A request must be attached to a site: choose equipment installed on an org node."
+    "DI_ORG_NODE_REQUIRED": "A request must be attached to a site: choose equipment installed on an org node.",
+    "SITE_ASSIGN_REASON_REQUIRED": "Give the reason (at least {{min}} characters) for the site you give.",
+    "SITE_ASSIGN_NO_RECORDS": "Select the records to give a site to.",
+    "SITE_ASSIGN_TOO_MANY": "At most {{max}} records can be given a site at once.",
+    "SITE_ASSIGN_ALREADY_HAS_SITE": "These records already have a site, which cannot be changed here: {{records}}. Reload the list.",
+    "SITE_ASSIGN_NODE_INVALID": "The site chosen is not a unit of the published organisation (deleted, or still in a draft).",
+    "SITE_ASSIGN_ALREADY_ASSIGNED": "These records were already given a site once, which is kept for good: they cannot be given one again here ({{records}}). A planner gives a planning window its site again in the window dialog.",
+    "SITE_ASSIGN_PERMANENT_RIGHT_REQUIRED": "Giving a site to a record without one needs the organisation administration right for the whole plant through a permanent role: an emergency grant is not enough.",
+    "SITE_ASSIGN_REASON_TOO_LONG": "The reason has at most {{max}} characters."
   }
 }

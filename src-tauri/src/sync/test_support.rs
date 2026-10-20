@@ -363,6 +363,18 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // The approver of an override must hold the certification right on the receiving device
     // (`qualification::sync_check`): generic accounts (administrators, `is_*` = 1) are not deleted.
     ("user_accounts", "deleted_at", "NULL"),
+    // A site rule received on a deleted node is refused (`settings::site::inbound_site_setting_check`):
+    // the generic node is live, as every node of the structure in use is.
+    ("org_nodes", "deleted_at", "NULL"),
+    // A live node belongs to a structure (trigger of migration 127): the one of its node type, the
+    // last created (the node type is created just before as its parent).
+    (
+        "org_nodes",
+        "structure_model_id",
+        "(SELECT structure_model_id FROM org_node_types ORDER BY id DESC LIMIT 1)",
+    ),
+    // Site rules are received only on a node of the structure in use (`settings::site`).
+    ("org_structure_models", "status", "'active'"),
     // A received permit is judged on its status (`permit::sync_check`): the generic permit is
     // active (its generic times are in order: fitted, verified, activated, lock removed, expiry),
     // so its generic isolations arrive with it as a valid group.
@@ -377,6 +389,17 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_orders", "permit_rule_code", "NULL"),
     ("work_orders", "permit_rule_permit_type", "NULL"),
     ("work_orders", "permit_rule_cleared_at", "NULL"),
+    // A generic record carries no assigned-site trace (written once by an administrator on a record
+    // without a site and judged on arrival, `org::site_assignment::inbound_site_assignment_check`).
+    ("work_orders", "site_assigned_by_id", "NULL"),
+    ("work_orders", "site_assigned_at", "NULL"),
+    ("work_orders", "site_assign_reason", "NULL"),
+    ("intervention_requests", "site_assigned_by_id", "NULL"),
+    ("intervention_requests", "site_assigned_at", "NULL"),
+    ("intervention_requests", "site_assign_reason", "NULL"),
+    ("planning_windows", "site_assigned_by_id", "NULL"),
+    ("planning_windows", "site_assigned_at", "NULL"),
+    ("planning_windows", "site_assign_reason", "NULL"),
     // A calendar day, not a timestamp.
     ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
     // A planned crew is 1–50 people (migration 207 triggers).

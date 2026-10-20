@@ -94,6 +94,113 @@ fn assign(user_id: i64, role_id: i64, scope_type: &str, reference: Option<&str>)
     }
 }
 
+/// A plant-wide assignment names no tenant or this plant's licence tenant, never another text: it
+/// travels to the other PCs unchanged.
+#[tokio::test]
+async fn plant_wide_assignment_names_no_tenant_or_the_licence_tenant() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let user = insert_user(&db, "tenant_scope_user").await;
+    let readonly = role_id(&db, "Readonly").await;
+
+    for reference in ["tenant-other", "plant-01"] {
+        let refused = assign_role_scope_impl(
+            &state,
+            &caller,
+            assign(user, readonly, "tenant", Some(reference)),
+            false,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(refused, Err(AppError::ValidationFailed(_))),
+            "{reference} without an activated licence"
+        );
+    }
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "plant-01", "fp-scope", "token-scope")
+        .await
+        .expect("activation");
+    let refused = assign_role_scope_impl(
+        &state,
+        &caller,
+        assign(user, readonly, "tenant", Some("tenant-other")),
+        false,
+        None,
+    )
+    .await;
+    assert!(matches!(refused, Err(AppError::ValidationFailed(_))), "another tenant");
+    assign_role_scope_impl(
+        &state,
+        &caller,
+        assign(user, readonly, "tenant", Some("plant-01")),
+        false,
+        None,
+    )
+    .await
+    .expect("the licence tenant");
+    validate_tenant_reference(&db, "tenant", None).await.expect("no tenant");
+    validate_tenant_reference(&db, "tenant", Some(" "))
+        .await
+        .expect("blank");
+    validate_tenant_reference(&db, "site", Some("anything"))
+        .await
+        .expect("not a plant-wide scope");
+}
+
+/// Every plant-wide row is one scope: a role given plant-wide from the screens (no tenant named)
+/// replaces a plant-wide role recorded with the licence tenant (first administrator, user
+/// creation), and a blank reference is stored as none.
+#[tokio::test]
+async fn a_plant_wide_role_replaces_the_plant_wide_role_naming_the_tenant() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let user = insert_user(&db, "plant_wide_replace").await;
+    let readonly = role_id(&db, "Readonly").await;
+    let supervisor = role_id(&db, "Supervisor").await;
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "plant-01", "fp-replace", "token-replace")
+        .await
+        .expect("activation");
+    assign_role_scope_impl(
+        &state,
+        &caller,
+        assign(user, readonly, "tenant", Some("plant-01")),
+        false,
+        None,
+    )
+    .await
+    .expect("plant-wide role naming the tenant");
+    assign_role_scope_impl(
+        &state,
+        &caller,
+        assign(user, supervisor, "tenant", Some(" ")),
+        false,
+        None,
+    )
+    .await
+    .expect("plant-wide role from the screens");
+
+    let live = |sql: &'static str| {
+        let db = db.clone();
+        async move { scalar_i64(&db, sql, vec![user.into()]).await }
+    };
+    assert_eq!(
+        live("SELECT COUNT(*) AS v FROM user_scope_assignments WHERE user_id = ? AND scope_type = 'tenant' AND deleted_at IS NULL").await,
+        1,
+        "one plant-wide role"
+    );
+    assert_eq!(
+        live("SELECT role_id AS v FROM user_scope_assignments WHERE user_id = ? AND scope_type = 'tenant' AND deleted_at IS NULL").await,
+        supervisor
+    );
+    assert_eq!(
+        live("SELECT COUNT(*) AS v FROM user_scope_assignments WHERE user_id = ? AND scope_type = 'tenant' AND deleted_at IS NULL AND scope_reference IS NULL").await,
+        1,
+        "a blank reference is stored as none"
+    );
+}
+
 #[tokio::test]
 async fn scoped_assignment_needs_an_existing_node_and_a_valid_window() {
     let db = crate::db::test_db::seeded().await;

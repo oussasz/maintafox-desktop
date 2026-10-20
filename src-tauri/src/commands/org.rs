@@ -841,3 +841,55 @@ pub async fn list_org_change_events(
     );
     audit::list_org_change_events(&state.db, limit, entity_kind.as_deref(), entity_id).await
 }
+
+// ─── Records without a site (CMMS Advisor decision Q1, step 6) ───────────────
+
+/// How many work orders, requests and planning windows have no site (plant-wide `org.admin`).
+#[tauri::command]
+pub async fn count_records_without_site(
+    state: State<'_, AppState>,
+) -> AppResult<crate::org::site_assignment::NoSiteCounts> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ORG_ADMIN,
+        PermissionScope::Global
+    );
+    crate::org::site_assignment::count_records_without_site(&state.db).await
+}
+
+/// The records of one kind without a site, the counts of every kind and the nodes a site can be
+/// chosen from (plant-wide `org.admin`).
+#[tauri::command]
+pub async fn list_records_without_site(
+    kind: crate::org::site_assignment::NoSiteKind,
+    state: State<'_, AppState>,
+) -> AppResult<crate::org::site_assignment::RecordsWithoutSite> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ORG_ADMIN,
+        PermissionScope::Global
+    );
+    crate::org::site_assignment::list_records_without_site(&state.db, kind).await
+}
+
+/// Gives a site to records that have none (plant-wide `org.admin` + step-up; a reason; one audit
+/// entry per record; a record that has a site refuses the batch).
+#[tauri::command]
+pub async fn assign_site_to_records(
+    payload: crate::org::site_assignment::AssignSiteInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::org::site_assignment::AssignSiteResult> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ORG_ADMIN,
+        PermissionScope::Global
+    );
+    require_step_up!(state);
+    crate::org::site_assignment::assign_site(&state.db, user.user_id, payload).await
+}

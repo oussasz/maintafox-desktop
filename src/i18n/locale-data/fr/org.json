@@ -264,7 +264,8 @@
       "PARENT_CHILD_NOT_ALLOWED": "«{{nodeName}}» ({{childType}}) ne peut pas dépendre d’un {{parentType}} avec les règles de relation actuelles. Déplacez-le ou mettez à jour les règles.",
       "PARENT_CHILD_DRIFT": "Une relation parent–enfant utilisée dans l’arbre n’est plus autorisée par les règles. Déplacez l’unité ou restaurez la règle.",
       "COST_CENTER_INCOMPATIBLE": "«{{nodeName}}» a un centre de coûts, mais son niveau «{{typeCode}}» ne les autorise pas. Retirez le centre de coûts ou autorisez-les sur ce niveau.",
-      "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS": "«{{nodeName}}» est encore utilisé par des données en production mais est absent de ce brouillon. Réparez les copies du brouillon, ou détachez ces liens avant de publier."
+      "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS": "«{{nodeName}}» est encore utilisé par des données en production mais est absent de ce brouillon. Réparez les copies du brouillon, ou détachez ces liens avant de publier.",
+      "SITE_RULE_ON_DRAFT_COPY": "La règle de site «{{settingKey}}» est définie à la fois sur «{{nodeName}}» et sur sa copie dans ce brouillon : la règle en vigueur ne peut pas passer sur la copie. Contactez le support pour retirer la règle de la copie avant de publier."
     },
     "refreshTimeline": "Actualiser l’historique des modifications",
     "auditLoadError": "Impossible de charger l'historique des modifications"
@@ -496,5 +497,52 @@
     "noMatch": "Aucune unité ne correspond à votre recherche.",
     "cancel": "Annuler",
     "review": "Voir l’impact"
+  },
+  "noSite": {
+    "open": "Enregistrements sans site",
+    "openCount": "Enregistrements sans site ({{count}})",
+    "openHint": "Anciens OT, demandes et fenêtres de planification enregistrés sans site : donnez-leur un site.",
+    "title": "Enregistrements sans site",
+    "description": "OT, demandes et fenêtres de planification enregistrés avant que le site soit obligatoire. Tant qu'ils n'ont pas de site, seuls les utilisateurs ayant un rôle valable pour toute l'usine les voient et peuvent agir dessus. Un site n'est donné qu'à un enregistrement qui n'en a pas : il ne peut plus être changé ici ensuite. Les enregistrements clôturés peuvent aussi recevoir un site.",
+    "kinds": {
+      "work_order": "OT ({{count}})",
+      "request": "Demandes ({{count}})",
+      "planning_window": "Fenêtres de planification ({{count}})"
+    },
+    "windowsHint": "Une fenêtre de planification sans site s'applique à toute l'usine : c'est valable. Donnez-lui un site seulement si elle concernait un seul site. Les fenêtres marquées « Site à ressaisir » ont perdu leur site en étant enregistrées avec l'ancienne fenêtre de saisie.",
+    "columns": {
+      "record": "Enregistrement",
+      "status": "Statut",
+      "review": "À revoir",
+      "equipment": "Équipement",
+      "suggested": "Équipement installé à",
+      "date": "Créé le",
+      "period": "Période"
+    },
+    "selectAll": "Sélectionner tous les enregistrements affichés",
+    "selectRow": "Sélectionner {{record}}",
+    "noEquipment": "Sans équipement",
+    "windowToReview": "Site à ressaisir",
+    "windowPlantWide": "Toute l'usine (valable)",
+    "emptyTitle": "Rien à revoir",
+    "empty": {
+      "work_order": "Tous les OT ont un site.",
+      "request": "Toutes les demandes ont un site.",
+      "planning_window": "Toutes les fenêtres de planification ont un site."
+    },
+    "loadFailed": "Impossible de charger les enregistrements sans site",
+    "selected_one": "{{count}} enregistrement sélectionné",
+    "selected_other": "{{count}} enregistrements sélectionnés",
+    "tooMany": "Au plus {{max}} enregistrements à la fois : sélectionnez-en moins.",
+    "site": "Site à donner",
+    "siteHint": "Prérempli avec l'endroit où l'équipement sélectionné est installé aujourd'hui. Vérifiez-le avant de confirmer.",
+    "siteHintNone": "Choisissez le site (ou la ligne, la zone) auquel ces enregistrements appartiennent.",
+    "reason": "Motif",
+    "reasonHint": "Au moins {{min}} caractères. Conservé sur chaque enregistrement et dans le journal d'audit avec votre nom et la date.",
+    "confirm_one": "Donner ce site à {{count}} enregistrement",
+    "confirm_other": "Donner ce site à {{count}} enregistrements",
+    "assigned_one": "{{site}} donné à {{count}} enregistrement.",
+    "assigned_other": "{{site}} donné à {{count}} enregistrements.",
+    "close": "Fermer"
   }
 }

@@ -135,6 +135,12 @@
       "ADMIN_RECOVERY_NOTICE_INVALID": "Un avis sur un administrateur créé avec un code de récupération est arrivé adressé au nouvel administrateur, ou avec des caractères invisibles dans les noms affichés",
       "ADMIN_RECOVERY_ACK_NOT_RECIPIENT": "Un avis de code de récupération a été marqué comme lu sur un autre poste par une autre personne que l'administrateur destinataire",
       "ADMIN_RECOVERY_ACK_CHANGED": "La prise de connaissance d'un avis de code de récupération a été modifiée sur un autre poste : elle n'est jamais modifiée",
+      "SITE_ASSIGNMENT_TRACE_CHANGED": "Le site donné à un ancien enregistrement sans site (qui, quand, pourquoi) a été retiré ou réécrit sur un autre poste",
+      "SITE_ASSIGNMENT_INCOMPLETE": "Un site donné sur un autre poste à un enregistrement sans site, sans qui, quand (ou daté dans le futur), pourquoi ou le site",
+      "SITE_ASSIGNMENT_SITE_NOT_EMPTY": "Un site donné sur un autre poste à un enregistrement qui a déjà un site ici",
+      "SITE_ASSIGNMENT_NODE_INVALID": "Un site donné sur un autre poste à un enregistrement sans site, sur une unité supprimée ici",
+      "SITE_ASSIGNMENT_NOT_ALLOWED": "Un site donné sur un autre poste à un enregistrement sans site, par une personne sans le droit d'administration de l'organisation pour toute l'usine",
+      "SITE_SET_WITHOUT_ASSIGNMENT": "Un OT ou une demande sans site reçu avec un site, sans l'attribution de site d'un administrateur de l'organisation",
       "other": "À examiner"
     },
     "history": {

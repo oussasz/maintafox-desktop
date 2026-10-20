@@ -1399,6 +1399,28 @@ pub(crate) async fn set_user_active_impl(
 /// (its subtree is covered, see `notifications::inbox::visible_to`); `team` references a team.
 pub(crate) const ASSIGNMENT_SCOPE_TYPES: &[&str] = &["tenant", "entity", "site", "team", "org_node"];
 
+/// A plant-wide (tenant) scope names no tenant, or this plant's licence tenant: it travels to the
+/// other PCs unchanged, where any other value would only stop the person from signing in.
+pub(crate) async fn validate_tenant_reference(
+    db: &sea_orm::DatabaseConnection,
+    scope_type: &str,
+    scope_reference: Option<&str>,
+) -> AppResult<()> {
+    if scope_type != "tenant" {
+        return Ok(());
+    }
+    let Some(reference) = scope_reference.filter(|r| !r.trim().is_empty()) else {
+        return Ok(());
+    };
+    let activated = crate::commands::product_license::get_activation_claim_tenant_id(db).await?;
+    if activated.as_deref() == Some(reference) {
+        return Ok(());
+    }
+    Err(AppError::ValidationFailed(vec![format!(
+        "A plant-wide scope names no tenant or this plant's licence tenant; '{reference}' is not it."
+    )]))
+}
+
 /// Check a scope type and its reference. Every non-tenant scope must name a live org node or
 /// team: an assignment whose reference matches nothing would grant nothing, silently.
 pub(crate) async fn validate_assignment_scope<C>(
@@ -1528,12 +1550,14 @@ pub(crate) async fn assign_role_scope_impl(
     app: Option<&AppHandle>,
 ) -> AppResult<IdPayload> {
     validate_assignment_scope(&state.db, &input.scope_type, input.scope_reference.as_deref()).await?;
+    validate_tenant_reference(&state.db, &input.scope_type, input.scope_reference.as_deref()).await?;
     ensure_role_allowed_at_scope(&state.db, input.role_id, &input.scope_type).await?;
     let (valid_from, valid_to) = normalize_validity(input.valid_from.as_deref(), input.valid_to.as_deref())?;
     ensure_may_grant_role(&state.db, caller, input.role_id, Some(input.user_id)).await?;
     ensure_may_manage_account(&state.db, caller, input.user_id).await?;
+    // A plant-wide scope stores the licence tenant id or nothing (a blank reference is nothing).
     let scope_reference_input = if input.scope_type == "tenant" {
-        input.scope_reference.clone()
+        input.scope_reference.clone().filter(|r| !r.trim().is_empty())
     } else {
         input.scope_reference.as_deref().map(|r| r.trim().to_string())
     };
@@ -1578,9 +1602,10 @@ pub(crate) async fn assign_role_scope_impl(
     let scope_type_for_audit = input.scope_type.clone();
     let scope_reference_for_audit = scope_reference_input.clone();
 
-    // Replace-at-scope: at most one assignment per (user_id, scope_type, scope_reference).
-    // The superseded rows (emergency elevations included), the new row, the last-administrator
-    // check and the ledger entries are one transaction.
+    // Replace-at-scope: at most one assignment per (user_id, scope_type, scope_reference); every
+    // plant-wide row is the same scope, whether it names the licence tenant (first administrator,
+    // user creation) or nothing (the screens). The superseded rows (emergency elevations included),
+    // the new row, the last-administrator check and the ledger entries are one transaction.
     let scope_ref_key = scope_reference_input.as_deref().unwrap_or("");
     let tx = state.db.begin().await?;
     let admins_before = active_admin_holders(&tx).await?;
@@ -1590,7 +1615,8 @@ pub(crate) async fn assign_role_scope_impl(
             "SELECT usa.id, usa.role_id, r.name AS role_name FROM user_scope_assignments usa \
              INNER JOIN roles r ON r.id = usa.role_id \
              WHERE usa.user_id = ? AND usa.scope_type = ? \
-               AND COALESCE(usa.scope_reference, '') = ? AND usa.deleted_at IS NULL",
+               AND (usa.scope_type = 'tenant' OR COALESCE(usa.scope_reference, '') = ?) \
+               AND usa.deleted_at IS NULL",
             vec![
                 input.user_id.into(),
                 input.scope_type.clone().into(),
@@ -1604,7 +1630,7 @@ pub(crate) async fn assign_role_scope_impl(
          SET deleted_at = ?, updated_at = ? \
          WHERE user_id = ? \
            AND scope_type = ? \
-           AND COALESCE(scope_reference, '') = ? \
+           AND (scope_type = 'tenant' OR COALESCE(scope_reference, '') = ?) \
            AND deleted_at IS NULL",
         vec![
             now.clone().into(),
