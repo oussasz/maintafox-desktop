@@ -3,18 +3,29 @@
 //!
 //! A stock movement received from another PC is applied as received (it is a physical fact): two
 //! PCs that each issued the last units leave the location below zero on every PC. Such a balance
-//! is "négatif — à rapprocher": one review item per article and location, until a stock count is
-//! recorded there or a later entry brings it back to zero or more.
+//! is "négatif — à rapprocher": one review item per article and location, until the stock there is
+//! back to zero or more (a count, a manual entry counted as one, or a goods receipt).
 //!
-//! `stock_negative_reviews` keeps those items on this PC. It is a projection of `stock_balances`
-//! (itself derived from the synchronised movement ledger) and is never synchronised: an item is
-//! open exactly while the location's on-hand stock is below zero, so every PC holding the same
-//! ledger shows the same open items. A closed item keeps how it was closed (`closure_kind`: a count
-//! or adjustment, or a stock entry — "régularisé par réception") and the movement that closed it.
-//! The partial unique index allows one open item per article and location.
+//! - `stock_negative_reviews` keeps those items on this PC. It is a projection of `stock_balances`
+//!   (itself derived from the synchronised movement ledger) and is never synchronised: an item is
+//!   open exactly while the location's on-hand stock is below zero, so every PC holding the same
+//!   ledger shows the same open items. A closed item keeps how it was closed (`closure_kind`: a
+//!   count, a manual adjustment, a goods receipt — "régularisé par réception" —, a return to stock,
+//!   or none on record) and the movement that closed it. The partial unique index allows one open
+//!   item per article and location.
+//! - `inventory_count_sessions` gains what marks a count recorded to reconcile a location
+//!   (`reconciliation_device_code`, the code of the PC that recorded it, and
+//!   `reconciliation_heads_json`, the reconciliation counts of that article and location this PC
+//!   knew and that no other count it knew had followed). Both travel with the session: two counts
+//!   made on two PCs without either knowing the other show as a double count "à vérifier" on every
+//!   PC (CMMS Advisor ruling S1), until a later count that knows both.
+//! - The notification category of the watcher `stock_to_reconcile` and its rule: the inv.manage
+//!   holders are told once per item, in-app.
 
-use sea_orm::{DatabaseBackend, Statement, TransactionTrait};
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, TransactionTrait};
 use sea_orm_migration::prelude::*;
+
+use crate::sync::identity::seeded_entity_sync_id;
 
 pub struct Migration;
 
@@ -23,6 +34,8 @@ impl MigrationName for Migration {
         "m20261020_000250_stock_negative_reviews"
     }
 }
+
+const CATEGORY: &str = crate::inventory::negative_stock::NOTIFICATION_CATEGORY;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
@@ -38,7 +51,8 @@ impl MigrationTrait for Migration {
                 opened_at               TEXT    NOT NULL,
                 opening_transaction_id  INTEGER NULL REFERENCES inventory_transactions(id),
                 closed_at               TEXT    NULL,
-                closure_kind            TEXT    NULL CHECK (closure_kind IN ('count', 'receipt', 'other')),
+                closure_kind            TEXT    NULL
+                    CHECK (closure_kind IN ('count', 'adjustment', 'receipt', 'return', 'other')),
                 closing_transaction_id  INTEGER NULL REFERENCES inventory_transactions(id),
                 CHECK ((status = 'open') = (closed_at IS NULL)),
                 CHECK ((status = 'open') = (closure_kind IS NULL))
@@ -51,17 +65,70 @@ impl MigrationTrait for Migration {
             txn.execute(Statement::from_string(DatabaseBackend::Sqlite, sql.to_string()))
                 .await?;
         }
+        // Re-runnable: a column already there is kept.
+        for column in ["reconciliation_device_code", "reconciliation_heads_json"] {
+            let exists = txn
+                .query_one(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "SELECT 1 AS ok FROM pragma_table_info('inventory_count_sessions') WHERE name = ?",
+                    [column.into()],
+                ))
+                .await?
+                .is_some();
+            if !exists {
+                txn.execute_unprepared(&format!(
+                    "ALTER TABLE inventory_count_sessions ADD COLUMN {column} TEXT NULL"
+                ))
+                .await?;
+            }
+        }
+        txn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "INSERT OR IGNORE INTO notification_categories \
+             (entity_sync_id, code, label, default_severity, default_requires_ack, is_user_configurable, \
+              module_code, is_offered) VALUES (?, ?, 'Stock to reconcile after sync', 'warning', 0, 1, 'inv', 1)",
+            [
+                seeded_entity_sync_id("notification_categories", CATEGORY).into(),
+                CATEGORY.into(),
+            ],
+        ))
+        .await?;
+        txn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "INSERT INTO notification_rules \
+             (entity_sync_id, category_code, routing_mode, requires_ack, dedupe_window_minutes, \
+              escalation_policy_id, is_active, lead_time_minutes, audiences_json) \
+             SELECT ?, ?, 'manual', 0, 0, NULL, 1, NULL, '[\"permission:inv.manage\"]' \
+             WHERE NOT EXISTS (SELECT 1 FROM notification_rules WHERE category_code = ?)",
+            [
+                seeded_entity_sync_id("notification_rules", CATEGORY).into(),
+                CATEGORY.into(),
+                CATEGORY.into(),
+            ],
+        ))
+        .await?;
         txn.commit().await
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .get_connection()
-            .execute(Statement::from_string(
+        let db = manager.get_connection();
+        db.execute(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "DROP TABLE IF EXISTS stock_negative_reviews".to_string(),
+        ))
+        .await?;
+        for (table, column) in [
+            ("notification_rules", "category_code"),
+            ("notification_categories", "code"),
+        ] {
+            db.execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
-                "DROP TABLE IF EXISTS stock_negative_reviews".to_string(),
+                format!("DELETE FROM {table} WHERE {column} = ?"),
+                [CATEGORY.into()],
             ))
             .await?;
+        }
+        // The two count-session columns stay (SQLite cannot drop them on every supported version).
         Ok(())
     }
 }

@@ -3,7 +3,9 @@
  *
  * A movement received from another PC is applied as received; a location left below zero gets one
  * review item per article and location, closed by a stock count recorded there (inv.manage, a
- * reason) or by a later stock entry. More reserved than held is a warning only.
+ * reason) or by a later stock entry. Two counts of the same location recorded on different PCs
+ * without knowing each other are a double count to verify, closed by a new count. More reserved
+ * than held is a warning only.
  *
  * IPC failures are passed on untouched so their coded reasons (`inventory:errors.*`) reach the
  * screen (`appErrorReason`).
@@ -13,7 +15,7 @@ import { z } from "zod";
 import { invoke } from "@/lib/ipc-invoke";
 
 /** Shortest reason accepted for the count (characters, trimmed): `REVIEW_REASON_MIN_CHARS`. */
-export const NEGATIVE_STOCK_REASON_MIN_CHARS = 5;
+export const NEGATIVE_STOCK_REASON_MIN_CHARS = 8;
 
 export const NegativeStockReviewSchema = z.object({
   id: z.number(),
@@ -28,7 +30,7 @@ export const NegativeStockReviewSchema = z.object({
   opening_transaction_id: z.number().nullable(),
   opening_movement_type: z.string().nullable(),
   closed_at: z.string().nullable(),
-  closure_kind: z.enum(["count", "receipt", "other"]).nullable(),
+  closure_kind: z.enum(["count", "adjustment", "receipt", "return", "other"]).nullable(),
   closing_transaction_id: z.number().nullable(),
   closing_movement_type: z.string().nullable(),
   on_hand_qty: z.number(),
@@ -50,17 +52,52 @@ export const OverReservationWarningSchema = z.object({
 });
 export type OverReservationWarning = z.infer<typeof OverReservationWarningSchema>;
 
+export const ReconciliationCountSchema = z.object({
+  session_sync_id: z.string(),
+  session_code: z.string(),
+  counted_by: z.string().nullable(),
+  device_code: z.string(),
+  counted_at: z.string(),
+  counted_qty: z.number(),
+  variance_qty: z.number(),
+});
+export type ReconciliationCount = z.infer<typeof ReconciliationCountSchema>;
+
+export const DoubleCountReviewSchema = z.object({
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  location_id: z.number(),
+  location_code: z.string(),
+  warehouse_code: z.string(),
+  counts: z.array(ReconciliationCountSchema),
+  on_hand_qty: z.number(),
+  reserved_qty: z.number(),
+  available_qty: z.number(),
+});
+export type DoubleCountReview = z.infer<typeof DoubleCountReviewSchema>;
+
 const NegativeStockReviewListSchema = z.object({
   items: z.array(NegativeStockReviewSchema),
+  double_counts: z.array(DoubleCountReviewSchema),
   over_reservations: z.array(OverReservationWarningSchema),
 });
 export type NegativeStockReviewList = z.infer<typeof NegativeStockReviewListSchema>;
 
 const NegativeStockSummarySchema = z.object({
   negative_count: z.number(),
+  double_count_count: z.number(),
   over_reserved_count: z.number(),
 });
 export type NegativeStockSummary = z.infer<typeof NegativeStockSummarySchema>;
+
+const NegativeStockResolutionSchema = z.object({
+  session_code: z.string(),
+  counted_qty: z.number(),
+  variance_qty: z.number(),
+  review: NegativeStockReviewSchema.nullable(),
+});
+export type NegativeStockResolution = z.infer<typeof NegativeStockResolutionSchema>;
 
 export interface ResolveNegativeStockInput {
   article_id: number;
@@ -86,7 +123,7 @@ export async function getNegativeStockSummary(): Promise<NegativeStockSummary> {
 
 export async function resolveNegativeStockByCount(
   input: ResolveNegativeStockInput,
-): Promise<NegativeStockReview> {
+): Promise<NegativeStockResolution> {
   const raw = await invoke<unknown>("resolve_negative_stock_by_count", { input });
-  return NegativeStockReviewSchema.parse(raw);
+  return NegativeStockResolutionSchema.parse(raw);
 }

@@ -1,4 +1,5 @@
-//! Stock balances below zero after sync: "négatif — à rapprocher" (CMMS Advisor 2026-10-20).
+//! Stock to reconcile after sync: "négatif — à rapprocher" and "double comptage — à vérifier"
+//! (CMMS Advisor 2026-10-20, review ruling S1).
 //!
 //! A stock movement received from another PC is applied as received: it is a physical fact and the
 //! ledger must be the same on every PC. Two PCs that each issued the last units of a location
@@ -6,43 +7,74 @@
 //! - on-hand stock below zero: one review item per article and location (`stock_negative_reviews`,
 //!   at most one open per pair), whatever movement brought it there;
 //! - on-hand stock at zero or more but more reserved than held: a warning only ("réservations
-//!   supérieures au stock"), derived from the balance, never stored and never a review item.
+//!   supérieures au stock"), derived from the balance, never stored and never a review item;
+//! - two reconciliation counts of the same article and location recorded on different PCs, neither
+//!   knowing the other (each corrected the stock by its own variance, so the stock is corrected
+//!   twice): a "double comptage — à vérifier" item, derived from the synchronised count sessions.
 //!
-//! An item is open exactly while the location's on-hand stock is below zero: [`reconcile_pair_in`]
-//! opens or closes it from the balance, after each received movement (`sync::apply_hooks`), after
-//! the count that resolves it, and for every balance before the list is read (local movements made
-//! by the inventory commands are caught there). Balances are derived from the synchronised ledger,
-//! so every PC holding the same movements shows the same open items, whatever order they arrived
-//! in. The items are this PC's projection and are not synchronised (`sync::registry`, derived
-//! projection); what resolves them — the count session, its movement and its audit — is.
+//! Determinism. A negative item is open exactly while the location's on-hand stock is below zero:
+//! [`reconcile_pair_in`] opens or closes it from the balance, after each received movement
+//! (`sync::apply_hooks`), after the count that resolves it, and for every balance before the list is
+//! read (local movements made by the inventory commands are caught there). Balances are derived from
+//! the synchronised ledger, so every PC holding the same movements shows the same open items,
+//! whatever order they arrived in. The items are this PC's projection and are not synchronised
+//! (`sync::registry`, derived projection); what resolves them — the count session, its movement and
+//! its audit — is. A double count is computed from the count sessions alone: each reconciliation
+//! count records the reconciliation counts of its pair that its PC knew and that no other known
+//! count had followed (`reconciliation_heads_json`); the counts no other count follows are the
+//! heads, and two heads or more from different PCs are a double count. A later count recorded with
+//! both known follows them both, which closes it on every PC that has received it.
 //!
-//! The one resolution is a stock count of that article at that location
-//! ([`resolve_by_count`], `inv.manage`, plant-wide while stores have no site), with a reason of at
-//! least [`REVIEW_REASON_MIN_CHARS`] characters: it is posted through the count workflow
-//! (`controls::record_location_count_in`) and audited. A later stock entry (goods receipt, return,
-//! transfer in, manual entry) that brings the stock back to zero or more closes the item too,
-//! noted "régularisé par réception". There is no reject and no "accept anyway".
+//! Resolution. A stock count of that article at that location ([`resolve_by_count`], `inv.manage`,
+//! plant-wide while stores have no site), with the variance reason and a reason of at least
+//! [`REVIEW_REASON_MIN_CHARS`] characters (the count-approval rule): it is posted through the count
+//! workflow (`controls::record_location_count_in`) and audited. It resolves a negative item and a
+//! double count alike. A later entry that brings the stock back to zero or more also closes a
+//! negative item; how is kept: a goods receipt or a transfer in is "régularisé par réception", a
+//! manual entry is an adjustment, a return to stock a return. There is no reject and no "accept
+//! anyway".
+//!
+//! Notice. The inv.manage holders are told once per item, in-app (watcher [`NOTIFICATION_CATEGORY`],
+//! `notifications::watchers`), with the same identity on every PC.
+
+use std::collections::{BTreeSet, HashSet};
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
 
-/// Shortest reason accepted for the count that resolves an item (characters, trimmed).
-pub const REVIEW_REASON_MIN_CHARS: usize = 5;
+/// Shortest reason accepted for the count that resolves an item (characters, trimmed): the rule of
+/// the count-line approval (CMMS Advisor decision 3).
+pub const REVIEW_REASON_MIN_CHARS: usize = 8;
 
 /// Quantities closer to zero than this are zero (balances are sums of decimal movements).
-const QTY_TOLERANCE: f64 = 1e-9;
+pub(crate) const QTY_TOLERANCE: f64 = 1e-9;
+
+/// Notification category (and watcher) of the stock to reconcile (migration 250).
+pub const NOTIFICATION_CATEGORY: &str = "stock_to_reconcile";
+
+/// Where the stock to reconcile is listed (Inventory › Controls; `listLinks.inventory` on screen).
+pub const LIST_URL: &str = "/inventory?stock=to_reconcile";
 
 /// Closed by a stock count (or the reversal of one).
 pub const CLOSURE_COUNT: &str = "count";
-/// Closed by a stock entry: "régularisé par réception".
+/// Closed by a manual stock entry (counted as a count resolution, CMMS Advisor decision 2).
+pub const CLOSURE_ADJUSTMENT: &str = "adjustment";
+/// Closed by a goods receipt or a transfer in: "régularisé par réception".
 pub const CLOSURE_RECEIPT: &str = "receipt";
+/// Closed by stock returned to the store (from a job, from repair).
+pub const CLOSURE_RETURN: &str = "return";
 /// Back to zero or more without a stock entry on record since the item opened (a data repair).
 pub const CLOSURE_OTHER: &str = "other";
 
-/// Movement types whose entry closes an item as a count.
-const COUNT_MOVEMENTS: &[&str] = &["COUNT_ADJUST", "COUNT_REVERSAL"];
+/// `(movement types, closure kind)` of the stock entries that close an item.
+const CLOSING_MOVEMENTS: &[(&[&str], &str)] = &[
+    (&["COUNT_ADJUST", "COUNT_REVERSAL"], CLOSURE_COUNT),
+    (&["ADJUST_IN"], CLOSURE_ADJUSTMENT),
+    (&["GR_ACCEPT", "TRANSFER_IN"], CLOSURE_RECEIPT),
+    (&["RETURN", "REPAIRABLE_RETURN"], CLOSURE_RETURN),
+];
 
 pub const REFUSED_REASON_SHORT: &str = "NEGATIVE_STOCK_REASON_SHORT";
 pub const REFUSED_COUNT_INVALID: &str = "NEGATIVE_STOCK_COUNT_INVALID";
@@ -67,7 +99,7 @@ pub struct NegativeStockReview {
     pub opening_transaction_id: Option<i64>,
     pub opening_movement_type: Option<String>,
     pub closed_at: Option<String>,
-    /// `count`, `receipt` ("régularisé par réception") or `other`.
+    /// `count`, `adjustment`, `receipt` ("régularisé par réception"), `return` or `other`.
     pub closure_kind: Option<String>,
     pub closing_transaction_id: Option<i64>,
     pub closing_movement_type: Option<String>,
@@ -90,17 +122,48 @@ pub struct OverReservationWarning {
     pub available_qty: f64,
 }
 
+/// One reconciliation count: who recorded it, on which PC, when, and the quantity counted.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReconciliationCount {
+    pub session_sync_id: String,
+    pub session_code: String,
+    pub counted_by: Option<String>,
+    pub device_code: String,
+    pub counted_at: String,
+    pub counted_qty: f64,
+    pub variance_qty: f64,
+}
+
+/// "Double comptage — à vérifier": reconciliation counts of one article and location recorded on
+/// different PCs, none knowing the others.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DoubleCountReview {
+    pub article_id: i64,
+    pub article_code: String,
+    pub article_name: String,
+    pub location_id: i64,
+    pub location_code: String,
+    pub warehouse_code: String,
+    /// Oldest first.
+    pub counts: Vec<ReconciliationCount>,
+    pub on_hand_qty: f64,
+    pub reserved_qty: f64,
+    pub available_qty: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NegativeStockReviewList {
     /// Open items first, then the closed ones when asked for.
     pub items: Vec<NegativeStockReview>,
+    pub double_counts: Vec<DoubleCountReview>,
     pub over_reservations: Vec<OverReservationWarning>,
 }
 
-/// Counts for the sync centre, derived from the balances.
+/// Counts for the sync centre, derived from the balances and the count sessions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NegativeStockSummary {
     pub negative_count: i64,
+    pub double_count_count: i64,
     pub over_reserved_count: i64,
 }
 
@@ -115,6 +178,16 @@ pub struct ResolveNegativeStockInput {
     pub reason: String,
 }
 
+/// What a resolution recorded, and the negative item it closed (none when only a double count was
+/// to verify).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NegativeStockResolution {
+    pub session_code: String,
+    pub counted_qty: f64,
+    pub variance_qty: f64,
+    pub review: Option<NegativeStockReview>,
+}
+
 fn refused(code: &str, message: impl Into<String>, params: &[(&str, String)]) -> AppError {
     crate::errors::org_validation_failed(code, message, crate::errors::issue_params(params))
 }
@@ -127,9 +200,16 @@ fn sqlite(sql: &str, values: Vec<Value>) -> Statement {
     Statement::from_sql_and_values(DbBackend::Sqlite, sql, values)
 }
 
+fn closure_kind_of(movement_type: &str) -> &'static str {
+    CLOSING_MOVEMENTS
+        .iter()
+        .find(|(types, _)| types.contains(&movement_type))
+        .map_or(CLOSURE_OTHER, |(_, kind)| kind)
+}
+
 /// Opens or closes the item of one article and location from its balance: open while the on-hand
 /// stock is below zero (one open item per pair), closed as soon as it is zero or more, noted with
-/// the latest stock entry since it opened (a count, or "régularisé par réception").
+/// the latest stock entry since it opened.
 pub async fn reconcile_pair_in(conn: &impl ConnectionTrait, article_id: i64, location_id: i64) -> AppResult<()> {
     let on_hand = conn
         .query_one(sqlite(
@@ -162,10 +242,12 @@ pub async fn reconcile_pair_in(conn: &impl ConnectionTrait, article_id: i64, loc
                 .await?
                 .map(|row| row.try_get::<i64>("", "id"))
                 .transpose()?;
+            // A reconcile running at the same time may have opened it: one open row per pair.
             conn.execute(sqlite(
                 "INSERT INTO stock_negative_reviews
                     (article_id, location_id, status, opened_at, opening_transaction_id)
-                 VALUES (?, ?, 'open', ?, ?)",
+                 VALUES (?, ?, 'open', ?, ?)
+                 ON CONFLICT(article_id, location_id) WHERE status = 'open' DO NOTHING",
                 vec![
                     article_id.into(),
                     location_id.into(),
@@ -193,15 +275,14 @@ pub async fn reconcile_pair_in(conn: &impl ConnectionTrait, article_id: i64, loc
                 Some(row) => {
                     let movement_type: String = row.try_get("", "movement_type")?;
                     let performed_at: Option<String> = row.try_get("", "performed_at")?;
-                    let kind = if COUNT_MOVEMENTS.contains(&movement_type.as_str()) {
-                        CLOSURE_COUNT
-                    } else {
-                        CLOSURE_RECEIPT
-                    };
                     // The time of the movement that closed it, never before the item opened here
                     // (a movement made earlier on another PC may arrive after the item opened).
                     let closed_at = performed_at.filter(|at| *at > opened_at).unwrap_or(opened_at);
-                    (kind, Some(row.try_get::<i64>("", "id")?), closed_at)
+                    (
+                        closure_kind_of(&movement_type),
+                        Some(row.try_get::<i64>("", "id")?),
+                        closed_at,
+                    )
                 }
                 None => (CLOSURE_OTHER, None, now_iso()),
             };
@@ -237,6 +318,87 @@ pub async fn reconcile_all_in(conn: &impl ConnectionTrait) -> AppResult<()> {
         reconcile_pair_in(conn, row.try_get("", "article_id")?, row.try_get("", "location_id")?).await?;
     }
     Ok(())
+}
+
+/// The reconciliation counts of an article and location that no other one follows, oldest first
+/// (time recorded, then session sync id: the same order on every PC).
+pub(crate) async fn reconciliation_heads(
+    conn: &impl ConnectionTrait,
+    article_id: i64,
+    location_id: i64,
+) -> AppResult<Vec<ReconciliationCount>> {
+    let rows = conn
+        .query_all(sqlite(
+            "SELECT cs.entity_sync_id, cs.session_code, cs.reconciliation_device_code,
+                    cs.reconciliation_heads_json, cs.posted_at, ua.display_name, ua.username,
+                    cl.counted_qty, cl.variance_qty
+             FROM inventory_count_sessions cs
+             JOIN inventory_count_lines cl ON cl.session_id = cs.id
+             LEFT JOIN user_accounts ua ON ua.id = cs.posted_by_id
+             WHERE cs.reconciliation_heads_json IS NOT NULL AND cs.entity_sync_id IS NOT NULL
+               AND cl.article_id = ? AND cl.location_id = ?
+             ORDER BY cs.posted_at, cs.entity_sync_id",
+            vec![article_id.into(), location_id.into()],
+        ))
+        .await?;
+    let mut followed: HashSet<String> = HashSet::new();
+    let mut counts = Vec::new();
+    for row in &rows {
+        let heads_json: String = row.try_get("", "reconciliation_heads_json")?;
+        // A list this version cannot read follows nothing: its counts stay heads (fail-safe).
+        if let Ok(heads) = serde_json::from_str::<Vec<String>>(&heads_json) {
+            followed.extend(heads);
+        }
+        let display: Option<String> = row.try_get("", "display_name")?;
+        let username: Option<String> = row.try_get("", "username")?;
+        counts.push(ReconciliationCount {
+            session_sync_id: row.try_get("", "entity_sync_id")?,
+            session_code: row.try_get("", "session_code")?,
+            counted_by: display.filter(|d| !d.trim().is_empty()).or(username),
+            device_code: row
+                .try_get::<Option<String>>("", "reconciliation_device_code")?
+                .unwrap_or_default(),
+            counted_at: row.try_get::<Option<String>>("", "posted_at")?.unwrap_or_default(),
+            counted_qty: row.try_get("", "counted_qty")?,
+            variance_qty: row.try_get("", "variance_qty")?,
+        });
+    }
+    counts.retain(|c| !followed.contains(&c.session_sync_id));
+    Ok(counts)
+}
+
+/// Heads recorded on two PCs or more: a double count to verify.
+fn is_double_count(heads: &[ReconciliationCount]) -> bool {
+    heads
+        .iter()
+        .map(|c| c.device_code.as_str())
+        .collect::<BTreeSet<_>>()
+        .len()
+        >= 2
+}
+
+/// Every article and location whose reconciliation counts are a double count.
+pub(crate) async fn double_count_pairs(
+    conn: &impl ConnectionTrait,
+) -> AppResult<Vec<(i64, i64, Vec<ReconciliationCount>)>> {
+    let pairs = conn
+        .query_all(sqlite(
+            "SELECT DISTINCT cl.article_id, cl.location_id
+             FROM inventory_count_sessions cs JOIN inventory_count_lines cl ON cl.session_id = cs.id
+             WHERE cs.reconciliation_heads_json IS NOT NULL
+             ORDER BY cl.article_id, cl.location_id",
+            vec![],
+        ))
+        .await?;
+    let mut out = Vec::new();
+    for row in pairs {
+        let (article_id, location_id): (i64, i64) = (row.try_get("", "article_id")?, row.try_get("", "location_id")?);
+        let heads = reconciliation_heads(conn, article_id, location_id).await?;
+        if is_double_count(&heads) {
+            out.push((article_id, location_id, heads));
+        }
+    }
+    Ok(out)
 }
 
 const REVIEW_SELECT: &str = "SELECT r.id, r.article_id, a.article_code, a.article_name, r.location_id,
@@ -287,8 +449,19 @@ async fn load_review(conn: &impl ConnectionTrait, id: i64) -> AppResult<Negative
     map_review(&row)
 }
 
-/// The items to reconcile (and the closed ones when `include_closed`), and the over-reservation
-/// warnings. The items are first brought in line with the balances.
+/// Article, location and balance columns of one pair.
+const PAIR_SELECT: &str = "SELECT a.id AS article_id, a.article_code, a.article_name, sl.id AS location_id,
+        sl.code AS location_code, w.code AS warehouse_code,
+        COALESCE(sb.on_hand_qty, 0) AS on_hand_qty, COALESCE(sb.reserved_qty, 0) AS reserved_qty,
+        COALESCE(sb.available_qty, 0) AS available_qty
+     FROM articles a
+     JOIN stock_locations sl ON sl.id = ?
+     JOIN warehouses w ON w.id = sl.warehouse_id
+     LEFT JOIN stock_balances sb ON sb.article_id = a.id AND sb.location_id = sl.id
+     WHERE a.id = ?";
+
+/// The items to reconcile (and the closed ones when `include_closed`), the double counts to verify
+/// and the over-reservation warnings. The items are first brought in line with the balances.
 pub async fn list_reviews(db: &DatabaseConnection, include_closed: bool) -> AppResult<NegativeStockReviewList> {
     let tx = db.begin().await?;
     reconcile_all_in(&tx).await?;
@@ -307,6 +480,27 @@ pub async fn list_reviews(db: &DatabaseConnection, include_closed: bool) -> AppR
         .iter()
         .map(map_review)
         .collect::<AppResult<Vec<_>>>()?;
+    let mut double_counts = Vec::new();
+    for (article_id, location_id, counts) in double_count_pairs(db).await? {
+        let Some(row) = db
+            .query_one(sqlite(PAIR_SELECT, vec![location_id.into(), article_id.into()]))
+            .await?
+        else {
+            continue;
+        };
+        double_counts.push(DoubleCountReview {
+            article_id,
+            article_code: row.try_get("", "article_code")?,
+            article_name: row.try_get("", "article_name")?,
+            location_id,
+            location_code: row.try_get("", "location_code")?,
+            warehouse_code: row.try_get("", "warehouse_code")?,
+            counts,
+            on_hand_qty: row.try_get("", "on_hand_qty")?,
+            reserved_qty: row.try_get("", "reserved_qty")?,
+            available_qty: row.try_get("", "available_qty")?,
+        });
+    }
     let over_reservations = db
         .query_all(sqlite(
             "SELECT sb.article_id, a.article_code, a.article_name, sb.location_id, sl.code AS location_code,
@@ -337,11 +531,13 @@ pub async fn list_reviews(db: &DatabaseConnection, include_closed: bool) -> AppR
         .collect::<AppResult<Vec<_>>>()?;
     Ok(NegativeStockReviewList {
         items,
+        double_counts,
         over_reservations,
     })
 }
 
-/// How many locations are below zero and how many hold more reserved than on hand (sync centre).
+/// How many locations are below zero, have a double count to verify, and hold more reserved than
+/// on hand (sync centre).
 pub async fn summary(db: &DatabaseConnection) -> AppResult<NegativeStockSummary> {
     let row = db
         .query_one(sqlite(
@@ -360,20 +556,60 @@ pub async fn summary(db: &DatabaseConnection) -> AppResult<NegativeStockSummary>
         .ok_or_else(|| AppError::SyncError("stock balance summary returned no row".to_string()))?;
     Ok(NegativeStockSummary {
         negative_count: row.try_get("", "negative_count")?,
+        double_count_count: i64::try_from(double_count_pairs(db).await?.len()).unwrap_or(i64::MAX),
         over_reserved_count: row.try_get("", "over_reserved_count")?,
     })
 }
 
-/// Resolves the item of an article and location by a stock count recorded there by `user_id`:
-/// needs `inv.manage` (plant-wide: stores have no site yet, as for stock adjustments), a reason of
-/// at least [`REVIEW_REASON_MIN_CHARS`] characters, the quantity counted (zero or more) and a code
-/// of the variance-reason list. The count is posted through the count workflow, audited, and the
-/// item closes since the stock is now the counted quantity.
+/// The most recent movement that took the on-hand stock of an article at a location from zero or
+/// more to below zero, in the order every PC shares (time, then sync id), walked back from today's
+/// level; `None` when the ledger shows it below zero from the start. Names the occurrence of the
+/// notice the same way on every PC.
+pub(crate) async fn negative_crossing(
+    conn: &impl ConnectionTrait,
+    article_id: i64,
+    location_id: i64,
+    on_hand_now: f64,
+) -> AppResult<Option<(String, Option<String>)>> {
+    let rows = conn
+        .query_all(sqlite(
+            "SELECT entity_sync_id, movement_type, quantity, performed_at FROM inventory_transactions
+             WHERE article_id = ? AND location_id = ? AND entity_sync_id IS NOT NULL
+             ORDER BY performed_at DESC, entity_sync_id DESC",
+            vec![article_id.into(), location_id.into()],
+        ))
+        .await?;
+    let mut on_hand = on_hand_now;
+    for row in &rows {
+        let movement: String = row.try_get("", "movement_type")?;
+        let quantity: f64 = row.try_get("", "quantity")?;
+        let Some((delta, _)) = crate::inventory::ledger::movement_balance_effect(&movement, quantity) else {
+            continue;
+        };
+        let before = on_hand - delta;
+        if before >= -QTY_TOLERANCE && on_hand < -QTY_TOLERANCE {
+            return Ok(Some((
+                row.try_get("", "entity_sync_id")?,
+                row.try_get("", "performed_at")?,
+            )));
+        }
+        on_hand = before;
+    }
+    Ok(None)
+}
+
+/// Resolves the stock to reconcile of an article and location — the negative item, a double count
+/// to verify, or both — by a stock count recorded there by `user_id`: needs `inv.manage`
+/// (plant-wide: stores have no site yet, as for stock adjustments), a reason of at least
+/// [`REVIEW_REASON_MIN_CHARS`] characters, the quantity counted (zero or more) and a code of the
+/// variance-reason list. The count is posted through the count workflow, marked as following every
+/// reconciliation count of the pair this PC knows, and audited; the negative item closes since the
+/// stock is now the counted quantity.
 pub async fn resolve_by_count(
     db: &DatabaseConnection,
     user_id: i32,
     input: ResolveNegativeStockInput,
-) -> AppResult<NegativeStockReview> {
+) -> AppResult<NegativeStockResolution> {
     let allowed = crate::auth::rbac::check_permission(
         db,
         user_id,
@@ -413,20 +649,26 @@ pub async fn resolve_by_count(
 
     let tx = db.begin().await?;
     reconcile_pair_in(&tx, input.article_id, input.location_id).await?;
-    let item = tx
+    let item_id = tx
         .query_one(sqlite(
             "SELECT id FROM stock_negative_reviews WHERE article_id = ? AND location_id = ? AND status = 'open'",
             vec![input.article_id.into(), input.location_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            refused(
-                REFUSED_NOT_OPEN,
-                "This location's stock is no longer below zero: nothing to reconcile.",
-                &[],
-            )
-        })?;
-    let item_id: i64 = item.try_get("", "id")?;
+        .map(|row| row.try_get::<i64>("", "id"))
+        .transpose()?;
+    let heads = reconciliation_heads(&tx, input.article_id, input.location_id).await?;
+    let double_count = is_double_count(&heads);
+    if item_id.is_none() && !double_count {
+        return Err(refused(
+            REFUSED_NOT_OPEN,
+            "This location's stock is no longer to reconcile.",
+            &[],
+        ));
+    }
+    let follows: Vec<&str> = heads.iter().map(|c| c.session_sync_id.as_str()).collect();
+    let heads_json = serde_json::to_string(&follows).map_err(|e| AppError::Internal(e.into()))?;
+    let device_code = crate::sync::device_code::this_device_code(&tx).await?;
     let actor_id = i64::from(user_id);
     let posted = crate::inventory::controls::record_location_count_in(
         &tx,
@@ -437,6 +679,7 @@ pub async fn resolve_by_count(
             variance_reason_code,
             evidence: reason,
             actor_id,
+            reconciliation: Some((&device_code, &heads_json)),
         },
     )
     .await?;
@@ -445,8 +688,8 @@ pub async fn resolve_by_count(
         &tx,
         crate::audit::writer::AuditEventInput {
             action_code: "inventory.negative_stock.counted".to_string(),
-            target_type: Some("stock_negative_review".to_string()),
-            target_id: Some(item_id.to_string()),
+            target_type: Some("stock_location_article".to_string()),
+            target_id: Some(format!("{}:{}", input.article_id, input.location_id)),
             actor_id: Some(actor_id),
             auth_context: "session".to_string(),
             result: "success".to_string(),
@@ -454,15 +697,20 @@ pub async fn resolve_by_count(
             after_hash: None,
             retention_class: "standard".to_string(),
             details_json: Some(serde_json::json!({
-                "summary": "Stock below zero reconciled by a count",
+                "summary": "Stock to reconcile resolved by a count",
                 "article_id": input.article_id,
                 "location_id": input.location_id,
+                "negative_review_id": item_id,
+                "double_count": double_count,
+                "follows_counts": follows,
+                "device_code": device_code,
                 "system_qty": posted.system_qty,
                 "counted_qty": input.counted_qty,
                 "variance_qty": posted.variance_qty,
                 "variance_reason_code": variance_reason_code,
                 "reason": reason,
                 "count_session_id": posted.session_id,
+                "count_session_sync_id": posted.session_sync_id,
                 "count_session_code": posted.session_code,
                 "count_line_id": posted.line_id,
                 "transaction_id": posted.transaction_id,
@@ -471,5 +719,14 @@ pub async fn resolve_by_count(
     )
     .await?;
     tx.commit().await?;
-    load_review(db, item_id).await
+    let review = match item_id {
+        Some(id) => Some(load_review(db, id).await?),
+        None => None,
+    };
+    Ok(NegativeStockResolution {
+        session_code: posted.session_code,
+        counted_qty: input.counted_qty,
+        variance_qty: posted.variance_qty,
+        review,
+    })
 }

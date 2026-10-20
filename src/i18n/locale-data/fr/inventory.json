@@ -1768,7 +1768,7 @@
   },
   "negativeStock": {
     "title": "Stock à rapprocher",
-    "description": "Les mouvements reçus d'un autre poste sont appliqués tels quels. Un emplacement passé sous zéro reste ici jusqu'à ce qu'un comptage y soit enregistré ou qu'une entrée de stock ultérieure le ramène à zéro ou plus.",
+    "description": "Les mouvements reçus d'un autre poste sont appliqués tels quels. Un emplacement passé sous zéro reste ici jusqu'à ce qu'un comptage y soit enregistré ou qu'une réception ou un transfert entrant ultérieur le ramène à zéro ou plus.",
     "showClosed": "Afficher les éléments rapprochés",
     "noneOpen": "Aucun emplacement sous zéro.",
     "openList": "Emplacements sous zéro à rapprocher",
@@ -1781,7 +1781,9 @@
     "overReservedLine": "{{article}} à {{location}} : {{reserved}} réservé(s) pour {{onHand}} en stock",
     "closure": {
       "count": "Rapproché par comptage le {{date}}",
+      "adjustment": "Rapproché par une entrée de stock manuelle le {{date}}",
       "receipt": "Régularisé par réception le {{date}} ({{movement}})",
+      "return": "Revenu à zéro ou plus par un retour en stock le {{date}} ({{movement}})",
       "other": "Revenu à zéro ou plus le {{date}} sans entrée de stock enregistrée"
     },
     "loadError": "Impossible de charger le stock à rapprocher",
@@ -1795,6 +1797,13 @@
       "reason": "Justification",
       "reasonPlaceholder": "Au moins {{count}} caractères : ce qui a été constaté et pourquoi",
       "confirm": "Enregistrer le comptage"
+    },
+    "doubleCount": {
+      "flag": "Double comptage — à vérifier",
+      "list": "Emplacements comptés deux fois",
+      "explain": "Compté sur deux postes sans que l'un connaisse l'autre : chacun a corrigé le stock, qui peut donc l'être deux fois (actuellement {{onHand}} en stock). Vérifiez le stock et enregistrez un nouveau comptage.",
+      "countLine": "{{who}} sur le poste {{device}}, {{date}} : compté {{counted}} (correction {{variance}})",
+      "unknownUser": "Utilisateur inconnu"
     }
   },
   "errors": {

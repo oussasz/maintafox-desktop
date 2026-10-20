@@ -322,6 +322,7 @@
       "app_settings": "Setting"
     },
     "negativeStock": "{{count}} stock location(s) below zero after sync, to reconcile by a count (Inventory › Controls).",
+    "doubleCount": "{{count}} stock location(s) counted on two PCs without knowing each other: double count to verify (Inventory › Controls).",
     "overReserved": "{{count}} stock location(s) with more reserved than in stock (warning).",
     "openNegativeStock": "Open the stock to reconcile"
   },

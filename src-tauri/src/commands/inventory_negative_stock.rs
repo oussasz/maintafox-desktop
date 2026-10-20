@@ -9,7 +9,7 @@ use tauri::State;
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
 use crate::inventory::negative_stock::{
-    self, NegativeStockReview, NegativeStockReviewList, NegativeStockSummary, ResolveNegativeStockInput,
+    self, NegativeStockResolution, NegativeStockReviewList, NegativeStockSummary, ResolveNegativeStockInput,
 };
 use crate::state::AppState;
 use crate::{require_permission, require_session};
@@ -45,7 +45,7 @@ pub async fn get_negative_stock_summary(state: State<'_, AppState>) -> AppResult
 pub async fn resolve_negative_stock_by_count(
     input: ResolveNegativeStockInput,
     state: State<'_, AppState>,
-) -> AppResult<NegativeStockReview> {
+) -> AppResult<NegativeStockResolution> {
     let user = require_session!(state);
     require_permission!(
         state,

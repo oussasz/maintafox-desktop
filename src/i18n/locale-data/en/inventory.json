@@ -1768,7 +1768,7 @@
   },
   "negativeStock": {
     "title": "Stock to reconcile",
-    "description": "Movements received from another PC are applied as received. A location left below zero stays here until a stock count is recorded there or a later stock entry brings it back to zero or more.",
+    "description": "Movements received from another PC are applied as received. A location left below zero stays here until a stock count is recorded there or a later goods receipt or transfer in brings it back to zero or more.",
     "showClosed": "Show reconciled items",
     "noneOpen": "No location below zero.",
     "openList": "Locations below zero to reconcile",
@@ -1781,7 +1781,9 @@
     "overReservedLine": "{{article}} at {{location}}: {{reserved}} reserved for {{onHand}} on hand",
     "closure": {
       "count": "Reconciled by a count on {{date}}",
+      "adjustment": "Reconciled by a manual stock entry on {{date}}",
       "receipt": "Regularised by receipt on {{date}} ({{movement}})",
+      "return": "Back to zero or more by a return to stock on {{date}} ({{movement}})",
       "other": "Back to zero or more on {{date}} without a stock entry on record"
     },
     "loadError": "The stock to reconcile could not be loaded",
@@ -1795,6 +1797,13 @@
       "reason": "Reason",
       "reasonPlaceholder": "At least {{count}} characters: what was found and why",
       "confirm": "Record the count"
+    },
+    "doubleCount": {
+      "flag": "Double count — to verify",
+      "list": "Locations counted twice",
+      "explain": "Counted on two PCs, neither knowing the other: each corrected the stock, so it may be corrected twice (now {{onHand}} on hand). Check the stock and record a new count.",
+      "countLine": "{{who}} on PC {{device}}, {{date}}: counted {{counted}} (correction {{variance}})",
+      "unknownUser": "Unknown user"
     }
   },
   "errors": {

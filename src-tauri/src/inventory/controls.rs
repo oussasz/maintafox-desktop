@@ -550,11 +550,15 @@ pub(crate) struct LocationCount<'a> {
     /// Why the count was made: kept as the line's reviewer evidence and on the movement's audit link.
     pub evidence: &'a str,
     pub actor_id: i64,
+    /// Set when the count reconciles a location (`inventory::negative_stock`): the code of this PC
+    /// and the JSON array of the reconciliation counts it follows (their session sync ids).
+    pub reconciliation: Option<(&'a str, &'a str)>,
 }
 
 /// What [`record_location_count_in`] wrote.
 pub(crate) struct PostedLocationCount {
     pub session_id: i64,
+    pub session_sync_id: String,
     pub session_code: String,
     pub line_id: i64,
     pub system_qty: f64,
@@ -587,13 +591,20 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
     let critical_abs_threshold = crate::settings::catalog::decimal_setting(tx, SETTING_COUNT_CRITICAL_VARIANCE).await?;
     let now = now_iso();
     let session_code = next_doc("CC");
+    let session_sync_id = crate::sync::identity::new_entity_sync_id();
+    let (device_code, heads_json) = match count.reconciliation {
+        Some((device, heads)) => (Value::from(device), Value::from(heads)),
+        None => (Value::String(None), Value::String(None)),
+    };
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_count_sessions
-            (session_code, warehouse_id, location_id, status, critical_abs_threshold, opened_by_id,
-             submitted_by_id, submitted_at, posted_by_id, posted_at, created_at, updated_at)
-         VALUES (?, ?, ?, 'posted', ?, ?, ?, ?, ?, ?, ?, ?)",
+            (entity_sync_id, session_code, warehouse_id, location_id, status, critical_abs_threshold, opened_by_id,
+             submitted_by_id, submitted_at, posted_by_id, posted_at, created_at, updated_at,
+             reconciliation_device_code, reconciliation_heads_json)
+         VALUES (?, ?, ?, ?, 'posted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
+            session_sync_id.clone().into(),
             session_code.clone().into(),
             warehouse_id.into(),
             count.location_id.into(),
@@ -605,6 +616,8 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
             now.clone().into(),
             now.clone().into(),
             now.clone().into(),
+            device_code,
+            heads_json,
         ],
     ))
     .await?;
@@ -680,6 +693,7 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
     }
     Ok(PostedLocationCount {
         session_id,
+        session_sync_id,
         session_code,
         line_id,
         system_qty,

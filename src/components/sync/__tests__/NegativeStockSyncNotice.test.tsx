@@ -38,12 +38,17 @@ describe("NegativeStockSyncNotice", () => {
   beforeEach(() => mocks.getNegativeStockSummary.mockReset());
 
   it("points to the stock to reconcile when locations are below zero", async () => {
-    mocks.getNegativeStockSummary.mockResolvedValue({ negative_count: 2, over_reserved_count: 1 });
+    mocks.getNegativeStockSummary.mockResolvedValue({
+      negative_count: 2,
+      double_count_count: 1,
+      over_reserved_count: 1,
+    });
     renderNotice();
     expect(
       await screen.findByText(/2 stock location\(s\) below zero after sync/),
     ).toBeInTheDocument();
     expect(screen.getByText(/1 stock location\(s\) with more reserved/)).toBeInTheDocument();
+    expect(screen.getByText(/1 stock location\(s\) counted on two PCs/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open the stock to reconcile" })).toHaveAttribute(
       "href",
       "/inventory?stock=to_reconcile",
@@ -51,14 +56,23 @@ describe("NegativeStockSyncNotice", () => {
   });
 
   it("stays hidden when there is nothing to reconcile", async () => {
-    mocks.getNegativeStockSummary.mockResolvedValue({ negative_count: 0, over_reserved_count: 0 });
+    mocks.getNegativeStockSummary.mockResolvedValue({
+      negative_count: 0,
+      double_count_count: 0,
+      over_reserved_count: 0,
+    });
     const { container } = renderNotice();
     await waitFor(() => expect(mocks.getNegativeStockSummary).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
   });
 
   it("has its texts in French", () => {
-    for (const key of ["negativeStock", "overReserved", "openNegativeStock"] as const) {
+    for (const key of [
+      "negativeStock",
+      "doubleCount",
+      "overReserved",
+      "openNegativeStock",
+    ] as const) {
       expect(frShell.sync[key].trim()).not.toBe("");
     }
   });

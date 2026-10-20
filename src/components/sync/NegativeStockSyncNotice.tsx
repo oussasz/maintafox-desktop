@@ -1,9 +1,10 @@
 /**
- * Sync centre: stock locations left below zero by received movements, and over-reservations.
+ * Sync centre: stock locations left below zero by received movements, counted twice on two PCs,
+ * and over-reservations.
  *
  * They are not sync conflicts (the movements are applied: nothing to accept or reject); the
  * notice points to the list where they are reconciled (Inventory › Controls). The counts come
- * from the stock balances (`get_negative_stock_summary`, inv.view).
+ * from the stock balances and the count sessions (`get_negative_stock_summary`, inv.view).
  */
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -40,13 +41,21 @@ export function NegativeStockSyncNotice({ onNavigate }: NegativeStockSyncNoticeP
     };
   }, []);
 
-  if (!summary || (summary.negative_count === 0 && summary.over_reserved_count === 0)) {
+  if (
+    !summary ||
+    (summary.negative_count === 0 &&
+      summary.double_count_count === 0 &&
+      summary.over_reserved_count === 0)
+  ) {
     return null;
   }
   return (
     <div className={summary.negative_count > 0 ? mfAlert.danger : mfAlert.warning} role="status">
       {summary.negative_count > 0 ? (
         <p>{t("sync.negativeStock", { count: summary.negative_count })}</p>
+      ) : null}
+      {summary.double_count_count > 0 ? (
+        <p>{t("sync.doubleCount", { count: summary.double_count_count })}</p>
       ) : null}
       {summary.over_reserved_count > 0 ? (
         <p>{t("sync.overReserved", { count: summary.over_reserved_count })}</p>

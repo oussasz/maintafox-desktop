@@ -3,8 +3,10 @@
  *
  * A stock movement received from another PC is applied as received; a location left below zero
  * is listed here once per article and location until a stock count is recorded there (inv.manage,
- * the variance reason and a reason of at least 5 characters) or a later stock entry brings it back
- * to zero or more ("régularisé par réception"). Locations holding more reserved than on hand are
+ * the variance reason and a reason of at least 8 characters) or a later entry brings it back to
+ * zero or more (a goods receipt or transfer in: "régularisé par réception"). Two counts of the same
+ * location recorded on different PCs without knowing each other are listed as "double comptage —
+ * à vérifier", naming both, until a new count. Locations holding more reserved than on hand are
  * shown as warnings only. Nothing here can be rejected or accepted as is.
  */
 import { AlertTriangle } from "lucide-react";
@@ -41,10 +43,23 @@ import {
   NEGATIVE_STOCK_REASON_MIN_CHARS,
   type NegativeStockReview,
   type NegativeStockReviewList,
+  type ReconciliationCount,
   listNegativeStockReviews,
   resolveNegativeStockByCount,
 } from "@/services/negative-stock-service";
 import { P } from "@shared/rbac/permissions.generated";
+
+/** The article and location a count is recorded for (a negative item or a double count). */
+type CountTarget = Pick<
+  NegativeStockReview,
+  | "article_id"
+  | "location_id"
+  | "article_code"
+  | "article_name"
+  | "warehouse_code"
+  | "location_code"
+  | "on_hand_qty"
+>;
 
 export interface NegativeStockReviewPanelProps {
   /** Bumped by the page refresh button to reload the list. */
@@ -59,7 +74,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
   const [includeClosed, setIncludeClosed] = useState(false);
   const [list, setList] = useState<NegativeStockReviewList | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
-  const [counting, setCounting] = useState<NegativeStockReview | null>(null);
+  const [counting, setCounting] = useState<CountTarget | null>(null);
   const [countedQty, setCountedQty] = useState("");
   const [varianceReason, setVarianceReason] = useState("");
   const [reason, setReason] = useState("");
@@ -89,7 +104,16 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
     void load();
   }, [load, reloadToken]);
 
-  const openCount = (item: NegativeStockReview) => {
+  const countLine = (c: ReconciliationCount) =>
+    t("negativeStock.doubleCount.countLine", {
+      who: c.counted_by ?? t("negativeStock.doubleCount.unknownUser"),
+      device: c.device_code || "—",
+      date: c.counted_at ? formatDateTime(c.counted_at) : "—",
+      counted: qty(c.counted_qty),
+      variance: qty(c.variance_qty),
+    });
+
+  const openCount = (item: CountTarget) => {
     setCounting(item);
     setCountedQty("");
     setVarianceReason("");
@@ -158,7 +182,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
         </label>
       </div>
 
-      {open.length === 0 ? (
+      {open.length === 0 && list.double_counts.length === 0 ? (
         <p className="text-sm text-text-muted">{t("negativeStock.noneOpen")}</p>
       ) : (
         <ul className="space-y-2" aria-label={t("negativeStock.openList")}>
@@ -199,6 +223,46 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
           ))}
         </ul>
       )}
+
+      {list.double_counts.length > 0 ? (
+        <ul className="mt-2 space-y-2" aria-label={t("negativeStock.doubleCount.list")}>
+          {list.double_counts.map((item) => (
+            <li
+              key={`${item.article_id}-${item.location_id}`}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-status-warning/35 bg-status-warning/10 px-3 py-2"
+            >
+              <div className="min-w-0 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusChip
+                    label={t("negativeStock.doubleCount.flag")}
+                    tone="warning"
+                    icon={AlertTriangle}
+                  />
+                  <span className="font-medium">
+                    {item.article_code} — {item.article_name}
+                  </span>
+                  <span className="text-text-muted">
+                    {item.warehouse_code}/{item.location_code}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-text-muted">
+                  {t("negativeStock.doubleCount.explain", { onHand: qty(item.on_hand_qty) })}
+                </p>
+                <ul className="mt-1 list-disc ps-5 text-xs text-text-secondary">
+                  {item.counts.map((c) => (
+                    <li key={c.session_sync_id}>{countLine(c)}</li>
+                  ))}
+                </ul>
+              </div>
+              <PermissionGate permission={P.INV_MANAGE}>
+                <Button className="h-11" onClick={() => openCount(item)}>
+                  {t("negativeStock.recordCount")}
+                </Button>
+              </PermissionGate>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {list.over_reservations.length > 0 ? (
         <div className={`${mfAlert.warning} mt-3`} role="status">

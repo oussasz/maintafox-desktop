@@ -89,6 +89,7 @@ describe("NegativeStockReviewPanel", () => {
   it("flags a location below zero once, and shows over-reservations as a warning only", async () => {
     mocks.listNegativeStockReviews.mockResolvedValue({
       items: [item()],
+      double_counts: [],
       over_reservations: [
         {
           article_id: 22,
@@ -114,15 +115,23 @@ describe("NegativeStockReviewPanel", () => {
     expect(mocks.listNegativeStockReviews).toHaveBeenCalledWith(false);
   });
 
-  it("records a count only with a counted quantity, a variance reason and a 5-character reason", async () => {
+  it("records a count only with a counted quantity, a variance reason and an 8-character reason", async () => {
     mocks.listNegativeStockReviews.mockResolvedValueOnce({
       items: [item()],
+      double_counts: [],
       over_reservations: [],
     });
-    mocks.listNegativeStockReviews.mockResolvedValue({ items: [], over_reservations: [] });
-    mocks.resolveNegativeStockByCount.mockResolvedValue(
-      item({ status: "closed", closure_kind: "count", closed_at: TS, on_hand_qty: 0 }),
-    );
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [],
+      over_reservations: [],
+    });
+    mocks.resolveNegativeStockByCount.mockResolvedValue({
+      session_code: "CC-1",
+      counted_qty: 0,
+      variance_qty: 5,
+      review: item({ status: "closed", closure_kind: "count", closed_at: TS, on_hand_qty: 0 }),
+    });
     render(<NegativeStockReviewPanel />);
     fireEvent.click(await screen.findByRole("button", { name: "Record a count" }));
 
@@ -130,7 +139,7 @@ describe("NegativeStockReviewPanel", () => {
     fireEvent.change(screen.getByLabelText("Quantity counted"), { target: { value: "0" } });
     fireEvent.click(screen.getByLabelText("Variance reason"));
     fireEvent.click(await screen.findByRole("option", { name: "Count error" }));
-    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "  abcd  " } });
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "  abcdefg  " } });
     expect(confirm).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: " Bin empty " } });
     expect(confirm).toBeEnabled();
@@ -159,6 +168,7 @@ describe("NegativeStockReviewPanel", () => {
           closing_movement_type: "GR_ACCEPT",
         }),
       ],
+      double_counts: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -167,6 +177,73 @@ describe("NegativeStockReviewPanel", () => {
     expect(
       await screen.findByText(/Regularised by receipt on .* \(Goods receipt\)/),
     ).toBeInTheDocument();
+  });
+
+  it("names both counts of a double count and offers a new count", async () => {
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [
+        {
+          article_id: 21,
+          article_code: "A-21",
+          article_name: "Bearing",
+          location_id: 10,
+          location_code: "BIN",
+          warehouse_code: "MAIN",
+          on_hand_qty: 5,
+          reserved_qty: 0,
+          available_qty: 5,
+          counts: [
+            {
+              session_sync_id: "s1",
+              session_code: "CC-1",
+              counted_by: "Alice",
+              device_code: "7KQ2",
+              counted_at: TS,
+              counted_qty: 0,
+              variance_qty: 5,
+            },
+            {
+              session_sync_id: "s2",
+              session_code: "CC-2",
+              counted_by: "Bob",
+              device_code: "M3XZ",
+              counted_at: TS,
+              counted_qty: 0,
+              variance_qty: 5,
+            },
+          ],
+        },
+      ],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    expect(await screen.findByText("Double count — to verify")).toBeInTheDocument();
+    expect(screen.getByText(/Alice on PC 7KQ2, .*: counted 0/)).toBeInTheDocument();
+    expect(screen.getByText(/Bob on PC M3XZ, .*: counted 0/)).toBeInTheDocument();
+    expect(screen.queryByText("No location below zero.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Record a count" }));
+    expect(await screen.findByRole("button", { name: "Record the count" })).toBeDisabled();
+  });
+
+  it("labels a manual entry as an adjustment, not a receipt", async () => {
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [
+        item({
+          id: 3,
+          status: "closed",
+          closure_kind: "adjustment",
+          closed_at: TS,
+          closing_movement_type: "ADJUST_IN",
+        }),
+      ],
+      double_counts: [],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    fireEvent.click(await screen.findByLabelText("Show reconciled items"));
+    expect(await screen.findByText(/Reconciled by a manual stock entry on/)).toBeInTheDocument();
+    expect(screen.queryByText(/Regularised by receipt/)).not.toBeInTheDocument();
   });
 
   it("has every text in French too", () => {
