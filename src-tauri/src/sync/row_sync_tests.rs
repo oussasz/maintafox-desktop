@@ -832,6 +832,99 @@ async fn stage_failure_reopens_and_keeps_the_operator_choice() {
     assert_eq!(author, operator);
 }
 
+/// History rows (append-only types) are never erased by a received delete or archive, whatever the
+/// sending PC claims: the change is refused as a visible `APPEND_ONLY_DELETE` conflict and the row
+/// stays. Media attachments are the one append-only type whose removal is replicated.
+#[tokio::test]
+async fn received_deletes_never_erase_history_rows() {
+    use super::materialize::{apply_inbound_payload, ApplyOutcome};
+
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let mut history = Vec::new();
+    for entity_type in ["inspection_evidence", "audit_events", "activity_events"] {
+        let def = registry::entity(entity_type).expect("registered");
+        assert_eq!(def.conflict_policy, ConflictPolicy::AppendOnly, "{entity_type}");
+        history.push(factory.create(&a, entity_type).await.expect(entity_type));
+    }
+    let media = factory.create(&a, "media_attachments").await.expect("media");
+    let pushed = server.exchange("A", &a).await;
+    let mut problems = Vec::new();
+    check_exchange(&pushed, "push", &mut problems);
+    let received = server.exchange("B", &b).await;
+    check_exchange(&received, "receive", &mut problems);
+    assert!(problems.is_empty(), "{problems:?}");
+
+    for row in &history {
+        let layout = row_layout::layout(&b, row.entity_type).await.expect("layout");
+        let delete = serde_json::Value::Object(super::row_codec::delete_payload(&layout, None)).to_string();
+        for operation in ["delete", "archive"] {
+            let outcome = apply_inbound_payload(&b, row.entity_type, &row.entity_sync_id, operation, 99, &delete)
+                .await
+                .expect("apply");
+            assert!(
+                matches!(&outcome, ApplyOutcome::Conflict { code, .. } if code == "APPEND_ONLY_DELETE"),
+                "{} {operation}: {outcome:?}",
+                row.entity_type
+            );
+        }
+        let still_there = scalar_i64(
+            &b,
+            &format!("SELECT COUNT(*) FROM \"{}\" WHERE entity_sync_id = ?", layout.table()),
+            vec![row.entity_sync_id.clone().into()],
+        )
+        .await;
+        assert_eq!(still_there, 1, "{} kept on B", row.entity_type);
+    }
+
+    // A history row deleted on A (only a tampered or older client does that) stays on B, with a
+    // conflict for a person to see.
+    let evidence = &history[0];
+    exec(
+        &a,
+        "DELETE FROM inspection_evidence WHERE entity_sync_id = ?",
+        vec![evidence.entity_sync_id.clone().into()],
+    )
+    .await;
+    server.exchange("A", &a).await;
+    server.exchange("B", &b).await;
+    let refused = scalar_i64(
+        &b,
+        "SELECT COUNT(*) FROM sync_conflicts WHERE entity_type = 'inspection_evidence'
+           AND entity_sync_id = ? AND conflict_type = 'APPEND_ONLY_DELETE'",
+        vec![evidence.entity_sync_id.clone().into()],
+    )
+    .await;
+    assert_eq!(
+        refused, 1,
+        "the received delete is a visible APPEND_ONLY_DELETE conflict"
+    );
+    let kept = scalar_i64(
+        &b,
+        "SELECT COUNT(*) FROM inspection_evidence WHERE entity_sync_id = ?",
+        vec![evidence.entity_sync_id.clone().into()],
+    )
+    .await;
+    assert_eq!(kept, 1, "inspection evidence kept on B");
+
+    // Media attachments: their removal is replicated by design.
+    let layout = row_layout::layout(&b, "media_attachments").await.expect("layout");
+    let delete = serde_json::Value::Object(super::row_codec::delete_payload(&layout, None)).to_string();
+    let outcome = apply_inbound_payload(&b, "media_attachments", &media.entity_sync_id, "delete", 99, &delete)
+        .await
+        .expect("apply media delete");
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let media_left = scalar_i64(
+        &b,
+        "SELECT COUNT(*) FROM media_attachments WHERE entity_sync_id = ?",
+        vec![media.entity_sync_id.clone().into()],
+    )
+    .await;
+    assert_eq!(media_left, 0, "a received media delete removes the attachment");
+}
+
 /// Every domain list above, in domain order.
 const DOMAIN_TYPES: &[&[&str]] = &[
     FOUNDATION_TYPES,
