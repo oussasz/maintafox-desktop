@@ -269,6 +269,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Limit | Impact | Handled in |
 |---|---|---|
 | Activity events are shown with translated names (every event code the program writes today is covered); event names added to the program later show in a readable form until their translation is added. | UX | Accepted |
+| Audit chain seen from another PC: some audit events never leave the PC that wrote them (permit and permit-type audits, safety-notice acknowledgements; the change itself travels on its own record). They still take a position in that PC's hash chain, so the audit-chain check on another PC reports "missing positions" at the first such event and checks nothing after it for that PC. Each PC's own chain is fully checked on that PC. | Data | Before release: verify other PCs' chains by position or with hash-only stubs (Safety & LOTO Lead) |
 
 ## Step 5 (old-layout screens) — in progress
 

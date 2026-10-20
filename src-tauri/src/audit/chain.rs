@@ -8,9 +8,10 @@
 //!
 //! The canonical content is the row's sync payload (`sync::row_codec::load_row_payload`) without
 //! `chain_hash` itself, the payload format marker and null fields: references are sync ids there,
-//! so the same event hashes the same on every device that received it, and the chain of each
-//! device can be verified anywhere. Null fields are left out so that a column added to the table
-//! later (null on older events) does not change older hashes.
+//! so the same event hashes the same on every device that received it. Null fields are left out so
+//! that a column added to the table later (null on older events) does not change older hashes.
+//! Events kept on their device (local form, below) never travel: another device sees a gap at
+//! their positions, so a device's chain is fully verifiable only on that device (KNOWN_LIMITS).
 //!
 //! What the chain does not do: it has no secret key, so someone able to rewrite the whole
 //! encrypted database could recompute a consistent chain; the copies already received by other
