@@ -1849,10 +1849,23 @@ pub async fn resolve_sync_conflict(
         "renumber_local" => renumbered = crate::sync::code_clash::renumber_local_record(&tx, &conflict).await?,
         _ => {}
     }
+    // Applying the choice drains the capture journal, which may already have closed this conflict
+    // (a stage failure that now stages): the person's choice still wins and keeps its author.
+    let version_now: i64 = tx
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT row_version FROM sync_conflicts WHERE id = ?",
+            [input.conflict_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::SyncError("Sync conflict disappeared while it was resolved.".to_string()))?
+        .try_get("", "row_version")
+        .map_err(|e| decode_err("row_version", e))?;
 
-    tx.execute(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        "UPDATE sync_conflicts
+    let updated = tx
+        .execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "UPDATE sync_conflicts
          SET status = ?,
              resolution_action = ?,
              resolution_note = ?,
@@ -1863,17 +1876,23 @@ pub async fn resolve_sync_conflict(
              row_version = row_version + 1,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ? AND row_version = ?",
-        [
-            next_status.to_string().into(),
-            input.action.clone().into(),
-            input.resolution_note.clone().into(),
-            user_id.into(),
-            next_status.to_string().into(),
-            input.conflict_id.into(),
-            input.expected_row_version.into(),
-        ],
-    ))
-    .await?;
+            [
+                next_status.to_string().into(),
+                input.action.clone().into(),
+                input.resolution_note.clone().into(),
+                user_id.into(),
+                next_status.to_string().into(),
+                input.conflict_id.into(),
+                version_now.into(),
+            ],
+        ))
+        .await?;
+    if updated.rows_affected() != 1 {
+        return Err(AppError::SyncError(format!(
+            "Sync conflict {} could not be updated.",
+            input.conflict_id
+        )));
+    }
     tx.commit().await?;
 
     if let Some(change) = renumbered {

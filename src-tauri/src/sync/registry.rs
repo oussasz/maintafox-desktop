@@ -109,6 +109,8 @@ pub struct LocalOnlyTable {
 pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "activity_events", table: "activity_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["user_accounts", "org_nodes"], note: None },
     SyncEntityDef { entity_type: "admin_change_events", table: "admin_change_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["roles", "user_accounts"], note: None },
+    SyncEntityDef { entity_type: "admin_recovery_acknowledgements", table: "admin_recovery_acknowledgements", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["admin_recovery_notices", "user_accounts"], note: None },
+    SyncEntityDef { entity_type: "admin_recovery_notices", table: "admin_recovery_notices", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["user_accounts", "audit_events"], note: Some("A received notice is checked against the redemption's admin_recovery.used audit record, applied first (auth::recovery_code).") },
     SyncEntityDef { entity_type: "analytics_contract_versions", table: "analytics_contract_versions", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &[], note: None },
     SyncEntityDef { entity_type: "app_settings", table: "app_settings", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts"], note: Some("Mixes device and tenant settings (setting_scope); step 2.4 must sync only tenant-scoped keys.") },
     SyncEntityDef { entity_type: "article_cost_profiles", table: "article_cost_profiles", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["external_companies", "lookup_values", "articles"], note: None },
@@ -459,6 +461,12 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
     },
     LocalOnlyTable {
         table: "machine_activation_state",
+        category: LocalOnlyCategory::Licensing,
+    },
+    // Vendor administrator recovery codes spent on this PC (`auth::recovery_code`): a code names
+    // one PC's activation, so the register stays on that PC. The notices it raises are synchronised.
+    LocalOnlyTable {
+        table: "admin_recovery_codes_used",
         category: LocalOnlyCategory::Licensing,
     },
     LocalOnlyTable {

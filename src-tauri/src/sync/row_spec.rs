@@ -215,8 +215,10 @@ pub(crate) const NOT_A_ROW: &str = "";
 pub(crate) const LOCAL_ROW: &str = "-";
 
 /// RBAC scope references: the org node (or team) a role assignment is limited to, stored as the
-/// local id in text form.
+/// local id in text form. A tenant-wide assignment stores the licence tenant id (or nothing),
+/// which is the same on every device of the plant: it is sent unchanged.
 const SCOPE_TARGETS: &[(&str, &str)] = &[
+    ("tenant", NOT_A_ROW),
     ("entity", "org_nodes"),
     ("org_node", "org_nodes"),
     ("site", "org_nodes"),
@@ -945,6 +947,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("sync_conflict", LOCAL_ROW),
                         ("audit_events", LOCAL_ROW),
                         ("personnel_import_batch", LOCAL_ROW),
+                        // A refused vendor recovery code: the target is the vendor's code id
+                        // (`auth::recovery_code`), sent as it is.
+                        ("admin_recovery_code", NOT_A_ROW),
                     ],
                 ),
             ],
@@ -1241,6 +1246,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("schedule_class_versions", &[]),
     spec("team_schedule_assignments", &[]),
     spec("personnel_schedule_exceptions", &[]),
+    // Vendor administrator recovery notices and their acknowledgements (`auth::recovery_code`):
+    // append-only, references by declared foreign keys (recipient, created account, notice, who
+    // acknowledged); `code_id` is the vendor's code id (a value: the spent register stays local).
+    spec("admin_recovery_notices", &[]),
+    spec("admin_recovery_acknowledgements", &[]),
 ];
 
 /// Rules of an entity type synchronised by the generic engine.

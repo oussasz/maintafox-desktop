@@ -321,6 +321,32 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ),
     // Labour booked to a person without a login (migration 190): personnel only.
     ("work_order_interveners", "intervener_id", "NULL"),
+    // A received notice must name its created account as that account is
+    // (`auth::recovery_code::inbound_notice_check`; a generic row has no redemption audit record):
+    // the seeded administrator (same identity on every device), with its names, and a device code.
+    (
+        "admin_recovery_notices",
+        "created_user_id",
+        "(SELECT MIN(id) FROM user_accounts)",
+    ),
+    (
+        "admin_recovery_notices",
+        "created_username",
+        "(SELECT username FROM user_accounts WHERE id = (SELECT MIN(id) FROM user_accounts))",
+    ),
+    (
+        "admin_recovery_notices",
+        "created_display_name",
+        "(SELECT COALESCE(display_name, '') FROM user_accounts WHERE id = (SELECT MIN(id) FROM user_accounts))",
+    ),
+    ("admin_recovery_notices", "redeemed_device_code", "'7KQ2'"),
+    // Only a notice's recipient acknowledges it (`auth::recovery_code::inbound_acknowledgement_check`):
+    // the acknowledgement names the recipient of the notice just created as its parent.
+    (
+        "admin_recovery_acknowledgements",
+        "acknowledged_by_id",
+        "(SELECT recipient_user_id FROM admin_recovery_notices ORDER BY id DESC LIMIT 1)",
+    ),
     // A requirement asks for one certification or one skill, never both.
     ("qualification_requirements", "skill_reference_value_id", "NULL"),
     ("qualification_requirements", "min_proficiency_level", "NULL"),

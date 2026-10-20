@@ -17,6 +17,7 @@ pub mod password;
 pub mod password_policy;
 pub mod pin;
 pub mod rbac;
+pub mod recovery_code;
 pub mod scope;
 pub mod session_manager;
 
