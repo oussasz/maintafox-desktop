@@ -4951,6 +4951,8 @@ async fn read_permit(db: &DatabaseConnection, wp: &WorkPermit) -> WorkPermit {
 async fn a_received_self_approval_is_refused_on_a_four_eyes_site() {
     let db = setup().await;
     let (wp, held) = submitted_by_applier(&db, "EQ-SYNC-4E1").await;
+    // A real planning site that keeps four-eyes (no per-site rule).
+    super::tests::make_test_site_a_planning_site(&db).await;
     let applier = user_sync(&db, APPLIER).await;
     let verifier = user_sync(&db, VERIFIER).await;
 
@@ -4963,6 +4965,13 @@ async fn a_received_self_approval_is_refused_on_a_four_eyes_site() {
         )
         .await;
         assert_eq!(code(&outcome), Some("PERMIT_SELF_APPROVAL"), "flag {flag}: {outcome:?}");
+        if flag == 1 {
+            // The conflict names the approval date and the site's rule here now.
+            let ApplyOutcome::Conflict { message, .. } = &outcome else {
+                unreachable!()
+            };
+            assert!(message.contains(" on 20") && message.contains("four-eyes"), "{message}");
+        }
         assert_eq!(permit_status(&db, &wp).await, "pending_review");
     }
     let nobody = with(held.clone(), &[("status", json!("approved"))]);
@@ -5033,6 +5042,14 @@ async fn a_received_approval_by_a_person_not_here_yet_waits_for_that_person() {
     )
     .await;
     assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    assert_eq!(permit_status(&db, &wp).await, "pending_review");
+    // Submitted and approved by that same person, not here yet: refused anyway (four-eyes here).
+    let own = with(
+        approved_by(&held, "user-sync-still-arriving", 1),
+        &[("submitted_by_sync_id", json!("user-sync-still-arriving"))],
+    );
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &own).await;
+    assert_eq!(code(&outcome), Some("PERMIT_SELF_APPROVAL"), "{outcome:?}");
     assert_eq!(permit_status(&db, &wp).await, "pending_review");
 }
 
@@ -5112,4 +5129,187 @@ async fn a_received_row_cannot_erase_or_rewrite_a_recorded_approver() {
         matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
         "an old permit unchanged passes: {outcome:?}"
     );
+}
+
+/// A per-site rule change for the test site (org node 1) waiting in the inbox, as the server sends
+/// it (`settings::site`): `value_json` is the rule's JSON text.
+async fn site_rule_waiting(db: &DatabaseConnection, value_json: &str) {
+    let payload: Payload = serde_json::from_value(json!({
+        "site_node_sync_id": "permit-test-org-001",
+        "setting_key": crate::reliability::study::decisions::SELF_APPROVAL_SETTING,
+        "value_json": value_json,
+    }))
+    .expect("payload");
+    inbox(db, "site_settings", "site-setting-waiting", 1, "deferred", &payload).await;
+}
+
+/// The author held here, none included, is never replaced by a received row: a permit written
+/// before authors were recorded is not given one (it would then pass as approved by a second
+/// person).
+#[tokio::test]
+async fn a_received_row_never_gives_an_author_to_a_permit_without_one() {
+    let db = setup().await;
+    let (wp, _) = submitted_by_applier(&db, "EQ-SYNC-4E5").await;
+    exec(
+        &db,
+        &format!("UPDATE work_permits SET created_by_id = NULL WHERE id = {}", wp.id),
+    )
+    .await;
+    let held = wire(&db, "work_permits", &wp.entity_sync_id).await;
+    let given = with(
+        held.clone(),
+        &[("created_by_sync_id", json!(user_sync(&db, VERIFIER).await))],
+    );
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &given).await;
+    assert_eq!(code(&outcome), Some("PERMIT_APPROVAL_RECORD_CHANGED"), "{outcome:?}");
+    assert_eq!(read_permit(&db, &wp).await.created_by_id, None);
+    let later = (chrono::Utc::now() + chrono::Duration::hours(6)).to_rfc3339();
+    let outcome = apply(
+        &db,
+        "work_permits",
+        &wp.entity_sync_id,
+        &with(held, &[("expires_at", json!(later))]),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// A self-approval made under the site's opt-out waits while that opt-out is still in the inbox
+/// here; a waiting change that keeps four-eyes does not hold it (conflict). Under the opt-out held
+/// here, a self-approval waits while the site's return to four-eyes is still in the inbox.
+#[tokio::test]
+async fn a_received_self_approval_waits_for_its_sites_rule_still_arriving() {
+    let db = setup().await;
+    let applier = user_sync(&db, APPLIER).await;
+    let (wp, held) = submitted_by_applier(&db, "EQ-SYNC-4E6").await;
+    super::tests::make_test_site_a_planning_site(&db).await;
+    let own = approved_by(&held, &applier, 1);
+
+    site_rule_waiting(&db, "false").await;
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &own).await;
+    assert_eq!(
+        code(&outcome),
+        Some("PERMIT_SELF_APPROVAL"),
+        "four-eyes kept: {outcome:?}"
+    );
+
+    exec(&db, "DELETE FROM sync_inbox WHERE entity_type = 'site_settings'").await;
+    site_rule_waiting(&db, " true ").await;
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &own).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Deferred { .. }),
+        "opt-out arriving: {outcome:?}"
+    );
+    assert_eq!(permit_status(&db, &wp).await, "pending_review");
+
+    // Opted out here, the return to four-eyes on its way: waits too.
+    exec(&db, "DELETE FROM sync_inbox WHERE entity_type = 'site_settings'").await;
+    super::tests::opt_site_out_of_four_eyes(&db).await;
+    site_rule_waiting(&db, "false").await;
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &own).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Deferred { .. }),
+        "return arriving: {outcome:?}"
+    );
+    exec(&db, "DELETE FROM sync_inbox WHERE entity_type = 'site_settings'").await;
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &own).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// A permit received for the first time, already approved, is judged like any approval: on a
+/// planning site keeping four-eyes its author's approval is refused, a second person's applied; a
+/// self-approval naming a site not applied here yet waits for it.
+#[tokio::test]
+async fn a_new_permit_received_already_approved_is_judged_on_four_eyes() {
+    let db = setup().await;
+    let applier = user_sync(&db, APPLIER).await;
+    let verifier = user_sync(&db, VERIFIER).await;
+    let (_, held) = submitted_by_applier(&db, "EQ-SYNC-4E7").await;
+    super::tests::make_test_site_a_planning_site(&db).await;
+    let fresh = |code: &str| with(held.clone(), &[("code", json!(code))]);
+
+    let own = approved_by(&fresh("PTW-NEW-4E-1"), &applier, 1);
+    let outcome = apply(&db, "work_permits", "wp-new-4e-1", &own).await;
+    assert_eq!(code(&outcome), Some("PERMIT_SELF_APPROVAL"), "{outcome:?}");
+
+    let elsewhere = with(own, &[("entity_sync_id", json!("org-node-not-here-yet"))]);
+    let outcome = apply(&db, "work_permits", "wp-new-4e-1", &elsewhere).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Deferred { .. }),
+        "site not here: {outcome:?}"
+    );
+
+    let second = approved_by(&fresh("PTW-NEW-4E-2"), &verifier, 0);
+    let outcome = apply(&db, "work_permits", "wp-new-4e-2", &second).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT status FROM work_permits WHERE entity_sync_id = 'wp-new-4e-2'"
+        )
+        .await
+        .as_deref(),
+        Some("approved")
+    );
+}
+
+/// A draft held here may arrive submitted and approved in one row (an offline PC folds its saves):
+/// judged as a submission then an approval.
+#[tokio::test]
+async fn a_held_draft_received_approved_in_one_row_is_judged_as_submitted_then_approved() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-4E8").await;
+    super::tests::make_test_site_a_planning_site(&db).await;
+    let wp = create_permit(&db, "hot_work", asset).await;
+    let applier = user_sync(&db, APPLIER).await;
+    let draft = wire(&db, "work_permits", &wp.entity_sync_id).await;
+    let submitted = with(
+        draft,
+        &[("submitted_by_sync_id", json!(applier)), ("submitted_at", json!(now()))],
+    );
+    let outcome = apply(
+        &db,
+        "work_permits",
+        &wp.entity_sync_id,
+        &approved_by(&submitted, &applier, 0),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_SELF_APPROVAL"), "{outcome:?}");
+    assert_eq!(permit_status(&db, &wp).await, "draft");
+    let verifier = user_sync(&db, VERIFIER).await;
+    let outcome = apply(
+        &db,
+        "work_permits",
+        &wp.entity_sync_id,
+        &approved_by(&submitted, &verifier, 0),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let stored = read_permit(&db, &wp).await;
+    assert_eq!(
+        (stored.status.as_str(), stored.submitted_by_id, stored.approved_by_id),
+        ("approved", Some(APPLIER), Some(VERIFIER))
+    );
+}
+
+/// An approval dated before its submission is an inconsistent record; one dated in the future is
+/// refused like any received time beyond the clock tolerance.
+#[tokio::test]
+async fn a_received_approval_out_of_time_order_is_refused() {
+    let db = setup().await;
+    let (wp, held) = submitted_by_applier(&db, "EQ-SYNC-4E9").await;
+    let verifier = user_sync(&db, VERIFIER).await;
+    let before = with(
+        approved_by(&held, &verifier, 0),
+        &[("approved_at", json!("2020-01-01T00:00:00Z"))],
+    );
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &before).await;
+    assert_eq!(code(&outcome), Some("PERMIT_APPROVAL_RECORD_INVALID"), "{outcome:?}");
+    let future = with(
+        approved_by(&held, &verifier, 0),
+        &[("approved_at", json!("2999-01-01T00:00:00Z"))],
+    );
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &future).await;
+    assert_eq!(code(&outcome), Some("SYNC_TIME_INCONSISTENT"), "{outcome:?}");
+    assert_eq!(permit_status(&db, &wp).await, "pending_review");
 }

@@ -3540,17 +3540,26 @@ async fn the_three_person_reason_refusal_names_the_minimum() {
 // Four-eyes on permit approval (owner decision 2026-10-17, migration 244)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Opts the test site (org node 1, created with the first equipment) out of four-eyes: a planning site whose per-site rule (the one
-/// reliability decisions use) allows self-approval.
-pub(super) async fn opt_site_out_of_four_eyes(db: &DatabaseConnection) {
-    for sql in [
+/// Makes the test site (org node 1, created with the first equipment) a planning site: its type
+/// can own work. Without a per-site rule it keeps four-eyes.
+pub(super) async fn make_test_site_a_planning_site(db: &DatabaseConnection) {
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
         "UPDATE org_node_types SET can_own_work = 1 WHERE id = 1".to_string(),
-        format!(
-            "INSERT INTO site_settings (entity_sync_id, site_node_id, setting_key, value_json) \
+    ))
+    .await
+    .expect("planning site");
+}
+
+/// Opts the test site (org node 1, created with the first equipment) out of four-eyes: a planning
+/// site whose per-site rule (the one reliability decisions use) allows self-approval.
+pub(super) async fn opt_site_out_of_four_eyes(db: &DatabaseConnection) {
+    make_test_site_a_planning_site(db).await;
+    for sql in [format!(
+        "INSERT INTO site_settings (entity_sync_id, site_node_id, setting_key, value_json) \
              VALUES ('site-setting-ptw-test', 1, '{}', 'true')",
-            crate::reliability::study::decisions::SELF_APPROVAL_SETTING
-        ),
-    ] {
+        crate::reliability::study::decisions::SELF_APPROVAL_SETTING
+    )] {
         db.execute(Statement::from_string(DbBackend::Sqlite, sql))
             .await
             .expect("opt out");
@@ -3580,6 +3589,8 @@ async fn four_eyes_the_author_and_the_submitter_never_approve_a_permit() {
     let db = setup().await;
     let submitter = second_approver(&db).await;
     let asset = insert_equipment(&db, "EQ-4EYES-1").await;
+    // A real planning site that keeps four-eyes (no per-site rule).
+    make_test_site_a_planning_site(&db).await;
     let wp = create_permit(&db, "hot_work", asset).await;
     assert_eq!(wp.created_by_id, Some(APPLIER), "the author is the session user");
     let wp = set_status_as(&db, &wp, "pending_review", submitter)
@@ -3677,6 +3688,7 @@ async fn four_eyes_an_opted_out_site_allows_a_flagged_self_approval() {
 async fn four_eyes_an_unrecorded_author_is_never_taken_as_a_second_person() {
     let db = setup().await;
     let asset = insert_equipment(&db, "EQ-4EYES-3").await;
+    make_test_site_a_planning_site(&db).await;
     let wp = create_permit(&db, "hot_work", asset).await;
     let wp = set_status_as(&db, &wp, "pending_review", APPLIER)
         .await
@@ -3703,6 +3715,7 @@ async fn four_eyes_a_permit_back_to_draft_is_submitted_again() {
     let db = setup().await;
     let submitter = second_approver(&db).await;
     let asset = insert_equipment(&db, "EQ-4EYES-4").await;
+    make_test_site_a_planning_site(&db).await;
     let other = insert_equipment(&db, "EQ-4EYES-5").await;
 
     // Equipment changed in review.

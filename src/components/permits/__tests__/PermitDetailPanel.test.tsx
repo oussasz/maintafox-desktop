@@ -468,6 +468,10 @@ describe("PermitDetailPanel — four-eyes approval", () => {
   it("shows who wrote, submitted and approved the permit", async () => {
     await show(permit());
     expect(screen.getByText(enPermits.detail.createdBy)).toBeInTheDocument();
+    // Written by, with the date the permit was requested (its creation).
+    expect(screen.getByText(enPermits.detail.createdBy).nextElementSibling).toHaveTextContent(
+      "Wendy Writer",
+    );
     expect(screen.getByText(enPermits.detail.submittedBy)).toBeInTheDocument();
     const approver = screen.getByTestId("permit-approver");
     expect(approver).toHaveTextContent("Alex Approver");
@@ -480,10 +484,9 @@ describe("PermitDetailPanel — four-eyes approval", () => {
     );
     const approver = screen.getByTestId("permit-approver");
     expect(approver).toHaveTextContent("Wendy Writer");
-    // The chip carries the explanation as its title.
-    expect(
-      within(approver).getByText(enPermits.detail.selfApproved).closest("[title]"),
-    ).toHaveAttribute("title", enPermits.detail.selfApprovedHint);
+    expect(within(approver).getByText(enPermits.detail.selfApproved)).toBeInTheDocument();
+    // The explanation is visible text (reachable by keyboard, touch and screen readers).
+    expect(within(approver).getByText(enPermits.detail.selfApprovedHint)).toBeVisible();
   });
 
   it("says the approver is not recorded on a permit approved before it was recorded", async () => {
@@ -502,6 +505,7 @@ describe("PermitDetailPanel — four-eyes approval", () => {
     expect(screen.getByTestId("permit-approver")).toHaveTextContent(
       enPermits.detail.approverNotRecorded,
     );
+    expect(screen.getByText(enPermits.detail.approverNotRecordedHint)).toBeVisible();
     expect(screen.queryByText(enPermits.detail.createdBy)).toBeNull();
   });
 

@@ -383,7 +383,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             {permit.created_by_id != null ? (
               <>
                 <dt className="text-text-muted">{t("detail.createdBy")}</dt>
-                <dd>{permit.created_by_name ?? t("detail.unknownPerson")}</dd>
+                {/* The permit is written when it is requested (`requested_at`, set at creation). */}
+                <dd>{byAt(permit.created_by_name, permit.requested_at)}</dd>
               </>
             ) : null}
             {permit.submitted_at != null ? (
@@ -398,23 +399,21 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                 <dd className="flex flex-wrap items-center gap-2" data-testid="permit-approver">
                   {byAt(permit.approved_by_name, permit.approved_at)}
                   {permit.self_approved ? (
-                    <StatusChip
-                      label={t("detail.selfApproved")}
-                      tone="warning"
-                      title={t("detail.selfApprovedHint")}
-                    />
+                    <>
+                      <StatusChip label={t("detail.selfApproved")} tone="warning" />
+                      <span className="basis-full text-xs text-text-muted">
+                        {t("detail.selfApprovedHint")}
+                      </span>
+                    </>
                   ) : null}
                 </dd>
               </>
             ) : APPROVED_ON_STATUSES.has(permit.status) ? (
               <>
                 <dt className="text-text-muted">{t("detail.approvedBy")}</dt>
-                <dd
-                  className="text-text-muted"
-                  data-testid="permit-approver"
-                  title={t("detail.approverNotRecordedHint")}
-                >
+                <dd className="text-text-muted" data-testid="permit-approver">
                   {t("detail.approverNotRecorded")}
+                  <span className="block text-xs">{t("detail.approverNotRecordedHint")}</span>
                 </dd>
               </>
             ) : null}

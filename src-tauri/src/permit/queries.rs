@@ -2131,8 +2131,8 @@ async fn four_eyes_approval(db: &impl ConnectionTrait, permit: &WorkPermit, acto
         refused(
             "PERMIT_APPROVAL_AUTHOR_UNKNOWN",
             format!(
-                "Permit {code} was written or submitted before the app recorded who did it: four-eyes cannot be \
-                 shown. Cancel it and raise a new permit."
+                "Permit {code}: author not recorded (permit older than the update): four-eyes cannot be shown. \
+                 Cancel it and raise a new permit."
             ),
             &[("permit", code.clone())],
         )

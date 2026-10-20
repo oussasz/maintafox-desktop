@@ -18,7 +18,8 @@
 //! - four-eyes on its approval (`four_eyes_check`, migration 244): the approver is neither the
 //!   author nor the submitter written on the row, unless it is flagged a self-approval and the
 //!   permit's site opted out of four-eyes here; a permit past review names who approved it; the
-//!   author, and once past review here the submission and approval, are never removed or rewritten;
+//!   author (or its absence), and once past review here the submission and approval, are never
+//!   removed or rewritten;
 //! - a permit's equipment, linked work order or site changes only while the copy held here is a
 //!   draft or waiting for review (a change of equipment or work order there needs the versions of a
 //!   return to draft), with no lock fitted under it here without a verified removal and no
@@ -820,10 +821,11 @@ fn approval_recorded(p: &Payload) -> bool {
     by.is_some() || at.is_some() || flag.is_some()
 }
 
-/// Whether a relaxing per-site rule (`value_json` true) of the four-eyes opt-out of `site_id` is
-/// still waiting in the inbox here: a self-approval made where it was already on waits for it
-/// (fail-closed meanwhile: four-eyes applies, nothing is written).
-async fn opt_out_still_arriving(conn: &impl ConnectionTrait, site_id: i64) -> AppResult<bool> {
+/// Whether a change of the four-eyes opt-out of `site_id` is still waiting in the inbox here:
+/// `relaxing` a rule switching it on (`value_json` true), else one switching it off. A self-approval
+/// waits for the opt-out it was made under (four-eyes meanwhile), and one accepted under the opt-out
+/// held here waits while a return to four-eyes is on its way; nothing is written meanwhile.
+async fn site_rule_change_waiting(conn: &impl ConnectionTrait, site_id: i64, relaxing: bool) -> AppResult<bool> {
     let Some(site_sync) = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -845,11 +847,12 @@ async fn opt_out_still_arriving(conn: &impl ConnectionTrait, site_id: i64) -> Ap
                AND apply_status IN ('pending', 'deferred') AND operation NOT IN ('delete', 'archive') \
                AND json_extract(payload_json, '$.site_node_sync_id') = ? \
                AND json_extract(payload_json, '$.setting_key') = ? \
-               AND TRIM(json_extract(payload_json, '$.value_json')) = 'true' \
+               AND (TRIM(COALESCE(json_extract(payload_json, '$.value_json'), '')) = 'true') = ? \
              LIMIT 1",
             [
                 site_sync.into(),
                 crate::reliability::study::decisions::SELF_APPROVAL_SETTING.into(),
+                relaxing.into(),
             ],
         ))
         .await?
@@ -858,9 +861,9 @@ async fn opt_out_still_arriving(conn: &impl ConnectionTrait, site_id: i64) -> Ap
 
 /// Four-eyes on a permit received by synchronisation (owner decision 2026-10-17, migration 244;
 /// the local rule is `permit::queries::set_work_permit_status`):
-/// - the record held here is kept: the permit's author is never removed or changed; once the copy
-///   held here is past review (approved, issued, … or cancelled), who submitted it and who approved
-///   it are never removed, changed or added. Held here as a draft or waiting for review, a new
+/// - the record held here is kept: the permit's author (or its absence) is never removed, changed or
+///   added; once the copy held here is past review (approved, issued, … or cancelled), who
+///   submitted it and who approved it are never removed, changed or added. Held here as a draft or waiting for review, a new
 ///   submission may arrive (the permit went back to draft and was submitted again there);
 /// - the record received is whole: a draft names no submission or approval, a permit waiting for
 ///   review no approval; who and when come together; an approval is not dated in the future nor
@@ -871,8 +874,9 @@ async fn opt_out_still_arriving(conn: &impl ConnectionTrait, site_id: i64) -> Ap
 ///   that person in the generic apply): a second person (both recorded, the approver neither) is a
 ///   four-eyes approval, never flagged as a self-approval; anything else is a self-approval, which
 ///   must be flagged as one and is accepted only when the permit's site opted out of four-eyes on
-///   this PC (`permit::queries::permit_four_eyes_rule`). Its site not applied here yet, or the
-///   site's opt-out still waiting in the inbox, makes the row wait.
+///   this PC (`permit::queries::permit_four_eyes_rule`). Its site not applied here yet, or a change
+///   of the site's opt-out still waiting in the inbox (either way), makes the row wait. A conflict
+///   names when it was approved and the site's rule on this PC now.
 async fn four_eyes_check(
     conn: &impl ConnectionTrait,
     local: Option<&Payload>,
@@ -882,11 +886,12 @@ async fn four_eyes_check(
     let status = field(permit, "status").unwrap_or_default();
     let held = local.and_then(|l| field(l, "status"));
     if let Some(l) = local {
-        let held_author = field(l, "created_by_sync_id");
-        if held_author.is_some() && held_author != field(permit, "created_by_sync_id") {
+        // The author is set once, at creation: a copy held here keeps the one it has, none included
+        // (a permit written before authors were recorded is never given one by a received row).
+        if field(l, "created_by_sync_id") != field(permit, "created_by_sync_id") {
             return conflict(
                 "PERMIT_APPROVAL_RECORD_CHANGED",
-                format!("permit {code}: the person recorded here as its author cannot be removed or changed"),
+                format!("permit {code}: the author recorded here (or its absence) cannot be removed, changed or added"),
             );
         }
         let past_review_here = held.is_some_and(|h| !crate::permit::queries::WP_EQUIPMENT_CHANGE_STATUSES.contains(&h));
@@ -973,42 +978,56 @@ async fn four_eyes_check(
     } else {
         "a person not shown to differ from its author and submitter (not recorded)"
     };
+    // The conflict says when it was approved and the site's rule on this PC now (CMMS Advisor
+    // decision A: a self-approval arriving after its site went back to four-eyes is a conflict).
     if !flag {
         return conflict(
             "PERMIT_SELF_APPROVAL",
-            format!("permit {code} was approved by {who} without being recorded as a self-approval"),
+            format!("permit {code} was approved by {who} on {approved_at} without being recorded as a self-approval"),
         );
     }
     // A self-approval: only where the permit's site opted out of four-eyes, on this PC.
     let Some(node) = field(permit, "entity_sync_id") else {
         return conflict(
             "PERMIT_SELF_APPROVAL",
-            format!("permit {code} was approved by {who}; it names no site, so four-eyes applies"),
+            format!("permit {code} was approved by {who} on {approved_at}; it names no site, so four-eyes applies"),
         );
     };
     let Some(node_id) = local_id(conn, "org_nodes", node).await? else {
         return wait(format!("permit {code}: its site {node} is not applied yet"));
     };
-    match crate::permit::queries::permit_four_eyes_rule(conn, node_id).await? {
-        crate::reliability::study::decisions::SelfApprovalRule::Allowed => Ok(None),
-        crate::reliability::study::decisions::SelfApprovalRule::SiteUnresolved => conflict(
-            "PERMIT_SELF_APPROVAL",
-            format!("permit {code} was approved by {who}; its site is not a planning site here, so four-eyes applies"),
-        ),
-        crate::reliability::study::decisions::SelfApprovalRule::FourEyes => {
-            let site = crate::planning::weekly_schedule::planning_site_of_node(conn, node_id).await?;
-            if let Some(site) = site {
-                if opt_out_still_arriving(conn, site).await? {
-                    return wait(format!(
-                        "permit {code}: self-approved; its site's four-eyes opt-out is still arriving"
-                    ));
-                }
+    let rule = crate::permit::queries::permit_four_eyes_rule(conn, node_id).await?;
+    let site = crate::planning::weekly_schedule::planning_site_of_node(conn, node_id).await?;
+    match (rule, site) {
+        (crate::reliability::study::decisions::SelfApprovalRule::Allowed, Some(site)) => {
+            if site_rule_change_waiting(conn, site, false).await? {
+                return wait(format!(
+                    "permit {code}: self-approved; its site's return to four-eyes is still arriving"
+                ));
+            }
+            Ok(None)
+        }
+        (crate::reliability::study::decisions::SelfApprovalRule::FourEyes, Some(site)) => {
+            if site_rule_change_waiting(conn, site, true).await? {
+                return wait(format!(
+                    "permit {code}: self-approved; its site's four-eyes opt-out is still arriving"
+                ));
             }
             conflict(
                 "PERMIT_SELF_APPROVAL",
-                format!("permit {code} was approved by {who}; its site requires a second person (four-eyes)"),
+                format!(
+                    "permit {code} was approved by {who} on {approved_at}; its site's setting on this PC now: \
+                     four-eyes (self-approval not allowed)"
+                ),
             )
         }
+        _ => conflict(
+            "PERMIT_SELF_APPROVAL",
+            format!(
+                "permit {code} was approved by {who} on {approved_at}; its site is not a planning site on this PC, \
+                 so four-eyes applies"
+            ),
+        ),
     }
 }
 

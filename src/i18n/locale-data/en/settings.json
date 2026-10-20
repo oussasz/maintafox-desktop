@@ -485,7 +485,7 @@
     "noHistory": "No change at this site.",
     "selfApproval": {
       "label": "Allow self-approval of reliability decisions and work permits",
-      "help": "Off (recommended): a second person approves every reliability decision and every work permit of this site (four-eyes: not the person who wrote or submitted the permit). Turn on only for a site where one person both prepares and approves; such approvals are labelled \"Self-approved\".",
+      "help": "Off (recommended): a second person approves every reliability decision and every work permit of this site (four-eyes: not the person who wrote or submitted the permit). Turn on only for a site where one person both prepares and approves; such approvals are marked \"self-approval (site without four-eyes)\" on the permit and \"Self-approved\" on the decision.",
       "active": "Four-eyes lifted at this site"
     },
     "confirmTitle": "Change the rule for {{site}}?",

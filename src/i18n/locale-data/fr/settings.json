@@ -485,7 +485,7 @@
     "noHistory": "Aucun changement sur ce site.",
     "selfApproval": {
       "label": "Autoriser l'auto-approbation des décisions de fiabilité et des permis de travail",
-      "help": "Désactivé (recommandé) : une deuxième personne approuve chaque décision de fiabilité et chaque permis de travail de ce site (quatre yeux : pas la personne qui a rédigé ou soumis le permis). À activer seulement pour un site où la même personne prépare et approuve ; ces approbations portent la mention « Auto-approuvée ».",
+      "help": "Désactivé (recommandé) : une deuxième personne approuve chaque décision de fiabilité et chaque permis de travail de ce site (quatre yeux : pas la personne qui a rédigé ou soumis le permis). À activer seulement pour un site où la même personne prépare et approuve ; ces approbations sont signalées « auto-approbation (site sans 4 yeux) » sur le permis et « Auto-approuvée » sur la décision.",
       "active": "Quatre yeux levé sur ce site"
     },
     "confirmTitle": "Modifier la règle de {{site}} ?",
