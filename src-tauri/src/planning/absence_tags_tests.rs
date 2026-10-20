@@ -1,18 +1,19 @@
-//! Absences on the planning board (decision register 2026-10-19, Q2): a planner without `per.view`
-//! gets a neutral tag only — away, critical for planning or not — decided by the absence type's
-//! `critical` behaviour tag in Données de référence; the type, code, label, reason and colour never
-//! leave the server for them. Holders of `per.view` keep each absence's type.
+//! Absences on the planning board (decision register 2026-10-19, Q2 and decision (b)): a planner
+//! without the sensitive-data right (`per.sensitiveview`, plant-wide) gets a neutral tag only —
+//! away, critical for planning or not — decided by the absence type's `critical` behaviour tag in
+//! Données de référence; the type, code, label, reason and colour never leave the server for them.
+//! Holders of the right keep each absence's type.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde_json::Value;
 
-use super::domain::{AbsenceDetail, PlanningGanttFilter};
+use super::domain::{AbsenceAccess, PlanningGanttFilter};
 use super::scheduling;
 use super::tests::{ensure_personnel_with_rate, get_any_team_id, setup_db};
 use crate::auth::scope_tests::{assign, role, user};
 use crate::personnel::availability::{create_availability_block, AvailabilityBlockCreateInput};
 use crate::personnel::reference_lists::ABSENCE_TYPES_DOMAIN;
-use crate::rbac::permissions::{PER_VIEW, PLAN_VIEW};
+use crate::rbac::permissions::{PER_SENSITIVEVIEW, PER_VIEW, PLAN_VIEW};
 use crate::reference::values::{update_value, UpdateReferenceValuePayload};
 
 const PERIOD_START: &str = "2026-09-01T00:00:00Z";
@@ -71,7 +72,7 @@ async fn absence(db: &DatabaseConnection, person: i64, actor: i64, code: &str, s
 }
 
 /// The person's lane on the board, as the given caller receives it: the raw JSON and its rows.
-async fn lane(db: &DatabaseConnection, team_id: i64, person: i64, detail: AbsenceDetail) -> (String, Vec<Value>) {
+async fn lane(db: &DatabaseConnection, team_id: i64, person: i64, access: &AbsenceAccess) -> (String, Vec<Value>) {
     let snapshot = scheduling::get_planning_gantt_snapshot(
         db,
         PlanningGanttFilter {
@@ -79,7 +80,7 @@ async fn lane(db: &DatabaseConnection, team_id: i64, person: i64, detail: Absenc
             period_end: PERIOD_END.to_string(),
             team_id: Some(team_id),
         },
-        detail,
+        access,
     )
     .await
     .expect("snapshot");
@@ -175,7 +176,7 @@ async fn a_planner_without_personnel_view_gets_only_the_neutral_tag() {
     )
     .await;
 
-    let (raw, rows) = lane(&db, team_id, person, AbsenceDetail::AvailabilityOnly).await;
+    let (raw, rows) = lane(&db, team_id, person, &AbsenceAccess::neutral()).await;
     assert_eq!(rows.len(), 3);
     for row in &rows {
         assert_eq!(
@@ -226,7 +227,7 @@ async fn a_planner_with_personnel_view_gets_the_absence_type() {
     )
     .await;
 
-    let (raw, rows) = lane(&db, team_id, person, AbsenceDetail::Full).await;
+    let (raw, rows) = lane(&db, team_id, person, &AbsenceAccess::full_for_tests()).await;
     assert_eq!(rows.len(), 2);
     for row in &rows {
         assert_eq!(keys(row), ["block_type", "critical", "end_at", "start_at"]);
@@ -254,11 +255,11 @@ async fn changing_the_types_tag_in_reference_data_changes_the_neutral_tag() {
     )
     .await;
 
-    let (_, rows) = lane(&db, team_id, person, AbsenceDetail::AvailabilityOnly).await;
+    let (_, rows) = lane(&db, team_id, person, &AbsenceAccess::neutral()).await;
     assert!(!critical(&rows[0]), "tagged leave: plain absence");
 
     retag(&db, value_id, "critical", actor).await;
-    let (raw, rows) = lane(&db, team_id, person, AbsenceDetail::AvailabilityOnly).await;
+    let (raw, rows) = lane(&db, team_id, person, &AbsenceAccess::neutral()).await;
     assert!(
         critical(&rows[0]),
         "tagged critical in Données de référence: critical for planning"
@@ -266,31 +267,282 @@ async fn changing_the_types_tag_in_reference_data_changes_the_neutral_tag() {
     assert!(!raw.contains("ASTREINTE_ABS") && !raw.contains("#AA0000"));
 
     retag(&db, value_id, "training", actor).await;
-    let (_, rows) = lane(&db, team_id, person, AbsenceDetail::AvailabilityOnly).await;
+    let (_, rows) = lane(&db, team_id, person, &AbsenceAccess::neutral()).await;
     assert!(!critical(&rows[0]), "tagged training again: plain absence");
 }
 
+/// A user holding `roles`, each assigned plant-wide (`tenant`) or on one site.
+async fn account(db: &DatabaseConnection, name: &str, permissions: &[&str], site: Option<i64>) -> i32 {
+    let id = user(db, name).await;
+    let role_id = role(db, &format!("{name}-role"), permissions).await;
+    match site {
+        None => assign(db, id, role_id, "tenant", None).await,
+        Some(node) => assign(db, id, role_id, "org_node", Some(node)).await,
+    }
+    id
+}
+
 #[tokio::test]
-async fn the_board_detail_follows_the_personnel_view_right() {
+async fn the_board_shows_the_type_only_with_the_sensitive_data_right() {
     let db = setup_db().await;
     let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
-    let planner = user(&db, "abs-tag-planner").await;
-    let planning_role = role(&db, "abs-tag-planning", &[PLAN_VIEW]).await;
-    assign(&db, planner, planning_role, "tenant", None).await;
-    assert_eq!(
-        scheduling::absence_detail_for(&db, &cache, planner)
-            .await
-            .expect("detail"),
-        AbsenceDetail::AvailabilityOnly
-    );
+    let (team_id, person, actor) = board_person(&db, "TECH-ABS-TAG-4").await;
+    absence(
+        &db,
+        person,
+        actor,
+        "medical",
+        "2026-09-02T08:00:00Z",
+        "2026-09-02T16:00:00Z",
+    )
+    .await;
 
-    let manager = user(&db, "abs-tag-manager").await;
-    let personnel_role = role(&db, "abs-tag-personnel", &[PLAN_VIEW, PER_VIEW]).await;
-    assign(&db, manager, personnel_role, "tenant", None).await;
-    assert_eq!(
-        scheduling::absence_detail_for(&db, &cache, manager)
+    // per.view alone (a planner reading the personnel screens): neutral tag only.
+    let planner = account(&db, "abs-tag-planner", &[PLAN_VIEW, PER_VIEW], None).await;
+    let access = AbsenceAccess::load(&db, &cache, planner).await;
+    let (raw, rows) = lane(&db, team_id, person, &access).await;
+    assert_eq!(keys(&rows[0]), ["critical", "end_at", "start_at"]);
+    assert!(critical(&rows[0]));
+    assert!(!raw.contains("medical"), "{raw}");
+
+    // per.view + per.sensitiveview plant-wide: the type.
+    let manager = account(&db, "abs-tag-manager", &[PLAN_VIEW, PER_VIEW, PER_SENSITIVEVIEW], None).await;
+    let access = AbsenceAccess::load(&db, &cache, manager).await;
+    let (_, rows) = lane(&db, team_id, person, &access).await;
+    assert_eq!(rows[0]["block_type"], "medical");
+}
+
+#[tokio::test]
+async fn the_sensitive_data_right_on_one_site_only_still_gives_the_neutral_tag() {
+    let db = setup_db().await;
+    let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
+    let sites = crate::auth::scope_tests::tree(&db).await;
+    let (team_id, person, actor) = board_person(&db, "TECH-ABS-TAG-5").await;
+    absence(
+        &db,
+        person,
+        actor,
+        "leave",
+        "2026-09-01T08:00:00Z",
+        "2026-09-01T16:00:00Z",
+    )
+    .await;
+
+    let site_planner = account(
+        &db,
+        "abs-tag-site",
+        &[PLAN_VIEW, PER_VIEW, PER_SENSITIVEVIEW],
+        Some(sites.site_a),
+    )
+    .await;
+    let access = AbsenceAccess::load(&db, &cache, site_planner).await;
+    let (raw, rows) = lane(&db, team_id, person, &access).await;
+    assert_eq!(keys(&rows[0]), ["critical", "end_at", "start_at"]);
+    assert!(!raw.contains("leave"), "{raw}");
+}
+
+/// The availability screens (block list, calendar, availability state) and the person's capacity
+/// days: per.view alone gets no type; the sensitive-data right, or the person's own record, does.
+#[tokio::test]
+async fn every_absence_screen_shows_the_type_only_with_the_sensitive_data_right() {
+    let db = setup_db().await;
+    let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
+    let (_, person, actor) = board_person(&db, "TECH-ABS-SCREENS").await;
+    absence(
+        &db,
+        person,
+        actor,
+        "medical",
+        "2026-09-02T00:00:00Z",
+        "2026-09-03T00:00:00Z",
+    )
+    .await;
+    // A second person away right now, for the availability state.
+    let (_, away, _) = board_person(&db, "TECH-ABS-NOW").await;
+    absence(
+        &db,
+        away,
+        actor,
+        "leave",
+        "2000-01-01T00:00:00Z",
+        "2100-01-01T00:00:00Z",
+    )
+    .await;
+
+    let viewer = account(&db, "abs-scr-viewer", &[PER_VIEW], None).await;
+    let sensitive = account(&db, "abs-scr-sensitive", &[PER_VIEW, PER_SENSITIVEVIEW], None).await;
+    // A user linked to the person's record, without the right: their own absences stay readable.
+    let own = account(&db, "abs-scr-own", &[PER_VIEW], None).await;
+    exec(
+        &db,
+        &format!("UPDATE user_accounts SET personnel_id = {person} WHERE id = {own}"),
+    )
+    .await;
+
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 9, 2).expect("day");
+    for (user_id, full_for_person) in [(viewer, false), (sensitive, true), (own, true)] {
+        let access = AbsenceAccess::load(&db, &cache, user_id).await;
+
+        // Availability block list.
+        let mut blocks = crate::personnel::queries::list_personnel_availability_blocks(&db, person, 50)
             .await
-            .expect("detail"),
-        AbsenceDetail::Full
+            .expect("blocks");
+        access.apply_to_blocks(&db, &mut blocks).await.expect("apply");
+        let payload = serde_json::to_value(&blocks).expect("json");
+        let block = &payload[0];
+        assert_eq!(block["critical_for_planning"], true, "medical is tagged critical");
+        if full_for_person {
+            assert_eq!(block["block_type"], "medical", "user {user_id}");
+            assert_eq!(block["reason_note"], SECRET_REASON);
+            assert_eq!(block["type_masked"], false);
+        } else {
+            assert!(block.get("block_type").is_none(), "no type in the payload: {block}");
+            assert!(block["reason_note"].is_null());
+            assert_eq!(block["type_masked"], true);
+            assert!(!payload.to_string().contains("medical"));
+        }
+
+        // Availability calendar.
+        let mut entries = crate::personnel::availability::list_availability_calendar(
+            &db,
+            crate::personnel::availability::AvailabilityCalendarFilter {
+                date_from: "2026-09-02".to_string(),
+                date_to: "2026-09-02".to_string(),
+                personnel_id: Some(person),
+                entity_id: None,
+                team_id: None,
+                include_inactive: Some(true),
+            },
+        )
+        .await
+        .expect("calendar");
+        access.apply_to_calendar(&mut entries);
+        let types: Vec<String> = entries.iter().flat_map(|e| e.block_types.clone()).collect();
+        assert_eq!(
+            types.is_empty(),
+            !full_for_person,
+            "calendar types for user {user_id}: {types:?}"
+        );
+
+        // The person's capacity days.
+        let mut days = crate::personnel::capacity::person_capacity_range(&db, person, day, day)
+            .await
+            .expect("capacity");
+        access.apply_to_person_capacity(person, &mut days);
+        let types: Vec<String> = days.iter().flat_map(|d| d.absence_types.clone()).collect();
+        assert_eq!(
+            types.is_empty(),
+            !full_for_person,
+            "capacity types for user {user_id}: {types:?}"
+        );
+        assert!(days.iter().any(|d| d.absent_minutes > 0), "the absence still counts");
+
+        // The availability state of the person away now (not the own-record user's record).
+        let mut state = crate::personnel::availability::compute_personnel_availability_state(&db, away)
+            .await
+            .expect("state");
+        access.apply_to_availability_state(&mut state);
+        let sees_type = user_id == sensitive;
+        assert_eq!(
+            state.reasons.contains(&"leave".to_string()),
+            sees_type,
+            "{:?}",
+            state.reasons
+        );
+    }
+}
+
+async fn critical_audits(db: &DatabaseConnection) -> Vec<sea_orm::QueryResult> {
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "SELECT actor_id, target_id, details_json FROM audit_events WHERE action_code = '{}' ORDER BY id",
+            crate::personnel::availability::AUDIT_BLOCK_CRITICAL_CHANGED
+        ),
+    ))
+    .await
+    .expect("audit rows")
+}
+
+/// Setting or clearing the critical flag of a block is audited: who, block, person, before and
+/// after — never the type or reason. An edit that keeps the type and reason hidden keeps them.
+#[tokio::test]
+async fn changing_a_blocks_critical_flag_is_audited_without_type_or_reason() {
+    let db = setup_db().await;
+    let (_, person, actor) = board_person(&db, "TECH-ABS-AUDIT").await;
+    absence(
+        &db,
+        person,
+        actor,
+        "leave",
+        "2026-09-05T08:00:00Z",
+        "2026-09-05T16:00:00Z",
+    )
+    .await;
+    let block_id = scalar(
+        &db,
+        &format!("SELECT id FROM personnel_availability_blocks WHERE personnel_id = {person}"),
+    )
+    .await;
+    let edit = |is_critical: bool| crate::personnel::availability::AvailabilityBlockUpdateInput {
+        id: block_id,
+        // A caller who may not read the type and reason keeps them.
+        block_type: None,
+        start_at: "2026-09-05T08:00:00Z".to_string(),
+        end_at: "2026-09-05T16:00:00Z".to_string(),
+        reason_note: None,
+        keep_reason_note: true,
+        is_critical: Some(is_critical),
+        confirm_overlap: None,
+    };
+
+    // Same flag: nothing to audit.
+    crate::personnel::availability::update_availability_block(&db, edit(false), actor)
+        .await
+        .expect("edit");
+    assert!(critical_audits(&db).await.is_empty());
+
+    let block = crate::personnel::availability::update_availability_block(&db, edit(true), actor)
+        .await
+        .expect("set critical");
+    assert!(block.is_critical);
+    assert_eq!(block.block_type, "leave", "the hidden type is kept");
+    assert_eq!(
+        block.reason_note.as_deref(),
+        Some(SECRET_REASON),
+        "the hidden reason is kept"
+    );
+    crate::personnel::availability::update_availability_block(&db, edit(false), actor)
+        .await
+        .expect("clear critical");
+
+    let rows = critical_audits(&db).await;
+    assert_eq!(rows.len(), 2);
+    let mut details: Vec<Value> = Vec::new();
+    for r in &rows {
+        assert_eq!(r.try_get::<Option<i64>>("", "actor_id").expect("actor"), Some(actor));
+        assert_eq!(
+            r.try_get::<Option<String>>("", "target_id").expect("target"),
+            Some(block_id.to_string())
+        );
+        let raw: String = r.try_get("", "details_json").expect("details");
+        assert!(!raw.contains("leave") && !raw.contains(SECRET_REASON), "{raw}");
+        details.push(serde_json::from_str(&raw).expect("json"));
+    }
+    assert_eq!(details[0]["personnel_id"], person);
+    assert_eq!(details[0]["block_id"], block_id);
+    assert_eq!(
+        (
+            details[0]["is_critical_before"].as_bool(),
+            details[0]["is_critical_after"].as_bool()
+        ),
+        (Some(false), Some(true))
+    );
+    assert_eq!(
+        (
+            details[1]["is_critical_before"].as_bool(),
+            details[1]["is_critical_after"].as_bool()
+        ),
+        (Some(true), Some(false))
     );
 }

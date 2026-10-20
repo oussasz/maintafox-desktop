@@ -14,6 +14,7 @@ import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { AvailabilityBlockDialog } from "@/components/personnel/AvailabilityBlockDialog";
 import { AvailabilityInspectorWorkspace } from "@/components/personnel/AvailabilityInspectorWorkspace";
+import { absenceBlockState, absenceBlockTitle } from "@/components/personnel/absence-block-display";
 import {
   addDaysLocal,
   AVAILABILITY_BLOCK_SEED_END_LOCAL,
@@ -39,11 +40,11 @@ import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import {
-  absenceTimelineState,
   RESOURCE_TIMELINE_BLOCK_LEGEND_STATES,
   RESOURCE_TIMELINE_STATE_CLASS,
 } from "@/design-system/resource-timeline-tokens";
 import { mfLayout } from "@/design-system/tokens";
+import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
@@ -59,6 +60,7 @@ import type {
   OrgDesignerNodeRow,
   PersonnelAvailabilityBlock,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export type AvailabilityCalendarHandle = {
   refresh: () => void;
@@ -113,6 +115,9 @@ export const AvailabilityCalendar = forwardRef<
   const { t } = useTranslation("personnel");
   // Absence types (and their behaviour tag) come from the plant's list (Données de référence).
   const lists = usePersonnelLists();
+  // Filtering by absence type needs the sensitive-data right: without it the server sends no type.
+  const { can } = usePermissions();
+  const canFilterByType = can(P.PER_SENSITIVEVIEW);
 
   const [dateFrom, setDateFrom] = useState(() => toLocalIsoDate(new Date()));
   const [dateTo, setDateTo] = useState(() =>
@@ -471,13 +476,10 @@ export const AvailabilityCalendar = forwardRef<
         return {
           id: b.id,
           group: b.personnel_id,
-          title: lists.text("absence_types", b.block_type),
+          title: absenceBlockTitle(b, lists, t),
           start_time: start,
           end_time: Math.max(end, start + 30 * 60 * 1000),
-          state: absenceTimelineState(
-            lists.option("absence_types", b.block_type)?.tag,
-            b.is_critical,
-          ),
+          state: absenceBlockState(b, lists),
         };
       });
     return [...unknownBars, ...blockBars];
@@ -531,19 +533,23 @@ export const AvailabilityCalendar = forwardRef<
         options: personOptions.map((o) => ({ value: String(o.id), label: o.label })),
         onChange: (v) => setFilterPersonId(v ? Number(v) : null),
       },
-      {
-        id: "blockType",
-        kind: "select",
-        label: t("availability.filters.blockType"),
-        value: filterBlockType,
-        options: lists.values("absence_types").map((v) => ({
-          value: v.code,
-          label: v.review_required
-            ? `${lists.text("absence_types", v.code)} · ${t("common:listValue.review")}`
-            : lists.text("absence_types", v.code),
-        })),
-        onChange: (v) => setFilterBlockType(v || null),
-      },
+      ...(canFilterByType
+        ? [
+            {
+              id: "blockType",
+              kind: "select" as const,
+              label: t("availability.filters.blockType"),
+              value: filterBlockType,
+              options: lists.values("absence_types").map((v) => ({
+                value: v.code,
+                label: v.review_required
+                  ? `${lists.text("absence_types", v.code)} · ${t("common:listValue.review")}`
+                  : lists.text("absence_types", v.code),
+              })),
+              onChange: (v: string | null) => setFilterBlockType(v || null),
+            },
+          ]
+        : []),
       {
         id: "critical",
         kind: "select",
@@ -560,6 +566,7 @@ export const AvailabilityCalendar = forwardRef<
       filterTeamId,
       filterPersonId,
       filterBlockType,
+      canFilterByType,
       criticalOnly,
       entityNodes,
       teamOptions,

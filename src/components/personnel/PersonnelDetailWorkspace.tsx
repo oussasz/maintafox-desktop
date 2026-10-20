@@ -18,6 +18,7 @@ import {
 import { PersonScheduleExceptions } from "@/components/personnel/PersonScheduleExceptions";
 import { PersonnelPortrait } from "@/components/personnel/PersonnelPortrait";
 import { PersonCapacityDays } from "@/components/personnel/TeamCapacityDays";
+import { absenceBlockTitle } from "@/components/personnel/absence-block-display";
 import { PersonQualificationSheet } from "@/components/personnel/qualification/PersonQualificationSheet";
 import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { Timeline, type TimelineEntry } from "@/components/timeline";
@@ -438,10 +439,8 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
           ) : null}
           {blocks.map((b) => (
             <div key={b.id} className="rounded border border-surface-border p-2 text-sm">
-              <span className="font-medium">
-                {restricted ? t("capacityDays.absence") : lists.text("absence_types", b.block_type)}
-              </span>{" "}
-              · {fmt(b.start_at)} → {fmt(b.end_at)}
+              <span className="font-medium">{absenceBlockTitle(b, lists, t)}</span> ·{" "}
+              {fmt(b.start_at)} → {fmt(b.end_at)}
             </div>
           ))}
         </DetailSectionCard>

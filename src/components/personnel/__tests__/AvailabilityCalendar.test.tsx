@@ -15,6 +15,8 @@ const i18nMock = vi.hoisted(() => {
   return { t, i18n: { language: "en" } };
 });
 vi.mock("react-i18next", () => ({ useTranslation: () => i18nMock }));
+// The calendar offers the absence-type filter to holders of the sensitive-data right.
+vi.mock("@/hooks/use-permissions", () => ({ usePermissions: () => ({ can: () => true }) }));
 
 /** Lightweight stand-in for the canvas: rows (titles) and bars (titles) as text. */
 vi.mock("@/components/timeline/ResourceTimeline", () => ({
@@ -90,6 +92,8 @@ function block(id: number, personnel_id: number, start: string): PersonnelAvaila
     created_by_label: null,
     created_at: start,
     reason_masked: false,
+    type_masked: false,
+    critical_for_planning: false,
   };
 }
 

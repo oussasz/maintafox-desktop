@@ -232,13 +232,15 @@ async fn a_record_with_a_retired_or_flagged_value_stays_editable() {
         &db,
         super::availability::AvailabilityBlockUpdateInput {
             id: block_id,
-            block_type: "day_off".into(),
+            block_type: Some("day_off".into()),
             start_at: "2000-01-01T00:00:00Z".into(),
             end_at: "2100-01-01T00:00:00Z".into(),
             reason_note: Some("checked".into()),
+            keep_reason_note: false,
             is_critical: None,
             confirm_overlap: None,
         },
+        1,
     )
     .await
     .expect("unchanged flagged type is editable");

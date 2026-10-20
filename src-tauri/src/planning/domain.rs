@@ -511,18 +511,8 @@ pub struct NotifyTeamsResult {
     pub skipped_count: i64,
 }
 
-/// What the planning board may tell its caller about a person's absences (decision register
-/// 2026-10-19, Q2: planning needs availability, not the reason — GDPR data minimisation).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AbsenceDetail {
-    /// Holders of `per.view`: each absence's type code and its critical flag (the screen names and
-    /// colours it from the plant's absence list).
-    Full,
-    /// Everyone else: only when the person is away and whether it is critical for planning — the
-    /// absence type's `critical` behaviour tag in Données de référence (`PERSONNEL.ABSENCE_TYPES`),
-    /// or the block itself marked critical. No type, code, label, reason or colour.
-    AvailabilityOnly,
-}
+/// What the board may show of a person's absences (decided by `personnel::absence_access`).
+pub use crate::personnel::absence_access::{AbsenceAccess, AbsenceDetail};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanningGanttFilter {

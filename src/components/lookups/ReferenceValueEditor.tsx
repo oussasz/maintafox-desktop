@@ -25,6 +25,12 @@ import type { KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  AbsenceBehaviourSelect,
+  AbsenceBehaviourText,
+  CriticalTagRemovalWarning,
+  removesCriticalTag,
+} from "@/components/lookups/AbsenceBehaviourPicker";
+import {
   MaintenanceNatureSelect,
   MaintenanceNatureText,
   useMaintenanceNatures,
@@ -231,11 +237,14 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     showParent,
     showSchedule,
     showNature,
+    showAbsenceBehaviour,
     showUnit,
     showPermitRule,
     crossDomainParentCode,
     sameSetHierarchy,
   } = columnFlags;
+  // The nature (request types) and the absence behaviour (absence types) are both `semantic_tag`.
+  const showSemanticTag = showNature || showAbsenceBehaviour;
   // Permit requirement rules (PERMIT.REQUIREMENT_RULES): class / work type → permit type.
   const permitRuleOptions = usePermitRuleOptions(showPermitRule);
   const [editRule, setEditRule] = useState<PermitRuleEditState>(EMPTY_PERMIT_RULE_EDIT);
@@ -400,8 +409,9 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         await saveValue(valueId, {
           label: editRow.label,
           description: editRow.description || null,
-          // "" clears the nature on the server (corrective fallback); null would leave it.
-          ...(showNature ? { semantic_tag: editRow.natureTag ?? "" } : {}),
+          // "" clears the nature on the server (corrective fallback); null would leave it. An
+          // absence type without a behaviour is refused by the server (required).
+          ...(showSemanticTag ? { semantic_tag: editRow.natureTag ?? "" } : {}),
         });
         if (showParent && existing && (existing.parent_id ?? null) !== (editRow.parentId ?? null)) {
           const moved = await moveReferenceValueParent(valueId, editRow.parentId);
@@ -419,7 +429,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       editRow,
       values,
       showParent,
-      showNature,
+      showSemanticTag,
       showUnit,
       editUnit,
       showPermitRule,
@@ -475,10 +485,10 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       code: newRow.code.trim(),
       label: newRow.label.trim(),
       description: newRow.description.trim() || null,
-      ...(showNature && newRow.natureTag ? { semantic_tag: newRow.natureTag } : {}),
+      ...(showSemanticTag && newRow.natureTag ? { semantic_tag: newRow.natureTag } : {}),
     };
     await addValue(payload);
-  }, [addValue, setId, newRow, showNature, showUnit, newUnit, showPermitRule, newRule]);
+  }, [addValue, setId, newRow, showSemanticTag, showUnit, newUnit, showPermitRule, newRule]);
 
   const confirmDeactivate = useCallback(async () => {
     if (!deleteTarget) return;
@@ -941,6 +951,11 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                   {t("maintenanceNature.column")}
                 </ReferenceValueTableHeadCell>
               ) : null}
+              {showAbsenceBehaviour ? (
+                <ReferenceValueTableHeadCell>
+                  {t("absenceBehaviour.column")}
+                </ReferenceValueTableHeadCell>
+              ) : null}
               {showColorColumn ? (
                 <ReferenceValueTableHeadCell>{t("editor.colColor")}</ReferenceValueTableHeadCell>
               ) : null}
@@ -1038,6 +1053,14 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                     <MaintenanceNatureSelect
                       value={newRow.natureTag}
                       natures={natures}
+                      onChange={(natureTag) => setNewRow({ ...newRow, natureTag })}
+                    />
+                  </ReferenceValueTableCell>
+                ) : null}
+                {showAbsenceBehaviour ? (
+                  <ReferenceValueTableCell>
+                    <AbsenceBehaviourSelect
+                      value={newRow.natureTag}
                       onChange={(natureTag) => setNewRow({ ...newRow, natureTag })}
                     />
                   </ReferenceValueTableCell>
@@ -1252,6 +1275,23 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         />
                       ) : (
                         <MaintenanceNatureText value={v.semantic_tag ?? null} natures={natures} />
+                      )}
+                    </ReferenceValueTableCell>
+                  ) : null}
+                  {showAbsenceBehaviour ? (
+                    <ReferenceValueTableCell>
+                      {isEditing ? (
+                        <>
+                          <AbsenceBehaviourSelect
+                            value={editRow.natureTag}
+                            onChange={(natureTag) => setEditRow({ ...editRow, natureTag })}
+                          />
+                          {removesCriticalTag(v.semantic_tag, editRow.natureTag) ? (
+                            <CriticalTagRemovalWarning />
+                          ) : null}
+                        </>
+                      ) : (
+                        <AbsenceBehaviourText value={v.semantic_tag ?? null} />
                       )}
                     </ReferenceValueTableCell>
                   ) : null}

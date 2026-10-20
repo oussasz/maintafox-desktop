@@ -7007,10 +7007,13 @@ export interface AvailabilityBlockCreateInput {
 
 export interface AvailabilityBlockUpdateInput {
   id: number;
-  block_type: string;
+  /** New absence type; omitted keeps the stored one (a caller the type is withheld from). */
+  block_type?: string;
   start_at: string;
   end_at: string;
   reason_note?: string | null;
+  /** Keeps the stored reason instead of `reason_note` (a caller the reason is withheld from). */
+  keep_reason_note?: boolean;
   is_critical?: boolean;
   confirm_overlap?: boolean;
 }
@@ -7018,7 +7021,11 @@ export interface AvailabilityBlockUpdateInput {
 export interface PersonnelAvailabilityBlock {
   id: number;
   personnel_id: number;
-  block_type: string;
+  /**
+   * Absence type code — sent only with the sensitive-data right (per.sensitiveview) or on the
+   * person's own record; otherwise absent and `type_masked` (decision register 2026-10-19).
+   */
+  block_type?: string;
   start_at: string;
   end_at: string;
   reason_note: string | null;
@@ -7028,6 +7035,10 @@ export interface PersonnelAvailabilityBlock {
   created_at: string;
   /** `reason_note` withheld (no per.sensitiveview, not the person's own record). */
   reason_masked: boolean;
+  /** The absence type withheld: show the neutral tag only. */
+  type_masked: boolean;
+  /** Critical for planning: the type's `critical` tag in Données de référence, or marked critical. */
+  critical_for_planning: boolean;
 }
 
 export interface PersonnelTeamAssignment {

@@ -9,12 +9,13 @@ use crate::notifications::emitter::{emit_event, NotificationEventInput};
 use crate::{activity, notifications};
 
 use super::domain::{
-    AbsenceDetail, AssigneeCapacityInput, CapacityRule, CapacityRuleFilter, CapacityWindow, CreateCapacityRuleInput,
-    CreatePlanningWindowInput, CreateScheduleBreakInInput, CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput,
-    ExportedBinaryDocument, FreezeSchedulePeriodInput, NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane,
-    PlanningCrewLane, PlanningGanttFilter, PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter,
-    RescheduleCommitmentInput, ScheduleBreakIn, ScheduleBreakInFilter, ScheduleChangeLogEntry, ScheduleCommitment,
-    ScheduleCommitmentFilter, TeamCapacityLoad, UpdateCapacityRuleInput, UpdatePlanningWindowInput,
+    AbsenceAccess, AbsenceDetail, AssigneeCapacityInput, CapacityRule, CapacityRuleFilter, CapacityWindow,
+    CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput, CreateScheduleCommitmentInput,
+    ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput, NotifyTeamsInput,
+    NotifyTeamsResult, PlanningAssigneeLane, PlanningCrewLane, PlanningGanttFilter, PlanningGanttSnapshot,
+    PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput, ScheduleBreakIn, ScheduleBreakInFilter,
+    ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, TeamCapacityLoad, UpdateCapacityRuleInput,
+    UpdatePlanningWindowInput,
 };
 use super::load;
 use super::person_load;
@@ -647,33 +648,10 @@ async fn compute_capacity_gate(
     Ok((true, None))
 }
 
-/// What the board may show a user of the assignees' absences (decision register 2026-10-19, Q2):
-/// holders of `per.view` (plant-wide, the personnel screens' read rule) read each absence's type;
-/// any other planner only when the person is away and whether it is critical for planning. Decided
-/// here, on the server, so the type never reaches them.
-pub async fn absence_detail_for(
-    db: &DatabaseConnection,
-    cache: &tokio::sync::RwLock<crate::rbac::cache::PermissionCache>,
-    user_id: i32,
-) -> AppResult<AbsenceDetail> {
-    let reads_personnel = crate::auth::rbac::check_permission_cached(
-        db,
-        cache,
-        user_id,
-        crate::rbac::permissions::PER_VIEW,
-        &crate::auth::rbac::PermissionScope::Global,
-    )
-    .await?;
-    Ok(if reads_personnel {
-        AbsenceDetail::Full
-    } else {
-        AbsenceDetail::AvailabilityOnly
-    })
-}
-
 /// A person's absence blocks touching `[start, end)`, as the planning board draws them, ordered by
-/// start. `Full` (holders of `per.view`): `{start_at, end_at, block_type, critical}` — `critical` is
-/// the block's own flag, the screen adds the type's tag from the plant's list. `AvailabilityOnly`:
+/// start. `Full` (callers who may read the type, `personnel::absence_access`): `{start_at, end_at,
+/// block_type, critical}` — `critical` is the block's own flag, the screen adds the type's tag from
+/// the plant's list. `AvailabilityOnly`:
 /// `{start_at, end_at, critical}` — `critical` when the absence type carries the `critical` tag in
 /// Données de référence (`PERSONNEL.ABSENCE_TYPES`) or the block is marked critical; nothing else.
 pub(crate) async fn absence_intervals(
@@ -2499,12 +2477,12 @@ pub async fn freeze_schedule_period(
     Ok(updated.rows_affected() as i64)
 }
 
-/// The planning board over a period. `detail` is what the caller may read of the assignees'
-/// absences ([`AbsenceDetail`]; the IPC command decides it from `per.view`).
+/// The planning board over a period. `access` is what the caller may read of each assignee's
+/// absences (`personnel::absence_access`, loaded by the IPC command).
 pub async fn get_planning_gantt_snapshot(
     db: &DatabaseConnection,
     filter: PlanningGanttFilter,
-    detail: AbsenceDetail,
+    access: &AbsenceAccess,
 ) -> AppResult<PlanningGanttSnapshot> {
     validate_window(&filter.period_start, &filter.period_end, "period_start", "period_end")?;
     let commitments = list_schedule_commitments(
@@ -2652,7 +2630,14 @@ pub async fn get_planning_gantt_snapshot(
                 .and_then(|r| r.try_get::<String>("", "full_name").ok())
                 .unwrap_or_else(|| format!("Personnel #{personnel_id}"));
 
-            let blocked = absence_intervals(db, personnel_id, &filter.period_start, &filter.period_end, detail).await?;
+            let blocked = absence_intervals(
+                db,
+                personnel_id,
+                &filter.period_start,
+                &filter.period_end,
+                access.detail_for(personnel_id),
+            )
+            .await?;
             let lane_commitments: Vec<Value> = commitments
                 .iter()
                 .filter(|c| c.assigned_personnel_id == Some(personnel_id))
@@ -2750,7 +2735,7 @@ pub async fn export_planning_gantt_pdf(
             team_id: input.team_id,
         },
         // The PDF prints commitments and capacity only, never absences.
-        AbsenceDetail::AvailabilityOnly,
+        &AbsenceAccess::neutral(),
     )
     .await?;
     let paper_size = input.paper_size.unwrap_or_else(|| "A4".to_string());
@@ -2890,7 +2875,7 @@ pub async fn list_team_capacity_load(
             team_id,
         },
         // Only the capacity is returned.
-        AbsenceDetail::AvailabilityOnly,
+        &AbsenceAccess::neutral(),
     )
     .await?;
     Ok(snapshot.capacity)

@@ -243,7 +243,8 @@ export const TeamCapacitySummaryRowSchema = z.object({
 export const PersonnelAvailabilityBlockSchema = z.object({
   id: z.number(),
   personnel_id: z.number(),
-  block_type: z.string(),
+  /** Absent when the type is withheld (`type_masked`). */
+  block_type: z.string().optional(),
   start_at: z.string(),
   end_at: z.string(),
   reason_note: z.string().nullable(),
@@ -253,6 +254,8 @@ export const PersonnelAvailabilityBlockSchema = z.object({
   created_at: z.string(),
   /** `reason_note` withheld (no per.sensitiveview, not own record). */
   reason_masked: z.boolean().optional().default(false),
+  type_masked: z.boolean(),
+  critical_for_planning: z.boolean(),
 });
 
 /** Backend ValidationFailed payload fragment for soft overlap confirm. */

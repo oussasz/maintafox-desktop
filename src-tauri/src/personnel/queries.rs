@@ -2403,6 +2403,8 @@ pub async fn list_personnel_availability_blocks(
             created_by_label: row.try_get("", "created_by_label").unwrap_or(None),
             created_at: row.try_get("", "created_at").unwrap_or_default(),
             reason_masked: false,
+            type_masked: false,
+            critical_for_planning: false,
         })
         .collect())
 }

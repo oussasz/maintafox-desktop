@@ -373,6 +373,17 @@
     "cancel": "Annuler",
     "save": "Enregistrer"
   },
+  "absenceBehaviour": {
+    "column": "Comportement",
+    "hint": "Ce que le programme fait des absences de ce type. Obligatoire.",
+    "placeholder": "Choisir un comportement",
+    "tags": {
+      "leave": "Congé (absence simple)",
+      "critical": "Critique (critique pour la planification)",
+      "training": "Formation"
+    },
+    "criticalRemovedWarning": "Les absences déjà saisies de ce type restent marquées critiques."
+  },
   "maintenanceNature": {
     "column": "Nature de l'OT (EN 13306)",
     "fallback": "Non précisée : corrective (immédiate si urgence)",

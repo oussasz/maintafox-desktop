@@ -1050,7 +1050,7 @@ async fn gantt_snapshot_and_pdf_export_use_real_commitments() {
             period_end: "2026-09-02T00:00:00Z".to_string(),
             team_id: Some(team_id),
         },
-        crate::planning::domain::AbsenceDetail::Full,
+        &crate::planning::domain::AbsenceAccess::full_for_tests(),
     )
     .await
     .expect("snapshot");
@@ -1075,7 +1075,7 @@ async fn gantt_snapshot_and_pdf_export_use_real_commitments() {
             period_end: "2026-09-02T00:00:00Z".to_string(),
             team_id: None,
         },
-        crate::planning::domain::AbsenceDetail::Full,
+        &crate::planning::domain::AbsenceAccess::full_for_tests(),
     )
     .await
     .expect("plant-wide snapshot");

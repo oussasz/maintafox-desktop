@@ -16,6 +16,7 @@ import {
   EntitySummaryKpiStrip,
   type EntitySummaryKpi,
 } from "@/components/detail";
+import { absenceBlockTitle } from "@/components/personnel/absence-block-display";
 import {
   CELL_STATE_CLASS,
   deriveCellState,
@@ -417,7 +418,7 @@ export function AvailabilityInspectorWorkspace({
 
         <TabsContent value="constraint" className="mt-3 space-y-3">
           {selectedBlock ? (
-            <DetailSectionCard title={lists.text("absence_types", selectedBlock.block_type)}>
+            <DetailSectionCard title={absenceBlockTitle(selectedBlock, lists, t)}>
               <DetailFieldRow
                 label={t("availability.form.startAt")}
                 value={formatHorizonInstant(selectedBlock.start_at)}
@@ -494,7 +495,7 @@ export function AvailabilityInspectorWorkspace({
                       )}
                       onClick={() => onSelectBlock(b.id)}
                     >
-                      <div className="font-medium">{lists.text("absence_types", b.block_type)}</div>
+                      <div className="font-medium">{absenceBlockTitle(b, lists, t)}</div>
                       <div className="text-xs text-text-muted">
                         {formatHorizonInstant(b.start_at)} → {formatHorizonInstant(b.end_at)}
                       </div>
