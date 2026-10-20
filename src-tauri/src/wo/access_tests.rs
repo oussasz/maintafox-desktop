@@ -569,6 +569,45 @@ async fn actions_and_child_records_are_checked_at_the_work_orders_site() {
             .await
             .expect("plant-wide");
     }
+    // A part line (cancel, required/optional, usage, not used): checked at its work order's site.
+    let part = |wo_id: i64| crate::wo::parts::AddPartInput {
+        wo_id,
+        article_id: None,
+        article_ref: Some("Coupling insert".into()),
+        quantity_planned: 1.0,
+        unit_cost: None,
+        stock_location_id: None,
+        auto_reserve: Some(false),
+        notes: None,
+        origin: None,
+        is_required: true,
+    };
+    let mut parts = Vec::new();
+    for wo_id in [f.wo_a, f.wo_b, f.wo_none] {
+        parts.push(
+            crate::wo::parts::add_planned_part(&f.db, part(wo_id))
+                .await
+                .expect("part line")
+                .id,
+        );
+    }
+    access::check_on_child(&f.db, &site, OT_EDIT, WoChild::Part, parts[0])
+        .await
+        .expect("part line of site A");
+    let err = access::check_on_child(&f.db, &site, OT_EDIT, WoChild::Part, parts[1])
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "SCOPE_OUTSIDE_SITE");
+    let err = access::check_on_child(&f.db, &site, OT_EDIT, WoChild::Part, parts[2])
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(&err), "SCOPE_RECORD_WITHOUT_SITE");
+    for id in &parts {
+        access::check_on_child(&f.db, &plant, OT_EDIT, WoChild::Part, *id)
+            .await
+            .expect("plant-wide");
+    }
+
     let err = access::check_on_child(&f.db, &site, OT_EDIT, WoChild::Task, 9_999_999)
         .await
         .unwrap_err();

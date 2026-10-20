@@ -1555,8 +1555,9 @@ pub(crate) async fn assign_role_scope_impl(
     let (valid_from, valid_to) = normalize_validity(input.valid_from.as_deref(), input.valid_to.as_deref())?;
     ensure_may_grant_role(&state.db, caller, input.role_id, Some(input.user_id)).await?;
     ensure_may_manage_account(&state.db, caller, input.user_id).await?;
+    // A plant-wide scope stores the licence tenant id or nothing (a blank reference is nothing).
     let scope_reference_input = if input.scope_type == "tenant" {
-        input.scope_reference.clone()
+        input.scope_reference.clone().filter(|r| !r.trim().is_empty())
     } else {
         input.scope_reference.as_deref().map(|r| r.trim().to_string())
     };
@@ -1601,9 +1602,10 @@ pub(crate) async fn assign_role_scope_impl(
     let scope_type_for_audit = input.scope_type.clone();
     let scope_reference_for_audit = scope_reference_input.clone();
 
-    // Replace-at-scope: at most one assignment per (user_id, scope_type, scope_reference).
-    // The superseded rows (emergency elevations included), the new row, the last-administrator
-    // check and the ledger entries are one transaction.
+    // Replace-at-scope: at most one assignment per (user_id, scope_type, scope_reference); every
+    // plant-wide row is the same scope, whether it names the licence tenant (first administrator,
+    // user creation) or nothing (the screens). The superseded rows (emergency elevations included),
+    // the new row, the last-administrator check and the ledger entries are one transaction.
     let scope_ref_key = scope_reference_input.as_deref().unwrap_or("");
     let tx = state.db.begin().await?;
     let admins_before = active_admin_holders(&tx).await?;
@@ -1613,7 +1615,8 @@ pub(crate) async fn assign_role_scope_impl(
             "SELECT usa.id, usa.role_id, r.name AS role_name FROM user_scope_assignments usa \
              INNER JOIN roles r ON r.id = usa.role_id \
              WHERE usa.user_id = ? AND usa.scope_type = ? \
-               AND COALESCE(usa.scope_reference, '') = ? AND usa.deleted_at IS NULL",
+               AND (usa.scope_type = 'tenant' OR COALESCE(usa.scope_reference, '') = ?) \
+               AND usa.deleted_at IS NULL",
             vec![
                 input.user_id.into(),
                 input.scope_type.clone().into(),
@@ -1627,7 +1630,7 @@ pub(crate) async fn assign_role_scope_impl(
          SET deleted_at = ?, updated_at = ? \
          WHERE user_id = ? \
            AND scope_type = ? \
-           AND COALESCE(scope_reference, '') = ? \
+           AND (scope_type = 'tenant' OR COALESCE(scope_reference, '') = ?) \
            AND deleted_at IS NULL",
         vec![
             now.clone().into(),
