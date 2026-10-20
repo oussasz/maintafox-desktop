@@ -889,8 +889,18 @@ async fn received_deletes_never_erase_history_rows() {
     )
     .await;
     server.exchange("A", &a).await;
-    let received = server.exchange("B", &b).await;
-    assert!(received.materialized.conflicts > 0, "{received:?}");
+    server.exchange("B", &b).await;
+    let refused = scalar_i64(
+        &b,
+        "SELECT COUNT(*) FROM sync_conflicts WHERE entity_type = 'inspection_evidence'
+           AND entity_sync_id = ? AND conflict_type = 'APPEND_ONLY_DELETE'",
+        vec![evidence.entity_sync_id.clone().into()],
+    )
+    .await;
+    assert_eq!(
+        refused, 1,
+        "the received delete is a visible APPEND_ONLY_DELETE conflict"
+    );
     let kept = scalar_i64(
         &b,
         "SELECT COUNT(*) FROM inspection_evidence WHERE entity_sync_id = ?",
@@ -906,6 +916,13 @@ async fn received_deletes_never_erase_history_rows() {
         .await
         .expect("apply media delete");
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let media_left = scalar_i64(
+        &b,
+        "SELECT COUNT(*) FROM media_attachments WHERE entity_sync_id = ?",
+        vec![media.entity_sync_id.clone().into()],
+    )
+    .await;
+    assert_eq!(media_left, 0, "a received media delete removes the attachment");
 }
 
 /// Every domain list above, in domain order.
