@@ -290,6 +290,32 @@ describe("InventoryPage", () => {
     expect(within(okRow).getAllByText("—").length).toBeGreaterThan(0);
   });
 
+  it("flags an article whose total on hand is negative with a text badge, and not a healthy one", async () => {
+    primeLists([
+      article(),
+      article({
+        id: 6,
+        article_code: "ART-NEG",
+        article_name: "Oversold seal",
+        on_hand_qty: -2,
+        reserved_qty: 0,
+        available_qty: -2,
+      }),
+    ]);
+
+    renderPage();
+
+    const negativeRow = (await screen.findByText("ART-NEG")).closest("tr");
+    const healthyRow = screen.getByText("ART-001").closest("tr");
+    if (!negativeRow || !healthyRow) throw new Error("expected article rows");
+    const badge = within(negativeRow).getByText("Negative stock");
+    expect(badge.closest("span[title]")).toHaveAttribute(
+      "title",
+      "Total over all stores is negative. To be corrected: another PC may have recorded a movement",
+    );
+    expect(within(healthyRow).queryByText("Negative stock")).toBeNull();
+  });
+
   it("opens the article named in ?articleId= (link from another module)", async () => {
     primeLists([article(), article({ id: 5, article_code: "ART-002", article_name: "Seal kit" })]);
 

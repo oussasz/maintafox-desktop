@@ -14,13 +14,22 @@ export function isNegativeStock(onHand: number, available: number): boolean {
   return onHand < -TOLERANCE || available < -TOLERANCE;
 }
 
-export function NegativeStockBadge({ onHand, available }: { onHand: number; available: number }) {
+export function NegativeStockBadge({
+  onHand,
+  available,
+  total = false,
+}: {
+  onHand: number;
+  available: number;
+  /** The figures are the total over all stores (list): the tooltip says so. */
+  total?: boolean;
+}) {
   const { t } = useTranslation("inventory");
   if (!isNegativeStock(onHand, available)) return null;
   return (
     <StatusChip
       label={t("negativeStock.label")}
-      title={t("negativeStock.hint")}
+      title={t(total ? "negativeStock.hintTotal" : "negativeStock.hint")}
       tone="danger"
       icon={AlertTriangle}
     />

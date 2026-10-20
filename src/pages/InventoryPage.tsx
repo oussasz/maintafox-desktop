@@ -297,6 +297,7 @@ export function InventoryPage() {
             <NegativeStockBadge
               onHand={row.original.on_hand_qty}
               available={row.original.available_qty}
+              total
             />
           </span>
         ),

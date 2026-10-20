@@ -12,7 +12,8 @@
   },
   "negativeStock": {
     "label": "Negative stock",
-    "hint": "To be corrected: another PC may have recorded a movement"
+    "hint": "To be corrected: another PC may have recorded a movement",
+    "hintTotal": "Total over all stores is negative. To be corrected: another PC may have recorded a movement"
   },
   "transfer": {
     "action": "Transfer",

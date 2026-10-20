@@ -12,7 +12,8 @@
   },
   "negativeStock": {
     "label": "Stock négatif",
-    "hint": "À corriger : un autre poste a peut-être enregistré un mouvement"
+    "hint": "À corriger : un autre poste a peut-être enregistré un mouvement",
+    "hintTotal": "Total des magasins négatif. À corriger : un autre poste a peut-être enregistré un mouvement"
   },
   "transfer": {
     "action": "Transférer",
