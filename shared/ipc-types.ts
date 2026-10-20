@@ -11141,3 +11141,65 @@ export interface UnfreezeDecisionInput extends WeeklyScheduleRef {
   approve: boolean;
   comment?: string | null;
 }
+
+// ── Records without a site (CMMS Advisor decision Q1, step 6) ─────────────────
+
+/** Kinds of record an organisation administrator can give a site to (`org::site_assignment`). */
+export type NoSiteKind = "work_order" | "request" | "planning_window";
+
+/** How many records have no site, per kind (`count_records_without_site`). */
+export interface NoSiteCounts {
+  work_orders: number;
+  requests: number;
+  /** Windows without a site flagged "Site to re-enter" (they lost their site). */
+  planning_windows_to_review: number;
+  /** Windows without a site not flagged: plant-wide windows, valid as they are. */
+  planning_windows_plant_wide: number;
+}
+
+/** A record without a site, as the "Records without a site" screen lists it. */
+export interface NoSiteRecord {
+  kind: NoSiteKind;
+  id: number;
+  code: string | null;
+  /** Work-order or request title; the window type for a window. */
+  title: string | null;
+  status_code: string | null;
+  created_at: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  equipment_id: number | null;
+  equipment_code: string | null;
+  equipment_name: string | null;
+  /** The equipment's current location: a suggestion the administrator confirms. */
+  suggested_node_id: number | null;
+  suggested_node_name: string | null;
+  to_review: boolean;
+}
+
+export interface RecordsWithoutSite {
+  kind: NoSiteKind;
+  counts: NoSiteCounts;
+  records: NoSiteRecord[];
+  /** At most this many records are listed (`counts` gives the full number). */
+  listed_limit: number;
+  /** At most this many records are given a site in one batch. */
+  max_batch: number;
+  /** The reason has at least this many characters. */
+  reason_min_chars: number;
+  nodes: AssignableScopeNode[];
+}
+
+export interface AssignSiteInput {
+  kind: NoSiteKind;
+  record_ids: number[];
+  org_node_id: number;
+  reason: string;
+}
+
+export interface AssignSiteResult {
+  kind: NoSiteKind;
+  org_node_id: number;
+  assigned: number[];
+  counts: NoSiteCounts;
+}

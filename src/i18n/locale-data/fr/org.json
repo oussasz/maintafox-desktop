@@ -497,5 +497,52 @@
     "noMatch": "Aucune unité ne correspond à votre recherche.",
     "cancel": "Annuler",
     "review": "Voir l’impact"
+  },
+  "noSite": {
+    "open": "Enregistrements sans site",
+    "openCount": "Enregistrements sans site ({{count}})",
+    "openHint": "Anciens OT, demandes et fenêtres de planification enregistrés sans site : donnez-leur un site.",
+    "title": "Enregistrements sans site",
+    "description": "OT, demandes et fenêtres de planification enregistrés avant que le site soit obligatoire. Tant qu'ils n'ont pas de site, seuls les utilisateurs ayant un rôle valable pour toute l'usine les voient et peuvent agir dessus. Un site n'est donné qu'à un enregistrement qui n'en a pas : il ne peut plus être changé ici ensuite. Les enregistrements clôturés peuvent aussi recevoir un site.",
+    "kinds": {
+      "work_order": "OT ({{count}})",
+      "request": "Demandes ({{count}})",
+      "planning_window": "Fenêtres de planification ({{count}})"
+    },
+    "windowsHint": "Une fenêtre de planification sans site s'applique à toute l'usine : c'est valable. Donnez-lui un site seulement si elle concernait un seul site. Les fenêtres marquées « Site à ressaisir » ont perdu leur site en étant enregistrées avec l'ancienne fenêtre de saisie.",
+    "columns": {
+      "record": "Enregistrement",
+      "status": "Statut",
+      "review": "À revoir",
+      "equipment": "Équipement",
+      "suggested": "Équipement installé à",
+      "date": "Créé le",
+      "period": "Période"
+    },
+    "selectAll": "Sélectionner tous les enregistrements affichés",
+    "selectRow": "Sélectionner {{record}}",
+    "noEquipment": "Sans équipement",
+    "windowToReview": "Site à ressaisir",
+    "windowPlantWide": "Toute l'usine (valable)",
+    "emptyTitle": "Rien à revoir",
+    "empty": {
+      "work_order": "Tous les OT ont un site.",
+      "request": "Toutes les demandes ont un site.",
+      "planning_window": "Toutes les fenêtres de planification ont un site."
+    },
+    "loadFailed": "Impossible de charger les enregistrements sans site",
+    "selected_one": "{{count}} enregistrement sélectionné",
+    "selected_other": "{{count}} enregistrements sélectionnés",
+    "tooMany": "Au plus {{max}} enregistrements à la fois : sélectionnez-en moins.",
+    "site": "Site à donner",
+    "siteHint": "Prérempli avec l'endroit où l'équipement sélectionné est installé aujourd'hui. Vérifiez-le avant de confirmer.",
+    "siteHintNone": "Choisissez le site (ou la ligne, la zone) auquel ces enregistrements appartiennent.",
+    "reason": "Motif",
+    "reasonHint": "Au moins {{min}} caractères. Conservé sur chaque enregistrement et dans le journal d'audit avec votre nom et la date.",
+    "confirm_one": "Donner ce site à {{count}} enregistrement",
+    "confirm_other": "Donner ce site à {{count}} enregistrements",
+    "assigned_one": "{{site}} donné à {{count}} enregistrement.",
+    "assigned_other": "{{site}} donné à {{count}} enregistrements.",
+    "close": "Fermer"
   }
 }

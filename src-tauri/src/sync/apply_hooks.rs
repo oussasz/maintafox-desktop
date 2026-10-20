@@ -58,6 +58,11 @@
 //!   already here is never changed, and an acknowledgement made by anyone but the notice's
 //!   recipient is refused as a conflict (`auth::recovery_code::inbound_notice_check`,
 //!   `inbound_acknowledgement_check`); both are append-only, so a received delete is a conflict.
+//! - `work_orders` / `intervention_requests` / `planning_windows`: a site given to a record without
+//!   one (CMMS Advisor decision Q1) is accepted only when it names who gave it (holding the
+//!   organisation administration right plant-wide here), when and why, and the record still has no
+//!   site here; the trace is never rewritten; a work order or request given a site without that
+//!   trace is a conflict (`org::site_assignment::inbound_site_assignment_check`).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -145,8 +150,41 @@ pub(crate) async fn before_upsert_checked(
         "work_orders" => Some(
             match crate::permit::sync_check::inbound_permit_rule_check(conn, entity_sync_id, payload).await? {
                 Some(verdict) => Some(verdict),
-                None => crate::permit::sync_check::inbound_work_order_check(conn, entity_sync_id, payload).await?,
+                None => {
+                    let permit_gate =
+                        crate::permit::sync_check::inbound_work_order_check(conn, entity_sync_id, payload).await?;
+                    match permit_gate {
+                        Some(verdict) => Some(verdict),
+                        None => {
+                            crate::org::site_assignment::inbound_site_assignment_check(
+                                conn,
+                                crate::org::site_assignment::NoSiteKind::WorkOrder,
+                                entity_sync_id,
+                                payload,
+                            )
+                            .await?
+                        }
+                    }
+                }
             },
+        ),
+        "intervention_requests" => Some(
+            crate::org::site_assignment::inbound_site_assignment_check(
+                conn,
+                crate::org::site_assignment::NoSiteKind::Request,
+                entity_sync_id,
+                payload,
+            )
+            .await?,
+        ),
+        "planning_windows" => Some(
+            crate::org::site_assignment::inbound_site_assignment_check(
+                conn,
+                crate::org::site_assignment::NoSiteKind::PlanningWindow,
+                entity_sync_id,
+                payload,
+            )
+            .await?,
         ),
         "qualification_overrides" => {
             Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)

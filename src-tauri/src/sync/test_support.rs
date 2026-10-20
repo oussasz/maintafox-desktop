@@ -377,6 +377,17 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_orders", "permit_rule_code", "NULL"),
     ("work_orders", "permit_rule_permit_type", "NULL"),
     ("work_orders", "permit_rule_cleared_at", "NULL"),
+    // A generic record carries no assigned-site trace (written once by an administrator on a record
+    // without a site and judged on arrival, `org::site_assignment::inbound_site_assignment_check`).
+    ("work_orders", "site_assigned_by_id", "NULL"),
+    ("work_orders", "site_assigned_at", "NULL"),
+    ("work_orders", "site_assign_reason", "NULL"),
+    ("intervention_requests", "site_assigned_by_id", "NULL"),
+    ("intervention_requests", "site_assigned_at", "NULL"),
+    ("intervention_requests", "site_assign_reason", "NULL"),
+    ("planning_windows", "site_assigned_by_id", "NULL"),
+    ("planning_windows", "site_assigned_at", "NULL"),
+    ("planning_windows", "site_assign_reason", "NULL"),
     // A calendar day, not a timestamp.
     ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
     // A planned crew is 1–50 people (migration 207 triggers).

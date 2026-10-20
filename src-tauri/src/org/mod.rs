@@ -27,6 +27,7 @@ pub mod node_types;
 pub mod nodes;
 pub mod relationship_rules;
 pub mod responsibilities;
+pub mod site_assignment;
 pub mod structure_model;
 pub mod tree_queries;
 pub mod validation;
@@ -41,6 +42,8 @@ mod node_types_tests;
 mod nodes_tests;
 #[cfg(test)]
 mod responsibilities_bindings_tests;
+#[cfg(test)]
+mod site_assignment_tests;
 #[cfg(test)]
 mod structure_model_tests;
 #[cfg(test)]

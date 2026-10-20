@@ -59,6 +59,12 @@ vi.mock("@/components/PermissionGate", () => ({
   PermissionGate: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
+// The "Records without a site" tool needs plant-wide `org.admin` (its own test:
+// records-without-site-panel.test.tsx); not held here, so the page is unchanged.
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: () => ({ loading: false, can: () => false }),
+}));
+
 // ── Import after mocks (hoisted by vitest) ────────────────────────────────────
 
 import { OrganizationDesignerPage } from "@/pages/admin/OrganizationDesignerPage";

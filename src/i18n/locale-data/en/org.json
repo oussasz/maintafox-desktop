@@ -497,5 +497,52 @@
     "noMatch": "No unit matches your search.",
     "cancel": "Cancel",
     "review": "Review impact"
+  },
+  "noSite": {
+    "open": "Records without a site",
+    "openCount": "Records without a site ({{count}})",
+    "openHint": "Old work orders, requests and planning windows recorded without a site: give them one.",
+    "title": "Records without a site",
+    "description": "Work orders, requests and planning windows recorded before a site was required. Until they have a site, only users with a role for the whole plant see them and can act on them. A site is given only to a record without one: it cannot be changed here afterwards. Closed records can be given a site too.",
+    "kinds": {
+      "work_order": "Work orders ({{count}})",
+      "request": "Requests ({{count}})",
+      "planning_window": "Planning windows ({{count}})"
+    },
+    "windowsHint": "A planning window without a site applies to the whole plant: that is valid. Give it a site only if it was meant for one site. Windows marked \"Site to re-enter\" lost their site when they were saved with the old window dialog.",
+    "columns": {
+      "record": "Record",
+      "status": "Status",
+      "review": "To review",
+      "equipment": "Equipment",
+      "suggested": "Equipment installed at",
+      "date": "Created",
+      "period": "Period"
+    },
+    "selectAll": "Select every record listed",
+    "selectRow": "Select {{record}}",
+    "noEquipment": "No equipment",
+    "windowToReview": "Site to re-enter",
+    "windowPlantWide": "Whole plant (valid)",
+    "emptyTitle": "Nothing to review",
+    "empty": {
+      "work_order": "Every work order has a site.",
+      "request": "Every request has a site.",
+      "planning_window": "Every planning window has a site."
+    },
+    "loadFailed": "The records without a site could not be loaded",
+    "selected_one": "{{count}} record selected",
+    "selected_other": "{{count}} records selected",
+    "tooMany": "At most {{max}} records at once: select fewer.",
+    "site": "Site to give",
+    "siteHint": "Pre-filled with the place where the selected equipment is installed today. Check it before confirming.",
+    "siteHintNone": "Choose the site (or line, zone) these records belong to.",
+    "reason": "Reason",
+    "reasonHint": "At least {{min}} characters. Kept on each record and in the audit log with your name and the date.",
+    "confirm_one": "Give this site to {{count}} record",
+    "confirm_other": "Give this site to {{count}} records",
+    "assigned_one": "{{site}} given to {{count}} record.",
+    "assigned_other": "{{site}} given to {{count}} records.",
+    "close": "Close"
   }
 }

@@ -135,6 +135,12 @@
       "ADMIN_RECOVERY_NOTICE_INVALID": "A notice about an administrator created with a recovery code arrived addressed to the new administrator, or with invisible characters in the names it shows",
       "ADMIN_RECOVERY_ACK_NOT_RECIPIENT": "A recovery-code notice was acknowledged on another PC by someone other than the administrator it is addressed to",
       "ADMIN_RECOVERY_ACK_CHANGED": "An acknowledgement of a recovery-code notice was changed on another PC: acknowledgements are never changed",
+      "SITE_ASSIGNMENT_TRACE_CHANGED": "The site given to an old record without one (who, when, why) was removed or rewritten on another PC",
+      "SITE_ASSIGNMENT_INCOMPLETE": "A site given on another PC to a record without one, without who, when (or dated in the future), why or the site",
+      "SITE_ASSIGNMENT_SITE_NOT_EMPTY": "A site given on another PC to a record that already has a site here",
+      "SITE_ASSIGNMENT_NODE_INVALID": "A site given on another PC to a record without one, on a unit deleted here",
+      "SITE_ASSIGNMENT_NOT_ALLOWED": "A site given on another PC to a record without one, by someone without the organisation administration right for the whole plant",
+      "SITE_SET_WITHOUT_ASSIGNMENT": "A work order or request without a site received with a site, without the site assignment of an organisation administrator",
       "other": "Needs review"
     },
     "history": {
