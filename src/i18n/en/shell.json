@@ -70,6 +70,7 @@
       "SITE_SETTING_NOT_A_SITE": "A site rule set on something that is not a site",
       "SITE_SETTING_STALE": "An older change of a site rule after a later one",
       "SITE_SETTING_UNKNOWN": "A site rule this version does not know",
+      "SITE_SETTING_MOVED": "A site rule moved to a site that does not replace its deleted site",
       "SYNC_STATE_TIME_MISSING": "A status received without the time it requires (activation, start)",
       "PERMIT_STATUS_BACKWARDS": "A finished permit would go back in its lifecycle",
       "PERMIT_EXPIRY_MISSING": "A permit activated without an expiry",

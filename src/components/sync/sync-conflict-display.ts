@@ -74,6 +74,8 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "SITE_SETTING_NOT_A_SITE",
   "SITE_SETTING_STALE",
   "SITE_SETTING_UNKNOWN",
+  // A site rule received on a site that does not replace the deleted site holding it here.
+  "SITE_SETTING_MOVED",
   "SYNC_STATE_TIME_MISSING",
   "PERMIT_STATUS_BACKWARDS",
   "PERMIT_EXPIRY_MISSING",

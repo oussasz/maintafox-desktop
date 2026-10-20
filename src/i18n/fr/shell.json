@@ -70,6 +70,7 @@
       "SITE_SETTING_NOT_A_SITE": "Une règle de site posée sur un élément qui n'est pas un site",
       "SITE_SETTING_STALE": "Une modification plus ancienne d'une règle de site, après une plus récente",
       "SITE_SETTING_UNKNOWN": "Une règle de site inconnue de cette version",
+      "SITE_SETTING_MOVED": "Une règle de site déplacée vers un site qui ne remplace pas son site supprimé",
       "SYNC_STATE_TIME_MISSING": "Un statut reçu sans la date qu'il exige (activation, démarrage)",
       "PERMIT_STATUS_BACKWARDS": "Un permis terminé reviendrait en arrière dans son cycle",
       "PERMIT_EXPIRY_MISSING": "Un permis activé sans date d'expiration",

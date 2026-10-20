@@ -269,6 +269,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Limit | Impact | Handled in |
 |---|---|---|
 | Activity events are shown with translated names (every event code the program writes today is covered); event names added to the program later show in a readable form until their translation is added. | UX | Accepted |
+| Audit chain seen from another PC: some audit events never leave the PC that wrote them (permit and permit-type audits, safety-notice acknowledgements; the change itself travels on its own record). They still take a position in that PC's hash chain, so the audit-chain check on another PC reports "missing positions" at the first such event and checks nothing after it for that PC. Each PC's own chain is fully checked on that PC. | Data | Before release: verify other PCs' chains by position or with hash-only stubs (Safety & LOTO Lead) |
 
 ## Step 5 (old-layout screens) — in progress
 
@@ -277,6 +278,8 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Work-order and request boards are read-only: each status change needs its own dialog (urgency, reason, permit checks). Purchasing boards allow submit/approve by drag, menu or keyboard through the same server step. | UX | Accepted |
 | Work-order and request boards load each lane from the server with its own count and "load more"; opening a board sends one request per lane (7 or 6, in parallel). | UX | Accepted |
 | Screens still old or mixed (in progress): asset import wizard, diagnostics page, and the remaining reliability tools (Ishikawa, decision log, rating scales). | UX | Step 5 |
+| The colour mode (Clair / Sombre / Système, Paramètres › Général › Apparence and Mon profil) is stored on this PC (per Windows user on this PC), not per account and not synced; "Système" follows the operating system. The login, lock and activation screens keep their fixed light brand look in every mode. | UX | Accepted |
+| Tone borders (the thin edge of status chips and boxes) have 1.2–1.8:1 contrast in light and dark; the text and the label carry the meaning (text contrast is checked by `node scripts/check-tone-contrast.mjs`, 4.5:1 or more in both modes). | UX | Accepted |
 
 ## Modules delivered before this register
 
