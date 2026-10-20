@@ -1182,7 +1182,7 @@ async fn a_synced_site_opt_out_needs_its_audited_change() {
     };
     let verdict = |p: serde_json::Map<String, serde_json::Value>| {
         let db = &f.db;
-        async move { inbound_site_setting_check(db, &p).await.expect("check") }
+        async move { inbound_site_setting_check(db, "ss-remote", &p).await.expect("check") }
     };
     let conflict_code = |v: &Option<InboundVerdict>| match v {
         Some(InboundVerdict::Conflict { code, .. }) => *code,
@@ -1349,12 +1349,12 @@ async fn a_received_site_rule_time_is_read_as_an_instant_in_any_format() {
         .await;
     }
     // The 09:00 "on" replayed, in a third format (fractional seconds, `Z`): the later "off" wins.
-    let replay = inbound_site_setting_check(&f.db, &rule("2026-10-18T09:00:00.000Z"))
+    let replay = inbound_site_setting_check(&f.db, "ss-formats", &rule("2026-10-18T09:00:00.000Z"))
         .await
         .expect("check");
     assert_eq!(conflict_code(replay), "SITE_SETTING_UNAUDITED");
     // A rule whose time of change cannot be read: invalid, never applied.
-    let unreadable = inbound_site_setting_check(&f.db, &rule("yesterday morning"))
+    let unreadable = inbound_site_setting_check(&f.db, "ss-formats", &rule("yesterday morning"))
         .await
         .expect("check");
     assert_eq!(conflict_code(unreadable), "SITE_SETTING_INVALID");
@@ -2122,6 +2122,109 @@ async fn a_received_decision_keeps_the_strictest_site_and_its_local_fields() {
     nobody.insert("decided_by_sync_id".into(), serde_json::Value::Null);
     let outcome = apply_wire(&f, "reliability_study_decisions", &sync_id, "upsert", &nobody).await;
     assert_eq!(conflict_code(&outcome), Some("DECISION_SELF_APPROVAL"), "{outcome:?}");
+}
+
+/// A new organisation structure published on another PC moves a decision, its equipment and its
+/// site's rules to the copy of its site (`org::validation::publish_model_with_remap`). Received
+/// here once the former site is deleted here, a self-approval is judged on the copy's rule: the
+/// deleted node no longer holds one. Received on any other site, the site stored here still
+/// counts (four-eyes).
+#[tokio::test]
+async fn a_received_decision_moved_to_the_copy_of_its_deleted_site_is_judged_on_the_copy() {
+    let f = setup().await;
+    let study_id = scenario(&f).await;
+    second_site(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    // Proposed at site 1 (four-eyes): the decision stores site 1.
+    let d = create_decision(
+        &f.db,
+        CreateDecisionInput {
+            study_id,
+            title: "Contrôle".into(),
+            action_kind: "one_off_wo".into(),
+            equipment_id: Some(f.p101),
+            pm_plan_id: None,
+            proposed_interval_hours: None,
+            wo_type_code: Some("corrective".into()),
+            approver_id: None,
+            fmeca_item_id: None,
+            rcm_decision_id: None,
+            justification: None,
+            planned_cost: None,
+            failure_cost: None,
+        },
+        f.admin,
+    )
+    .await
+    .expect("decision");
+    let sync_id = text(
+        &f,
+        &format!(
+            "SELECT entity_sync_id FROM reliability_study_decisions WHERE id = {}",
+            d.id
+        ),
+    )
+    .await;
+    let admin_sync = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM user_accounts WHERE id = {}", f.admin),
+    )
+    .await;
+    // Site 2 allows self-approval (set while it is a site of the structure in use).
+    set_opt_out(&f, 2, true, None).await;
+    // The publish as received here: site 1 deleted; its copy (node 90, same code and node type, in
+    // structure model 90) holds the site's rule, moved there turned on; P-101 moved there too.
+    for sql in [
+        "UPDATE org_structure_models SET status = 'superseded' WHERE id = 1".to_string(),
+        "INSERT INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
+         VALUES (90, 'st-model-90', 90, 'active', datetime('now'), datetime('now'))"
+            .to_string(),
+        "INSERT INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, can_own_work, is_active, \
+         created_at, updated_at) SELECT 90, 'st-type-90', 90, code, label, can_own_work, 1, datetime('now'), \
+         datetime('now') FROM org_node_types WHERE id = 1"
+            .to_string(),
+        "INSERT INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, ancestor_path, depth, \
+         created_at, updated_at, structure_model_id) SELECT 90, 'st-node-90', code, name, 90, 'active', '/90/', 0, \
+         datetime('now'), datetime('now'), 90 FROM org_nodes WHERE id = 1"
+            .to_string(),
+        "UPDATE org_nodes SET deleted_at = datetime('now') WHERE id = 1".to_string(),
+        format!(
+            "INSERT INTO site_settings (entity_sync_id, site_node_id, setting_key, value_json) \
+             VALUES ('st-moved-rule', 90, '{SELF_APPROVAL_SETTING}', 'true')"
+        ),
+        format!("UPDATE equipment SET installed_at_node_id = 90 WHERE id = {}", f.p101),
+    ] {
+        exec(&f.db, &sql).await;
+    }
+    let self_approved = |site: &str| {
+        let f = &f;
+        let sync_id = sync_id.clone();
+        let admin_sync = admin_sync.clone();
+        let site = site.to_string();
+        async move {
+            let mut wire = wire_of(f, "reliability_study_decisions", &sync_id).await;
+            wire.insert("status".into(), "approved".into());
+            wire.insert("decided_by_sync_id".into(), admin_sync.into());
+            wire.insert("site_node_sync_id".into(), site.into());
+            wire.insert("site_recorded".into(), 1.into());
+            apply_wire(f, "reliability_study_decisions", &sync_id, "upsert", &wire).await
+        }
+    };
+    // Received on site 2 (allows it, but not the copy of site 1): the site stored here counts.
+    let outcome = self_approved("st-node-2").await;
+    assert_eq!(conflict_code(&outcome), Some("DECISION_SELF_APPROVAL"), "{outcome:?}");
+    // Received on the copy of site 1, whose rule allows it: applied.
+    let outcome = self_approved("st-node-90").await;
+    assert_eq!(conflict_code(&outcome), None, "{outcome:?}");
+    assert_eq!(
+        text(
+            &f,
+            &format!("SELECT status FROM reliability_study_decisions WHERE id = {}", d.id)
+        )
+        .await,
+        "approved"
+    );
 }
 
 #[tokio::test]

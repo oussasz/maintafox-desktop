@@ -264,7 +264,8 @@
       "PARENT_CHILD_NOT_ALLOWED": "«{{nodeName}}» ({{childType}}) ne peut pas dépendre d’un {{parentType}} avec les règles de relation actuelles. Déplacez-le ou mettez à jour les règles.",
       "PARENT_CHILD_DRIFT": "Une relation parent–enfant utilisée dans l’arbre n’est plus autorisée par les règles. Déplacez l’unité ou restaurez la règle.",
       "COST_CENTER_INCOMPATIBLE": "«{{nodeName}}» a un centre de coûts, mais son niveau «{{typeCode}}» ne les autorise pas. Retirez le centre de coûts ou autorisez-les sur ce niveau.",
-      "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS": "«{{nodeName}}» est encore utilisé par des données en production mais est absent de ce brouillon. Réparez les copies du brouillon, ou détachez ces liens avant de publier."
+      "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS": "«{{nodeName}}» est encore utilisé par des données en production mais est absent de ce brouillon. Réparez les copies du brouillon, ou détachez ces liens avant de publier.",
+      "SITE_RULE_ON_DRAFT_COPY": "La règle de site «{{settingKey}}» est définie à la fois sur «{{nodeName}}» et sur sa copie dans ce brouillon : la règle en vigueur ne peut pas passer sur la copie. Contactez le support pour retirer la règle de la copie avant de publier."
     },
     "refreshTimeline": "Actualiser l’historique des modifications",
     "auditLoadError": "Impossible de charger l'historique des modifications"

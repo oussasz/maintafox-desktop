@@ -879,6 +879,9 @@ async fn local_decision<C: ConnectionTrait>(conn: &C, sync_id: &str) -> AppResul
 ///   the decision's site allows it here — the strictest of the site stored with the decision and
 ///   its equipment's current site — or this device already holds exactly that approval (same
 ///   study, equipment, proposer and decider; status the same or further along);
+/// - a site stored here that a new organisation structure replaced (deleted here, the received site
+///   is the node replacing it, `org::validation::node_replaces_deleted_node`) gives way to the
+///   received site;
 /// - a study, equipment, site or person not applied here yet makes the row wait.
 pub(crate) async fn inbound_self_approval_check<C: ConnectionTrait>(
     conn: &C,
@@ -969,14 +972,28 @@ pub(crate) async fn inbound_self_approval_check<C: ConnectionTrait>(
         .get("site_recorded")
         .and_then(|v| v.as_i64().or_else(|| v.as_bool().map(i64::from)))
         == Some(1);
+    let mut payload_site = None;
     if payload_recorded {
         let Ok(site) = payload_ref(conn, payload, "site_node_sync_id", "org_nodes").await? else {
             return Ok(Some(InboundDecisionVerdict::Defer("site not applied yet".into())));
         };
+        payload_site = site;
         rule = strictest(rule, site_rule(conn, site).await?);
     }
     if let Some(l) = local.as_ref().filter(|l| l.site_recorded) {
-        rule = strictest(rule, site_rule(conn, l.site_node_id).await?);
+        // The site stored here is a node deleted here and the received site is the node replacing
+        // it: a new organisation structure moved the decision (and the site's rules) there
+        // (`org::validation::publish_model_with_remap`). The received site's rule is the one
+        // judged; the deleted node no longer holds a rule.
+        let replaced = match (l.site_node_id, payload_site) {
+            (Some(held), Some(received)) if held != received => {
+                crate::org::validation::node_replaces_deleted_node(conn, held, received).await?
+            }
+            _ => false,
+        };
+        if !replaced {
+            rule = strictest(rule, site_rule(conn, l.site_node_id).await?);
+        }
     }
     Ok(match rule {
         SelfApprovalRule::Allowed => None,

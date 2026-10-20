@@ -22,7 +22,9 @@
 //!   applied yet makes it wait (`reliability::study::decisions::inbound_self_approval_check`);
 //! - `site_settings` / `site_setting_events`: a per-site rule relaxing a site is applied only with
 //!   its audited change (step-up, reason, settings right), waiting for that event while it is in
-//!   the inbox, a conflict otherwise; unknown rules and unreadable values are conflicts
+//!   the inbox, a conflict otherwise; unknown rules and unreadable values are conflicts; a rule
+//!   held on here moved by an organisation publish to the node replacing its deleted node is
+//!   applied, moved anywhere else it is a conflict
 //!   (`settings::site::inbound_site_setting_check`, `inbound_site_setting_event_check`);
 //! - `weekly_schedules`: a received week that would go backwards in its lifecycle here (frozen
 //!   back to draft, a later baseline back to an earlier one) is refused as a conflict
@@ -126,7 +128,9 @@ pub(crate) async fn before_upsert_checked(
             }));
     }
     let safety_check = match layout.def.entity_type {
-        "site_settings" => Some(crate::settings::site::inbound_site_setting_check(conn, payload).await?),
+        "site_settings" => {
+            Some(crate::settings::site::inbound_site_setting_check(conn, entity_sync_id, payload).await?)
+        }
         "site_setting_events" => Some(crate::settings::site::inbound_site_setting_event_check(payload).await?),
         "permit_types" => {
             Some(crate::permit::sync_check::inbound_permit_type_check(conn, entity_sync_id, payload).await?)

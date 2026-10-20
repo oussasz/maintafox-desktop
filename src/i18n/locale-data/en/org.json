@@ -264,7 +264,8 @@
       "PARENT_CHILD_NOT_ALLOWED": "«{{nodeName}}» ({{childType}}) cannot sit under a {{parentType}} with the current relationship rules. Move it or update the rules.",
       "PARENT_CHILD_DRIFT": "A parent–child relationship used in the tree is no longer allowed by the rules. Move the unit or restore the rule.",
       "COST_CENTER_INCOMPATIBLE": "«{{nodeName}}» has a cost center, but its level «{{typeCode}}» does not allow cost centers. Remove the cost center or allow them on that level.",
-      "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS": "«{{nodeName}}» is still used by live data but is missing from this draft. Repair the draft copies, or detach those links before publishing."
+      "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS": "«{{nodeName}}» is still used by live data but is missing from this draft. Repair the draft copies, or detach those links before publishing.",
+      "SITE_RULE_ON_DRAFT_COPY": "The site rule «{{settingKey}}» is set both on «{{nodeName}}» and on its copy in this draft, so the rule in force cannot move onto the copy. Contact support to remove the copy’s rule before publishing."
     },
     "refreshTimeline": "Refresh the change timeline",
     "auditLoadError": "The change history could not be loaded"

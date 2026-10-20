@@ -584,16 +584,35 @@ async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> Ap
 }
 
 /// Whether the site a permit holds here (`entity_sync_id` of the copy held here) is an org node
-/// that exists here and is deleted. A node missing here, or no node, is not: nothing tells it apart
-/// from a site change.
-async fn site_node_deleted_here(conn: &impl ConnectionTrait, held_node: Option<&str>) -> AppResult<bool> {
+/// that exists here and is deleted, and the received site (`node`) is the node that replaced it
+/// when a new organisation structure was published (`org::validation::node_replaces_deleted_node`:
+/// same code and node type, in another structure). Never any other live node, such as the plant
+/// above it: the publish moves a permit only to the copy of its own node. A held node missing here,
+/// or no node, is not deleted: nothing tells it apart from a site change. `None`: the held node is
+/// deleted here and the received one is not applied yet (the row waits).
+async fn site_moved_to_replacing_node(
+    conn: &impl ConnectionTrait,
+    held_node: Option<&str>,
+    node: Option<&str>,
+) -> AppResult<Option<bool>> {
     let Some(held_node) = held_node else {
-        return Ok(false);
+        return Ok(Some(false));
     };
-    let Some(id) = local_id(conn, "org_nodes", held_node).await? else {
-        return Ok(false);
+    let Some(held_id) = local_id(conn, "org_nodes", held_node).await? else {
+        return Ok(Some(false));
     };
-    Ok(!crate::permit::queries::live_org_node(conn, id).await?)
+    if crate::permit::queries::live_org_node(conn, held_id).await? {
+        return Ok(Some(false));
+    }
+    let Some(node) = node else {
+        return Ok(Some(false));
+    };
+    let Some(node_id) = local_id(conn, "org_nodes", node).await? else {
+        return Ok(None);
+    };
+    Ok(Some(
+        crate::org::validation::node_replaces_deleted_node(conn, held_id, node_id).await?,
+    ))
 }
 
 /// A received permit whose equipment, linked work order or site differs from the copy held here
@@ -646,11 +665,23 @@ async fn equipment_change_check(
         return Ok(None);
     }
     let held = field(local, "status").unwrap_or_default();
-    // Its site alone moved off a node deleted here: the publish of a new organisation structure
-    // moves every permit off the former nodes (`org::validation::publish_model_with_remap`, which
-    // deletes them before it moves the permits). Whatever its status, it is judged on the rules
+    // Its site alone moved off a node deleted here to the node replacing it: the publish of a new
+    // organisation structure moves every permit off the former nodes to their copies
+    // (`org::validation::publish_model_with_remap`). Whatever its status, it is judged on the rules
     // below (its site on its equipment's or work order's chain).
-    let site_reanchored = !equipment_changes && site_node_deleted_here(conn, held_node).await?;
+    let site_reanchored = if equipment_changes {
+        false
+    } else {
+        match site_moved_to_replacing_node(conn, held_node, node).await? {
+            Some(reanchored) => reanchored,
+            None => {
+                return wait(format!(
+                    "permit {code}: its site {} is not applied yet",
+                    node.unwrap_or("none")
+                ))
+            }
+        }
+    };
     if !site_reanchored && !crate::permit::queries::WP_EQUIPMENT_CHANGE_STATUSES.contains(&held) {
         return if equipment_changes {
             conflict(
