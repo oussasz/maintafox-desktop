@@ -13,7 +13,7 @@ const OPTIONS: { value: ThemePreference; icon: LucideIcon }[] = [
 
 /**
  * Settings → Appearance: Clair / Sombre / Système. The choice is stored on this PC only
- * (localStorage of the app, per Windows session, shared by the Maintafox accounts of this PC); "Système" follows the Windows setting.
+ * (localStorage of the app, per Windows user on this PC, shared by the Maintafox accounts of this PC); "Système" follows the Windows setting.
  * It is not a plant setting, so it needs no permission and is not synchronised.
  */
 export function AppearanceSettingsPanel() {

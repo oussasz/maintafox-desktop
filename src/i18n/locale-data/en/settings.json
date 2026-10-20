@@ -468,7 +468,7 @@
   },
   "appearance": {
     "title": "Appearance",
-    "intro": "Colour mode of the application on this PC. The choice is saved on this PC, for the current Windows session; it is not shared with other PCs or between Maintafox accounts on this PC.",
+    "intro": "Colour mode of the application on this PC. The choice is saved on this PC, for the current Windows user; it is not shared with other PCs or between Maintafox accounts on this PC.",
     "legend": "Colour mode",
     "light": "Light",
     "lightHint": "Light background, recommended in a well-lit workshop.",

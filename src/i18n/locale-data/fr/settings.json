@@ -468,7 +468,7 @@
   },
   "appearance": {
     "title": "Apparence",
-    "intro": "Mode de couleur de l'application sur ce poste. Le choix est enregistré sur ce poste, pour la session Windows en cours ; il n'est pas partagé avec les autres postes ni entre les comptes Maintafox de ce poste.",
+    "intro": "Mode de couleur de l'application sur ce poste. Le choix est enregistré sur ce poste, pour l'utilisateur Windows de ce poste ; il n'est pas partagé avec les autres postes ni entre les comptes Maintafox de ce poste.",
     "legend": "Mode de couleur",
     "light": "Clair",
     "lightHint": "Fond clair, recommandé en atelier bien éclairé.",

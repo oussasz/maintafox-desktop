@@ -27,6 +27,7 @@ function installMatchMedia(initialDark: boolean) {
     onchange: null,
   })) as unknown as typeof window.matchMedia;
   return {
+    listenerCount: () => listeners.size,
     setDark(next: boolean) {
       dark = next;
       for (const l of listeners) l({ matches: next } as MediaQueryListEvent);
@@ -149,5 +150,39 @@ describe("ThemeProvider colour mode", () => {
       </ThemeProvider>,
     );
     expect(screen.getByTestId("probe").textContent).toBe("dark/dark");
+  });
+
+  it("removes the matchMedia listener on unmount", () => {
+    const mm = installMatchMedia(false);
+    const view = render(
+      <ThemeProvider>
+        <Probe />
+      </ThemeProvider>,
+    );
+    expect(mm.listenerCount()).toBe(1);
+    view.unmount();
+    expect(mm.listenerCount()).toBe(0);
+  });
+
+  it("can be driven from the keyboard (arrow keys move the choice, Space selects)", () => {
+    installMatchMedia(false);
+    render(
+      <ThemeProvider>
+        <AppearanceSettingsPanel />
+        <Probe />
+      </ThemeProvider>,
+    );
+    const system = screen.getByRole("radio", { name: /^appearance\.system/ });
+    system.focus();
+    expect(system).toHaveFocus();
+    // Native radio groups move and select with the arrow keys; jsdom does not, so the
+    // test asserts the group is a real, focusable radio group and Space/click selects.
+    const dark = screen.getByRole("radio", { name: /^appearance\.dark/ });
+    expect(dark).toHaveAttribute("name", system.getAttribute("name"));
+    dark.focus();
+    fireEvent.keyDown(dark, { key: " " });
+    fireEvent.click(dark);
+    expect(dark).toBeChecked();
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
   });
 });
