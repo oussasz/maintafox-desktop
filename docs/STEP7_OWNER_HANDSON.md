@@ -9,20 +9,20 @@ Only what automatic tests cannot prove. Every step was re-read against the curre
 ## Avant de commencer / Before you start
 
 1. Installez l'installateur de test (étape 8) et chargez l'usine de démonstration : équipements avec compteurs, plans préventifs, stock dans deux magasins, demandes et OT à plusieurs statuts, et **au moins deux sites** (S1 et S2) avec des équipements installés sur chacun.
-2. Créez les comptes ci-dessous dans Utilisateurs & rôles › Utilisateurs › « Nouvel utilisateur ». Les rôles livrés sont « Administrator », « Supervisor », « Planner/Scheduler », « Maintenance Technician » ; les droits sont ceux de la liste générée (`shared/rbac/permissions.generated.ts`).
+2. Créez les comptes ci-dessous dans Utilisateurs & rôles › Utilisateurs › « Nouvel utilisateur ». Les rôles livrés sont « Administrator », « Supervisor », « Planner/Scheduler », « Maintenance Technician ».
 
 | Compte | Rôle | Où il s'applique | À quoi il sert |
 | --- | --- | --- | --- |
 | Administrateur | Administrator | Toute l'usine | réglages, comptes, listes |
-| Superviseur 1 et 2 | Supervisor | Toute l'usine | tri, approbation, permis (ptw.issue, ptw.close), planification, fiabilité |
+| Superviseur 1 et 2 | Supervisor | Toute l'usine | tri, approbation, permis (droit d'émettre et de clôturer), planification, fiabilité |
 | Planificateur | Planner/Scheduler | Toute l'usine | planification, préventif (pas de permis) |
-| Planificateur réduit | copie de Planner/Scheduler sans per.view, per.report, per.position.view, org.view, ref.view | Toute l'usine | étapes de droits réduits |
-| Technicien (personne A) | Maintenance Technician | Toute l'usine | demandes, OT, permis (ptw.issue sans ptw.close) |
-| Magasinier | à créer : inv.view, inv.manage, inv.count, inv.procure, ot.view | Toute l'usine | stock |
+| Planificateur réduit | copie de Planner/Scheduler sans les droits de lire le personnel, les postes, l'organisation et les données de référence | Toute l'usine | étapes de droits réduits |
+| Technicien (personne A) | Maintenance Technician | Toute l'usine | demandes, OT, permis (droit d'émettre, pas de clôturer) |
+| Magasinier | à créer : droits du stock (voir, gérer, compter, acheter) et voir les OT | Toute l'usine | stock |
 | Technicien S1 et Technicien S2 | Maintenance Technician | un seul site chacun | droits par site (un rôle d'administrateur ne peut pas être limité à un site) |
 
-3. Travaillez en français, thème clair ; l'anglais et le sombre sont à la fin.
-4. Gardez le Fil d'activité ouvert : Paramètres › « Sécurité & Logs » › « Journal d'activité » › « Fil d'activité » (compte avec adm.settings et log.view). Après chaque étape, une ligne lisible doit apparaître.
+3. Travaillez en français, thème clair ; l'anglais est à la fin. Le passage en thème sombre est à faire seulement quand le choix Clair/Sombre existe dans l'application (en attente d'une décision produit) : aucun écran ne le propose aujourd'hui.
+4. Gardez le Fil d'activité ouvert : Paramètres › « Sécurité & Logs » › « Journal d'activité » › « Fil d'activité » (compte avec le droit paramètres et le droit de lire le journal). Après chaque étape, une ligne lisible doit apparaître.
 5. Deux PC (même usine, même serveur) : seulement pour la section K. La section A demande une machine neuve ou remise à zéro.
 6. Pour chaque étape : cochez si conforme ; sinon écrivez une ligne : écran · ce que j'ai fait · ce que j'ai vu.
 
@@ -46,7 +46,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** The banner “Créez un second administrateur” is shown. Create a second user with the Administrator role for the whole plant, then try to limit an administrator role to one site.
 - **Attendu :** Le bandeau disparaît quand un second administrateur actif existe. Un rôle d'administrateur limité à un site est refusé (« Les rôles d'administrateur s'appliquent à toute l'usine… »).
 - **Expected:** The banner goes away once a second active administrator exists. A site-limited administrator role is refused.
-- **Rôle :** Administrateur (adm.users).
+- **Rôle :** Administrateur (droit de gérer les utilisateurs).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -58,7 +58,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Intervention Requests › “Nouvelle DI”: pick a pump, tick “Enjeu sécurité”, “Créer la demande”.
 - **Attendu :** La demande apparaît dans la liste (statut « Nouvelle » ou « En attente de tri », file « À trier »). Une ligne lisible apparaît dans le Fil d'activité.
 - **Expected:** The request shows in the list (status “Nouvelle” or “En attente de tri”, queue “À trier”). A readable line appears in the activity feed.
-- **Rôle :** Technicien (di.create).
+- **Rôle :** Technicien.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -68,7 +68,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Open the request, screen it, then “Approuver & Convertir en OT”. Open the “Revue” tab.
 - **Attendu :** L'écran de conversion dit « La demande signalait un risque sécurité : l'OT ne démarrera pas sans permis actif ». Chaque ligne de l'historique de revue porte « Par » suivi du nom de la personne qui a décidé (jamais vide).
 - **Expected:** The conversion screen says the OT will not start without an active permit. Every review-history line names the person who decided (“Par …”), never blank.
-- **Rôle :** Superviseur 1 (di.screen, di.review, di.approve, di.convert).
+- **Rôle :** Superviseur 1 (droits de trier, examiner, approuver et convertir les demandes).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -78,7 +78,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Work Permits › “New permit” (or from the OT), LOTO type, link OT and equipment. Person A: add an isolation, “Mark applied”, then try “Verify”. Person B: “Verify”.
 - **Attendu :** Pour A : refus lisible (« Vous avez posé cette isolation — une autre personne doit vérifier. »). Pour B : accepté, « Vérifiée par B ».
 - **Expected:** For A: refused with a readable reason. For B: accepted, “Verified by B”.
-- **Rôle :** A = Technicien, B = Superviseur 1 (ptw.issue).
+- **Rôle :** A = Technicien, B = Superviseur 1.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -86,23 +86,23 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 **À vérifier après la fusion de la PR 65** (règle des quatre yeux sur les permis, avis aux administrateurs). Avant la fusion, ne pas faire cette étape.
 
-- **FR :** Personne A (auteur du permis) : « Soumettre en revue », puis « Approuver ». Ensuite personne B : « Approuver ». Regardez le haut de la fiche du permis.
+- **FR :** Personne A (qui rédige le permis) : « Soumettre en revue », puis « Approuver ». Ensuite personne B : « Approuver ». Regardez le haut de la fiche du permis.
 - **EN :** Person A (author): “Submit for review”, then “Approve”. Then person B: “Approve”. Look at the top of the permit panel.
-- **Attendu :** Pour A, refus : « Quatre yeux : vous avez rédigé le permis …, une autre personne doit l'approuver. » Pour B, accepté. La fiche affiche « Rédigé par A », « Soumis par A », « Approuvé par B », chacun avec sa date.
-- **Expected:** A is refused (author cannot approve). B is accepted. The panel shows “Rédigé par”, “Soumis par”, “Approuvé par” with dates.
-- **Rôle :** A = Technicien, B = Superviseur 1 (ptw.issue).
+- **Attendu :** Pour A, qui a rédigé et soumis, refus : « Quatre yeux : vous avez soumis le permis … en revue, une autre personne doit l’approuver. » Pour B, accepté. La fiche affiche « Rédigé par A », « Soumis par A », « Approuvé par B », chacun avec sa date.
+- **Expected:** A (who wrote and submitted) is refused with the “you submitted it” reason. B is accepted. The panel shows “Rédigé par”, “Soumis par”, “Approuvé par” with dates.
+- **Rôle :** A = Technicien, B = Superviseur 1.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 7. Approbation : la personne qui a soumis ne peut pas approuver (facultatif)
+### 7. Approbation : ni l'auteur ni la personne qui a soumis (facultatif)
 
 **À vérifier après la fusion de la PR 65** (règle des quatre yeux sur les permis, avis aux administrateurs). Avant la fusion, ne pas faire cette étape.
 
-- **FR :** Sur un second permis rédigé par A : le Superviseur 1 « Soumet en revue » puis essaie « Approuver ». Le Superviseur 2 « Approuve ».
-- **EN :** On a second permit written by A: Supervisor 1 submits, then tries to approve; Supervisor 2 approves.
-- **Attendu :** Le Superviseur 1 est refusé (« Quatre yeux : vous avez soumis le permis …, une autre personne doit l'approuver. »). Le Superviseur 2 est accepté.
-- **Expected:** Supervisor 1 is refused (submitter cannot approve). Supervisor 2 is accepted.
-- **Rôle :** Superviseur 1 et 2 (ptw.issue).
+- **FR :** Sur un second permis rédigé par A : le Superviseur 1 « Soumet en revue ». A essaie « Approuver », puis le Superviseur 1 essaie « Approuver », puis le Superviseur 2 « Approuve ».
+- **EN :** On a second permit written by A: Supervisor 1 submits. A tries to approve, then Supervisor 1 tries, then Supervisor 2 approves.
+- **Attendu :** A est refusé (« Quatre yeux : vous avez rédigé le permis …, une autre personne doit l’approuver. »). Le Superviseur 1 est refusé (« Quatre yeux : vous avez soumis le permis … en revue, une autre personne doit l’approuver. »). Le Superviseur 2 est accepté.
+- **Expected:** A is refused (author), Supervisor 1 is refused (submitter), Supervisor 2 is accepted.
+- **Rôle :** Superviseur 1 et 2.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -112,7 +112,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** On the approved permit: “Issue”, “Activate”, then show and print the LOTO card.
 - **Attendu :** Le permis passe « Délivré » puis « Actif ». La fiche imprimée est lisible sur papier (« DANGER — NE PAS MANŒUVRER »).
 - **Expected:** The permit becomes Issued then Active. The printed card reads well on paper.
-- **Rôle :** Superviseur 1 (ptw.issue).
+- **Rôle :** Superviseur 1.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -124,7 +124,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Settings › General › “Règles par site”: set the self-approval rule On for a site (password and reason). Person A writes, submits and approves a permit of that site. Put the rule back Off and read the History.
 - **Attendu :** L'approbation est acceptée et la fiche porte « auto-approbation (site sans 4 yeux) ». Remise à « Désactivé », A est de nouveau refusé. L'Historique donne qui, quand, avant et après, motif, en français correct.
 - **Expected:** The self-approval is accepted and flagged “auto-approbation (site sans 4 yeux)”. After switching Off, A is refused again. The History line gives who, when, before/after, reason.
-- **Rôle :** Administrateur (adm.settings) pour la règle ; Technicien pour le permis.
+- **Rôle :** Administrateur (droit paramètres) pour la règle ; Technicien pour le permis.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -136,7 +136,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Open a permit written before the update: if already approved or further, read “Approuvé par”. If still draft or in review, try “Approve”.
 - **Attendu :** Déjà approuvé : « approbateur non enregistré ». Brouillon ou en revue : refus « auteur non enregistré (permis antérieur à la mise à jour) » : il faut l'annuler et établir un nouveau permis.
 - **Expected:** Already approved: “approbateur non enregistré”. Draft or in review: refused, cancel it and raise a new permit.
-- **Rôle :** Superviseur (ptw.issue).
+- **Rôle :** Superviseur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -146,7 +146,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Work Orders › the OT: try “Démarrer” without an active permit, then with it. Add labour hours and a part issued from stock.
 - **Attendu :** Sans permis : refus « Cet OT exige un permis de travail : liez un permis actif avant de le démarrer… ». Avec : l'OT démarre. Le « Résumé des coûts » se met à jour sans recharger.
 - **Expected:** Without a permit: refused. With it: starts. The cost summary updates without reloading.
-- **Rôle :** Technicien (ot.edit, inv.manage).
+- **Rôle :** Technicien.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -156,7 +156,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** On the active permit: “Verify removal” (confirmation names point, who applied, who verified); A, who applied it, is refused. Then close the permit, record the handover (roles, receiver, note), hand back. Finally complete and close the work order.
 - **Attendu :** Avant la clôture, la passation dit « La remise se consigne une fois le permis clôturé ». Ensuite le journal montre « Signée par … », « reçue par … » avec date. La personne qui reçoit n'est pas vous et détient le droit de clôture des permis sur ce site. L'activité montre « OT clôturé ».
 - **Expected:** Before closing, the handover says it is recorded once the permit is closed. Afterwards the log shows signer and receiver with dates; the receiver is not you. The feed shows the work order closed.
-- **Rôle :** Superviseur 1 (ptw.close, ot.close) ; réceptionnaire = Superviseur 2.
+- **Rôle :** Superviseur 1 (droit de clôturer les permis et les OT) ; réceptionnaire = Superviseur 2.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -166,7 +166,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Work Permits › “Permit types” › LOTO type: switch the three-person lock-removal rule on (password and reason), then the person who verified the isolation tries “Verify removal”. Put it back off.
 - **Attendu :** Règle active : la personne qui a vérifié l'isolement est refusée (« Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait. ») ; une troisième personne est acceptée. Règle désactivée : seule la règle des deux personnes (pas la personne qui a posé) s'applique.
 - **Expected:** Rule on: the verifier is refused, a third person is accepted. Rule off: only the two-person rule applies.
-- **Rôle :** Administrateur (adm.settings + ptw.issue) pour la règle ; Superviseurs pour le retrait.
+- **Rôle :** Administrateur avec droit paramètres et droit d'émettre des permis, pour la règle ; Superviseurs pour le retrait.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -176,7 +176,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** On a draft permit: add an isolation line and “Annuler la ligne”. On an already approved permit, try to change its equipment.
 - **Attendu :** La ligne reste, grisée « Annulée » avec qui et quand, sans pouvoir être posée. Le changement d'équipement est refusé : « Ce permis a été approuvé pour cet équipement. Annulez-le et établissez un nouveau permis. »
 - **Expected:** The line stays greyed “Annulée” with who and when. The equipment change is refused.
-- **Rôle :** Technicien ou Superviseur (ptw.issue).
+- **Rôle :** Technicien ou Superviseur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -188,7 +188,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Preventive Maintenance › “Nouveau plan”: one fixed-calendar plan and one meter plan. The crew picker lists the teams. Propose, approve, publish.
 - **Attendu :** Les deux plans sont publiés et génèrent des échéances. Un plan sur compteur demande un équipement ayant un compteur actif.
 - **Expected:** Both plans are published and generate due dates. A meter plan needs equipment with an active meter.
-- **Rôle :** Planificateur (pm.create, pm.edit, pm.approve).
+- **Rôle :** Planificateur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -198,7 +198,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Preventive Maintenance › “Calendrier” view: month, week, day.
 - **Attendu :** Les échéances sont aux bonnes dates ; le changement de mois est rapide.
 - **Expected:** Occurrences sit on the right dates; changing month is quick.
-- **Rôle :** Planificateur (pm.view).
+- **Rôle :** Planificateur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -208,7 +208,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Preventive Maintenance › “File d'échéances”: change one occurrence to Reportée (reason), one to Manquée, one to Prête à planifier (creates the work order).
 - **Attendu :** Chaque action laisse une ligne lisible dans le Fil d'activité ; « Prête à planifier » crée l'OT avec tâches, pièces et exigence de permis du plan.
 - **Expected:** Each action leaves a readable feed line; “Prête à planifier” creates the work order.
-- **Rôle :** Planificateur (pm.edit).
+- **Rôle :** Planificateur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -218,7 +218,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** In a plan's new version › “Pièces requises” › “Ajouter un article”: type 2 characters of the code or name.
 - **Attendu :** Le nom et le stock de l'article apparaissent ; chaque pièce se marque « Obligatoire » ou « Optionnelle ».
 - **Expected:** The article's name and stock show; each part is marked required or optional.
-- **Rôle :** Planificateur (pm.edit).
+- **Rôle :** Planificateur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -228,7 +228,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Planning › Gantt board: click a “Prêt” backlog card, “Créer l'engagement” for 2 work orders, drag one to another day. Add 2 production windows (whole plant, one site).
 - **Attendu :** Les engagements et fenêtres apparaissent aux bonnes dates ; une fenêtre verrouillée empêche d'y engager du travail.
 - **Expected:** Commitments and windows show on the right dates; a locked window blocks commitments.
-- **Rôle :** Planificateur (plan.edit, plan.windows).
+- **Rôle :** Planificateur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -238,7 +238,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Planning › Weekly schedule: approve then freeze the week. Try to move a job: the “frozen week: enter as a break-in” dialog opens; register the break-in with reason code and approver. Click “Demander le dégel”.
 - **Attendu :** Le break-in est enregistré (ligne « Intervention imprévue » dans l'activité). Le dégel indique « Il doit être décidé par un autre planificateur » : un autre planificateur voit « Approuver le dégel » / « Refuser le dégel ».
 - **Expected:** The break-in is recorded (feed line). The unfreeze request must be decided by another planner.
-- **Rôle :** Planificateur (plan.confirm) ; un second planificateur pour le dégel.
+- **Rôle :** Planificateur  ; un second planificateur pour le dégel.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -248,7 +248,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Work Orders › a draft OT › tick “Nécessite un arrêt”. Planning › backlog.
 - **Attendu :** La carte de l'OT dans le backlog porte le badge « Arrêt nécessaire » ; une carte sans arrêt n'en porte pas.
 - **Expected:** The OT's backlog card shows the “Arrêt nécessaire” badge; a card without shutdown shows none.
-- **Rôle :** Planificateur (ot.edit, plan.view).
+- **Rôle :** Planificateur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -258,7 +258,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Work Orders › a planning-stage OT with planned parts: “Annuler la ligne” (confirm) and switch another line between Obligatoire and Optionnelle.
 - **Attendu :** La ligne annulée reste visible « Annulée », hors des totaux et réservations. Une ligne dont une pièce est déjà sortie du magasin ne s'annule pas. Le journal de l'OT dit « Ligne de pièce planifiée annulée » / « rendue optionnelle ».
 - **Expected:** The cancelled line stays visible as cancelled, out of totals and reservations. A line with stock already issued cannot be cancelled. The OT log records it.
-- **Rôle :** Planificateur ou Superviseur (ot.edit).
+- **Rôle :** Planificateur ou Superviseur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -270,7 +270,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Spare Parts › “Comptoir de sortie” tab: find the article, pick the OT and the store location, issue it.
 - **Attendu :** Le solde baisse dans le bon magasin et le coût apparaît dans le « Résumé des coûts » de l'OT.
 - **Expected:** The balance drops in the right store and the cost shows on the work order.
-- **Rôle :** Magasinier (inv.manage, ot.view).
+- **Rôle :** Magasinier.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -280,7 +280,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Spare Parts › Articles › the article › “Ajuster le stock”: type Entrée, return reason, and the OT the part comes back from.
 - **Attendu :** Le solde remonte dans le bon magasin et l'activité de l'article montre « Retour en stock ». Il n'existe pas d'écran de transfert entre deux magasins : ne pas chercher.
 - **Expected:** The balance goes up in the right store and the article activity shows a stock return. There is no screen to transfer between two stores.
-- **Rôle :** Magasinier (inv.manage).
+- **Rôle :** Magasinier.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -290,7 +290,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Spare Parts › “Achats & réparables”: the late filter and a late purchase order.
 - **Attendu :** « En retard de N jours » est juste ; un brouillon n'est jamais en retard. Facultatif vers minuit UTC (01h00 à Alger) : une commande due aujourd'hui passe en retard à ce moment.
 - **Expected:** “Late by N days” is right; a draft is never late. Optional around midnight UTC: a PO due today turns late then.
-- **Rôle :** Magasinier (inv.view, inv.procure).
+- **Rôle :** Magasinier.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -300,7 +300,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Settings › General › Inventory: read “Écart critique d'un comptage d'inventaire”. Spare Parts › “Inventaires & contrôles”: open a count.
 - **Attendu :** Le comptage utilise cette valeur (plus de valeur préremplie modifiable par le compteur). Chaque session garde la tolérance avec laquelle elle a été ouverte.
 - **Expected:** The count uses that value (no pre-filled editable value). Each session keeps the tolerance it was opened with.
-- **Rôle :** Administrateur (adm.settings) pour lire le réglage ; Magasinier (inv.count) pour le comptage.
+- **Rôle :** Administrateur (droit paramètres) pour lire le réglage ; Magasinier pour le comptage.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -310,7 +310,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Spare Parts › “Valorisation” and a supplier's “Fiche de performance”.
 - **Attendu :** Chaque chiffre dit sur quelle base il est calculé, jamais d'unités mélangées. Aucun écran n'offre « stock bas seulement ».
 - **Expected:** Each figure states its basis, never mixed units. No screen offers “low stock only”.
-- **Rôle :** Magasinier ou Superviseur (inv.view).
+- **Rôle :** Magasinier ou Superviseur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -322,7 +322,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Reliability (RAMS) › open a study › “Décisions”: A records a decision, B approves (A is told another person approves).
 - **Attendu :** Statut « Approuvée », approbateur B, une ligne dans l'activité. Sans la règle « site sans quatre yeux », A ne peut pas approuver sa propre décision.
 - **Expected:** Status Approuvée, approver B, a feed line. A cannot approve their own decision.
-- **Rôle :** A : ram.analyze ; B : ram.manage (Superviseur).
+- **Rôle :** A et B sont deux Superviseurs (le technicien et le planificateur livrés peuvent seulement consulter la fiabilité).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -332,7 +332,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Reference Data › FMECA scales: change a rating grid. Reliability › a study › FMECA › rating grids.
 - **Attendu :** L'étude utilise la nouvelle grille ; l'avertissement « À revoir » apparaît puis disparaît une fois les lignes revues.
 - **Expected:** The study uses the new grid; the “To review” warning appears then clears.
-- **Rôle :** Administrateur ou Superviseur (ref.manage, ref.publish) ; ram.view pour l'étude.
+- **Rôle :** Administrateur ou Superviseur : droit de gérer les données de référence ; pour enregistrer les grilles depuis l'étude, droit de gérer la fiabilité (le technicien et le planificateur livrés ne peuvent que les consulter).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -342,7 +342,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Reliability › a study with a reliability diagram › “Modèle système” › Monte Carlo simulation › “Cost of one repair”: click “Utiliser le coût correctif moyen de …”.
 - **Attendu :** Le champ se remplit avec la moyenne des OT correctifs clôturés de l'équipement (source, nombre d'OT et devise indiqués ; modifiable). Sans OT correctif clôturé : message « n'a encore aucun OT correctif clôturé ». Sans droit finance : message « demande le droit de consultation des finances ».
 - **Expected:** The field fills with the mean of the equipment's closed corrective work orders (source, count, currency shown; editable). With none: a message. Without finance view: a message.
-- **Rôle :** ram.view + fin.view (Superviseur).
+- **Rôle :** Superviseur (voir la fiabilité et les finances).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -354,7 +354,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Equipment › open a retired asset.
 - **Attendu :** Le bouton « Remettre en service » est à côté de l'indication « retiré ». Un compte sans gestion des équipements ne voit pas le bouton. La remise en service demande un statut en service et un motif.
 - **Expected:** The “Remettre en service” button sits next to the retired hint. Without equipment management: no button.
-- **Rôle :** Superviseur (eq.manage) ; contre-épreuve : Planificateur (eq.view seul).
+- **Rôle :** Superviseur (gère les équipements) ; contre-épreuve : Planificateur (lecture seule).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -364,7 +364,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Equipment › an asset › “Maintenance” tab.
 - **Attendu :** Le nombre d'OT ouverts porte la mention « Pas encore clôturés », et la phrase « Chiffres de cet équipement seul / et de ses composants » est juste.
 - **Expected:** The open count says “Pas encore clôturés”, and the roll-up sentence is right.
-- **Rôle :** Technicien (eq.view).
+- **Rôle :** Technicien.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -374,7 +374,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Equipment › “Importer”: a CSV with 1 bad row and 1 warning (upload, validate, preview, apply). Also import personnel or a reference list.
 - **Attendu :** Les raisons sont traduites ; « Appliquer l'import » demande confirmation avec les nombres. Notez si les lignes de détail restent dans une seule langue (limite connue).
 - **Expected:** Reasons are translated; Apply asks for confirmation with counts. Note whether detail lines stay in one language (known limit).
-- **Rôle :** Administrateur ou Superviseur (eq.import ; ref.manage pour les listes).
+- **Rôle :** Administrateur ou Superviseur (droit d'importer les équipements).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -386,7 +386,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Reference Data › “Types d'absence”: add “Stage”, behaviour Formation, publish, no restart. Same for “Catégories de documents”.
 - **Attendu :** « Stage » est offert dans la fenêtre d'absence (Personnel › Disponibilité › « Créer un bloc »), le filtre et la légende ; une absence « Stage » est dessinée comme formation. La catégorie neuve est offerte dans la bibliothèque (Documentation) et l'onglet « Documents et photos » d'un équipement.
 - **Expected:** “Stage” is offered in the absence dialog, filter and legend and is drawn as training. The new document category is offered in the library and the asset documents tab.
-- **Rôle :** Administrateur (ref.manage, ref.publish).
+- **Rôle :** Administrateur (droit de gérer et publier les données de référence).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -396,7 +396,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Look for the amber “À revoir” marker on: person card, record, list column, absence, documents tab, library menu.
 - **Attendu :** Le marqueur est visible là où une ancienne valeur n'est plus dans la liste de l'usine ; la disponibilité des gens n'a pas changé.
 - **Expected:** The marker shows where an old value is no longer in the plant list; nobody's availability changed.
-- **Rôle :** Superviseur (per.view, doc.view, eq.view).
+- **Rôle :** Superviseur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -406,7 +406,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Personnel: the amber “Statuts à revoir (N)” line. Open a person, choose a status, save.
 - **Attendu :** N diminue d'une unité. Un nouveau formulaire (personne, poste, absence) ne présélectionne aucune valeur de liste : il faut choisir.
 - **Expected:** N goes down by one. New person/position/absence forms preselect no list value.
-- **Rôle :** Superviseur (per.manage).
+- **Rôle :** Superviseur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -416,7 +416,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Reference Data: at the top, “N work-order types have no maintenance nature”. Click “Attribuer une nature”, pick one, write a reason, save.
 - **Attendu :** Le type disparaît de la liste ; quand il n'y en a plus, la ligne disparaît. Sans nature, un type ne compte dans aucune part (planifiée, réactive, urgence) de l'accueil. Si aucun type n'est sans nature, la ligne n'existe pas : c'est normal.
 - **Expected:** The type leaves the list; when none is left, the banner disappears. If no type lacks a nature, the banner is not shown: that is normal.
-- **Rôle :** Administrateur ou Superviseur (ref.manage).
+- **Rôle :** Administrateur ou Superviseur (droit de gérer les données de référence).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -428,7 +428,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Overview › “Supervision” panel › “Arriéré OT”: click To do, Overdue, one of Planned/Reactive/Emergency, then “Stock à réapprovisionner”.
 - **Attendu :** La liste s'ouvre avec une puce de filtre et le même nombre que le chiffre cliqué. Le nombre « Permis ouverts » exclut les permis hors de vos sites.
 - **Expected:** The list opens with a filter chip and the same number as the figure. “Permis ouverts” leaves out permits outside your sites.
-- **Rôle :** Superviseur (ot.view, inv.view, ptw.view).
+- **Rôle :** Superviseur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -438,7 +438,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Settings › General: save 2 or 3 settings.
 - **Attendu :** La confirmation apparaît en bas de l'application, pas dans la page Paramètres.
 - **Expected:** The confirmation appears at the bottom of the app, not inside Settings.
-- **Rôle :** Administrateur (adm.settings).
+- **Rôle :** Administrateur (droit paramètres).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -448,7 +448,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Settings › “Sécurité & Logs” › Activity log › “Fil d'activité”: pick an organisation unit, name the view, save, reload.
 - **Attendu :** L'unité choisie est conservée dans « Vues enregistrées ».
 - **Expected:** The unit is kept in the saved views.
-- **Rôle :** Administrateur (adm.settings + log.view). L'ancien chemin « Administration › Activité » n'existe plus.
+- **Rôle :** Administrateur (droit paramètres et lecture du journal). L'ancien chemin « Administration › Activité » n'existe plus.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -468,7 +468,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Budget & Costs › “Pilotage” tab: open a line with many postings. Click a line right after the cockpit opens.
 - **Attendu :** « Total des N écritures » est juste ; « Charger la suite » ajoute des lignes jusqu'à la fin ; le détail s'ouvre au premier clic.
 - **Expected:** “Total des N écritures” is right; “Charger la suite” adds lines to the end; the detail opens on the first click.
-- **Rôle :** Superviseur ou Finance Manager (fin.view).
+- **Rôle :** Superviseur ou Finance Manager.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -498,7 +498,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Open: Training › new session; Catalogue › new certification; Requirements › new requirement; Overview › Customise; Analytics › Customise.
 - **Attendu :** Chaque fenêtre a un titre, des blocs titrés, un pied de page fixe avec « Annuler » puis le bouton principal. Un clic à côté ne ferme pas la fenêtre ; × et Échap la ferment sans rien enregistrer.
 - **Expected:** Each dialog has a title, titled blocks and a sticky footer (Cancel, then the main button). Clicking outside does not close it; × and Esc close without saving.
-- **Rôle :** Superviseur (trn.manage, rep.view).
+- **Rôle :** Superviseur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -526,7 +526,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ### 48. Planificateur à droits réduits
 
-- **FR :** Connectez-vous en planificateur sans droit personnel ni organisation (copie de Planner/Scheduler sans per.view, per.report, per.position.view, org.view, ref.view). Ouvrez Planification (fenêtre de production), la planification d'un OT, un plan préventif, le choix d'un équipement dans une demande, un formulaire de personne.
+- **FR :** Connectez-vous en planificateur sans droit personnel ni organisation (copie de Planner/Scheduler sans les droits de lire le personnel, l'organisation et les données de référence). Ouvrez Planification (fenêtre de production), la planification d'un OT, un plan préventif, le choix d'un équipement dans une demande, un formulaire de personne.
 - **EN :** Sign in as a planner without personnel or organisation rights. Open Planning (production window), an OT's planning, a PM plan, an asset picker in a request, a person form.
 - **Attendu :** Chaque liste manquante montre une petite note « … demande le droit de consultation … », jamais une liste vide trompeuse ; la fenêtre de production n'offre que « Toute l'usine » avec une note. Ni fenêtre d'erreur, ni écran de verrouillage.
 - **Expected:** Each missing list shows a small “right required” note, never a misleading empty list; the production window offers only “Toute l'usine” with a note. No error popup, no lock screen.
@@ -550,7 +550,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Organisation: if “Enregistrements sans site (N)” exists, open it and give an old record a site (reason required).
 - **Attendu :** Un compte limité à un site est refusé ; un administrateur d'organisation de toute l'usine y arrive. Un enregistrement qui a déjà reçu un site n'est plus proposé.
 - **Expected:** A site-limited account is refused; a plant-wide organisation administrator can do it. A record already given a site is not offered again.
-- **Rôle :** Administrateur (org.admin, toute l'usine).
+- **Rôle :** Administrateur de l'organisation, toute l'usine.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -562,7 +562,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Organisation › “Règles de hiérarchie” (draft mode): add A → B then B → A, then publish.
 - **Attendu :** La publication est refusée (boucle). Un type sous le même type (A → A) est permis.
 - **Expected:** Publishing is refused (loop). A type under the same type is allowed.
-- **Rôle :** Administrateur (org.admin).
+- **Rôle :** Administrateur de l'organisation.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -572,7 +572,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Settings › “Sécurité & Logs” › session policy: edit the draft, then test it.
 - **Attendu :** Les « Résultats des tests » sont en français ; les champs et plages sont nommés (par exemple « Délai d'inactivité (minutes) »).
 - **Expected:** The test results are in French; fields and ranges are named.
-- **Rôle :** Administrateur (adm.settings).
+- **Rôle :** Administrateur (droit paramètres).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -582,7 +582,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Same panel: lower the idle time in the draft, test, activate, let the screen lock.
 - **Attendu :** « Session verrouillée » s'affiche sur un arrière-plan assombri ; « Déverrouiller » redonne l'accès. (Le point visuel est l'étape 62.)
 - **Expected:** “Session verrouillée” shows over a dimmed background; unlock works.
-- **Rôle :** Administrateur (adm.settings).
+- **Rôle :** Administrateur (droit paramètres).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -592,7 +592,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Settings › “Système & Sync” › Licence. Open the “recent licence events (technical details)” line.
 - **Attendu :** L'état de la licence est lisible (édition, activation, ce poste). Les actions de licence (Suspendre, Révoquer) demandent un administrateur : ne pas les lancer sur le poste de test sans besoin.
 - **Expected:** The licence state is readable. Licence actions need an administrator: do not run them on the test PC without reason.
-- **Rôle :** Administrateur (adm.settings ; lic.manage pour les actions).
+- **Rôle :** Administrateur (droit paramètres).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -602,11 +602,11 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 **À vérifier après la fusion de la PR 65** (règle des quatre yeux sur les permis, avis aux administrateurs). Avant la fusion, ne pas faire cette étape.
 
-- **FR :** PC 1 : Paramètres › Général › « Règles par site », site S1 › « Activé » (mot de passe, motif). Synchronisez. PC 2 : connectez-vous avec un administrateur (adm.settings) : un avis « Règle des quatre yeux désactivée à S1 sur un autre poste » est affiché en haut ; essayez de le masquer, puis cliquez « J'ai pris connaissance ». Relisez l'« Historique » de la règle.
+- **FR :** PC 1 : Paramètres › Général › « Règles par site », site S1 › « Activé » (mot de passe, motif). Synchronisez. PC 2 : connectez-vous avec un administrateur : un avis « Règle des quatre yeux désactivée à S1 sur un autre poste » est affiché en haut ; essayez de le masquer, puis cliquez « J'ai pris connaissance ». Relisez l'« Historique » de la règle.
 - **EN :** PC 1: Settings › General › Rules per site, S1 › On (password, reason). Sync. PC 2: sign in as an administrator: a notice “Règle des quatre yeux désactivée à S1 sur un autre poste” is shown; try to hide it, then acknowledge it.
-- **Attendu :** Sur PC 2, S1 est « Activé » et le changement de PC 1 est dans l'Historique, sans conflit. L'avis reste affiché à chaque connexion jusqu'à la confirmation (impossible à archiver ou reporter avant) ; il est aussi dans la boîte de réception de Notifications. Il n'est jamais envoyé par e-mail. Remettez ensuite la règle sur « Désactivé » (un second avis « réactivée » arrive).
+- **Attendu :** Sur PC 2, S1 est « Activé » et le changement de PC 1 est dans l'Historique, sans conflit. Quand la règle « retrait des cadenas à trois personnes » d'un type de permis est activée ou désactivée sur un autre PC, un avis du même genre arrive (« Retrait des cadenas à trois personnes activé pour … sur un autre poste » / « désactivé »). Chaque avis reste affiché à chaque connexion jusqu'à la confirmation (impossible à archiver ou reporter avant) ; il est aussi dans la boîte de réception de Notifications. Il n'est jamais envoyé par e-mail. Remettez ensuite la règle sur « Désactivé » (un second avis « réactivée » arrive).
 - **Expected:** On PC 2, S1 is On and PC 1's change is in the History, no conflict. The notice stays on every sign-in until acknowledged, cannot be archived or snoozed before, and is never emailed. Switch it Off again: a second notice (re-enabled) arrives.
-- **Rôle :** Administrateur (adm.settings) sur les deux PC.
+- **Rôle :** Administrateur (droit paramètres) sur les deux PC.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -616,7 +616,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** PC 1: Planning › Weekly schedule: approve then freeze a week. Sync. PC 2: same screen.
 - **Attendu :** PC 2 montre « Gelé » avec l'historique de PC 1.
 - **Expected:** PC 2 shows “Gelé” with PC 1's history.
-- **Rôle :** Planificateur (plan.confirm).
+- **Rôle :** Planificateur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -626,7 +626,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** PC 1: Reference Data: change a list and publish. PC 2: open a screen using it (copy older than 5 minutes, or after restart).
 - **Attendu :** La nouvelle valeur est là sur PC 2.
 - **Expected:** The new value is there on PC 2.
-- **Rôle :** Administrateur (ref.manage, ref.publish).
+- **Rôle :** Administrateur (droit de gérer et publier les données de référence).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -636,7 +636,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Edit the same record on both PCs offline, then sync. Open the top-bar cloud: Sync center › Unresolved conflicts.
 - **Attendu :** Le nuage s'anime en rouge ; la carte nomme l'enregistrement, met en évidence le bouton « Recommandé : … » et demande confirmation avant « Prendre la version du serveur ». La dernière carte résolue disparaît et le nuage se calme.
 - **Expected:** The cloud pulses red; the card names the record, highlights the recommended button, and asks to confirm before taking the server version. The last resolved card disappears; the cloud calms.
-- **Rôle :** Administrateur (sync.resolve).
+- **Rôle :** Administrateur (droit de résoudre les conflits).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -672,76 +672,76 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-## L. Passage visuel (chaque point en clair, puis en sombre)
+## L. Passage visuel (chaque point en clair ; le sombre quand le choix existera)
 
 ### 62. Verrouillage
 
 - **FR :** Après l'étape 53 : l'arrière-plan est assombri (ni noir, ni clair) et la carte est lisible.
 - **EN :** After step 53: the background is dimmed (neither black nor clear), the card readable.
-- **Attendu :** Correct en thème clair (Paramètres › Général › Apparence › « Mode de couleur ») et en thème sombre.
-- **Expected:** Correct in the light theme and in the dark theme.
+- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
+- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre OK
+- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 63. Cartes
 
 - **FR :** Vue d'ensemble, Analytique, Équipements, Planification : cartes à teinte légère, un peu plus sombres au survol.
 - **EN :** Overview, Analytics, Equipment, Planning: cards have a light tint and darken slightly on hover.
-- **Attendu :** Correct en thème clair (Paramètres › Général › Apparence › « Mode de couleur ») et en thème sombre.
-- **Expected:** Correct in the light theme and in the dark theme.
+- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
+- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre OK
+- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 64. Message d'erreur
 
 - **FR :** Clôturez un OT avec une tâche obligatoire ouverte : le message est sur fond rouge doux, texte lisible.
 - **EN :** Close a work order with a mandatory task open: soft red background, readable text.
-- **Attendu :** Correct en thème clair (Paramètres › Général › Apparence › « Mode de couleur ») et en thème sombre.
-- **Expected:** Correct in the light theme and in the dark theme.
+- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
+- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre OK
+- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 65. Ligne survolée et choisie
 
 - **FR :** Liste des OT : une ligne survolée a une teinte légère, la ligne choisie se distingue.
 - **EN :** Work-order list: hovered row has a faint tint, the selected row stands out.
-- **Attendu :** Correct en thème clair (Paramètres › Général › Apparence › « Mode de couleur ») et en thème sombre.
-- **Expected:** Correct in the light theme and in the dark theme.
+- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
+- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre OK
+- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 66. Licence
 
 - **FR :** Paramètres › Système & Sync › Licence › « événements de licence récents (détails techniques) » : la boîte a une teinte légère, texte lisible.
 - **EN :** Settings › System & Sync › Licence › technical details box: light tint, readable text.
-- **Attendu :** Correct en thème clair (Paramètres › Général › Apparence › « Mode de couleur ») et en thème sombre.
-- **Expected:** Correct in the light theme and in the dark theme.
+- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
+- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre OK
+- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 67. Lignes d'import
 
 - **FR :** Pendant l'import d'équipements : erreurs en rouge, avertissements en ambre, lignes valides sans teinte.
 - **EN :** During the equipment import: errors red, warnings amber, valid rows plain.
-- **Attendu :** Correct en thème clair (Paramètres › Général › Apparence › « Mode de couleur ») et en thème sombre.
-- **Expected:** Correct in the light theme and in the dark theme.
+- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
+- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre OK
+- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 68. Calendrier de date
 
 - **FR :** Dans un sélecteur de date : jours hors du mois en gris, jours désactivés encore plus pâles.
 - **EN :** In any date picker: days outside the month grey, disabled days fainter.
-- **Attendu :** Correct en thème clair (Paramètres › Général › Apparence › « Mode de couleur ») et en thème sombre.
-- **Expected:** Correct in the light theme and in the dark theme.
+- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
+- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre OK
+- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ## M. Anglais et journée réaliste
