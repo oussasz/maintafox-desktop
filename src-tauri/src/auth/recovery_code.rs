@@ -1206,7 +1206,7 @@ pub(crate) async fn inbound_notice_check(
         }));
     }
     if !payload_text(payload, "redeemed_device_code").is_some_and(is_device_code)
-        || !payload_text(payload, "created_at").is_some_and(|t| DateTime::parse_from_rfc3339(t).is_ok())
+        || payload_text(payload, "created_at").is_none_or(|t| DateTime::parse_from_rfc3339(t).is_err())
     {
         return Ok(Some(InboundVerdict::Conflict {
             code: CONFLICT_NOTICE_INVALID,
