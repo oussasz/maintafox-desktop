@@ -85,6 +85,20 @@ export const PERMIT_EDITABLE_STATUSES: ReadonlySet<string> = new Set([
   "issued",
 ]);
 
+/**
+ * Statuses a permit reaches only through an approval (`permit::sync_check::APPROVED_ON`): past
+ * review, a permit without a recorded approver was approved before the app recorded approvers.
+ */
+export const APPROVED_ON_STATUSES: ReadonlySet<string> = new Set([
+  "approved",
+  "issued",
+  "active",
+  "suspended",
+  "revalidation_required",
+  "closed",
+  "handed_back",
+]);
+
 export function isPermitExpired(permit: WorkPermitRecord, now: Date = new Date()): boolean {
   return permit.expires_at != null && new Date(permit.expires_at).getTime() <= now.getTime();
 }

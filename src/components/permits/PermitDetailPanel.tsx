@@ -58,6 +58,7 @@ import { PermitHandoverForm } from "./PermitHandoverForm";
 import { PermitNoSiteBadge, usePermitAccess } from "./PermitSiteScope";
 import { printLotoCard } from "./loto-card-print";
 import {
+  APPROVED_ON_STATUSES,
   ISOLATION_REMOVAL_STATUSES,
   ISOLATION_SETUP_STATUSES,
   PERMIT_EDITABLE_STATUSES,
@@ -119,6 +120,9 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [editingExpiry, setEditingExpiry] = useState<string | null>(null);
 
   const fmt = (v: string | null) => (v ? formatDateTime(v, i18n.language) : t("detail.none"));
+  /** Who did a step and when (four-eyes record); a person no longer readable is named as such. */
+  const byAt = (name: string | null, at: string | null) =>
+    t("detail.byAt", { name: name ?? t("detail.unknownPerson"), date: fmt(at) });
 
   const loadChildren = useCallback(async () => {
     setChildrenLoading(true);
@@ -374,6 +378,44 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
               <>
                 <dt className="text-text-muted">{t("detail.handedBackAt")}</dt>
                 <dd>{fmt(permit.handed_back_at)}</dd>
+              </>
+            ) : null}
+            {permit.created_by_id != null ? (
+              <>
+                <dt className="text-text-muted">{t("detail.createdBy")}</dt>
+                <dd>{permit.created_by_name ?? t("detail.unknownPerson")}</dd>
+              </>
+            ) : null}
+            {permit.submitted_at != null ? (
+              <>
+                <dt className="text-text-muted">{t("detail.submittedBy")}</dt>
+                <dd>{byAt(permit.submitted_by_name, permit.submitted_at)}</dd>
+              </>
+            ) : null}
+            {permit.approved_at != null ? (
+              <>
+                <dt className="text-text-muted">{t("detail.approvedBy")}</dt>
+                <dd className="flex flex-wrap items-center gap-2" data-testid="permit-approver">
+                  {byAt(permit.approved_by_name, permit.approved_at)}
+                  {permit.self_approved ? (
+                    <StatusChip
+                      label={t("detail.selfApproved")}
+                      tone="warning"
+                      title={t("detail.selfApprovedHint")}
+                    />
+                  ) : null}
+                </dd>
+              </>
+            ) : APPROVED_ON_STATUSES.has(permit.status) ? (
+              <>
+                <dt className="text-text-muted">{t("detail.approvedBy")}</dt>
+                <dd
+                  className="text-text-muted"
+                  data-testid="permit-approver"
+                  title={t("detail.approverNotRecordedHint")}
+                >
+                  {t("detail.approverNotRecorded")}
+                </dd>
               </>
             ) : null}
           </dl>

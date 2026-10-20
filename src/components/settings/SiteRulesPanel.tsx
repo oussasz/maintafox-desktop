@@ -1,7 +1,8 @@
 /**
  * Per-site rules (Settings › Général › Règles par site): a planning site may lift four-eyes on
- * its reliability decisions. Changed under step-up with a reason; every change is listed with who,
- * when, old → new and why. A site without a rule keeps four-eyes.
+ * its reliability decisions and its work-permit approvals (one rule, owner decision 2026-10-17).
+ * Changed under step-up with a reason; every change is listed with who, when, old → new and why. A
+ * site without a rule keeps four-eyes.
  */
 import { History, ShieldAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -31,7 +32,10 @@ import {
   setSiteSetting,
 } from "@/services/settings-service";
 
-/** Per-site rule: the proposer of a reliability decision may approve it. */
+/**
+ * Per-site rule: the proposer of a reliability decision, and the author or submitter of a work
+ * permit, may approve it.
+ */
 export const SELF_APPROVAL_SITE_RULE = "reliability.decisions.allow_self_approval";
 /** Shortest reason accepted (same rule as the server). */
 const MIN_REASON_CHARS = 10;

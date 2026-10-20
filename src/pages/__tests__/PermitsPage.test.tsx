@@ -178,6 +178,15 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
     linked_work_order_code: "OT-0042",
     permit_type_requires_energy_isolation: true,
     permit_type_requires_three_person_removal: false,
+    created_by_id: null,
+    created_by_name: null,
+    submitted_by_id: null,
+    submitted_by_name: null,
+    submitted_at: null,
+    approved_by_id: null,
+    approved_by_name: null,
+    approved_at: null,
+    self_approved: false,
     ...overrides,
   };
 }

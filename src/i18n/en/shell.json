@@ -130,6 +130,10 @@
       "PERMIT_TYPE_ISOLATION_STALE": "A permit type's energy-isolation rule received with a change older than the one recorded here",
       "PERMIT_TYPE_LOTO_ISOLATION_LOCKED": "The LOTO permit type's energy-isolation rule switched off on another PC",
       "PERMIT_TYPE_CODE_LOCKED": "A permit type's code changed on another PC",
+      "PERMIT_SELF_APPROVAL": "A permit approved on another PC by the person who wrote or submitted it, where its site requires a second person (four-eyes), or not recorded as a self-approval",
+      "PERMIT_APPROVER_MISSING": "A permit approved on another PC without saying who approved it (four-eyes)",
+      "PERMIT_APPROVAL_RECORD_CHANGED": "Who wrote, submitted or approved a permit, as recorded here, was erased or changed on another PC",
+      "PERMIT_APPROVAL_RECORD_INVALID": "A permit received with an incomplete or inconsistent record of its submission or approval",
       "LAST_ADMINISTRATOR_REQUIRED": "A change from another PC that would leave this PC without an active administrator",
       "other": "Needs review"
     },

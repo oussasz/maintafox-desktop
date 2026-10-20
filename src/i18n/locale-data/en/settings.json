@@ -484,13 +484,13 @@
     "historyError": "The history could not be loaded",
     "noHistory": "No change at this site.",
     "selfApproval": {
-      "label": "Allow self-approval of reliability decisions",
-      "help": "Off (recommended): a second person approves every reliability decision of this site (four-eyes). Turn on only for a site where one person both proposes and approves; such approvals are labelled \"Self-approved\".",
+      "label": "Allow self-approval of reliability decisions and work permits",
+      "help": "Off (recommended): a second person approves every reliability decision and every work permit of this site (four-eyes: not the person who wrote or submitted the permit). Turn on only for a site where one person both prepares and approves; such approvals are labelled \"Self-approved\".",
       "active": "Four-eyes lifted at this site"
     },
     "confirmTitle": "Change the rule for {{site}}?",
-    "confirmOnBody": "The person who proposes a reliability decision at {{site}} will be able to approve it. Other sites keep four-eyes.",
-    "confirmOffBody": "Reliability decisions at {{site}} will again need a second person to approve them.",
+    "confirmOnBody": "The person who proposes a reliability decision, or writes or submits a work permit, at {{site}} will be able to approve it. Other sites keep four-eyes.",
+    "confirmOffBody": "Reliability decisions and work permits at {{site}} will again need a second person to approve them.",
     "confirm": "Change the rule",
     "reason": "Reason for the change",
     "reasonHint": "At least {{min}} characters; kept in the history with your name and the time.",

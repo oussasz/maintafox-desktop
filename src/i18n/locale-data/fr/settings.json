@@ -484,13 +484,13 @@
     "historyError": "L'historique n'a pas pu être chargé",
     "noHistory": "Aucun changement sur ce site.",
     "selfApproval": {
-      "label": "Autoriser l'auto-approbation des décisions de fiabilité",
-      "help": "Désactivé (recommandé) : une deuxième personne approuve chaque décision de fiabilité de ce site (quatre yeux). À activer seulement pour un site où la même personne propose et approuve ; ces approbations portent la mention « Auto-approuvée ».",
+      "label": "Autoriser l'auto-approbation des décisions de fiabilité et des permis de travail",
+      "help": "Désactivé (recommandé) : une deuxième personne approuve chaque décision de fiabilité et chaque permis de travail de ce site (quatre yeux : pas la personne qui a rédigé ou soumis le permis). À activer seulement pour un site où la même personne prépare et approuve ; ces approbations portent la mention « Auto-approuvée ».",
       "active": "Quatre yeux levé sur ce site"
     },
     "confirmTitle": "Modifier la règle de {{site}} ?",
-    "confirmOnBody": "La personne qui propose une décision de fiabilité à {{site}} pourra l'approuver. Les autres sites gardent les quatre yeux.",
-    "confirmOffBody": "Les décisions de fiabilité de {{site}} demanderont de nouveau l'approbation d'une deuxième personne.",
+    "confirmOnBody": "La personne qui propose une décision de fiabilité, ou qui rédige ou soumet un permis de travail, à {{site}} pourra l'approuver. Les autres sites gardent les quatre yeux.",
+    "confirmOffBody": "Les décisions de fiabilité et les permis de travail de {{site}} demanderont de nouveau l'approbation d'une deuxième personne.",
     "confirm": "Modifier la règle",
     "reason": "Motif du changement",
     "reasonHint": "Au moins {{min}} caractères ; conservé dans l'historique avec votre nom et l'heure.",
