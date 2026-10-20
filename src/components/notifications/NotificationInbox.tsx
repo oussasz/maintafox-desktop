@@ -32,7 +32,7 @@ import { useNavigate } from "react-router-dom";
 import { urgencyTone, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import {
   SAFETY_NOTICE_ACKNOWLEDGED_EVENT,
-  SAFETY_NOTICE_CATEGORY,
+  SAFETY_NOTICE_CATEGORIES,
 } from "@/components/notifications/SafetyRuleNotice";
 import {
   OPEN_SYNC_CENTER_EVENT,
@@ -144,7 +144,7 @@ function isUnread(row: NotificationSummary): boolean {
 
 /** A safety rule notice not acknowledged yet: acknowledged first, never snoozed or archived. */
 function lockedUntilAck(row: NotificationSummary): boolean {
-  return row.category_code === SAFETY_NOTICE_CATEGORY && row.acknowledged_at == null;
+  return SAFETY_NOTICE_CATEGORIES.has(row.category_code) && row.acknowledged_at == null;
 }
 
 function needsAck(row: NotificationSummary): boolean {
@@ -422,7 +422,7 @@ export function NotificationInbox({
                 void runAction(row.id, async () => {
                   await acknowledgeNotification(row.id);
                   // The sign-in banner shows the same notice: read it again.
-                  if (row.category_code === SAFETY_NOTICE_CATEGORY) {
+                  if (SAFETY_NOTICE_CATEGORIES.has(row.category_code)) {
                     window.dispatchEvent(new Event(SAFETY_NOTICE_ACKNOWLEDGED_EVENT));
                   }
                 })

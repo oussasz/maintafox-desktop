@@ -145,7 +145,12 @@ pub const ESCALATION_TARGETS: &[&str] = &[
 /// Categories whose recipients are not chosen by a rule: the budget alert configuration names
 /// its recipient, the digest goes to the person who asked for it, a safety rule changed on another
 /// PC goes to the settings administrators ([`ALWAYS_DELIVERED`]).
-pub const FIXED_ROUTING_CATEGORIES: &[&str] = &["budget_control_alert", "daily_digest", "safety_rule_received"];
+pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
+    "budget_control_alert",
+    "daily_digest",
+    "safety_rule_received",
+    "loto_forced_removal",
+];
 
 /// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
 /// to this audience, whatever their rule row says (inactive, other audiences) and whatever the
@@ -157,7 +162,12 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &["budget_control_alert", "daily_d
 /// `digest` and `email` names `safety_rule_received`; toast, digest and email each have a test with
 /// a preference set after the notice). Its preference rows are also removed before each notice
 /// (`settings::received_notice::ensure_notice_rows`, tested).
-pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[("safety_rule_received", "permission:adm.settings")];
+/// A lock taken off by a forced removal goes to the permit close-right holders of the permit's
+/// site (`settings::received_notice::FORCED_REMOVAL_CATEGORY`, routed by the permit's node).
+pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
+    ("safety_rule_received", "permission:adm.settings"),
+    ("loto_forced_removal", "permission:ptw.close"),
+];
 
 /// The fixed audience of an [`ALWAYS_DELIVERED`] category.
 pub fn always_delivered_audience(category: &str) -> Option<Audience> {

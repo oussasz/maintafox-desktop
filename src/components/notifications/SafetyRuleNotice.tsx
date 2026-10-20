@@ -22,6 +22,15 @@ import {
 
 /** The category of the notice (`settings::received_notice::RECEIVED_RULE_CATEGORY`). */
 export const SAFETY_NOTICE_CATEGORY = "safety_rule_received";
+/**
+ * Every category of a persistent safety notice (`settings::received_notice::SAFETY_NOTICE_CATEGORIES`):
+ * a safety rule changed on another PC, and a lock taken off by a forced removal (shown to the
+ * permit close-right holders of the site). Each recipient acknowledges their own.
+ */
+export const SAFETY_NOTICE_CATEGORIES: ReadonlySet<string> = new Set([
+  SAFETY_NOTICE_CATEGORY,
+  "loto_forced_removal",
+]);
 /** Sent when a notice is acknowledged elsewhere (the inbox): the banner reads its list again. */
 export const SAFETY_NOTICE_ACKNOWLEDGED_EVENT = "maintafox:safety-notice-acknowledged";
 

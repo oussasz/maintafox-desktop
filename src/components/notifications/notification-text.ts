@@ -43,6 +43,8 @@ export const MESSAGE_KEYS = [
   "site_rule_received_off",
   "three_person_received_on",
   "three_person_received_off",
+  // A lock taken off by a forced removal (permit close-right holders of the site).
+  "loto_forced_removal",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;

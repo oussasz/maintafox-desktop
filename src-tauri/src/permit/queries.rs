@@ -745,7 +745,9 @@ pub(crate) async fn activation_ready(db: &impl ConnectionTrait, wp: &WorkPermit)
                 params,
             ));
         }
-        let removed = count_isolations_where(db, wp.id, "removal_verified_at IS NOT NULL").await?;
+        // A lock taken off (its removal recorded, verified or not, migration 249) protects nothing.
+        let removed =
+            count_isolations_where(db, wp.id, "(removal_verified_at IS NOT NULL OR removed_at IS NOT NULL)").await?;
         if removed > 0 {
             return Err(crate::errors::org_validation_failed(
                 "LOTO_ISOLATION_REMOVED",
@@ -2618,13 +2620,55 @@ pub async fn list_handover_receivers(
         .await?;
     // Nobody but the person asking is eligible at the permit's site, whatever the search.
     let empty_reason = rows.is_empty().then(|| NO_RECEIVER_AT_SITE.to_string());
+    let mut page = people_page(&rows, search, limit, offset)?;
+    page.empty_reason = empty_reason;
+    Ok(page)
+}
+
+/// Who may be named to take off the lock of the isolation `isolation_id` in a forced removal:
+/// active, non-deleted accounts other than the person asking (the authoriser) and the lock's
+/// applier, by name (case and accents ignored), paged with the total that match. The person asking
+/// holds `ptw.close` at the permit's site (checked by the command). Not found when the isolation
+/// does not exist.
+pub async fn list_lock_removers(
+    db: &impl ConnectionTrait,
+    actor_id: i64,
+    isolation_id: i64,
+    search: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+) -> AppResult<HandoverReceiverPage> {
+    let iso = get_permit_isolation(db, isolation_id).await?;
+    let name = handover_person_name_sql("ua");
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT ua.id, {name} AS display_name FROM user_accounts ua \
+                 WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? AND ua.id IS NOT ?"
+            ),
+            [actor_id.into(), opt_i64(iso.applied_by_id)],
+        ))
+        .await?;
+    people_page(&rows, search, limit, offset)
+}
+
+/// Accounts `(id, display_name)` filtered by name (case and accents ignored, the way the asset
+/// search ignores them, `assets::search::fold_search_text`; "%" and "_" are plain characters),
+/// ordered by name then account, paged, with the total that match.
+fn people_page(
+    rows: &[sea_orm::QueryResult],
+    search: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+) -> AppResult<HandoverReceiverPage> {
     let wanted = search
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(crate::assets::search::fold_search_text);
     let mut matching: Vec<(String, HandoverReceiver)> = Vec::with_capacity(rows.len());
-    for r in &rows {
+    for r in rows {
         let receiver = HandoverReceiver {
             id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
             display_name: r
@@ -2651,7 +2695,7 @@ pub async fn list_handover_receivers(
     Ok(HandoverReceiverPage {
         items,
         total,
-        empty_reason,
+        empty_reason: None,
     })
 }
 
@@ -3084,6 +3128,18 @@ async fn apply_permit_isolation_in(
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
         .or_else(|| iso.lock_number.clone());
+    // A worker whose lock was taken off by a forced removal fits no new lock until they were told
+    // of it (migration 249; re-checked on a received row, `permit::sync_check`).
+    if let Some(open) = open_forced_removal_of(db, actor_id, None).await? {
+        return Err(refused(
+            CODE_WORKER_NOT_INFORMED,
+            format!(
+                "Your lock '{}' on permit {} was taken off by a forced removal: acknowledge it before fitting a new lock.",
+                open.1, open.0
+            ),
+            &[("permit", open.0), ("point", open.1)],
+        ));
+    }
     write_isolation_action(
         db,
         &iso,
@@ -3091,6 +3147,36 @@ async fn apply_permit_isolation_in(
         vec![actor_id.into(), now_ts().into(), opt_string(lock_number)],
     )
     .await
+}
+
+/// Stable code: a worker with a forced removal they were not told of yet fits a new lock.
+pub const CODE_WORKER_NOT_INFORMED: &str = "PERMIT_WORKER_NOT_INFORMED";
+
+/// A forced removal of `worker`'s lock that they were not told of yet, other than the isolation
+/// `except`: `(permit code, isolation point)`, the oldest first.
+pub(crate) async fn open_forced_removal_of(
+    db: &impl ConnectionTrait,
+    worker: i64,
+    except: Option<i64>,
+) -> AppResult<Option<(String, String)>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT wp.code AS code, pi.isolation_point AS point FROM permit_isolations pi \
+               JOIN work_permits wp ON wp.id = pi.permit_id \
+              WHERE pi.applied_by_id = ? AND pi.forced_removal = 1 AND pi.informed_at IS NULL \
+                AND pi.id IS NOT ? \
+              ORDER BY pi.removed_at, pi.id LIMIT 1",
+            [worker.into(), opt_i64(except)],
+        ))
+        .await?;
+    row.map(|r| -> AppResult<(String, String)> {
+        Ok((
+            r.try_get("", "code").map_err(|e| decode_err("code", e))?,
+            r.try_get("", "point").map_err(|e| decode_err("point", e))?,
+        ))
+    })
+    .transpose()
 }
 
 /// The person acting in a LOTO role must hold what the role requires
@@ -3366,6 +3452,446 @@ async fn record_permit_isolation_removed_in(
     )
     .await?;
     Ok(out)
+}
+
+// ── Forced removal (applier absent) and telling the worker (migration 249) ─────────────────────
+
+/// Stable codes of a forced removal refused.
+pub const CODE_FORCED_AUTHORISER_IS_APPLIER: &str = "PERMIT_FORCED_REMOVAL_AUTHORISER_IS_APPLIER";
+pub const CODE_FORCED_AUTHORISER_IS_REMOVER: &str = "PERMIT_FORCED_REMOVAL_AUTHORISER_IS_REMOVER";
+pub const CODE_FORCED_REMOVER_IS_APPLIER: &str = "PERMIT_FORCED_REMOVAL_REMOVER_IS_APPLIER";
+pub const CODE_FORCED_REMOVER_UNKNOWN: &str = "PERMIT_FORCED_REMOVAL_REMOVER_UNKNOWN";
+pub const CODE_FORCED_REASON_TOO_SHORT: &str = "PERMIT_FORCED_REMOVAL_REASON_TOO_SHORT";
+pub const CODE_FORCED_ATTESTATION_REQUIRED: &str = "PERMIT_FORCED_REMOVAL_ATTESTATION_REQUIRED";
+pub const CODE_FORCED_ATTEMPTS_REQUIRED: &str = "PERMIT_FORCED_REMOVAL_CONTACT_ATTEMPTS_REQUIRED";
+pub const CODE_FORCED_ATTEMPT_INVALID: &str = "PERMIT_FORCED_REMOVAL_ATTEMPT_INVALID";
+pub const CODE_FORCED_UNAUTHORISED: &str = "PERMIT_FORCED_REMOVAL_UNAUTHORISED";
+/// Stable codes of telling the worker refused.
+pub const CODE_INFORMED_NOT_FORCED: &str = "PERMIT_WORKER_INFORMED_NOT_FORCED";
+pub const CODE_ALREADY_INFORMED: &str = "PERMIT_WORKER_ALREADY_INFORMED";
+pub const CODE_INFORMED_UNAUTHORISED: &str = "PERMIT_WORKER_INFORMED_UNAUTHORISED";
+pub const CODE_INFORMED_SELF: &str = "PERMIT_WORKER_INFORMED_SELF";
+pub const CODE_INFORMED_TIME_INVALID: &str = "PERMIT_WORKER_INFORMED_TIME_INVALID";
+pub const CODE_ACK_NOT_YOURS: &str = "PERMIT_WORKER_ACK_NOT_YOURS";
+
+/// Audit actions of the forced removal and of the worker told.
+pub const AUDIT_FORCED_REMOVAL: &str = "permit.lock_forced_removal";
+pub const AUDIT_WORKER_ACKNOWLEDGED: &str = "permit.forced_removal_acknowledged";
+pub const AUDIT_WORKER_INFORMED: &str = "permit.forced_removal_worker_informed";
+
+/// Latest time this PC accepts for a time given by a person (the tolerated clock difference).
+fn latest_accepted_ts() -> String {
+    (Utc::now() + Duration::minutes(crate::settings::site::MAX_CLOCK_SKEW_MINUTES))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+/// The contact attempts of a forced removal, checked and stored in their canonical form: at least
+/// one, at most [`super::domain::MAX_CONTACT_ATTEMPTS`]; each at a readable time not in the future,
+/// with a method of the plant's list (`permit::contact_methods`) and a result of 1 to
+/// [`super::domain::MAX_CONTACT_RESULT_CHARS`] characters.
+async fn checked_contact_attempts(
+    db: &impl ConnectionTrait,
+    attempts: &[super::domain::ContactAttempt],
+) -> AppResult<Vec<super::domain::ContactAttempt>> {
+    use super::domain::{MAX_CONTACT_ATTEMPTS, MAX_CONTACT_RESULT_CHARS};
+    if attempts.is_empty() || attempts.len() > MAX_CONTACT_ATTEMPTS {
+        return Err(refused(
+            CODE_FORCED_ATTEMPTS_REQUIRED,
+            format!("Record from 1 to {MAX_CONTACT_ATTEMPTS} attempts to reach the worker."),
+            &[("max", MAX_CONTACT_ATTEMPTS.to_string())],
+        ));
+    }
+    let latest = latest_accepted_ts();
+    let mut out = Vec::with_capacity(attempts.len());
+    for (i, a) in attempts.iter().enumerate() {
+        let n = (i + 1).to_string();
+        let invalid = |what: &str| {
+            refused(
+                CODE_FORCED_ATTEMPT_INVALID,
+                format!("Contact attempt {n}: {what}."),
+                &[("attempt", n.clone())],
+            )
+        };
+        let at = normalize_ts("at", &a.at).map_err(|_| invalid("its time is not readable"))?;
+        if at > latest {
+            return Err(invalid("its time is in the future"));
+        }
+        let result = a.result.trim().to_string();
+        if result.is_empty() || result.chars().count() > MAX_CONTACT_RESULT_CHARS {
+            return Err(invalid("say what came of it (500 characters at most)"));
+        }
+        let method = crate::permit::contact_methods::checked_method(db, "method", &a.method).await?;
+        out.push(super::domain::ContactAttempt { at, method, result });
+    }
+    Ok(out)
+}
+
+/// An active account with this id (a person who can be named on a lock record).
+async fn active_user(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM user_accounts WHERE id = ? AND is_active = 1 AND deleted_at IS NULL",
+            [user_id.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Forced removal of a lock whose applier is absent (OSHA 1910.147(e)(3)(ii) A–C): `actor_id` (the
+/// session user, holding `ptw.close` at the permit's site after a step-up — the command checks
+/// both; the save checks the right again) authorises the person `removed_by_id` to take the lock
+/// off. The authoriser is neither the applier nor the remover; the remover is not the applier; the
+/// reason has at least 20 characters; the worker is attested absent from the site; at least one
+/// attempt to reach them is recorded. Recorded as taken off now, by the remover, flagged forced;
+/// audited; the `ptw.close` holders of the site get the persistent notice
+/// (`settings::received_notice`). The removal is then verified as any (not by the remover).
+pub async fn force_permit_isolation_removal(
+    db: &DatabaseConnection,
+    input: super::domain::PermitForcedRemovalInput,
+    actor_id: i64,
+) -> AppResult<PermitIsolation> {
+    let txn = db.begin().await?;
+    let out = force_permit_isolation_removal_in(&txn, input, actor_id).await?;
+    txn.commit().await?;
+    Ok(out)
+}
+
+async fn force_permit_isolation_removal_in(
+    db: &impl ConnectionTrait,
+    input: super::domain::PermitForcedRemovalInput,
+    actor_id: i64,
+) -> AppResult<PermitIsolation> {
+    let action = PermitIsolationActionInput {
+        isolation_id: input.isolation_id,
+        expected_row_version: input.expected_row_version,
+        lock_number: None,
+    };
+    let (iso, permit) = load_isolation_for_action(db, &action).await?;
+    let applier = ensure_lock_removable(db, &iso, &permit).await?;
+    if actor_id == applier {
+        return Err(refused(
+            CODE_FORCED_AUTHORISER_IS_APPLIER,
+            "You fitted this lock: record \"J'ai retiré mon cadenas\" instead of a forced removal.",
+            &[],
+        ));
+    }
+    if input.removed_by_id == applier {
+        return Err(refused(
+            CODE_FORCED_REMOVER_IS_APPLIER,
+            "The applier is absent: name the person who physically takes the lock off.",
+            &[],
+        ));
+    }
+    if input.removed_by_id == actor_id {
+        return Err(refused(
+            CODE_FORCED_AUTHORISER_IS_REMOVER,
+            "The person who authorises a forced removal does not take the lock off themselves.",
+            &[],
+        ));
+    }
+    if !active_user(db, input.removed_by_id).await? {
+        return Err(refused(
+            CODE_FORCED_REMOVER_UNKNOWN,
+            "The person named to take the lock off is not an active account.",
+            &[],
+        ));
+    }
+    let reason = input.reason.trim().to_string();
+    let min = super::domain::MIN_FORCED_REMOVAL_REASON_CHARS;
+    if reason.chars().count() < min {
+        return Err(refused(
+            CODE_FORCED_REASON_TOO_SHORT,
+            format!("Give the reason of the forced removal ({min} characters at least)."),
+            &[("min", min.to_string())],
+        ));
+    }
+    if !input.worker_absent_attested {
+        return Err(refused(
+            CODE_FORCED_ATTESTATION_REQUIRED,
+            "Attest that the worker is not on the site.",
+            &[],
+        ));
+    }
+    let attempts = checked_contact_attempts(db, &input.contact_attempts).await?;
+    // The command checked `ptw.close` at the permit's site; checked again on the same rule as a
+    // received row is (`permit::sync_check`).
+    if !super::access::may_receive_handover(db, permit.id, actor_id).await? {
+        return Err(refused(
+            CODE_FORCED_UNAUTHORISED,
+            "A forced removal is authorised by a person holding the permit close right at the permit's site.",
+            &[],
+        ));
+    }
+    let removed_at = now_ts();
+    let attempts_json = serde_json::to_string(&attempts)?;
+    let out = write_isolation_action(
+        db,
+        &iso,
+        "removed_by_id = ?, removed_at = ?, forced_removal = 1, forced_authorized_by_id = ?, forced_reason = ?, \
+         forced_worker_absent = 1, forced_contact_attempts_json = ?",
+        vec![
+            input.removed_by_id.into(),
+            removed_at.clone().into(),
+            actor_id.into(),
+            reason.clone().into(),
+            attempts_json.into(),
+        ],
+    )
+    .await?;
+    crate::audit::writer::write_audit_event_in(
+        db,
+        crate::audit::writer::AuditEventInput {
+            retention_class: "security".to_string(),
+            ..permit_audit_event(
+                AUDIT_FORCED_REMOVAL,
+                permit.id,
+                actor_id,
+                serde_json::json!({
+                    "code": permit.code,
+                    "isolation_id": iso.id,
+                    "isolation_sync_id": iso.entity_sync_id,
+                    "isolation_point": iso.isolation_point,
+                    "lock_number": iso.lock_number,
+                    "applied_by_id": applier,
+                    "removed_by_id": input.removed_by_id,
+                    "removed_at": removed_at,
+                    "authorized_by_id": actor_id,
+                    "reason": reason,
+                    "worker_absent_attested": true,
+                    "contact_attempts": attempts,
+                    "permit_status": permit.status,
+                    "step_up": true,
+                }),
+            )
+        },
+    )
+    .await?;
+    crate::settings::received_notice::announce_forced_removal(db, &permit, &out).await?;
+    Ok(out)
+}
+
+/// A forced removal whose worker may be told now: forced, not told yet.
+fn ensure_worker_to_inform(iso: &PermitIsolation) -> AppResult<i64> {
+    let applier = iso
+        .applied_by_id
+        .filter(|_| iso.forced_removal && iso.removed_at.is_some());
+    let Some(applier) = applier else {
+        return Err(refused(
+            CODE_INFORMED_NOT_FORCED,
+            "This lock was not taken off by a forced removal.",
+            &[],
+        ));
+    };
+    if iso.informed_at.is_some() {
+        return Err(refused(
+            CODE_ALREADY_INFORMED,
+            "The worker was already told of this forced removal.",
+            &[],
+        ));
+    }
+    Ok(applier)
+}
+
+/// The worker acknowledges, in the app, the forced removal of their own lock (the blocking screen
+/// at sign-in): recorded as told by themselves now, "in-app acknowledgement". Only the lock's
+/// applier (`actor_id`, the session user). Audited. Whatever the permit's status (it may be closed).
+pub async fn acknowledge_forced_removal(
+    db: &DatabaseConnection,
+    isolation_id: i64,
+    actor_id: i64,
+) -> AppResult<PermitIsolation> {
+    let txn = db.begin().await?;
+    let iso = get_permit_isolation(&txn, isolation_id).await?;
+    let applier = ensure_worker_to_inform(&iso)?;
+    if applier != actor_id {
+        return Err(refused(
+            CODE_ACK_NOT_YOURS,
+            "Only the worker whose lock was taken off acknowledges its forced removal.",
+            &[],
+        ));
+    }
+    let permit = require_work_permit(&txn, iso.permit_id).await?;
+    let informed_at = now_ts();
+    let out = write_isolation_action(
+        &txn,
+        &iso,
+        "informed_by_id = ?, informed_at = ?, informed_method = NULL, informed_in_app = 1",
+        vec![actor_id.into(), informed_at.clone().into()],
+    )
+    .await?;
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        permit_audit_event(
+            AUDIT_WORKER_ACKNOWLEDGED,
+            permit.id,
+            actor_id,
+            serde_json::json!({
+                "code": permit.code,
+                "isolation_id": iso.id,
+                "isolation_sync_id": iso.entity_sync_id,
+                "isolation_point": iso.isolation_point,
+                "removed_at": iso.removed_at,
+                "informed_at": informed_at,
+                "method": "in_app_acknowledgement",
+            }),
+        ),
+    )
+    .await?;
+    txn.commit().await?;
+    Ok(out)
+}
+
+/// A person holding `ptw.close` at the permit's site (`actor_id`, the session user; the
+/// authoriser included) records that the worker of a forced removal was told (a worker without an
+/// account, or told in person): who (the recorder), when (`informed_at`, not before the removal nor
+/// in the future; now when omitted) and how (a method of the plant's list). Not the worker
+/// themselves (they acknowledge in the app). Audited. Whatever the permit's status.
+pub async fn record_worker_informed(
+    db: &DatabaseConnection,
+    input: super::domain::PermitWorkerInformedInput,
+    actor_id: i64,
+) -> AppResult<PermitIsolation> {
+    let txn = db.begin().await?;
+    let action = PermitIsolationActionInput {
+        isolation_id: input.isolation_id,
+        expected_row_version: input.expected_row_version,
+        lock_number: None,
+    };
+    let (iso, permit) = load_isolation_for_action(&txn, &action).await?;
+    let applier = ensure_worker_to_inform(&iso)?;
+    if applier == actor_id {
+        return Err(refused(
+            CODE_INFORMED_SELF,
+            "This forced removal is of your own lock: acknowledge it in the app.",
+            &[],
+        ));
+    }
+    if !super::access::may_receive_handover(&txn, permit.id, actor_id).await? {
+        return Err(refused(
+            CODE_INFORMED_UNAUTHORISED,
+            "The worker told of a forced removal is recorded by a person holding the permit close right at the permit's site.",
+            &[],
+        ));
+    }
+    let method = crate::permit::contact_methods::checked_method(&txn, "method", &input.method).await?;
+    let informed_at = match input.informed_at.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        Some(raw) => normalize_ts("informed_at", raw).map_err(|_| {
+            refused(
+                CODE_INFORMED_TIME_INVALID,
+                "The time the worker was told is not readable.",
+                &[],
+            )
+        })?,
+        None => now_ts(),
+    };
+    let removed_at = iso.removed_at.clone().unwrap_or_default();
+    if informed_at < removed_at || informed_at > latest_accepted_ts() {
+        return Err(refused(
+            CODE_INFORMED_TIME_INVALID,
+            "The worker is told after the forced removal, and not in the future.",
+            &[],
+        ));
+    }
+    let out = write_isolation_action(
+        &txn,
+        &iso,
+        "informed_by_id = ?, informed_at = ?, informed_method = ?, informed_in_app = 0",
+        vec![actor_id.into(), informed_at.clone().into(), method.clone().into()],
+    )
+    .await?;
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        permit_audit_event(
+            AUDIT_WORKER_INFORMED,
+            permit.id,
+            actor_id,
+            serde_json::json!({
+                "code": permit.code,
+                "isolation_id": iso.id,
+                "isolation_sync_id": iso.entity_sync_id,
+                "isolation_point": iso.isolation_point,
+                "worker_id": applier,
+                "removed_at": iso.removed_at,
+                "informed_at": informed_at,
+                "method": method,
+            }),
+        ),
+    )
+    .await?;
+    txn.commit().await?;
+    Ok(out)
+}
+
+/// The isolations selected by `sql` (one column `id`, in its order), each with its permit.
+async fn forced_removal_items(
+    db: &impl ConnectionTrait,
+    sql: &str,
+    values: Vec<sea_orm::Value>,
+) -> AppResult<Vec<super::domain::ForcedRemovalItem>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+        .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        let id: i64 = r.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        let isolation = get_permit_isolation(db, id).await?;
+        let permit = require_work_permit(db, isolation.permit_id).await?;
+        let equipment_label = match (permit.asset_code.clone(), permit.asset_label.clone()) {
+            (Some(c), Some(n)) => Some(format!("{c} — {n}")),
+            (c, n) => c.or(n),
+        };
+        out.push(super::domain::ForcedRemovalItem {
+            permit_id: permit.id,
+            permit_code: permit.code,
+            permit_status: permit.status,
+            equipment_label,
+            isolation,
+        });
+    }
+    Ok(out)
+}
+
+/// The forced removals of `worker`'s locks they were not told of yet (the blocking screen at
+/// sign-in), oldest first.
+pub async fn forced_removals_to_acknowledge(
+    db: &impl ConnectionTrait,
+    worker: i64,
+) -> AppResult<Vec<super::domain::ForcedRemovalItem>> {
+    forced_removal_items(
+        db,
+        "SELECT pi.id FROM permit_isolations pi \
+          WHERE pi.applied_by_id = ? AND pi.forced_removal = 1 AND pi.informed_at IS NULL \
+          ORDER BY pi.removed_at, pi.id",
+        vec![worker.into()],
+    )
+    .await
+}
+
+/// The review list: forced removals whose worker was not told yet, on the permits of `scope` (where
+/// the reader holds `ptw.close`) and those the reader authorised, oldest first. A closed permit
+/// keeps its open item until the worker is told.
+pub async fn open_forced_removals_in_scope(
+    db: &impl ConnectionTrait,
+    scope: &AccessScope,
+    reader: i64,
+) -> AppResult<Vec<super::domain::ForcedRemovalItem>> {
+    let scope_sql = super::access::scope_sql(scope);
+    let mut values: Vec<sea_orm::Value> = vec![reader.into()];
+    values.extend(scope_sql.binds);
+    forced_removal_items(
+        db,
+        &format!(
+            "SELECT pi.id FROM permit_isolations pi JOIN work_permits wp ON wp.id = pi.permit_id \
+              WHERE pi.forced_removal = 1 AND pi.informed_at IS NULL \
+                AND (pi.forced_authorized_by_id = ? OR ({})) \
+              ORDER BY pi.removed_at, pi.id",
+            scope_sql.predicate
+        ),
+        values,
+    )
+    .await
 }
 
 fn map_loto_card_print_job(row: &sea_orm::QueryResult) -> AppResult<LotoCardPrintJob> {

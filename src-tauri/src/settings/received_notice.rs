@@ -63,6 +63,30 @@ type Payload = Map<String, Value>;
 /// Notification category of a safety rule changed on another PC (migration 246).
 pub const RECEIVED_RULE_CATEGORY: &str = "safety_rule_received";
 
+/// Notification category of a lock taken off by a forced removal (migration 249): told to the
+/// users holding `ptw.close` at the permit's site, on the PC where it was recorded and on each PC
+/// that applies it ([`announce_forced_removal`], [`notify_received_rule_change`]).
+pub const FORCED_REMOVAL_CATEGORY: &str = "loto_forced_removal";
+
+/// Every category of a persistent safety notice: kept for each recipient until they acknowledge it,
+/// never muted, re-routed, expired, archived or deleted before, and local to each PC. The SQL of
+/// the notification modules names them through [`safety_notice_categories_sql`].
+pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[RECEIVED_RULE_CATEGORY, FORCED_REMOVAL_CATEGORY];
+
+/// SQL list of [`SAFETY_NOTICE_CATEGORIES`], for the constant SQL of the notification modules
+/// (`concat!`); a test keeps both the same.
+#[macro_export]
+macro_rules! safety_notice_categories_sql {
+    () => {
+        "('safety_rule_received', 'loto_forced_removal')"
+    };
+}
+
+/// Whether `category` is one of [`SAFETY_NOTICE_CATEGORIES`].
+pub fn is_safety_notice_category(category: &str) -> bool {
+    SAFETY_NOTICE_CATEGORIES.contains(&category)
+}
+
 fn text<'a>(p: &'a Payload, key: &str) -> Option<&'a str> {
     p.get(key)
         .and_then(Value::as_str)
@@ -111,6 +135,7 @@ pub(crate) async fn notify_received_rule_change(
     match entity_type {
         "site_settings" => site_rule(conn, entity_sync_id, received).await,
         "permit_types" => three_person(conn, entity_sync_id, received).await,
+        "permit_isolations" => received_forced_removal(conn, entity_sync_id, received).await,
         _ => Ok(()),
     }
 }
@@ -298,13 +323,14 @@ pub(crate) async fn inbound_local_only_check(
             },
         },
     };
-    let locked = |c: &Option<String>| c.as_deref() == Some(RECEIVED_RULE_CATEGORY);
+    let locked = |c: &Option<String>| c.as_deref().is_some_and(is_safety_notice_category);
     if locked(&held) || locked(&named) {
         let what = if received.is_none() { "deleted" } else { "changed" };
+        let category = held.or(named).unwrap_or_default();
         return Ok(Some(InboundVerdict::Conflict {
             code: "NOTIFICATION_CATEGORY_LOCKED",
             message: format!(
-                "{entity_type} {entity_sync_id}: rows of '{RECEIVED_RULE_CATEGORY}' stay on each PC and are never \
+                "{entity_type} {entity_sync_id}: rows of '{category}' stay on each PC and are never \
                  {what} by synchronisation"
             ),
         }));
@@ -332,10 +358,34 @@ fn new_event_id() -> String {
 /// reset, which wipes them) and before each notice. They never travel, so nothing else brings them
 /// back. Also removes any preference row of the category (ignored anyway). Idempotent.
 pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult<()> {
+    for (category, label) in [
+        (RECEIVED_RULE_CATEGORY, "Safety rule changed on another PC"),
+        (FORCED_REMOVAL_CATEGORY, "Lock taken off by a forced removal"),
+    ] {
+        ensure_category_rows(conn, category, label).await?;
+    }
+    // The guards are made again each time: a PC upgraded from an earlier version holds them for the
+    // first category only (`CREATE TRIGGER IF NOT EXISTS` would keep that version).
+    drop_notice_guards(conn).await?;
+    for (_, sql) in NOTICE_GUARDS {
+        conn.execute_unprepared(sql).await?;
+    }
+    // Its preferences are ignored on every channel: a row left from an earlier version (or received
+    // before such rows were refused) would only show stale toggles. Removed, never sent (row filter).
+    conn.execute_unprepared(concat!(
+        "DELETE FROM notification_preferences WHERE category_code IN ",
+        crate::safety_notice_categories_sql!()
+    ))
+    .await?;
+    Ok(())
+}
+
+/// The fixed category and rule rows of one safety notice category, with its fixed audience.
+async fn ensure_category_rows(conn: &impl ConnectionTrait, category: &str, label: &str) -> AppResult<()> {
     let audiences = serde_json::to_string(
         &crate::notifications::catalog::ALWAYS_DELIVERED
             .iter()
-            .filter(|(c, _)| *c == RECEIVED_RULE_CATEGORY)
+            .filter(|(c, _)| *c == category)
             .map(|(_, a)| *a)
             .collect::<Vec<_>>(),
     )
@@ -344,12 +394,13 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
         DbBackend::Sqlite,
         "INSERT INTO notification_categories \
          (entity_sync_id, code, label, default_severity, default_requires_ack, is_user_configurable, module_code, \
-          is_offered) VALUES (?, ?, 'Safety rule changed on another PC', 'warning', 0, 0, 'system', 1) \
+          is_offered) VALUES (?, ?, ?, 'warning', 0, 0, 'system', 1) \
          ON CONFLICT(code) DO UPDATE SET default_severity = 'warning', default_requires_ack = 0, \
            is_user_configurable = 0, module_code = 'system', is_offered = 1",
         [
-            crate::sync::identity::seeded_entity_sync_id("notification_categories", RECEIVED_RULE_CATEGORY).into(),
-            RECEIVED_RULE_CATEGORY.into(),
+            crate::sync::identity::seeded_entity_sync_id("notification_categories", category).into(),
+            category.into(),
+            label.into(),
         ],
     ))
     .await?;
@@ -358,7 +409,7 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
         "UPDATE notification_rules SET routing_mode = 'manual', requires_ack = 0, dedupe_window_minutes = 0, \
            escalation_policy_id = NULL, is_active = 1, lead_time_minutes = NULL, audiences_json = ? \
          WHERE category_code = ?",
-        [audiences.clone().into(), RECEIVED_RULE_CATEGORY.into()],
+        [audiences.clone().into(), category.into()],
     ))
     .await?;
     conn.execute(Statement::from_sql_and_values(
@@ -369,22 +420,11 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
          SELECT ?, ?, 'manual', 0, 0, NULL, 1, NULL, ? \
          WHERE NOT EXISTS (SELECT 1 FROM notification_rules WHERE category_code = ?)",
         [
-            crate::sync::identity::seeded_entity_sync_id("notification_rules", RECEIVED_RULE_CATEGORY).into(),
-            RECEIVED_RULE_CATEGORY.into(),
+            crate::sync::identity::seeded_entity_sync_id("notification_rules", category).into(),
+            category.into(),
             audiences.into(),
-            RECEIVED_RULE_CATEGORY.into(),
+            category.into(),
         ],
-    ))
-    .await?;
-    for (_, sql) in NOTICE_GUARDS {
-        conn.execute_unprepared(sql).await?;
-    }
-    // Its preferences are ignored on every channel: a row left from an earlier version (or received
-    // before such rows were refused) would only show stale toggles. Removed, never sent (row filter).
-    conn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "DELETE FROM notification_preferences WHERE category_code = ?",
-        [RECEIVED_RULE_CATEGORY.into()],
     ))
     .await?;
     Ok(())
@@ -402,23 +442,32 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
 const NOTICE_GUARDS: &[(&str, &str)] = &[
     (
         "safety_notice_event_kept",
-        "CREATE TRIGGER IF NOT EXISTS safety_notice_event_kept BEFORE DELETE ON notification_events \
-         WHEN OLD.category_code = 'safety_rule_received' \
-         BEGIN SELECT RAISE(ABORT, 'NOTIFICATION_CATEGORY_LOCKED: a safety rule notice is never deleted'); END",
+        concat!(
+            "CREATE TRIGGER IF NOT EXISTS safety_notice_event_kept BEFORE DELETE ON notification_events \
+             WHEN OLD.category_code IN ",
+            crate::safety_notice_categories_sql!(),
+            " BEGIN SELECT RAISE(ABORT, 'NOTIFICATION_CATEGORY_LOCKED: a safety notice is never deleted'); END"
+        ),
     ),
     (
         "safety_notice_kept",
-        "CREATE TRIGGER IF NOT EXISTS safety_notice_kept BEFORE DELETE ON notifications \
-         WHEN EXISTS (SELECT 1 FROM notification_events e WHERE e.id = OLD.notification_event_id \
-                        AND e.category_code = 'safety_rule_received') \
-         BEGIN SELECT RAISE(ABORT, 'NOTIFICATION_CATEGORY_LOCKED: a safety rule notice is never deleted'); END",
+        concat!(
+            "CREATE TRIGGER IF NOT EXISTS safety_notice_kept BEFORE DELETE ON notifications \
+             WHEN EXISTS (SELECT 1 FROM notification_events e WHERE e.id = OLD.notification_event_id \
+                            AND e.category_code IN ",
+            crate::safety_notice_categories_sql!(),
+            ") BEGIN SELECT RAISE(ABORT, 'NOTIFICATION_CATEGORY_LOCKED: a safety notice is never deleted'); END"
+        ),
     ),
     (
         "safety_notice_ack_kept",
-        "CREATE TRIGGER IF NOT EXISTS safety_notice_ack_kept BEFORE DELETE ON notification_acknowledgements \
-         WHEN EXISTS (SELECT 1 FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
-                        WHERE n.id = OLD.notification_id AND e.category_code = 'safety_rule_received') \
-         BEGIN SELECT RAISE(ABORT, 'NOTIFICATION_CATEGORY_LOCKED: an acknowledged safety rule notice is kept'); END",
+        concat!(
+            "CREATE TRIGGER IF NOT EXISTS safety_notice_ack_kept BEFORE DELETE ON notification_acknowledgements \
+             WHEN EXISTS (SELECT 1 FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+                            WHERE n.id = OLD.notification_id AND e.category_code IN ",
+            crate::safety_notice_categories_sql!(),
+            ") BEGIN SELECT RAISE(ABORT, 'NOTIFICATION_CATEGORY_LOCKED: an acknowledged safety notice is kept'); END"
+        ),
     ),
 ];
 
@@ -454,10 +503,10 @@ pub(crate) async fn notices_for(conn: &impl ConnectionTrait, user_id: i64) -> Ap
             "SELECT n.id, n.created_at, n.title, n.body, e.message_key, e.message_params_json \
                FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
                JOIN user_accounts u ON u.id = n.recipient_user_id \
-              WHERE n.recipient_user_id = ? AND e.category_code = ? AND n.acknowledged_at IS NULL \
-                AND u.is_active = 1 AND u.deleted_at IS NULL \
+              WHERE n.recipient_user_id = ? AND e.category_code IN (SELECT value FROM json_each(?)) \
+                AND n.acknowledged_at IS NULL AND u.is_active = 1 AND u.deleted_at IS NULL \
               ORDER BY n.created_at, n.id",
-            [user_id.into(), RECEIVED_RULE_CATEGORY.into()],
+            [user_id.into(), categories_json().into()],
         ))
         .await?;
     rows.iter()
@@ -475,14 +524,19 @@ pub(crate) async fn notices_for(conn: &impl ConnectionTrait, user_id: i64) -> Ap
         .collect()
 }
 
+/// [`SAFETY_NOTICE_CATEGORIES`] as a JSON array (bound to `json_each`).
+fn categories_json() -> String {
+    serde_json::to_string(SAFETY_NOTICE_CATEGORIES).unwrap_or_else(|_| "[]".to_string())
+}
+
 /// Whether notification `notification_id` is a safety rule notice not acknowledged yet.
 pub(crate) async fn is_unacknowledged_notice(conn: &impl ConnectionTrait, notification_id: i64) -> AppResult<bool> {
     Ok(conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT 1 AS x FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
-              WHERE n.id = ? AND e.category_code = ? AND n.acknowledged_at IS NULL",
-            [notification_id.into(), RECEIVED_RULE_CATEGORY.into()],
+              WHERE n.id = ? AND e.category_code IN (SELECT value FROM json_each(?)) AND n.acknowledged_at IS NULL",
+            [notification_id.into(), categories_json().into()],
         ))
         .await?
         .is_some())
@@ -494,8 +548,8 @@ pub(crate) async fn is_notice(conn: &impl ConnectionTrait, notification_id: i64)
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT 1 AS x FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
-              WHERE n.id = ? AND e.category_code = ?",
-            [notification_id.into(), RECEIVED_RULE_CATEGORY.into()],
+              WHERE n.id = ? AND e.category_code IN (SELECT value FROM json_each(?))",
+            [notification_id.into(), categories_json().into()],
         ))
         .await?
         .is_some())
@@ -518,10 +572,12 @@ pub(crate) async fn acknowledge_notice(
     let row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT e.entity_sync_id AS event, e.message_key AS k, e.message_params_json AS p \
+            "SELECT e.entity_sync_id AS event, e.message_key AS k, e.message_params_json AS p, \
+                    e.category_code AS c \
                FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
-              WHERE n.id = ? AND n.recipient_user_id = ? AND e.category_code = ? AND n.acknowledged_at IS NULL",
-            [notification_id.into(), user_id.into(), RECEIVED_RULE_CATEGORY.into()],
+              WHERE n.id = ? AND n.recipient_user_id = ? AND e.category_code IN (SELECT value FROM json_each(?)) \
+                AND n.acknowledged_at IS NULL",
+            [notification_id.into(), user_id.into(), categories_json().into()],
         ))
         .await?
         .ok_or_else(|| {
@@ -533,6 +589,7 @@ pub(crate) async fn acknowledge_notice(
     let event: Option<String> = row.try_get("", "event").map_err(hook_err)?;
     let key: Option<String> = row.try_get("", "k").map_err(hook_err)?;
     let params: Option<String> = row.try_get("", "p").map_err(hook_err)?;
+    let category: String = row.try_get("", "c").map_err(hook_err)?;
     crate::notifications::delivery::record_acknowledgement(&tx, notification_id, user_id, None).await?;
     crate::audit::writer::write_audit_event_in(
         &tx,
@@ -547,7 +604,7 @@ pub(crate) async fn acknowledge_notice(
             after_hash: None,
             retention_class: "security".to_string(),
             details_json: Some(json!({
-                "category": RECEIVED_RULE_CATEGORY,
+                "category": category,
                 "notification_id": notification_id,
                 "event_sync_id": event,
                 "message_key": key,
@@ -636,7 +693,14 @@ async fn send(
     message: NotificationMessage,
 ) -> AppResult<()> {
     conn.execute_unprepared("SAVEPOINT received_rule_notice").await?;
-    let written = emit_notice(conn, entity_type, entity_sync_id, title, body, action_url, &message).await;
+    let route = NoticeRoute {
+        category: RECEIVED_RULE_CATEGORY,
+        source_module: "settings",
+        source_record_id: entity_sync_id.to_string(),
+        entity_type,
+        entity_sync_id,
+    };
+    let written = emit_notice(conn, &route, title, body, action_url, &message).await;
     match written {
         Ok(()) => {
             conn.execute_unprepared("RELEASE received_rule_notice").await?;
@@ -660,16 +724,25 @@ async fn send(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Where a notice goes: its category, the record it is about (its routing context: a permit routes
+/// to its site) and the row that caused it.
+struct NoticeRoute<'a> {
+    category: &'static str,
+    source_module: &'static str,
+    source_record_id: String,
+    entity_type: &'a str,
+    entity_sync_id: &'a str,
+}
+
 async fn emit_notice(
     conn: &impl ConnectionTrait,
-    entity_type: &str,
-    entity_sync_id: &str,
+    route: &NoticeRoute<'_>,
     title: String,
     body: String,
     action_url: &str,
     message: &NotificationMessage,
 ) -> AppResult<()> {
+    let (entity_type, entity_sync_id) = (route.entity_type, route.entity_sync_id);
     // Every change applied here gets its own notice: the hook runs only when the received row
     // changes the value held here, and a row already applied stops before it (Unchanged). The fixed
     // category and rule rows are made sure of first, so the notice always shows in the inbox.
@@ -681,10 +754,10 @@ async fn emit_notice(
     emit(
         conn,
         &NotificationEventInput {
-            source_module: "settings".to_string(),
-            source_record_id: Some(entity_sync_id.to_string()),
-            event_code: RECEIVED_RULE_CATEGORY.to_string(),
-            category_code: RECEIVED_RULE_CATEGORY.to_string(),
+            source_module: route.source_module.to_string(),
+            source_record_id: Some(route.source_record_id.clone()),
+            event_code: route.category.to_string(),
+            category_code: route.category.to_string(),
             severity: "warning".to_string(),
             dedupe_key: None,
             payload_json: Some(
@@ -704,7 +777,7 @@ async fn emit_notice(
             DbBackend::Sqlite,
             "SELECT 1 AS x FROM notification_events WHERE entity_sync_id = ? AND category_code = ? \
                AND json_extract(payload_json, '$.notice') = ?",
-            [event_id.into(), RECEIVED_RULE_CATEGORY.into(), nonce.into()],
+            [event_id.into(), route.category.into(), nonce.into()],
         ))
         .await?
         .is_some();
@@ -714,4 +787,146 @@ async fn emit_notice(
         )));
     }
     Ok(())
+}
+
+/// The people and texts of a forced removal, for its notice.
+struct ForcedRemovalNotice {
+    permit_id: i64,
+    permit_code: String,
+    point: String,
+    worker: Option<String>,
+    remover: Option<String>,
+    authoriser: Option<String>,
+    removed_at: String,
+    reason: String,
+}
+
+/// Writes the notice of a forced removal to the `ptw.close` holders of the permit's site, in a
+/// savepoint: an error fails the caller (a forced removal is never recorded or applied without its
+/// notice).
+async fn send_forced_removal(
+    conn: &impl ConnectionTrait,
+    isolation_sync_id: &str,
+    n: ForcedRemovalNotice,
+) -> AppResult<()> {
+    let who = |p: &Option<String>| p.clone().unwrap_or_else(|| "?".to_string());
+    let (worker, remover, authoriser) = (who(&n.worker), who(&n.remover), who(&n.authoriser));
+    let (permit, point, removed_at, reason) = (&n.permit_code, &n.point, &n.removed_at, &n.reason);
+    let title = format!("Retrait forcé d'un cadenas : {point} ({permit}) / Forced lock removal: {point} ({permit})");
+    let body = format!(
+        "{authoriser} a autorisé le retrait du cadenas de {worker} (absent) par {remover} le {removed_at}. Motif : \
+         {reason}. Le travailleur doit en être informé. / {authoriser} authorised {remover} to take off the lock of \
+         {worker} (absent) on {removed_at}. Reason: {reason}. The worker must be told."
+    );
+    let message = NotificationMessage::new(
+        FORCED_REMOVAL_CATEGORY,
+        json!({
+            "permit": permit,
+            "point": point,
+            "worker": n.worker,
+            "removed_by": n.remover,
+            "authorised_by": n.authoriser,
+            "removed_at": removed_at,
+            "reason": reason,
+        }),
+    );
+    let route = NoticeRoute {
+        category: FORCED_REMOVAL_CATEGORY,
+        source_module: "permit",
+        source_record_id: n.permit_id.to_string(),
+        entity_type: "permit_isolations",
+        entity_sync_id: isolation_sync_id,
+    };
+    conn.execute_unprepared("SAVEPOINT forced_removal_notice").await?;
+    match emit_notice(conn, &route, title, body, "/permits", &message).await {
+        Ok(()) => {
+            conn.execute_unprepared("RELEASE forced_removal_notice").await?;
+            Ok(())
+        }
+        Err(err) => {
+            conn.execute_unprepared("ROLLBACK TO forced_removal_notice").await?;
+            conn.execute_unprepared("RELEASE forced_removal_notice").await?;
+            Err(err)
+        }
+    }
+}
+
+/// Display name of the user with this local id (`None`: none, or not on this PC).
+async fn person_by_id(conn: &impl ConnectionTrait, user_id: Option<i64>) -> AppResult<Option<String>> {
+    let Some(id) = user_id else {
+        return Ok(None);
+    };
+    conn.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT COALESCE(display_name, username) AS n FROM user_accounts WHERE id = ?",
+        [id.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<Option<String>>("", "n"))
+    .transpose()
+    .map_err(hook_err)
+    .map(Option::flatten)
+}
+
+/// The notice of a forced removal recorded on this PC (`permit::queries::force_permit_isolation_removal`),
+/// in its transaction: to the users holding `ptw.close` at the permit's site, kept for each until
+/// they acknowledge it.
+pub(crate) async fn announce_forced_removal(
+    conn: &impl ConnectionTrait,
+    permit: &crate::permit::domain::WorkPermit,
+    iso: &crate::permit::domain::PermitIsolation,
+) -> AppResult<()> {
+    let notice = ForcedRemovalNotice {
+        permit_id: permit.id,
+        permit_code: permit.code.clone(),
+        point: iso.isolation_point.clone(),
+        worker: match iso.applied_by_name.clone() {
+            Some(n) => Some(n),
+            None => person_by_id(conn, iso.applied_by_id).await?,
+        },
+        remover: iso.removed_by_name.clone(),
+        authoriser: iso.forced_authorized_by_name.clone(),
+        removed_at: iso.removed_at.clone().unwrap_or_default(),
+        reason: iso.forced_reason.clone().unwrap_or_default(),
+    };
+    send_forced_removal(conn, &iso.entity_sync_id, notice).await
+}
+
+/// A forced removal received by sync that passed its checks (`permit::sync_check`) and is new here
+/// (the copy held here was not forced): the `ptw.close` holders of the permit's site on this PC are
+/// told, in the apply's transaction. A permit not here yet: the row waits anyway (nothing told).
+async fn received_forced_removal(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<()> {
+    let local = crate::permit::sync_check::local_wire(conn, "permit_isolations", entity_sync_id).await?;
+    let row = crate::permit::sync_check::overlay(local.as_ref(), received);
+    if !on(&row, "forced_removal") || local.as_ref().is_some_and(|l| on(l, "forced_removal")) {
+        return Ok(());
+    }
+    let Some(permit_sync) = text(&row, "permit_sync_id") else {
+        return Ok(());
+    };
+    let Some(permit) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, code FROM work_permits WHERE entity_sync_id = ?",
+            [permit_sync.into()],
+        ))
+        .await?
+    else {
+        return Ok(());
+    };
+    let notice = ForcedRemovalNotice {
+        permit_id: permit.try_get("", "id").map_err(hook_err)?,
+        permit_code: permit.try_get("", "code").map_err(hook_err)?,
+        point: text(&row, "isolation_point").unwrap_or_default().to_string(),
+        worker: person(conn, text(&row, "applied_by_sync_id")).await?,
+        remover: person(conn, text(&row, "removed_by_sync_id")).await?,
+        authoriser: person(conn, text(&row, "forced_authorized_by_sync_id")).await?,
+        removed_at: text(&row, "removed_at").unwrap_or_default().to_string(),
+        reason: text(&row, "forced_reason").unwrap_or_default().to_string(),
+    };
+    send_forced_removal(conn, entity_sync_id, notice).await
 }

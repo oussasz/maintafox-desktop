@@ -1647,3 +1647,20 @@ async fn audits_kept_on_the_pc_are_never_staged_nor_stage_errors() {
         "nothing of them is sent"
     );
 }
+
+/// The SQL list the notification modules use names exactly the safety notice categories.
+#[test]
+fn the_sql_list_of_safety_notice_categories_matches_the_constants() {
+    let listed = crate::safety_notice_categories_sql!()
+        .trim_matches(|c| c == '(' || c == ')')
+        .split(',')
+        .map(|c| c.trim().trim_matches('\'').to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(listed, super::received_notice::SAFETY_NOTICE_CATEGORIES);
+    for category in super::received_notice::SAFETY_NOTICE_CATEGORIES {
+        assert!(
+            crate::notifications::catalog::always_delivered_audience(category).is_some(),
+            "{category} goes to its fixed audience"
+        );
+    }
+}

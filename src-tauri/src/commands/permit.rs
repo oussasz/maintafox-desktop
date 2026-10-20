@@ -281,6 +281,82 @@ pub async fn record_permit_isolation_removed(
     queries::record_permit_isolation_removed(&state.db, input, i64::from(user.user_id)).await
 }
 
+/// Forced removal of a lock whose applier is absent: the session user authorises it, holding
+/// `ptw.close` at the permit's site, after a step-up re-authentication; the save checks the people,
+/// the reason, the attestation and the contact attempts, audits it and tells the site's `ptw.close`
+/// holders.
+#[tauri::command]
+pub async fn force_permit_isolation_removal(
+    input: crate::permit::domain::PermitForcedRemovalInput,
+    state: State<'_, AppState>,
+) -> AppResult<PermitIsolation> {
+    let user = require_session!(state);
+    require_on_isolation(&state, user.user_id, PTW_CLOSE, input.isolation_id).await?;
+    crate::require_step_up!(state);
+    queries::force_permit_isolation_removal(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Who may be named to take off a lock in a forced removal: active accounts other than the person
+/// asking and the lock's applier, by name, paged with the total. Requires `ptw.close` at the
+/// permit's site.
+#[tauri::command]
+pub async fn list_permit_lock_removers(
+    isolation_id: i64,
+    search: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+    state: State<'_, AppState>,
+) -> AppResult<queries::HandoverReceiverPage> {
+    let user = require_session!(state);
+    require_on_isolation(&state, user.user_id, PTW_CLOSE, isolation_id).await?;
+    queries::list_lock_removers(&state.db, i64::from(user.user_id), isolation_id, search, limit, offset).await
+}
+
+/// The worker of a forced removal was told of it, recorded by the session user (holding
+/// `ptw.close` at the permit's site): a worker without an account, or told in person.
+#[tauri::command]
+pub async fn record_permit_worker_informed(
+    input: crate::permit::domain::PermitWorkerInformedInput,
+    state: State<'_, AppState>,
+) -> AppResult<PermitIsolation> {
+    let user = require_session!(state);
+    require_on_isolation(&state, user.user_id, PTW_CLOSE, input.isolation_id).await?;
+    queries::record_worker_informed(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// The signed-in worker's locks taken off by a forced removal they have not acknowledged yet (the
+/// blocking screen at sign-in). The session only: the list is the worker's own.
+#[tauri::command]
+pub async fn list_my_forced_lock_removals(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::permit::domain::ForcedRemovalItem>> {
+    let user = require_session!(state);
+    queries::forced_removals_to_acknowledge(&state.db, i64::from(user.user_id)).await
+}
+
+/// The signed-in worker acknowledges the forced removal of their own lock (recorded as told,
+/// "in-app acknowledgement", audited). The session only: the save refuses anyone but the lock's
+/// applier.
+#[tauri::command]
+pub async fn acknowledge_forced_lock_removal(
+    isolation_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<PermitIsolation> {
+    let user = require_session!(state);
+    queries::acknowledge_forced_removal(&state.db, isolation_id, i64::from(user.user_id)).await
+}
+
+/// The review list: forced removals whose worker was not told yet, at the sites where the user
+/// holds `ptw.close` (and those the user authorised), closed permits included.
+#[tauri::command]
+pub async fn list_open_forced_lock_removals(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::permit::domain::ForcedRemovalItem>> {
+    let user = require_session!(state);
+    let scope = require_anywhere(&state, user.user_id, PTW_CLOSE).await?;
+    queries::open_forced_removals_in_scope(&state.db, &scope, i64::from(user.user_id)).await
+}
+
 /// Records verified lock removal by the session user (part of closing a permit); the lock must have
 /// been taken off first, by someone other than the verifier.
 #[tauri::command]

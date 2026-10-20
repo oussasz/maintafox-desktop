@@ -168,7 +168,8 @@ async fn one_permit_findings(
             format!(
                 "SELECT (SELECT COUNT(*) FROM permit_isolations pi WHERE pi.permit_id = ? AND {counted}) AS isolations, \
                         (SELECT COUNT(*) FROM permit_isolations pi WHERE pi.permit_id = ? AND {counted} \
-                            AND pi.verified_at IS NOT NULL AND pi.removal_verified_at IS NULL) AS verified",
+                            AND pi.verified_at IS NOT NULL AND pi.removal_verified_at IS NULL \
+                            AND pi.removed_at IS NULL) AS verified",
                 counted = crate::permit::queries::COUNTED_ISOLATION_SQL,
             ),
             [permit.id.into(), permit.id.into()],

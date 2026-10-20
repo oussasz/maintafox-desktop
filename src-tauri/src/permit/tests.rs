@@ -2278,7 +2278,7 @@ async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_ch
 }
 
 /// Turns the three-person chain on for the LOTO type (administrator, step-up, reason).
-async fn loto_with_three_person_chain(db: &DatabaseConnection) {
+pub(super) async fn loto_with_three_person_chain(db: &DatabaseConnection) {
     let loto = queries::list_permit_types(db)
         .await
         .expect("types")

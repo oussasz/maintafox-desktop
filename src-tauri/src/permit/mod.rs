@@ -11,6 +11,8 @@ pub mod wo_gate;
 #[cfg(test)]
 mod access_tests;
 #[cfg(test)]
+mod lock_removal_tests;
+#[cfg(test)]
 mod requirement_rules_tests;
 #[cfg(test)]
 mod sync_check_tests;
