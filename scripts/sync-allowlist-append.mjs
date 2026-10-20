@@ -3,7 +3,9 @@
 // "synced" or "staged_only") to the control-plane sync allowlist, then refresh the desktop copy.
 //
 // The allowlist is append-only (maintafox-vendor-console/deploy/SYNC_PROTOCOL_V2.md §2): existing
-// entries are never changed or removed; a type already listed with another scope is an error.
+// entries are never changed or removed. A new entry gets `append_only` from the type's conflict_policy;
+// a type already listed with another scope or append_only flag is an error and nothing is written
+// (rule in scripts/sync-allowlist-merge.mjs).
 //
 // Usage: node scripts/sync-allowlist-append.mjs [path/to/maintafox-vendor-console]
 //        (default: ../maintafox-vendor-console next to this repository)
@@ -11,6 +13,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { appendStagedTypes } from "./sync-allowlist-merge.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const consoleRepo = resolve(process.argv[2] ?? join(repo, "..", "maintafox-vendor-console"));
@@ -22,20 +25,10 @@ const readJson = (path) => JSON.parse(readFileSync(path, "utf8").replace(/^﻿/,
 
 const registry = readJson(registryPath);
 const server = readJson(serverPath);
-const listed = new Map(server.entity_types.map((e) => [e.entity_type, e.scope]));
-
-const added = [];
-for (const entity of registry.entities) {
-  if (entity.sync_status !== "synced" && entity.sync_status !== "staged_only") continue;
-  const scope = listed.get(entity.entity_type);
-  if (scope === undefined) {
-    server.entity_types.push({ entity_type: entity.entity_type, scope: entity.scope });
-    listed.set(entity.entity_type, entity.scope);
-    added.push(`${entity.entity_type} (${entity.scope})`);
-  } else if (scope !== entity.scope) {
-    console.error(`${entity.entity_type}: allowlist scope ${scope}, desktop scope ${entity.scope}`);
-    process.exit(1);
-  }
+const { added, problems } = appendStagedTypes(registry, server);
+if (problems.length) {
+  console.error(problems.join("\n"));
+  process.exit(1);
 }
 
 const text = `${JSON.stringify(server, null, 2)}\n`;
