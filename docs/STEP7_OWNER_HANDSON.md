@@ -2,9 +2,9 @@
 
 # Step 7 — Hands-on checklist for the test installer
 
-Seulement ce que les tests automatiques ne peuvent pas prouver. Chaque étape a été relue contre les écrans actuels de la branche de développement (menus et libellés français réels). Les étapes marquées « PR 65 » portent sur la règle des quatre yeux des permis et l'avis aux administrateurs, qui ne sont pas encore fusionnés.
+Seulement ce que les tests automatiques ne peuvent pas prouver. Chaque étape a été relue contre les écrans actuels de la branche de développement (menus et libellés français réels).
 
-Only what automatic tests cannot prove. Every step was re-read against the current screens (real French labels). Steps marked “PR 65” cover the permit four-eyes rule and the administrator notice, not merged yet.
+Only what automatic tests cannot prove. Every step was re-read against the current screens (real French labels).
 
 ## Avant de commencer / Before you start
 
@@ -21,7 +21,7 @@ Only what automatic tests cannot prove. Every step was re-read against the curre
 | Magasinier | à créer : droits du stock (voir, gérer, compter, acheter) et voir les OT | Toute l'usine | stock |
 | Technicien S1 et Technicien S2 | Maintenance Technician | un seul site chacun | droits par site (un rôle d'administrateur ne peut pas être limité à un site) |
 
-3. Travaillez en français, thème clair ; l'anglais est à la fin. Le passage en thème sombre est à faire seulement quand le choix Clair/Sombre existe dans l'application (en attente d'une décision produit) : aucun écran ne le propose aujourd'hui.
+3. Travaillez en français, thème clair ; l'anglais est à la fin. Le thème sombre se règle dans Paramètres › Général › « Apparence » › « Mode de couleur » (administrateurs) ou dans Mon profil (tout le monde) : Clair, Sombre ou Système (par défaut). Le choix est enregistré sur ce poste, pour l'utilisateur Windows. Les écrans de connexion, de verrouillage et d'activation restent toujours en clair. Faites la section L d'abord en clair, puis en sombre.
 4. Gardez le Fil d'activité ouvert : Paramètres › « Sécurité & Logs » › « Journal d'activité » › « Fil d'activité » (compte avec le droit paramètres et le droit de lire le journal). Après chaque étape, une ligne lisible doit apparaître.
 5. Deux PC (même usine, même serveur) : seulement pour la section K. La section A demande une machine neuve ou remise à zéro.
 6. Pour chaque étape : cochez si conforme ; sinon écrivez une ligne : écran · ce que j'ai fait · ce que j'ai vu.
@@ -84,8 +84,6 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ### 6. Approbation par une autre personne que l'auteur (quatre yeux)
 
-**À vérifier après la fusion de la PR 65** (règle des quatre yeux sur les permis, avis aux administrateurs). Avant la fusion, ne pas faire cette étape.
-
 - **FR :** Personne A (qui rédige le permis) : « Soumettre en revue », puis « Approuver ». Ensuite personne B : « Approuver ». Regardez le haut de la fiche du permis.
 - **EN :** Person A (author): “Submit for review”, then “Approve”. Then person B: “Approve”. Look at the top of the permit panel.
 - **Attendu :** Pour A, qui a rédigé et soumis, refus : « Quatre yeux : vous avez soumis le permis … en revue, une autre personne doit l’approuver. » Pour B, accepté. La fiche affiche « Rédigé par A », « Soumis par A », « Approuvé par B », chacun avec sa date.
@@ -95,8 +93,6 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 7. Approbation : ni l'auteur ni la personne qui a soumis (facultatif)
-
-**À vérifier après la fusion de la PR 65** (règle des quatre yeux sur les permis, avis aux administrateurs). Avant la fusion, ne pas faire cette étape.
 
 - **FR :** Sur un second permis rédigé par A : le Superviseur 1 « Soumet en revue ». A essaie « Approuver », puis le Superviseur 1 essaie « Approuver », puis le Superviseur 2 « Approuve ».
 - **EN :** On a second permit written by A: Supervisor 1 submits. A tries to approve, then Supervisor 1 tries, then Supervisor 2 approves.
@@ -118,8 +114,6 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ### 9. Site sans quatre yeux : auto-approbation signalée
 
-**À vérifier après la fusion de la PR 65** (règle des quatre yeux sur les permis, avis aux administrateurs). Avant la fusion, ne pas faire cette étape.
-
 - **FR :** Paramètres › Général › « Règles par site » : choisissez un site, mettez « Autoriser l'auto-approbation des décisions de fiabilité et des permis de travail » sur « Activé » (mot de passe et motif de 10 caractères au moins). La personne A rédige, soumet et approuve un permis de ce site. Remettez ensuite la règle sur « Désactivé » et relisez l'« Historique ».
 - **EN :** Settings › General › “Règles par site”: set the self-approval rule On for a site (password and reason). Person A writes, submits and approves a permit of that site. Put the rule back Off and read the History.
 - **Attendu :** L'approbation est acceptée et la fiche porte « auto-approbation (site sans 4 yeux) ». Remise à « Désactivé », A est de nouveau refusé. L'Historique donne qui, quand, avant et après, motif, en français correct.
@@ -130,12 +124,10 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ### 10. Permis d'avant la mise à jour (seulement si le jeu de démonstration en contient) (facultatif)
 
-**À vérifier après la fusion de la PR 65** (règle des quatre yeux sur les permis, avis aux administrateurs). Avant la fusion, ne pas faire cette étape.
-
-- **FR :** Ouvrez un permis écrit avant la mise à jour : s'il est déjà approuvé ou plus loin, regardez « Approuvé par ». S'il est encore brouillon ou en revue, essayez « Approuver ».
-- **EN :** Open a permit written before the update: if already approved or further, read “Approuvé par”. If still draft or in review, try “Approve”.
-- **Attendu :** Déjà approuvé : « approbateur non enregistré ». Brouillon ou en revue : refus « auteur non enregistré (permis antérieur à la mise à jour) » : il faut l'annuler et établir un nouveau permis.
-- **Expected:** Already approved: “approbateur non enregistré”. Draft or in review: refused, cancel it and raise a new permit.
+- **FR :** Ouvrez un permis écrit avant la mise à jour : s'il est déjà approuvé ou plus loin, regardez « Approuvé par ». S'il est encore brouillon, « Soumettre en revue » ; s'il est en revue, faites « Approuver » par une autre personne que celle qui vient de le soumettre.
+- **EN :** Open a permit written before the update: if already approved or further, read “Approuvé par”. If still draft, submit it; if in review, have another person than the submitter try “Approve”.
+- **Attendu :** Déjà approuvé : « approbateur non enregistré ». En revue : refus « auteur non enregistré (permis antérieur à la mise à jour) » : il faut l'annuler et établir un nouveau permis.
+- **Expected:** Already approved: “approbateur non enregistré”. In review: refused (author not recorded), cancel it and raise a new permit.
 - **Rôle :** Superviseur.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
@@ -238,7 +230,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - **EN :** Planning › Weekly schedule: approve then freeze the week. Try to move a job: the “frozen week: enter as a break-in” dialog opens; register the break-in with reason code and approver. Click “Demander le dégel”.
 - **Attendu :** Le break-in est enregistré (ligne « Intervention imprévue » dans l'activité). Le dégel indique « Il doit être décidé par un autre planificateur » : un autre planificateur voit « Approuver le dégel » / « Refuser le dégel ».
 - **Expected:** The break-in is recorded (feed line). The unfreeze request must be decided by another planner.
-- **Rôle :** Planificateur  ; un second planificateur pour le dégel.
+- **Rôle :** Planificateur ; un second planificateur pour le dégel.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
@@ -600,8 +592,6 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ### 55. Règle par site et avis aux administrateurs
 
-**À vérifier après la fusion de la PR 65** (règle des quatre yeux sur les permis, avis aux administrateurs). Avant la fusion, ne pas faire cette étape.
-
 - **FR :** PC 1 : Paramètres › Général › « Règles par site », site S1 › « Activé » (mot de passe, motif). Synchronisez. PC 2 : connectez-vous avec un administrateur : un avis « Règle des quatre yeux désactivée à S1 sur un autre poste » est affiché en haut ; essayez de le masquer, puis cliquez « J'ai pris connaissance ». Relisez l'« Historique » de la règle.
 - **EN :** PC 1: Settings › General › Rules per site, S1 › On (password, reason). Sync. PC 2: sign in as an administrator: a notice “Règle des quatre yeux désactivée à S1 sur un autre poste” is shown; try to hide it, then acknowledge it.
 - **Attendu :** Sur PC 2, S1 est « Activé » et le changement de PC 1 est dans l'Historique, sans conflit. Quand la règle « retrait des cadenas à trois personnes » d'un type de permis est activée ou désactivée sur un autre PC, un avis du même genre arrive (« Retrait des cadenas à trois personnes activé pour … sur un autre poste » / « désactivé »). Chaque avis reste affiché à chaque connexion jusqu'à la confirmation (impossible à archiver ou reporter avant) ; il est aussi dans la boîte de réception de Notifications. Il n'est jamais envoyé par e-mail. Remettez ensuite la règle sur « Désactivé » (un second avis « réactivée » arrive).
@@ -652,8 +642,6 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ### 60. Facultatif : permis auto-approuvé reçu après retour aux quatre yeux
 
-**À vérifier après la fusion de la PR 65** (règle des quatre yeux sur les permis, avis aux administrateurs). Avant la fusion, ne pas faire cette étape.
-
 - **FR :** PC 1 (site S1 « Activé ») : l'auteur rédige, soumet et approuve un permis. PC 2 : S1 est « Désactivé ». Synchronisez et ouvrez « Conflits non résolus » sur PC 2.
 - **EN :** PC 1 (S1 On): the author writes, submits and approves a permit. PC 2: S1 is Off. Sync and open the conflicts on PC 2.
 - **Attendu :** Un conflit « Un permis approuvé sur un autre poste par la personne qui l'a rédigé ou soumis… » apparaît sur PC 2 ; le permis n'y est pas appliqué.
@@ -672,81 +660,95 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-## L. Passage visuel (chaque point en clair ; le sombre quand le choix existera)
+## L. Passage visuel (chaque point en clair, puis en sombre)
+
+Pour le sombre : Paramètres › Général › « Apparence » › « Mode de couleur » › « Sombre » (ou Mon profil). Le badge « Enregistré sur ce poste » confirme que le choix est gardé sur ce PC. Gardez « Sombre » pour les cases « Sombre OK » ci-dessous, puis remettez « Clair » ou « Système » si vous voulez.
+
+For dark: Settings › General › “Apparence” › “Mode de couleur” › “Sombre” (or My profile). The badge “Enregistré sur ce poste” confirms the choice is kept on this PC. Keep “Sombre” for the dark boxes below, then switch back if you like.
 
 ### 62. Verrouillage
 
 - **FR :** Après l'étape 53 : l'arrière-plan est assombri (ni noir, ni clair) et la carte est lisible.
 - **EN :** After step 53: the background is dimmed (neither black nor clear), the card readable.
-- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
-- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
+- **Attendu :** Correct en thème clair et en thème sombre (texte lisible, rien de blanc éclatant ni d'illisible).
+- **Expected:** Correct in the light and the dark theme (readable text, nothing glaring or unreadable).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
+- [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 63. Cartes
 
 - **FR :** Vue d'ensemble, Analytique, Équipements, Planification : cartes à teinte légère, un peu plus sombres au survol.
 - **EN :** Overview, Analytics, Equipment, Planning: cards have a light tint and darken slightly on hover.
-- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
-- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
+- **Attendu :** Correct en thème clair et en thème sombre (texte lisible, rien de blanc éclatant ni d'illisible).
+- **Expected:** Correct in the light and the dark theme (readable text, nothing glaring or unreadable).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
+- [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 64. Message d'erreur
 
 - **FR :** Clôturez un OT avec une tâche obligatoire ouverte : le message est sur fond rouge doux, texte lisible.
 - **EN :** Close a work order with a mandatory task open: soft red background, readable text.
-- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
-- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
+- **Attendu :** Correct en thème clair et en thème sombre (texte lisible, rien de blanc éclatant ni d'illisible).
+- **Expected:** Correct in the light and the dark theme (readable text, nothing glaring or unreadable).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
+- [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 65. Ligne survolée et choisie
 
 - **FR :** Liste des OT : une ligne survolée a une teinte légère, la ligne choisie se distingue.
 - **EN :** Work-order list: hovered row has a faint tint, the selected row stands out.
-- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
-- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
+- **Attendu :** Correct en thème clair et en thème sombre (texte lisible, rien de blanc éclatant ni d'illisible).
+- **Expected:** Correct in the light and the dark theme (readable text, nothing glaring or unreadable).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
+- [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 66. Licence
 
 - **FR :** Paramètres › Système & Sync › Licence › « événements de licence récents (détails techniques) » : la boîte a une teinte légère, texte lisible.
 - **EN :** Settings › System & Sync › Licence › technical details box: light tint, readable text.
-- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
-- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
+- **Attendu :** Correct en thème clair et en thème sombre (texte lisible, rien de blanc éclatant ni d'illisible).
+- **Expected:** Correct in the light and the dark theme (readable text, nothing glaring or unreadable).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
+- [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 67. Lignes d'import
 
 - **FR :** Pendant l'import d'équipements : erreurs en rouge, avertissements en ambre, lignes valides sans teinte.
 - **EN :** During the equipment import: errors red, warnings amber, valid rows plain.
-- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
-- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
+- **Attendu :** Correct en thème clair et en thème sombre (texte lisible, rien de blanc éclatant ni d'illisible).
+- **Expected:** Correct in the light and the dark theme (readable text, nothing glaring or unreadable).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
+- [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ### 68. Calendrier de date
 
 - **FR :** Dans un sélecteur de date : jours hors du mois en gris, jours désactivés encore plus pâles.
 - **EN :** In any date picker: days outside the month grey, disabled days fainter.
-- **Attendu :** Correct en thème clair. Thème sombre : à faire seulement quand le choix Clair/Sombre existe (en attente d'une décision produit).
-- **Expected:** Correct in the light theme. Dark theme: only once the Light/Dark choice exists (pending a product decision).
+- **Attendu :** Correct en thème clair et en thème sombre (texte lisible, rien de blanc éclatant ni d'illisible).
+- **Expected:** Correct in the light and the dark theme (readable text, nothing glaring or unreadable).
 - **Rôle :** Tout compte.
-- [ ] Clair OK  - [ ] Sombre (quand le choix existe)
+- [ ] Clair OK  - [ ] Sombre OK
+- Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
+
+### 69. Facultatif : le choix « Système » suit Windows
+
+- **FR :** Mode de couleur › « Système ». Changez le mode de couleur de Windows (Paramètres Windows › Personnalisation › Couleurs : clair puis sombre). Ouvrez ensuite l'écran de connexion (déconnexion).
+- **EN :** Colour mode › “Système”. Change the Windows colour mode (light then dark). Then open the sign-in screen (sign out).
+- **Attendu :** L'application suit Windows sans redémarrage (« Affichage actuel » change). L'écran de connexion reste clair dans tous les cas. Le choix est propre à ce poste : un autre PC garde le sien.
+- **Expected:** The app follows Windows without a restart (“Affichage actuel” changes). The sign-in screen stays light in every mode. The choice is per PC.
+- **Rôle :** Tout compte.
+- [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
 ## M. Anglais et journée réaliste
 
-### 69. Coup d'œil en anglais
+### 70. Coup d'œil en anglais
 
 - **FR :** Passez en anglais (menu utilisateur › « Langue ») et reparcourez : demande, permis, OT, accueil, nouvelle valeur « Stage ».
 - **EN :** Switch to English and go through: request, permit, work order, overview, the new “Stage” value.
@@ -756,7 +758,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 70. Une journée réaliste
+### 71. Une journée réaliste
 
 - **FR :** Pour chaque module ancien (stock, fiabilité, préventif, analytique, finance, personnel, « Rondes et checklists ») faites une journée de travail normale et notez toute limite ou gêne.
 - **EN :** For each earlier module (stock, reliability, PM, analytics, finance, personnel, inspection rounds) do one normal working day and note every limit or annoyance.
@@ -774,4 +776,4 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ---
 
-Total : 70 étapes (dont 8 facultatives et 6 à vérifier après la fusion de la PR 65).
+Total : 71 étapes (dont 9 facultatives).
