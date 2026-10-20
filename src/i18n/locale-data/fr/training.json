@@ -415,6 +415,7 @@
     "PERMIT_TYPE_ISOLATION_CLOCK_BEHIND": "La règle d’isolation d’énergie du type de permis {{type}} a été modifiée en dernier le {{last}}, ce qui n’est pas antérieur à l’heure de ce poste : vérifiez la date et l’heure de ce poste, puis refaites la modification.",
     "PERSONNEL_CODE_NOT_IN_LIST": "« {{code}} » n’est pas une valeur active de sa liste ({{field}}) dans Données de référence.",
     "PERSONNEL_ABSENCE_TAG_REQUIRED": "Chaque type d’absence doit indiquer son comportement : leave (absence simple), critical (toujours bloquante) ou training (affiché en formation).",
+    "PERSONNEL_ABSENCE_TYPE_HIDDEN": "Le type de cette absence est une donnée sensible que vous ne pouvez pas lire : il ne peut pas être modifié. Les dates et le caractère critique peuvent l’être.",
     "DOCUMENT_CATEGORY_NOT_IN_LIST": "« {{code}} » n’est pas une catégorie de document active dans Données de référence.",
     "WO_SHUTDOWN_FLAG_NOT_EDITABLE": "« Arrêt nécessaire » ne se modifie que pendant la préparation de l’OT (brouillon, planification ou prêt) ; il est {{status}}.",
     "WO_PART_LINE_RIGHT_REQUIRED": "Modifier une ligne de pièce planifiée demande le droit de modification des OT.",

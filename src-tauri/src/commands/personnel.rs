@@ -859,8 +859,13 @@ pub async fn update_availability_block(
         crate::rbac::permissions::PER_MANAGE,
         PermissionScope::Global
     );
-    let block = availability::update_availability_block(&state.db, input, i64::from(user.user_id)).await?;
-    readable_block(&state, user.user_id, block).await
+    // The hidden type and reason are kept on the server whatever the payload holds.
+    let access = absence_access(&state, user.user_id).await;
+    let block = availability::update_availability_block(&state.db, input, i64::from(user.user_id), &access).await?;
+    let mut blocks = [block];
+    access.apply_to_blocks(&state.db, &mut blocks).await?;
+    let [block] = blocks;
+    Ok(block)
 }
 
 #[tauri::command]

@@ -370,10 +370,19 @@ pub async fn create_availability_block(
 /// the absence type or reason).
 pub const AUDIT_BLOCK_CRITICAL_CHANGED: &str = "personnel.availability_block.critical_changed";
 
+/// Refusal of a type change by a caller the block's type is withheld from (translated in
+/// `training:errors`).
+pub const CODE_ABSENCE_TYPE_HIDDEN: &str = "PERSONNEL_ABSENCE_TYPE_HIDDEN";
+
+/// Edits a block. `access` is what the caller may read (`personnel::absence_access`): for a caller
+/// the block's type and reason are withheld from, the server never takes them from the payload —
+/// the stored reason is kept whatever is sent, and any type in the payload is refused
+/// ([`CODE_ABSENCE_TYPE_HIDDEN`]); dates and the critical flag stay editable.
 pub async fn update_availability_block(
     db: &DatabaseConnection,
     input: AvailabilityBlockUpdateInput,
     actor_id: i64,
+    access: &crate::personnel::absence_access::AbsenceAccess,
 ) -> AppResult<PersonnelAvailabilityBlock> {
     if input.start_at >= input.end_at {
         return Err(AppError::ValidationFailed(vec![
@@ -381,6 +390,17 @@ pub async fn update_availability_block(
         ]));
     }
     let existing = fetch_block_by_id(db, input.id).await?;
+    let hidden =
+        access.detail_for(existing.personnel_id) == crate::personnel::absence_access::AbsenceDetail::AvailabilityOnly;
+    // Any type in the payload is refused, even the stored one: accepting a right guess would let
+    // the caller probe the hidden type.
+    if hidden && input.block_type.is_some() {
+        return Err(crate::errors::org_validation_failed(
+            CODE_ABSENCE_TYPE_HIDDEN,
+            "The absence type of this block is sensitive data you cannot read: it cannot be changed.",
+            HashMap::from([("block_id".to_string(), existing.id.to_string())]),
+        ));
+    }
     // Only a change of type is checked against the list: a block whose stored type was retired
     // or flagged stays editable and keeps that type's behaviour.
     // Unchanged type: the stored critical flag is kept (a legacy type adopted "à revoir" never
@@ -408,7 +428,8 @@ pub async fn update_availability_block(
     .await?;
 
     let is_critical = forced_critical || input.is_critical.unwrap_or(keep_critical);
-    let reason_note = if input.keep_reason_note {
+    // A caller the reason is withheld from never overwrites it.
+    let reason_note = if hidden || input.keep_reason_note {
         existing.reason_note.clone()
     } else {
         input.reason_note.clone()

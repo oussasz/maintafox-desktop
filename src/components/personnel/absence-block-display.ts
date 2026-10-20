@@ -7,8 +7,8 @@
 import type { TFunction } from "i18next";
 
 import {
-  absenceTimelineState,
   type ResourceTimelineState,
+  absenceTimelineState,
 } from "@/design-system/resource-timeline-tokens";
 import type { PersonnelAvailabilityBlock } from "@shared/ipc-types";
 

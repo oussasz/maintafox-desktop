@@ -241,6 +241,7 @@ async fn a_record_with_a_retired_or_flagged_value_stays_editable() {
             confirm_overlap: None,
         },
         1,
+        &crate::personnel::absence_access::AbsenceAccess::full_for_tests(),
     )
     .await
     .expect("unchanged flagged type is editable");
