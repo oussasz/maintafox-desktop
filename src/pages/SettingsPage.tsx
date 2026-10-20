@@ -9,6 +9,7 @@ import { DiagnosticsPanel } from "@/components/diagnostics/DiagnosticsPanel";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { LicenseEnforcementPanel } from "@/components/license/LicenseEnforcementPanel";
 import { ActivityLogSettingsSection } from "@/components/settings/ActivityLogSettingsSection";
+import { AppearanceSettingsPanel } from "@/components/settings/AppearanceSettingsPanel";
 import { BackupOperationsPanel } from "@/components/settings/BackupOperationsPanel";
 import { ConnectionProfilesPanel } from "@/components/settings/ConnectionProfilesPanel";
 import { DatabaseRecoveryKeyPanel } from "@/components/settings/DatabaseRecoveryKeyPanel";
@@ -340,6 +341,7 @@ export function SettingsPage() {
                       <p className="text-sm leading-relaxed text-text-muted">
                         {t("tabs.profileHint")}
                       </p>
+                      <AppearanceSettingsPanel />
                       <ProfileSettingsPanel />
                     </section>
                   ) : null}
@@ -358,6 +360,7 @@ export function SettingsPage() {
                       <p className="text-sm leading-relaxed text-text-muted">
                         {t("tabs.generalHint")}
                       </p>
+                      <AppearanceSettingsPanel />
                       <DocumentHeaderSettingsPanel
                         onToast={onToast}
                         onSaved={() => void loadAll({ silent: true, allowEnsure: false })}

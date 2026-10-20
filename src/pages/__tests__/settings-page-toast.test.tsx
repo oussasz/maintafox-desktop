@@ -6,6 +6,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ThemeProvider } from "@/components/ui/ThemeProvider";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { useAppToastStore } from "@/store/app-toast-store";
 
@@ -41,9 +42,11 @@ describe("SettingsPage confirmations", () => {
 
   it("confirms restoring the defaults through the app-wide toast", async () => {
     render(
-      <MemoryRouter>
-        <SettingsPage />
-      </MemoryRouter>,
+      <ThemeProvider>
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
+      </ThemeProvider>,
     );
     fireEvent.click(await screen.findByRole("button", { name: "page.restoreDefaults" }));
     await waitFor(() =>

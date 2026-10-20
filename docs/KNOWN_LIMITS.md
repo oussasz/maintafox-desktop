@@ -277,6 +277,8 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Work-order and request boards are read-only: each status change needs its own dialog (urgency, reason, permit checks). Purchasing boards allow submit/approve by drag, menu or keyboard through the same server step. | UX | Accepted |
 | Work-order and request boards load each lane from the server with its own count and "load more"; opening a board sends one request per lane (7 or 6, in parallel). | UX | Accepted |
 | Screens still old or mixed (in progress): asset import wizard, diagnostics page, and the remaining reliability tools (Ishikawa, decision log, rating scales). | UX | Step 5 |
+| The colour mode (Clair / Sombre / Système, Paramètres › Général › Apparence and Mon profil) is stored on this PC (per Windows user on this PC), not per account and not synced; "Système" follows the operating system. The login, lock and activation screens keep their fixed light brand look in every mode. | UX | Accepted |
+| Tone borders (the thin edge of status chips and boxes) have 1.2–1.8:1 contrast in light and dark; the text and the label carry the meaning (text contrast is checked by `node scripts/check-tone-contrast.mjs`, 4.5:1 or more in both modes). | UX | Accepted |
 
 ## Modules delivered before this register
 

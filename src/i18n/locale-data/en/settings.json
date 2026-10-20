@@ -466,6 +466,22 @@
       }
     }
   },
+  "appearance": {
+    "title": "Appearance",
+    "intro": "Colour mode of the application on this PC. The choice is saved on this PC, for the current Windows user; it is not shared with other PCs or between Maintafox accounts on this PC.",
+    "legend": "Colour mode",
+    "light": "Light",
+    "lightHint": "Light background, recommended in a well-lit workshop.",
+    "dark": "Dark",
+    "darkHint": "Dark background, less glare in a control room or at night.",
+    "system": "System",
+    "systemHint": "Follows the Windows setting and changes with it.",
+    "current": "Currently shown: {{mode}}",
+    "currentLight": "light",
+    "currentDark": "dark",
+    "storedLocally": "Saved on this PC",
+    "authNote": "The sign-in, lock and activation screens always stay light."
+  },
   "siteRules": {
     "title": "Rules per site",
     "hint": "A planning site may relax a rule for itself only. A site without a rule keeps the strict default. Each change asks for a reason and your identity, and is kept in the history.",
