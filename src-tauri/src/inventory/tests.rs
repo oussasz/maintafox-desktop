@@ -345,10 +345,11 @@ async fn transfer_safety_preserves_reserved_and_blocks_double_consumption() {
             notes: Some("should fail due reserved".to_string()),
             lot_id: None,
         },
+        None,
     )
     .await
     .expect_err("cannot transfer more than available");
-    assert!(matches!(transfer_err, AppError::ValidationFailed(_)));
+    assert!(matches!(transfer_err, AppError::OrgValidationFailed(_)));
 
     queries::issue_reserved_stock(
         &db,
@@ -1886,4 +1887,322 @@ async fn count_tolerances_come_from_the_tenant_settings() {
             .await
             .is_err()
     );
+}
+
+async fn insert_aux_location(db: &DatabaseConnection, code: &str) -> i64 {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO stock_locations (entity_sync_id, warehouse_id, code, name, is_default, is_active)
+         SELECT ?, warehouse_id, ?, 'Aux bin', 0, 1
+         FROM stock_locations WHERE code = 'MAIN-BIN' LIMIT 1",
+        [crate::sync::identity::new_entity_sync_id().into(), code.into()],
+    ))
+    .await
+    .expect("insert aux location");
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM stock_locations WHERE code = ? LIMIT 1",
+            [code.into()],
+        ))
+        .await
+        .expect("query aux")
+        .expect("aux row");
+    row.try_get("", "id").expect("aux id")
+}
+
+async fn seed_stock(db: &DatabaseConnection, article_id: i64, location_id: i64, qty: f64) {
+    queries::adjust_stock(
+        db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: qty,
+            reason_code: Some("seed transfer".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed stock");
+}
+
+fn transfer_input(article_id: i64, from: i64, to: i64, quantity: f64, notes: Option<&str>) -> InventoryTransferInput {
+    InventoryTransferInput {
+        article_id,
+        from_location_id: from,
+        to_location_id: to,
+        quantity,
+        source_type: None,
+        source_id: None,
+        source_ref: None,
+        notes: notes.map(str::to_string),
+        lot_id: None,
+    }
+}
+
+fn transfer_refusal_of(err: AppError) -> (String, std::collections::HashMap<String, String>) {
+    match err {
+        AppError::OrgValidationFailed(issues) => {
+            let issue = issues.into_iter().next().expect("one issue");
+            (issue.code, issue.params)
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+}
+
+async fn transfer_movement_count(db: &DatabaseConnection, article_id: i64) -> i64 {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM inventory_transactions
+             WHERE article_id = ? AND movement_type IN ('TRANSFER_OUT','TRANSFER_IN')",
+            [article_id.into()],
+        ))
+        .await
+        .expect("count movements")
+        .expect("row");
+    row.try_get("", "n").expect("n")
+}
+
+#[tokio::test]
+async fn transfer_refusals_carry_stable_codes_and_change_nothing() {
+    use crate::inventory::queries::transfer_codes as codes;
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-XFER-CODES").await;
+    let main_loc = main_location_id(&db).await;
+    let aux_loc = insert_aux_location(&db, "AUX-CODES").await;
+    seed_stock(&db, article_id, main_loc, 8.0).await;
+    queries::reserve_stock(
+        &db,
+        InventoryReserveInput {
+            article_id,
+            location_id: main_loc,
+            quantity: 3.0,
+            source_type: "WO".to_string(),
+            source_id: Some(9101),
+            source_ref: Some("WO-9101".to_string()),
+            notes: None,
+        },
+    )
+    .await
+    .expect("reserve");
+
+    let note = Some("réappro atelier");
+    let (code, _) = transfer_refusal_of(
+        queries::transfer_stock(&db, transfer_input(article_id, main_loc, aux_loc, 0.0, note), None)
+            .await
+            .expect_err("zero quantity"),
+    );
+    assert_eq!(code, codes::QUANTITY_INVALID);
+    let (code, _) = transfer_refusal_of(
+        queries::transfer_stock(&db, transfer_input(article_id, main_loc, aux_loc, -2.0, note), None)
+            .await
+            .expect_err("negative quantity"),
+    );
+    assert_eq!(code, codes::QUANTITY_INVALID);
+    let (code, _) = transfer_refusal_of(
+        queries::transfer_stock(&db, transfer_input(article_id, main_loc, main_loc, 1.0, note), None)
+            .await
+            .expect_err("same location"),
+    );
+    assert_eq!(code, codes::SAME_LOCATION);
+
+    for bad_note in [None, Some(""), Some("    "), Some("  ab  "), Some("abcd")] {
+        let (code, params) = transfer_refusal_of(
+            queries::transfer_stock(&db, transfer_input(article_id, main_loc, aux_loc, 1.0, bad_note), None)
+                .await
+                .expect_err("missing or short note"),
+        );
+        assert_eq!(code, codes::NOTE_TOO_SHORT, "note {bad_note:?}");
+        assert_eq!(params.get("min").map(String::as_str), Some("5"));
+    }
+
+    // 8 on hand, 3 reserved: 5 available. 6 is refused even though 8 are on hand.
+    let (code, params) = transfer_refusal_of(
+        queries::transfer_stock(&db, transfer_input(article_id, main_loc, aux_loc, 6.0, note), None)
+            .await
+            .expect_err("reserved stock is not transferable"),
+    );
+    assert_eq!(code, codes::INSUFFICIENT_AVAILABLE);
+    assert_eq!(params.get("available").map(String::as_str), Some("5"));
+    assert_eq!(params.get("requested").map(String::as_str), Some("6"));
+
+    let (code, params) = transfer_refusal_of(
+        queries::transfer_stock(&db, transfer_input(article_id, main_loc, 987_654, 1.0, note), None)
+            .await
+            .expect_err("unknown destination"),
+    );
+    assert_eq!(code, codes::LOCATION_UNAVAILABLE);
+    assert_eq!(params.get("side").map(String::as_str), Some("to"));
+    let (code, params) = transfer_refusal_of(
+        queries::transfer_stock(&db, transfer_input(article_id, 987_654, aux_loc, 1.0, note), None)
+            .await
+            .expect_err("unknown source"),
+    );
+    assert_eq!(code, codes::LOCATION_UNAVAILABLE);
+    assert_eq!(params.get("side").map(String::as_str), Some("from"));
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE articles SET is_active = 0 WHERE id = ?",
+        [article_id.into()],
+    ))
+    .await
+    .expect("deactivate");
+    let (code, _) = transfer_refusal_of(
+        queries::transfer_stock(&db, transfer_input(article_id, main_loc, aux_loc, 1.0, note), None)
+            .await
+            .expect_err("inactive article"),
+    );
+    assert_eq!(code, codes::ARTICLE_INACTIVE);
+
+    assert_eq!(transfer_movement_count(&db, article_id).await, 0);
+    let balances = queries::list_stock_balances(&db, InventoryStockFilter::default())
+        .await
+        .expect("balances");
+    let main_balance = balances
+        .iter()
+        .find(|b| b.article_id == article_id && b.location_id == main_loc)
+        .expect("source balance");
+    assert!((main_balance.on_hand_qty - 8.0).abs() < 1e-9);
+    assert!((main_balance.reserved_qty - 3.0).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn transfer_of_tracked_articles_refuses_with_codes() {
+    use crate::inventory::queries::transfer_codes as codes;
+    let db = setup_db().await;
+    let main_loc = main_location_id(&db).await;
+    let aux_loc = insert_aux_location(&db, "AUX-TRACKED").await;
+    let note = Some("réappro atelier");
+
+    let serial_id = create_test_article(&db, "INV-XFER-SERIAL").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE articles SET requires_serial_tracking = 1 WHERE id = ?",
+        [serial_id.into()],
+    ))
+    .await
+    .expect("serial tracking");
+    let (code, _) = transfer_refusal_of(
+        queries::transfer_stock(&db, transfer_input(serial_id, main_loc, aux_loc, 1.5, note), None)
+            .await
+            .expect_err("fractional serial quantity"),
+    );
+    assert_eq!(code, codes::WHOLE_UNITS);
+
+    // A batch-tracked article without any lot in stock: FEFO cannot cover the quantity, and a
+    // lot that does not exist is refused the same way.
+    let batch_id = create_test_article(&db, "INV-XFER-BATCH").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE articles SET requires_batch_tracking = 1 WHERE id = ?",
+        [batch_id.into()],
+    ))
+    .await
+    .expect("batch tracking");
+    // Plain on-hand stock (not in a lot) is enough for the available check, not for the lots.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO stock_balances (article_id, warehouse_id, location_id, on_hand_qty, reserved_qty, available_qty)
+         SELECT ?, warehouse_id, id, 5, 0, 5 FROM stock_locations WHERE id = ?",
+        [batch_id.into(), main_loc.into()],
+    ))
+    .await
+    .expect("balance without lot");
+    let (code, params) = transfer_refusal_of(
+        queries::transfer_stock(&db, transfer_input(batch_id, main_loc, aux_loc, 2.0, note), None)
+            .await
+            .expect_err("no lot in stock"),
+    );
+    assert_eq!(code, codes::LOT_UNAVAILABLE);
+    assert_eq!(params.get("requested").map(String::as_str), Some("2"));
+    let mut with_lot = transfer_input(batch_id, main_loc, aux_loc, 2.0, note);
+    with_lot.lot_id = Some(987_654);
+    let (code, _) = transfer_refusal_of(
+        queries::transfer_stock(&db, with_lot, None)
+            .await
+            .expect_err("unknown lot"),
+    );
+    assert_eq!(code, codes::LOT_UNAVAILABLE);
+    assert_eq!(transfer_movement_count(&db, batch_id).await, 0);
+}
+
+#[tokio::test]
+async fn transfer_moves_available_stock_and_records_who_when_and_why_on_both_movements() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-XFER-OK").await;
+    let main_loc = main_location_id(&db).await;
+    let aux_loc = insert_aux_location(&db, "AUX-OK").await;
+    seed_stock(&db, article_id, main_loc, 8.0).await;
+    queries::reserve_stock(
+        &db,
+        InventoryReserveInput {
+            article_id,
+            location_id: main_loc,
+            quantity: 3.0,
+            source_type: "WO".to_string(),
+            source_id: Some(9102),
+            source_ref: Some("WO-9102".to_string()),
+            notes: None,
+        },
+    )
+    .await
+    .expect("reserve");
+    let actor: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts ORDER BY id LIMIT 1".to_string(),
+        ))
+        .await
+        .expect("query user")
+        .expect("a user")
+        .try_get("", "id")
+        .expect("user id");
+
+    // The note is trimmed; exactly the available quantity (5) can leave.
+    let balances = queries::transfer_stock(
+        &db,
+        transfer_input(article_id, main_loc, aux_loc, 5.0, Some("  Renfort magasin atelier  ")),
+        Some(actor),
+    )
+    .await
+    .expect("transfer");
+    assert_eq!(balances.len(), 2);
+    assert!(
+        (balances[0].on_hand_qty - 3.0).abs() < 1e-9,
+        "source keeps the reserved 3"
+    );
+    assert!((balances[0].reserved_qty - 3.0).abs() < 1e-9);
+    assert!(balances[0].available_qty.abs() < 1e-9);
+    assert!((balances[1].on_hand_qty - 5.0).abs() < 1e-9);
+    assert!(balances[1].reserved_qty.abs() < 1e-9);
+
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT movement_type, quantity, reason, performed_by_id, performed_at, location_id
+             FROM inventory_transactions
+             WHERE article_id = ? AND movement_type IN ('TRANSFER_OUT','TRANSFER_IN')
+             ORDER BY id",
+            [article_id.into()],
+        ))
+        .await
+        .expect("movements");
+    assert_eq!(rows.len(), 2, "one OUT and one IN");
+    for (row, (kind, location)) in rows.iter().zip([("TRANSFER_OUT", main_loc), ("TRANSFER_IN", aux_loc)]) {
+        let movement_type: String = row.try_get("", "movement_type").expect("type");
+        assert_eq!(movement_type, kind);
+        let quantity: f64 = row.try_get("", "quantity").expect("qty");
+        assert!((quantity - 5.0).abs() < 1e-9);
+        let reason: Option<String> = row.try_get("", "reason").expect("reason");
+        assert_eq!(reason.as_deref(), Some("Renfort magasin atelier"));
+        let by: Option<i64> = row.try_get("", "performed_by_id").expect("by");
+        assert_eq!(by, Some(actor));
+        let at: Option<String> = row.try_get("", "performed_at").expect("at");
+        assert!(at.is_some_and(|v| !v.is_empty()));
+        let loc: i64 = row.try_get("", "location_id").expect("loc");
+        assert_eq!(loc, location);
+    }
 }
