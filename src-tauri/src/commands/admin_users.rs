@@ -1399,6 +1399,28 @@ pub(crate) async fn set_user_active_impl(
 /// (its subtree is covered, see `notifications::inbox::visible_to`); `team` references a team.
 pub(crate) const ASSIGNMENT_SCOPE_TYPES: &[&str] = &["tenant", "entity", "site", "team", "org_node"];
 
+/// A plant-wide (tenant) scope names no tenant, or this plant's licence tenant: it travels to the
+/// other PCs unchanged, where any other value would only stop the person from signing in.
+pub(crate) async fn validate_tenant_reference(
+    db: &sea_orm::DatabaseConnection,
+    scope_type: &str,
+    scope_reference: Option<&str>,
+) -> AppResult<()> {
+    if scope_type != "tenant" {
+        return Ok(());
+    }
+    let Some(reference) = scope_reference.filter(|r| !r.trim().is_empty()) else {
+        return Ok(());
+    };
+    let activated = crate::commands::product_license::get_activation_claim_tenant_id(db).await?;
+    if activated.as_deref() == Some(reference) {
+        return Ok(());
+    }
+    Err(AppError::ValidationFailed(vec![format!(
+        "A plant-wide scope names no tenant or this plant's licence tenant; '{reference}' is not it."
+    )]))
+}
+
 /// Check a scope type and its reference. Every non-tenant scope must name a live org node or
 /// team: an assignment whose reference matches nothing would grant nothing, silently.
 pub(crate) async fn validate_assignment_scope<C>(
@@ -1528,6 +1550,7 @@ pub(crate) async fn assign_role_scope_impl(
     app: Option<&AppHandle>,
 ) -> AppResult<IdPayload> {
     validate_assignment_scope(&state.db, &input.scope_type, input.scope_reference.as_deref()).await?;
+    validate_tenant_reference(&state.db, &input.scope_type, input.scope_reference.as_deref()).await?;
     ensure_role_allowed_at_scope(&state.db, input.role_id, &input.scope_type).await?;
     let (valid_from, valid_to) = normalize_validity(input.valid_from.as_deref(), input.valid_to.as_deref())?;
     ensure_may_grant_role(&state.db, caller, input.role_id, Some(input.user_id)).await?;
