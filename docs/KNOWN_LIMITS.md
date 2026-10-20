@@ -257,7 +257,6 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Limit | Impact | Handled in |
 |---|---|---|
 | Personnel and document list screens follow Données de référence: an edit there shows at once; a change received by sync shows when a screen opens and its copy is more than 5 minutes old. | UX | Accepted |
-| A planner without the personnel view right sees absence codes (not names) on the planning board, coloured only as critical or plain. | UX | Step 6 (roles) |
 | A person's skills and certifications are edited only in the Qualifications tab, not in the person form (which points there). | UX | Accepted |
 
 ## Activity feed and audit log
