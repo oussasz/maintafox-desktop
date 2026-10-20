@@ -236,7 +236,7 @@ const AssignableRoleSummarySchema = z.object({
   is_system: z.boolean(),
 });
 
-const AssignableScopeNodeSchema = z.object({
+export const AssignableScopeNodeSchema = z.object({
   id: z.number(),
   parent_id: z.number().nullable(),
   code: z.string(),

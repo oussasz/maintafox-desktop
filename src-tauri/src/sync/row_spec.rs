@@ -461,6 +461,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
                 r("submitter_id", USER),
                 r("reviewer_id", USER),
                 r("closed_by_id", USER),
+                // Who gave an old request without a site its site (migration 245).
+                r("site_assigned_by_id", USER),
                 r("sla_rule_id", "di_sla_rules"),
                 r("related_di_id", "intervention_requests"),
                 r("recurrence_di_id", "intervention_requests"),
@@ -515,6 +517,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("planning_approved_by_id", USER),
             // Who cleared the permit flag a conversion rule set (migration 233).
             r("permit_rule_cleared_by_id", USER),
+            // Who gave an old work order without a site its site (migration 245).
+            r("site_assigned_by_id", USER),
             r("assigned_team_id", "teams"),
             r("urgency_id", "reference_values"),
             r("source_di_id", "intervention_requests"),
@@ -614,7 +618,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("pm_findings", &[]),
     spec("pm_occurrence_transitions", &[]),
     spec("pm_trigger_events", &[]),
-    spec("planning_windows", &[]),
+    // Who gave a window without a site its site (migration 245).
+    spec("planning_windows", &[r("site_assigned_by_id", USER)]),
     spec("capacity_rules", &[]),
     spec(
         "schedule_candidates",
@@ -925,6 +930,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
             json_ref_hist("details_json", "$.detail.role_id", "roles"),
             json_ref_hist("details_json", "$.detail.assignment_id", "user_scope_assignments"),
             json_ref_hist("details_json", "$.filter.actor_id", USER),
+            // The site before and after a site given to an old record (`org::site_assignment`).
+            json_ref_hist("details_json", "$.site_before", "org_nodes"),
+            json_ref_hist("details_json", "$.site_after", "org_nodes"),
         ],
         // Audits kept on the device on purpose (never staged, so never a stage error): the
         // acknowledgement of a safety rule notice (`settings::received_notice`, the notice itself
@@ -946,6 +954,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("user_account", USER),
                         ("user_scope_assignment", "user_scope_assignments"),
                         ("work_order", "work_orders"),
+                        // A site given to an old record without one (`org::site_assignment`).
+                        ("intervention_request", "intervention_requests"),
+                        ("planning_window", "planning_windows"),
                         // Device, licence, activation, export, repair and import records stay on
                         // the device they belong to.
                         ("trusted_device", LOCAL_ROW),

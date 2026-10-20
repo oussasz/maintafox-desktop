@@ -5,7 +5,7 @@
  * Governed lifecycle: explicit “published (read-only)” vs “draft (editing)” modes.
  */
 
-import { Building2, Network, Settings2 } from "lucide-react";
+import { Building2, MapPinOff, Network, Settings2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -21,10 +21,13 @@ import { OrgExportMenu } from "@/components/org/OrgExportMenu";
 import { OrgNodeCreateDialog } from "@/components/org/OrgNodeCreateDialog";
 import { OrgRelationshipRulesPanel } from "@/components/org/OrgRelationshipRulesPanel";
 import { OrganizationTreePanel } from "@/components/org/OrganizationTreePanel";
+import { RecordsWithoutSitePanel } from "@/components/org/RecordsWithoutSitePanel";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { mfLayout } from "@/design-system/tokens";
+import { useAccessAt } from "@/hooks/use-access-at";
 import { useFormatters } from "@/hooks/use-formatters";
+import { countRecordsWithoutSite, noSiteToReview } from "@/services/site-assignment-service";
 import { isOrgStructureDesignMode, useOrgDesignerStore } from "@/stores/org-designer-store";
 import { useOrgGovernanceStore } from "@/stores/org-governance-store";
 import { P } from "@shared/rbac/permissions.generated";
@@ -34,6 +37,13 @@ export function OrganizationDesignerPage() {
   const { formatNumber } = useFormatters();
   const [typesPanelOpen, setTypesPanelOpen] = useState(false);
   const [rulesPanelOpen, setRulesPanelOpen] = useState(false);
+  const [noSitePanelOpen, setNoSitePanelOpen] = useState(false);
+  /** Records "to review: no site"; null until counted. */
+  const [noSiteCount, setNoSiteCount] = useState<number | null>(null);
+  // Giving a site to old records is a plant-wide tool: `org.admin` for the whole plant (the
+  // rights at no node are the plant-wide ones), as the backend checks.
+  const plantWide = useAccessAt(0);
+  const canAssignSites = plantWide.can(P.ORG_ADMIN);
   const snapshot = useOrgDesignerStore((s) => s.snapshot);
   const loading = useOrgDesignerStore((s) => s.loading);
   const error = useOrgDesignerStore((s) => s.error);
@@ -44,6 +54,22 @@ export function OrganizationDesignerPage() {
   useEffect(() => {
     void loadSnapshot();
   }, [loadSnapshot]);
+
+  useEffect(() => {
+    if (!canAssignSites) return;
+    let cancelled = false;
+    void countRecordsWithoutSite()
+      .then((counts) => {
+        if (!cancelled) setNoSiteCount(noSiteToReview(counts));
+      })
+      .catch(() => {
+        // The failure is already shown as a notification; the button stays without a count.
+        if (!cancelled) setNoSiteCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canAssignSites]);
 
   const nodeTypes = useMemo(() => {
     if (!snapshot) return [];
@@ -134,6 +160,17 @@ export function OrganizationDesignerPage() {
           {t("designer.manageHierarchyRules")}
         </Button>
       </PermissionGate>
+      {canAssignSites ? (
+        <Button
+          variant="outline"
+          onClick={() => setNoSitePanelOpen(true)}
+          title={t("noSite.openHint")}
+          className="h-11 gap-1.5"
+        >
+          <MapPinOff className="h-4 w-4" aria-hidden />
+          {noSiteCount != null ? t("noSite.openCount", { count: noSiteCount }) : t("noSite.open")}
+        </Button>
+      ) : null}
       <OrgExportMenu treeContainerId="org-tree-container" />
       <RefreshButton onRefresh={() => void loadSnapshot()} loading={loading} />
     </>
@@ -260,6 +297,14 @@ export function OrganizationDesignerPage() {
       />
 
       <ImpactPreviewDrawer />
+
+      {canAssignSites ? (
+        <RecordsWithoutSitePanel
+          open={noSitePanelOpen}
+          onOpenChange={setNoSitePanelOpen}
+          onChanged={(counts) => setNoSiteCount(noSiteToReview(counts))}
+        />
+      ) : null}
     </ModulePageShell>
   );
 }

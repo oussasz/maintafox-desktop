@@ -605,6 +605,12 @@ pub async fn create_delegation_policy(
         input.managed_scope_reference.as_deref(),
     )
     .await?;
+    crate::commands::admin_users::validate_tenant_reference(
+        &state.db,
+        &input.managed_scope_type,
+        input.managed_scope_reference.as_deref(),
+    )
+    .await?;
 
     let domains_json = serde_json::to_string(&input.allowed_domains)?;
 

@@ -1128,7 +1128,14 @@ pub async fn cancel_planned_part(
     state: State<'_, AppState>,
 ) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Part,
+        input.wo_part_id,
+    )
+    .await?;
     parts::cancel_planned_part(&state.db, input, user.user_id.into()).await
 }
 
@@ -1139,7 +1146,14 @@ pub async fn set_planned_part_required(
     state: State<'_, AppState>,
 ) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Part,
+        input.wo_part_id,
+    )
+    .await?;
     parts::set_planned_part_required(&state.db, input, user.user_id.into()).await
 }
 

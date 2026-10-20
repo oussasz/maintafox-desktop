@@ -3130,29 +3130,76 @@ async fn a_received_site_change_is_rechecked_against_the_permit_held_here() {
     assert_eq!(code(&outcome), Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"), "{outcome:?}");
 }
 
+/// A new organisation structure as received here from the PC that published it: node 1 (the
+/// first site) deleted, and in structure model 90 (active, superseding model 1 at the moment it
+/// was activated, as a publish records it) its copy (node 90, sync id `permit-test-org-090`: same
+/// code and node type) under a new top node (node 91, `permit-test-org-091`, another code).
+/// Returns the copy's id.
+async fn receive_structure_replacing_first_site(db: &DatabaseConnection) -> i64 {
+    for sql in [
+        "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, activated_at, \
+         created_at, updated_at) VALUES (90, 'permit-test-model-090', 90, 'active', '2026-10-01T00:00:00+00:00', \
+         datetime('now'), datetime('now'))",
+        "UPDATE org_structure_models SET status = 'superseded', superseded_at = '2026-10-01T00:00:00+00:00' \
+         WHERE id = 1",
+        // The node types of the new structure, matched by their stable code.
+        "INSERT INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, \
+         updated_at) SELECT 90, 'permit-test-type-090', 90, t.code, t.label, 1, datetime('now'), datetime('now') \
+         FROM org_node_types t WHERE t.id = (SELECT node_type_id FROM org_nodes WHERE id = 1)",
+        "INSERT INTO org_nodes (id, entity_sync_id, code, name, node_type_id, parent_id, status, created_at, \
+         updated_at, structure_model_id) VALUES (91, 'permit-test-org-091', 'PLANT-PTW-NEW', 'New plant', 90, NULL, \
+         'active', datetime('now'), datetime('now'), 90)",
+        "INSERT INTO org_nodes (id, entity_sync_id, code, name, node_type_id, parent_id, status, created_at, \
+         updated_at, structure_model_id) SELECT 90, 'permit-test-org-090', n.code, n.name, 90, 91, 'active', \
+         datetime('now'), datetime('now'), 90 FROM org_nodes n WHERE n.id = 1",
+        "UPDATE org_nodes SET deleted_at = datetime('now') WHERE id = 1",
+    ] {
+        exec(db, sql).await;
+    }
+    90
+}
+
 /// A new organisation structure published on another PC deletes the former nodes and moves every
-/// permit (approved ones included) to the node replacing its own (`org::validation`): received
-/// here once its former node is deleted here, the move is judged on the equipment's chain whatever
-/// the permit's status; an equipment change stays locked, and a site off the chain is refused.
+/// permit (approved ones included) to the copy of its own node (`org::validation`): received here
+/// once its former node is deleted here, the move to that copy is judged on the equipment's chain
+/// whatever the permit's status. An equipment change stays locked, and an approved permit moved to
+/// any other node is refused as locked, even a live node above its equipment (the new plant): the
+/// received node must be the copy of the one held here (same code and node type).
 #[tokio::test]
-async fn a_received_site_move_off_a_deleted_node_is_accepted_on_the_equipment_chain() {
+async fn a_received_site_move_off_a_deleted_node_is_accepted_only_to_its_copy() {
     let db = setup().await;
     let asset = insert_equipment(&db, "EQ-SYNC-REORG1").await;
     let far = equipment_on_second_site(&db, "EQ-SYNC-REORG2").await;
     let _ = equipment_on_line_of_first_site(&db, "EQ-SYNC-REORG3").await;
-    let node = |id: i64| json!(format!("permit-test-org-00{id}"));
+    let node = |id: i64| json!(format!("permit-test-org-{id:03}"));
     let approved = create_permit(&db, "hot_work", asset).await;
     assert_eq!(approved.entity_id, 1);
     let approved = set_status(&db, &approved, "pending_review").await.expect("submit");
     let approved = set_status(&db, &approved, "approved").await.expect("approve");
 
-    // The publish as received here: node 1 deleted, the equipment moved to the node replacing it.
-    exec(&db, "UPDATE org_nodes SET deleted_at = datetime('now') WHERE id = 1").await;
+    // The publish as received here: node 1 deleted, the equipment moved to the copy of node 1.
+    let copy = receive_structure_replacing_first_site(&db).await;
     exec(
         &db,
-        &format!("UPDATE equipment SET installed_at_node_id = 2 WHERE id = {asset}"),
+        &format!("UPDATE equipment SET installed_at_node_id = {copy} WHERE id = {asset}"),
     )
     .await;
+    let moved_to = |to: i64| {
+        let db = &db;
+        let sync_id = approved.entity_sync_id.clone();
+        async move {
+            apply(
+                db,
+                "work_permits",
+                &sync_id,
+                &with(
+                    wire(db, "work_permits", &sync_id).await,
+                    &[("entity_sync_id", node(to))],
+                ),
+            )
+            .await
+        }
+    };
 
     // Its equipment changed too: still locked.
     let far_sync = text(&db, &format!("SELECT entity_sync_id FROM equipment WHERE id = {far}"))
@@ -3164,41 +3211,89 @@ async fn a_received_site_move_off_a_deleted_node_is_accepted_on_the_equipment_ch
         &approved.entity_sync_id,
         &with(
             wire(&db, "work_permits", &approved.entity_sync_id).await,
-            &[("asset_sync_id", json!(far_sync)), ("entity_sync_id", node(2))],
+            &[("asset_sync_id", json!(far_sync)), ("entity_sync_id", node(copy))],
         ),
     )
     .await;
     assert_eq!(code(&outcome), Some("PERMIT_EQUIPMENT_LOCKED"), "{outcome:?}");
-    // A site off its equipment's chain (line 3, under the deleted node): refused.
-    let outcome = apply(
+    // Not the copy of node 1: the new plant above its equipment (on its chain), line 3 (under the
+    // deleted node) and the second site are all refused as locked; nothing written.
+    for to in [91, 3, 2] {
+        let outcome = moved_to(to).await;
+        assert_eq!(code(&outcome), Some("PERMIT_SITE_LOCKED"), "to node {to}: {outcome:?}");
+    }
+    // A site not applied here yet: the row waits.
+    let outcome = moved_to(99).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    // The copy while its structure is still a draft here (the publish arrived in part: model 1
+    // still in use, its node deleted): no copy yet, the row waits for the activation.
+    exec(
         &db,
-        "work_permits",
-        &approved.entity_sync_id,
-        &with(
-            wire(&db, "work_permits", &approved.entity_sync_id).await,
-            &[("entity_sync_id", node(3))],
-        ),
+        "UPDATE org_structure_models SET status = CASE id WHEN 90 THEN 'draft' ELSE 'active' END WHERE id IN (1, 90)",
     )
     .await;
-    assert_eq!(code(&outcome), Some("PERMIT_SITE_NOT_EQUIPMENT_SITE"), "{outcome:?}");
-    // The node replacing its own, its equipment's node: applied.
-    let outcome = apply(
+    let outcome = moved_to(copy).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    exec(
         &db,
-        "work_permits",
-        &approved.entity_sync_id,
-        &with(
-            wire(&db, "work_permits", &approved.entity_sync_id).await,
-            &[("entity_sync_id", node(2))],
-        ),
+        "UPDATE org_structure_models SET status = CASE id WHEN 90 THEN 'active' ELSE 'superseded' END \
+         WHERE id IN (1, 90)",
     )
     .await;
+    let kept = queries::get_work_permit(&db, approved.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!(kept.entity_id, 1, "nothing written");
+    // The copy of its own node, its equipment's node: applied.
+    let outcome = moved_to(copy).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     let moved = queries::get_work_permit(&db, approved.id)
         .await
         .expect("read")
         .expect("permit");
-    assert_eq!(moved.entity_id, 2);
+    assert_eq!(moved.entity_id, copy);
     assert_eq!(moved.status, "approved");
+}
+
+/// The copy must keep the node type of the node held here, matched by its stable code: a node of
+/// the new structure with the held node's code but another type is not its copy.
+#[tokio::test]
+async fn a_received_site_move_to_a_node_of_another_type_is_refused() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-REORG4").await;
+    let approved = create_permit(&db, "hot_work", asset).await;
+    let approved = set_status(&db, &approved, "pending_review").await.expect("submit");
+    let approved = set_status(&db, &approved, "approved").await.expect("approve");
+    let copy = receive_structure_replacing_first_site(&db).await;
+    exec(
+        &db,
+        &format!("UPDATE equipment SET installed_at_node_id = {copy} WHERE id = {asset}"),
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, \
+         updated_at) VALUES (91, 'permit-test-type-091', 90, 'PTW-OTHER-LEVEL', 'Other level', 1, datetime('now'), \
+         datetime('now'))",
+    )
+    .await;
+    exec(
+        &db,
+        &format!("UPDATE org_nodes SET node_type_id = 91 WHERE id = {copy}"),
+    )
+    .await;
+    let outcome = apply(
+        &db,
+        "work_permits",
+        &approved.entity_sync_id,
+        &with(
+            wire(&db, "work_permits", &approved.entity_sync_id).await,
+            &[("entity_sync_id", json!("permit-test-org-090"))],
+        ),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_SITE_LOCKED"), "{outcome:?}");
 }
 
 /// A permit held here waiting for review, as last synced at `version`, with nothing of this PC still

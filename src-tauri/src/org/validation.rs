@@ -464,6 +464,10 @@ pub async fn validate_draft_model_for_publish(
                 issue_params(&[("nodeName", node_name), ("opsRefCount", ops_ref_count)]),
             ));
         }
+        // A site rule on an active node and on its copy: the publish could not move it.
+        for c in collect_site_rules_on_draft_copies(db, model_id).await? {
+            issues.push(site_rule_on_draft_copy_issue(&c));
+        }
     }
 
     // remap_count = draft nodes with an origin_node_id (clones of active nodes)
@@ -619,7 +623,9 @@ async fn count_ops_references(txn: &impl ConnectionTrait, active_node_id: i64) -
     // (equipment, teams, user_scope_assignments). personnel / work_orders / work_permits /
     // intervention_requests use hard deletes or status flags instead: every one of their rows
     // counts, closed or not (their node is the site the site-scoped rights read,
-    // `docs/SITE_SCOPED_ROLES.md` §4).
+    // `docs/SITE_SCOPED_ROLES.md` §4). The same for the per-site rules, the site a reliability
+    // decision was proposed for, PM plans scoped to a location and the site calendars: every row
+    // counts, whatever its status (they are moved like the others, `remap_node_ops_fks`).
     let check_sql = format!(
         "SELECT \
           (SELECT COUNT(*) FROM equipment WHERE installed_at_node_id = {id} AND deleted_at IS NULL) + \
@@ -635,7 +641,12 @@ async fn count_ops_references(txn: &impl ConnectionTrait, active_node_id: i64) -
           (SELECT COUNT(*) FROM planning_windows WHERE entity_id = {id}) + \
           (SELECT COUNT(*) FROM cost_centers WHERE entity_id = {id}) + \
           (SELECT COUNT(*) FROM inspection_templates WHERE org_scope_id = {id}) + \
-          (SELECT COUNT(*) FROM closeout_validation_policies WHERE entity_id = {id}) \
+          (SELECT COUNT(*) FROM closeout_validation_policies WHERE entity_id = {id}) + \
+          (SELECT COUNT(*) FROM site_settings WHERE site_node_id = {id}) + \
+          (SELECT COUNT(*) FROM reliability_study_decisions WHERE site_node_id = {id}) + \
+          (SELECT COUNT(*) FROM pm_plans WHERE asset_scope_type = 'location' AND asset_scope_id = {id}) + \
+          (SELECT COUNT(*) FROM work_calendar_holidays WHERE entity_id = {id}) + \
+          (SELECT COUNT(*) FROM site_work_weeks WHERE entity_id = {id}) \
          AS total",
         id = active_node_id
     );
@@ -727,6 +738,23 @@ async fn remap_node_ops_fks(txn: &impl ConnectionTrait, old_id: i64, new_id: i64
     remap_integer_fk(txn, "cost_centers", "entity_id", old_id, new_id, now).await?;
     remap_integer_fk_row_version_only(txn, "inspection_templates", "org_scope_id", old_id, new_id).await?;
     remap_integer_fk(txn, "closeout_validation_policies", "entity_id", old_id, new_id, now).await?;
+    // Per-site rules (`settings::site`), the site a reliability decision was proposed for (its
+    // four-eyes rule follows it), PM plans scoped to a location and the site calendars (holidays,
+    // working week): left on the former node, the site's rule or calendar would silently give way
+    // to the plant default. A site rule keeps its time and author (the move is no change of the
+    // rule; the other PCs accept it as the move of a rule they hold, `settings::site`). Its audit
+    // events stay on the former node: they are history, synchronised append-only.
+    remap_integer_fk_row_version_only(txn, "site_settings", "site_node_id", old_id, new_id).await?;
+    remap_integer_fk(txn, "reliability_study_decisions", "site_node_id", old_id, new_id, now).await?;
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE pm_plans SET asset_scope_id = ?, updated_at = ?, row_version = row_version + 1 \
+         WHERE asset_scope_type = 'location' AND asset_scope_id = ?",
+        [new_id.into(), now.to_string().into(), old_id.into()],
+    ))
+    .await?;
+    remap_integer_fk(txn, "work_calendar_holidays", "entity_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "site_work_weeks", "entity_id", old_id, new_id, now).await?;
 
     // user_scope_assignments.scope_reference is TEXT; remap both scope types that store node IDs.
     remap_scope_reference(txn, "entity", old_id, new_id, now).await?;
@@ -737,6 +765,142 @@ async fn remap_node_ops_fks(txn: &impl ConnectionTrait, old_id: i64, new_id: i64
 
     Ok(())
 }
+
+/// A site rule set both on an active node and on its draft copy (`site_settings` holds one row per
+/// site and rule, so the active node's rule cannot move onto the copy). Rules can no longer be set
+/// on a draft node (`settings::site::set_site_setting`); this finds rows recorded before that.
+#[derive(Debug, Clone)]
+pub struct SiteRuleOnDraftCopy {
+    pub node_id: i64,
+    pub node_name: String,
+    pub setting_key: String,
+}
+
+/// Shared publish/validate check: site rules set on an active node and on its draft copy.
+pub async fn collect_site_rules_on_draft_copies(
+    db: &impl ConnectionTrait,
+    draft_model_id: i64,
+) -> AppResult<Vec<SiteRuleOnDraftCopy>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT a.id AS node_id, a.name AS node_name, s.setting_key AS setting_key \
+             FROM site_settings s \
+             JOIN org_nodes a ON a.id = s.site_node_id AND a.deleted_at IS NULL \
+             JOIN org_nodes d ON d.origin_node_id = a.id AND d.structure_model_id = ? AND d.deleted_at IS NULL \
+             JOIN site_settings c ON c.site_node_id = d.id AND c.setting_key = s.setting_key \
+             ORDER BY a.id, s.setting_key",
+            [draft_model_id.into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(SiteRuleOnDraftCopy {
+                node_id: r.try_get("", "node_id").map_err(|e| decode_err("node_id", e))?,
+                node_name: r.try_get("", "node_name").map_err(|e| decode_err("node_name", e))?,
+                setting_key: r.try_get("", "setting_key").map_err(|e| decode_err("setting_key", e))?,
+            })
+        })
+        .collect()
+}
+
+fn site_rule_on_draft_copy_issue(c: &SiteRuleOnDraftCopy) -> AppValidationIssue {
+    AppValidationIssue::error_with_related(
+        "SITE_RULE_ON_DRAFT_COPY",
+        format!(
+            "The site rule '{}' is set both on '{}' and on its copy in this draft: the rule in force \
+             cannot move onto the copy. Have the copy's rule removed before publishing.",
+            c.setting_key, c.node_name
+        ),
+        Some(c.node_id),
+        issue_params(&[("nodeName", c.node_name.clone()), ("settingKey", c.setting_key.clone())]),
+    )
+}
+
+/// Whether `received` is the node that replaced `held` when a new organisation structure was
+/// published (`publish_model_with_remap`), judged on a PC that receives the records moved by that
+/// publish. The old → new map is gone there (step 5 clears `origin_node_id`), so the copy is
+/// recognised by what a draft copies and never changes: a draft copies every node with its code and
+/// its node type (`structure_model::fork_draft_from_published`, types matched by their stable
+/// code); neither the code of a node nor its type nor a type's code can be edited afterwards (only
+/// a draft node's parent can change, so the depth is not compared); a code is unique among the
+/// live nodes of a model. Hence: `held` exists here and is deleted (only a publish deletes the
+/// nodes of the structure in use), `received` is live in the structure model in use here, and
+/// `held` belongs to a structure that model replaced, publish after publish, each of them holding
+/// a node of the same code and node-type code ([`NODES_REPLACED_BY_SQL`]). A node of a draft (never
+/// published here) is no copy: while the publish that activates its model has not arrived here,
+/// [`node_copy_awaits_activation`] tells the callers to wait.
+pub(crate) async fn node_replaces_deleted_node(
+    conn: &impl ConnectionTrait,
+    held: i64,
+    received: i64,
+) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT 1 AS ok WHERE ? IN ({NODES_REPLACED_BY_SQL})"),
+            [held.into(), received.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Whether `received` would be the copy of a node deleted here (`held`, or any node when `None`)
+/// but the publish of its structure has only partly arrived: the former nodes are deleted here,
+/// their structure model is still the one in use here, and `received` belongs to a model still a
+/// draft here with the same code and node-type code. The publish deletes the former nodes and
+/// moves the records before it activates the new model (`publish_model_with_remap`), so an
+/// exchange can end between them: the received row waits for the activation. Outside a publish,
+/// the nodes of the model in use are live, so a row received on a node of an ordinary draft is
+/// not covered (the callers refuse it).
+pub(crate) async fn node_copy_awaits_activation(
+    conn: &impl ConnectionTrait,
+    held: Option<i64>,
+    received: i64,
+) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM org_nodes n \
+               JOIN org_node_types nt ON nt.id = n.node_type_id \
+               JOIN org_structure_models nm ON nm.id = n.structure_model_id AND nm.status = 'draft' \
+               JOIN org_nodes h ON h.deleted_at IS NOT NULL AND h.code = n.code \
+                AND h.structure_model_id IS NOT n.structure_model_id \
+               JOIN org_node_types ht ON ht.id = h.node_type_id AND ht.code = nt.code \
+               JOIN org_structure_models hm ON hm.id = h.structure_model_id AND hm.status = 'active' \
+              WHERE n.id = ? AND n.deleted_at IS NULL AND (? IS NULL OR h.id = ?) LIMIT 1",
+            [received.into(), held.into(), held.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// The ids of the deleted nodes that the live node bound to its one `?` replaced (see
+/// [`node_replaces_deleted_node`]); none when that node is deleted or is not in the structure
+/// model in use here. The chain of structures is followed back through the publishes recorded on
+/// the models themselves (synced to every PC): a publish supersedes the former model at the very
+/// moment it activates the new one (`superseded_at` = `activated_at`, same value on both rows,
+/// here and in `structure_model::publish_model`). Each structure on the way must hold a node of the
+/// same code and node-type code: a code dropped by one publish and reused by a later one for
+/// another site does not take over the history of the node it once named. A PC that missed a
+/// structure entirely (none of its rows here) sees the chain stop there: it fails closed (no
+/// replacement), never wider.
+pub(crate) const NODES_REPLACED_BY_SQL: &str = "WITH RECURSIVE replaced(model_id, code, type_code, start) AS ( \
+       SELECT n.structure_model_id, n.code, nt.code, 1 FROM org_nodes n \
+         JOIN org_node_types nt ON nt.id = n.node_type_id \
+         JOIN org_structure_models nm ON nm.id = n.structure_model_id AND nm.status = 'active' \
+        WHERE n.id = ? AND n.deleted_at IS NULL \
+       UNION \
+       SELECT pm.id, r.code, r.type_code, 0 FROM replaced r \
+         JOIN org_structure_models cm ON cm.id = r.model_id \
+         JOIN org_structure_models pm ON pm.status = 'superseded' AND pm.superseded_at = cm.activated_at \
+          AND pm.id <> cm.id \
+         JOIN org_nodes x ON x.structure_model_id = pm.id AND x.code = r.code AND x.deleted_at IS NOT NULL \
+         JOIN org_node_types xt ON xt.id = x.node_type_id AND xt.code = r.type_code) \
+     SELECT h.id FROM replaced r \
+       JOIN org_nodes h ON h.structure_model_id = r.model_id AND h.code = r.code AND h.deleted_at IS NOT NULL \
+       JOIN org_node_types ht ON ht.id = h.node_type_id AND ht.code = r.type_code \
+      WHERE r.start = 0";
 
 // ─── Publish ──────────────────────────────────────────────────────────────────
 
@@ -836,12 +1000,22 @@ pub async fn publish_model_with_remap(
                 .collect();
             return Err(org_validation_failed_issues(issues));
         }
+        let collisions = collect_site_rules_on_draft_copies(&txn, draft_model_id).await?;
+        if !collisions.is_empty() {
+            return Err(org_validation_failed_issues(
+                collisions.iter().map(site_rule_on_draft_copy_issue).collect(),
+            ));
+        }
 
         // ── Step 3c: soft-delete all nodes in the old active model ────────
-        // Before the remaps (same transaction, same result here): the changes are captured for sync
-        // in this order, so another PC sees the former nodes deleted before it receives the permits
-        // moved off them (`permit::sync_check`: a permit approved there keeps its site unless that
-        // site is a deleted node).
+        // Before the remaps (same transaction, same result here). The other PCs do not apply the
+        // received rows in capture order but parents first (`sync::registry::apply_priority`:
+        // `org_nodes` is a parent of the permits, site rules and the other moved records), so
+        // within one exchange they see the former nodes deleted before the records moved off them
+        // (`permit::sync_check`, `settings::site`: an approved permit or a site rule turned on keeps
+        // its site unless that site is a deleted node and the new one replaces it,
+        // `node_replaces_deleted_node`). The order only matters when an exchange ends between the
+        // two: capturing the deletes first puts them in the earlier one.
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE org_nodes \

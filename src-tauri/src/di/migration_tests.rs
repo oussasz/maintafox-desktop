@@ -118,6 +118,10 @@ mod tests {
             "related_di_id",
             "closed_by_id",
             "deferred_from_status",
+            // Site given once to an old request without one (migration 245).
+            "site_assigned_by_id",
+            "site_assigned_at",
+            "site_assign_reason",
             // Sync identity (outbox staging).
             "entity_sync_id",
             "row_version",

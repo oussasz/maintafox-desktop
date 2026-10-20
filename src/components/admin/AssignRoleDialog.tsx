@@ -69,14 +69,16 @@ export function AssignRoleDialog({
   }, [open]);
 
   const target = scopeChoiceToInput(scope);
+  // The roles the backend replaces: at a node, the role naming that node; plant-wide, every
+  // plant-wide role of the user, whatever reference it was recorded with (the first
+  // administrator's role names the plant, a plant-wide choice here names none).
   const replaced = useMemo(() => {
-    if (!user) return null;
-    return (
-      user.roles.find(
-        (r) =>
-          r.scope_type === target.scope_type &&
-          (r.scope_reference ?? "") === (target.scope_reference ?? ""),
-      ) ?? null
+    if (!user) return [];
+    return user.roles.filter(
+      (r) =>
+        r.scope_type === target.scope_type &&
+        (target.scope_type === "tenant" ||
+          (r.scope_reference ?? "") === (target.scope_reference ?? "")),
     );
   }, [user, target.scope_type, target.scope_reference]);
 
@@ -166,16 +168,18 @@ export function AssignRoleDialog({
             </p>
           ) : null}
 
-          {replaced ? (
+          {replaced.length > 0 ? (
             <div
               className="flex items-start gap-2 rounded-md border border-tone-attention-border bg-tone-attention-bg p-3 text-sm text-tone-attention-fg"
               role="status"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-accent" aria-hidden />
               <span>
-                {t("console.assign.replaces", {
-                  role: replaced.role_name,
-                })}
+                {replaced.length === 1
+                  ? t("console.assign.replaces", { role: replaced[0]?.role_name })
+                  : t("console.assign.replacesMany", {
+                      roles: replaced.map((r) => r.role_name).join(", "),
+                    })}
               </span>
             </div>
           ) : null}

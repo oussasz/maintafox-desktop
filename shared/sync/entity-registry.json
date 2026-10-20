@@ -1349,7 +1349,8 @@
       "apply_priority": 5,
       "parents": [
         "org_nodes",
-        "equipment"
+        "equipment",
+        "user_accounts"
       ],
       "sync_status": "synced"
     },
