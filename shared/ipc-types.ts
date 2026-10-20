@@ -10838,6 +10838,42 @@ export interface PermitIsolationActionInput {
   lock_number: string | null;
 }
 
+/** One attempt to reach an absent worker before a forced lock removal. */
+export interface PermitContactAttempt {
+  /** RFC 3339. */
+  at: string;
+  /** A code of `PERMIT.CONTACT_METHODS` (Données de référence). */
+  method: string;
+  /** What came of it (no answer, voicemail…). */
+  result: string;
+}
+
+/** `force_permit_isolation_removal`: the applier is absent; the session user (ptw.close at the
+ * permit's site, after a step-up) authorises `removed_by_id` to take the lock off. */
+export interface PermitForcedRemovalInput {
+  isolation_id: number;
+  expected_row_version: number;
+  /** The person who physically takes the lock off: not the applier, not the authoriser. */
+  removed_by_id: number;
+  /** At least 20 characters once trimmed. */
+  reason: string;
+  /** "Le travailleur n'est pas sur le site": must be true. */
+  worker_absent_attested: boolean;
+  /** At least one. */
+  contact_attempts: PermitContactAttempt[];
+}
+
+/** `record_permit_worker_informed`: a ptw.close holder at the site records that the worker of a
+ * forced removal was told (worker without an account, or told in person). */
+export interface PermitWorkerInformedInput {
+  isolation_id: number;
+  expected_row_version: number;
+  /** A code of `PERMIT.CONTACT_METHODS`. */
+  method: string;
+  /** RFC 3339; now when null. Not before the removal, not in the future. */
+  informed_at: string | null;
+}
+
 /** `cancel_permit_isolation`: cancels a planned line never applied (draft or waiting for review);
  * the session user is recorded, the line is kept as "cancelled". */
 export interface PermitIsolationCancelInput {

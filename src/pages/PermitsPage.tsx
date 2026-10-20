@@ -25,6 +25,7 @@ import { FilterToggleButton, RefreshButton } from "@/components/layout/ModuleHea
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { PermitTypesHost } from "@/components/lookups/adapters/PermitTypesHost";
 import { KpiTile } from "@/components/metrics/KpiTile";
+import { ForcedRemovalReviewList } from "@/components/permits/ForcedRemovalReviewList";
 import {
   PermitCreateDialog,
   type PermitCreateWorkOrder,
@@ -454,6 +455,14 @@ export function PermitsPage() {
             withoutSite={hidden.withoutSite}
             className="mx-6 mt-3"
           />
+          {/* Forced lock removals whose worker was not told yet (permit close-right holders). */}
+          {can(P.PTW_CLOSE) ? (
+            <ForcedRemovalReviewList
+              onOpenPermit={setSelectedId}
+              reloadKey={permits}
+              className="mx-6 mt-3"
+            />
+          ) : null}
           <div className="px-6 py-3">
             {kpiError != null ? (
               <ErrorState

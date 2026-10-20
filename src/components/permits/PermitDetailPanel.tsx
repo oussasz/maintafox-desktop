@@ -43,6 +43,7 @@ import {
   listPermitIsolations,
   listPermitSuspensions,
   recordLotoCardPrint,
+  recordPermitIsolationRemoved,
   setWorkPermitStatus,
   suspendWorkPermit,
   updateWorkPermit,
@@ -54,8 +55,10 @@ import { formatDateTime } from "@/utils/format-date";
 import type { WorkPermitStatus } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { ForcedRemovalDialog } from "./ForcedRemovalDialog";
 import { PermitHandoverForm } from "./PermitHandoverForm";
 import { PermitNoSiteBadge, usePermitAccess } from "./PermitSiteScope";
+import { WorkerInformedDialog } from "./WorkerInformedDialog";
 import { printLotoCard } from "./loto-card-print";
 import {
   APPROVED_ON_STATUSES,
@@ -117,6 +120,10 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [cancelLine, setCancelLine] = useState<PermitIsolationRecord | null>(null);
   /** The isolation whose lock removal waits for the confirmation dialog. */
   const [removalConfirm, setRemovalConfirm] = useState<PermitIsolationRecord | null>(null);
+  /** The isolation whose forced removal (applier absent) is being recorded. */
+  const [forcedFor, setForcedFor] = useState<PermitIsolationRecord | null>(null);
+  /** The forced removal whose worker is being recorded as told. */
+  const [informFor, setInformFor] = useState<PermitIsolationRecord | null>(null);
   const [editingExpiry, setEditingExpiry] = useState<string | null>(null);
 
   const fmt = (v: string | null) => (v ? formatDateTime(v, i18n.language) : t("detail.none"));
@@ -508,15 +515,25 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
               // its removal either (the server refuses it too: PERMIT_THREE_PERSON_REMOVAL).
               const chainApplies =
                 permit.permit_type_requires_three_person_removal &&
-                state === "verified" &&
+                (state === "verified" || state === "takenOff") &&
                 removalOpen;
               const verifiedByMe = me != null && iso.verified_by_id === me;
-              const removalBlockedForMe = appliedByMe || (chainApplies && verifiedByMe);
+              // The person who took the lock off does not verify its removal (the server refuses
+              // it too: PERMIT_REMOVAL_VERIFIER_IS_REMOVER).
+              const removedByMe = me != null && iso.removed_by_id === me;
+              const removalBlockedForMe =
+                appliedByMe || removedByMe || (chainApplies && verifiedByMe);
               const removalBlockedReason = appliedByMe
                 ? t("isolation.selfBlocked")
-                : chainApplies && verifiedByMe
-                  ? t("isolation.threePersonSelf")
-                  : undefined;
+                : removedByMe
+                  ? t("isolation.removerBlocked")
+                  : chainApplies && verifiedByMe
+                    ? t("isolation.threePersonSelf")
+                    : undefined;
+              // A fitted lock not taken off yet: its applier says "J'ai retiré mon cadenas"; when
+              // they are absent, a close-right holder records a forced removal.
+              const lockOn = removalOpen && (state === "applied" || state === "verified");
+              const informOpen = iso.forced_removal && iso.informed_at == null;
               return (
                 <li
                   key={iso.id}
@@ -576,6 +593,14 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         {t("isolation.removalVerifiedBy", { name: iso.removal_verified_by_name })}
                       </span>
                     ) : null}
+                    {iso.removed_at ? (
+                      <span data-testid="isolation-removed-by">
+                        {t("isolation.removedBy", {
+                          name: iso.removed_by_name ?? t("isolation.personUnknown"),
+                          date: fmt(iso.removed_at),
+                        })}
+                      </span>
+                    ) : null}
                     {iso.cancelled_at ? (
                       <span data-testid="isolation-cancelled-by">
                         {iso.cancelled_by_name
@@ -587,6 +612,48 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                       </span>
                     ) : null}
                   </div>
+                  {iso.forced_removal ? (
+                    <div
+                      className="space-y-1 rounded-md border border-tone-warning-border bg-tone-warning-bg p-2 text-xs"
+                      data-testid="isolation-forced-removal"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusChip label={t("forced.chip")} tone="warning" />
+                        <span>
+                          {t("forced.summary", {
+                            authoriser:
+                              iso.forced_authorized_by_name ?? t("isolation.personUnknown"),
+                            date: fmt(iso.removed_at),
+                          })}
+                        </span>
+                      </div>
+                      <p>{t("forced.reasonShown", { reason: iso.forced_reason ?? "" })}</p>
+                      {iso.forced_contact_attempts.length > 0 ? (
+                        <ul className="list-disc pl-4" aria-label={t("forced.attempts")}>
+                          {iso.forced_contact_attempts.map((a, i) => (
+                            <li key={i}>
+                              {t("forced.attemptShown", {
+                                date: fmt(a.at),
+                                method: a.method,
+                                result: a.result,
+                              })}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      <p data-testid="isolation-worker-informed">
+                        {iso.informed_at == null
+                          ? t("informed.pending")
+                          : iso.informed_in_app
+                            ? t("informed.doneInApp", { date: fmt(iso.informed_at) })
+                            : t("informed.done", {
+                                name: iso.informed_by_name ?? t("isolation.personUnknown"),
+                                date: fmt(iso.informed_at),
+                                method: iso.informed_method ?? "",
+                              })}
+                      </p>
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap items-center gap-2">
                     {state === "pending" && setupOpen && canIssue ? (
                       <Button
@@ -609,7 +676,27 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         {t("isolation.verify")}
                       </Button>
                     ) : null}
-                    {state === "verified" && removalOpen && canClose ? (
+                    {lockOn && appliedByMe && canIssue ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => void isolationAction(iso, recordPermitIsolationRemoved)}
+                      >
+                        {t("isolation.takeOff")}
+                      </Button>
+                    ) : null}
+                    {lockOn && !appliedByMe && canClose ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setForcedFor(iso)}
+                      >
+                        {t("forced.action")}
+                      </Button>
+                    ) : null}
+                    {state === "takenOff" && iso.verified_at != null && removalOpen && canClose ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -620,7 +707,17 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         {t("isolation.verifyRemoval")}
                       </Button>
                     ) : null}
-                    {state === "verified" || state === "removed" ? (
+                    {informOpen && canClose && !appliedByMe ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setInformFor(iso)}
+                      >
+                        {t("informed.action")}
+                      </Button>
+                    ) : null}
+                    {state === "verified" || state === "takenOff" || state === "removed" ? (
                       <Button size="sm" variant="ghost" onClick={() => void showCard(iso)}>
                         {t("card.show")}
                       </Button>
@@ -638,6 +735,16 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                     ) : null}
                     {appliedByMe && (state === "applied" || state === "verified") ? (
                       <span className="text-xs text-text-muted">{t("isolation.selfBlocked")}</span>
+                    ) : null}
+                    {lockOn && state === "verified" && !appliedByMe ? (
+                      <span
+                        className="text-xs text-text-muted"
+                        data-testid="isolation-awaiting-take-off"
+                      >
+                        {t("isolation.awaitingTakeOff", {
+                          name: iso.applied_by_name ?? t("isolation.personUnknown"),
+                        })}
+                      </span>
                     ) : null}
                   </div>
                   {chainApplies ? (
@@ -684,6 +791,18 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             <div>
               {t("card.expiry")}: {fmt(cardView.expires_at)}
             </div>
+            {cardView.forced_removal ? (
+              <div
+                className="font-sans font-semibold text-tone-warning-fg"
+                data-testid="card-forced"
+              >
+                {t("card.forcedLine", {
+                  authoriser: cardView.forced_authorized_by ?? t("isolation.personUnknown"),
+                  date: fmt(cardView.forced_removed_at),
+                  reason: cardView.forced_reason ?? "",
+                })}
+              </div>
+            ) : null}
             {canIssue ? (
               <Button
                 size="sm"
@@ -941,6 +1060,21 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           // A refusal is shown on the permit (translated); the dialog closes so it is visible.
           await isolationAction(iso, verifyPermitIsolationRemoval);
         }}
+      />
+
+      <ForcedRemovalDialog
+        isolation={forcedFor}
+        onOpenChange={(open) => {
+          if (!open) setForcedFor(null);
+        }}
+        onRecorded={() => void loadChildren()}
+      />
+      <WorkerInformedDialog
+        isolation={informFor}
+        onOpenChange={(open) => {
+          if (!open) setInformFor(null);
+        }}
+        onRecorded={() => void loadChildren()}
       />
 
       <ConfirmDialog

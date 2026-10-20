@@ -54,6 +54,15 @@ export function buildLotoCardHtml(
     [t("card.verifier"), card.verifier_signature ?? none],
     [t("card.expiry"), fmtDateTime(card.expires_at, locale, none)],
   ];
+  // A lock taken off by a forced removal (applier absent): who authorised it, when and why.
+  if (card.forced_removal) {
+    rows.push(
+      [t("card.forcedRemoval"), t("card.forcedRemovalYes")],
+      [t("card.forcedAuthorisedBy"), card.forced_authorized_by ?? none],
+      [t("card.forcedAt"), fmtDateTime(card.forced_removed_at, locale, none)],
+      [t("card.forcedReason"), card.forced_reason ?? none],
+    );
+  }
   const body = rows
     .map(([label, value]) => `<tr><th>${esc(label)}</th><td>${esc(value)}</td></tr>`)
     .join("");

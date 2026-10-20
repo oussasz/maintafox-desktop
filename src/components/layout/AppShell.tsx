@@ -5,6 +5,7 @@ import { AdminRecoveryNotice } from "@/components/auth/AdminRecoveryNotice";
 import { BuiltinAdminWarning } from "@/components/auth/BuiltinAdminWarning";
 import { SingleAdministratorWarning } from "@/components/auth/SingleAdministratorWarning";
 import { SafetyRuleNotice } from "@/components/notifications/SafetyRuleNotice";
+import { ForcedRemovalAcknowledgementGate } from "@/components/permits/ForcedRemovalAcknowledgementGate";
 import { AppToastHost } from "@/components/shell/AppToastHost";
 import { DatabaseRecoveryScreen } from "@/components/startup/DatabaseRecoveryScreen";
 import { useStartupBridge } from "@/hooks/use-startup-bridge";
@@ -124,6 +125,10 @@ export function AppShell({ children }: AppShellProps) {
         </main>
       </div>
       <StatusBar />
+      {/* A lock of the signed-in worker taken off by a forced removal: acknowledged before anything else. */}
+      {sessionAuthenticated && !sessionLocked ? (
+        <ForcedRemovalAcknowledgementGate sessionUserId={sessionUserId} />
+      ) : null}
       <AppToastHost />
     </div>
   );
