@@ -184,7 +184,8 @@
     "support_response": "Support reply available",
     "sync_conflict": "Synchronisation conflict",
     "wo_assigned": "Work order assigned",
-    "wo_overdue": "Work order overdue"
+    "wo_overdue": "Work order overdue",
+    "safety_rule_received": "Safety rule changed on another PC"
   },
   "messages": {
     "wo_assigned": {
@@ -277,6 +278,22 @@
     },
     "daily_digest": {
       "title": "Daily digest for {{date}}: {{total}} unread"
+    },
+    "site_rule_received_on": {
+      "title": "Four-eyes lifted at {{site}} on another PC",
+      "body": "{{changed_by}} allowed self-approval of reliability decisions and work permits at {{site}} on {{changed_at}} — reason: {{reason}}. Check that this change was intended (Settings › Rules per site)."
+    },
+    "site_rule_received_off": {
+      "title": "Four-eyes restored at {{site}} on another PC",
+      "body": "{{changed_by}} restored four-eyes at {{site}} on {{changed_at}} — reason: {{reason}}."
+    },
+    "three_person_received_on": {
+      "title": "Three-person lock removal turned on for {{permit_type}} on another PC",
+      "body": "{{changed_by}} required a third person to confirm lock removal for {{permit_type}} on {{changed_at}} — reason: {{reason}}."
+    },
+    "three_person_received_off": {
+      "title": "Three-person lock removal turned off for {{permit_type}} on another PC",
+      "body": "{{changed_by}} removed the third-person check of lock removal for {{permit_type}} on {{changed_at}} — reason: {{reason}}. Check that this change was intended (permit types)."
     }
   },
   "audience": {

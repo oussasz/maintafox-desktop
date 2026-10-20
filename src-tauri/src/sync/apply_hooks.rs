@@ -37,6 +37,9 @@
 //!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
 //!   here), when and why; the shipped LOTO type's isolation rule is never switched off
 //!   (`inbound_permit_type_check`);
+//! - `site_settings` (the four-eyes opt-out) / `permit_types` (the three-person setting): a change
+//!   accepted by those checks is announced to the settings administrators in the same transaction
+//!   (`settings::received_notice`);
 //! - `permit_handover_logs`: a hand-over received by the person who signed it is refused as a
 //!   conflict (`permit::sync_check::inbound_handover_check`); one without a signer is accepted;
 //! - `permit_handover_logs`: after the apply, the log's "from" / "to" role that is not in the
@@ -148,6 +151,18 @@ pub(crate) async fn before_upsert_checked(
     };
     if let Some(verdict) = safety_check {
         use crate::settings::site::InboundVerdict;
+        // A site's four-eyes opt-out or a permit type's three-person setting changed on another PC
+        // and accepted here: the settings administrators are told, in this apply's transaction (a
+        // row then refused or left waiting rolls it back; `settings::received_notice`).
+        if verdict.is_none() {
+            crate::settings::received_notice::notify_received_rule_change(
+                conn,
+                layout.def.entity_type,
+                entity_sync_id,
+                payload,
+            )
+            .await?;
+        }
         return Ok(verdict.map(|v| match v {
             InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
                 code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),

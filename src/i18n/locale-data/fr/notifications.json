@@ -184,7 +184,8 @@
     "support_response": "Réponse du support disponible",
     "sync_conflict": "Conflit de synchronisation",
     "wo_assigned": "OT affecté",
-    "wo_overdue": "OT en retard"
+    "wo_overdue": "OT en retard",
+    "safety_rule_received": "Règle de sécurité modifiée sur un autre poste"
   },
   "messages": {
     "wo_assigned": {
@@ -277,6 +278,22 @@
     },
     "daily_digest": {
       "title": "Résumé du {{date}} : {{total}} non lue(s)"
+    },
+    "site_rule_received_on": {
+      "title": "Quatre yeux levé à {{site}} sur un autre poste",
+      "body": "{{changed_by}} a autorisé l’auto-approbation des décisions de fiabilité et des permis de travail à {{site}} le {{changed_at}} — motif : {{reason}}. Vérifiez que ce changement était voulu (Paramètres › Règles par site)."
+    },
+    "site_rule_received_off": {
+      "title": "Quatre yeux rétabli à {{site}} sur un autre poste",
+      "body": "{{changed_by}} a rétabli les quatre yeux à {{site}} le {{changed_at}} — motif : {{reason}}."
+    },
+    "three_person_received_on": {
+      "title": "Retrait des cadenas à trois personnes activé pour {{permit_type}} sur un autre poste",
+      "body": "{{changed_by}} a exigé une troisième personne pour confirmer le retrait des cadenas ({{permit_type}}) le {{changed_at}} — motif : {{reason}}."
+    },
+    "three_person_received_off": {
+      "title": "Retrait des cadenas à trois personnes désactivé pour {{permit_type}} sur un autre poste",
+      "body": "{{changed_by}} a retiré la confirmation par une troisième personne du retrait des cadenas ({{permit_type}}) le {{changed_at}} — motif : {{reason}}. Vérifiez que ce changement était voulu (types de permis)."
     }
   },
   "audience": {

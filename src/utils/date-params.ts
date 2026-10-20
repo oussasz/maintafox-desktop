@@ -18,6 +18,8 @@ export const DATE_TIME_PARAMS: ReadonlySet<string> = new Set([
   "created_at",
   // Last recorded change of a safety setting (…_CLOCK_BEHIND refusals).
   "last",
+  // When a safety rule received from another PC was changed there (notifications).
+  "changed_at",
 ]);
 
 /**
