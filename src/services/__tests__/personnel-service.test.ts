@@ -436,6 +436,9 @@ describe("personnel-service results", () => {
       created_by_id: null,
       created_by_label: null,
       created_at: "2026-05-01T08:00:00Z",
+      // Always sent by the backend (personnel::absence_access); only reason_masked may be absent.
+      type_masked: false,
+      critical_for_planning: false,
     };
     mockInvoke.mockResolvedValue([block]);
     const rows = await svc.listPersonnelAvailabilityBlocks(4, 10);
