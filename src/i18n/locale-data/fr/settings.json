@@ -466,6 +466,22 @@
       }
     }
   },
+  "appearance": {
+    "title": "Apparence",
+    "intro": "Mode de couleur de l'application sur ce poste. Le choix est enregistré sur ce poste, pour la session Windows en cours ; il n'est pas partagé avec les autres postes ni entre les comptes Maintafox de ce poste.",
+    "legend": "Mode de couleur",
+    "light": "Clair",
+    "lightHint": "Fond clair, recommandé en atelier bien éclairé.",
+    "dark": "Sombre",
+    "darkHint": "Fond sombre, moins éblouissant en salle de contrôle ou de nuit.",
+    "system": "Système",
+    "systemHint": "Suit le réglage de Windows et change avec lui.",
+    "current": "Affichage actuel : {{mode}}",
+    "currentLight": "clair",
+    "currentDark": "sombre",
+    "storedLocally": "Enregistré sur ce poste",
+    "authNote": "Les écrans de connexion, de verrouillage et d'activation restent toujours en clair."
+  },
   "siteRules": {
     "title": "Règles par site",
     "hint": "Un site de planification peut assouplir une règle pour lui seul. Un site sans règle garde le choix strict par défaut. Chaque changement demande un motif et votre identité, et reste dans l'historique.",
