@@ -217,6 +217,13 @@ pub(super) async fn apply_and_verify(db: &DatabaseConnection, iso: &PermitIsolat
         .expect("verify")
 }
 
+/// "J'ai retiré mon cadenas": the lock's applier takes it off (before its removal is verified).
+pub(super) async fn take_off(db: &DatabaseConnection, iso: &PermitIsolation) -> PermitIsolation {
+    queries::record_permit_isolation_removed(db, action(iso), iso.applied_by_id.expect("applied"))
+        .await
+        .expect("lock taken off by its applier")
+}
+
 fn assert_validation(res: Result<impl std::fmt::Debug, AppError>, needle: &str) {
     match res {
         Err(AppError::ValidationFailed(msgs)) => assert!(
@@ -921,6 +928,7 @@ async fn applier_cannot_verify_own_lock_removal() {
         queries::verify_permit_isolation_removal(&db, action(&iso), APPLIER).await,
         "Two-person rule",
     );
+    let iso = take_off(&db, &iso).await;
     let removed = queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER)
         .await
         .expect("removal verified by second person");
@@ -947,11 +955,60 @@ async fn close_requires_every_lock_removal_verified() {
     let db = setup().await;
     let (wp, iso) = active_loto_permit(&db, "EQ-PTW-30").await;
     assert_validation(set_status(&db, &wp, "closed").await, "lock removal");
+    let iso = take_off(&db, &iso).await;
     queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER)
         .await
         .expect("removal");
     let wp = set_status(&db, &wp, "closed").await.expect("close after removal");
     assert_eq!(wp.status, "closed");
+}
+
+// ── The applier takes their own lock off (migration 249) ──────────────
+
+/// "J'ai retiré mon cadenas": only the applier records it, once, while removal is open; the
+/// removal of a lock fitted before this rule is not verified until it is recorded (no
+/// grandfathering); both steps are audited.
+#[tokio::test]
+async fn only_the_applier_takes_the_lock_off_before_its_removal_is_verified() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-LR1").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let iso = apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-LR1").await).await;
+    // Not while the permit is only issued.
+    let err = queries::record_permit_isolation_removed(&db, action(&iso), APPLIER)
+        .await
+        .expect_err("issued");
+    assert_eq!(refusal_code(err), "PERMIT_ISOLATION_WRONG_STATUS");
+    let wp = set_status(&db, &wp, "active").await.expect("activate");
+
+    // A lock already fitted: its removal is not verified before it is taken off.
+    let err = queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER)
+        .await
+        .expect_err("not taken off");
+    assert_eq!(refusal_code(err), "PERMIT_REMOVAL_LOCK_NOT_REMOVED");
+    // Someone else cannot record it on the applier's behalf (that is a forced removal).
+    let err = queries::record_permit_isolation_removed(&db, action(&iso), VERIFIER)
+        .await
+        .expect_err("not the applier");
+    assert_eq!(refusal_code(err), "PERMIT_LOCK_REMOVAL_NOT_APPLIER");
+
+    let removed = take_off(&db, &iso).await;
+    assert_eq!(removed.removed_by_id, Some(APPLIER));
+    assert!(removed.removed_at.is_some());
+    assert!(!removed.forced_removal);
+    assert!(removed.removal_verified_at.is_none(), "still to verify");
+    let err = queries::record_permit_isolation_removed(&db, action(&removed), APPLIER)
+        .await
+        .expect_err("twice");
+    assert_eq!(refusal_code(err), "PERMIT_LOCK_ALREADY_REMOVED");
+
+    let verified = queries::verify_permit_isolation_removal(&db, action(&removed), VERIFIER)
+        .await
+        .expect("verified by a second person");
+    assert_eq!(verified.removal_verified_by_id, Some(VERIFIER));
+    assert_eq!(audit_count(&db, queries::AUDIT_LOCK_REMOVED).await, 1);
+    assert_eq!(audit_count(&db, queries::AUDIT_LOCK_REMOVAL_VERIFIED).await, 1);
+    set_status(&db, &wp, "closed").await.expect("close");
 }
 
 // ── WO gate integration ──────────────────────────────────────────────
@@ -1155,6 +1212,7 @@ async fn wo_gate_blocks_after_locks_removed() {
     let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("create")).await;
     let iso = apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-9").await).await;
     set_status(&db, &wp, "active").await.expect("activate");
+    let iso = take_off(&db, &iso).await;
     queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER)
         .await
         .expect("remove");
@@ -1188,9 +1246,14 @@ async fn locks_cannot_be_removed_while_linked_work_is_running() {
     set_status(&db, &wp, "active").await.expect("activate");
     start(&db, wo_id, rv).await.expect("WO starts");
 
+    // Neither taken off by its applier nor verified while the work runs.
+    assert_validation(
+        queries::record_permit_isolation_removed(&db, action(&iso), APPLIER).await,
+        "still in progress",
+    );
     assert_validation(
         queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER).await,
-        "still in progress",
+        "PERMIT_REMOVAL_LOCK_NOT_REMOVED",
     );
 
     // Once the work is no longer being executed, the removal can be verified.
@@ -1202,6 +1265,7 @@ async fn locks_cannot_be_removed_while_linked_work_is_running() {
     ))
     .await
     .expect("complete WO");
+    let iso = take_off(&db, &iso).await;
     queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER)
         .await
         .expect("removal after work completed");
@@ -2214,7 +2278,7 @@ async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_ch
 }
 
 /// Turns the three-person chain on for the LOTO type (administrator, step-up, reason).
-async fn loto_with_three_person_chain(db: &DatabaseConnection) {
+pub(super) async fn loto_with_three_person_chain(db: &DatabaseConnection) {
     let loto = queries::list_permit_types(db)
         .await
         .expect("types")
@@ -2241,6 +2305,8 @@ async fn with_the_three_person_chain_the_isolation_verifier_cannot_verify_the_re
         "the dialog can name who may not confirm"
     );
 
+    // The lock is taken off by its applier: the three-person chain still applies to the verifier.
+    let iso = take_off(&db, &iso).await;
     let err = queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER)
         .await
         .expect_err("verifier");
@@ -2263,6 +2329,7 @@ async fn without_the_three_person_chain_the_verifier_may_verify_the_removal() {
     let db = setup().await;
     let (wp, iso) = active_loto_permit(&db, "EQ-PTW-91").await;
     assert!(!wp.permit_type_requires_three_person_removal, "off by default");
+    let iso = take_off(&db, &iso).await;
     let err = queries::verify_permit_isolation_removal(&db, action(&iso), APPLIER)
         .await
         .expect_err("applier");
@@ -2788,6 +2855,7 @@ async fn a_cancelled_line_is_not_counted_by_the_lockout_and_readiness_readers() 
     let wp = set_status(&db, &wp, "active")
         .await
         .expect("activation counts the verified line only");
+    let kept = take_off(&db, &kept).await;
     queries::verify_permit_isolation_removal(&db, action(&kept), VERIFIER)
         .await
         .expect("remove the fitted lock");

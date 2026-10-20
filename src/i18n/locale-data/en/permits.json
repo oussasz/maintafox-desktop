@@ -146,7 +146,8 @@
       "applied": "Applied",
       "verified": "Verified",
       "removed": "Removed",
-      "cancelled": "Cancelled"
+      "cancelled": "Cancelled",
+      "takenOff": "Lock off — to verify"
     },
     "editLocked": "Isolations can only be added while the permit is not active.",
     "loadError": "The isolations of this permit could not be loaded",
@@ -172,7 +173,13 @@
     "cancelledAt": "Cancelled on {{date}}",
     "removalConfirmTitle": "Confirm lock removal",
     "removalConfirmDescription": "You confirm that the isolation \"{{point}}\" has been removed. Applied by {{applier}}, verified by {{verifier}}. Your name will be recorded as the person who verified the removal.",
-    "personUnknown": "no one recorded"
+    "personUnknown": "no one recorded",
+    "takeOff": "I removed my lock",
+    "removedBy": "Lock taken off by {{name}} on {{date}}",
+    "removerBlocked": "You took this lock off — another person must verify its removal.",
+    "awaitingTakeOff": "Waiting for {{name}} to record “I removed my lock” (or a forced removal if they are absent).",
+    "takeOffConfirmTitle": "Confirm you took your lock off",
+    "takeOffConfirmDescription": "You confirm that you have taken your lock off the isolation “{{point}}”. From now on this isolation no longer protects the work: nobody may work under it, and another person must verify the removal before the permit can be closed."
   },
   "card": {
     "title": "LOTO card",
@@ -187,7 +194,13 @@
     "recordPrint": "Record print",
     "print": "Print LOTO tag",
     "doNotOperate": "DANGER — DO NOT OPERATE. Equipment locked out.",
-    "signature": "Worker signature"
+    "signature": "Worker signature",
+    "forcedRemoval": "Forced removal",
+    "forcedRemovalYes": "Yes — worker absent",
+    "forcedAuthorisedBy": "Authorised by",
+    "forcedAt": "Taken off on",
+    "forcedReason": "Reason",
+    "forcedLine": "Forced removal — authorised by {{authoriser}} on {{date}}: {{reason}}"
   },
   "suspension": {
     "title": "Suspensions",
@@ -304,5 +317,67 @@
     "searchPlaceholder": "Search a permit, asset or work order…",
     "status": "Status",
     "type": "Permit type"
+  },
+  "forced": {
+    "action": "Forced removal (worker absent)",
+    "title": "Forced lock removal — worker absent",
+    "description": "The lock “{{point}}” was fitted by {{worker}}, who is absent. As a holder of the permit close right at this site, you authorise another person to take it off. Your password will be asked again.",
+    "remover": "Person who takes the lock off",
+    "removerHint": "Neither {{worker}} nor you.",
+    "removerSearch": "Search by name",
+    "removerPlaceholder": "Choose the person",
+    "removersPartial": "{{shown}} of {{total}} people shown: refine the search.",
+    "reason": "Reason",
+    "reasonCount": "{{length}} / {{min}} characters at least",
+    "reasonMin": "Give the reason in {{min}} characters at least.",
+    "attempts": "Attempts to reach the worker",
+    "attemptsHint": "At least one: when, how (your site's contact methods, Reference data) and what came of it.",
+    "noMethods": "No contact method is active in Reference data (PERMIT.CONTACT_METHODS): ask an administrator to add one.",
+    "attemptAt": "Time of attempt {{n}}",
+    "attemptMethod": "Method of attempt {{n}}",
+    "attemptResult": "Result of attempt {{n}}",
+    "methodPlaceholder": "Choose the method",
+    "resultPlaceholder": "No answer, voicemail…",
+    "removeAttempt": "Remove attempt {{n}}",
+    "attemptsIncomplete": "Give the time, the method and the result of each attempt.",
+    "addAttempt": "Add an attempt",
+    "attest": "I attest that the worker is not on the site.",
+    "attestHint": "Required by OSHA 1910.147(e)(3)(ii): the employer verifies that the authorised employee is not at the facility.",
+    "attestRequired": "The attestation is required.",
+    "stepUpHint": "Recording a forced removal asks for your password again; it is audited and announced to the permit close-right holders of the site.",
+    "submit": "Record the forced removal",
+    "chip": "Forced removal",
+    "summary": "Authorised by {{authoriser}} on {{date}}",
+    "reasonShown": "Reason: {{reason}}",
+    "attemptShown": "{{date}} — {{method}}: {{result}}",
+    "removedAt": "Taken off on",
+    "removedBy": "Taken off by",
+    "authorisedBy": "Authorised by"
+  },
+  "informed": {
+    "action": "Worker informed",
+    "title": "The worker was told of the forced removal",
+    "description": "Record that {{worker}} was told that their lock “{{point}}” was taken off (worker without an account in Maintafox, or told in person). You are recorded as the person who told them.",
+    "method": "How",
+    "at": "When",
+    "hint": "A worker with an account is also asked to acknowledge it at their next sign-in.",
+    "submit": "Record",
+    "pending": "Worker not told yet: they fit no new lock until they are.",
+    "doneInApp": "Worker told: acknowledged in the app on {{date}}",
+    "done": "Worker told by {{name}} on {{date}} ({{method}})"
+  },
+  "gateAck": {
+    "title": "One of your locks was taken off while you were absent",
+    "intro": "A forced removal was recorded for a lock you fitted. Read it and acknowledge it before continuing: you cannot fit a new lock until you do.",
+    "lock": "Lock “{{point}}” — permit {{permit}} — {{equipment}}",
+    "acknowledge": "I have read it",
+    "loadError": "Your forced lock removals could not be read. Try again: the app stays blocked until they can be checked.",
+    "retry": "Try again"
+  },
+  "review": {
+    "title": "Forced removals to follow up ({{count}})",
+    "hint": "Locks taken off while their worker was absent: the worker must be told (at their next sign-in, or record it here).",
+    "item": "{{point}} — {{worker}}, taken off on {{date}}, authorised by {{authoriser}}",
+    "loadError": "The forced removals to follow up could not be loaded"
   }
 }

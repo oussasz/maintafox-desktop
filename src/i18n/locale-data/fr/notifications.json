@@ -185,7 +185,8 @@
     "sync_conflict": "Conflit de synchronisation",
     "wo_assigned": "OT affecté",
     "wo_overdue": "OT en retard",
-    "safety_rule_received": "Règle de sécurité modifiée sur un autre poste"
+    "safety_rule_received": "Règle de sécurité modifiée sur un autre poste",
+    "loto_forced_removal": "Cadenas retiré par un retrait forcé"
   },
   "messages": {
     "wo_assigned": {
@@ -294,6 +295,10 @@
     "three_person_received_off": {
       "title": "Retrait des cadenas à trois personnes désactivé pour {{permit_type}} sur un autre poste",
       "body": "{{changed_by}} a retiré la confirmation par une troisième personne du retrait des cadenas ({{permit_type}}) le {{changed_at}} — motif : {{reason}}. Vérifiez que ce changement était voulu (types de permis)."
+    },
+    "loto_forced_removal": {
+      "title": "Retrait forcé d’un cadenas : {{point}} (permis {{permit}})",
+      "body": "{{authorised_by}} a autorisé {{removed_by}} à retirer le cadenas de {{worker}}, absent, le {{removed_at}} — motif : {{reason}}. Le travailleur doit en être informé (Permis de travail › retraits forcés à suivre)."
     }
   },
   "audience": {
@@ -351,7 +356,8 @@
     "fixedRouting": {
       "budget_control_alert": "Destinataire choisi dans les réglages des alertes budgétaires.",
       "daily_digest": "Envoyé à chaque personne qui a choisi le résumé quotidien.",
-      "safety_rule_received": "Toujours les administrateurs des paramètres de toute l’usine."
+      "safety_rule_received": "Toujours les administrateurs des paramètres de toute l’usine.",
+      "loto_forced_removal": "Toujours les personnes qui détiennent le droit de clôture des permis sur le site du permis."
     },
     "minutes": "min",
     "minutesAfterAlert": "min après l'alerte",

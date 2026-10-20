@@ -19,7 +19,17 @@ export const PERMIT_QUERY_CREATE_FOR_WO = "createForWo";
  */
 export const PERMIT_REFUSAL_NAMESPACES = ["training"] as const;
 
-export type IsolationState = "pending" | "applied" | "verified" | "removed" | "cancelled";
+/**
+ * `takenOff`: the lock was taken off (by its applier, "J'ai retiré mon cadenas", or by a forced
+ * removal) and its removal is not verified yet; `removed`: the removal is verified.
+ */
+export type IsolationState =
+  | "pending"
+  | "applied"
+  | "verified"
+  | "takenOff"
+  | "removed"
+  | "cancelled";
 
 /**
  * A planned line cancelled and never applied (`COUNTED_ISOLATION_SQL` on the server): kept as
@@ -37,6 +47,7 @@ export function countedIsolations(isolations: PermitIsolationRecord[]): PermitIs
 export function isolationState(iso: PermitIsolationRecord): IsolationState {
   if (isCancelledLine(iso)) return "cancelled";
   if (iso.removal_verified_at) return "removed";
+  if (iso.removed_at) return "takenOff";
   if (iso.verified_at) return "verified";
   if (iso.applied_at) return "applied";
   return "pending";
@@ -113,7 +124,8 @@ export function activationBlocker(
   // The type's own rule (`requires_energy_isolation`, set for LOTO), never a code in the program.
   if (permit.permit_type_requires_energy_isolation && isolations.length === 0)
     return "gate.noIsolation";
-  if (isolations.some((i) => i.removal_verified_at)) return "gate.removed";
+  // A lock taken off protects nothing, its removal verified or not (the server refuses it too).
+  if (isolations.some((i) => i.removal_verified_at || i.removed_at)) return "gate.removed";
   if (isolations.some((i) => !i.verified_at)) return "gate.unverified";
   return null;
 }

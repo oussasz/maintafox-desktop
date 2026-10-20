@@ -69,6 +69,11 @@ const svc = vi.hoisted(() => ({
   verifyPermitIsolation: vi.fn(),
   verifyPermitIsolationRemoval: vi.fn(),
   cancelPermitIsolation: vi.fn(),
+  recordPermitIsolationRemoved: vi.fn(),
+  forcePermitIsolationRemoval: vi.fn(),
+  recordPermitWorkerInformed: vi.fn(),
+  listPermitContactMethods: vi.fn(),
+  listPermitLockRemovers: vi.fn(),
 }));
 vi.mock("@/services/permit-service", () => svc);
 
@@ -126,7 +131,10 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
   };
 }
 
-/** Applied by user 7, verified by user 8 (Sara Sup), removal not yet confirmed. */
+/**
+ * Applied by user 7, verified by user 8 (Sara Sup), taken off by user 7 ("I removed my lock"),
+ * removal not yet confirmed.
+ */
 const VERIFIED_ISOLATION: PermitIsolationRecord = {
   id: 300,
   entity_sync_id: "i300",
@@ -154,6 +162,28 @@ const VERIFIED_ISOLATION: PermitIsolationRecord = {
   cancelled_at: null,
   cancelled_by_id: null,
   cancelled_by_name: null,
+  removed_by_id: 7,
+  removed_by_name: "Amine Tech",
+  removed_at: "2026-10-10T17:00:00Z",
+  forced_removal: false,
+  forced_authorized_by_id: null,
+  forced_authorized_by_name: null,
+  forced_reason: null,
+  forced_worker_absent: false,
+  forced_contact_attempts: [],
+  informed_by_id: null,
+  informed_by_name: null,
+  informed_at: null,
+  informed_method: null,
+  informed_in_app: false,
+};
+
+/** The same lock still on (not taken off yet). */
+const LOCK_ON: PermitIsolationRecord = {
+  ...VERIFIED_ISOLATION,
+  removed_by_id: null,
+  removed_by_name: null,
+  removed_at: null,
 };
 
 function renderPanel(p: WorkPermitRecord = permit()) {
@@ -256,6 +286,123 @@ describe("PermitDetailPanel — lock removal with a third person", () => {
   });
 });
 
+describe("PermitDetailPanel — taking a lock off", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    siteRights.withheld = new Set();
+    svc.listPermitIsolationOptions.mockResolvedValue({ energy_types: [], isolation_methods: [] });
+    svc.listPermitSuspensions.mockResolvedValue([]);
+    svc.listPermitHandoverLogs.mockResolvedValue([]);
+    svc.listPermitHandoverRoles.mockResolvedValue([]);
+    svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+    svc.listPermitContactMethods.mockResolvedValue([
+      { code: "Téléphone", label: "Téléphone", review_required: true },
+    ]);
+    svc.listPermitLockRemovers.mockResolvedValue({ items: [], total: 0, empty_reason: null });
+  });
+
+  const button = (row: HTMLElement, name: string) => within(row).queryByRole("button", { name });
+
+  it("lets the applier record that they took their lock off, before any removal check", async () => {
+    session.userId = 7;
+    svc.listPermitIsolations.mockResolvedValue([LOCK_ON]);
+    svc.recordPermitIsolationRemoved.mockResolvedValue(VERIFIED_ISOLATION);
+    const row = await renderPanel();
+    expect(button(row, enPermits.isolation.verifyRemoval)).toBeNull();
+    expect(button(row, enPermits.forced.action)).toBeNull();
+    fireEvent.click(button(row, enPermits.isolation.takeOff) as HTMLElement);
+    // A confirmation first, saying the lock then no longer protects the work.
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      fill(enPermits.isolation.takeOffConfirmDescription, { point: "MCC-1 breaker" }),
+    );
+    expect(svc.recordPermitIsolationRemoved).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: enPermits.isolation.takeOff }));
+    await waitFor(() =>
+      expect(svc.recordPermitIsolationRemoved).toHaveBeenCalledWith({
+        isolation_id: 300,
+        expected_row_version: 3,
+        lock_number: null,
+      }),
+    );
+  });
+
+  it("records nothing when the take-off confirmation is cancelled", async () => {
+    session.userId = 7;
+    svc.listPermitIsolations.mockResolvedValue([LOCK_ON]);
+    const row = await renderPanel();
+    fireEvent.click(button(row, enPermits.isolation.takeOff) as HTMLElement);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "ds.confirm.cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(svc.recordPermitIsolationRemoved).not.toHaveBeenCalled();
+  });
+
+  it("offers a forced removal to a close-right holder while the lock is on, and waits for the applier", async () => {
+    session.userId = 10;
+    svc.listPermitIsolations.mockResolvedValue([LOCK_ON]);
+    const row = await renderPanel();
+    expect(button(row, enPermits.isolation.takeOff)).toBeNull();
+    expect(button(row, enPermits.isolation.verifyRemoval)).toBeNull();
+    expect(within(row).getByTestId("isolation-awaiting-take-off")).toHaveTextContent("Amine Tech");
+    fireEvent.click(button(row, enPermits.forced.action) as HTMLElement);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(enPermits.forced.title);
+    // Nothing is sent without the remover, the reason, the attestation and a complete attempt.
+    fireEvent.click(within(dialog).getByRole("button", { name: enPermits.forced.submit }));
+    expect(await within(dialog).findByText(enPermits.forced.attestRequired)).toBeInTheDocument();
+    expect(svc.forcePermitIsolationRemoval).not.toHaveBeenCalled();
+  });
+
+  it("offers no forced removal without the close right at the permit's site", async () => {
+    session.userId = 10;
+    siteRights.withheld = new Set([P.PTW_CLOSE]);
+    svc.listPermitIsolations.mockResolvedValue([LOCK_ON]);
+    const row = await renderPanel();
+    expect(button(row, enPermits.forced.action)).toBeNull();
+  });
+
+  it("does not let the person who took the lock off verify its removal", async () => {
+    session.userId = 12;
+    svc.listPermitIsolations.mockResolvedValue([
+      { ...VERIFIED_ISOLATION, removed_by_id: 12, removed_by_name: "Rémi Remover" },
+    ]);
+    const row = await renderPanel(permit({ permit_type_requires_three_person_removal: false }));
+    expect(removalButton(row)).toBeDisabled();
+    expect(removalButton(row)).toHaveAttribute("title", enPermits.isolation.removerBlocked);
+  });
+
+  it("shows a forced removal with who authorised it, why, the attempts, and lets a holder record the worker told", async () => {
+    session.userId = 10;
+    svc.listPermitIsolations.mockResolvedValue([
+      {
+        ...VERIFIED_ISOLATION,
+        removed_by_id: 12,
+        removed_by_name: "Rémi Remover",
+        forced_removal: true,
+        forced_authorized_by_id: 11,
+        forced_authorized_by_name: "Chef Site",
+        forced_reason: "Fin de poste, travailleur parti",
+        forced_worker_absent: true,
+        forced_contact_attempts: [
+          { at: "2026-10-10T16:30:00Z", method: "Téléphone", result: "Pas de réponse" },
+        ],
+      },
+    ]);
+    const row = await renderPanel();
+    const forced = within(row).getByTestId("isolation-forced-removal");
+    expect(forced).toHaveTextContent(enPermits.forced.chip);
+    expect(forced).toHaveTextContent("Chef Site");
+    expect(forced).toHaveTextContent("Fin de poste, travailleur parti");
+    expect(forced).toHaveTextContent("Pas de réponse");
+    expect(within(row).getByTestId("isolation-worker-informed")).toHaveTextContent(
+      enPermits.informed.pending,
+    );
+    fireEvent.click(button(row, enPermits.informed.action) as HTMLElement);
+    expect(await screen.findByRole("dialog")).toHaveTextContent(enPermits.informed.title);
+  });
+});
+
 describe("PermitDetailPanel — recorded hand-overs", () => {
   const handover = (o: Partial<PermitHandoverLogRecord>): PermitHandoverLogRecord => ({
     id: 1,
@@ -340,6 +487,9 @@ describe("PermitDetailPanel — cancelling a planned isolation line", () => {
     row_version: 1,
     applied_by_name: null,
     verified_by_name: null,
+    removed_by_id: null,
+    removed_by_name: null,
+    removed_at: null,
   };
   const cancelButton = (row: HTMLElement) =>
     within(row).queryByRole("button", { name: enPermits.isolation.cancel });

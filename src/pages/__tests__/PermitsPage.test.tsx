@@ -76,6 +76,13 @@ const svc = vi.hoisted(() => ({
   applyPermitIsolation: vi.fn(),
   verifyPermitIsolation: vi.fn(),
   verifyPermitIsolationRemoval: vi.fn(),
+  recordPermitIsolationRemoved: vi.fn(),
+  forcePermitIsolationRemoval: vi.fn(),
+  recordPermitWorkerInformed: vi.fn(),
+  listPermitContactMethods: vi.fn(),
+  listPermitLockRemovers: vi.fn(),
+  // The review list of forced lock removals (permit close-right holders): none here.
+  listOpenForcedLockRemovals: vi.fn(async () => []),
   appendPermitHandoverLog: vi.fn(),
   createWorkPermit: vi.fn(),
   upsertPermitType: vi.fn(),
@@ -225,9 +232,30 @@ function isolation(overrides: Partial<PermitIsolationRecord> = {}): PermitIsolat
     cancelled_at: null,
     cancelled_by_id: null,
     cancelled_by_name: null,
+    removed_by_id: null,
+    removed_by_name: null,
+    removed_at: null,
+    forced_removal: false,
+    forced_authorized_by_id: null,
+    forced_authorized_by_name: null,
+    forced_reason: null,
+    forced_worker_absent: false,
+    forced_contact_attempts: [],
+    informed_by_id: null,
+    informed_by_name: null,
+    informed_at: null,
+    informed_method: null,
+    informed_in_app: false,
     ...overrides,
   };
 }
+
+/** Taken off by its applier ("I removed my lock"), removal not verified yet. */
+const TAKEN_OFF = {
+  removed_by_id: 7,
+  removed_by_name: "Amine Tech",
+  removed_at: "2026-10-10T14:00:00Z",
+};
 
 const VERIFIED = {
   verified_by_id: 8,
@@ -321,10 +349,13 @@ describe("PermitsPage", () => {
   it("blocks closing until every lock removal is verified", async () => {
     session.userId = 8;
     svc.listWorkPermits.mockResolvedValue(page([permit({ status: "active", row_version: 5 })]));
-    svc.listPermitIsolations.mockResolvedValue([isolation({ ...VERIFIED, verified_by_id: 9 })]);
+    svc.listPermitIsolations.mockResolvedValue([
+      isolation({ ...VERIFIED, ...TAKEN_OFF, verified_by_id: 9 }),
+    ]);
     svc.verifyPermitIsolationRemoval.mockImplementation(async () => {
       const removed = isolation({
         ...VERIFIED,
+        ...TAKEN_OFF,
         verified_by_id: 9,
         removal_verified_at: "2026-10-10T15:00:00Z",
         removal_verified_by_id: 8,

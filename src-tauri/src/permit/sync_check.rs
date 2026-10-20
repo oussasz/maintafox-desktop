@@ -36,6 +36,16 @@
 //!   a permit protecting the work, it must date from before the permit started protecting it; its
 //!   lock removal is verified only once the permit was active (`ISOLATION_SETUP_STATUSES` and
 //!   `ISOLATION_REMOVAL_STATUSES` of `permit::queries`);
+//! - a lock taken off (migration 249, `lock_removal_breach`, `lock_record_check`): a normal removal
+//!   is recorded by the lock's applier, with who and when; a forced removal (applier absent) names an
+//!   authoriser who is neither the applier nor the remover, a remover who is not the applier, a
+//!   reason of at least 20 characters, the attestation that the worker is not on site and at least
+//!   one well-formed contact attempt, and its authoriser holds `ptw.close` at the permit's site
+//!   here; the removal is verified only after the lock was taken off, never by the remover; the
+//!   worker is told of a forced removal by their own in-app acknowledgement or by a person holding
+//!   `ptw.close` at the site here, after the removal; a lock taken off happens only once the permit
+//!   was active; once recorded here, the removal and the telling are never rewritten; and a worker
+//!   with a forced removal they were not told of before fits no new lock (`forced_removal_block`);
 //! - an isolation line cancelled (migration 243, `cancellation_check`): only a line never applied
 //!   (not here, not in the row), with who and when, on a permit held here as a draft or waiting for
 //!   review (as before the change when it arrives with its permit's change); a line cancelled here
@@ -235,7 +245,162 @@ pub(crate) fn isolation_rule_breach(iso: &Payload, three_person: bool) -> Option
             ));
         }
     }
+    lock_removal_breach(iso, point)
+}
+
+/// The lock-removal rules a state of an isolation breaks, if any (migration 249,
+/// `permit::queries::record_permit_isolation_removed`, `force_permit_isolation_removal`,
+/// `acknowledge_forced_removal`, `record_worker_informed`). Judged on the row alone.
+fn lock_removal_breach(iso: &Payload, point: &str) -> Option<(&'static str, String)> {
+    let applier = field(iso, "applied_by_sync_id");
+    let remover = field(iso, "removed_by_sync_id");
+    let removed_at = field(iso, "removed_at");
+    let forced = flag(iso, "forced_removal");
+    let invalid = |code: &'static str, what: &str| Some((code, format!("isolation '{point}': {what}")));
+    if remover.is_some() != removed_at.is_some() || removed_at.is_some_and(|t| instant(t).is_none()) {
+        return invalid(
+            "PERMIT_LOCK_REMOVAL_INVALID",
+            "lock taken off without who or when, or at an unreadable time",
+        );
+    }
+    let removed = removed_at.and_then(instant);
+    if removed.is_some() && (applier.is_none() || field(iso, "applied_at").is_none()) {
+        return invalid("PERMIT_ISOLATION_NOT_APPLIED", "lock taken off but never applied");
+    }
+    if removed.is_some_and(|t| t > future_bound()) {
+        return invalid("PERMIT_LOCK_REMOVAL_INVALID", "lock taken off at a time in the future");
+    }
+    let authoriser = field(iso, "forced_authorized_by_sync_id");
+    if forced {
+        let reason_ok = field(iso, "forced_reason")
+            .is_some_and(|r| r.chars().count() >= crate::permit::domain::MIN_FORCED_REMOVAL_REASON_CHARS);
+        if removed.is_none()
+            || authoriser.is_none()
+            || !reason_ok
+            || !flag(iso, "forced_worker_absent")
+            || !contact_attempts_valid(iso)
+        {
+            return invalid(
+                "PERMIT_FORCED_REMOVAL_INVALID",
+                "forced removal without its remover, time, authoriser, reason (20 characters at least), \
+                 attestation that the worker is absent or contact attempts",
+            );
+        }
+        if authoriser == applier {
+            return invalid(
+                "PERMIT_FORCED_REMOVAL_AUTHORISER_IS_APPLIER",
+                "forced removal authorised by the lock's own applier",
+            );
+        }
+        if authoriser == remover {
+            return invalid(
+                "PERMIT_FORCED_REMOVAL_AUTHORISER_IS_REMOVER",
+                "forced removal authorised by the person who took the lock off",
+            );
+        }
+        if remover == applier {
+            return invalid(
+                "PERMIT_FORCED_REMOVAL_REMOVER_IS_APPLIER",
+                "forced removal whose remover is the absent applier",
+            );
+        }
+    } else {
+        if authoriser.is_some()
+            || field(iso, "forced_reason").is_some()
+            || field(iso, "forced_contact_attempts_json").is_some()
+            || flag(iso, "forced_worker_absent")
+        {
+            return invalid(
+                "PERMIT_FORCED_REMOVAL_INVALID",
+                "a forced-removal record on a lock removal not flagged forced",
+            );
+        }
+        if remover.is_some() && remover != applier {
+            return invalid(
+                "PERMIT_LOCK_REMOVAL_NOT_APPLIER",
+                "lock removal recorded by someone other than its applier",
+            );
+        }
+    }
+    if field(iso, "removal_verified_at").is_some() {
+        let verified = time(iso, "removal_verified_at");
+        // A removal verified with no trace of the lock taken off at all: verified on a PC before
+        // the update (migration 249) and received here (CMMS Advisor, S2 option a: kept refused,
+        // a person checks on site, then resolves the conflict; the lock stays fitted here).
+        if remover.is_none() && removed_at.is_none() {
+            return invalid(
+                "PERMIT_REMOVAL_PRE_UPGRADE",
+                "lock removal verified before the update, with no trace of the lock taken off by its applier \
+                 (retrait vérifié avant la mise à jour, sans trace du retrait par le poseur) — check on site, then \
+                 resolve",
+            );
+        }
+        if removed.is_none() || verified.is_none_or(|v| removed.is_some_and(|r| v < r)) {
+            return invalid(
+                "PERMIT_REMOVAL_LOCK_NOT_REMOVED",
+                "lock removal verified before the lock was taken off",
+            );
+        }
+        if field(iso, "removal_verified_by_sync_id") == remover {
+            return invalid(
+                "PERMIT_REMOVAL_VERIFIER_IS_REMOVER",
+                "lock removal verified by the person who took it off",
+            );
+        }
+    }
+    let informer = field(iso, "informed_by_sync_id");
+    let informed_at = field(iso, "informed_at");
+    let in_app = flag(iso, "informed_in_app");
+    let method = field(iso, "informed_method");
+    if informer.is_none() && informed_at.is_none() {
+        if in_app || method.is_some() {
+            return invalid("PERMIT_WORKER_INFORMED_INVALID", "worker told without who or when");
+        }
+        return None;
+    }
+    let told = informed_at.and_then(instant);
+    if !forced
+        || informer.is_none()
+        || told.is_none_or(|t| t > future_bound() || removed.is_some_and(|r| t < r))
+        || (in_app && method.is_some())
+        || (!in_app && (method.is_none() || informer == applier))
+    {
+        return invalid(
+            "PERMIT_WORKER_INFORMED_INVALID",
+            "worker told of a forced removal without who, when (after the removal) or how, or of a removal \
+             not forced",
+        );
+    }
+    if in_app && informer != applier {
+        return invalid(
+            "PERMIT_WORKER_ACK_NOT_YOURS",
+            "forced removal acknowledged in the app by someone other than the worker",
+        );
+    }
     None
+}
+
+/// The contact attempts of a forced removal, as the save checks them: a JSON list of 1 to
+/// [`crate::permit::domain::MAX_CONTACT_ATTEMPTS`] attempts, each at a readable time not in the
+/// future, with a method and a result of at most [`crate::permit::domain::MAX_CONTACT_RESULT_CHARS`]
+/// characters. The method is not checked against the plant's list here (the list may reach this PC
+/// after the row).
+fn contact_attempts_valid(iso: &Payload) -> bool {
+    use crate::permit::domain::{ContactAttempt, MAX_CONTACT_ATTEMPTS, MAX_CONTACT_RESULT_CHARS};
+    let Some(raw) = field(iso, "forced_contact_attempts_json") else {
+        return false;
+    };
+    let Ok(attempts) = serde_json::from_str::<Vec<ContactAttempt>>(raw) else {
+        return false;
+    };
+    !attempts.is_empty()
+        && attempts.len() <= MAX_CONTACT_ATTEMPTS
+        && attempts.iter().all(|a| {
+            instant(&a.at).is_some_and(|t| t <= future_bound())
+                && !a.method.trim().is_empty()
+                && !a.result.trim().is_empty()
+                && a.result.trim().chars().count() <= MAX_CONTACT_RESULT_CHARS
+        })
 }
 
 /// The keys of an isolation's actions (who fitted, verified and verified the removal, and when).
@@ -246,7 +411,20 @@ const ISOLATION_ACTION_KEYS: &[&str] = &[
     "verified_at",
     "removal_verified_by_sync_id",
     "removal_verified_at",
+    "removed_by_sync_id",
+    "removed_at",
 ];
+
+/// The record of a lock taken off (migration 249): who and when, and the forced-removal record.
+const LOCK_REMOVAL_KEYS: &[&str] = &[
+    "removed_by_sync_id",
+    "removed_at",
+    "forced_authorized_by_sync_id",
+    "forced_reason",
+    "forced_contact_attempts_json",
+];
+/// The record of the worker told of a forced removal.
+const WORKER_INFORMED_KEYS: &[&str] = &["informed_by_sync_id", "informed_at", "informed_method"];
 
 /// A cancelled line never applied (migration 243): no isolation of its permit, never a lock to fit
 /// (`permit::queries::COUNTED_ISOLATION_SQL`). A line that would hold both still counts.
@@ -524,7 +702,10 @@ fn protection_start(permit: &Payload, suspensions: &[&Payload]) -> Option<DateTi
 /// A lock removal verified before `at` (an unreadable time counts as removed, as locally any removal
 /// counts).
 fn removed_before(iso: &Payload, at: DateTime<Utc>) -> bool {
-    field(iso, "removal_verified_at").is_some_and(|t| instant(t).is_none_or(|t| t < at))
+    // A lock taken off (migration 249) protects nothing, its removal verified or not.
+    ["removal_verified_at", "removed_at"]
+        .iter()
+        .any(|k| field(iso, k).is_some_and(|t| instant(t).is_none_or(|t| t < at)))
 }
 
 /// The isolations of a permit ready to protect work from `at` (`permit::queries::activation_ready`).
@@ -1291,6 +1472,8 @@ fn isolation_actions(p: &Payload) -> [Option<&str>; 7] {
 /// What a line cancelled here keeps as it was: its permit, content (the energy and method texts and
 /// references, the mapping review mark), actions and cancellation.
 const CANCELLED_LINE_KEPT: &[&str] = &[
+    "removed_by_sync_id",
+    "removed_at",
     "permit_sync_id",
     "isolation_point",
     "energy_type",
@@ -1388,9 +1571,12 @@ pub(crate) async fn inbound_isolation_check(
     if let Some(verdict) = cancellation_check(conn, local.as_ref(), &iso).await? {
         return Ok(Some(verdict));
     }
+    if let Some(verdict) = lock_record_kept(local.as_ref(), &iso) {
+        return Ok(Some(verdict));
+    }
     if local
         .as_ref()
-        .is_some_and(|l| isolation_actions(l) == isolation_actions(&iso))
+        .is_some_and(|l| isolation_actions(l) == isolation_actions(&iso) && lock_record(l) == lock_record(&iso))
     {
         return Ok(None);
     }
@@ -1473,6 +1659,193 @@ pub(crate) async fn inbound_isolation_check(
         return conflict(
             "PERMIT_ISOLATION_WRONG_STATUS",
             format!("isolation '{point}': lock removal verified while permit {code} is '{current}'"),
+        );
+    }
+    // A lock is taken off only once the permit was active (migration 249).
+    if changed("removed_at") && ISOLATION_SETUP.contains(&current.as_str()) {
+        return conflict(
+            "PERMIT_ISOLATION_WRONG_STATUS",
+            format!("isolation '{point}': lock taken off while permit {code} is '{current}'"),
+        );
+    }
+    lock_record_check(conn, local.as_ref(), &iso, entity_sync_id, permit_sync, &point).await
+}
+
+/// The removal and worker-informed values of an isolation, compared as this PC stores them.
+fn lock_record(p: &Payload) -> (Vec<Option<&str>>, Vec<Option<&str>>, [bool; 3]) {
+    (
+        LOCK_REMOVAL_KEYS.iter().map(|k| field(p, k)).collect(),
+        WORKER_INFORMED_KEYS.iter().map(|k| field(p, k)).collect(),
+        [
+            flag(p, "forced_removal"),
+            flag(p, "forced_worker_absent"),
+            flag(p, "informed_in_app"),
+        ],
+    )
+}
+
+/// Once recorded here, a lock removal (with its forced-removal record) and the worker told are
+/// never rewritten nor taken back by a received row (`PERMIT_LOCK_REMOVAL_RECORD_CHANGED`).
+fn lock_record_kept(local: Option<&Payload>, iso: &Payload) -> Option<InboundVerdict> {
+    let held = local?;
+    let point = field(iso, "isolation_point").unwrap_or("?");
+    let (held_removal, held_informed, held_flags) = lock_record(held);
+    let (removal, informed, flags) = lock_record(iso);
+    let removal_changed = field(held, "removed_at").is_some()
+        && (held_removal != removal || held_flags[0] != flags[0] || held_flags[1] != flags[1]);
+    let informed_changed =
+        field(held, "informed_at").is_some() && (held_informed != informed || held_flags[2] != flags[2]);
+    (removal_changed || informed_changed).then(|| InboundVerdict::Conflict {
+        code: "PERMIT_LOCK_REMOVAL_RECORD_CHANGED",
+        message: format!(
+            "isolation '{point}': the record of its lock taken off (or of the worker told) held here cannot change"
+        ),
+    })
+}
+
+/// The local id of the user with this sync id.
+async fn local_user(conn: &impl ConnectionTrait, user_sync_id: &str) -> AppResult<Option<i64>> {
+    local_id(conn, "user_accounts", user_sync_id).await
+}
+
+/// `ptw.close` of `user_sync` at the site of the permit `permit_sync` here (the rule of
+/// `permit::access::may_receive_handover`, the local saves' check): `Ok(None)` when held, else the
+/// verdict (waiting while the person or their rights may still arrive, else `code`).
+async fn close_right_at_permit(
+    conn: &impl ConnectionTrait,
+    user_sync: &str,
+    permit_sync: &str,
+    code: &'static str,
+    message: String,
+) -> AppResult<Option<InboundVerdict>> {
+    let Some(user) = local_user(conn, user_sync).await? else {
+        return wait(format!("{message}: that person is not applied here yet"));
+    };
+    let Some(permit) = local_id(conn, "work_permits", permit_sync).await? else {
+        return Ok(None);
+    };
+    if crate::permit::access::may_receive_handover(conn, permit, user).await? {
+        return Ok(None);
+    }
+    if rights_may_still_arrive(conn, user_sync, crate::rbac::permissions::PTW_CLOSE).await? {
+        return wait(format!("{message}: their rights are still arriving"));
+    }
+    conflict(
+        code,
+        format!("{message} without the permit close right at the permit's site here"),
+    )
+}
+
+/// The checks of a received lock record that need this PC (migration 249): the authoriser of a
+/// forced removal new here and the person recording that the worker was told hold `ptw.close` at
+/// the permit's site here; a lock newly applied by a worker with a forced removal they were not told
+/// of before it is refused ([`forced_removal_block`]).
+async fn lock_record_check(
+    conn: &impl ConnectionTrait,
+    local: Option<&Payload>,
+    iso: &Payload,
+    entity_sync_id: &str,
+    permit_sync: &str,
+    point: &str,
+) -> AppResult<Option<InboundVerdict>> {
+    let new_here = |key: &str| field(iso, key).is_some() && local.is_none_or(|l| field(l, key).is_none());
+    if flag(iso, "forced_removal") && new_here("removed_at") {
+        if let Some(authoriser) = field(iso, "forced_authorized_by_sync_id") {
+            if let Some(verdict) = close_right_at_permit(
+                conn,
+                authoriser,
+                permit_sync,
+                "PERMIT_FORCED_REMOVAL_UNAUTHORISED",
+                format!("isolation '{point}': forced removal authorised"),
+            )
+            .await?
+            {
+                return Ok(Some(verdict));
+            }
+        }
+    }
+    if new_here("informed_at") && !flag(iso, "informed_in_app") {
+        if let Some(informer) = field(iso, "informed_by_sync_id") {
+            if let Some(verdict) = close_right_at_permit(
+                conn,
+                informer,
+                permit_sync,
+                "PERMIT_WORKER_INFORMED_UNAUTHORISED",
+                format!("isolation '{point}': worker told of the forced removal, recorded"),
+            )
+            .await?
+            {
+                return Ok(Some(verdict));
+            }
+        }
+    }
+    let applied_changed = ["applied_by_sync_id", "applied_at"]
+        .iter()
+        .any(|k| field(iso, k).is_some() && local.is_none_or(|l| field(l, k) != field(iso, k)));
+    if applied_changed {
+        return forced_removal_block(conn, iso, entity_sync_id, point).await;
+    }
+    Ok(None)
+}
+
+/// A lock applied by a worker who has, here, a forced removal they were not told of, taken off
+/// before this lock was applied: refused (`PERMIT_WORKER_NOT_INFORMED`), as the local apply is. When
+/// the record of the worker told of it is waiting in the inbox, the row waits for it.
+async fn forced_removal_block(
+    conn: &impl ConnectionTrait,
+    iso: &Payload,
+    entity_sync_id: &str,
+    point: &str,
+) -> AppResult<Option<InboundVerdict>> {
+    let (Some(worker), Some(applied_at)) = (field(iso, "applied_by_sync_id"), field(iso, "applied_at")) else {
+        return Ok(None);
+    };
+    let applied = instant(applied_at);
+    let open = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT pi.entity_sync_id AS sid, pi.removed_at AS removed_at FROM permit_isolations pi \
+               JOIN user_accounts u ON u.id = pi.applied_by_id \
+              WHERE u.entity_sync_id = ? AND pi.forced_removal = 1 AND pi.informed_at IS NULL \
+                AND pi.entity_sync_id IS NOT ?",
+            [worker.into(), entity_sync_id.into()],
+        ))
+        .await?;
+    for r in open {
+        let sid: Option<String> = r.try_get("", "sid").map_err(sync_err)?;
+        let removed: Option<String> = r.try_get("", "removed_at").map_err(sync_err)?;
+        // Taken off after this lock was applied: the worker could not have been told before.
+        let before = match (removed.as_deref().and_then(instant), applied) {
+            (Some(removed), Some(applied)) => removed <= applied,
+            _ => true,
+        };
+        if !before {
+            continue;
+        }
+        let told_waiting = match &sid {
+            Some(sid) => conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT 1 AS w FROM sync_inbox WHERE entity_type = 'permit_isolations' \
+                       AND entity_sync_id = ? AND apply_status IN ('pending', 'deferred') \
+                       AND json_extract(payload_json, '$.informed_at') IS NOT NULL LIMIT 1",
+                    [sid.as_str().into()],
+                ))
+                .await?
+                .is_some(),
+            None => false,
+        };
+        if told_waiting {
+            return wait(format!(
+                "isolation '{point}': the worker's acknowledgement of an earlier forced removal is still arriving"
+            ));
+        }
+        return conflict(
+            "PERMIT_WORKER_NOT_INFORMED",
+            format!(
+                "isolation '{point}': applied by a worker not yet told of the forced removal of their lock \
+                 (taken off before)"
+            ),
         );
     }
     Ok(None)

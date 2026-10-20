@@ -148,14 +148,18 @@ pub(crate) async fn run_stage(pool: &impl ConnectionTrait, stage: Stage, now: Da
             let expiry_modifier = format!("-{expiry_days} days");
             pool.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE notifications
+                concat!(
+                    "UPDATE notifications
                  SET delivery_state = 'expired'
                  WHERE delivery_state IN ('pending', 'delivered', 'read', 'escalated')
                    AND created_at < strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', ?))
-                   -- A safety rule notice stays until acknowledged (`settings::received_notice`).
+                   -- A safety notice stays until acknowledged (`settings::received_notice`).
                    AND NOT EXISTS (SELECT 1 FROM notification_events e
                                    WHERE e.id = notifications.notification_event_id
-                                     AND e.category_code = 'safety_rule_received')",
+                                     AND e.category_code IN ",
+                    crate::safety_notice_categories_sql!(),
+                    ")"
+                ),
                 [expiry_modifier.into()],
             ))
             .await?;

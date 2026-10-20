@@ -185,7 +185,8 @@
     "sync_conflict": "Synchronisation conflict",
     "wo_assigned": "Work order assigned",
     "wo_overdue": "Work order overdue",
-    "safety_rule_received": "Safety rule changed on another PC"
+    "safety_rule_received": "Safety rule changed on another PC",
+    "loto_forced_removal": "Lock taken off by a forced removal"
   },
   "messages": {
     "wo_assigned": {
@@ -294,6 +295,10 @@
     "three_person_received_off": {
       "title": "Three-person lock removal turned off for {{permit_type}} on another PC",
       "body": "{{changed_by}} removed the third-person check of lock removal for {{permit_type}} on {{changed_at}} — reason: {{reason}}. Check that this change was intended (permit types)."
+    },
+    "loto_forced_removal": {
+      "title": "Forced lock removal: {{point}} (permit {{permit}})",
+      "body": "{{authorised_by}} authorised {{removed_by}} to take off the lock of {{worker}}, who was absent, on {{removed_at}} — reason: {{reason}}. The worker must be told (Work permits › forced removals to follow up)."
     }
   },
   "audience": {
@@ -351,7 +356,8 @@
     "fixedRouting": {
       "budget_control_alert": "Recipient chosen in the budget alert settings.",
       "daily_digest": "Sent to each person who chose the daily digest.",
-      "safety_rule_received": "Always the plant-wide settings administrators."
+      "safety_rule_received": "Always the plant-wide settings administrators.",
+      "loto_forced_removal": "Always the people holding the permit close right at the permit's site."
     },
     "minutes": "min",
     "minutesAfterAlert": "min after the alert",

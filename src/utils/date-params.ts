@@ -20,6 +20,8 @@ export const DATE_TIME_PARAMS: ReadonlySet<string> = new Set([
   "last",
   // When a safety rule received from another PC was changed there (notifications).
   "changed_at",
+  // When a lock was taken off by a forced removal (notifications).
+  "removed_at",
 ]);
 
 /**

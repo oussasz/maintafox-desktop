@@ -778,6 +778,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("removal_verified_by_id", USER),
             // Who cancelled a planned line (migration 243).
             r("cancelled_by_id", USER),
+            // Who took the lock off, who authorised a forced removal and who recorded that the
+            // worker was told (migration 249).
+            r("removed_by_id", USER),
+            r("forced_authorized_by_id", USER),
+            r("informed_by_id", USER),
         ],
     ),
     spec(
@@ -1002,12 +1007,19 @@ pub const ROW_SPECS: &[RowSpec] = &[
     RowSpec {
         // The safety rule notice is local to each PC (`settings::received_notice`): its category
         // and rule rows never travel (each PC has them from migration 246).
-        row_filter: Some("{row}.code IS NOT 'safety_rule_received'"),
+        // Same for the notice of a forced lock removal (migration 249).
+        row_filter: Some(concat!(
+            "COALESCE({row}.code, '') NOT IN ",
+            crate::safety_notice_categories_sql!()
+        )),
         ..spec("notification_categories", &[])
     },
     spec("notification_escalation_policies", &[]),
     RowSpec {
-        row_filter: Some("{row}.category_code IS NOT 'safety_rule_received'"),
+        row_filter: Some(concat!(
+            "COALESCE({row}.category_code, '') NOT IN ",
+            crate::safety_notice_categories_sql!()
+        )),
         ..spec(
             "notification_rules",
             &[r("escalation_policy_id", "notification_escalation_policies")],
@@ -1060,7 +1072,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // The notice of a safety rule changed on another PC is about the apply on this PC: each PC
         // that applies the change tells its own administrators; it never travels
         // (`settings::received_notice`).
-        row_filter: Some("{row}.category_code IS NOT 'safety_rule_received'"),
+        row_filter: Some(concat!(
+            "COALESCE({row}.category_code, '') NOT IN ",
+            crate::safety_notice_categories_sql!()
+        )),
         ..spec(
             "notification_events",
             &[
@@ -1108,10 +1123,12 @@ pub const ROW_SPECS: &[RowSpec] = &[
         device_local: &["resolved_at", "already_true"],
         // Reading or archiving the notice of a safety rule changed on another PC stays on this PC:
         // its event never travels, so another PC would wait for it forever.
-        row_filter: Some(
+        row_filter: Some(concat!(
             "NOT EXISTS (SELECT 1 FROM notification_events e WHERE e.id = {row}.notification_event_id \
-             AND e.category_code = 'safety_rule_received')",
-        ),
+             AND e.category_code IN ",
+            crate::safety_notice_categories_sql!(),
+            ")"
+        )),
         ..spec(
             "notifications",
             &[
@@ -1123,10 +1140,12 @@ pub const ROW_SPECS: &[RowSpec] = &[
     },
     RowSpec {
         // An acknowledgement of the safety rule notice stays on this PC with its notification.
-        row_filter: Some(
+        row_filter: Some(concat!(
             "NOT EXISTS (SELECT 1 FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
-             WHERE n.id = {row}.notification_id AND e.category_code = 'safety_rule_received')",
-        ),
+             WHERE n.id = {row}.notification_id AND e.category_code IN ",
+            crate::safety_notice_categories_sql!(),
+            ")"
+        )),
         ..spec(
             "notification_acknowledgements",
             &[r("notification_id", "notifications"), r("acknowledged_by_id", USER)],
@@ -1149,7 +1168,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
     // ── Personal items (per user, only to that user's devices) ─────────────────────────────
     RowSpec {
         // The safety rule notice ignores preferences and its preference rows stay on the PC.
-        row_filter: Some("{row}.category_code IS NOT 'safety_rule_received'"),
+        row_filter: Some(concat!(
+            "COALESCE({row}.category_code, '') NOT IN ",
+            crate::safety_notice_categories_sql!()
+        )),
         ..spec("notification_preferences", &[r("user_id", USER)])
     },
     RowSpec {

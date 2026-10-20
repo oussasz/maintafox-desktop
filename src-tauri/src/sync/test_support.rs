@@ -385,11 +385,27 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_permits", "self_approved", "0"),
     ("work_permits", "submitted_at", "'2026-01-01T08:00:00Z'"),
     ("work_permits", "approved_at", "'2026-01-01T09:00:00Z'"),
-    // The generic isolation is fitted, verified and removed under that active permit: a line in
-    // use, never cancelled (a cancelled line is one never applied, on a draft or a permit waiting
-    // for review, `permit::sync_check::cancellation_check`).
+    // The generic isolation is fitted and verified under that active permit, its lock still on: a
+    // line in use, never cancelled (a cancelled line is one never applied, on a draft or a permit
+    // waiting for review, `permit::sync_check::cancellation_check`). Its lock is not taken off: a
+    // removal is recorded by its applier (or forced, with its whole record) before it is verified
+    // (migration 249, `permit::sync_check::isolation_rule_breach`), which generic people and times
+    // cannot give.
     ("permit_isolations", "cancelled_at", "NULL"),
     ("permit_isolations", "cancelled_by_id", "NULL"),
+    ("permit_isolations", "removal_verified_at", "NULL"),
+    ("permit_isolations", "removal_verified_by_id", "NULL"),
+    ("permit_isolations", "removed_at", "NULL"),
+    ("permit_isolations", "removed_by_id", "NULL"),
+    ("permit_isolations", "forced_removal", "0"),
+    ("permit_isolations", "forced_authorized_by_id", "NULL"),
+    ("permit_isolations", "forced_reason", "NULL"),
+    ("permit_isolations", "forced_worker_absent", "0"),
+    ("permit_isolations", "forced_contact_attempts_json", "NULL"),
+    ("permit_isolations", "informed_by_id", "NULL"),
+    ("permit_isolations", "informed_at", "NULL"),
+    ("permit_isolations", "informed_method", "NULL"),
+    ("permit_isolations", "informed_in_app", "0"),
     // A generic work order carries no plant-rule permit flag (that trace is written at conversion and
     // judged on arrival, `permit::sync_check::inbound_permit_rule_check`).
     ("work_orders", "permit_rule_code", "NULL"),

@@ -723,6 +723,8 @@ async fn an_isolation_never_changes_after_its_permit_protects_the_work() {
         &[
             ("removal_verified_by_sync_id", json!(verifier)),
             ("removal_verified_at", json!(now())),
+            ("removed_by_sync_id", json!(applier)),
+            ("removed_at", json!(now())),
         ],
     );
     let outcome = apply(&db, "permit_isolations", &first.entity_sync_id, &removal_early).await;
@@ -757,12 +759,15 @@ async fn an_isolation_never_changes_after_its_permit_protects_the_work() {
     let outcome = apply(&db, "permit_isolations", &first.entity_sync_id, &moved).await;
     assert_eq!(code(&outcome), Some("PERMIT_ISOLATION_MOVED"), "{outcome:?}");
 
-    // Lock removal verified by a second person while the permit is active: applied.
+    // Lock taken off by its applier, its removal verified by a second person while the permit is
+    // active: applied.
     let removal = with(
         wire(&db, "permit_isolations", &first.entity_sync_id).await,
         &[
             ("removal_verified_by_sync_id", json!(verifier)),
             ("removal_verified_at", json!(now())),
+            ("removed_by_sync_id", json!(applier)),
+            ("removed_at", json!(now())),
         ],
     );
     let outcome = apply(&db, "permit_isolations", &first.entity_sync_id, &removal).await;
@@ -866,6 +871,8 @@ async fn hand_back_suspension_and_revalidation_are_rechecked() {
         &[
             ("removal_verified_by_sync_id", json!(user_sync(&db, VERIFIER).await)),
             ("removal_verified_at", json!(now())),
+            ("removed_by_sync_id", json!(user_sync(&db, APPLIER).await)),
+            ("removed_at", json!(now())),
         ],
     );
     let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &removed).await;
@@ -1868,6 +1875,8 @@ async fn a_received_removal_keeps_the_three_person_chain_of_its_permit_type() {
             &[
                 ("removal_verified_by_sync_id", json!(verifier)),
                 ("removal_verified_at", json!(now())),
+                ("removed_by_sync_id", json!(user_sync(&db, APPLIER).await)),
+                ("removed_at", json!(now())),
             ],
         );
         let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &removal).await;
@@ -5407,4 +5416,349 @@ async fn a_received_approval_out_of_time_order_is_refused() {
     let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &future).await;
     assert_eq!(code(&outcome), Some("SYNC_TIME_INCONSISTENT"), "{outcome:?}");
     assert_eq!(permit_status(&db, &wp).await, "pending_review");
+}
+
+// ── Lock taken off, forced removal and the worker told (migration 249) ───────────────────────────
+
+/// An active LOTO permit here with one lock fitted by APPLIER and verified by VERIFIER.
+async fn active_lock_here(
+    db: &DatabaseConnection,
+    asset_code: &str,
+) -> (WorkPermit, crate::permit::domain::PermitIsolation) {
+    let asset = insert_equipment(db, asset_code).await;
+    let wp = advance_to_issued(db, create_permit(db, "loto", asset).await).await;
+    let iso = apply_and_verify(db, &add_isolation(db, wp.id, &format!("{asset_code} breaker")).await).await;
+    let wp = set_status(db, &wp, "active").await.expect("activate");
+    (wp, iso)
+}
+
+fn attempts_json(at: &str) -> Value {
+    json!(
+        serde_json::to_string(&json!([{ "at": at, "method": "Téléphone", "result": "Pas de réponse" }])).expect("json")
+    )
+}
+
+fn minutes_ago(m: i64) -> String {
+    (chrono::Utc::now() - chrono::Duration::minutes(m))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+/// Each lock-removal rule refused on a received row, then a valid forced removal applied (and
+/// announced here), then its record and the worker told never rewritten.
+#[tokio::test]
+async fn a_received_lock_removal_keeps_the_applier_and_forced_removal_rules() {
+    let db = setup().await;
+    let (_, iso) = active_lock_here(&db, "EQ-SYNC-LR1").await;
+    let applier = user_sync(&db, APPLIER).await;
+    let verifier = user_sync(&db, VERIFIER).await;
+    user_with(&db, "sx-chef", &[crate::rbac::permissions::PTW_CLOSE]).await;
+    let chef = "sx-chef-sync".to_string();
+    user_with(&db, "sx-remover", &[]).await;
+    let remover = "sx-remover-sync".to_string();
+    user_with(&db, "sx-outsider", &[]).await;
+    let outsider = "sx-outsider-sync".to_string();
+    let base = wire(&db, "permit_isolations", &iso.entity_sync_id).await;
+    let sid = iso.entity_sync_id.clone();
+    let check = |p: Payload, expected: &'static str| {
+        let db = &db;
+        let sid = sid.clone();
+        async move {
+            let outcome = apply(db, "permit_isolations", &sid, &p).await;
+            assert_eq!(code(&outcome), Some(expected), "{outcome:?}");
+        }
+    };
+    let removed_at = minutes_ago(5);
+
+    // Normal removal recorded by someone other than the applier; without its time.
+    check(
+        with(
+            base.clone(),
+            &[
+                ("removed_by_sync_id", json!(verifier)),
+                ("removed_at", json!(removed_at)),
+            ],
+        ),
+        "PERMIT_LOCK_REMOVAL_NOT_APPLIER",
+    )
+    .await;
+    check(
+        with(base.clone(), &[("removed_by_sync_id", json!(applier))]),
+        "PERMIT_LOCK_REMOVAL_INVALID",
+    )
+    .await;
+    // Removal verified with no trace of the lock taken off (a PC before the update), or before it.
+    check(
+        with(
+            base.clone(),
+            &[
+                ("removal_verified_by_sync_id", json!(verifier)),
+                ("removal_verified_at", json!(now())),
+            ],
+        ),
+        "PERMIT_REMOVAL_PRE_UPGRADE",
+    )
+    .await;
+    check(
+        with(
+            base.clone(),
+            &[
+                ("removed_by_sync_id", json!(applier)),
+                ("removed_at", json!(now())),
+                ("removal_verified_by_sync_id", json!(verifier)),
+                ("removal_verified_at", json!(minutes_ago(30))),
+            ],
+        ),
+        "PERMIT_REMOVAL_LOCK_NOT_REMOVED",
+    )
+    .await;
+
+    // A forced removal: its whole record, the people apart.
+    let forced = with(
+        base.clone(),
+        &[
+            ("removed_by_sync_id", json!(remover)),
+            ("removed_at", json!(removed_at)),
+            ("forced_removal", json!(1)),
+            ("forced_authorized_by_sync_id", json!(chef)),
+            (
+                "forced_reason",
+                json!("Fin de poste, travailleur parti sans retirer son cadenas"),
+            ),
+            ("forced_worker_absent", json!(1)),
+            ("forced_contact_attempts_json", attempts_json(&minutes_ago(20))),
+        ],
+    );
+    for (key, value) in [
+        ("forced_reason", json!("Absent")),
+        ("forced_worker_absent", json!(0)),
+        ("forced_contact_attempts_json", json!("[]")),
+        ("forced_contact_attempts_json", json!("not a list")),
+        ("forced_contact_attempts_json", attempts_json("2999-01-01T00:00:00Z")),
+        ("forced_authorized_by_sync_id", Value::Null),
+    ] {
+        check(with(forced.clone(), &[(key, value)]), "PERMIT_FORCED_REMOVAL_INVALID").await;
+    }
+    // A forced-removal record on a removal not flagged forced.
+    check(
+        with(
+            forced.clone(),
+            &[("forced_removal", json!(0)), ("removed_by_sync_id", json!(applier))],
+        ),
+        "PERMIT_FORCED_REMOVAL_INVALID",
+    )
+    .await;
+    check(
+        with(forced.clone(), &[("forced_authorized_by_sync_id", json!(applier))]),
+        "PERMIT_FORCED_REMOVAL_AUTHORISER_IS_APPLIER",
+    )
+    .await;
+    check(
+        with(forced.clone(), &[("forced_authorized_by_sync_id", json!(remover))]),
+        "PERMIT_FORCED_REMOVAL_AUTHORISER_IS_REMOVER",
+    )
+    .await;
+    check(
+        with(forced.clone(), &[("removed_by_sync_id", json!(applier))]),
+        "PERMIT_FORCED_REMOVAL_REMOVER_IS_APPLIER",
+    )
+    .await;
+    // Authorised by someone without the close right at the permit's site here.
+    check(
+        with(forced.clone(), &[("forced_authorized_by_sync_id", json!(outsider))]),
+        "PERMIT_FORCED_REMOVAL_UNAUTHORISED",
+    )
+    .await;
+    // Its removal verified by the person who took it off.
+    check(
+        with(
+            forced.clone(),
+            &[
+                ("removal_verified_by_sync_id", json!(remover)),
+                ("removal_verified_at", json!(now())),
+            ],
+        ),
+        "PERMIT_REMOVAL_VERIFIER_IS_REMOVER",
+    )
+    .await;
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT removed_at FROM permit_isolations WHERE id = {}", iso.id)
+        )
+        .await,
+        None,
+        "nothing written"
+    );
+
+    // Valid: applied, and the close-right holders of the site here are told.
+    let outcome = apply(&db, "permit_isolations", &sid, &forced).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let notices = text(
+        &db,
+        "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE category_code = 'loto_forced_removal'",
+    )
+    .await;
+    assert_eq!(notices.as_deref(), Some("1"));
+    // Its record is never rewritten.
+    check(
+        with(
+            forced.clone(),
+            &[("forced_reason", json!("Un autre motif de plus de vingt caractères"))],
+        ),
+        "PERMIT_LOCK_REMOVAL_RECORD_CHANGED",
+    )
+    .await;
+
+    // The worker told: in the app by the worker only; by a close-right holder with a method,
+    // after the removal, never the worker themselves.
+    let held = wire(&db, "permit_isolations", &sid).await;
+    let told_by = |who: &str, at: String, in_app: bool| {
+        let mut changes = vec![("informed_by_sync_id", json!(who)), ("informed_at", json!(at))];
+        if in_app {
+            changes.push(("informed_in_app", json!(1)));
+        } else {
+            changes.push(("informed_method", json!("Téléphone")));
+        }
+        with(held.clone(), &changes)
+    };
+    check(told_by(&verifier, now(), true), "PERMIT_WORKER_ACK_NOT_YOURS").await;
+    check(told_by(&applier, now(), false), "PERMIT_WORKER_INFORMED_INVALID").await;
+    check(told_by(&chef, minutes_ago(60), false), "PERMIT_WORKER_INFORMED_INVALID").await;
+    check(told_by(&outsider, now(), false), "PERMIT_WORKER_INFORMED_UNAUTHORISED").await;
+    let told = told_by(&chef, now(), false);
+    let outcome = apply(&db, "permit_isolations", &sid, &told).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    check(
+        with(told, &[("informed_method", json!("SMS"))]),
+        "PERMIT_LOCK_REMOVAL_RECORD_CHANGED",
+    )
+    .await;
+}
+
+/// A lock received as applied by a worker with a forced removal they were not told of (taken off
+/// before it was applied) is refused; it waits while the worker's acknowledgement is in the inbox;
+/// once they are told here it is applied.
+#[tokio::test]
+async fn a_received_lock_of_a_worker_not_told_of_a_forced_removal_is_refused() {
+    let db = setup().await;
+    let (_, iso) = active_lock_here(&db, "EQ-SYNC-LR2").await;
+    let chef = user_with(&db, "sx2-chef", &[crate::rbac::permissions::PTW_CLOSE]).await;
+    let remover = user_with(&db, "sx2-remover", &[]).await;
+    let method = crate::permit::contact_methods::list_contact_methods(&db)
+        .await
+        .expect("methods")[0]
+        .code
+        .clone();
+    let forced = queries::force_permit_isolation_removal(
+        &db,
+        crate::permit::domain::PermitForcedRemovalInput {
+            isolation_id: iso.id,
+            expected_row_version: iso.row_version,
+            removed_by_id: remover,
+            reason: "Fin de poste, travailleur parti sans retirer son cadenas".into(),
+            worker_absent_attested: true,
+            contact_attempts: vec![crate::permit::domain::ContactAttempt {
+                at: minutes_ago(30),
+                method,
+                result: "Pas de réponse".into(),
+            }],
+        },
+        chef,
+    )
+    .await
+    .expect("forced removal here");
+
+    let asset = insert_equipment(&db, "EQ-SYNC-LR2b").await;
+    let other = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let line = add_isolation(&db, other.id, "Valve V-LR2").await;
+    let applier = user_sync(&db, APPLIER).await;
+    let fitted_now = with(
+        wire(&db, "permit_isolations", &line.entity_sync_id).await,
+        &[("applied_by_sync_id", json!(applier)), ("applied_at", json!(now()))],
+    );
+    let outcome = apply(&db, "permit_isolations", &line.entity_sync_id, &fitted_now).await;
+    assert_eq!(code(&outcome), Some("PERMIT_WORKER_NOT_INFORMED"), "{outcome:?}");
+    // Fitted before the forced removal: the worker could not have been told yet, accepted.
+    let fitted_before = with(fitted_now.clone(), &[("applied_at", json!(minutes_ago(90)))]);
+    let outcome = apply(&db, "permit_isolations", &line.entity_sync_id, &fitted_before).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    exec(
+        &db,
+        &format!(
+            "UPDATE permit_isolations SET applied_by_id = NULL, applied_at = NULL WHERE id = {}",
+            line.id
+        ),
+    )
+    .await;
+
+    // The worker's acknowledgement is waiting in the inbox: the lock waits for it.
+    let acknowledged = with(
+        wire(&db, "permit_isolations", &forced.entity_sync_id).await,
+        &[
+            ("informed_by_sync_id", json!(applier)),
+            ("informed_at", json!(now())),
+            ("informed_in_app", json!(1)),
+        ],
+    );
+    inbox(
+        &db,
+        "permit_isolations",
+        &forced.entity_sync_id,
+        9,
+        "pending",
+        &acknowledged,
+    )
+    .await;
+    let outcome = apply(&db, "permit_isolations", &line.entity_sync_id, &fitted_now).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    exec(&db, "DELETE FROM sync_inbox").await;
+
+    // Told here (acknowledged at sign-in): applied.
+    queries::acknowledge_forced_removal(&db, forced.id, APPLIER)
+        .await
+        .expect("acknowledged");
+    let outcome = apply(&db, "permit_isolations", &line.entity_sync_id, &fitted_now).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// A lock removal verified on a PC before the update (no trace of the lock taken off by its
+/// applier) arriving on a PC that has the update: its own conflict for a person to check on site
+/// (CMMS Advisor, S2 option a); meanwhile the lock stays fitted here — counted among the locks in
+/// place, and the permit does not close.
+#[tokio::test]
+async fn a_removal_verified_before_the_update_is_held_for_review_and_the_lock_stays_fitted() {
+    let db = setup().await;
+    let (wp, iso) = active_lock_here(&db, "EQ-SYNC-LR3").await;
+    let (_, locks_before) = queries::isolation_locks_in_place(&db).await.expect("locks");
+    assert!(locks_before >= 1, "the fitted lock is counted before the row arrives");
+    let verifier = user_sync(&db, VERIFIER).await;
+    let pre_upgrade = with(
+        wire(&db, "permit_isolations", &iso.entity_sync_id).await,
+        &[
+            ("removal_verified_by_sync_id", json!(verifier)),
+            ("removal_verified_at", json!(now())),
+        ],
+    );
+    let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &pre_upgrade).await;
+    assert_eq!(code(&outcome), Some("PERMIT_REMOVAL_PRE_UPGRADE"), "{outcome:?}");
+    if let ApplyOutcome::Conflict { message, .. } = &outcome {
+        assert!(message.contains("retrait vérifié avant la mise à jour"), "{message}");
+    }
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT removal_verified_at FROM permit_isolations WHERE id = {}",
+                iso.id
+            )
+        )
+        .await,
+        None
+    );
+    let (_, locks_after) = queries::isolation_locks_in_place(&db).await.expect("locks");
+    assert!(locks_after >= 1, "the lock is still counted in place");
+    assert_eq!(locks_after, locks_before, "still a lock in place");
+    let err = set_status(&db, &wp, "closed").await.expect_err("lock still fitted");
+    assert!(format!("{err:?}").contains("PERMIT_REMOVAL_PENDING"), "{err:?}");
 }
