@@ -368,5 +368,9 @@
     "days": "days",
     "defaultValue": "Shipped value",
     "locked": "Locked: a safety notice, always sent and never synchronised."
+  },
+  "safetyNotice": {
+    "acknowledge": "Acknowledge",
+    "hint": "This notice stays after each sign-in until you acknowledge it; your acknowledgement is recorded."
   }
 }

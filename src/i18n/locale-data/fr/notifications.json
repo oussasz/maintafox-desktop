@@ -368,5 +368,9 @@
     "days": "jours",
     "defaultValue": "Valeur livrée",
     "locked": "Verrouillée : avis de sécurité, toujours envoyé et jamais synchronisé."
+  },
+  "safetyNotice": {
+    "acknowledge": "J’ai pris connaissance",
+    "hint": "Cet avis reste affiché à chaque connexion jusqu’à ce que vous en preniez connaissance ; votre confirmation est enregistrée."
   }
 }

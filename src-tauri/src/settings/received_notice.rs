@@ -43,7 +43,13 @@
 //! notice ([`ensure_notice_rows`]), so the inbox always shows it. Delivery ignores preferences on
 //! every channel: in-app and desktop toast always, never folded into the daily digest, never emailed
 //! (`notifications::os_toast`, `digest`, `email`); its preference rows stay local and received ones are
-//! refused. Like any notice it is removed after the plant's notification retention (at least 7 days).
+//! refused.
+//!
+//! Each administrator keeps their notice until they acknowledge it (CMMS Advisor, like the
+//! recovery-code notice): it is shown after each sign-in on this PC ([`notices_for`]), never
+//! expired by the notification retention, never archived or snoozed before its acknowledgement, and
+//! never deleted (local triggers, [`NOTICE_GUARDS`]; a full tenant data reset of the PC excepted).
+//! Acknowledging is the recipient's alone and is audited ([`acknowledge_notice`]).
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde_json::{json, Map, Value};
@@ -370,6 +376,9 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
         ],
     ))
     .await?;
+    for (_, sql) in NOTICE_GUARDS {
+        conn.execute_unprepared(sql).await?;
+    }
     // Its preferences are ignored on every channel: a row left from an earlier version (or received
     // before such rows were refused) would only show stale toggles. Removed, never sent (row filter).
     conn.execute(Statement::from_sql_and_values(
@@ -380,6 +389,171 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
     .await?;
     Ok(())
 }
+
+/// Local triggers keeping every notice of the category: its events and notifications are never
+/// deleted (CMMS Advisor: kept for each administrator until acknowledged). Created by
+/// [`ensure_notice_rows`]; dropped only by a full tenant data reset of the PC, whose reseed creates
+/// them again ([`drop_notice_guards`]).
+const NOTICE_GUARDS: &[(&str, &str)] = &[
+    (
+        "safety_notice_event_kept",
+        "CREATE TRIGGER IF NOT EXISTS safety_notice_event_kept BEFORE DELETE ON notification_events \
+         WHEN OLD.category_code = 'safety_rule_received' \
+         BEGIN SELECT RAISE(ABORT, 'NOTIFICATION_CATEGORY_LOCKED: a safety rule notice is never deleted'); END",
+    ),
+    (
+        "safety_notice_kept",
+        "CREATE TRIGGER IF NOT EXISTS safety_notice_kept BEFORE DELETE ON notifications \
+         WHEN EXISTS (SELECT 1 FROM notification_events e WHERE e.id = OLD.notification_event_id \
+                        AND e.category_code = 'safety_rule_received') \
+         BEGIN SELECT RAISE(ABORT, 'NOTIFICATION_CATEGORY_LOCKED: a safety rule notice is never deleted'); END",
+    ),
+    (
+        "safety_notice_ack_kept",
+        "CREATE TRIGGER IF NOT EXISTS safety_notice_ack_kept BEFORE DELETE ON notification_acknowledgements \
+         WHEN EXISTS (SELECT 1 FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+                        WHERE n.id = OLD.notification_id AND e.category_code = 'safety_rule_received') \
+         BEGIN SELECT RAISE(ABORT, 'NOTIFICATION_CATEGORY_LOCKED: an acknowledged safety rule notice is kept'); END",
+    ),
+];
+
+/// Drops the guards before a full tenant data reset wipes the PC's data (its reseed runs
+/// [`ensure_notice_rows`], which creates them again).
+pub(crate) async fn drop_notice_guards(conn: &impl ConnectionTrait) -> AppResult<()> {
+    for (name, _) in NOTICE_GUARDS {
+        conn.execute_unprepared(&format!("DROP TRIGGER IF EXISTS {name}"))
+            .await?;
+    }
+    Ok(())
+}
+
+/// A safety rule notice of the signed-in administrator still to acknowledge (shown after each
+/// sign-in until acknowledged, as the recovery-code notice is).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SafetyRuleNotice {
+    /// The notification's local id (what [`acknowledge_notice`] takes).
+    pub id: i64,
+    pub created_at: String,
+    pub title: String,
+    pub body: Option<String>,
+    pub message_key: Option<String>,
+    pub message_params: Option<serde_json::Value>,
+}
+
+/// The notices of `user_id` not acknowledged yet, oldest first, while that account is active.
+/// Never expired, archived or snoozed away before acknowledgement (they stay here until then).
+pub(crate) async fn notices_for(conn: &impl ConnectionTrait, user_id: i64) -> AppResult<Vec<SafetyRuleNotice>> {
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT n.id, n.created_at, n.title, n.body, e.message_key, e.message_params_json \
+               FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+               JOIN user_accounts u ON u.id = n.recipient_user_id \
+              WHERE n.recipient_user_id = ? AND e.category_code = ? AND n.acknowledged_at IS NULL \
+                AND u.is_active = 1 AND u.deleted_at IS NULL \
+              ORDER BY n.created_at, n.id",
+            [user_id.into(), RECEIVED_RULE_CATEGORY.into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            let params: Option<String> = r.try_get("", "message_params_json").map_err(hook_err)?;
+            Ok(SafetyRuleNotice {
+                id: r.try_get("", "id").map_err(hook_err)?,
+                created_at: r.try_get("", "created_at").map_err(hook_err)?,
+                title: r.try_get("", "title").map_err(hook_err)?,
+                body: r.try_get("", "body").map_err(hook_err)?,
+                message_key: r.try_get("", "message_key").map_err(hook_err)?,
+                message_params: params.and_then(|p| serde_json::from_str(&p).ok()),
+            })
+        })
+        .collect()
+}
+
+/// Whether notification `notification_id` is a safety rule notice not acknowledged yet.
+pub(crate) async fn is_unacknowledged_notice(conn: &impl ConnectionTrait, notification_id: i64) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+              WHERE n.id = ? AND e.category_code = ? AND n.acknowledged_at IS NULL",
+            [notification_id.into(), RECEIVED_RULE_CATEGORY.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Whether notification `notification_id` is a safety rule notice (acknowledged or not).
+pub(crate) async fn is_notice(conn: &impl ConnectionTrait, notification_id: i64) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+              WHERE n.id = ? AND e.category_code = ?",
+            [notification_id.into(), RECEIVED_RULE_CATEGORY.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Acknowledges a safety rule notice: only by its recipient, once. Recorded (who, when) and audited
+/// (`notification.safety_notice_acknowledged`: who, when, which notice and its change) in one
+/// transaction; the acknowledgement stays on this PC (row filter).
+pub(crate) async fn acknowledge_notice(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i64,
+    notification_id: i64,
+) -> AppResult<()> {
+    use sea_orm::TransactionTrait;
+    let tx = db.begin().await?;
+    let row = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT e.entity_sync_id AS event, e.message_key AS k, e.message_params_json AS p \
+               FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+              WHERE n.id = ? AND n.recipient_user_id = ? AND e.category_code = ? AND n.acknowledged_at IS NULL",
+            [notification_id.into(), user_id.into(), RECEIVED_RULE_CATEGORY.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_NOTIFICATION_ACK_NOT_YOURS: this safety notice is not yours or was already acknowledged."
+                    .to_string(),
+            ])
+        })?;
+    let event: Option<String> = row.try_get("", "event").map_err(hook_err)?;
+    let key: Option<String> = row.try_get("", "k").map_err(hook_err)?;
+    let params: Option<String> = row.try_get("", "p").map_err(hook_err)?;
+    crate::notifications::delivery::record_acknowledgement(&tx, notification_id, user_id, None).await?;
+    crate::audit::writer::write_audit_event_in(
+        &tx,
+        crate::audit::writer::AuditEventInput {
+            action_code: AUDIT_NOTICE_ACKNOWLEDGED.to_string(),
+            target_type: Some("notification".to_string()),
+            target_id: Some(notification_id.to_string()),
+            actor_id: Some(user_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(json!({
+                "category": RECEIVED_RULE_CATEGORY,
+                "notification_id": notification_id,
+                "event_sync_id": event,
+                "message_key": key,
+                "message_params": params.and_then(|p| serde_json::from_str::<Value>(&p).ok()),
+                "acknowledged_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            })),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Audit action of an acknowledged safety rule notice.
+pub const AUDIT_NOTICE_ACKNOWLEDGED: &str = "notification.safety_notice_acknowledged";
 
 async fn three_person(conn: &impl ConnectionTrait, entity_sync_id: &str, received: &Payload) -> AppResult<()> {
     const FLAG: &str = "requires_three_person_removal";

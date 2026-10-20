@@ -151,7 +151,11 @@ pub(crate) async fn run_stage(pool: &impl ConnectionTrait, stage: Stage, now: Da
                 "UPDATE notifications
                  SET delivery_state = 'expired'
                  WHERE delivery_state IN ('pending', 'delivered', 'read', 'escalated')
-                   AND created_at < strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', ?))",
+                   AND created_at < strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', ?))
+                   -- A safety rule notice stays until acknowledged (`settings::received_notice`).
+                   AND NOT EXISTS (SELECT 1 FROM notification_events e
+                                   WHERE e.id = notifications.notification_event_id
+                                     AND e.category_code = 'safety_rule_received')",
                 [expiry_modifier.into()],
             ))
             .await?;

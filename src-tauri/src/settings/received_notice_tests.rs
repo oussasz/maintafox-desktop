@@ -1352,3 +1352,173 @@ async fn the_seed_corrects_the_notice_rows() {
         0
     );
 }
+
+// ── Kept for each administrator until acknowledged (CMMS Advisor) ──────────────────────────
+
+/// A notice for the administrator on this PC (a received return to four-eyes); its notification id.
+async fn admin_notice(db: &DatabaseConnection) -> i64 {
+    let (_, rule) = opted_out_site(db).await;
+    let outcome = apply(
+        db,
+        "site_settings",
+        &rule,
+        &back_to_four_eyes(db, &rule, "2026-10-20T09:00:00Z").await,
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    scalar_i64(
+        db,
+        "SELECT n.id FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+         WHERE e.category_code = ? AND n.recipient_user_id = ?",
+        vec![RECEIVED_RULE_CATEGORY.into(), admin(db).await.into()],
+    )
+    .await
+}
+
+/// Shown after each sign-in until its recipient acknowledges it; the acknowledgement is the
+/// recipient's alone, once, and audited (who, when, which notice).
+#[tokio::test]
+async fn the_notice_stays_until_its_administrator_acknowledges_it_audited() {
+    let db = crate::sync::test_support::started_db().await;
+    let notification = admin_notice(&db).await;
+    let admin_id = admin(&db).await;
+    let shown = super::received_notice::notices_for(&db, admin_id)
+        .await
+        .expect("notices");
+    assert_eq!(shown.iter().map(|n| n.id).collect::<Vec<_>>(), vec![notification]);
+    // Read in the inbox: still shown at the next sign-in.
+    crate::notifications::delivery::mark_as_read(&db, notification, admin_id)
+        .await
+        .expect("read");
+    assert_eq!(
+        super::received_notice::notices_for(&db, admin_id)
+            .await
+            .expect("notices")
+            .len(),
+        1
+    );
+    // Somebody else cannot acknowledge it.
+    let other = settings_admin(&db, "plant_admin", None).await;
+    assert!(super::received_notice::acknowledge_notice(&db, other, notification)
+        .await
+        .is_err());
+    super::received_notice::acknowledge_notice(&db, admin_id, notification)
+        .await
+        .expect("acknowledge");
+    assert!(super::received_notice::notices_for(&db, admin_id)
+        .await
+        .expect("notices")
+        .is_empty());
+    assert!(
+        super::received_notice::acknowledge_notice(&db, admin_id, notification)
+            .await
+            .is_err(),
+        "once"
+    );
+    let details = scalar_opt_text(
+        &db,
+        "SELECT details_json FROM audit_events WHERE action_code = ? AND target_type = 'notification' \
+         AND target_id = ? AND actor_id = ?",
+        vec![
+            super::received_notice::AUDIT_NOTICE_ACKNOWLEDGED.into(),
+            notification.to_string().into(),
+            admin_id.into(),
+        ],
+    )
+    .await
+    .expect("audited");
+    assert!(
+        details.contains("site_rule_received_off") && details.contains("acknowledged_at"),
+        "{details}"
+    );
+}
+
+/// Never expired by the notification retention, never archived or snoozed before it is
+/// acknowledged, never deleted (a full tenant data reset excepted, whose reseed guards it again).
+#[tokio::test]
+async fn the_notice_survives_retention_and_cannot_be_deleted_or_dismissed() {
+    let db = crate::sync::test_support::started_db().await;
+    let notification = admin_notice(&db).await;
+    let admin_id = admin(&db).await;
+    exec(
+        &db,
+        "UPDATE notifications SET created_at = '2000-01-01T00:00:00Z' WHERE id = ?",
+        vec![notification.into()],
+    )
+    .await;
+    crate::notifications::scheduler::run_stage(
+        &db,
+        crate::notifications::scheduler::Stage::Expire,
+        chrono::Utc::now(),
+        false,
+    )
+    .await
+    .expect("retention");
+    assert_ne!(
+        scalar_opt_text(
+            &db,
+            "SELECT delivery_state FROM notifications WHERE id = ?",
+            vec![notification.into()]
+        )
+        .await
+        .as_deref(),
+        Some("expired")
+    );
+    assert_eq!(
+        super::received_notice::notices_for(&db, admin_id)
+            .await
+            .expect("notices")
+            .len(),
+        1
+    );
+
+    for sql in [
+        "DELETE FROM notifications WHERE id = ?",
+        "DELETE FROM notification_events WHERE id = (SELECT notification_event_id FROM notifications WHERE id = ?)",
+    ] {
+        let deleted = db
+            .execute(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                [notification.into()],
+            ))
+            .await;
+        assert!(deleted.is_err(), "{sql}");
+    }
+    assert!(
+        crate::notifications::delivery::set_archived(&db, notification, admin_id, true)
+            .await
+            .is_err()
+    );
+    assert!(crate::notifications::delivery::snooze(&db, notification, admin_id, 60)
+        .await
+        .is_err());
+
+    // Acknowledged: it may leave the inbox; the notice and its acknowledgement stay.
+    super::received_notice::acknowledge_notice(&db, admin_id, notification)
+        .await
+        .expect("acknowledge");
+    crate::notifications::delivery::set_archived(&db, notification, admin_id, true)
+        .await
+        .expect("archive once acknowledged");
+    let ack_delete = db
+        .execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            "DELETE FROM notification_acknowledgements WHERE notification_id = ?",
+            [notification.into()],
+        ))
+        .await;
+    assert!(ack_delete.is_err());
+
+    // The guards come back with the seed after a reset dropped them.
+    super::received_notice::drop_notice_guards(&db).await.expect("drop");
+    crate::db::seeder::seed_system_data(&db).await.expect("seed");
+    let deleted = db
+        .execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            "DELETE FROM notifications WHERE id = ?",
+            [notification.into()],
+        ))
+        .await;
+    assert!(deleted.is_err());
+}

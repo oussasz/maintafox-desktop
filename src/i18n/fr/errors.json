@@ -64,6 +64,8 @@
     "INTERNAL_ERROR": "Une erreur interne s'est produite."
   },
   "gateError": {
+    "GATE_NOTIFICATION_ACK_REQUIRED": "Prenez connaissance de cet avis de sécurité avant de le masquer.",
+    "GATE_NOTIFICATION_ACK_NOT_YOURS": "Cet avis de sécurité ne vous est pas adressé ou a déjà été confirmé.",
     "GATE_REF_SYSTEM_DOMAIN_READ_ONLY": "Modification refusée : cette liste est gérée par Maintafox et ne peut pas être modifiée dans les Données de référence. Ses valeurs restent disponibles dans les formulaires qui les utilisent.",
     "GATE_UNIT_NOT_ACTIVE": "Unité refusée : elle n'existe pas ou n'est plus active dans les Données de référence. Choisissez une unité active.",
     "GATE_UNIT_DIMENSION_MISMATCH": "Conversion refusée : les deux unités ne mesurent pas la même grandeur (par exemple une masse et une longueur).",

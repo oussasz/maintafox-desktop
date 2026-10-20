@@ -122,6 +122,31 @@ export async function acknowledgeNotification(
 }
 
 /** Snoozes until `snoozeUntil` (within the next 7 days). */
+/**
+ * A safety rule changed on another PC and applied here (`settings::received_notice`), still to
+ * acknowledge by the signed-in administrator: shown after each sign-in until acknowledged.
+ */
+const SafetyRuleNoticeSchema = z.object({
+  id: z.number().int(),
+  created_at: z.string(),
+  title: z.string(),
+  body: z.string().nullable(),
+  message_key: z.string().nullable(),
+  message_params: z.record(z.string(), z.unknown()).nullable(),
+});
+
+export type SafetyRuleNotice = z.infer<typeof SafetyRuleNoticeSchema>;
+
+export async function getSafetyRuleNotices(): Promise<SafetyRuleNotice[]> {
+  const raw = await invoke<unknown>("get_safety_rule_notices");
+  return z.array(SafetyRuleNoticeSchema).parse(raw);
+}
+
+/** Acknowledges one of the signed-in administrator's safety rule notices (audited). */
+export async function acknowledgeSafetyRuleNotice(notificationId: number): Promise<void> {
+  await invoke<void>("acknowledge_safety_rule_notice", { notificationId });
+}
+
 export async function snoozeNotification(notificationId: number, snoozeUntil: Date): Promise<void> {
   await invoke<void>("snooze_notification", {
     notificationId,

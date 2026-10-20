@@ -109,6 +109,10 @@ pub async fn acknowledge_notification(
         .try_get::<Option<i64>>("", "recipient_user_id")
         .unwrap_or(None);
 
+    // A safety rule notice: its recipient alone acknowledges it, audited.
+    if crate::settings::received_notice::is_notice(&state.db, notification_id).await? {
+        return crate::settings::received_notice::acknowledge_notice(&state.db, user_id, notification_id).await;
+    }
     if recipient_user_id == Some(user_id) {
         visible(&state, user.user_id, notification_id).await?;
         return delivery::acknowledge(&state.db, notification_id, user_id, note).await;
@@ -130,6 +134,23 @@ pub async fn acknowledge_notification(
     }
 
     delivery::record_acknowledgement(&state.db, notification_id, user_id, note).await
+}
+
+/// The signed-in administrator's safety rule notices still to acknowledge (shown after each
+/// sign-in until acknowledged, `settings::received_notice`).
+#[tauri::command]
+pub async fn get_safety_rule_notices(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::settings::received_notice::SafetyRuleNotice>> {
+    let user = require_session!(state);
+    crate::settings::received_notice::notices_for(&state.db, i64::from(user.user_id)).await
+}
+
+/// Acknowledges one of the signed-in administrator's safety rule notices (audited).
+#[tauri::command]
+pub async fn acknowledge_safety_rule_notice(notification_id: i64, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    crate::settings::received_notice::acknowledge_notice(&state.db, i64::from(user.user_id), notification_id).await
 }
 
 /// Snoozes until `snooze_until` (RFC 3339, within `delivery::MAX_SNOOZE_DAYS`).

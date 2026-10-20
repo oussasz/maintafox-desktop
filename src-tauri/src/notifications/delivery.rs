@@ -153,6 +153,7 @@ pub async fn snooze_until(
     until: DateTime<Utc>,
 ) -> Result<()> {
     ensure_recipient(pool, notification_id, user_id).await?;
+    refuse_hiding_unacknowledged_notice(pool, notification_id).await?;
     let now = Utc::now();
     if until <= now || until > now + Duration::days(MAX_SNOOZE_DAYS) {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -183,6 +184,9 @@ pub async fn set_archived(
     archived: bool,
 ) -> Result<()> {
     ensure_recipient(pool, notification_id, user_id).await?;
+    if archived {
+        refuse_hiding_unacknowledged_notice(pool, notification_id).await?;
+    }
     let sql = if archived {
         format!(
             "UPDATE notifications SET archived_at = {NOW}, read_at = COALESCE(read_at, {NOW}), \
@@ -199,6 +203,17 @@ pub async fn set_archived(
         [notification_id.into()],
     ))
     .await?;
+    Ok(())
+}
+
+/// A safety rule notice is acknowledged before it is archived or snoozed away
+/// (`settings::received_notice`).
+async fn refuse_hiding_unacknowledged_notice(pool: &impl ConnectionTrait, notification_id: i64) -> Result<()> {
+    if crate::settings::received_notice::is_unacknowledged_notice(pool, notification_id).await? {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_NOTIFICATION_ACK_REQUIRED: acknowledge this safety notice before hiding it.".to_string(),
+        ]));
+    }
     Ok(())
 }
 

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { AdminRecoveryNotice } from "@/components/auth/AdminRecoveryNotice";
 import { BuiltinAdminWarning } from "@/components/auth/BuiltinAdminWarning";
 import { SingleAdministratorWarning } from "@/components/auth/SingleAdministratorWarning";
+import { SafetyRuleNotice } from "@/components/notifications/SafetyRuleNotice";
 import { AppToastHost } from "@/components/shell/AppToastHost";
 import { DatabaseRecoveryScreen } from "@/components/startup/DatabaseRecoveryScreen";
 import { useStartupBridge } from "@/hooks/use-startup-bridge";
@@ -118,6 +119,7 @@ export function AppShell({ children }: AppShellProps) {
           <BuiltinAdminWarning sessionUserId={sessionUserId} className="m-4" />
           <SingleAdministratorWarning sessionUserId={sessionUserId} className="m-4" />
           <AdminRecoveryNotice sessionUserId={sessionUserId} className="m-4" />
+          <SafetyRuleNotice sessionUserId={sessionUserId} className="m-4" />
           {children}
         </main>
       </div>
