@@ -1252,12 +1252,6 @@ async fn delivery_of_the_notice_ignores_preferences_on_every_channel() {
         toasts.items.iter().any(|t| t.notification_id == notification),
         "toasted"
     );
-    assert!(
-        !crate::notifications::email::enqueue_email(&db, notification)
-            .await
-            .expect("email"),
-        "never emailed"
-    );
     let digests = crate::notifications::digest::build_due_digests(
         &db,
         &chrono::Utc,
@@ -1267,4 +1261,94 @@ async fn delivery_of_the_notice_ignores_preferences_on_every_channel() {
     .await
     .expect("digest");
     assert_eq!(digests, 0, "never folded into the digest");
+}
+
+/// Never emailed, even to an administrator whose preference asks for email, unmuted and instant
+/// (a row a later edit could leave): no email delivery is queued for the notice.
+#[tokio::test]
+async fn the_notice_is_never_emailed() {
+    let db = crate::sync::test_support::started_db().await;
+    let (_, rule) = opted_out_site(&db).await;
+    let admin_id = admin(&db).await;
+    let outcome = apply(
+        &db,
+        "site_settings",
+        &rule,
+        &back_to_four_eyes(&db, &rule, "2026-10-20T09:00:00Z").await,
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let notification = scalar_i64(
+        &db,
+        "SELECT n.id FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+         WHERE e.category_code = ? AND n.recipient_user_id = ?",
+        vec![RECEIVED_RULE_CATEGORY.into(), admin_id.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO notification_preferences (user_id, category_code, in_app_enabled, os_enabled, email_enabled, \
+         digest_mode, muted_until) VALUES (?, ?, 1, 1, 1, 'instant', NULL)",
+        vec![admin_id.into(), RECEIVED_RULE_CATEGORY.into()],
+    )
+    .await;
+    crate::notifications::email::enqueue_email(&db, notification)
+        .await
+        .expect("email");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM notification_deliveries WHERE notification_id = ? AND channel = 'email'",
+            vec![notification.into()],
+        )
+        .await,
+        0
+    );
+}
+
+/// The start-up seed puts differing values of the fixed rows back and removes the category's
+/// preference rows.
+#[tokio::test]
+async fn the_seed_corrects_the_notice_rows() {
+    let db = crate::sync::test_support::started_db().await;
+    let admin_id = admin(&db).await;
+    for (sql, values) in [
+        (
+            "UPDATE notification_categories SET is_user_configurable = 1, module_code = 'fin', is_offered = 0 \
+             WHERE code = ?",
+            vec![RECEIVED_RULE_CATEGORY.into()],
+        ),
+        (
+            "UPDATE notification_rules SET is_active = 0, audiences_json = '[]', requires_ack = 1 \
+             WHERE category_code = ?",
+            vec![RECEIVED_RULE_CATEGORY.into()],
+        ),
+        (
+            "INSERT INTO notification_preferences (user_id, category_code, in_app_enabled) VALUES (?, ?, 0)",
+            vec![admin_id.into(), RECEIVED_RULE_CATEGORY.into()],
+        ),
+    ] {
+        exec(&db, sql, values).await;
+    }
+    crate::db::seeder::seed_system_data(&db).await.expect("seed");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM notification_categories c JOIN notification_rules r ON r.category_code = c.code \
+             WHERE c.code = ? AND c.is_user_configurable = 0 AND c.module_code = 'system' AND c.is_offered = 1 \
+               AND r.is_active = 1 AND r.requires_ack = 0 AND r.audiences_json = '[\"permission:adm.settings\"]'",
+            vec![RECEIVED_RULE_CATEGORY.into()],
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM notification_preferences WHERE category_code = ?",
+            vec![RECEIVED_RULE_CATEGORY.into()],
+        )
+        .await,
+        0
+    );
 }

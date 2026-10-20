@@ -116,7 +116,8 @@ pub async fn email_channel_status(db: &DatabaseConnection) -> AppResult<ChannelA
 
 /// Queues the email of a new notification when its recipient enabled email for the category
 /// (and has not muted it, and receives the category instantly rather than in the daily digest or
-/// in-app only, `notifications::digest`). Same transaction as the notification.
+/// in-app only, `notifications::digest`). Same transaction as the notification. Never for the
+/// safety rule notice (`catalog::ALWAYS_DELIVERED`), whatever the preference says.
 pub async fn enqueue_email(conn: &impl ConnectionTrait, notification_id: i64) -> AppResult<bool> {
     let res = conn
         .execute(Statement::from_sql_and_values(

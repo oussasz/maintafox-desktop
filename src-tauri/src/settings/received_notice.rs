@@ -324,7 +324,7 @@ fn new_event_id() -> String {
 /// The fixed category and rule rows of the notice (migration 246's ids and values), created when
 /// missing and put back to their fixed values: run by the startup seed (also after a tenant data
 /// reset, which wipes them) and before each notice. They never travel, so nothing else brings them
-/// back. Idempotent.
+/// back. Also removes any preference row of the category (ignored anyway). Idempotent.
 pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult<()> {
     let audiences = serde_json::to_string(
         &crate::notifications::catalog::ALWAYS_DELIVERED
@@ -368,6 +368,14 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
             audiences.into(),
             RECEIVED_RULE_CATEGORY.into(),
         ],
+    ))
+    .await?;
+    // Its preferences are ignored on every channel: a row left from an earlier version (or received
+    // before such rows were refused) would only show stale toggles. Removed, never sent (row filter).
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM notification_preferences WHERE category_code = ?",
+        [RECEIVED_RULE_CATEGORY.into()],
     ))
     .await?;
     Ok(())

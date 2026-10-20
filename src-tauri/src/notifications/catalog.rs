@@ -151,12 +151,12 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &["budget_control_alert", "daily_d
 /// to this audience, whatever their rule row says (inactive, other audiences) and whatever the
 /// recipients' preferences say. The notice that a safety rule changed on another PC exists to catch
 /// a rogue PC, which could otherwise switch it off first (`settings::received_notice`).
+///
+/// Delivery of such a category ignores preferences on every channel: in-app and desktop toast
+/// always, never folded into the daily digest, never emailed (the delivery SQL of `os_toast`,
+/// `digest` and `email` names `safety_rule_received`; toast, digest and email each have a test).
 pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[("safety_rule_received", "permission:adm.settings")];
 
-/// Delivery of an [`ALWAYS_DELIVERED`] category ignores preferences on every channel: in-app and
-/// desktop toast always, never folded into the daily digest, never emailed (the delivery SQL of
-/// `os_toast`, `digest` and `email` names `safety_rule_received`, checked by a test).
-///
 /// The fixed audience of an [`ALWAYS_DELIVERED`] category.
 pub fn always_delivered_audience(category: &str) -> Option<Audience> {
     ALWAYS_DELIVERED

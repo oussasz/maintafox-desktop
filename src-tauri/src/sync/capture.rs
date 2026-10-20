@@ -713,8 +713,10 @@ async fn stage_current_state(
     natural_key: Option<&Map<String, Value>>,
     delete_owner: Option<String>,
 ) -> AppResult<bool> {
-    // A row the capture filter keeps on this device (`row_spec` row filters) is never staged here
-    // either ("keep mine" on a conflict about it sends nothing).
+    // A row its capture filter keeps on this device (`row_spec` row filters) is never staged: not
+    // by the capture drain, not by "keep mine" on a conflict about it. That includes a row that has
+    // just left its filter (the update trigger journals it as it leaves): nothing is sent for it,
+    // neither its new state nor a delete, so other PCs keep the last version they received.
     if layout.natural_pk.is_none() {
         let local_only = conn
             .query_one(Statement::from_sql_and_values(
