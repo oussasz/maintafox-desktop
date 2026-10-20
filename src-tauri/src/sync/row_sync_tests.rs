@@ -777,7 +777,10 @@ async fn stage_failure_reopens_and_keeps_the_operator_choice() {
     assert_eq!(state(&a, id.clone()).await.as_deref(), Some("new:-"));
     set_scope("tenant").await;
     server.exchange("A", &a).await;
-    assert_eq!(state(&a, id.clone()).await.as_deref(), Some("resolved_local:auto_restaged"));
+    assert_eq!(
+        state(&a, id.clone()).await.as_deref(),
+        Some("resolved_local:auto_restaged")
+    );
     set_scope("unknown_scope").await;
     server.exchange("A", &a).await;
     assert_eq!(
@@ -816,7 +819,10 @@ async fn stage_failure_reopens_and_keeps_the_operator_choice() {
     )
     .await
     .expect("resolve");
-    assert_eq!(state(&a, id.clone()).await.as_deref(), Some("resolved_local:accept_local"));
+    assert_eq!(
+        state(&a, id.clone()).await.as_deref(),
+        Some("resolved_local:accept_local")
+    );
     let author = scalar_i64(
         &a,
         "SELECT resolved_by_id FROM sync_conflicts WHERE id = ?",
