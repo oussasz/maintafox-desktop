@@ -125,14 +125,14 @@ Cross-cutting surfaces:
 
 - Work orders, requests and planning windows recorded before a site was required have no site. A plant-wide user with the organisation-administration right (lasting, not an emergency grant, held on the whole plant; a site-only administrator is refused) can give them one from Organisation, "Records without a site".
 - A reason is required. Any status is allowed, closed ones included. Each record gets one audit entry (who, when, why, site before and after).
-- It is done once. A record that already has a site is never changed by this tool, and a batch holding one is refused whole.
+- It is done once. A record that already has a site, or that was given one by this tool before (even if its site was later removed), is never changed by this tool, and a batch holding one is refused whole.
 - On the other PCs the arrival is accepted only with its complete trace (who, when, why), an author who holds that right on the whole plant there, a record still without a site there and a live unit as the site. Otherwise it is a visible sync conflict.
 
 ### Publishing a new site structure
 
 - The publish moves to the copy of each unit the records that point to it: the records listed in `KNOWN_LIMITS.md`, plus per-site rules (time and author kept; their history is shown with the site), the site reliability decisions were proposed for, preventive plans scoped to a location, and site calendars. Weekly schedules are not moved.
 - Publishing is refused while a per-site rule is set both on a unit and on its draft copy (SITE_RULE_ON_DRAFT_COPY).
-- On the other PCs a moved record is accepted only onto the copy of its former unit: a live node of the active structure with the same code and unit type, linked publish by publish. It waits while the former unit is not yet deleted there, or while the publish has arrived only in part.
+- On the other PCs a moved record is accepted only onto the copy of its former unit: a live unit of the structure in use, with the same code and unit type. Each publish in between must have replaced the unit the same way. It waits while the former unit is not yet deleted there, or while the publish has arrived only in part.
 - A per-site rule received on a draft unit, or turned on at a deleted unit, is refused. A rule received turned off at a deleted unit is applied: it takes the rule off the copy.
 - The received unit rows themselves are not checked for who sent them (see `KNOWN_LIMITS.md`).
 
