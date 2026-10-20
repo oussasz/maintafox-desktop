@@ -1,4 +1,5 @@
 pub mod access;
+pub mod contact_methods;
 pub mod domain;
 pub mod energy_reference;
 pub mod handover_roles;

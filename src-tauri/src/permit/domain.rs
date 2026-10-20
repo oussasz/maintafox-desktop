@@ -180,6 +180,101 @@ pub struct PermitIsolation {
     pub cancelled_by_id: Option<i64>,
     #[serde(default)]
     pub cancelled_by_name: Option<String>,
+    /// Who physically took the lock off and when (migration 249): the applier ("J'ai retiré mon
+    /// cadenas"), or the person named by a forced removal. The removal is verified only after.
+    #[serde(default)]
+    pub removed_by_id: Option<i64>,
+    #[serde(default)]
+    pub removed_by_name: Option<String>,
+    #[serde(default)]
+    pub removed_at: Option<String>,
+    /// The applier was absent: the lock was taken off on the authority of a `ptw.close` holder.
+    #[serde(default)]
+    pub forced_removal: bool,
+    #[serde(default)]
+    pub forced_authorized_by_id: Option<i64>,
+    #[serde(default)]
+    pub forced_authorized_by_name: Option<String>,
+    #[serde(default)]
+    pub forced_reason: Option<String>,
+    /// The authoriser attested that the worker is not on site.
+    #[serde(default)]
+    pub forced_worker_absent: bool,
+    /// The attempts made to reach the worker before the forced removal.
+    #[serde(default)]
+    pub forced_contact_attempts: Vec<ContactAttempt>,
+    /// The worker was told of the forced removal: by their own acknowledgement at sign-in
+    /// (`informed_in_app`), or by a `ptw.close` holder (`informed_method`, a contact method code).
+    #[serde(default)]
+    pub informed_by_id: Option<i64>,
+    #[serde(default)]
+    pub informed_by_name: Option<String>,
+    #[serde(default)]
+    pub informed_at: Option<String>,
+    #[serde(default)]
+    pub informed_method: Option<String>,
+    #[serde(default)]
+    pub informed_in_app: bool,
+}
+
+/// One attempt to reach an absent worker before a forced lock removal (stored as JSON on the
+/// isolation, `permit_isolations.forced_contact_attempts_json`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactAttempt {
+    /// When (RFC 3339; stored in the canonical UTC form).
+    pub at: String,
+    /// A code of `PERMIT.CONTACT_METHODS`.
+    pub method: String,
+    /// What came of it (no answer, voicemail, ...).
+    pub result: String,
+}
+
+/// Shortest reason a forced removal accepts (trimmed).
+pub const MIN_FORCED_REMOVAL_REASON_CHARS: usize = 20;
+/// Most contact attempts one forced removal records.
+pub const MAX_CONTACT_ATTEMPTS: usize = 20;
+/// Longest text of one attempt's result.
+pub const MAX_CONTACT_RESULT_CHARS: usize = 500;
+
+/// Forced removal of a lock whose applier is absent (`force_permit_isolation_removal`). The
+/// authoriser is the session user (holding `ptw.close` at the permit's site, after a step-up).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermitForcedRemovalInput {
+    pub isolation_id: i64,
+    pub expected_row_version: i64,
+    /// The person who physically takes the lock off (a user account, not the applier, not the
+    /// authoriser).
+    pub removed_by_id: i64,
+    /// At least [`MIN_FORCED_REMOVAL_REASON_CHARS`] characters once trimmed.
+    pub reason: String,
+    /// "Le travailleur n'est pas sur le site": must be true.
+    pub worker_absent_attested: bool,
+    /// At least one.
+    pub contact_attempts: Vec<ContactAttempt>,
+}
+
+/// The worker of a forced removal was told of it, recorded by a `ptw.close` holder at the site
+/// (worker without an account, or told in person). The recorder is the session user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermitWorkerInformedInput {
+    pub isolation_id: i64,
+    pub expected_row_version: i64,
+    /// A code of `PERMIT.CONTACT_METHODS`.
+    pub method: String,
+    /// When the worker was told (RFC 3339); now when omitted. Not before the removal, not in the future.
+    #[serde(default)]
+    pub informed_at: Option<String>,
+}
+
+/// A forced removal whose worker has not been told yet (the review list of the `ptw.close`
+/// holders, and the blocking screen of the worker at sign-in).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForcedRemovalItem {
+    pub isolation: PermitIsolation,
+    pub permit_id: i64,
+    pub permit_code: String,
+    pub permit_status: String,
+    pub equipment_label: Option<String>,
 }
 
 /// One list of permits limited to the reader's sites (`list_work_permits`, the open-permits
@@ -347,6 +442,16 @@ pub struct LotoCardView {
     pub lock_number: Option<String>,
     pub verifier_signature: Option<String>,
     pub expires_at: Option<String>,
+    /// The lock was taken off by a forced removal (applier absent): shown "Retrait forcé" with who
+    /// authorised it, when and why.
+    #[serde(default)]
+    pub forced_removal: bool,
+    #[serde(default)]
+    pub forced_authorized_by: Option<String>,
+    #[serde(default)]
+    pub forced_removed_at: Option<String>,
+    #[serde(default)]
+    pub forced_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

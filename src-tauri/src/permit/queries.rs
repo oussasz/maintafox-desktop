@@ -97,14 +97,24 @@ const PERMIT_ISOLATION_SELECT: &str = "SELECT pi.id, pi.entity_sync_id, pi.permi
      COALESCE(ua.display_name, ua.username) AS applied_by_name, \
      COALESCE(uv.display_name, uv.username) AS verified_by_name, \
      COALESCE(ur.display_name, ur.username) AS removal_verified_by_name, \
-     COALESCE(uc.display_name, uc.username) AS cancelled_by_name \
+     COALESCE(uc.display_name, uc.username) AS cancelled_by_name, \
+     pi.removed_by_id, pi.removed_at, COALESCE(pi.forced_removal, 0) AS forced_removal, \
+     pi.forced_authorized_by_id, pi.forced_reason, COALESCE(pi.forced_worker_absent, 0) AS forced_worker_absent, \
+     pi.forced_contact_attempts_json, pi.informed_by_id, pi.informed_at, pi.informed_method, \
+     COALESCE(pi.informed_in_app, 0) AS informed_in_app, \
+     COALESCE(urm.display_name, urm.username) AS removed_by_name, \
+     COALESCE(ufa.display_name, ufa.username) AS forced_authorized_by_name, \
+     COALESCE(uin.display_name, uin.username) AS informed_by_name \
      FROM permit_isolations pi \
      LEFT JOIN reference_values et ON et.id = pi.energy_type_id \
      LEFT JOIN reference_values im ON im.id = pi.isolation_method_id \
      LEFT JOIN user_accounts ua ON ua.id = pi.applied_by_id \
      LEFT JOIN user_accounts uv ON uv.id = pi.verified_by_id \
      LEFT JOIN user_accounts ur ON ur.id = pi.removal_verified_by_id \
-     LEFT JOIN user_accounts uc ON uc.id = pi.cancelled_by_id";
+     LEFT JOIN user_accounts uc ON uc.id = pi.cancelled_by_id \
+     LEFT JOIN user_accounts urm ON urm.id = pi.removed_by_id \
+     LEFT JOIN user_accounts ufa ON ufa.id = pi.forced_authorized_by_id \
+     LEFT JOIN user_accounts uin ON uin.id = pi.informed_by_id";
 
 const PERMIT_SUSPENSION_SELECT: &str = "SELECT ps.id, ps.entity_sync_id, ps.permit_id, ps.reason, \
      ps.suspended_by_id, ps.suspended_at, ps.reinstated_by_id, ps.reinstated_at, \
@@ -379,6 +389,34 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
         cancelled_at: row.try_get("", "cancelled_at").ok().flatten(),
         cancelled_by_id: row.try_get("", "cancelled_by_id").ok().flatten(),
         cancelled_by_name: row.try_get("", "cancelled_by_name").ok().flatten(),
+        removed_by_id: row.try_get("", "removed_by_id").ok().flatten(),
+        removed_by_name: row.try_get("", "removed_by_name").ok().flatten(),
+        removed_at: row.try_get("", "removed_at").ok().flatten(),
+        forced_removal: i64_to_bool(
+            row.try_get::<i64>("", "forced_removal")
+                .map_err(|e| decode_err("forced_removal", e))?,
+        ),
+        forced_authorized_by_id: row.try_get("", "forced_authorized_by_id").ok().flatten(),
+        forced_authorized_by_name: row.try_get("", "forced_authorized_by_name").ok().flatten(),
+        forced_reason: row.try_get("", "forced_reason").ok().flatten(),
+        forced_worker_absent: i64_to_bool(
+            row.try_get::<i64>("", "forced_worker_absent")
+                .map_err(|e| decode_err("forced_worker_absent", e))?,
+        ),
+        forced_contact_attempts: row
+            .try_get::<Option<String>>("", "forced_contact_attempts_json")
+            .ok()
+            .flatten()
+            .and_then(|j| serde_json::from_str::<Vec<super::domain::ContactAttempt>>(&j).ok())
+            .unwrap_or_default(),
+        informed_by_id: row.try_get("", "informed_by_id").ok().flatten(),
+        informed_by_name: row.try_get("", "informed_by_name").ok().flatten(),
+        informed_at: row.try_get("", "informed_at").ok().flatten(),
+        informed_method: row.try_get("", "informed_method").ok().flatten(),
+        informed_in_app: i64_to_bool(
+            row.try_get::<i64>("", "informed_in_app")
+                .map_err(|e| decode_err("informed_in_app", e))?,
+        ),
     })
 }
 
@@ -3222,12 +3260,15 @@ pub async fn get_loto_card_view(
             "SELECT wp.code AS permit_code, wp.expires_at AS permit_expires, pi.id AS isolation_id, \
              pi.isolation_point, COALESCE(et.label, pi.energy_type) AS energy_type, pi.lock_number, \
              pi.verified_by_id, pi.verified_at, pi.cancelled_at, \
+             COALESCE(pi.forced_removal, 0) AS forced_removal, pi.removed_at, pi.forced_reason, \
+             COALESCE(uf.display_name, uf.username) AS forced_authorized_by, \
              e.asset_id_code, e.name AS equipment_name, ua.username AS verifier_username \
              FROM permit_isolations pi \
              JOIN work_permits wp ON wp.id = pi.permit_id \
              LEFT JOIN reference_values et ON et.id = pi.energy_type_id \
              LEFT JOIN equipment e ON e.id = wp.asset_id \
              LEFT JOIN user_accounts ua ON ua.id = pi.verified_by_id \
+             LEFT JOIN user_accounts uf ON uf.id = pi.forced_authorized_by_id \
              WHERE pi.id = ? AND pi.permit_id = ?",
             [isolation_id.into(), permit_id.into()],
         ))
@@ -3270,6 +3311,19 @@ pub async fn get_loto_card_view(
     let iso_id: i64 = row
         .try_get("", "isolation_id")
         .map_err(|e| decode_err("isolation_id", e))?;
+    // A lock taken off by a forced removal (applier absent): the card says so, with who authorised
+    // it, when and why (migration 249).
+    let forced_removal = i64_to_bool(
+        row.try_get::<i64>("", "forced_removal")
+            .map_err(|e| decode_err("forced_removal", e))?,
+    );
+    let forced_text = |column: &str| -> Option<String> {
+        if forced_removal {
+            row.try_get("", column).ok().flatten()
+        } else {
+            None
+        }
+    };
     Ok(LotoCardView {
         permit_code,
         equipment_label,
@@ -3279,6 +3333,10 @@ pub async fn get_loto_card_view(
         lock_number,
         verifier_signature,
         expires_at,
+        forced_removal,
+        forced_authorized_by: forced_text("forced_authorized_by"),
+        forced_removed_at: forced_text("removed_at"),
+        forced_reason: forced_text("forced_reason"),
     })
 }
 

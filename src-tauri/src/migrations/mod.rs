@@ -223,6 +223,7 @@ mod m20261019_000248_admin_recovery_codes;
 mod m20261020_000244_permit_four_eyes;
 mod m20261020_000245_legacy_site_assignment;
 mod m20261020_000246_received_rule_notice;
+mod m20261020_000249_permit_lock_removal;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -459,6 +460,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261020_000246_received_rule_notice::Migration),
             Box::new(m20261019_000248_admin_recovery_codes::Migration),
             Box::new(m20261020_000245_legacy_site_assignment::Migration),
+            Box::new(m20261020_000249_permit_lock_removal::Migration),
         ]
     }
 }

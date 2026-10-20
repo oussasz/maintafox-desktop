@@ -332,6 +332,22 @@ pub async fn list_permit_handover_roles(
     crate::permit::handover_roles::list_handover_roles(&state.db).await
 }
 
+/// The plant's contact methods (Données de référence › `PERMIT.CONTACT_METHODS`): how an absent
+/// worker was reached before a forced lock removal, and how they were told of it. Requires `ptw.view`.
+#[tauri::command]
+pub async fn list_permit_contact_methods(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::permit::contact_methods::ContactMethodOption>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PTW_VIEW,
+        PermissionScope::Global
+    );
+    crate::permit::contact_methods::list_contact_methods(&state.db).await
+}
+
 #[tauri::command]
 pub async fn list_permit_suspensions(permit_id: i64, state: State<'_, AppState>) -> AppResult<Vec<PermitSuspension>> {
     let user = require_session!(state);

@@ -778,6 +778,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("removal_verified_by_id", USER),
             // Who cancelled a planned line (migration 243).
             r("cancelled_by_id", USER),
+            // Who took the lock off, who authorised a forced removal and who recorded that the
+            // worker was told (migration 249).
+            r("removed_by_id", USER),
+            r("forced_authorized_by_id", USER),
+            r("informed_by_id", USER),
         ],
     ),
     spec(

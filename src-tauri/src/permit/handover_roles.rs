@@ -52,16 +52,25 @@ pub const STARTER_ROLES: &[(&str, &str)] = &[
 /// sync identity, the same on every PC, and is never written over an existing value.
 pub async fn seed_starter_roles(db: &impl ConnectionTrait) -> AppResult<()> {
     ensure_handover_roles(db).await?;
+    seed_review_starters(db, DOMAIN, STARTER_ROLES).await
+}
+
+/// Seeds starter values `(code, English label)` into the COMPANY list `domain`, flagged "à revoir"
+/// (`origin = "starter"`): only into a list that holds no value an administrator added (values
+/// adopted from old free text, `origin = "migrated"`, do not count); a starter whose code is
+/// already in the list (ignoring case and spaces) is skipped; each has a seeded sync identity, the
+/// same on every PC, and is never written over an existing value. The list and its published set
+/// must exist. Shared by the hand-over roles and the contact methods (`permit::contact_methods`).
+pub(crate) async fn seed_review_starters(
+    db: &impl ConnectionTrait,
+    domain: &str,
+    starters: &[(&str, &str)],
+) -> AppResult<()> {
     let added_by_plant = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS n FROM reference_values rv \
-               JOIN reference_sets rs ON rs.id = rv.set_id \
-               JOIN reference_domains d ON d.id = rs.domain_id \
-              WHERE UPPER(TRIM(d.code)) = ? \
-                AND COALESCE(json_extract(CASE WHEN json_valid(rv.metadata_json) \
-                                               THEN rv.metadata_json END, '$.origin'), '') <> 'migrated'",
-            [DOMAIN.into()],
+            "SELECT COUNT(*) AS n FROM reference_values rv                JOIN reference_sets rs ON rs.id = rv.set_id                JOIN reference_domains d ON d.id = rs.domain_id               WHERE UPPER(TRIM(d.code)) = ?                 AND COALESCE(json_extract(CASE WHEN json_valid(rv.metadata_json)                                                THEN rv.metadata_json END, '$.origin'), '') <> 'migrated'",
+            [domain.into()],
         ))
         .await?
         .map(|r| r.try_get::<i64>("", "n"))
@@ -70,29 +79,19 @@ pub async fn seed_starter_roles(db: &impl ConnectionTrait) -> AppResult<()> {
     if added_by_plant > 0 {
         return Ok(());
     }
-    for (i, (code, label_en)) in STARTER_ROLES.iter().enumerate() {
-        let sync_id = crate::sync::identity::seeded_entity_sync_id("reference_values", &format!("{DOMAIN}:{code}"));
+    for (i, (code, label_en)) in starters.iter().enumerate() {
+        let sync_id = crate::sync::identity::seeded_entity_sync_id("reference_values", &format!("{domain}:{code}"));
         let meta = serde_json::json!({ "origin": "starter", "review_required": true, "label_en": label_en });
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, parent_id, code, label, \
-                description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, \
-                metadata_json) \
-             SELECT ?, rs.id, NULL, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, 1, ? \
-               FROM reference_domains d \
-               JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published' \
-              WHERE UPPER(TRIM(d.code)) = ? \
-                AND NOT EXISTS (SELECT 1 FROM reference_values rv WHERE rv.entity_sync_id = ?) \
-                AND NOT EXISTS (SELECT 1 FROM reference_values rv WHERE rv.set_id = rs.id \
-                                  AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?))) \
-              ORDER BY rs.version_no DESC LIMIT 1",
+            "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, parent_id, code, label,                 description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active,                 metadata_json)              SELECT ?, rs.id, NULL, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, 1, ?                FROM reference_domains d                JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published'               WHERE UPPER(TRIM(d.code)) = ?                 AND NOT EXISTS (SELECT 1 FROM reference_values rv WHERE rv.entity_sync_id = ?)                 AND NOT EXISTS (SELECT 1 FROM reference_values rv WHERE rv.set_id = rs.id                                   AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)))               ORDER BY rs.version_no DESC LIMIT 1",
             [
                 sync_id.clone().into(),
                 (*code).into(),
                 (*code).into(),
                 i64::try_from(i + 1).unwrap_or(1).into(),
                 meta.to_string().into(),
-                DOMAIN.into(),
+                domain.into(),
                 sync_id.into(),
                 (*code).into(),
             ],
@@ -174,18 +173,17 @@ pub struct HandoverRoleOption {
 
 /// Active roles of the latest published set, in the list order.
 pub async fn list_handover_roles(db: &impl ConnectionTrait) -> AppResult<Vec<HandoverRoleOption>> {
+    active_options(db, DOMAIN).await
+}
+
+/// Active values of the latest published set of the list `domain`, in the list order, with their
+/// "à revoir" mark. Shared by the hand-over roles and the contact methods.
+pub(crate) async fn active_options(db: &impl ConnectionTrait, domain: &str) -> AppResult<Vec<HandoverRoleOption>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT rv.code, rv.label, rv.metadata_json FROM reference_values rv \
-               JOIN reference_sets rs ON rs.id = rv.set_id \
-               JOIN reference_domains d ON d.id = rs.domain_id \
-              WHERE UPPER(TRIM(d.code)) = ? AND rv.is_active = 1 \
-                AND rs.id = (SELECT rs2.id FROM reference_sets rs2 \
-                              WHERE rs2.domain_id = d.id AND rs2.status = 'published' \
-                              ORDER BY rs2.version_no DESC LIMIT 1) \
-              ORDER BY rv.sort_order ASC, rv.code ASC",
-            [DOMAIN.into()],
+            "SELECT rv.code, rv.label, rv.metadata_json FROM reference_values rv                JOIN reference_sets rs ON rs.id = rv.set_id                JOIN reference_domains d ON d.id = rs.domain_id               WHERE UPPER(TRIM(d.code)) = ? AND rv.is_active = 1                 AND rs.id = (SELECT rs2.id FROM reference_sets rs2                               WHERE rs2.domain_id = d.id AND rs2.status = 'published'                               ORDER BY rs2.version_no DESC LIMIT 1)               ORDER BY rv.sort_order ASC, rv.code ASC",
+            [domain.into()],
         ))
         .await?;
     rows.iter()
