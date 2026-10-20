@@ -17,6 +17,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { appErrorReason } from "@/lib/app-error";
+import { setBlockingGateActive } from "@/lib/blocking-gate";
 import {
   type ForcedRemovalItem,
   acknowledgeForcedLockRemoval,
@@ -85,8 +86,10 @@ export function ForcedRemovalAcknowledgementGate({
   const active = sessionUserId !== null && (items.length > 0 || loadFailed);
 
   useEffect(() => {
+    setBlockingGateActive(active);
     onActiveChange?.(active);
   }, [active, onActiveChange]);
+  useEffect(() => () => setBlockingGateActive(false), []);
   useEffect(() => () => onActiveChange?.(false), [onActiveChange]);
 
   // Focus moves into the screen when it shows (and back into it if it was lost).
@@ -103,6 +106,8 @@ export function ForcedRemovalAcknowledgementGate({
 
   /** Tab and Shift+Tab cycle inside the screen; Escape does nothing. */
   const trapFocus = (e: KeyboardEvent<HTMLDivElement>) => {
+    // No key leaves the screen: document-level shortcuts (Ctrl+K) never see it.
+    e.stopPropagation();
     if (e.key === "Escape") {
       e.preventDefault();
       return;

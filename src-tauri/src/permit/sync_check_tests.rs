@@ -5731,6 +5731,7 @@ async fn a_removal_verified_before_the_update_is_held_for_review_and_the_lock_st
     let db = setup().await;
     let (wp, iso) = active_lock_here(&db, "EQ-SYNC-LR3").await;
     let (_, locks_before) = queries::isolation_locks_in_place(&db).await.expect("locks");
+    assert!(locks_before >= 1, "the fitted lock is counted before the row arrives");
     let verifier = user_sync(&db, VERIFIER).await;
     let pre_upgrade = with(
         wire(&db, "permit_isolations", &iso.entity_sync_id).await,
@@ -5756,6 +5757,7 @@ async fn a_removal_verified_before_the_update_is_held_for_review_and_the_lock_st
         None
     );
     let (_, locks_after) = queries::isolation_locks_in_place(&db).await.expect("locks");
+    assert!(locks_after >= 1, "the lock is still counted in place");
     assert_eq!(locks_after, locks_before, "still a lock in place");
     let err = set_status(&db, &wp, "closed").await.expect_err("lock still fitted");
     assert!(format!("{err:?}").contains("PERMIT_REMOVAL_PENDING"), "{err:?}");

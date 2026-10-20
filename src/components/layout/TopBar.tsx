@@ -22,6 +22,7 @@ import { CommandPalette } from "@/components/shell/CommandPalette";
 import { SyncCenterModal } from "@/components/sync/SyncCenterModal";
 import { useDeviceTrustStatus } from "@/hooks/use-device-trust-status";
 import { useSession } from "@/hooks/use-session";
+import { isBlockingGateActive } from "@/lib/blocking-gate";
 import { logout as authLogout } from "@/services/auth-service";
 import { useAppStore } from "@/store/app-store";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
@@ -56,6 +57,8 @@ export function TopBar() {
   // Ctrl+K / ⌘K global shortcut for command palette
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // Nothing opens under a blocking screen (forced lock removal acknowledgement).
+      if (isBlockingGateActive()) return;
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         setCommandPaletteOpen((v) => !v);
