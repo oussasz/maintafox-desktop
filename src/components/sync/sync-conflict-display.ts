@@ -136,6 +136,13 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "PERMIT_TYPE_ISOLATION_STALE",
   "PERMIT_TYPE_LOTO_ISOLATION_LOCKED",
   "PERMIT_TYPE_CODE_LOCKED",
+  // Four-eyes on permit approval (owner decision 2026-10-17).
+  "PERMIT_SELF_APPROVAL",
+  "PERMIT_APPROVER_MISSING",
+  "PERMIT_APPROVAL_RECORD_CHANGED",
+  "PERMIT_APPROVAL_RECORD_INVALID",
+  // The notice of a safety rule changed on another PC cannot be muted or re-routed by sync.
+  "NOTIFICATION_CATEGORY_LOCKED",
   "LAST_ADMINISTRATOR_REQUIRED",
   // Vendor recovery-code notices: never changed, acknowledged by their recipient only.
   "ADMIN_RECOVERY_NOTICE_CHANGED",

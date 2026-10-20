@@ -163,7 +163,8 @@ pub async fn create_work_permit(input: WorkPermitCreateInput, state: State<'_, A
     let user = require_session!(state);
     // Rule §2.6: at the new permit's node, its equipment's node and its linked work order's node.
     access::require_create_at(&state.db, &state.permission_cache, user.user_id, &input).await?;
-    queries::create_work_permit(&state.db, input).await
+    // The session user is recorded as the permit's author (four-eyes: not its approver).
+    queries::create_work_permit(&state.db, input, i64::from(user.user_id)).await
 }
 
 #[tauri::command]
@@ -185,6 +186,8 @@ pub async fn set_work_permit_status(input: WorkPermitStatusInput, state: State<'
         _ => PTW_ISSUE,
     };
     require_on_permit(&state, user.user_id, permission, input.id).await?;
+    // The session user is recorded as the submitter / approver; the approver is neither the author
+    // nor the submitter unless the permit's site opted out of four-eyes (checked in the query).
     queries::set_work_permit_status(&state.db, input, i64::from(user.user_id)).await
 }
 

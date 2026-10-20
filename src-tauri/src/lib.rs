@@ -278,6 +278,8 @@ pub fn run() {
             commands::notifications::get_notification_channel_status,
             commands::notifications::mark_notification_read,
             commands::notifications::acknowledge_notification,
+            commands::notifications::get_safety_rule_notices,
+            commands::notifications::acknowledge_safety_rule_notice,
             commands::notifications::snooze_notification,
             commands::notifications::get_notification_preferences,
             commands::notifications::update_notification_preference,

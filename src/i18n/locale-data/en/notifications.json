@@ -184,7 +184,8 @@
     "support_response": "Support reply available",
     "sync_conflict": "Synchronisation conflict",
     "wo_assigned": "Work order assigned",
-    "wo_overdue": "Work order overdue"
+    "wo_overdue": "Work order overdue",
+    "safety_rule_received": "Safety rule changed on another PC"
   },
   "messages": {
     "wo_assigned": {
@@ -277,6 +278,22 @@
     },
     "daily_digest": {
       "title": "Daily digest for {{date}}: {{total}} unread"
+    },
+    "site_rule_received_on": {
+      "title": "Four-eyes lifted at {{site}} on another PC",
+      "body": "{{changed_by}} allowed self-approval of reliability decisions and work permits at {{site}} on {{changed_at}} — reason: {{reason}}. Check that this change was intended (Settings › Rules per site)."
+    },
+    "site_rule_received_off": {
+      "title": "Four-eyes restored at {{site}} on another PC",
+      "body": "{{changed_by}} restored four-eyes at {{site}} on {{changed_at}} — reason: {{reason}}."
+    },
+    "three_person_received_on": {
+      "title": "Three-person lock removal turned on for {{permit_type}} on another PC",
+      "body": "{{changed_by}} required a third person to confirm lock removal for {{permit_type}} on {{changed_at}} — reason: {{reason}}."
+    },
+    "three_person_received_off": {
+      "title": "Three-person lock removal turned off for {{permit_type}} on another PC",
+      "body": "{{changed_by}} removed the third-person check of lock removal for {{permit_type}} on {{changed_at}} — reason: {{reason}}. Check that this change was intended (permit types)."
     }
   },
   "audience": {
@@ -333,7 +350,8 @@
     "escalationNeedsAck": "Escalation only applies to categories that must be acknowledged.",
     "fixedRouting": {
       "budget_control_alert": "Recipient chosen in the budget alert settings.",
-      "daily_digest": "Sent to each person who chose the daily digest."
+      "daily_digest": "Sent to each person who chose the daily digest.",
+      "safety_rule_received": "Always the plant-wide settings administrators."
     },
     "minutes": "min",
     "minutesAfterAlert": "min after the alert",
@@ -348,6 +366,13 @@
     "retentionHint": "Notifications older than this expire (from {{min}} to {{max}} days; shipped value {{default}} days).",
     "retentionDays": "Retention in days",
     "days": "days",
-    "defaultValue": "Shipped value"
+    "defaultValue": "Shipped value",
+    "locked": "Locked: a safety notice, always sent and never synchronised."
+  },
+  "safetyNotice": {
+    "acknowledge": "Acknowledge",
+    "hint": "This notice stays after each sign-in until you acknowledge it; your acknowledgement is recorded.",
+    "inboxHint": "Safety notice: acknowledge it; it cannot be snoozed or archived before.",
+    "loadError": "The safety notices could not be loaded. They are kept; sign in again or reload to see them."
   }
 }

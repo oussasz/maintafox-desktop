@@ -147,7 +147,9 @@
     "GATE_INSP_SCHEDULE_METER_INACTIVE": "Schedule: the meter is unknown or inactive, no round can be generated.",
     "GATE_INSP_SCHEDULE_TEMPLATE_NOT_PUBLISHED": "Schedule: the checklist is inactive or has no published version.",
     "GATE_INSP_SCHEDULE_INCOMPLETE": "Schedule: its recurrence is incomplete; edit and save it again.",
-    "GATE_INSP_SCHEDULE_TOO_MANY_ROUNDS": "Schedule: generation stopped at 1000 rounds; shorten the look-ahead or lengthen the interval."
+    "GATE_INSP_SCHEDULE_TOO_MANY_ROUNDS": "Schedule: generation stopped at 1000 rounds; shorten the look-ahead or lengthen the interval.",
+    "GATE_NOTIFICATION_ACK_REQUIRED": "Acknowledge this safety notice before hiding it.",
+    "GATE_NOTIFICATION_ACK_NOT_YOURS": "This safety notice is not yours or was already acknowledged."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",

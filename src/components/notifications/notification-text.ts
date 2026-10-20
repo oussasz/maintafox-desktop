@@ -38,6 +38,11 @@ export const MESSAGE_KEYS = [
   "cert_expired",
   "personnel_critical_block",
   "daily_digest",
+  // A safety rule changed on another PC, applied here (settings administrators).
+  "site_rule_received_on",
+  "site_rule_received_off",
+  "three_person_received_on",
+  "three_person_received_off",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;

@@ -762,6 +762,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("permit_type_id", "permit_types"),
             r("asset_id", "equipment"),
             r("entity_id", "org_nodes"),
+            // Who wrote, submitted and approved the permit (four-eyes, migration 244).
+            r("created_by_id", USER),
+            r("submitted_by_id", USER),
+            r("approved_by_id", USER),
         ],
     ),
     spec("permit_handover_logs", &[r("permit_id", "work_permits")]),
@@ -930,6 +934,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
             json_ref_hist("details_json", "$.site_before", "org_nodes"),
             json_ref_hist("details_json", "$.site_after", "org_nodes"),
         ],
+        // Audits kept on the device on purpose (never staged, so never a stage error): the
+        // acknowledgement of a safety rule notice (`settings::received_notice`, the notice itself
+        // never travels), and the audits of permit and permit type changes (`permit::queries`):
+        // the change itself travels on its own row (who submitted, approved, changed the setting,
+        // when and why), while these details hold local ids that mean nothing on another PC.
+        row_filter: Some(
+            "{row}.action_code IS NOT 'notification.safety_notice_acknowledged' \
+             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type')",
+        ),
         ..spec(
             "audit_events",
             &[
@@ -986,12 +999,20 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("site_settings", &[]),
     spec("site_setting_events", &[]),
     // ── Notifications ───────────────────────────────────────────────────────────────────────
-    spec("notification_categories", &[]),
+    RowSpec {
+        // The safety rule notice is local to each PC (`settings::received_notice`): its category
+        // and rule rows never travel (each PC has them from migration 246).
+        row_filter: Some("{row}.code IS NOT 'safety_rule_received'"),
+        ..spec("notification_categories", &[])
+    },
     spec("notification_escalation_policies", &[]),
-    spec(
-        "notification_rules",
-        &[r("escalation_policy_id", "notification_escalation_policies")],
-    ),
+    RowSpec {
+        row_filter: Some("{row}.category_code IS NOT 'safety_rule_received'"),
+        ..spec(
+            "notification_rules",
+            &[r("escalation_policy_id", "notification_escalation_policies")],
+        )
+    },
     spec(
         "notification_escalation_steps",
         &[
@@ -1036,6 +1057,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // its own keys; received events carry none. Whether the event's condition cleared is
         // computed by each device from synchronised data (`notifications::conditions`).
         device_local: &["dedupe_key", "resolved_at"],
+        // The notice of a safety rule changed on another PC is about the apply on this PC: each PC
+        // that applies the change tells its own administrators; it never travels
+        // (`settings::received_notice`).
+        row_filter: Some("{row}.category_code IS NOT 'safety_rule_received'"),
         ..spec(
             "notification_events",
             &[
@@ -1059,6 +1084,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // The daily digest names its day (`2026-10-15`); conflicts carry no record.
                         ("notifications", NOT_A_ROW),
                         ("sync", NOT_A_ROW),
+                        // The safety rule notice names the received row by its sync id; it stays on
+                        // the PC (row filter above).
+                        ("settings", NOT_A_ROW),
                     ],
                 ),
             ],
@@ -1078,6 +1106,12 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // Whether the condition cleared is computed by each device (`notifications::conditions`);
         // whether the condition was already true when this device started watching it, too.
         device_local: &["resolved_at", "already_true"],
+        // Reading or archiving the notice of a safety rule changed on another PC stays on this PC:
+        // its event never travels, so another PC would wait for it forever.
+        row_filter: Some(
+            "NOT EXISTS (SELECT 1 FROM notification_events e WHERE e.id = {row}.notification_event_id \
+             AND e.category_code = 'safety_rule_received')",
+        ),
         ..spec(
             "notifications",
             &[
@@ -1087,10 +1121,17 @@ pub const ROW_SPECS: &[RowSpec] = &[
             ],
         )
     },
-    spec(
-        "notification_acknowledgements",
-        &[r("notification_id", "notifications"), r("acknowledged_by_id", USER)],
-    ),
+    RowSpec {
+        // An acknowledgement of the safety rule notice stays on this PC with its notification.
+        row_filter: Some(
+            "NOT EXISTS (SELECT 1 FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+             WHERE n.id = {row}.notification_id AND e.category_code = 'safety_rule_received')",
+        ),
+        ..spec(
+            "notification_acknowledgements",
+            &[r("notification_id", "notifications"), r("acknowledged_by_id", USER)],
+        )
+    },
     // ── Reports ─────────────────────────────────────────────────────────────────────────────
     spec("report_templates", &[]),
     RowSpec {
@@ -1106,7 +1147,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
         )
     },
     // ── Personal items (per user, only to that user's devices) ─────────────────────────────
-    spec("notification_preferences", &[r("user_id", USER)]),
+    RowSpec {
+        // The safety rule notice ignores preferences and its preference rows stay on the PC.
+        row_filter: Some("{row}.category_code IS NOT 'safety_rule_received'"),
+        ..spec("notification_preferences", &[r("user_id", USER)])
+    },
     RowSpec {
         // Ids a saved activity filter narrows on (`commands::activity_feed::ActivityFilter`).
         json_refs: &[

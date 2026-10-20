@@ -10,6 +10,9 @@ use sha2::{Digest, Sha256};
 
 pub mod branding;
 pub mod catalog;
+pub(crate) mod received_notice;
+#[cfg(test)]
+mod received_notice_tests;
 pub mod site;
 #[cfg(test)]
 mod sync_tests;

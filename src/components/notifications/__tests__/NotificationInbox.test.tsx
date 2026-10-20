@@ -161,6 +161,31 @@ describe("NotificationInbox", () => {
     await waitFor(() => expect(svc.getNotificationCounts).toHaveBeenCalled());
   });
 
+  it("a safety rule notice is acknowledged first, never snoozed or archived, and the banner re-reads", async () => {
+    svc.listNotifications.mockResolvedValue([
+      row({
+        id: 7,
+        category_code: "safety_rule_received",
+        module_code: "system",
+        message_key: "site_rule_received_on",
+        message_params: { site: "Plant A" },
+        requires_ack: true,
+        action_url: "/settings",
+      }),
+    ]);
+    const heard = vi.fn();
+    window.addEventListener("maintafox:safety-notice-acknowledged", heard);
+    renderInbox();
+    const ack = await screen.findByRole("button", { name: "inbox.actions.acknowledge" });
+    expect(screen.getByTestId("safety-notice-hint")).toHaveTextContent("safetyNotice.inboxHint");
+    expect(screen.queryByRole("button", { name: "inbox.actions.snooze" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "inbox.actions.archive" })).toBeNull();
+    fireEvent.click(ack);
+    await waitFor(() => expect(svc.acknowledgeNotification).toHaveBeenCalledWith(7));
+    await waitFor(() => expect(heard).toHaveBeenCalledTimes(1));
+    window.removeEventListener("maintafox:safety-notice-acknowledged", heard);
+  });
+
   it("shows who acknowledged the event and offers no acknowledge action then", async () => {
     svc.listNotifications.mockResolvedValue([
       row({ requires_ack: true, event_acknowledged_by: "Ali" }),

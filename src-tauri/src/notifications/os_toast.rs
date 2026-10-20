@@ -69,9 +69,9 @@ pub async fn pending_os_toasts(
                         ON p.user_id = n.recipient_user_id AND p.category_code = e.category_code \
                  WHERE n.recipient_user_id = ? AND n.id > ? \
                    AND n.delivery_state IN ('pending', 'delivered') \
-                   AND COALESCE(p.os_enabled, 1) = 1 \
+                   AND (e.category_code = 'safety_rule_received' OR (COALESCE(p.os_enabled, 1) = 1 \
                    AND {} \
-                   AND (p.muted_until IS NULL OR p.muted_until <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) \
+                   AND (p.muted_until IS NULL OR p.muted_until <= strftime('%Y-%m-%dT%H:%M:%SZ','now')))) \
                    AND NOT EXISTS (SELECT 1 FROM notification_deliveries d \
                                    WHERE d.notification_id = n.id AND d.channel = 'os') \
                  ORDER BY n.id LIMIT ?",

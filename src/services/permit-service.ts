@@ -61,6 +61,21 @@ const WorkPermitSchema = z.object({
   permit_type_requires_energy_isolation: z.boolean(),
   /** The permit's type asks for a third person to confirm lock removal. */
   permit_type_requires_three_person_removal: z.boolean(),
+  /**
+   * Four-eyes: who wrote, submitted and approved the permit (null: not recorded, e.g. before the
+   * app recorded it — nobody is invented). The submission is cleared when the permit returns to
+   * draft.
+   */
+  created_by_id: z.number().nullable(),
+  created_by_name: z.string().nullable(),
+  submitted_by_id: z.number().nullable(),
+  submitted_by_name: z.string().nullable(),
+  submitted_at: z.string().nullable(),
+  approved_by_id: z.number().nullable(),
+  approved_by_name: z.string().nullable(),
+  approved_at: z.string().nullable(),
+  /** Approved without a verified second person, on a site that opted out of four-eyes. */
+  self_approved: z.boolean(),
 });
 
 const PermitSuspensionSchema = z.object({

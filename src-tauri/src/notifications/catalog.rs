@@ -143,8 +143,29 @@ pub const ESCALATION_TARGETS: &[&str] = &[
 ];
 
 /// Categories whose recipients are not chosen by a rule: the budget alert configuration names
-/// its recipient, the digest goes to the person who asked for it.
-pub const FIXED_ROUTING_CATEGORIES: &[&str] = &["budget_control_alert", "daily_digest"];
+/// its recipient, the digest goes to the person who asked for it, a safety rule changed on another
+/// PC goes to the settings administrators ([`ALWAYS_DELIVERED`]).
+pub const FIXED_ROUTING_CATEGORIES: &[&str] = &["budget_control_alert", "daily_digest", "safety_rule_received"];
+
+/// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
+/// to this audience, whatever their rule row says (inactive, other audiences) and whatever the
+/// recipients' preferences say. The notice that a safety rule changed on another PC exists to catch
+/// a rogue PC, which could otherwise switch it off first (`settings::received_notice`).
+///
+/// Delivery of such a category ignores preferences on every channel: in-app and desktop toast
+/// always, never folded into the daily digest, never emailed (the delivery SQL of `os_toast`,
+/// `digest` and `email` names `safety_rule_received`; toast, digest and email each have a test with
+/// a preference set after the notice). Its preference rows are also removed before each notice
+/// (`settings::received_notice::ensure_notice_rows`, tested).
+pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[("safety_rule_received", "permission:adm.settings")];
+
+/// The fixed audience of an [`ALWAYS_DELIVERED`] category.
+pub fn always_delivered_audience(category: &str) -> Option<Audience> {
+    ALWAYS_DELIVERED
+        .iter()
+        .find(|(c, _)| *c == category)
+        .and_then(|(_, a)| parse_audience(a))
+}
 
 #[cfg(test)]
 mod tests {

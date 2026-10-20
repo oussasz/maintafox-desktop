@@ -374,10 +374,17 @@ async fn loto_roles_require_the_authorisation_until_overridden() {
             linked_work_order_id: None,
             expires_at: Some((chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339()),
         },
+        admin(&db).await,
     )
     .await
     .expect("permit");
     for status in ["pending_review", "approved", "issued"] {
+        // Four-eyes: the technician with a login (user 2 of `setup`) approves what the admin wrote.
+        let actor = if status == "approved" {
+            scalar_i64(&db, "SELECT id FROM user_accounts WHERE id = 2").await
+        } else {
+            admin(&db).await
+        };
         wp = crate::permit::queries::set_work_permit_status(
             &db,
             crate::permit::domain::WorkPermitStatusInput {
@@ -385,7 +392,7 @@ async fn loto_roles_require_the_authorisation_until_overridden() {
                 status: status.into(),
                 expected_row_version: wp.row_version,
             },
-            admin(&db).await,
+            actor,
         )
         .await
         .unwrap_or_else(|e| panic!("-> {status}: {e:?}"));

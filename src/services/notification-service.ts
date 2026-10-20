@@ -121,6 +121,31 @@ export async function acknowledgeNotification(
   await invoke<void>("acknowledge_notification", { notificationId, note });
 }
 
+/**
+ * A safety rule changed on another PC and applied here (`settings::received_notice`), still to
+ * acknowledge by the signed-in administrator: shown after each sign-in until acknowledged.
+ */
+const SafetyRuleNoticeSchema = z.object({
+  id: z.number().int(),
+  created_at: z.string(),
+  title: z.string(),
+  body: z.string().nullable(),
+  message_key: z.string().nullable(),
+  message_params: z.record(z.string(), z.unknown()).nullable(),
+});
+
+export type SafetyRuleNotice = z.infer<typeof SafetyRuleNoticeSchema>;
+
+export async function getSafetyRuleNotices(): Promise<SafetyRuleNotice[]> {
+  const raw = await invoke<unknown>("get_safety_rule_notices");
+  return z.array(SafetyRuleNoticeSchema).parse(raw);
+}
+
+/** Acknowledges one of the signed-in administrator's safety rule notices (audited). */
+export async function acknowledgeSafetyRuleNotice(notificationId: number): Promise<void> {
+  await invoke<void>("acknowledge_safety_rule_notice", { notificationId });
+}
+
 /** Snoozes until `snoozeUntil` (within the next 7 days). */
 export async function snoozeNotification(notificationId: number, snoozeUntil: Date): Promise<void> {
   await invoke<void>("snooze_notification", {
@@ -157,6 +182,8 @@ const RuleConfigSchema = z.object({
   default_severity: z.string(),
   is_user_configurable: z.boolean(),
   fixed_routing: z.boolean(),
+  /** Nothing of the rule can be changed (the safety rule notice): shown locked. */
+  locked: z.boolean(),
   is_active: z.boolean(),
   audiences: z.array(z.string()),
   requires_ack: z.boolean(),

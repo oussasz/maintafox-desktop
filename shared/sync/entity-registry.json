@@ -2348,7 +2348,8 @@
         "work_orders",
         "permit_types",
         "equipment",
-        "org_nodes"
+        "org_nodes",
+        "user_accounts"
       ],
       "sync_status": "synced"
     },

@@ -39,6 +39,9 @@
 //!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
 //!   here), when and why; the shipped LOTO type's isolation rule is never switched off
 //!   (`inbound_permit_type_check`);
+//! - `site_settings` (the four-eyes opt-out) / `permit_types` (the three-person setting): a change
+//!   accepted by those checks is announced to the settings administrators in the same transaction
+//!   (`settings::received_notice`);
 //! - `permit_handover_logs`: a hand-over received by the person who signed it is refused as a
 //!   conflict (`permit::sync_check::inbound_handover_check`); one without a signer is accepted;
 //! - `permit_handover_logs`: after the apply, the log's "from" / "to" role that is not in the
@@ -136,6 +139,21 @@ pub(crate) async fn before_upsert_checked(
         "site_settings" => {
             Some(crate::settings::site::inbound_site_setting_check(conn, entity_sync_id, payload).await?)
         }
+        // The notice of a safety rule changed on another PC cannot be muted or re-routed by sync.
+        "notification_rules"
+        | "notification_categories"
+        | "notification_events"
+        | "notifications"
+        | "notification_acknowledgements"
+        | "notification_preferences" => Some(
+            crate::settings::received_notice::inbound_local_only_check(
+                conn,
+                layout.def.entity_type,
+                entity_sync_id,
+                Some(payload),
+            )
+            .await?,
+        ),
         "site_setting_events" => Some(crate::settings::site::inbound_site_setting_event_check(payload).await?),
         "permit_types" => {
             Some(crate::permit::sync_check::inbound_permit_type_check(conn, entity_sync_id, payload).await?)
@@ -200,6 +218,18 @@ pub(crate) async fn before_upsert_checked(
     };
     if let Some(verdict) = safety_check {
         use crate::settings::site::InboundVerdict;
+        // A site's four-eyes opt-out or a permit type's three-person setting changed on another PC
+        // and accepted here: the settings administrators are told, in this apply's transaction (a
+        // row then refused or left waiting rolls it back; `settings::received_notice`).
+        if verdict.is_none() {
+            crate::settings::received_notice::notify_received_rule_change(
+                conn,
+                layout.def.entity_type,
+                entity_sync_id,
+                payload,
+            )
+            .await?;
+        }
         return Ok(verdict.map(|v| match v {
             InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
                 code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
@@ -293,6 +323,21 @@ pub(crate) async fn before_delete_checked(
     let verdict = match layout.def.entity_type {
         "work_permits" | "permit_isolations" | "permit_suspensions" | "permit_types" | "qualification_requirements" => {
             crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?
+        }
+        // Rows of the safety rule notice are local to each PC: never deleted by sync.
+        "notification_rules"
+        | "notification_categories"
+        | "notification_events"
+        | "notifications"
+        | "notification_acknowledgements"
+        | "notification_preferences" => {
+            crate::settings::received_notice::inbound_local_only_check(
+                conn,
+                layout.def.entity_type,
+                entity_sync_id,
+                None,
+            )
+            .await?
         }
         _ => None,
     };

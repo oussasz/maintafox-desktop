@@ -5463,6 +5463,7 @@ async fn planning_requires_an_isolation_for_every_permit_type_flagged_for_energy
                     linked_work_order_id: Some(wo_id),
                     expires_at: Some((chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339()),
                 },
+                scalar(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await,
             )
             .await
             .expect("permit")

@@ -58,6 +58,31 @@ pub struct WorkPermit {
     /// The type's `requires_three_person_removal` (lock removal verified by a third person).
     #[serde(default)]
     pub permit_type_requires_three_person_removal: bool,
+    /// Four-eyes (migration 244): who wrote the permit. `None` on a permit written before it
+    /// was recorded (nobody is invented).
+    #[serde(default)]
+    pub created_by_id: Option<i64>,
+    #[serde(default)]
+    pub created_by_name: Option<String>,
+    /// Who submitted it for review and when; cleared when the permit returns to draft.
+    #[serde(default)]
+    pub submitted_by_id: Option<i64>,
+    #[serde(default)]
+    pub submitted_by_name: Option<String>,
+    #[serde(default)]
+    pub submitted_at: Option<String>,
+    /// Who approved it and when. `None` past review: approved before the approver was recorded
+    /// ("approbateur non enregistré").
+    #[serde(default)]
+    pub approved_by_id: Option<i64>,
+    #[serde(default)]
+    pub approved_by_name: Option<String>,
+    #[serde(default)]
+    pub approved_at: Option<String>,
+    /// Approved without a verified second person, on a site that opted out of four-eyes
+    /// ("auto-approbation (site sans 4 yeux)").
+    #[serde(default)]
+    pub self_approved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

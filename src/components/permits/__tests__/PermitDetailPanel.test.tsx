@@ -112,6 +112,16 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
     linked_work_order_code: null,
     permit_type_requires_energy_isolation: true,
     permit_type_requires_three_person_removal: true,
+    // Four-eyes: written and submitted by Wendy Writer, approved by Alex Approver.
+    created_by_id: 20,
+    created_by_name: "Wendy Writer",
+    submitted_by_id: 20,
+    submitted_by_name: "Wendy Writer",
+    submitted_at: "2026-10-10T07:00:00Z",
+    approved_by_id: 21,
+    approved_by_name: "Alex Approver",
+    approved_at: "2026-10-10T08:00:00Z",
+    self_approved: false,
     ...overrides,
   };
 }
@@ -431,5 +441,109 @@ describe("PermitDetailPanel — cancelling a planned isolation line", () => {
     );
     await screen.findAllByTestId("permit-isolation");
     expect(screen.queryByText(enPermits.gate.pendingRemoval)).toBeNull();
+  });
+});
+
+describe("PermitDetailPanel — four-eyes approval", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    session.userId = 20;
+    svc.listPermitIsolations.mockResolvedValue([]);
+    svc.listPermitIsolationOptions.mockResolvedValue({ energy_types: [], isolation_methods: [] });
+    svc.listPermitSuspensions.mockResolvedValue([]);
+    svc.listPermitHandoverLogs.mockResolvedValue([]);
+    svc.listPermitHandoverRoles.mockResolvedValue([]);
+    svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+  });
+
+  const show = async (p: WorkPermitRecord) => {
+    render(
+      <MemoryRouter>
+        <PermitDetailPanel permit={p} onChanged={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(svc.listPermitIsolations).toHaveBeenCalled());
+  };
+
+  it("shows who wrote, submitted and approved the permit", async () => {
+    await show(permit());
+    expect(screen.getByText(enPermits.detail.createdBy)).toBeInTheDocument();
+    // Written by, with the date the permit was requested (its creation).
+    expect(screen.getByText(enPermits.detail.createdBy).nextElementSibling).toHaveTextContent(
+      "Wendy Writer",
+    );
+    expect(screen.getByText(enPermits.detail.submittedBy)).toBeInTheDocument();
+    const approver = screen.getByTestId("permit-approver");
+    expect(approver).toHaveTextContent("Alex Approver");
+    expect(approver).not.toHaveTextContent(enPermits.detail.selfApproved);
+  });
+
+  it("flags a self-approval made on a site without four-eyes", async () => {
+    await show(
+      permit({ approved_by_id: 20, approved_by_name: "Wendy Writer", self_approved: true }),
+    );
+    const approver = screen.getByTestId("permit-approver");
+    expect(approver).toHaveTextContent("Wendy Writer");
+    expect(within(approver).getByText(enPermits.detail.selfApproved)).toBeInTheDocument();
+    // The explanation is visible text (reachable by keyboard, touch and screen readers).
+    expect(within(approver).getByText(enPermits.detail.selfApprovedHint)).toBeVisible();
+  });
+
+  it("says the approver is not recorded on a permit approved before it was recorded", async () => {
+    await show(
+      permit({
+        created_by_id: null,
+        created_by_name: null,
+        submitted_by_id: null,
+        submitted_by_name: null,
+        submitted_at: null,
+        approved_by_id: null,
+        approved_by_name: null,
+        approved_at: null,
+      }),
+    );
+    expect(screen.getByTestId("permit-approver")).toHaveTextContent(
+      enPermits.detail.approverNotRecorded,
+    );
+    expect(screen.getByText(enPermits.detail.approverNotRecordedHint)).toBeVisible();
+    expect(screen.queryByText(enPermits.detail.createdBy)).toBeNull();
+  });
+
+  it("shows no approver line on a permit still waiting for review", async () => {
+    await show(
+      permit({
+        status: "pending_review",
+        approved_by_id: null,
+        approved_by_name: null,
+        approved_at: null,
+      }),
+    );
+    expect(screen.queryByTestId("permit-approver")).toBeNull();
+  });
+
+  it("surfaces the four-eyes refusal when the submitter tries to approve", async () => {
+    svc.setWorkPermitStatus.mockRejectedValue({ code: "PERMIT_APPROVER_IS_SUBMITTER" });
+    const p = permit({
+      status: "pending_review",
+      approved_by_id: null,
+      approved_by_name: null,
+      approved_at: null,
+    });
+    await show(p);
+    const approve = await screen.findByRole("button", { name: enPermits.transition.approve });
+    await waitFor(() => expect(approve).toBeEnabled());
+    fireEvent.click(approve);
+    await waitFor(() =>
+      expect(svc.setWorkPermitStatus).toHaveBeenCalledWith({
+        id: 41,
+        status: "approved",
+        expected_row_version: 5,
+      }),
+    );
+    const reason = String(lookup(enTraining, "errors.PERMIT_APPROVER_IS_SUBMITTER")).replace(
+      /\{\{\w+\}\}/g,
+      "",
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(reason.replace(/\s+/g, " ").trim());
   });
 });
