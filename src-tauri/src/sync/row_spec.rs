@@ -1029,6 +1029,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // its own keys; received events carry none. Whether the event's condition cleared is
         // computed by each device from synchronised data (`notifications::conditions`).
         device_local: &["dedupe_key", "resolved_at"],
+        // The notice of a safety rule changed on another PC is about the apply on this PC: each PC
+        // that applies the change tells its own administrators; it never travels
+        // (`settings::received_notice`).
+        row_filter: Some("{row}.category_code IS NOT 'safety_rule_received'"),
         ..spec(
             "notification_events",
             &[
@@ -1052,6 +1056,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // The daily digest names its day (`2026-10-15`); conflicts carry no record.
                         ("notifications", NOT_A_ROW),
                         ("sync", NOT_A_ROW),
+                        // The safety rule notice names the received row by its sync id; it stays on
+                        // the PC (row filter above).
+                        ("settings", NOT_A_ROW),
                     ],
                 ),
             ],
@@ -1071,6 +1078,12 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // Whether the condition cleared is computed by each device (`notifications::conditions`);
         // whether the condition was already true when this device started watching it, too.
         device_local: &["resolved_at", "already_true"],
+        // Reading or archiving the notice of a safety rule changed on another PC stays on this PC:
+        // its event never travels, so another PC would wait for it forever.
+        row_filter: Some(
+            "NOT EXISTS (SELECT 1 FROM notification_events e WHERE e.id = {row}.notification_event_id \
+             AND e.category_code = 'safety_rule_received')",
+        ),
         ..spec(
             "notifications",
             &[

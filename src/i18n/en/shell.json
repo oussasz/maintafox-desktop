@@ -134,6 +134,7 @@
       "PERMIT_APPROVER_MISSING": "A permit approved on another PC without saying who approved it (four-eyes)",
       "PERMIT_APPROVAL_RECORD_CHANGED": "Who wrote, submitted or approved a permit, as recorded here, was erased or changed on another PC",
       "PERMIT_APPROVAL_RECORD_INVALID": "A permit received with an incomplete or inconsistent record of its submission or approval",
+      "NOTIFICATION_CATEGORY_LOCKED": "A change from another PC that would switch off or re-route the notice of a safety rule changed on another PC",
       "LAST_ADMINISTRATOR_REQUIRED": "A change from another PC that would leave this PC without an active administrator",
       "ADMIN_RECOVERY_NOTICE_CHANGED": "A notice about an administrator created with a recovery code was changed on another PC: notices are never changed",
       "ADMIN_RECOVERY_NOTICE_INVALID": "A notice about an administrator created with a recovery code arrived addressed to the new administrator, or with invisible characters in the names it shows",

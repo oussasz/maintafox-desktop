@@ -217,6 +217,11 @@ pub async fn update_rule(conn: &impl ConnectionTrait, input: &UpdateRuleInput) -
     let category: String = row.try_get("", "category_code").map_err(|e| decode("category", e))?;
     let mut sets: Vec<&str> = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
+    // A category that cannot be muted (`catalog::ALWAYS_DELIVERED`) stays active; its recipients are
+    // refused below with the other fixed-routing categories.
+    if input.is_active == Some(false) && catalog::always_delivered_audience(&category).is_some() {
+        return Err(gate(format!("'{category}' cannot be switched off")));
+    }
     if let Some(active) = input.is_active {
         sets.push("is_active = ?");
         values.push(i64::from(active).into());

@@ -130,6 +130,16 @@ pub(crate) async fn before_upsert_checked(
     }
     let safety_check = match layout.def.entity_type {
         "site_settings" => Some(crate::settings::site::inbound_site_setting_check(conn, payload).await?),
+        // The notice of a safety rule changed on another PC cannot be muted or re-routed by sync.
+        "notification_rules" | "notification_categories" => Some(
+            crate::settings::received_notice::inbound_category_lock_check(
+                conn,
+                layout.def.entity_type,
+                entity_sync_id,
+                payload,
+            )
+            .await?,
+        ),
         "site_setting_events" => Some(crate::settings::site::inbound_site_setting_event_check(payload).await?),
         "permit_types" => {
             Some(crate::permit::sync_check::inbound_permit_type_check(conn, entity_sync_id, payload).await?)
