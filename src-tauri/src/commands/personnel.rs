@@ -120,6 +120,27 @@ impl SensitiveAccess {
     }
 }
 
+/// What the caller may read of absence types (`personnel::absence_access`, decision register
+/// 2026-10-19 Q2 and (b)): one rule for every screen that shows absences.
+async fn absence_access(state: &State<'_, AppState>, user_id: i32) -> crate::personnel::absence_access::AbsenceAccess {
+    crate::personnel::absence_access::AbsenceAccess::load(&state.db, &state.permission_cache, user_id).await
+}
+
+/// One block as the caller may read it.
+async fn readable_block(
+    state: &State<'_, AppState>,
+    user_id: i32,
+    block: availability::PersonnelAvailabilityBlock,
+) -> AppResult<availability::PersonnelAvailabilityBlock> {
+    let mut blocks = [block];
+    absence_access(state, user_id)
+        .await
+        .apply_to_blocks(&state.db, &mut blocks)
+        .await?;
+    let [block] = blocks;
+    Ok(block)
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) list_personnel — per.view
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -414,7 +435,11 @@ pub async fn get_personnel_availability_state(
     if !can_read_personnel_record(&state, &user, personnel_id).await? {
         return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
     }
-    availability::compute_personnel_availability_state(&state.db, personnel_id).await
+    let mut availability_state = availability::compute_personnel_availability_state(&state.db, personnel_id).await?;
+    absence_access(&state, user.user_id)
+        .await
+        .apply_to_availability_state(&mut availability_state);
+    Ok(availability_state)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -649,7 +674,11 @@ pub async fn list_availability_calendar(
         crate::rbac::permissions::PER_VIEW,
         PermissionScope::Global
     );
-    availability::list_availability_calendar(&state.db, filter).await
+    let mut entries = availability::list_availability_calendar(&state.db, filter).await?;
+    absence_access(&state, user.user_id)
+        .await
+        .apply_to_calendar(&mut entries);
+    Ok(entries)
 }
 
 #[tauri::command]
@@ -815,7 +844,7 @@ pub async fn create_availability_block(
             tracing::warn!(error = %err, "failed to emit personnel critical block notification");
         }
     }
-    Ok(block)
+    readable_block(&state, user.user_id, block).await
 }
 
 #[tauri::command]
@@ -830,7 +859,13 @@ pub async fn update_availability_block(
         crate::rbac::permissions::PER_MANAGE,
         PermissionScope::Global
     );
-    availability::update_availability_block(&state.db, input).await
+    // The hidden type and reason are kept on the server whatever the payload holds.
+    let access = absence_access(&state, user.user_id).await;
+    let block = availability::update_availability_block(&state.db, input, i64::from(user.user_id), &access).await?;
+    let mut blocks = [block];
+    access.apply_to_blocks(&state.db, &mut blocks).await?;
+    let [block] = blocks;
+    Ok(block)
 }
 
 #[tauri::command]
@@ -857,7 +892,8 @@ pub async fn end_availability_block(
         crate::rbac::permissions::PER_MANAGE,
         PermissionScope::Global
     );
-    availability::end_availability_block(&state.db, id).await
+    let block = availability::end_availability_block(&state.db, id).await?;
+    readable_block(&state, user.user_id, block).await
 }
 
 #[tauri::command]
@@ -883,14 +919,11 @@ pub async fn list_personnel_availability_blocks(
         return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
     }
     let mut blocks = queries::list_personnel_availability_blocks(&state.db, personnel_id, limit.unwrap_or(50)).await?;
-    if !SensitiveAccess::load(&state, user.user_id)
-        .await?
-        .can_view(personnel_id)
-    {
-        for block in &mut blocks {
-            block.mask_sensitive();
-        }
-    }
+    // Type and reason only for the sensitive-data right or the person's own record.
+    absence_access(&state, user.user_id)
+        .await
+        .apply_to_blocks(&state.db, &mut blocks)
+        .await?;
     Ok(blocks)
 }
 
@@ -1105,7 +1138,8 @@ pub async fn get_team_capacity(
     .await
 }
 
-/// One person's capacity per day. Absence types are personal data (`per.sensitiveview`).
+/// One person's capacity per day. Absence types are sensitive personal data
+/// (`personnel::absence_access`).
 #[tauri::command]
 pub async fn get_person_capacity(
     personnel_id: i64,
@@ -1124,14 +1158,9 @@ pub async fn get_person_capacity(
         parse_capacity_day("date_to", &date_to)?,
     )
     .await?;
-    if !SensitiveAccess::load(&state, user.user_id)
-        .await?
-        .can_view(personnel_id)
-    {
-        for day in &mut days {
-            day.absence_types.clear();
-        }
-    }
+    absence_access(&state, user.user_id)
+        .await
+        .apply_to_person_capacity(personnel_id, &mut days);
     Ok(days)
 }
 

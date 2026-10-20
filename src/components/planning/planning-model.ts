@@ -12,6 +12,7 @@ import {
 } from "@/design-system/resource-timeline-tokens";
 import type {
   ConflictReason,
+  PlanningBlockedInterval,
   PlanningGanttSnapshot,
   PlanningWindow,
   ScheduleCandidate,
@@ -34,12 +35,8 @@ export type SuggestedAssignee = {
   matching_skills: number;
 };
 
-export type BlockedInterval = {
-  start_at: string;
-  end_at: string;
-  block_type: string;
-  critical: boolean;
-};
+/** One absence on an assignee lane; `block_type` only for holders of per.view. */
+export type BlockedInterval = PlanningBlockedInterval;
 
 export type LaneCommitmentSnippet = {
   id: number;
@@ -508,13 +505,10 @@ export function parseBlockedIntervals(json: string | null | undefined): BlockedI
         const start_at = typeof rec["start_at"] === "string" ? rec["start_at"] : "";
         const end_at = typeof rec["end_at"] === "string" ? rec["end_at"] : "";
         if (!start_at || !end_at) return null;
-        return {
-          start_at,
-          end_at,
-          // A missing type stays empty (drawn as a plain absence), never assumed to be leave.
-          block_type: typeof rec["block_type"] === "string" ? rec["block_type"] : "",
-          critical: Boolean(rec["critical"]),
-        };
+        const interval: BlockedInterval = { start_at, end_at, critical: Boolean(rec["critical"]) };
+        // No type: the caller may not read it (no per.view) — shown as a neutral tag only.
+        if (typeof rec["block_type"] === "string") interval.block_type = rec["block_type"];
+        return interval;
       })
       .filter((row): row is BlockedInterval => row != null);
   } catch {
@@ -589,17 +583,20 @@ export function buildPlanningTimelineLanes(
 export type AbsenceTypeLookup = (code: string) => { text: string; tag: string | null } | null;
 
 /**
- * Commitment bars + availability blocks for ResourceTimeline. Absence bars are named and drawn
- * from the plant's absence list when `absenceType` can read it; otherwise they show their code
- * and are drawn from their critical flag only.
+ * Commitment bars + availability blocks for ResourceTimeline. An absence with its type (caller
+ * holds per.view) is named and drawn from the plant's absence list when `absenceType` can read it,
+ * otherwise it shows its code and is drawn from its critical flag only. An absence without its
+ * type (no per.view) shows the neutral tag `absenceTag` gives — "absent — critical for planning"
+ * or "absent" — drawn critical or as a plain block.
  */
 export function buildPlanningTimelineItems(input: {
   commitments: ScheduleCommitment[];
   gantt: PlanningGanttSnapshot | null | undefined;
   canDrag?: boolean;
   absenceType?: AbsenceTypeLookup;
+  absenceTag: (critical: boolean) => string;
 }): PlanningTimelineItemData[] {
-  const { commitments, gantt, canDrag = false, absenceType } = input;
+  const { commitments, gantt, canDrag = false, absenceType, absenceTag } = input;
   const next: PlanningTimelineItemData[] = [];
 
   for (const commitment of commitments) {
@@ -630,13 +627,20 @@ export function buildPlanningTimelineItems(input: {
       const start = parseMs(interval.start_at);
       const end = parseMs(interval.end_at);
       if (!start || !end || end <= start) return;
+      const type = interval.block_type;
       next.push({
         id: blockItemId(lane.personnel_id, index),
         groupId: String(lane.personnel_id),
-        title: absenceType?.(interval.block_type)?.text ?? interval.block_type,
+        title:
+          type === undefined ? absenceTag(interval.critical) : (absenceType?.(type)?.text ?? type),
         startMs: start,
         endMs: end,
-        state: absenceTimelineState(absenceType?.(interval.block_type)?.tag, interval.critical),
+        state:
+          type === undefined
+            ? interval.critical
+              ? "critical"
+              : "blocked"
+            : absenceTimelineState(absenceType?.(type)?.tag, interval.critical),
         canMove: false,
       });
     });
@@ -1020,6 +1024,14 @@ export function conflictReasonText(reason: ConflictReason, t: TFunction<"plannin
     skills: skills.join(", "),
     required: skills.length,
   });
+}
+
+/**
+ * The neutral tag of an absence a planner without per.view sees (decision register 2026-10-19,
+ * Q2): availability only, never the reason.
+ */
+export function absenceTagText(critical: boolean, t: TFunction<"planning">): string {
+  return critical ? t("board.absenceTag.critical") : t("board.absenceTag.plain");
 }
 
 /** Hover text of a bar: its title, then why it is critical. */

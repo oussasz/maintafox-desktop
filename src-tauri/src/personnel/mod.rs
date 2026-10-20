@@ -3,6 +3,7 @@
 //! Workforce registry: positions, schedules, personnel master, contractor companies,
 //! rate cards, and execution authorizations.
 
+pub mod absence_access;
 pub mod assignment_history;
 pub mod availability;
 pub mod calendar;

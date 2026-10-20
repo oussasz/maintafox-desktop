@@ -7007,10 +7007,13 @@ export interface AvailabilityBlockCreateInput {
 
 export interface AvailabilityBlockUpdateInput {
   id: number;
-  block_type: string;
+  /** New absence type; omitted keeps the stored one (a caller the type is withheld from). */
+  block_type?: string;
   start_at: string;
   end_at: string;
   reason_note?: string | null;
+  /** Keeps the stored reason instead of `reason_note` (a caller the reason is withheld from). */
+  keep_reason_note?: boolean;
   is_critical?: boolean;
   confirm_overlap?: boolean;
 }
@@ -7018,7 +7021,11 @@ export interface AvailabilityBlockUpdateInput {
 export interface PersonnelAvailabilityBlock {
   id: number;
   personnel_id: number;
-  block_type: string;
+  /**
+   * Absence type code — sent only with the sensitive-data right (per.sensitiveview) or on the
+   * person's own record; otherwise absent and `type_masked` (decision register 2026-10-19).
+   */
+  block_type?: string;
   start_at: string;
   end_at: string;
   reason_note: string | null;
@@ -7028,6 +7035,10 @@ export interface PersonnelAvailabilityBlock {
   created_at: string;
   /** `reason_note` withheld (no per.sensitiveview, not the person's own record). */
   reason_masked: boolean;
+  /** The absence type withheld: show the neutral tag only. */
+  type_masked: boolean;
+  /** Critical for planning: the type's `critical` tag in Données de référence, or marked critical. */
+  critical_for_planning: boolean;
 }
 
 export interface PersonnelTeamAssignment {
@@ -9286,9 +9297,28 @@ export interface CapacityWindow {
   hours: number;
 }
 
+/**
+ * One absence of an assignee lane (an element of `PlanningAssigneeLane.blocked_intervals_json`).
+ * Decision register 2026-10-19, Q2: a caller without `per.view` receives only when the person is
+ * away and `critical` (the absence type's `critical` tag in Données de référence, or the block
+ * marked critical) — the server never sends them the type, its label, reason or colour.
+ */
+export interface PlanningBlockedInterval {
+  start_at: string;
+  end_at: string;
+  /** Absence type code — present only for holders of `per.view`. */
+  block_type?: string;
+  /**
+   * With `block_type`: the block's own critical flag (the screen adds the type's tag). Without
+   * it: critical for planning.
+   */
+  critical: boolean;
+}
+
 export interface PlanningAssigneeLane {
   personnel_id: number;
   full_name: string;
+  /** JSON array of `PlanningBlockedInterval`. */
   blocked_intervals_json: string;
   commitments_json: string;
 }

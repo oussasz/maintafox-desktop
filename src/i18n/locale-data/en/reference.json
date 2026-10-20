@@ -373,6 +373,17 @@
     "cancel": "Cancel",
     "save": "Save"
   },
+  "absenceBehaviour": {
+    "column": "Behaviour",
+    "hint": "What the program does with absences of this type. Required.",
+    "placeholder": "Choose a behaviour",
+    "tags": {
+      "leave": "Leave (plain absence)",
+      "critical": "Critical (critical for planning)",
+      "training": "Training"
+    },
+    "criticalRemovedWarning": "Absences already recorded with this type stay marked critical."
+  },
   "maintenanceNature": {
     "column": "Work-order nature (EN 13306)",
     "fallback": "Not set: corrective (immediate if emergency)",

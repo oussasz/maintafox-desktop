@@ -98,7 +98,11 @@
     "emptyAllCrews": "No plant commitments in this horizon — pick a Ready card and commit to a target crew.",
     "unknownCrew": "Unknown crew",
     "noCrewTitle": "Select a board crew",
-    "noCrewHint": "Use Planning context above to choose All crews or a single crew and the From–To period."
+    "noCrewHint": "Use Planning context above to choose All crews or a single crew and the From–To period.",
+    "absenceTag": {
+      "critical": "Absent — critical for planning",
+      "plain": "Absent"
+    }
   },
   "commitment": {
     "formTitle": "Commit to schedule",

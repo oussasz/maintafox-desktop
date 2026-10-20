@@ -511,6 +511,9 @@ pub struct NotifyTeamsResult {
     pub skipped_count: i64,
 }
 
+/// What the board may show of a person's absences (decided by `personnel::absence_access`).
+pub use crate::personnel::absence_access::{AbsenceAccess, AbsenceDetail};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanningGanttFilter {
     pub period_start: String,

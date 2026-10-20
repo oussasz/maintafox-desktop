@@ -79,6 +79,9 @@ pub struct SetTeamLeadInput {
 pub struct PersonnelAvailabilityBlock {
     pub id: i64,
     pub personnel_id: i64,
+    /// Absence type code. Left out of the payload (empty) when the caller may not read it
+    /// (`personnel::absence_access`; then `type_masked`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub block_type: String,
     pub start_at: String,
     pub end_at: String,
@@ -90,6 +93,14 @@ pub struct PersonnelAvailabilityBlock {
     /// True when `reason_note` was withheld (caller lacks `per.sensitiveview`, not own record).
     #[serde(default)]
     pub reason_masked: bool,
+    /// True when the absence type was withheld (decision register 2026-10-19, Q2 and (b)): the
+    /// caller sees a neutral tag only.
+    #[serde(default)]
+    pub type_masked: bool,
+    /// Critical for planning: the type carries the `critical` tag in Données de référence, or the
+    /// block is marked critical. Set by `personnel::absence_access` on every block it returns.
+    #[serde(default)]
+    pub critical_for_planning: bool,
 }
 
 impl PersonnelAvailabilityBlock {

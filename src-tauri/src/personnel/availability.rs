@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use super::domain::PersonnelAvailabilityState;
@@ -60,10 +60,16 @@ pub struct AvailabilityBlockCreateInput {
 #[derive(Debug, Clone, Deserialize)]
 pub struct AvailabilityBlockUpdateInput {
     pub id: i64,
-    pub block_type: String,
+    /// The new absence type; `None` keeps the stored one (a caller who may not read the type —
+    /// `personnel::absence_access` — edits dates and the critical flag without seeing it).
+    #[serde(default)]
+    pub block_type: Option<String>,
     pub start_at: String,
     pub end_at: String,
     pub reason_note: Option<String>,
+    /// Keeps the stored reason instead of `reason_note` (a caller the reason was withheld from).
+    #[serde(default)]
+    pub keep_reason_note: bool,
     pub is_critical: Option<bool>,
     pub confirm_overlap: Option<bool>,
 }
@@ -128,6 +134,8 @@ fn map_block_row(row: sea_orm::QueryResult) -> PersonnelAvailabilityBlock {
         created_by_label: row.try_get("", "created_by_label").unwrap_or(None),
         created_at: row.try_get("", "created_at").unwrap_or_default(),
         reason_masked: false,
+        type_masked: false,
+        critical_for_planning: false,
     }
 }
 
@@ -358,9 +366,23 @@ pub async fn create_availability_block(
     Ok(map_block_row(row))
 }
 
+/// Audit action of a change of a block's critical flag (who, block, person, before → after; never
+/// the absence type or reason).
+pub const AUDIT_BLOCK_CRITICAL_CHANGED: &str = "personnel.availability_block.critical_changed";
+
+/// Refusal of a type change by a caller the block's type is withheld from (translated in
+/// `training:errors`).
+pub const CODE_ABSENCE_TYPE_HIDDEN: &str = "PERSONNEL_ABSENCE_TYPE_HIDDEN";
+
+/// Edits a block. `access` is what the caller may read (`personnel::absence_access`): for a caller
+/// the block's type and reason are withheld from, the server never takes them from the payload —
+/// the stored reason is kept whatever is sent, and any type in the payload is refused
+/// ([`CODE_ABSENCE_TYPE_HIDDEN`]); dates and the critical flag stay editable.
 pub async fn update_availability_block(
     db: &DatabaseConnection,
     input: AvailabilityBlockUpdateInput,
+    actor_id: i64,
+    access: &crate::personnel::absence_access::AbsenceAccess,
 ) -> AppResult<PersonnelAvailabilityBlock> {
     if input.start_at >= input.end_at {
         return Err(AppError::ValidationFailed(vec![
@@ -368,19 +390,31 @@ pub async fn update_availability_block(
         ]));
     }
     let existing = fetch_block_by_id(db, input.id).await?;
+    let hidden =
+        access.detail_for(existing.personnel_id) == crate::personnel::absence_access::AbsenceDetail::AvailabilityOnly;
+    // Any type in the payload is refused, even the stored one: accepting a right guess would let
+    // the caller probe the hidden type.
+    if hidden && input.block_type.is_some() {
+        return Err(crate::errors::org_validation_failed(
+            CODE_ABSENCE_TYPE_HIDDEN,
+            "The absence type of this block is sensitive data you cannot read: it cannot be changed.",
+            HashMap::from([("block_id".to_string(), existing.id.to_string())]),
+        ));
+    }
     // Only a change of type is checked against the list: a block whose stored type was retired
     // or flagged stays editable and keeps that type's behaviour.
     // Unchanged type: the stored critical flag is kept (a legacy type adopted "à revoir" never
     // forces it, so a note edit cannot flip an old block); only a shipped or plant type tagged
     // critical forces it, as on creation.
-    let (block_type, forced_critical, keep_critical) = if input.block_type == existing.block_type {
+    let requested_type = input.block_type.as_deref().unwrap_or(&existing.block_type);
+    let (block_type, forced_critical, keep_critical) = if requested_type == existing.block_type {
         let forced = matches!(
             super::reference_lists::stored_absence_type(db, &existing.block_type).await?,
             Some((Some(ref tag), false)) if tag == super::reference_lists::ABSENCE_TAG_CRITICAL
         );
         (existing.block_type.clone(), forced, existing.is_critical)
     } else {
-        let (code, tag) = super::reference_lists::checked_absence_type(db, &input.block_type).await?;
+        let (code, tag) = super::reference_lists::checked_absence_type(db, requested_type).await?;
         (code, tag == super::reference_lists::ABSENCE_TAG_CRITICAL, false)
     };
     assert_no_overlapping_blocks(
@@ -394,8 +428,16 @@ pub async fn update_availability_block(
     .await?;
 
     let is_critical = forced_critical || input.is_critical.unwrap_or(keep_critical);
+    // A caller the reason is withheld from never overwrites it.
+    let reason_note = if hidden || input.keep_reason_note {
+        existing.reason_note.clone()
+    } else {
+        input.reason_note.clone()
+    };
 
-    db.execute(Statement::from_sql_and_values(
+    // The change and its audit event commit together.
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE personnel_availability_blocks
          SET block_type = ?, start_at = ?, end_at = ?, reason_note = ?, is_critical = ?
@@ -404,12 +446,37 @@ pub async fn update_availability_block(
             block_type.into(),
             input.start_at.clone().into(),
             input.end_at.clone().into(),
-            input.reason_note.clone().into(),
+            reason_note.into(),
             (if is_critical { 1 } else { 0 }).into(),
             input.id.into(),
         ],
     ))
     .await?;
+    if is_critical != existing.is_critical {
+        crate::audit::writer::write_audit_event_in(
+            &txn,
+            crate::audit::writer::AuditEventInput {
+                action_code: AUDIT_BLOCK_CRITICAL_CHANGED.to_string(),
+                target_type: Some("personnel_availability_block".to_string()),
+                target_id: Some(existing.id.to_string()),
+                actor_id: Some(actor_id),
+                auth_context: "session".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "standard".to_string(),
+                // Who (actor), which block and person, before → after; never the type or reason.
+                details_json: Some(serde_json::json!({
+                    "block_id": existing.id,
+                    "personnel_id": existing.personnel_id,
+                    "is_critical_before": existing.is_critical,
+                    "is_critical_after": is_critical,
+                })),
+            },
+        )
+        .await?;
+    }
+    txn.commit().await?;
 
     fetch_block_by_id(db, input.id).await
 }
@@ -481,6 +548,12 @@ pub const REASON_EMPLOYMENT_TERMINATED: &str = "employment_terminated";
 pub const REASON_BLOCKED_OVERRIDE: &str = "blocked_override";
 /// The person is on open work orders; their number is `open_work_order_count`.
 pub const REASON_OPEN_WORK_ORDERS: &str = "open_work_orders";
+/// The program's own reason codes (any other reason is an absence type code).
+pub const PROGRAM_REASON_CODES: &[&str] = &[
+    REASON_EMPLOYMENT_TERMINATED,
+    REASON_BLOCKED_OVERRIDE,
+    REASON_OPEN_WORK_ORDERS,
+];
 
 /// Compute the current availability state for a single personnel.
 ///

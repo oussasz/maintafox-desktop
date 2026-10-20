@@ -436,6 +436,10 @@ describe("personnel-service results", () => {
       created_by_id: null,
       created_by_label: null,
       created_at: "2026-05-01T08:00:00Z",
+      // Always sent by the backend (personnel::absence_access). reason_masked is left out here to
+      // check the schema still reads it as false.
+      type_masked: false,
+      critical_for_planning: false,
     };
     mockInvoke.mockResolvedValue([block]);
     const rows = await svc.listPersonnelAvailabilityBlocks(4, 10);

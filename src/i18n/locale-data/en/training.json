@@ -415,6 +415,7 @@
     "PERMIT_TYPE_ISOLATION_CLOCK_BEHIND": "The energy-isolation rule of permit type {{type}} was last changed at {{last}}, which is not earlier than this PC's time: check this PC's date and time, then make the change again.",
     "PERSONNEL_CODE_NOT_IN_LIST": "“{{code}}” is not an active value of its list ({{field}}) in Reference data.",
     "PERSONNEL_ABSENCE_TAG_REQUIRED": "Every absence type needs a behaviour: leave (plain absence), critical (always a critical block) or training (shown as in training).",
+    "PERSONNEL_ABSENCE_TYPE_HIDDEN": "This absence's type is sensitive data you cannot read, so it cannot be changed. Dates and the critical flag can be.",
     "DOCUMENT_CATEGORY_NOT_IN_LIST": "“{{code}}” is not an active document category in Reference data.",
     "WO_SHUTDOWN_FLAG_NOT_EDITABLE": "“Needs shutdown” can only be changed while the work order is being prepared (draft, planning or ready); it is {{status}}.",
     "WO_PART_LINE_RIGHT_REQUIRED": "Changing a planned part line needs the work-order edit right.",

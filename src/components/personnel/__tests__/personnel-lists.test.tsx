@@ -118,13 +118,18 @@ describe("absence bars", () => {
         },
       ],
     } as unknown as Parameters<typeof buildPlanningTimelineItems>[0]["gantt"];
-    const items = buildPlanningTimelineItems({ commitments: [], gantt, absenceType: lookup });
+    const items = buildPlanningTimelineItems({
+      commitments: [],
+      gantt,
+      absenceType: lookup,
+      absenceTag: (critical) => (critical ? "absent-critical" : "absent"),
+    });
     expect(items.map((i) => [i.title, i.state])).toEqual([
       ["Stage", "training"],
       // "Leave" is not the code "leave": shown as stored, drawn as a plain absence.
       ["Leave", "blocked"],
-      // No type at all is never assumed to be leave.
-      ["", "blocked"],
+      // No type (the caller has no per.view): the neutral tag, never assumed to be leave.
+      ["absent", "blocked"],
     ]);
   });
 });

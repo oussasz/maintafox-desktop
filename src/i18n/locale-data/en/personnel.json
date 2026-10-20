@@ -580,6 +580,10 @@
         "title": "Workload"
       }
     },
+    "absenceTag": {
+      "critical": "Absent — critical for planning",
+      "plain": "Absent"
+    },
     "form": {
       "title": "Create availability block",
       "editTitle": "Edit availability block",
@@ -591,6 +595,8 @@
       "reason": "Reason",
       "isCritical": "Critical (triggers notification)",
       "criticalForced": "required for this type",
+      "typeHidden": "Absence type hidden (sensitive data) — it is kept.",
+      "reasonHidden": "Reason hidden (sensitive data) — it is kept.",
       "submit": "Create block",
       "save": "Save",
       "cancel": "Cancel",

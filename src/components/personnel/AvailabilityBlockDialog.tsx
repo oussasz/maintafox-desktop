@@ -73,7 +73,14 @@ export function AvailabilityBlockDialog({
   const [overlapConfirmPending, setOverlapConfirmPending] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const forcedCritical = lists.option("absence_types", blockType)?.tag === "critical";
+  // Without the sensitive-data right the server withholds the type and reason of someone else's
+  // block: the dialog then edits dates and the critical flag and keeps both (never sends them).
+  const typeHidden = mode === "edit" && editingBlock?.type_masked === true;
+  const reasonHidden = mode === "edit" && editingBlock?.reason_masked === true;
+  // A hidden type tagged critical shows as critical for planning without the block's own flag.
+  const forcedCritical = typeHidden
+    ? editingBlock?.critical_for_planning === true && editingBlock.is_critical === false
+    : lists.option("absence_types", blockType)?.tag === "critical";
 
   // Latest props for the reset below, read without making them reset triggers: the parent
   // rebuilds `personOptions` on every render, which used to wipe the form while typing.
@@ -102,7 +109,7 @@ export function AvailabilityBlockDialog({
     if (mode === "edit" && init.editingBlock) {
       const b = init.editingBlock;
       setPersonnelId(b.personnel_id);
-      setBlockType(b.block_type);
+      setBlockType(b.block_type ?? "");
       setStartAt(toDatetimeLocalValue(b.start_at));
       setEndAt(toDatetimeLocalValue(b.end_at));
       setReason(b.reason_note ?? "");
@@ -132,7 +139,7 @@ export function AvailabilityBlockDialog({
       setError(t("availability.form.errors.personnelRequired"));
       return;
     }
-    if (!blockType) {
+    if (!typeHidden && !blockType) {
       setError(t("availability.form.errors.typeRequired"));
       return;
     }
@@ -153,10 +160,12 @@ export function AvailabilityBlockDialog({
       if (mode === "edit" && editingBlock) {
         const updateInput = {
           id: editingBlock.id,
-          block_type: blockType,
+          ...(typeHidden ? {} : { block_type: blockType }),
           start_at: startIso,
           end_at: endIso,
-          reason_note: reason.trim() || null,
+          ...(reasonHidden
+            ? { keep_reason_note: true as const }
+            : { reason_note: reason.trim() || null }),
           is_critical: forcedCritical || isCritical,
           ...(confirmOverlap ? { confirm_overlap: true as const } : {}),
         };
@@ -223,13 +232,17 @@ export function AvailabilityBlockDialog({
             <span id="availability-block-type" className="mb-1 block text-text-muted">
               {t("availability.form.blockType")}
             </span>
-            <PersonnelListSelect
-              list="absence_types"
-              lists={lists}
-              value={blockType}
-              onChange={setBlockType}
-              ariaLabel={t("availability.form.blockType")}
-            />
+            {typeHidden ? (
+              <p className="text-text-muted">{t("availability.form.typeHidden")}</p>
+            ) : (
+              <PersonnelListSelect
+                list="absence_types"
+                lists={lists}
+                value={blockType}
+                onChange={setBlockType}
+                ariaLabel={t("availability.form.blockType")}
+              />
+            )}
           </div>
 
           <label className="text-sm">
@@ -246,10 +259,17 @@ export function AvailabilityBlockDialog({
             <Input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
           </label>
 
-          <label className="text-sm">
-            <span className="mb-1 block text-text-muted">{t("availability.form.reason")}</span>
-            <Input value={reason} onChange={(e) => setReason(e.target.value)} />
-          </label>
+          {reasonHidden ? (
+            <div className="text-sm">
+              <span className="mb-1 block text-text-muted">{t("availability.form.reason")}</span>
+              <p className="text-text-muted">{t("availability.form.reasonHidden")}</p>
+            </div>
+          ) : (
+            <label className="text-sm">
+              <span className="mb-1 block text-text-muted">{t("availability.form.reason")}</span>
+              <Input value={reason} onChange={(e) => setReason(e.target.value)} />
+            </label>
+          )}
 
           <label className="flex items-center gap-2 text-sm">
             <input

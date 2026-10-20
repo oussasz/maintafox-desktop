@@ -310,7 +310,10 @@ pub async fn get_planning_gantt_snapshot(
         crate::rbac::permissions::PLAN_VIEW,
         PermissionScope::Global
     );
-    scheduling::get_planning_gantt_snapshot(&state.db, filter).await
+    // Absence types only for holders of the sensitive-data right (`personnel::absence_access`).
+    let access =
+        crate::personnel::absence_access::AbsenceAccess::load(&state.db, &state.permission_cache, user.user_id).await;
+    scheduling::get_planning_gantt_snapshot(&state.db, filter, &access).await
 }
 
 /// The assignee picker: each crew member's shift and hours left over a slot.

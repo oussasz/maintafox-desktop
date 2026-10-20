@@ -17,4 +17,6 @@ pub mod windows;
 pub mod wo_sync;
 
 #[cfg(test)]
+mod absence_tags_tests;
+#[cfg(test)]
 mod tests;

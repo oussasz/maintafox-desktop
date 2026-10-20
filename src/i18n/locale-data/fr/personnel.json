@@ -580,6 +580,10 @@
         "title": "Charge"
       }
     },
+    "absenceTag": {
+      "critical": "Absent — critique pour la planification",
+      "plain": "Absent"
+    },
     "form": {
       "title": "Créer un bloc de disponibilité",
       "editTitle": "Modifier le bloc de disponibilité",
@@ -591,6 +595,8 @@
       "reason": "Raison",
       "isCritical": "Critique (déclenche une notification)",
       "criticalForced": "obligatoire pour ce type",
+      "typeHidden": "Type d'absence masqué (donnée sensible) — il est conservé.",
+      "reasonHidden": "Raison masquée (donnée sensible) — elle est conservée.",
       "submit": "Créer le bloc",
       "save": "Enregistrer",
       "cancel": "Annuler",
