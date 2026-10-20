@@ -124,7 +124,7 @@ async fn site_rule(conn: &impl ConnectionTrait, entity_sync_id: &str, received: 
     let value = |p: &Payload| text(p, "value_json").map(|v| v == "true").unwrap_or(false);
     let new_value = value(&row);
     // No rule here: the strict default (four-eyes) was in force.
-    if local.as_ref().map_or(false, value) == new_value {
+    if local.as_ref().is_some_and(value) == new_value {
         return Ok(());
     }
     let site_sync = text(&row, "site_node_sync_id").unwrap_or_default();
