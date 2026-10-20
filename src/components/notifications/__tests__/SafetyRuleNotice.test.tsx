@@ -53,6 +53,33 @@ describe("SafetyRuleNotice", () => {
     expect(screen.queryByTestId("safety-rule-notices")).toBeNull();
   });
 
+  it("says when the notices cannot be read", async () => {
+    svc.getSafetyRuleNotices.mockRejectedValue(new Error("offline"));
+    render(<SafetyRuleNotice sessionUserId={1} />);
+    expect(await screen.findByTestId("safety-rule-notices-error")).toHaveTextContent(
+      "safetyNotice.loadError",
+    );
+  });
+
+  it("reads the notices again when one is acknowledged from the inbox", async () => {
+    render(<SafetyRuleNotice sessionUserId={1} />);
+    await screen.findByTestId("safety-rule-notice");
+    svc.getSafetyRuleNotices.mockResolvedValue([]);
+    window.dispatchEvent(new Event("maintafox:safety-notice-acknowledged"));
+    await waitFor(() => expect(screen.queryByTestId("safety-rule-notice")).toBeNull());
+  });
+
+  it("names the notice its button confirms, in one alert region", async () => {
+    render(<SafetyRuleNotice sessionUserId={1} />);
+    const button = await screen.findByRole("button", { name: "safetyNotice.acknowledge" });
+    const described = button.getAttribute("aria-describedby");
+    expect(described).toBeTruthy();
+    expect(document.getElementById(described ?? "")).toHaveTextContent(
+      "messages.site_rule_received_on.title",
+    );
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
   it("keeps the notice and says why when the acknowledgement is refused", async () => {
     svc.acknowledgeSafetyRuleNotice.mockRejectedValue(new Error("refused"));
     render(<SafetyRuleNotice sessionUserId={1} />);

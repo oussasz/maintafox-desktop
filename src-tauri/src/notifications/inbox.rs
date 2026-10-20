@@ -28,10 +28,14 @@ pub const MAX_PAGE: i64 = 200;
 
 const IN_INBOX: &str = "n.archived_at IS NULL AND n.delivery_state NOT IN ('snoozed', 'expired', 'closed')";
 const UNREAD: &str = "n.read_at IS NULL AND n.acknowledged_at IS NULL AND n.resolved_at IS NULL";
-const REQUIRES_ACK: &str = "COALESCE((SELECT MAX(r2.requires_ack) FROM notification_rules r2 \
-     WHERE r2.category_code = e.category_code AND r2.is_active = 1), 0) = 1";
-const EVENT_ACKNOWLEDGED: &str = "EXISTS (SELECT 1 FROM notifications n2 \
-     WHERE n2.notification_event_id = n.notification_event_id AND n2.acknowledged_at IS NOT NULL)";
+/// A safety rule notice (`settings::received_notice`) is acknowledged by each recipient, whatever
+/// its (locked) rule says; others follow their rule, acknowledged once per event.
+const REQUIRES_ACK: &str = "(e.category_code = 'safety_rule_received' \
+     OR COALESCE((SELECT MAX(r2.requires_ack) FROM notification_rules r2 \
+     WHERE r2.category_code = e.category_code AND r2.is_active = 1), 0) = 1)";
+const EVENT_ACKNOWLEDGED: &str = "(CASE WHEN e.category_code = 'safety_rule_received' \
+     THEN n.acknowledged_at IS NOT NULL ELSE EXISTS (SELECT 1 FROM notifications n2 \
+     WHERE n2.notification_event_id = n.notification_event_id AND n2.acknowledged_at IS NOT NULL) END)";
 const SEVERITY_SQL: &str = "CASE WHEN e.severity IN ('critical', 'error') THEN 'critical' \
      WHEN e.severity = 'warning' THEN 'warning' ELSE 'info' END";
 
@@ -331,7 +335,8 @@ pub async fn list(
                 (SELECT ua.display_name FROM notification_acknowledgements a \
                    JOIN notifications n3 ON n3.id = a.notification_id \
                    JOIN user_accounts ua ON ua.id = a.acknowledged_by_id \
-                  WHERE n3.notification_event_id = n.notification_event_id ORDER BY a.id LIMIT 1) AS acked_by, \
+                  WHERE n3.notification_event_id = n.notification_event_id \
+                    AND (e.category_code <> 'safety_rule_received' OR n3.id = n.id) ORDER BY a.id LIMIT 1) AS acked_by, \
                 CASE WHEN {EVENT_ACKNOWLEDGED} THEN 1 ELSE 0 END AS event_acked, \
                 n.reason_code, n.reason_ref, n.already_true, e.source_module, e.source_record_id \
          {from}{cond} ORDER BY n.created_at DESC, n.id DESC LIMIT ? OFFSET ?"

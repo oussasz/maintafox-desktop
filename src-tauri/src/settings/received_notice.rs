@@ -390,10 +390,15 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
     Ok(())
 }
 
-/// Local triggers keeping every notice of the category: its events and notifications are never
-/// deleted (CMMS Advisor: kept for each administrator until acknowledged). Created by
-/// [`ensure_notice_rows`]; dropped only by a full tenant data reset of the PC, whose reseed creates
-/// them again ([`drop_notice_guards`]).
+/// Local triggers keeping every notice of the category: its events, notifications and
+/// acknowledgements are never deleted (CMMS Advisor: kept for each administrator until
+/// acknowledged). Created by [`ensure_notice_rows`] at start-up and before each notice; dropped only
+/// by a full tenant data reset of the PC, whose reseed creates them again ([`drop_notice_guards`]).
+///
+/// For migration authors: these triggers exist when the next upgrade's migrations run. A migration
+/// that deletes rows of this category, or rebuilds `notification_events`, `notifications` or
+/// `notification_acknowledgements` (create, copy, drop, rename), must call [`drop_notice_guards`]
+/// first; the start-up seed creates them again.
 const NOTICE_GUARDS: &[(&str, &str)] = &[
     (
         "safety_notice_event_kept",
@@ -505,7 +510,11 @@ pub(crate) async fn acknowledge_notice(
     notification_id: i64,
 ) -> AppResult<()> {
     use sea_orm::TransactionTrait;
+    // Holding the write lock from the start (as the recovery-code acknowledgement): a second click
+    // waits, then finds the notice acknowledged.
     let tx = db.begin().await?;
+    tx.execute_unprepared("UPDATE notifications SET id = id WHERE 0")
+        .await?;
     let row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -536,7 +545,7 @@ pub(crate) async fn acknowledge_notice(
             result: "success".to_string(),
             before_hash: None,
             after_hash: None,
-            retention_class: "standard".to_string(),
+            retention_class: "security".to_string(),
             details_json: Some(json!({
                 "category": RECEIVED_RULE_CATEGORY,
                 "notification_id": notification_id,

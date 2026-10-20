@@ -20,6 +20,11 @@ import {
   getSafetyRuleNotices,
 } from "@/services/notification-service";
 
+/** The category of the notice (`settings::received_notice::RECEIVED_RULE_CATEGORY`). */
+export const SAFETY_NOTICE_CATEGORY = "safety_rule_received";
+/** Sent when a notice is acknowledged elsewhere (the inbox): the banner reads its list again. */
+export const SAFETY_NOTICE_ACKNOWLEDGED_EVENT = "maintafox:safety-notice-acknowledged";
+
 interface SafetyRuleNoticeProps {
   /** Re-read when the signed-in account changes (its user id, or null when signed out). */
   sessionUserId: number | null;
@@ -32,14 +37,21 @@ export function SafetyRuleNotice({ sessionUserId, className }: SafetyRuleNoticeP
   const [notices, setNotices] = useState<Notice[]>([]);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const load = useCallback(async (isCancelled: () => boolean) => {
     try {
       const next = await getSafetyRuleNotices();
-      if (!isCancelled()) setNotices(next);
+      if (!isCancelled()) {
+        setNotices(next);
+        setLoadFailed(false);
+      }
     } catch {
-      // No answer: the notice stays stored and comes back on the next read.
-      if (!isCancelled()) setNotices([]);
+      // The notices stay stored; say they could not be read rather than show nothing.
+      if (!isCancelled()) {
+        setNotices([]);
+        setLoadFailed(true);
+      }
     }
   }, []);
 
@@ -51,8 +63,11 @@ export function SafetyRuleNotice({ sessionUserId, className }: SafetyRuleNoticeP
     }
     let cancelled = false;
     void load(() => cancelled);
+    const reload = () => void load(() => cancelled);
+    window.addEventListener(SAFETY_NOTICE_ACKNOWLEDGED_EVENT, reload);
     return () => {
       cancelled = true;
+      window.removeEventListener(SAFETY_NOTICE_ACKNOWLEDGED_EVENT, reload);
     };
   }, [sessionUserId, load]);
 
@@ -69,16 +84,21 @@ export function SafetyRuleNotice({ sessionUserId, className }: SafetyRuleNoticeP
     }
   };
 
-  if (notices.length === 0) return null;
+  if (notices.length === 0 && !loadFailed) return null;
 
   return (
-    <div className={cn("space-y-2", className)} data-testid="safety-rule-notices">
+    <div role="alert" className={cn("space-y-2", className)} data-testid="safety-rule-notices">
+      {loadFailed ? (
+        <p className="text-sm text-text-danger" data-testid="safety-rule-notices-error">
+          {t("safetyNotice.loadError")}
+        </p>
+      ) : null}
       {notices.map((notice) => {
         const text = notificationText(notice, t, fmt);
+        const titleId = `safety-rule-notice-${notice.id}`;
         return (
           <div
             key={notice.id}
-            role="alert"
             data-testid="safety-rule-notice"
             className={cn(
               "flex items-start gap-2 rounded-md border p-3 text-sm",
@@ -88,7 +108,9 @@ export function SafetyRuleNotice({ sessionUserId, className }: SafetyRuleNoticeP
           >
             <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
             <div className="flex-1 space-y-1">
-              <p className="font-semibold">{text.title}</p>
+              <p id={titleId} className="font-semibold">
+                {text.title}
+              </p>
               {text.body ? <p>{text.body}</p> : null}
               <p className="text-xs">{t("safetyNotice.hint")}</p>
             </div>
@@ -97,6 +119,7 @@ export function SafetyRuleNotice({ sessionUserId, className }: SafetyRuleNoticeP
               size="sm"
               variant="outline"
               disabled={busyId === notice.id}
+              aria-describedby={titleId}
               onClick={() => void acknowledge(notice.id)}
             >
               {t("safetyNotice.acknowledge")}
@@ -104,11 +127,7 @@ export function SafetyRuleNotice({ sessionUserId, className }: SafetyRuleNoticeP
           </div>
         );
       })}
-      {error ? (
-        <p role="alert" className="text-sm text-text-danger">
-          {error}
-        </p>
-      ) : null}
+      {error ? <p className="text-sm text-text-danger">{error}</p> : null}
     </div>
   );
 }

@@ -90,10 +90,29 @@ pub async fn acknowledge_notification(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    let user_id = i64::from(user.user_id);
+    let is_admin_users = check_permission_cached(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::ADM_USERS,
+        &PermissionScope::Global,
+    )
+    .await?;
+    acknowledge_notification_in(&state.db, user.user_id, notification_id, note, is_admin_users).await
+}
 
-    let recipient_row = state
-        .db
+/// [`acknowledge_notification`] once the session and the `adm.users` right are known. A safety rule
+/// notice goes to its recipient-only, audited path (`settings::received_notice`), whatever the
+/// caller's rights.
+pub(crate) async fn acknowledge_notification_in(
+    db: &sea_orm::DatabaseConnection,
+    session_user_id: i32,
+    notification_id: i64,
+    note: Option<String>,
+    is_admin_users: bool,
+) -> AppResult<()> {
+    let user_id = i64::from(session_user_id);
+    let recipient_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT recipient_user_id FROM notifications WHERE id = ?",
@@ -110,22 +129,14 @@ pub async fn acknowledge_notification(
         .unwrap_or(None);
 
     // A safety rule notice: its recipient alone acknowledges it, audited.
-    if crate::settings::received_notice::is_notice(&state.db, notification_id).await? {
-        return crate::settings::received_notice::acknowledge_notice(&state.db, user_id, notification_id).await;
+    if crate::settings::received_notice::is_notice(db, notification_id).await? {
+        return crate::settings::received_notice::acknowledge_notice(db, user_id, notification_id).await;
     }
     if recipient_user_id == Some(user_id) {
-        visible(&state, user.user_id, notification_id).await?;
-        return delivery::acknowledge(&state.db, notification_id, user_id, note).await;
+        let modules = inbox::visible_to(db, session_user_id).await?;
+        inbox::ensure_visible(db, user_id, &modules, notification_id).await?;
+        return delivery::acknowledge(db, notification_id, user_id, note).await;
     }
-
-    let is_admin_users = check_permission_cached(
-        &state.db,
-        &state.permission_cache,
-        user.user_id,
-        crate::rbac::permissions::ADM_USERS,
-        &PermissionScope::Global,
-    )
-    .await?;
 
     if !is_admin_users {
         return Err(AppError::PermissionDenied(
@@ -133,7 +144,7 @@ pub async fn acknowledge_notification(
         ));
     }
 
-    delivery::record_acknowledgement(&state.db, notification_id, user_id, note).await
+    delivery::record_acknowledgement(db, notification_id, user_id, note).await
 }
 
 /// The signed-in administrator's safety rule notices still to acknowledge (shown after each

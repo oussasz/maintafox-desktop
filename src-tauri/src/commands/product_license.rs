@@ -860,9 +860,9 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
 
     // The wipe and the reseed below are local maintenance, not changes for other devices: capture
     // is off until it is installed again at the end.
-    crate::sync::capture::suspend_capture(&state.db).await?;
     // The safety rule notices are otherwise never deleted: the reseed below guards them again.
     crate::settings::received_notice::drop_notice_guards(&state.db).await?;
+    crate::sync::capture::suspend_capture(&state.db).await?;
 
     // SQLite ignores (or cannot toggle) foreign_keys inside an active transaction. Run OFF on the
     // connection first, then delete inside a transaction, then restore ON. Requires a single-connection

@@ -53,7 +53,9 @@ async fn event_payload(conn: &impl ConnectionTrait, entity_sync_id: &str) -> App
     load_row_payload(conn, &layout, &RowLocator::Identity(entity_sync_id.to_string()))
         .await?
         .map(|p| p.payload)
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("audit event {entity_sync_id} missing")))
+        // Kept on this device by its row filter (`sync::row_spec`), or gone: hashed in its local
+        // form (`event_hash`), which reads the row itself.
+        .ok_or_else(|| AppError::SyncError(format!("audit event {entity_sync_id} has no sync payload")))
 }
 
 /// Marks a hash computed over the event's local form: events whose target the sync codec cannot

@@ -596,18 +596,38 @@ async fn the_notice_cannot_be_muted_or_re_routed() {
     )
     .await;
     let admin_id = admin(&db).await;
-    exec(
-        &db,
-        "INSERT INTO notification_preferences (user_id, category_code, in_app_enabled) VALUES (?, ?, 0)",
-        vec![admin_id.into(), RECEIVED_RULE_CATEGORY.into()],
-    )
-    .await;
     let received = back_to_four_eyes(&db, &rule, "2026-10-20T10:00:00Z").await;
     let outcome = apply(&db, "site_settings", &rule, &received).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     assert!(
         recipients(&db).await.contains(&admin_id),
         "delivered to the administrator"
+    );
+    // In-app off for the category, set after that notice: removed before the next one, which is
+    // delivered too.
+    exec(
+        &db,
+        "INSERT INTO notification_preferences (user_id, category_code, in_app_enabled) VALUES (?, ?, 0)",
+        vec![admin_id.into(), RECEIVED_RULE_CATEGORY.into()],
+    )
+    .await;
+    let lifted = with(received, &[("value_json", serde_json::json!("true"))]);
+    super::received_notice::notify_received_rule_change(&db, "site_settings", &rule, &lifted)
+        .await
+        .expect("notify");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM notification_preferences WHERE category_code = ?",
+            vec![RECEIVED_RULE_CATEGORY.into()],
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        recipients(&db).await.iter().filter(|u| **u == admin_id).count(),
+        2,
+        "both notices delivered to the administrator"
     );
 }
 
@@ -1223,13 +1243,6 @@ async fn delivery_of_the_notice_ignores_preferences_on_every_channel() {
     let db = crate::sync::test_support::started_db().await;
     let (_, rule) = opted_out_site(&db).await;
     let admin_id = admin(&db).await;
-    exec(
-        &db,
-        "INSERT INTO notification_preferences (user_id, category_code, in_app_enabled, os_enabled, email_enabled, \
-         digest_mode, muted_until) VALUES (?, ?, 0, 0, 1, 'daily_digest', '2999-01-01T00:00:00Z')",
-        vec![admin_id.into(), RECEIVED_RULE_CATEGORY.into()],
-    )
-    .await;
     let outcome = apply(
         &db,
         "site_settings",
@@ -1238,6 +1251,14 @@ async fn delivery_of_the_notice_ignores_preferences_on_every_channel() {
     )
     .await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // Muted, toast off, daily digest: set after the notice (removed before each notice otherwise).
+    exec(
+        &db,
+        "INSERT INTO notification_preferences (user_id, category_code, in_app_enabled, os_enabled, email_enabled, \
+         digest_mode, muted_until) VALUES (?, ?, 0, 0, 1, 'daily_digest', '2999-01-01T00:00:00Z')",
+        vec![admin_id.into(), RECEIVED_RULE_CATEGORY.into()],
+    )
+    .await;
     let notification = scalar_i64(
         &db,
         "SELECT n.id FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
@@ -1483,7 +1504,8 @@ async fn the_notice_survives_retention_and_cannot_be_deleted_or_dismissed() {
                 [notification.into()],
             ))
             .await;
-        assert!(deleted.is_err(), "{sql}");
+        let error = format!("{:?}", deleted.expect_err(sql));
+        assert!(error.contains("NOTIFICATION_CATEGORY_LOCKED"), "{sql}: {error}");
     }
     assert!(
         crate::notifications::delivery::set_archived(&db, notification, admin_id, true)
@@ -1508,11 +1530,22 @@ async fn the_notice_survives_retention_and_cannot_be_deleted_or_dismissed() {
             [notification.into()],
         ))
         .await;
-    assert!(ack_delete.is_err());
+    let error = format!("{:?}", ack_delete.expect_err("ack kept"));
+    assert!(error.contains("NOTIFICATION_CATEGORY_LOCKED"), "{error}");
 
     // The guards come back with the seed after a reset dropped them.
     super::received_notice::drop_notice_guards(&db).await.expect("drop");
     crate::db::seeder::seed_system_data(&db).await.expect("seed");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN \
+             ('safety_notice_event_kept', 'safety_notice_kept', 'safety_notice_ack_kept')",
+            vec![],
+        )
+        .await,
+        3
+    );
     let deleted = db
         .execute(sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Sqlite,
@@ -1520,5 +1553,97 @@ async fn the_notice_survives_retention_and_cannot_be_deleted_or_dismissed() {
             [notification.into()],
         ))
         .await;
-    assert!(deleted.is_err());
+    let error = format!("{:?}", deleted.expect_err("kept"));
+    assert!(error.contains("NOTIFICATION_CATEGORY_LOCKED"), "{error}");
+}
+
+/// The acknowledge command routes a safety rule notice to the recipient-only, audited path: a
+/// user administrator (adm.users) cannot acknowledge it for its recipient.
+#[tokio::test]
+async fn the_acknowledge_command_keeps_the_notice_to_its_recipient() {
+    let db = crate::sync::test_support::started_db().await;
+    let notification = admin_notice(&db).await;
+    let admin_id = admin(&db).await;
+    let other = settings_admin(&db, "plant_admin", None).await;
+    assert!(crate::commands::notifications::acknowledge_notification_in(
+        &db,
+        i32::try_from(other).expect("id"),
+        notification,
+        None,
+        true,
+    )
+    .await
+    .is_err());
+    crate::commands::notifications::acknowledge_notification_in(
+        &db,
+        i32::try_from(admin_id).expect("id"),
+        notification,
+        None,
+        false,
+    )
+    .await
+    .expect("recipient");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = ? AND target_id = ?",
+            vec![
+                super::received_notice::AUDIT_NOTICE_ACKNOWLEDGED.into(),
+                notification.to_string().into(),
+            ],
+        )
+        .await,
+        1
+    );
+}
+
+/// Audits kept on the PC on purpose never become stage errors: the acknowledgement of a notice, and
+/// the audits of permit and permit type changes (their change travels on its own row).
+#[tokio::test]
+async fn audits_kept_on_the_pc_are_never_staged_nor_stage_errors() {
+    let db = crate::sync::test_support::started_db().await;
+    let notification = admin_notice(&db).await;
+    super::received_notice::acknowledge_notice(&db, admin(&db).await, notification)
+        .await
+        .expect("acknowledge");
+    for target in ["work_permit", "permit_type"] {
+        crate::audit::writer::write_audit_event_in(
+            &db,
+            crate::audit::writer::AuditEventInput {
+                action_code: format!("{target}.test_local"),
+                target_type: Some(target.to_string()),
+                target_id: Some("1".to_string()),
+                actor_id: Some(admin(&db).await),
+                auth_context: "session".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "standard".to_string(),
+                details_json: None,
+            },
+        )
+        .await
+        .expect("audit");
+    }
+    crate::sync::capture::drain_capture_journal(&db).await.expect("drain");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_conflicts WHERE conflict_type = 'STAGE_ERROR'",
+            vec![],
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_outbox WHERE entity_type = 'audit_events' AND (payload_json LIKE ? \
+             OR payload_json LIKE '%test_local%')",
+            vec![format!("%{}%", super::received_notice::AUDIT_NOTICE_ACKNOWLEDGED).into()],
+        )
+        .await,
+        0,
+        "nothing of them is sent"
+    );
 }

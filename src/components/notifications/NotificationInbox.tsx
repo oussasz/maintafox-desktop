@@ -31,6 +31,10 @@ import { useNavigate } from "react-router-dom";
 
 import { urgencyTone, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import {
+  SAFETY_NOTICE_ACKNOWLEDGED_EVENT,
+  SAFETY_NOTICE_CATEGORY,
+} from "@/components/notifications/SafetyRuleNotice";
+import {
   OPEN_SYNC_CENTER_EVENT,
   SYNC_CENTER_LINK,
   resolveNotificationLink,
@@ -136,6 +140,11 @@ function isUnread(row: NotificationSummary): boolean {
     row.archived_at == null &&
     row.delivery_state !== "snoozed"
   );
+}
+
+/** A safety rule notice not acknowledged yet: acknowledged first, never snoozed or archived. */
+function lockedUntilAck(row: NotificationSummary): boolean {
+  return row.category_code === SAFETY_NOTICE_CATEGORY && row.acknowledged_at == null;
 }
 
 function needsAck(row: NotificationSummary): boolean {
@@ -409,11 +418,24 @@ export function NotificationInbox({
               variant="outline"
               className="h-8"
               disabled={busy}
-              onClick={() => void runAction(row.id, () => acknowledgeNotification(row.id))}
+              onClick={() =>
+                void runAction(row.id, async () => {
+                  await acknowledgeNotification(row.id);
+                  // The sign-in banner shows the same notice: read it again.
+                  if (row.category_code === SAFETY_NOTICE_CATEGORY) {
+                    window.dispatchEvent(new Event(SAFETY_NOTICE_ACKNOWLEDGED_EVENT));
+                  }
+                })
+              }
             >
               <Check className="me-1 h-3.5 w-3.5" aria-hidden />
               {t("inbox.actions.acknowledge")}
             </Button>
+          ) : null}
+          {lockedUntilAck(row) ? (
+            <span className="self-center text-xs text-text-muted" data-testid="safety-notice-hint">
+              {t("safetyNotice.inboxHint")}
+            </span>
           ) : null}
           {unread ? (
             <Button
@@ -437,7 +459,7 @@ export function NotificationInbox({
               {t("inbox.actions.markUnread")}
             </Button>
           ) : null}
-          {!row.acknowledged_at && !row.archived_at && !row.resolved_at ? (
+          {!row.acknowledged_at && !row.archived_at && !row.resolved_at && !lockedUntilAck(row) ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="sm" variant="ghost" className="h-8" disabled={busy}>
@@ -487,7 +509,7 @@ export function NotificationInbox({
               <ArchiveRestore className="me-1 h-3.5 w-3.5" aria-hidden />
               {t("inbox.actions.unarchive")}
             </Button>
-          ) : !needsAck(row) ? (
+          ) : !needsAck(row) && !lockedUntilAck(row) ? (
             <Button
               size="sm"
               variant="ghost"

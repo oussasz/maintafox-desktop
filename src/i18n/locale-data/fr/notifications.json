@@ -371,6 +371,8 @@
   },
   "safetyNotice": {
     "acknowledge": "J’ai pris connaissance",
-    "hint": "Cet avis reste affiché à chaque connexion jusqu’à ce que vous en preniez connaissance ; votre confirmation est enregistrée."
+    "hint": "Cet avis reste affiché à chaque connexion jusqu’à ce que vous en preniez connaissance ; votre confirmation est enregistrée.",
+    "inboxHint": "Avis de sécurité : prenez-en connaissance ; il ne peut pas être reporté ni archivé avant.",
+    "loadError": "Les avis de sécurité n’ont pas pu être chargés. Ils sont conservés ; reconnectez-vous ou rechargez pour les voir."
   }
 }

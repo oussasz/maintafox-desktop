@@ -371,6 +371,8 @@
   },
   "safetyNotice": {
     "acknowledge": "Acknowledge",
-    "hint": "This notice stays after each sign-in until you acknowledge it; your acknowledgement is recorded."
+    "hint": "This notice stays after each sign-in until you acknowledge it; your acknowledgement is recorded.",
+    "inboxHint": "Safety notice: acknowledge it; it cannot be snoozed or archived before.",
+    "loadError": "The safety notices could not be loaded. They are kept; sign in again or reload to see them."
   }
 }

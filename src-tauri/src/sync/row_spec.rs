@@ -926,6 +926,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
             json_ref_hist("details_json", "$.detail.assignment_id", "user_scope_assignments"),
             json_ref_hist("details_json", "$.filter.actor_id", USER),
         ],
+        // Audits kept on the device on purpose (never staged, so never a stage error): the
+        // acknowledgement of a safety rule notice (`settings::received_notice`, the notice itself
+        // never travels), and the audits of permit and permit type changes (`permit::queries`):
+        // the change itself travels on its own row (who submitted, approved, changed the setting,
+        // when and why), while these details hold local ids that mean nothing on another PC.
+        row_filter: Some(
+            "{row}.action_code IS NOT 'notification.safety_notice_acknowledged' \
+             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type')",
+        ),
         ..spec(
             "audit_events",
             &[

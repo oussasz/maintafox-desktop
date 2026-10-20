@@ -121,7 +121,6 @@ export async function acknowledgeNotification(
   await invoke<void>("acknowledge_notification", { notificationId, note });
 }
 
-/** Snoozes until `snoozeUntil` (within the next 7 days). */
 /**
  * A safety rule changed on another PC and applied here (`settings::received_notice`), still to
  * acknowledge by the signed-in administrator: shown after each sign-in until acknowledged.
@@ -147,6 +146,7 @@ export async function acknowledgeSafetyRuleNotice(notificationId: number): Promi
   await invoke<void>("acknowledge_safety_rule_notice", { notificationId });
 }
 
+/** Snoozes until `snoozeUntil` (within the next 7 days). */
 export async function snoozeNotification(notificationId: number, snoozeUntil: Date): Promise<void> {
   await invoke<void>("snooze_notification", {
     notificationId,
