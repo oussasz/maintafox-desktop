@@ -350,7 +350,8 @@
     "escalationNeedsAck": "L'escalade ne s'applique qu'aux catégories à acquitter.",
     "fixedRouting": {
       "budget_control_alert": "Destinataire choisi dans les réglages des alertes budgétaires.",
-      "daily_digest": "Envoyé à chaque personne qui a choisi le résumé quotidien."
+      "daily_digest": "Envoyé à chaque personne qui a choisi le résumé quotidien.",
+      "safety_rule_received": "Toujours les administrateurs des paramètres de toute l’usine."
     },
     "minutes": "min",
     "minutesAfterAlert": "min après l'alerte",
@@ -365,6 +366,7 @@
     "retentionHint": "Les notifications plus anciennes expirent (de {{min}} à {{max}} jours ; valeur livrée {{default}} jours).",
     "retentionDays": "Conservation en jours",
     "days": "jours",
-    "defaultValue": "Valeur livrée"
+    "defaultValue": "Valeur livrée",
+    "locked": "Verrouillée : avis de sécurité, toujours envoyé et jamais synchronisé."
   }
 }

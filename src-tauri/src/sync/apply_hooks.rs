@@ -131,12 +131,16 @@ pub(crate) async fn before_upsert_checked(
     let safety_check = match layout.def.entity_type {
         "site_settings" => Some(crate::settings::site::inbound_site_setting_check(conn, payload).await?),
         // The notice of a safety rule changed on another PC cannot be muted or re-routed by sync.
-        "notification_rules" | "notification_categories" => Some(
-            crate::settings::received_notice::inbound_category_lock_check(
+        "notification_rules"
+        | "notification_categories"
+        | "notification_events"
+        | "notifications"
+        | "notification_acknowledgements" => Some(
+            crate::settings::received_notice::inbound_local_only_check(
                 conn,
                 layout.def.entity_type,
                 entity_sync_id,
-                payload,
+                Some(payload),
             )
             .await?,
         ),
@@ -276,6 +280,20 @@ pub(crate) async fn before_delete_checked(
     let verdict = match layout.def.entity_type {
         "work_permits" | "permit_isolations" | "permit_suspensions" | "permit_types" | "qualification_requirements" => {
             crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?
+        }
+        // Rows of the safety rule notice are local to each PC: never deleted by sync.
+        "notification_rules"
+        | "notification_categories"
+        | "notification_events"
+        | "notifications"
+        | "notification_acknowledgements" => {
+            crate::settings::received_notice::inbound_local_only_check(
+                conn,
+                layout.def.entity_type,
+                entity_sync_id,
+                None,
+            )
+            .await?
         }
         _ => None,
     };

@@ -234,6 +234,8 @@ function RuleRow({
   const setAudiences = (audiences: string[]) => onUpdate({ rule_id: rule.rule_id, audiences });
   const label = categoryLabel(rule.category_code, t);
   const leadValue = minutes(lead);
+  // A rule nothing of which can be changed (the safety rule notice): every control locked.
+  const locked = disabled || rule.locked;
 
   return (
     <tr className="border-b border-surface-border align-top">
@@ -242,11 +244,12 @@ function RuleRow({
         <div className="text-xs text-text-muted">
           {t(`module.${rule.module_code}`)} · {t(`severity.${rule.default_severity}`)}
         </div>
+        {rule.locked ? <p className="text-xs text-text-muted">{t("rules.locked")}</p> : null}
       </td>
       <td className="px-2 py-2">
         <Switch
           checked={rule.is_active}
-          disabled={disabled}
+          disabled={locked}
           aria-label={`${t("rules.col.active")} ${label}`}
           onCheckedChange={(v) => onUpdate({ rule_id: rule.rule_id, is_active: v })}
         />
@@ -331,7 +334,7 @@ function RuleRow({
       <td className="px-2 py-2">
         <Switch
           checked={rule.requires_ack}
-          disabled={disabled}
+          disabled={locked}
           aria-label={`${t("rules.col.ack")} ${label}`}
           onCheckedChange={(v) => onUpdate({ rule_id: rule.rule_id, requires_ack: v })}
         />
@@ -339,7 +342,7 @@ function RuleRow({
       <td className="px-2 py-2">
         <Select
           value={rule.escalation_policy_id?.toString() ?? NONE}
-          disabled={disabled}
+          disabled={locked}
           onValueChange={(v) =>
             onUpdate({ rule_id: rule.rule_id, escalation_policy_id: v === NONE ? null : Number(v) })
           }

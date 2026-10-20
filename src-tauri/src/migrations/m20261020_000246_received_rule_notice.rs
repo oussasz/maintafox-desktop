@@ -4,8 +4,9 @@
 //! When a site's four-eyes opt-out or a permit type's three-person lock-removal setting changed on
 //! another PC is applied here, the users holding the settings-administration right (`adm.settings`)
 //! are told in-app. The category is not one users may switch off (`is_user_configurable = 0`): it
-//! is the administrators' check that a safety rule changed elsewhere was meant. Its rule sends it to
-//! `permission:adm.settings`; a plant may add audiences in Données de référence → Notifications.
+//! is the administrators' check that a safety rule changed elsewhere was meant. It always goes to
+//! `permission:adm.settings` (`notifications::catalog::ALWAYS_DELIVERED`); its rule cannot be edited,
+//! and these rows stay on each PC (never synchronised).
 //! (Number 245 is reserved by another change.)
 
 use sea_orm::{DatabaseBackend, Statement, TransactionTrait};

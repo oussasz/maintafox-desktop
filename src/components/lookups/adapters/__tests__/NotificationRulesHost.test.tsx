@@ -40,6 +40,7 @@ const config: NotificationConfig = {
       default_severity: "warning",
       is_user_configurable: true,
       fixed_routing: false,
+      locked: false,
       is_active: true,
       audiences: ["assignee", "permission:ot.approve"],
       requires_ack: true,
@@ -111,6 +112,33 @@ describe("NotificationRulesHost", () => {
         reference: null,
       }),
     );
+  });
+
+  it("shows the safety rule notice locked, with why", async () => {
+    const base = config.rules[0];
+    if (!base) throw new Error("fixture rule missing");
+    const safety = {
+      ...base,
+      rule_id: 9,
+      category_code: "safety_rule_received",
+      module_code: "system",
+      is_user_configurable: false,
+      fixed_routing: true,
+      locked: true,
+      audiences: ["permission:adm.settings"],
+      requires_ack: false,
+      escalation_policy_id: null,
+    };
+    svc.getNotificationConfig.mockResolvedValue({ ...config, rules: [safety] });
+    render(<NotificationRulesHost />);
+    expect(await screen.findByText("rules.locked")).toBeInTheDocument();
+    expect(screen.getByText("rules.fixedRouting.safety_rule_received")).toBeInTheDocument();
+    for (const name of [
+      "rules.col.active category.safety_rule_received",
+      "rules.col.ack category.safety_rule_received",
+    ]) {
+      expect(screen.getByRole("switch", { name })).toBeDisabled();
+    }
   });
 
   it("is read only without ref.manage", async () => {

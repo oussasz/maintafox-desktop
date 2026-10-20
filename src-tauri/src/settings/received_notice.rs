@@ -16,8 +16,9 @@
 //! When: from the apply hook (`sync::apply_hooks::before_upsert_checked`), once the row passed its
 //! safety check, inside the transaction that applies the row. A row refused or left waiting rolls
 //! that transaction back, so no notice is left; a local change never goes through it. The event has
-//! a seeded identity built from the row and its recorded change (who, when, value), so applying the
-//! same row again (a second pass, "take theirs") creates no second notice. An error while notifying
+//! a random identity and a device-local key built from the row and its recorded change (who, when,
+//! value), so applying the same row again (a second pass, "take theirs") creates no second notice and
+//! nothing received can predict, plant or take over the event. An error while notifying
 //! (only a database failure; the notice is written in its own savepoint, undone on error) depends on
 //! the direction of the change:
 //! - a change that RELAXES a rule (opt-out on, three-person chain off) fails the apply: the row
@@ -26,12 +27,18 @@
 //! - a change that TIGHTENS a rule (back to four-eyes, three-person chain on) is applied anyway, the
 //!   failure logged: the stricter rule is never held back by a notice (fail-safe).
 //!
+//! If SQLite itself abandoned the whole transaction (disk full, I/O error), undoing the savepoint
+//! fails too and the apply ends in error whatever the direction: nothing could be applied in that
+//! transaction anyway.
+//!
 //! The notice cannot be muted or re-routed (`notifications::catalog::ALWAYS_DELIVERED`): it goes to
-//! its fixed audience whatever its rule row or preferences say, a local edit cannot switch its rule
-//! off or re-route it, and a received rule or category row that would is refused
-//! ([`inbound_category_lock_check`]). Its event and notifications stay on this PC (row filters of
-//! `notification_events` / `notifications`, `sync::row_spec`): each PC that applies a change tells its
-//! own administrators, and reading the notice on one PC sends nothing that another PC would wait for.
+//! its fixed audience whatever its rule row or preferences say, and nothing of its rule can be edited
+//! here. Everything of the category is local to each PC and never touched by sync: its category and
+//! rule rows, events, notifications and acknowledgements are kept out of capture (row filters,
+//! `sync::row_spec`) and any received upsert or delete of them is refused
+//! ([`inbound_local_only_check`]). Each PC that applies a change tells its own administrators, and
+//! reading the notice on one PC sends nothing that another PC would wait for. The category row is
+//! thus never removed or renamed (no local writer, sync refused), so the inbox always shows it.
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde_json::{json, Map, Value};
@@ -39,7 +46,6 @@ use serde_json::{json, Map, Value};
 use crate::errors::{AppError, AppResult};
 use crate::notifications::emitter::{emit, Arrival, NotificationEventInput, NotificationMessage};
 use crate::settings::site::InboundVerdict;
-use crate::sync::identity::seeded_entity_sync_id;
 
 type Payload = Map<String, Value>;
 
@@ -211,65 +217,85 @@ async fn change_reason(
     Ok(None)
 }
 
-/// A received `notification_rules` or `notification_categories` row that would mute or re-route a
-/// category that cannot be ([`crate::notifications::catalog::ALWAYS_DELIVERED`]): its rule switched
-/// off or sent to other audiences, or the category made user-configurable or moved to another
-/// module (another view permission). Refused as a conflict (`NOTIFICATION_CATEGORY_LOCKED`); judged on
-/// the received row completed by the local one.
-pub(crate) async fn inbound_category_lock_check(
+/// Everything of the category [`RECEIVED_RULE_CATEGORY`] is local to each PC and sync never touches
+/// it: its category and rule rows, its events, their notifications and acknowledgements (row filters
+/// keep them out of capture, `sync::row_spec`). A received upsert or delete of any of these rows
+/// is refused as a conflict (`NOTIFICATION_CATEGORY_LOCKED`) when the row is of that category here
+/// (judged on the LOCAL row by its sync id, so a rename through the sync id is refused too) or the
+/// received row names that category (another row may not take its code, an event or notification
+/// may not be planted under it). `received`: `None` for a delete.
+pub(crate) async fn inbound_local_only_check(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
-    received: &Payload,
+    received: Option<&Payload>,
 ) -> AppResult<Option<InboundVerdict>> {
-    let local = crate::permit::sync_check::local_wire(conn, entity_type, entity_sync_id).await?;
-    let row = crate::permit::sync_check::overlay(local.as_ref(), received);
-    let refuse = |why: String| {
-        Ok(Some(InboundVerdict::Conflict {
-            code: "NOTIFICATION_CATEGORY_LOCKED",
-            message: why,
-        }))
+    // The category of the row held here, by its sync identity (fixed SQL per table).
+    let local_sql = match entity_type {
+        "notification_categories" => "SELECT code AS c FROM notification_categories WHERE entity_sync_id = ?",
+        "notification_rules" => "SELECT category_code AS c FROM notification_rules WHERE entity_sync_id = ?",
+        "notification_events" => "SELECT category_code AS c FROM notification_events WHERE entity_sync_id = ?",
+        "notifications" => {
+            "SELECT e.category_code AS c FROM notifications n \
+               JOIN notification_events e ON e.id = n.notification_event_id WHERE n.entity_sync_id = ?"
+        }
+        "notification_acknowledgements" => {
+            "SELECT e.category_code AS c FROM notification_acknowledgements a \
+               JOIN notifications n ON n.id = a.notification_id \
+               JOIN notification_events e ON e.id = n.notification_event_id WHERE a.entity_sync_id = ?"
+        }
+        _ => return Ok(None),
     };
-    match entity_type {
-        "notification_rules" => {
-            let Some(category) = text(&row, "category_code") else {
-                return Ok(None);
-            };
-            let Some((_, audience)) = crate::notifications::catalog::ALWAYS_DELIVERED
-                .iter()
-                .find(|(c, _)| *c == category)
-            else {
-                return Ok(None);
-            };
-            if !on(&row, "is_active") {
-                return refuse(format!("the rule of '{category}' cannot be switched off"));
-            }
-            let audiences: Option<Vec<String>> =
-                text(&row, "audiences_json").and_then(|j| serde_json::from_str(j).ok());
-            if audiences.as_deref() != Some(&[(*audience).to_string()][..]) {
-                return refuse(format!(
-                    "the recipients of '{category}' cannot change (always {audience})"
-                ));
-            }
-            Ok(None)
-        }
-        "notification_categories" => {
-            let Some(code) = text(&row, "code") else {
-                return Ok(None);
-            };
-            if crate::notifications::catalog::always_delivered_audience(code).is_none() {
-                return Ok(None);
-            }
-            if on(&row, "is_user_configurable") {
-                return refuse(format!("'{code}' cannot be made something users switch off"));
-            }
-            if text(&row, "module_code") != Some("system") {
-                return refuse(format!("'{code}' cannot move to another module"));
-            }
-            Ok(None)
-        }
-        _ => Ok(None),
+    let category_of = |sql: &'static str, key: String| async move {
+        conn.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [key.into()]))
+            .await?
+            .map(|r| r.try_get::<Option<String>>("", "c"))
+            .transpose()
+            .map_err(hook_err)
+            .map(Option::flatten)
+    };
+    let held = category_of(local_sql, entity_sync_id.to_string()).await?;
+    // The category the received row names (directly, or through the event / notification it names).
+    let named = match received {
+        None => None,
+        Some(p) => match entity_type {
+            "notification_categories" => text(p, "code").map(str::to_string),
+            "notification_rules" | "notification_events" => text(p, "category_code").map(str::to_string),
+            "notifications" => match text(p, "notification_event_sync_id") {
+                Some(event) => {
+                    category_of(
+                        "SELECT category_code AS c FROM notification_events WHERE entity_sync_id = ?",
+                        event.to_string(),
+                    )
+                    .await?
+                }
+                None => None,
+            },
+            _ => match text(p, "notification_sync_id") {
+                Some(notification) => {
+                    category_of(
+                        "SELECT e.category_code AS c FROM notifications n \
+                           JOIN notification_events e ON e.id = n.notification_event_id WHERE n.entity_sync_id = ?",
+                        notification.to_string(),
+                    )
+                    .await?
+                }
+                None => None,
+            },
+        },
+    };
+    let locked = |c: &Option<String>| c.as_deref() == Some(RECEIVED_RULE_CATEGORY);
+    if locked(&held) || locked(&named) {
+        let what = if received.is_none() { "deleted" } else { "changed" };
+        return Ok(Some(InboundVerdict::Conflict {
+            code: "NOTIFICATION_CATEGORY_LOCKED",
+            message: format!(
+                "{entity_type} {entity_sync_id}: rows of '{RECEIVED_RULE_CATEGORY}' stay on each PC and are never \
+                 {what} by synchronisation"
+            ),
+        }));
     }
+    Ok(None)
 }
 
 async fn three_person(conn: &impl ConnectionTrait, entity_sync_id: &str, received: &Payload) -> AppResult<()> {
@@ -392,6 +418,19 @@ async fn emit_notice(
     action_url: &str,
     message: &NotificationMessage,
 ) -> AppResult<()> {
+    // Once per change on this PC: keyed by the device-local `dedupe_key` (never sent, never
+    // received). The event id itself is random: nothing received can predict or plant it.
+    let noticed = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM notification_events WHERE dedupe_key = ? AND category_code = ?",
+            [basis.into(), RECEIVED_RULE_CATEGORY.into()],
+        ))
+        .await?
+        .is_some();
+    if noticed {
+        return Ok(());
+    }
     emit(
         conn,
         &NotificationEventInput {
@@ -400,16 +439,30 @@ async fn emit_notice(
             event_code: RECEIVED_RULE_CATEGORY.to_string(),
             category_code: RECEIVED_RULE_CATEGORY.to_string(),
             severity: "warning".to_string(),
-            dedupe_key: None,
+            dedupe_key: Some(basis.to_string()),
             payload_json: Some(json!({ "entity_type": entity_type, "entity_sync_id": entity_sync_id }).to_string()),
             title,
             body: Some(body),
             action_url: Some(action_url.to_string()),
         },
-        Some(seeded_entity_sync_id("notification_events", basis)),
+        None,
         Some(message),
         Arrival::New,
     )
     .await?;
+    // The event written is this category's, created here (its local key is set only here).
+    let created = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM notification_events WHERE dedupe_key = ? AND category_code = ?",
+            [basis.into(), RECEIVED_RULE_CATEGORY.into()],
+        ))
+        .await?
+        .is_some();
+    if !created {
+        return Err(hook_err(format!(
+            "the notice of {entity_type} {entity_sync_id} was not created here"
+        )));
+    }
     Ok(())
 }

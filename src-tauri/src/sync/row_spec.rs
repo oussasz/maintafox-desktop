@@ -979,12 +979,20 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("site_settings", &[]),
     spec("site_setting_events", &[]),
     // ── Notifications ───────────────────────────────────────────────────────────────────────
-    spec("notification_categories", &[]),
+    RowSpec {
+        // The safety rule notice is local to each PC (`settings::received_notice`): its category
+        // and rule rows never travel (each PC has them from migration 246).
+        row_filter: Some("{row}.code IS NOT 'safety_rule_received'"),
+        ..spec("notification_categories", &[])
+    },
     spec("notification_escalation_policies", &[]),
-    spec(
-        "notification_rules",
-        &[r("escalation_policy_id", "notification_escalation_policies")],
-    ),
+    RowSpec {
+        row_filter: Some("{row}.category_code IS NOT 'safety_rule_received'"),
+        ..spec(
+            "notification_rules",
+            &[r("escalation_policy_id", "notification_escalation_policies")],
+        )
+    },
     spec(
         "notification_escalation_steps",
         &[
@@ -1093,10 +1101,17 @@ pub const ROW_SPECS: &[RowSpec] = &[
             ],
         )
     },
-    spec(
-        "notification_acknowledgements",
-        &[r("notification_id", "notifications"), r("acknowledged_by_id", USER)],
-    ),
+    RowSpec {
+        // An acknowledgement of the safety rule notice stays on this PC with its notification.
+        row_filter: Some(
+            "NOT EXISTS (SELECT 1 FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+             WHERE n.id = {row}.notification_id AND e.category_code = 'safety_rule_received')",
+        ),
+        ..spec(
+            "notification_acknowledgements",
+            &[r("notification_id", "notifications"), r("acknowledged_by_id", USER)],
+        )
+    },
     // ── Reports ─────────────────────────────────────────────────────────────────────────────
     spec("report_templates", &[]),
     RowSpec {

@@ -38,6 +38,8 @@ pub struct RuleConfig {
     pub is_user_configurable: bool,
     /// Recipients are named elsewhere (budget alert configuration, digest): no audiences here.
     pub fixed_routing: bool,
+    /// Nothing of the rule can be changed (`catalog::ALWAYS_DELIVERED`): shown locked.
+    pub locked: bool,
     pub is_active: bool,
     pub audiences: Vec<String>,
     pub requires_ack: bool,
@@ -109,6 +111,7 @@ pub async fn load(conn: &impl ConnectionTrait) -> AppResult<NotificationConfig> 
                 .map_err(|e| decode("cfg", e))?
                 == 1,
             fixed_routing: catalog::FIXED_ROUTING_CATEGORIES.contains(&code.as_str()),
+            locked: catalog::always_delivered_audience(&code).is_some(),
             is_active: r.try_get::<i64>("", "is_active").map_err(|e| decode("is_active", e))? == 1,
             audiences: catalog::rule_audiences(audiences_json.as_deref(), &routing_mode)
                 .iter()
@@ -217,10 +220,10 @@ pub async fn update_rule(conn: &impl ConnectionTrait, input: &UpdateRuleInput) -
     let category: String = row.try_get("", "category_code").map_err(|e| decode("category", e))?;
     let mut sets: Vec<&str> = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
-    // A category that cannot be muted (`catalog::ALWAYS_DELIVERED`) stays active; its recipients are
-    // refused below with the other fixed-routing categories.
-    if input.is_active == Some(false) && catalog::always_delivered_audience(&category).is_some() {
-        return Err(gate(format!("'{category}' cannot be switched off")));
+    // A category that cannot be muted (`catalog::ALWAYS_DELIVERED`): nothing of its rule changes
+    // (active, recipients, acknowledgement, escalation).
+    if catalog::always_delivered_audience(&category).is_some() {
+        return Err(gate(format!("the rule of '{category}' is fixed: it cannot be changed")));
     }
     if let Some(active) = input.is_active {
         sets.push("is_active = ?");

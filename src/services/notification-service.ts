@@ -157,6 +157,8 @@ const RuleConfigSchema = z.object({
   default_severity: z.string(),
   is_user_configurable: z.boolean(),
   fixed_routing: z.boolean(),
+  /** Nothing of the rule can be changed (the safety rule notice): shown locked. */
+  locked: z.boolean(),
   is_active: z.boolean(),
   audiences: z.array(z.string()),
   requires_ack: z.boolean(),

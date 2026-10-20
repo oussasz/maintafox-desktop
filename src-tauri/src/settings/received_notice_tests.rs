@@ -535,7 +535,7 @@ async fn the_notice_cannot_be_muted_or_re_routed() {
     )
     .await
     .expect("rule sync id");
-    let held_rule = wire(&db, "notification_rules", &rule_sync).await;
+    let held_rule = rule_payload(RECEIVED_RULE_CATEGORY);
     for change in [
         ("is_active", serde_json::json!(0)),
         ("audiences_json", serde_json::json!("[\"assignee\"]")),
@@ -561,7 +561,7 @@ async fn the_notice_cannot_be_muted_or_re_routed() {
     )
     .await
     .expect("category sync id");
-    let held_category = wire(&db, "notification_categories", &category_sync).await;
+    let held_category = category_payload(RECEIVED_RULE_CATEGORY);
     for change in [
         ("is_user_configurable", serde_json::json!(1)),
         ("module_code", serde_json::json!("fin")),
@@ -661,4 +661,277 @@ async fn a_refused_three_person_change_is_not_announced() {
     let outcome = apply(&db, "permit_types", &sync, &received).await;
     assert!(conflict_code(&outcome).is_some(), "{outcome:?}");
     assert_eq!(all_notices(&db).await, 0);
+}
+
+// ── Local-only: sync never touches anything of the category (review of 4cb9b376) ────────────
+
+/// Rows of the notice are never loaded as payloads here (they never travel): what another PC
+/// would send for them is written out.
+fn payload(value: serde_json::Value) -> Payload {
+    let mut p: Payload = serde_json::from_value(value).expect("payload");
+    p.insert("_sync_format".into(), serde_json::json!("row.v1"));
+    p
+}
+
+fn rule_payload(category: &str) -> Payload {
+    payload(serde_json::json!({
+        "category_code": category,
+        "routing_mode": "manual",
+        "requires_ack": 0,
+        "dedupe_window_minutes": 0,
+        "is_active": 1,
+        "audiences_json": "[\"permission:adm.settings\"]",
+    }))
+}
+
+fn category_payload(code: &str) -> Payload {
+    payload(serde_json::json!({
+        "code": code,
+        "label": "Safety rule changed on another PC",
+        "default_severity": "warning",
+        "default_requires_ack": 0,
+        "is_user_configurable": 0,
+        "module_code": "system",
+        "is_offered": 1,
+    }))
+}
+
+async fn delete(db: &DatabaseConnection, entity_type: &str, sync_id: &str) -> ApplyOutcome {
+    use sea_orm::TransactionTrait;
+    let layout = crate::sync::row_layout::layout(db, entity_type).await.expect("layout");
+    let payload = crate::sync::row_codec::delete_payload(&layout, None);
+    let tx = db.begin().await.expect("begin");
+    let outcome = crate::sync::row_codec::apply_row(
+        &tx,
+        &layout,
+        sync_id,
+        "delete",
+        &serde_json::to_string(&payload).expect("json"),
+    )
+    .await
+    .expect("apply");
+    if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged) {
+        tx.commit().await.expect("commit");
+    } else {
+        tx.rollback().await.expect("rollback");
+    }
+    crate::sync::row_codec::clear_ref_cache();
+    outcome
+}
+
+async fn sync_id_of(db: &DatabaseConnection, sql: &str) -> String {
+    scalar_opt_text(db, sql, vec![RECEIVED_RULE_CATEGORY.into()])
+        .await
+        .expect("sync id")
+}
+
+/// The category and rule rows of the notice are never deleted, renamed or taken over by sync.
+#[tokio::test]
+async fn the_notice_rows_are_never_deleted_renamed_or_taken_over_by_sync() {
+    let db = crate::sync::test_support::started_db().await;
+    let rule = sync_id_of(
+        &db,
+        "SELECT entity_sync_id FROM notification_rules WHERE category_code = ?",
+    )
+    .await;
+    let category = sync_id_of(&db, "SELECT entity_sync_id FROM notification_categories WHERE code = ?").await;
+    for (entity_type, sync) in [("notification_rules", &rule), ("notification_categories", &category)] {
+        let outcome = delete(&db, entity_type, sync).await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some("NOTIFICATION_CATEGORY_LOCKED"),
+            "{entity_type}: {outcome:?}"
+        );
+    }
+    // Renamed through their own sync ids: judged on the row held here.
+    let renamed_rule = rule_payload("sync_conflict");
+    let outcome = apply(&db, "notification_rules", &rule, &renamed_rule).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("NOTIFICATION_CATEGORY_LOCKED"),
+        "{outcome:?}"
+    );
+    let renamed_category = category_payload("zzz");
+    let outcome = apply(&db, "notification_categories", &category, &renamed_category).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("NOTIFICATION_CATEGORY_LOCKED"),
+        "{outcome:?}"
+    );
+    // Another row taking its code.
+    let other = sync_id_of(
+        &db,
+        "SELECT entity_sync_id FROM notification_rules WHERE category_code <> ? LIMIT 1",
+    )
+    .await;
+    let taken = with(
+        wire(&db, "notification_rules", &other).await,
+        &[("category_code", serde_json::json!(RECEIVED_RULE_CATEGORY))],
+    );
+    let outcome = apply(&db, "notification_rules", &other, &taken).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("NOTIFICATION_CATEGORY_LOCKED"),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM notification_categories c JOIN notification_rules r ON r.category_code = c.code \
+             WHERE c.code = ? AND r.is_active = 1",
+            vec![RECEIVED_RULE_CATEGORY.into()],
+        )
+        .await,
+        1,
+        "both rows kept as they were"
+    );
+}
+
+/// The event id is random and the notice is keyed locally: an event planted under the id the
+/// earlier version would have used does not take the notice over; an event, notification or
+/// acknowledgement of the category received from another PC is refused; nothing of it is captured.
+#[tokio::test]
+async fn a_planted_or_received_notice_row_never_replaces_or_joins_the_notice() {
+    let db = crate::sync::test_support::started_db().await;
+    let (_, rule) = opted_out_site(&db).await;
+    let at = "2026-10-20T09:00:00Z";
+    // Planted under the formerly predictable id, in another category.
+    let basis = format!("{RECEIVED_RULE_CATEGORY}|site|{rule}|{at}|false");
+    exec(
+        &db,
+        "INSERT INTO notification_events (entity_sync_id, source_module, event_code, category_code, severity) \
+         VALUES (?, 'sync', 'planted', 'sync_conflict', 'info')",
+        vec![crate::sync::identity::seeded_entity_sync_id("notification_events", &basis).into()],
+    )
+    .await;
+    let outcome = apply(&db, "site_settings", &rule, &back_to_four_eyes(&db, &rule, at).await).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        notices(&db, "site_rule_received_off").await,
+        1,
+        "its own event, created here"
+    );
+    assert!(recipients(&db).await.contains(&admin(&db).await));
+
+    // Rows of the category received from another PC: refused, whatever their sync id.
+    let event = sync_id_of(
+        &db,
+        "SELECT entity_sync_id FROM notification_events WHERE category_code = ?",
+    )
+    .await;
+    let received_event = payload(serde_json::json!({
+        "source_module": "settings",
+        "event_code": RECEIVED_RULE_CATEGORY,
+        "category_code": RECEIVED_RULE_CATEGORY,
+        "severity": "warning",
+    }));
+    for sync in [event.as_str(), "event-planted-by-another-pc"] {
+        let outcome = apply(&db, "notification_events", sync, &received_event).await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some("NOTIFICATION_CATEGORY_LOCKED"),
+            "{sync}: {outcome:?}"
+        );
+    }
+    let notification = sync_id_of(
+        &db,
+        "SELECT n.entity_sync_id FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+         WHERE e.category_code = ? LIMIT 1",
+    )
+    .await;
+    let received_notification = payload(serde_json::json!({
+        "notification_event_sync_id": event,
+        "delivery_state": "pending",
+        "title": "Received",
+    }));
+    for sync in [notification.as_str(), "notification-planted-by-another-pc"] {
+        let outcome = apply(&db, "notifications", sync, &received_notification).await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some("NOTIFICATION_CATEGORY_LOCKED"),
+            "{sync}: {outcome:?}"
+        );
+    }
+    // Deleted by another PC: refused (an event is history, already never deleted by sync).
+    for (entity_type, sync, refusal) in [
+        ("notification_events", &event, "APPEND_ONLY_DELETE"),
+        ("notifications", &notification, "NOTIFICATION_CATEGORY_LOCKED"),
+    ] {
+        let outcome = delete(&db, entity_type, sync).await;
+        assert_eq!(conflict_code(&outcome), Some(refusal), "{entity_type}: {outcome:?}");
+    }
+    let ack = payload(serde_json::json!({
+        "notification_sync_id": notification,
+        "acknowledged_at": "2026-10-20T09:05:00Z",
+    }));
+    let outcome = apply(&db, "notification_acknowledgements", "ack-planted-by-another-pc", &ack).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("NOTIFICATION_CATEGORY_LOCKED"),
+        "{outcome:?}"
+    );
+
+    // Acknowledged here: stays here (nothing captured for another PC to wait on).
+    exec(
+        &db,
+        "INSERT INTO notification_acknowledgements (notification_id, acknowledged_by_id) \
+         SELECT n.id, n.recipient_user_id FROM notifications n JOIN notification_events e \
+           ON e.id = n.notification_event_id WHERE e.category_code = ? LIMIT 1",
+        vec![RECEIVED_RULE_CATEGORY.into()],
+    )
+    .await;
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type IN \
+             ('notification_acknowledgements', 'notifications', 'notification_events', 'notification_rules', \
+              'notification_categories') AND entity_sync_id IS NOT ?",
+            // The planted event of another category is ordinary data: it travels.
+            vec![crate::sync::identity::seeded_entity_sync_id("notification_events", &basis).into()],
+        )
+        .await,
+        0
+    );
+}
+
+/// Nothing of its rule can be changed here: acknowledgement and escalation included.
+#[tokio::test]
+async fn nothing_of_the_notice_rule_can_be_changed_here() {
+    let db = crate::sync::test_support::started_db().await;
+    let rule_id = scalar_i64(
+        &db,
+        "SELECT id FROM notification_rules WHERE category_code = ?",
+        vec![RECEIVED_RULE_CATEGORY.into()],
+    )
+    .await;
+    for input in [
+        crate::notifications::config::UpdateRuleInput {
+            rule_id,
+            is_active: None,
+            audiences: None,
+            requires_ack: Some(true),
+            escalation_policy_id: None,
+            lead_time_minutes: None,
+        },
+        crate::notifications::config::UpdateRuleInput {
+            rule_id,
+            is_active: None,
+            audiences: None,
+            requires_ack: None,
+            escalation_policy_id: Some(None),
+            lead_time_minutes: None,
+        },
+    ] {
+        assert!(
+            crate::notifications::config::update_rule(&db, &input).await.is_err(),
+            "{input:?}"
+        );
+    }
+    let config = crate::notifications::config::load(&db).await.expect("config");
+    let shown = config
+        .rules
+        .iter()
+        .find(|r| r.category_code == RECEIVED_RULE_CATEGORY)
+        .expect("listed");
+    assert!(shown.locked && shown.is_active && !shown.requires_ack);
 }
