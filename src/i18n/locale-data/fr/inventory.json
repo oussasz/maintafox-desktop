@@ -10,6 +10,39 @@
     "stockBelowReorder": "Au point de commande ou en dessous",
     "stockOut": "Rien de disponible"
   },
+  "transfer": {
+    "action": "Transférer",
+    "actionHint": "Transférer ce stock vers un autre magasin",
+    "title": "Transférer du stock vers un autre magasin",
+    "description": "Déplace du stock disponible de ce magasin vers un autre. Le stock réservé reste en place.",
+    "cancel": "Annuler",
+    "submit": "Transférer",
+    "sections": {
+      "source": "Article et magasin source",
+      "move": "Transfert"
+    },
+    "from": "Magasin source",
+    "to": "Magasin de destination",
+    "toPlaceholder": "Choisir le magasin de destination",
+    "noDestination": "Aucun autre magasin actif n’est disponible.",
+    "storesFailed": "La liste des magasins n’a pas pu être chargée.",
+    "availableLine": "Disponible : {{available}} {{unit}} (en stock {{onHand}}, dont {{reserved}} réservé, non transférable)",
+    "lot": "Lot ou numéro de série",
+    "lotFefo": "Automatique : le lot qui expire en premier (FEFO)",
+    "quantity": "Quantité ({{unit}})",
+    "quantityMax": "Maximum transférable : {{max}} {{unit}}",
+    "wholeUnitsHint": "Cet article est suivi par numéro de série : la quantité se transfère par unités entières.",
+    "reason": "Motif",
+    "confirm": "Transférer {{qty}} {{unit}} de {{article}} du magasin {{from}} vers {{to}} ?",
+    "done": "{{qty}} {{unit}} de {{article}} transférées vers {{to}}.",
+    "errors": {
+      "toRequired": "Choisissez le magasin de destination.",
+      "quantityInvalid": "Saisissez une quantité supérieure à 0.",
+      "quantityAbove": "La quantité dépasse le stock disponible ({{max}} {{unit}}).",
+      "wholeUnits": "Saisissez un nombre entier d’unités.",
+      "reasonShort": "Le motif doit faire au moins {{min}} caractères."
+    }
+  },
   "adjustStock": {
     "title": "Ajuster le stock",
     "description": "Enregistrer une entrée, une sortie ou un ajustement pour cet article.",
