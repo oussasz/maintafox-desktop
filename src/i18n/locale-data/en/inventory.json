@@ -10,8 +10,13 @@
     "stockBelowReorder": "At or below reorder point",
     "stockOut": "Nothing available"
   },
+  "negativeStock": {
+    "label": "Negative stock",
+    "hint": "To be corrected: another PC may have recorded a movement"
+  },
   "transfer": {
     "action": "Transfer",
+    "noneAvailable": "No available stock to transfer",
     "actionHint": "Transfer this stock to another store",
     "title": "Transfer stock to another store",
     "description": "Moves available stock from this store to another one. Reserved stock stays where it is.",
@@ -34,7 +39,7 @@
     "wholeUnitsHint": "This article is serial-tracked: the quantity is transferred in whole units.",
     "reason": "Reason",
     "confirm": "Transfer {{qty}} {{unit}} of {{article}} from store {{from}} to {{to}}?",
-    "done": "{{qty}} {{unit}} of {{article}} transferred to {{to}}.",
+    "done": "Transfer done: {{qty}} {{unit}} of {{article}} to {{to}}",
     "errors": {
       "toRequired": "Choose the destination store.",
       "quantityInvalid": "Enter a quantity greater than 0.",

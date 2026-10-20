@@ -26,7 +26,7 @@ export function StockTransferAction({ article, balance, onTransferred }: StockTr
         variant="outline"
         size="sm"
         className="gap-1.5"
-        title={t("transfer.actionHint")}
+        title={balance.available_qty <= 0 ? t("transfer.noneAvailable") : t("transfer.actionHint")}
         disabled={balance.available_qty <= 0}
         onClick={() => setOpen(true)}
       >

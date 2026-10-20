@@ -10,8 +10,13 @@
     "stockBelowReorder": "Au point de commande ou en dessous",
     "stockOut": "Rien de disponible"
   },
+  "negativeStock": {
+    "label": "Stock négatif",
+    "hint": "À corriger : un autre poste a peut-être enregistré un mouvement"
+  },
   "transfer": {
     "action": "Transférer",
+    "noneAvailable": "Aucun stock disponible à transférer",
     "actionHint": "Transférer ce stock vers un autre magasin",
     "title": "Transférer du stock vers un autre magasin",
     "description": "Déplace du stock disponible de ce magasin vers un autre. Le stock réservé reste en place.",
@@ -34,7 +39,7 @@
     "wholeUnitsHint": "Cet article est suivi par numéro de série : la quantité se transfère par unités entières.",
     "reason": "Motif",
     "confirm": "Transférer {{qty}} {{unit}} de {{article}} du magasin {{from}} vers {{to}} ?",
-    "done": "{{qty}} {{unit}} de {{article}} transférées vers {{to}}.",
+    "done": "Transfert effectué : {{qty}} {{unit}} de {{article}} vers {{to}}",
     "errors": {
       "toRequired": "Choisissez le magasin de destination.",
       "quantityInvalid": "Saisissez une quantité supérieure à 0.",

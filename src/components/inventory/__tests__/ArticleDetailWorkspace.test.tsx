@@ -225,6 +225,41 @@ describe("ArticleDetailWorkspace", () => {
     expect(screen.queryByText("RECEIVED_CLOSED")).toBeNull();
   });
 
+  it("flags a negative stock position with a text badge and a tooltip, and says why transfer is off", async () => {
+    const line = (id: number, onHand: number, reserved: number) => ({
+      id,
+      article_id: 4,
+      article_code: "ART-001",
+      article_name: "Bearing 6204",
+      warehouse_id: 1,
+      warehouse_code: "MAIN",
+      warehouse_name: "Main store",
+      location_id: id,
+      location_code: `BIN-${id}`,
+      location_name: null,
+      on_hand_qty: onHand,
+      reserved_qty: reserved,
+      available_qty: onHand - reserved,
+      moving_avg_unit_cost: null,
+      updated_at: TS,
+    });
+    svc.listInventoryStockBalances.mockResolvedValue([line(1, -2, 0), line(2, 4, 1)]);
+
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: "Stock Positions" }));
+
+    const badges = await screen.findAllByText("Negative stock");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]?.closest("span[title]")).toHaveAttribute(
+      "title",
+      "To be corrected: another PC may have recorded a movement",
+    );
+    const transferButtons = screen.getAllByRole("button", { name: /Transfer/ });
+    expect(transferButtons[0]).toBeDisabled();
+    expect(transferButtons[0]).toHaveAttribute("title", "No available stock to transfer");
+    expect(transferButtons[1]).toBeEnabled();
+  });
+
   it("adds an equivalent with a backend equivalence type and removes it only after confirmation", async () => {
     svc.upsertInventoryArticleEquivalent.mockResolvedValue({});
     svc.listInventoryArticleEquivalents.mockResolvedValue([

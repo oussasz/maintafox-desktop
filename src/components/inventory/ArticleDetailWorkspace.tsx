@@ -23,6 +23,7 @@ import {
 } from "@/components/detail";
 import { ArticleConsumptionChart } from "@/components/inventory/ArticleConsumptionChart";
 import { InventoryAdjustmentDialog } from "@/components/inventory/InventoryAdjustmentDialog";
+import { NegativeStockBadge } from "@/components/inventory/NegativeStockBadge";
 import { ReservationInsightsPanel } from "@/components/inventory/ReservationInsightsPanel";
 import { StockTransferAction } from "@/components/inventory/StockTransferAction";
 import {
@@ -601,7 +602,8 @@ export function ArticleDetailWorkspace({
                         onTransferred={handleStockAdjusted}
                       />
                     </div>
-                    <div className="mt-1 text-xs text-text-muted">
+                    <div className="mt-1 flex flex-wrap items-center gap-x-1 text-xs text-text-muted">
+                      <NegativeStockBadge onHand={b.on_hand_qty} available={b.available_qty} />
                       {t("detail.kpis.onHand")}: {formatQty(b.on_hand_qty)} ·{" "}
                       {t("detail.kpis.reserved")}: {formatQty(b.reserved_qty)} ·{" "}
                       {t("detail.kpis.available")}: {formatQty(b.available_qty)} ·{" "}
