@@ -20,6 +20,14 @@ vi.mock("@/services/permit-service", () => svc);
 const rbac = vi.hoisted(() => ({ verifyStepUp: vi.fn() }));
 vi.mock("@/services/rbac-service", () => rbac);
 
+// Permit types are plant-wide: the rights at no node (node 0).
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: (node: number | null | undefined) => ({
+    loading: false,
+    can: (p: string) => node === 0 && (p === P.PTW_VIEW || p === P.PTW_ISSUE),
+  }),
+}));
+
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({
     can: (p: string) => p === P.PTW_VIEW || p === P.PTW_ISSUE,

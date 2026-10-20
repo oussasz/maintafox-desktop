@@ -147,6 +147,26 @@ pub struct PermitIsolation {
     pub verified_by_name: Option<String>,
     #[serde(default)]
     pub removal_verified_by_name: Option<String>,
+    /// Set when a planned line (never applied) was cancelled: kept as history, "Annulée", never a
+    /// lock to fit (migration 243).
+    #[serde(default)]
+    pub cancelled_at: Option<String>,
+    #[serde(default)]
+    pub cancelled_by_id: Option<i64>,
+    #[serde(default)]
+    pub cancelled_by_name: Option<String>,
+}
+
+/// One list of permits limited to the reader's sites (`list_work_permits`, the open-permits
+/// report), with the permits left out and why (rule §2.4: shown as a count, never silently).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkPermitListPage {
+    pub items: Vec<WorkPermit>,
+    /// Permits the reader's sites do not cover, whatever the filters. Always 0 plant-wide.
+    pub hidden_outside_scope: i64,
+    /// Permits without an org node (plant-wide readers only), whatever the filters. Always 0
+    /// plant-wide.
+    pub hidden_without_site: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -272,6 +292,13 @@ pub struct PermitIsolationActionInput {
     /// Only for `apply`: lock number fitted at application time.
     #[serde(default)]
     pub lock_number: Option<String>,
+}
+
+/// Cancel a planned isolation line (`cancel_permit_isolation`): the session user is recorded.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermitIsolationCancelInput {
+    pub isolation_id: i64,
+    pub expected_row_version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

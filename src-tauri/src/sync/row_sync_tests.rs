@@ -674,6 +674,166 @@ async fn received_stock_movements_update_stock_balances() {
     assert_eq!(on_b, on_a, "B must hold the same balance as A");
 }
 
+/// A tenant-wide role assignment stores the licence tenant id as its scope reference (licence
+/// activation, first administrator): it reaches the other devices unchanged. Before 'tenant' was
+/// a mapped scope type such a change could not be staged and stayed in the journal with an open
+/// `STAGE_ERROR` conflict; once it stages that conflict is closed.
+#[tokio::test]
+async fn tenant_wide_assignment_with_tenant_id_reaches_other_devices() {
+    use super::queries::{record_sync_conflict, NewSyncConflict};
+    use super::test_support::scalar_opt_text;
+
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let assignment = factory.create(&a, "user_scope_assignments").await.expect("assignment");
+    exec(
+        &a,
+        "UPDATE user_scope_assignments SET scope_type = 'tenant', scope_reference = 'tenant-plant-01' WHERE id = ?",
+        vec![assignment.rowid.into()],
+    )
+    .await;
+    // What the earlier failed attempt left behind.
+    record_sync_conflict(
+        &a,
+        NewSyncConflict {
+            source_scope: "outbox",
+            source_batch_id: None,
+            linked_outbox_id: None,
+            linked_inbox_id: None,
+            entity_type: "user_scope_assignments".to_string(),
+            entity_sync_id: assignment.entity_sync_id.clone(),
+            operation: "upsert".to_string(),
+            conflict_type: "STAGE_ERROR".to_string(),
+            local_payload_json: Some(r#"{"error":"not a mapped reference type"}"#.to_string()),
+            inbound_payload_json: None,
+            checkpoint_token: None,
+            local_row_version: None,
+            inbound_row_version: None,
+        },
+    )
+    .await
+    .expect("earlier stage failure");
+
+    let pushed = server.exchange("A", &a).await;
+    let mut problems = Vec::new();
+    check_exchange(&pushed, "push", &mut problems);
+    let received = server.exchange("B", &b).await;
+    check_exchange(&received, "receive", &mut problems);
+    assert!(problems.is_empty(), "{problems:?}");
+
+    let open = scalar_i64(
+        &a,
+        "SELECT COUNT(*) FROM sync_conflicts WHERE conflict_type = 'STAGE_ERROR' AND entity_sync_id = ?
+           AND status IN ('new', 'triaged', 'escalated')",
+        vec![assignment.entity_sync_id.clone().into()],
+    )
+    .await;
+    assert_eq!(open, 0, "the stage failure is closed once the change is staged");
+    let on_b = scalar_opt_text(
+        &b,
+        "SELECT scope_type || ':' || scope_reference FROM user_scope_assignments WHERE entity_sync_id = ?",
+        vec![assignment.entity_sync_id.clone().into()],
+    )
+    .await;
+    assert_eq!(on_b.as_deref(), Some("tenant:tenant-plant-01"));
+}
+
+/// The `STAGE_ERROR` conflict follows the change: closed when it stages, open again when it fails
+/// again later; a person who resolves it keeps the decision and is recorded as its author.
+#[tokio::test]
+async fn stage_failure_reopens_and_keeps_the_operator_choice() {
+    use super::domain::ResolveSyncConflictInput;
+    use super::queries::resolve_sync_conflict;
+    use super::test_support::scalar_opt_text;
+
+    let a = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let assignment = factory.create(&a, "user_scope_assignments").await.expect("assignment");
+    server.exchange("A", &a).await;
+    let state = |a: &DatabaseConnection, id: String| {
+        let a = a.clone();
+        async move {
+            scalar_opt_text(
+                &a,
+                "SELECT status || ':' || COALESCE(resolution_action, '-') FROM sync_conflicts
+                 WHERE conflict_type = 'STAGE_ERROR' AND entity_sync_id = ?",
+                vec![id.into()],
+            )
+            .await
+        }
+    };
+    let set_scope = |scope_type: &'static str| {
+        exec(
+            &a,
+            "UPDATE user_scope_assignments SET scope_type = ?, scope_reference = 'x' WHERE id = ?",
+            vec![scope_type.into(), assignment.rowid.into()],
+        )
+    };
+    let id = assignment.entity_sync_id.clone();
+
+    set_scope("unknown_scope").await;
+    server.exchange("A", &a).await;
+    assert_eq!(state(&a, id.clone()).await.as_deref(), Some("new:-"));
+    set_scope("tenant").await;
+    server.exchange("A", &a).await;
+    assert_eq!(
+        state(&a, id.clone()).await.as_deref(),
+        Some("resolved_local:auto_restaged")
+    );
+    set_scope("unknown_scope").await;
+    server.exchange("A", &a).await;
+    assert_eq!(
+        state(&a, id.clone()).await.as_deref(),
+        Some("new:-"),
+        "a new failure opens the conflict again"
+    );
+
+    // The person fixes the record and keeps the local version: the drain inside the resolution
+    // stages the change, and the conflict records the person's choice, not the automatic close.
+    set_scope("tenant").await;
+    let (conflict_id, version) = (
+        scalar_i64(
+            &a,
+            "SELECT id FROM sync_conflicts WHERE conflict_type = 'STAGE_ERROR' AND entity_sync_id = ?",
+            vec![id.clone().into()],
+        )
+        .await,
+        scalar_i64(
+            &a,
+            "SELECT row_version FROM sync_conflicts WHERE conflict_type = 'STAGE_ERROR' AND entity_sync_id = ?",
+            vec![id.clone().into()],
+        )
+        .await,
+    );
+    let operator = scalar_i64(&a, "SELECT id FROM user_accounts ORDER BY id LIMIT 1", vec![]).await;
+    resolve_sync_conflict(
+        &a,
+        operator,
+        ResolveSyncConflictInput {
+            conflict_id,
+            expected_row_version: version,
+            action: "accept_local".into(),
+            resolution_note: Some("scope corrected".into()),
+        },
+    )
+    .await
+    .expect("resolve");
+    assert_eq!(
+        state(&a, id.clone()).await.as_deref(),
+        Some("resolved_local:accept_local")
+    );
+    let author = scalar_i64(
+        &a,
+        "SELECT resolved_by_id FROM sync_conflicts WHERE id = ?",
+        vec![conflict_id.into()],
+    )
+    .await;
+    assert_eq!(author, operator);
+}
+
 /// Every domain list above, in domain order.
 const DOMAIN_TYPES: &[&[&str]] = &[
     FOUNDATION_TYPES,

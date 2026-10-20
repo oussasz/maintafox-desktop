@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui";
+import { useAccessAt } from "@/hooks/use-access-at";
 import { appErrorReason } from "@/lib/app-error";
 import {
   createWorkPermit,
@@ -25,6 +26,7 @@ import {
   type WorkPermitRecord,
 } from "@/services/permit-service";
 import type { AssetSearchResult } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { localInputToIso, toLocalInputValue } from "./permit-rules";
 import { usePermitTypeName } from "./permit-type-name";
@@ -33,6 +35,8 @@ export interface PermitCreateWorkOrder {
   id: number;
   code: string;
   assetLabel: string | null;
+  /** The work order's site (`entity_id`), when it has one. */
+  siteId?: number | null;
 }
 
 interface PermitCreateDialogProps {
@@ -84,6 +88,14 @@ export function PermitCreateDialog({
   };
 
   const needsAsset = workOrder == null;
+  // The permit is issued at the equipment's (or the work order's) site: once it is known, the
+  // issue right is read there. Before, the page's "held anywhere" check let the dialog open and
+  // the backend stays the authority.
+  const siteId = workOrder != null ? (workOrder.siteId ?? null) : (asset?.org_node_id ?? null);
+  const siteKnown = siteId != null && siteId > 0;
+  const siteAccess = useAccessAt(siteKnown ? siteId : null);
+  const rightsLoading = siteKnown && siteAccess.loading;
+  const noIssueRightAtSite = siteKnown && !siteAccess.loading && !siteAccess.can(P.PTW_ISSUE);
   const typeError = submitted && !typeId ? t("errors.required") : undefined;
   const assetError = submitted && needsAsset && !asset ? t("errors.required") : undefined;
   const expiryError = submitted && !localInputToIso(expiresAt) ? t("errors.required") : undefined;
@@ -172,6 +184,12 @@ export function PermitCreateDialog({
             <p className="text-xs text-text-muted">{selectedType.description}</p>
           ) : null}
 
+          {noIssueRightAtSite ? (
+            <p role="alert" className="text-sm text-tone-danger-fg">
+              {t("siteScope.noIssueRightAtSite")}
+            </p>
+          ) : null}
+
           {error ? (
             <p role="alert" className="text-sm text-tone-danger-fg">
               {error}
@@ -182,7 +200,7 @@ export function PermitCreateDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {t("actions.cancel")}
             </Button>
-            <Button type="submit" disabled={busy}>
+            <Button type="submit" disabled={busy || noIssueRightAtSite || rightsLoading}>
               {t("create.submit")}
             </Button>
           </DialogFooter>

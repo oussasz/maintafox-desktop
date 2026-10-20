@@ -101,6 +101,14 @@ vi.mock("@/hooks/use-permissions", () => ({
   }),
 }));
 
+// Rights at a permit's site (and at no node): the same grants as the "held anywhere" set here.
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: (node: number | null | undefined) => ({
+    loading: false,
+    can: (p: string) => node != null && !perms.denied.has(p),
+  }),
+}));
+
 const LOTO_TYPE: PermitTypeRecord = {
   id: 1,
   entity_sync_id: "t1",
@@ -174,6 +182,11 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
   };
 }
 
+/** A permit list of the user's sites, nothing left out. */
+function page(items: WorkPermitRecord[]) {
+  return { items, hidden_outside_scope: 0, hidden_without_site: 0 };
+}
+
 /** Applied by user 7, not yet verified. */
 function isolation(overrides: Partial<PermitIsolationRecord> = {}): PermitIsolationRecord {
   return {
@@ -200,6 +213,9 @@ function isolation(overrides: Partial<PermitIsolationRecord> = {}): PermitIsolat
     applied_by_name: "Amine Tech",
     verified_by_name: null,
     removal_verified_by_name: null,
+    cancelled_at: null,
+    cancelled_by_id: null,
+    cancelled_by_name: null,
     ...overrides,
   };
 }
@@ -230,13 +246,13 @@ describe("PermitsPage", () => {
     vi.clearAllMocks();
     session.userId = 7;
     svc.listPermitTypes.mockResolvedValue([LOTO_TYPE]);
-    svc.listWorkPermits.mockResolvedValue([permit()]);
+    svc.listWorkPermits.mockResolvedValue(page([permit()]));
     svc.permitComplianceKpi30d.mockResolvedValue({
       activated_count: 0,
       handed_back_on_time_count: 0,
       rate: null,
     });
-    svc.listOpenPermitsReport.mockResolvedValue([]);
+    svc.listOpenPermitsReport.mockResolvedValue(page([]));
     svc.listPermitSuspensions.mockResolvedValue([]);
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitIsolations.mockResolvedValue([isolation()]);
@@ -295,7 +311,7 @@ describe("PermitsPage", () => {
 
   it("blocks closing until every lock removal is verified", async () => {
     session.userId = 8;
-    svc.listWorkPermits.mockResolvedValue([permit({ status: "active", row_version: 5 })]);
+    svc.listWorkPermits.mockResolvedValue(page([permit({ status: "active", row_version: 5 })]));
     svc.listPermitIsolations.mockResolvedValue([isolation({ ...VERIFIED, verified_by_id: 9 })]);
     svc.verifyPermitIsolationRemoval.mockImplementation(async () => {
       const removed = isolation({
@@ -325,7 +341,7 @@ describe("PermitsPage", () => {
   });
 
   it("opens the create dialog pre-linked to the work order from the WO launch point", async () => {
-    svc.listWorkPermits.mockResolvedValue([]);
+    svc.listWorkPermits.mockResolvedValue(page([]));
     getWo.mockResolvedValue({
       wo: { id: 5, code: "OT-0042", asset_code: "PMP-101", asset_label: "Feed pump" },
       transitions: [],
@@ -361,7 +377,7 @@ describe("PermitsPage", () => {
       asset_label: "Compressor",
     });
     svc.listWorkPermits.mockImplementation(async (filter: { search?: string }) =>
-      filter.search ? [compressor] : [permit(), compressor],
+      page(filter.search ? [compressor] : [permit(), compressor]),
     );
     renderPage();
     await screen.findByRole("button", { name: "Select PTW-2026-000042" });
@@ -410,7 +426,7 @@ describe("PermitsPage", () => {
       handed_back_on_time_count: 3,
       rate: 0.75,
     });
-    svc.listOpenPermitsReport.mockResolvedValue([permit(), permit({ id: 2 })]);
+    svc.listOpenPermitsReport.mockResolvedValue(page([permit(), permit({ id: 2 })]));
     renderPage();
     const tiles = await screen.findByTestId("permits-kpis");
     expect(within(tiles).getByText(enPermits.kpi.open)).toBeInTheDocument();
@@ -509,5 +525,27 @@ describe("PermitsPage", () => {
     const link = await screen.findByRole("link", { name: enPermits.actions.manageTypes });
     expect(link).toHaveAttribute("href", "/lookups?catalog=PERMIT.TYPES");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("says how many permits the list and the open report leave out, and why", async () => {
+    svc.listWorkPermits.mockResolvedValue({
+      items: [permit()],
+      hidden_outside_scope: 3,
+      hidden_without_site: 1,
+    });
+    svc.listOpenPermitsReport.mockResolvedValue({
+      items: [permit()],
+      hidden_outside_scope: 2,
+      hidden_without_site: 0,
+    });
+    renderPage();
+    const outside = await screen.findByText("3 permits are not shown: outside your sites.");
+    expect(outside.parentElement).toHaveTextContent("1 permit is not shown: it has no site.");
+    expect(await screen.findByText(/2 more open permits are outside your sites/)).toBeTruthy();
+  });
+
+  it("shows no notice when nothing is hidden", async () => {
+    renderPage();
+    await screen.findByText("PTW-2026-000041");
+    expect(screen.queryByText(/not shown: /)).toBeNull();
   });
 });

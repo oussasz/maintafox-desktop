@@ -14,6 +14,23 @@
     "select": "Select {{code}}",
     "retry": "Retry"
   },
+  "siteScope": {
+    "hidden": {
+      "outsideScope_one": "{{count}} permit is not shown: outside your sites.",
+      "outsideScope_other": "{{count}} permits are not shown: outside your sites.",
+      "withoutSite_one": "{{count}} permit is not shown: it has no site.",
+      "withoutSite_other": "{{count}} permits are not shown: they have no site.",
+      "allPermits": "These counts cover all permits, whatever the filters or search.",
+      "askPlantWide": "Ask a plant-wide user to see them."
+    },
+    "noSite": {
+      "badge": "To review: no site",
+      "hint": "Permit recorded without a site. Only users with a plant-wide role see it and can act on it."
+    },
+    "openHidden_one": "{{count}} more open permit is outside your sites or has no site: not counted",
+    "openHidden_other": "{{count}} more open permits are outside your sites or have no site: not counted",
+    "noIssueRightAtSite": "You do not hold the permit issue right at the site of this equipment."
+  },
   "kpi": {
     "title": "LOTO compliance (30 days)",
     "summary": "Activations: {{activated}} · Handed back on time: {{onTime}}",
@@ -119,7 +136,8 @@
       "pending": "Not applied",
       "applied": "Applied",
       "verified": "Verified",
-      "removed": "Removed"
+      "removed": "Removed",
+      "cancelled": "Cancelled"
     },
     "editLocked": "Isolations can only be added while the permit is not active.",
     "loadError": "The isolations of this permit could not be loaded",
@@ -135,6 +153,14 @@
     "threePersonNotice": "Three-person rule: {{name}} verified this isolation and may not confirm its removal.",
     "threePersonNoticeUnknown": "Three-person rule: the person who verified this isolation may not confirm its removal.",
     "threePersonSelf": "You verified this isolation — a third person must confirm its removal.",
+    "cancel": "Cancel the line",
+    "cancelTitle": "Cancel the isolation line",
+    "cancelKeep": "Keep the line",
+    "cancelConfirm": "The line “{{point}}” ({{energy}} · {{method}}) was never applied. It will be marked “Cancelled” and kept in the permit's history: it can no longer be applied, verified or edited.",
+    "cancelResetNotice": "This permit is waiting for review: it will go back to draft and must be submitted again.",
+    "cancelHint": "A line never applied can be cancelled while the permit is a draft or waiting for review; a fitted lock is removed with a verified removal.",
+    "cancelledBy": "Cancelled by {{name}} on {{date}}",
+    "cancelledAt": "Cancelled on {{date}}",
     "removalConfirmTitle": "Confirm lock removal",
     "removalConfirmDescription": "You confirm that the isolation \"{{point}}\" has been removed. Applied by {{applier}}, verified by {{verifier}}. Your name will be recorded as the person who verified the removal.",
     "personUnknown": "no one recorded"

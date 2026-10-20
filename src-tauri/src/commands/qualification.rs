@@ -495,12 +495,15 @@ pub async fn check_person_for_permit_role(
     state: State<'_, AppState>,
 ) -> AppResult<PersonQualificationCheck> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
+    // The permit view right at the permit's site (step 6, `permit::access`).
+    crate::permit::access::require_on_permit(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
         crate::rbac::permissions::PTW_VIEW,
-        PermissionScope::Global
-    );
+        permit_id,
+    )
+    .await?;
     require_any_permission(&state, &user, PEOPLE_VIEW).await?;
     gate::check_person_for_permit_role(&state.db, personnel_id, permit_id, &role).await
 }

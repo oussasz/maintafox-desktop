@@ -154,6 +154,14 @@
     "SCOPE_RECORD_WITHOUT_SITE": "Cet enregistrement n'a pas de site : seul un rôle valable pour toute l'usine peut agir dessus.",
     "SCOPE_PLANT_WIDE_ONLY": "Objet commun à toute l'usine : seul un rôle valable pour toute l'usine peut agir dessus.",
     "SCOPE_ADMIN_ROLE_PLANT_WIDE": "Les rôles d'administrateur s'appliquent à toute l'usine : ils ne peuvent pas être limités à un site.",
+    "PERMIT_HANDOVER_NO_RECEIVER_AT_SITE": "Personne sur ce site ne détient le droit de clôture des permis : personne ne peut recevoir cette passation. Demandez à un administrateur d'accorder ce droit sur ce site.",
+    "PERMIT_HANDOVER_RECEIVER_NO_RIGHT": "La personne qui reçoit ne détient pas le droit de clôture des permis sur le site de ce permis.",
+    "PERMIT_EQUIPMENT_LOCKED": "Ce permis a été approuvé pour cet équipement. Annulez-le et établissez un nouveau permis.",
+    "PERMIT_EQUIPMENT_LOCK_FITTED": "Un cadenas est posé sous ce permis et sa dépose n'a pas été vérifiée : son équipement ne peut pas être changé. Annulez le permis, faites vérifier la dépose du cadenas, puis établissez un nouveau permis.",
+    "PERMIT_EQUIPMENT_ISOLATIONS_PLANNED": "Des points d'isolement sont prévus sur ce permis pour son équipement actuel : son équipement ne peut pas être changé. Annulez les lignes d'isolement prévues, ou annulez le permis et établissez-en un nouveau pour le nouvel équipement.",
+    "PERMIT_SITE_NOT_EQUIPMENT_SITE": "Un permis est enregistré sur le site de son équipement (ou de son ordre de travail), ou à un niveau au-dessus : un autre site, ou un niveau en dessous, ne peut pas être indiqué.",
+    "PERMIT_SITE_LOCKED": "Ce permis a été approuvé sur ce site : son site ne peut plus changer. Annulez-le et établissez un nouveau permis.",
+    "PERMIT_WO_EQUIPMENT_MISMATCH": "L'équipement du permis doit être celui de son ordre de travail.",
     "DI_ORG_NODE_REQUIRED": "Une demande doit être rattachée à un site : choisissez un équipement installé sur un nœud de l'organisation."
   }
 }

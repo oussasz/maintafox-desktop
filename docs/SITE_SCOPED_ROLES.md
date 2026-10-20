@@ -65,7 +65,7 @@ anchor_of(db, RecordRef) -> Anchor      // one table, §4; used by actions and b
 | DI (requests) | `org_node_id` | `0` / missing node (create skips the check at 0 — fix) | `list_intervention_requests` **(today shows every site)** | review/approve/convert at node |
 | PM plans | `asset_scope_type`: `equipment` → its node; `location` → that node; `family` / `criticality_group` → **multi-site** (O3) | family/criticality plans | `list_pm_plans` (filter ignored today) | edit at anchor; multi-site → plant-wide only |
 | PM occurrences | `equipment_id` → node, else the plan's anchor | both missing | `list_pm_occurrences` | at anchor |
-| Permits (+ isolations, LOTO) | `entity_id` (NOT NULL) | — | `list_work_permits`, `list_open_permits_report` | issue/activate/close at `entity_id`; isolations via permit |
+| Permits (+ isolations, LOTO) | `entity_id` (NOT NULL) | `0` / negative (old or received rows) | `list_work_permits`, `list_open_permits_report`, `permit_compliance_kpi_30d` | issue/activate/close at `entity_id`; isolations, suspensions, hand-overs, LOTO cards via permit; hand-over receiver holds `ptw.close` at `entity_id` |
 | Planning candidates / commitments | the source record's anchor (WO / PM occ. / DI) | source without anchor | `list_schedule_candidates`, commitments | commit/break-in at source anchor |
 | Weekly schedules | `entity_id` (the site) | — | `get_weekly_schedule(site, …)` | approve/freeze/unfreeze at site |
 | Planning windows, capacity rules | `entity_id` (NULL = plant-wide) | NULL → plant-wide object | `list_planning_windows`, `list_capacity_rules` | NULL ones: plant-wide right |

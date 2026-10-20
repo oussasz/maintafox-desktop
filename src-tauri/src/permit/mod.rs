@@ -1,3 +1,4 @@
+pub mod access;
 pub mod domain;
 pub mod energy_reference;
 pub mod handover_roles;
@@ -6,6 +7,8 @@ pub mod requirement_rules;
 pub(crate) mod sync_check;
 pub mod wo_gate;
 
+#[cfg(test)]
+mod access_tests;
 #[cfg(test)]
 mod requirement_rules_tests;
 #[cfg(test)]
