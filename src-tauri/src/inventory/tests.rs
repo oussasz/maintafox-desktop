@@ -2127,6 +2127,9 @@ async fn transfer_of_tracked_articles_refuses_with_codes() {
     );
     assert_eq!(code, codes::LOT_UNAVAILABLE);
     assert_eq!(transfer_movement_count(&db, batch_id).await, 0);
+    // Refused before the first write: balances are exactly as they were.
+    assert_eq!(balance_of(&db, batch_id, main_loc).await, Some((5.0, 0.0)));
+    assert_eq!(balance_of(&db, batch_id, aux_loc).await, None);
 }
 
 #[tokio::test]
@@ -2205,4 +2208,197 @@ async fn transfer_moves_available_stock_and_records_who_when_and_why_on_both_mov
         let loc: i64 = row.try_get("", "location_id").expect("loc");
         assert_eq!(loc, location);
     }
+}
+
+async fn balance_of(db: &DatabaseConnection, article_id: i64, location_id: i64) -> Option<(f64, f64)> {
+    let balances = queries::list_stock_balances(
+        db,
+        InventoryStockFilter {
+            article_id: Some(article_id),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("balances");
+    balances
+        .into_iter()
+        .find(|b| b.location_id == location_id)
+        .map(|b| (b.on_hand_qty, b.reserved_qty))
+}
+
+#[tokio::test]
+async fn transfer_of_the_displayed_available_quantity_is_never_refused_by_float_rounding() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-XFER-FLOAT").await;
+    let main_loc = main_location_id(&db).await;
+    let aux_loc = insert_aux_location(&db, "AUX-FLOAT").await;
+    seed_stock(&db, article_id, main_loc, 0.3).await;
+    queries::reserve_stock(
+        &db,
+        InventoryReserveInput {
+            article_id,
+            location_id: main_loc,
+            quantity: 0.1,
+            source_type: "WO".to_string(),
+            source_id: Some(9103),
+            source_ref: Some("WO-9103".to_string()),
+            notes: None,
+        },
+    )
+    .await
+    .expect("reserve");
+
+    // 0.3 on hand, 0.1 reserved: 0.2 is shown as available and must go through.
+    let balances = queries::transfer_stock(
+        &db,
+        transfer_input(article_id, main_loc, aux_loc, 0.2, Some("Renfort magasin atelier")),
+        None,
+    )
+    .await
+    .expect("0.2 is available");
+    assert!((balances[0].on_hand_qty - 0.1).abs() < 1e-9);
+    assert!(balances[0].available_qty.abs() < 1e-9);
+    assert!((balances[1].on_hand_qty - 0.2).abs() < 1e-9);
+
+    // Nothing is left to transfer: a coded refusal, never an uncoded one.
+    let (code, _) = transfer_refusal_of(
+        queries::transfer_stock(
+            &db,
+            transfer_input(article_id, main_loc, aux_loc, 0.05, Some("Renfort magasin atelier")),
+            None,
+        )
+        .await
+        .expect_err("reserved stock stays"),
+    );
+    assert_eq!(code, "INV_TRANSFER_INSUFFICIENT_AVAILABLE");
+}
+
+#[tokio::test]
+async fn transfer_of_a_lot_tracked_article_moves_the_chosen_lot_and_records_it_on_both_movements() {
+    use crate::inventory::domain::NewLotInput;
+    use crate::inventory::queries::AdjustStockOptions;
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-XFER-LOT").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE articles SET requires_batch_tracking = 1 WHERE id = ?",
+        [article_id.into()],
+    ))
+    .await
+    .expect("batch tracking");
+    let main_loc = main_location_id(&db).await;
+    let aux_loc = insert_aux_location(&db, "AUX-LOT").await;
+    queries::adjust_stock_full(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id: main_loc,
+            delta_qty: 6.0,
+            reason_code: Some("seed transfer".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+        AdjustStockOptions {
+            unit_cost: Some(2.0),
+            new_lot: Some(NewLotInput {
+                lot_number: Some("LOT-A".to_string()),
+                serial_number: None,
+                expiry_date: None,
+            }),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("lot entry");
+    let lot_id = crate::inventory::lots::list_lot_stock(&db, article_id, Some(main_loc))
+        .await
+        .expect("lots")
+        .first()
+        .expect("one lot")
+        .lot_id;
+    let actor: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts ORDER BY id LIMIT 1".to_string(),
+        ))
+        .await
+        .expect("query user")
+        .expect("a user")
+        .try_get("", "id")
+        .expect("user id");
+
+    let mut input = transfer_input(article_id, main_loc, aux_loc, 4.0, Some("Renfort magasin atelier"));
+    input.lot_id = Some(lot_id);
+    let balances = queries::transfer_stock(&db, input, Some(actor))
+        .await
+        .expect("lot transfer");
+    assert!((balances[0].on_hand_qty - 2.0).abs() < 1e-9);
+    assert!((balances[1].on_hand_qty - 4.0).abs() < 1e-9);
+
+    // The lot ledger follows the parts.
+    assert!(
+        (crate::inventory::lots::lot_stock_at(&db, lot_id, main_loc)
+            .await
+            .expect("src")
+            - 2.0)
+            .abs()
+            < 1e-9
+    );
+    assert!(
+        (crate::inventory::lots::lot_stock_at(&db, lot_id, aux_loc)
+            .await
+            .expect("dst")
+            - 4.0)
+            .abs()
+            < 1e-9
+    );
+
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT movement_type, quantity, reason, performed_by_id, lot_id
+             FROM inventory_transactions
+             WHERE article_id = ? AND movement_type IN ('TRANSFER_OUT','TRANSFER_IN')
+             ORDER BY id",
+            [article_id.into()],
+        ))
+        .await
+        .expect("movements");
+    assert_eq!(rows.len(), 2);
+    for row in &rows {
+        let quantity: f64 = row.try_get("", "quantity").expect("qty");
+        assert!((quantity - 4.0).abs() < 1e-9);
+        let reason: Option<String> = row.try_get("", "reason").expect("reason");
+        assert_eq!(reason.as_deref(), Some("Renfort magasin atelier"));
+        let by: Option<i64> = row.try_get("", "performed_by_id").expect("by");
+        assert_eq!(by, Some(actor));
+        let lot: Option<i64> = row.try_get("", "lot_id").expect("lot");
+        assert_eq!(lot, Some(lot_id));
+    }
+}
+
+#[tokio::test]
+async fn a_database_failure_during_a_transfer_is_not_presented_as_a_business_refusal() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-XFER-DBERR").await;
+    let main_loc = main_location_id(&db).await;
+    let aux_loc = insert_aux_location(&db, "AUX-DBERR").await;
+    seed_stock(&db, article_id, main_loc, 3.0).await;
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "ALTER TABLE stock_locations RENAME TO stock_locations_gone".to_string(),
+    ))
+    .await
+    .expect("break the stores table");
+    let err = queries::transfer_stock(
+        &db,
+        transfer_input(article_id, main_loc, aux_loc, 1.0, Some("Renfort magasin atelier")),
+        None,
+    )
+    .await
+    .expect_err("broken database");
+    assert!(
+        !matches!(err, AppError::OrgValidationFailed(_) | AppError::ValidationFailed(_)),
+        "a real database error must propagate, got {err:?}"
+    );
 }

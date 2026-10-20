@@ -2829,6 +2829,21 @@ fn transfer_refusal(code: &str, message: impl Into<String>, params: &[(&str, Str
     crate::errors::org_validation_failed(code, message, crate::errors::issue_params(params))
 }
 
+/// A business failure of a check becomes its coded refusal; a real error (database, I/O) is
+/// never presented as a business refusal and propagates unchanged.
+fn coded_or_propagate(err: AppError, refusal: impl FnOnce() -> AppError) -> AppError {
+    match err {
+        AppError::ValidationFailed(_) | AppError::NotFound { .. } | AppError::OrgValidationFailed(_) => refusal(),
+        other => other,
+    }
+}
+
+/// Quantities are compared and stored on the same 9-decimal grid: a figure the screen shows as
+/// available (checked with the 1e-9 tolerance) is never refused by the balance rules afterwards.
+fn snap_qty(value: f64) -> f64 {
+    (value * 1e9).round() / 1e9
+}
+
 /// A quantity as shown to the storekeeper: up to 3 decimals, no trailing zeros.
 fn transfer_qty_text(value: f64) -> String {
     let text = format!("{value:.3}");
@@ -2867,41 +2882,52 @@ pub async fn transfer_stock(
     }
 
     let tx = db.begin().await?;
-    ensure_article_active(&tx, input.article_id).await.map_err(|_| {
-        transfer_refusal(
-            transfer_codes::ARTICLE_INACTIVE,
-            "The article is inactive or unknown.",
-            &[],
-        )
+    ensure_article_active(&tx, input.article_id).await.map_err(|e| {
+        coded_or_propagate(e, || {
+            transfer_refusal(
+                transfer_codes::ARTICLE_INACTIVE,
+                "The article is inactive or unknown.",
+                &[],
+            )
+        })
     })?;
-    let from_warehouse = ensure_location_exists(&tx, input.from_location_id).await.map_err(|_| {
-        transfer_refusal(
-            transfer_codes::LOCATION_UNAVAILABLE,
-            "The source store is unknown or inactive.",
-            &[("side", "from".to_string())],
-        )
+    let from_warehouse = ensure_location_exists(&tx, input.from_location_id).await.map_err(|e| {
+        coded_or_propagate(e, || {
+            transfer_refusal(
+                transfer_codes::LOCATION_UNAVAILABLE,
+                "The source store is unknown or inactive.",
+                &[("side", "from".to_string())],
+            )
+        })
     })?;
-    let to_warehouse = ensure_location_exists(&tx, input.to_location_id).await.map_err(|_| {
-        transfer_refusal(
-            transfer_codes::LOCATION_UNAVAILABLE,
-            "The destination store is unknown or inactive.",
-            &[("side", "to".to_string())],
-        )
+    let to_warehouse = ensure_location_exists(&tx, input.to_location_id).await.map_err(|e| {
+        coded_or_propagate(e, || {
+            transfer_refusal(
+                transfer_codes::LOCATION_UNAVAILABLE,
+                "The destination store is unknown or inactive.",
+                &[("side", "to".to_string())],
+            )
+        })
     })?;
 
     // Tracked articles move lot by lot (chosen lot, else FEFO) so each lot follows its parts.
     let tracking = crate::inventory::lots::article_tracking(&tx, input.article_id).await?;
-    crate::inventory::lots::ensure_whole_units(&tracking, input.quantity).map_err(|_| {
-        transfer_refusal(
-            transfer_codes::WHOLE_UNITS,
-            "Serial-tracked articles move by whole units.",
-            &[],
-        )
+    crate::inventory::lots::ensure_whole_units(&tracking, input.quantity).map_err(|e| {
+        coded_or_propagate(e, || {
+            transfer_refusal(
+                transfer_codes::WHOLE_UNITS,
+                "Serial-tracked articles move by whole units.",
+                &[],
+            )
+        })
     })?;
 
     let (from_on_hand, from_reserved) = get_balance_snapshot(&tx, input.article_id, input.from_location_id).await?;
-    let from_available = from_on_hand - from_reserved;
-    if from_available + 1e-9 < input.quantity {
+    let from_on_hand = snap_qty(from_on_hand);
+    let from_reserved = snap_qty(from_reserved);
+    let quantity_requested = snap_qty(input.quantity);
+    let from_available = snap_qty(from_on_hand - from_reserved);
+    if from_available < quantity_requested {
         let available = transfer_qty_text(from_available.max(0.0));
         return Err(transfer_refusal(
             transfer_codes::INSUFFICIENT_AVAILABLE,
@@ -2915,12 +2941,15 @@ pub async fn transfer_stock(
         ));
     }
 
-    let lot_refusal = |detail: String| {
-        transfer_refusal(
-            transfer_codes::LOT_UNAVAILABLE,
-            detail,
-            &[("requested", transfer_qty_text(input.quantity))],
-        )
+    let lot_refusal = |err: AppError| {
+        let detail = err.to_string();
+        coded_or_propagate(err, || {
+            transfer_refusal(
+                transfer_codes::LOT_UNAVAILABLE,
+                detail,
+                &[("requested", transfer_qty_text(input.quantity))],
+            )
+        })
     };
     let allocation: Vec<(Option<i64>, f64)> = if tracking.is_tracked() {
         match input.lot_id {
@@ -2930,23 +2959,23 @@ pub async fn transfer_stock(
                     lot,
                     input.article_id,
                     input.from_location_id,
-                    input.quantity,
+                    quantity_requested,
                 )
                 .await
-                .map_err(|e| lot_refusal(e.to_string()))?;
-                vec![(Some(lot), input.quantity)]
+                .map_err(lot_refusal)?;
+                vec![(Some(lot), quantity_requested)]
             }
             None => {
-                crate::inventory::lots::fefo_allocate(&tx, input.article_id, input.from_location_id, input.quantity)
+                crate::inventory::lots::fefo_allocate(&tx, input.article_id, input.from_location_id, quantity_requested)
                     .await
-                    .map_err(|e| lot_refusal(e.to_string()))?
+                    .map_err(lot_refusal)?
                     .into_iter()
                     .map(|(lot, qty)| (Some(lot), qty))
                     .collect()
             }
         }
     } else {
-        vec![(None, input.quantity)]
+        vec![(None, quantity_requested)]
     };
 
     let (to_on_hand, to_reserved) = get_balance_snapshot(&tx, input.article_id, input.to_location_id).await?;
@@ -2956,7 +2985,8 @@ pub async fn transfer_stock(
         input.article_id,
         from_warehouse,
         input.from_location_id,
-        from_on_hand - input.quantity,
+        // Never below the reserved quantity: only the tolerance of the check above can reach it.
+        snap_qty(from_on_hand - quantity_requested).max(from_reserved),
         from_reserved,
     )
     .await?;
@@ -2965,7 +2995,7 @@ pub async fn transfer_stock(
         input.article_id,
         to_warehouse,
         input.to_location_id,
-        to_on_hand + input.quantity,
+        snap_qty(to_on_hand + quantity_requested),
         to_reserved,
     )
     .await?;
