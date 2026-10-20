@@ -139,6 +139,42 @@ describe("ForcedRemovalAcknowledgementGate", () => {
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   });
 
+  it("tells the shell it is active, keeps the focus inside, and sits above the popovers", async () => {
+    svc.listMyForcedLockRemovals.mockResolvedValue([item(1)]);
+    svc.acknowledgeForcedLockRemoval.mockResolvedValue(undefined);
+    const onActiveChange = vi.fn();
+    render(
+      <>
+        <button type="button">outside</button>
+        <ForcedRemovalAcknowledgementGate sessionUserId={7} onActiveChange={onActiveChange} />
+      </>,
+    );
+    const gate = await screen.findByRole("alertdialog");
+    await waitFor(() => expect(onActiveChange).toHaveBeenLastCalledWith(true));
+    expect(gate.className).toContain("z-[300]");
+    const ack = within(gate).getByRole("button", { name: enPermits.gateAck.acknowledge });
+    await waitFor(() => expect(ack).toHaveFocus());
+    // Tab and Shift+Tab stay inside (one focusable control: it keeps the focus).
+    fireEvent.keyDown(ack, { key: "Tab" });
+    expect(ack).toHaveFocus();
+    fireEvent.keyDown(ack, { key: "Tab", shiftKey: true });
+    expect(ack).toHaveFocus();
+    fireEvent.click(ack);
+    await waitFor(() => expect(onActiveChange).toHaveBeenLastCalledWith(false));
+  });
+
+  it("stays blocking with a retry when the list cannot be read", async () => {
+    svc.listMyForcedLockRemovals.mockRejectedValueOnce(new Error("offline"));
+    svc.listMyForcedLockRemovals.mockResolvedValueOnce([item(1)]);
+    render(<ForcedRemovalAcknowledgementGate sessionUserId={7} />);
+    const error = await screen.findByTestId("forced-removal-gate-error");
+    expect(error).toHaveTextContent(enPermits.gateAck.loadError);
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    fireEvent.click(within(error).getByRole("button", { name: enPermits.gateAck.retry }));
+    expect(await screen.findByTestId("forced-removal-gate-item")).toBeInTheDocument();
+    expect(screen.queryByTestId("forced-removal-gate-error")).toBeNull();
+  });
+
   it("shows nothing when there is nothing to acknowledge or nobody is signed in", async () => {
     svc.listMyForcedLockRemovals.mockResolvedValue([]);
     const { rerender } = render(<ForcedRemovalAcknowledgementGate sessionUserId={7} />);

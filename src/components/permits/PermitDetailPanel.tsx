@@ -120,6 +120,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [cancelLine, setCancelLine] = useState<PermitIsolationRecord | null>(null);
   /** The isolation whose lock removal waits for the confirmation dialog. */
   const [removalConfirm, setRemovalConfirm] = useState<PermitIsolationRecord | null>(null);
+  /** The applier's own lock whose taking off waits for the confirmation dialog. */
+  const [takeOffConfirm, setTakeOffConfirm] = useState<PermitIsolationRecord | null>(null);
   /** The isolation whose forced removal (applier absent) is being recorded. */
   const [forcedFor, setForcedFor] = useState<PermitIsolationRecord | null>(null);
   /** The forced removal whose worker is being recorded as told. */
@@ -681,7 +683,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         size="sm"
                         variant="outline"
                         disabled={busy}
-                        onClick={() => void isolationAction(iso, recordPermitIsolationRemoved)}
+                        onClick={() => setTakeOffConfirm(iso)}
                       >
                         {t("isolation.takeOff")}
                       </Button>
@@ -1041,6 +1043,24 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           </form>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={takeOffConfirm != null}
+        onOpenChange={(open) => {
+          if (!open) setTakeOffConfirm(null);
+        }}
+        title={t("isolation.takeOffConfirmTitle")}
+        description={t("isolation.takeOffConfirmDescription", {
+          point: takeOffConfirm?.isolation_point ?? "",
+        })}
+        confirmLabel={t("isolation.takeOff")}
+        onConfirm={async () => {
+          const iso = takeOffConfirm;
+          if (!iso) return;
+          // A refusal is shown on the permit (translated); the dialog closes so it is visible.
+          await isolationAction(iso, recordPermitIsolationRemoved);
+        }}
+      />
 
       <ConfirmDialog
         open={removalConfirm != null}

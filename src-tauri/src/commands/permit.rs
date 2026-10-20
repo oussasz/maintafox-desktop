@@ -407,34 +407,26 @@ pub async fn list_permit_handover_receivers(
     queries::list_handover_receivers(&state.db, i64::from(user.user_id), permit_id, search, limit, offset).await
 }
 
-/// The plant's hand-over roles (Données de référence › `PERMIT.HANDOVER_ROLES`). Requires `ptw.view`.
+/// The plant's hand-over roles (Données de référence › `PERMIT.HANDOVER_ROLES`). Requires `ptw.view`
+/// or `ptw.close` at any site (a site-only supervisor records hand-overs at their site).
 #[tauri::command]
 pub async fn list_permit_handover_roles(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<crate::permit::handover_roles::HandoverRoleOption>> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::PTW_VIEW,
-        PermissionScope::Global
-    );
+    access::require_any_anywhere(&state.db, &state.permission_cache, user.user_id, &[PTW_VIEW, PTW_CLOSE]).await?;
     crate::permit::handover_roles::list_handover_roles(&state.db).await
 }
 
 /// The plant's contact methods (Données de référence › `PERMIT.CONTACT_METHODS`): how an absent
-/// worker was reached before a forced lock removal, and how they were told of it. Requires `ptw.view`.
+/// worker was reached before a forced lock removal, and how they were told of it. Requires `ptw.view`
+/// or `ptw.close` at any site (a site-only supervisor records forced removals at their site).
 #[tauri::command]
 pub async fn list_permit_contact_methods(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<crate::permit::contact_methods::ContactMethodOption>> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::PTW_VIEW,
-        PermissionScope::Global
-    );
+    access::require_any_anywhere(&state.db, &state.permission_cache, user.user_id, &[PTW_VIEW, PTW_CLOSE]).await?;
     crate::permit::contact_methods::list_contact_methods(&state.db).await
 }
 

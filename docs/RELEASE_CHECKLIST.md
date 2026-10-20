@@ -31,6 +31,11 @@ the release manager together.
 - [ ] `db:reset` script completes on a clean environment after applying this release
 - [ ] SQLX offline cache (`.sqlx/`) is up to date (run `cargo sqlx prepare` if schema
   changed)
+- [ ] LOTO lock removal (migration 249): upgrade every PC together before the first sync —
+  « mettre à jour tous les PC ensemble avant la première synchronisation ; les retraits
+  antérieurs à la mise à jour arrivant sur un nouveau PC vont en revue ». A lock removal verified
+  before the upgrade arriving on a new PC becomes the sync conflict PERMIT_REMOVAL_PRE_UPGRADE
+  (the lock stays fitted there until a person checks on site and resolves it).
 
 ### Security
 - [ ] `cargo audit` reports 0 known critical/high CVEs in Rust dependencies

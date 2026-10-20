@@ -5487,7 +5487,7 @@ async fn a_received_lock_removal_keeps_the_applier_and_forced_removal_rules() {
         "PERMIT_LOCK_REMOVAL_INVALID",
     )
     .await;
-    // Removal verified before the lock was taken off (not at all, or earlier).
+    // Removal verified with no trace of the lock taken off (a PC before the update), or before it.
     check(
         with(
             base.clone(),
@@ -5496,7 +5496,7 @@ async fn a_received_lock_removal_keeps_the_applier_and_forced_removal_rules() {
                 ("removal_verified_at", json!(now())),
             ],
         ),
-        "PERMIT_REMOVAL_LOCK_NOT_REMOVED",
+        "PERMIT_REMOVAL_PRE_UPGRADE",
     )
     .await;
     check(
@@ -5720,4 +5720,43 @@ async fn a_received_lock_of_a_worker_not_told_of_a_forced_removal_is_refused() {
         .expect("acknowledged");
     let outcome = apply(&db, "permit_isolations", &line.entity_sync_id, &fitted_now).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// A lock removal verified on a PC before the update (no trace of the lock taken off by its
+/// applier) arriving on a PC that has the update: its own conflict for a person to check on site
+/// (CMMS Advisor, S2 option a); meanwhile the lock stays fitted here — counted among the locks in
+/// place, and the permit does not close.
+#[tokio::test]
+async fn a_removal_verified_before_the_update_is_held_for_review_and_the_lock_stays_fitted() {
+    let db = setup().await;
+    let (wp, iso) = active_lock_here(&db, "EQ-SYNC-LR3").await;
+    let (_, locks_before) = queries::isolation_locks_in_place(&db).await.expect("locks");
+    let verifier = user_sync(&db, VERIFIER).await;
+    let pre_upgrade = with(
+        wire(&db, "permit_isolations", &iso.entity_sync_id).await,
+        &[
+            ("removal_verified_by_sync_id", json!(verifier)),
+            ("removal_verified_at", json!(now())),
+        ],
+    );
+    let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &pre_upgrade).await;
+    assert_eq!(code(&outcome), Some("PERMIT_REMOVAL_PRE_UPGRADE"), "{outcome:?}");
+    if let ApplyOutcome::Conflict { message, .. } = &outcome {
+        assert!(message.contains("retrait vérifié avant la mise à jour"), "{message}");
+    }
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT removal_verified_at FROM permit_isolations WHERE id = {}",
+                iso.id
+            )
+        )
+        .await,
+        None
+    );
+    let (_, locks_after) = queries::isolation_locks_in_place(&db).await.expect("locks");
+    assert_eq!(locks_after, locks_before, "still a lock in place");
+    let err = set_status(&db, &wp, "closed").await.expect_err("lock still fitted");
+    assert!(format!("{err:?}").contains("PERMIT_REMOVAL_PENDING"), "{err:?}");
 }

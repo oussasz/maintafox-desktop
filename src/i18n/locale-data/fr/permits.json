@@ -177,7 +177,9 @@
     "takeOff": "J'ai retiré mon cadenas",
     "removedBy": "Cadenas retiré par {{name}} le {{date}}",
     "removerBlocked": "Vous avez retiré ce cadenas — une autre personne doit vérifier son retrait.",
-    "awaitingTakeOff": "En attente de « J'ai retiré mon cadenas » par {{name}} (ou d'un retrait forcé s'il est absent)."
+    "awaitingTakeOff": "En attente de « J'ai retiré mon cadenas » par {{name}} (ou d'un retrait forcé s'il est absent).",
+    "takeOffConfirmTitle": "Confirmer le retrait de votre cadenas",
+    "takeOffConfirmDescription": "Vous confirmez avoir retiré votre cadenas de l'isolement « {{point}} ». Dès maintenant cet isolement ne protège plus le travail : personne ne doit travailler sous sa protection, et une autre personne doit vérifier le retrait avant la clôture du permis."
   },
   "card": {
     "title": "Fiche LOTO",
@@ -368,7 +370,9 @@
     "title": "Un de vos cadenas a été retiré pendant votre absence",
     "intro": "Un retrait forcé a été enregistré pour un cadenas que vous aviez posé. Lisez-le et confirmez en avoir pris connaissance avant de continuer : vous ne pouvez poser aucun nouveau cadenas avant.",
     "lock": "Cadenas « {{point}} » — permis {{permit}} — {{equipment}}",
-    "acknowledge": "J'ai pris connaissance"
+    "acknowledge": "J'ai pris connaissance",
+    "loadError": "Vos retraits forcés de cadenas n'ont pas pu être lus. Réessayez : l'application reste bloquée tant qu'ils ne peuvent pas être vérifiés.",
+    "retry": "Réessayer"
   },
   "review": {
     "title": "Retraits forcés à suivre ({{count}})",

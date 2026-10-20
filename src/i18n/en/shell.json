@@ -116,6 +116,7 @@
       "PERMIT_THREE_PERSON_REMOVAL": "A lock removal verified by the isolation's verifier, where the permit type requires a third person",
       "PERMIT_LOCK_REMOVAL_INVALID": "A lock taken off without who or when, at an unreadable time or in the future",
       "PERMIT_LOCK_REMOVAL_NOT_APPLIER": "A lock removal recorded by someone other than the person who fitted the lock (not a forced removal)",
+      "PERMIT_REMOVAL_PRE_UPGRADE": "A lock removal verified before the update, with no trace of the lock taken off by its applier: check on site, then resolve (the lock stays fitted on this PC until then)",
       "PERMIT_REMOVAL_LOCK_NOT_REMOVED": "A lock removal verified before the lock was taken off",
       "PERMIT_REMOVAL_VERIFIER_IS_REMOVER": "A lock removal verified by the person who took the lock off",
       "PERMIT_FORCED_REMOVAL_INVALID": "A forced lock removal without its authoriser, reason, attestation that the worker is absent or contact attempts",

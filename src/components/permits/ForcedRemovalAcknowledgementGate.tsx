@@ -3,11 +3,16 @@
  * while they were absent (OSHA 1910.147(e)(3)(ii) C). The worker must acknowledge each one before
  * doing anything else in the app; the acknowledgement records them as told, "in-app
  * acknowledgement", audited (`acknowledge_forced_lock_removal`). Until then the backend refuses
- * them as the applier of any new lock. Nothing else of the app can be reached while one is shown.
+ * them as the applier of any new lock.
+ *
+ * Nothing else of the app can be reached while it is shown: the shell makes the rest of the app
+ * inert (`onActiveChange`), focus stays inside the screen (Tab and Shift+Tab cycle through it),
+ * and it sits above every popover and dialog layer. When the list cannot be read, the screen says
+ * so and offers to try again rather than letting the worker past.
  */
 
 import { ShieldAlert } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -21,26 +26,45 @@ import { formatDateTime } from "@/utils/format-date";
 
 import { PERMIT_REFUSAL_NAMESPACES } from "./permit-rules";
 
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 interface ForcedRemovalAcknowledgementGateProps {
   /** Re-read when the signed-in account changes (its user id, or null when signed out). */
   sessionUserId: number | null;
+  /** Told whether the screen is shown (the shell makes the rest of the app inert meanwhile). */
+  onActiveChange?: (active: boolean) => void;
 }
 
 export function ForcedRemovalAcknowledgementGate({
   sessionUserId,
+  onActiveChange,
 }: ForcedRemovalAcknowledgementGateProps) {
   const { t, i18n } = useTranslation(["permits", ...PERMIT_REFUSAL_NAMESPACES]);
   const [items, setItems] = useState<ForcedRemovalItem[]>([]);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async (isCancelled: () => boolean) => {
+    setLoading(true);
     try {
       const next = await listMyForcedLockRemovals();
-      if (!isCancelled()) setItems(next);
+      if (!isCancelled()) {
+        setItems(next);
+        setLoadFailed(false);
+      }
     } catch {
-      // Not readable now: the backend still refuses new locks until it is acknowledged.
-      if (!isCancelled()) setItems([]);
+      // Not readable now: say so and let the worker try again (the backend still refuses new
+      // locks until the forced removal is acknowledged).
+      if (!isCancelled()) {
+        setItems([]);
+        setLoadFailed(true);
+      }
+    } finally {
+      if (!isCancelled()) setLoading(false);
     }
   }, []);
 
@@ -48,6 +72,7 @@ export function ForcedRemovalAcknowledgementGate({
     setError(null);
     if (sessionUserId === null) {
       setItems([]);
+      setLoadFailed(false);
       return;
     }
     let cancelled = false;
@@ -57,7 +82,49 @@ export function ForcedRemovalAcknowledgementGate({
     };
   }, [sessionUserId, load]);
 
-  if (items.length === 0) return null;
+  const active = sessionUserId !== null && (items.length > 0 || loadFailed);
+
+  useEffect(() => {
+    onActiveChange?.(active);
+  }, [active, onActiveChange]);
+  useEffect(() => () => onActiveChange?.(false), [onActiveChange]);
+
+  // Focus moves into the screen when it shows (and back into it if it was lost).
+  useEffect(() => {
+    if (!active) return;
+    const panel = panelRef.current;
+    if (panel && !panel.contains(document.activeElement)) {
+      const first = panel.querySelector<HTMLElement>(FOCUSABLE);
+      (first ?? panel).focus();
+    }
+  }, [active, items.length, loadFailed]);
+
+  if (!active) return null;
+
+  /** Tab and Shift+Tab cycle inside the screen; Escape does nothing. */
+  const trapFocus = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const panel = panelRef.current;
+    const focusable = Array.from(panel?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!first || !last) {
+      e.preventDefault();
+      return;
+    }
+    const current = document.activeElement;
+    if (e.shiftKey && (current === first || !panel?.contains(current))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (current === last || !panel?.contains(current))) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
 
   const fmt = (v: string | null) =>
     v ? formatDateTime(v, i18n.language) : t("permits:detail.none");
@@ -80,9 +147,15 @@ export function ForcedRemovalAcknowledgementGate({
       aria-modal="true"
       aria-labelledby="forced-removal-gate-title"
       data-testid="forced-removal-gate"
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-surface-0/95 p-4"
+      // Above every popover (z-200) and dialog layer of the app.
+      className="fixed inset-0 z-[300] flex items-center justify-center bg-surface-0/95 p-4"
+      onKeyDown={trapFocus}
     >
-      <div className="max-h-full w-full max-w-2xl space-y-4 overflow-auto rounded-lg border border-tone-danger-border bg-surface-1 p-5 shadow-lg">
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className="max-h-full w-full max-w-2xl space-y-4 overflow-auto rounded-lg border border-tone-danger-border bg-surface-1 p-5 shadow-lg outline-none"
+      >
         <div className="flex items-start gap-3">
           <ShieldAlert className="mt-0.5 h-6 w-6 shrink-0 text-tone-danger-fg" aria-hidden />
           <div className="space-y-1">
@@ -92,6 +165,16 @@ export function ForcedRemovalAcknowledgementGate({
             <p className="text-sm text-text-secondary">{t("permits:gateAck.intro")}</p>
           </div>
         </div>
+        {loadFailed ? (
+          <div className="space-y-2" data-testid="forced-removal-gate-error">
+            <p role="alert" className="text-sm text-tone-danger-fg">
+              {t("permits:gateAck.loadError")}
+            </p>
+            <Button type="button" disabled={loading} onClick={() => void load(() => false)}>
+              {t("permits:gateAck.retry")}
+            </Button>
+          </div>
+        ) : null}
         <ul className="space-y-3">
           {items.map((item) => {
             const iso = item.isolation;

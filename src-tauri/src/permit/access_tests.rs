@@ -1748,3 +1748,20 @@ async fn cancelling_an_isolation_line_is_checked_at_its_permits_site() {
         assert!(lines.iter().any(|l| l.id == iso.id && l.cancelled_at.is_none()));
     }
 }
+
+/// The plant's choice lists of the permit forms (hand-over roles, contact methods) are read by
+/// anyone holding the permit view or close right at any site: a site-only supervisor, a closer of
+/// site B only; never by someone with no permit right.
+#[tokio::test]
+async fn a_site_only_user_reads_the_permit_choice_lists() {
+    let f = fixture().await;
+    for user in [f.plant, f.site, f.closer_b] {
+        let map = map_of(&f.db, user).await;
+        assert!(
+            access::check_any_anywhere(&map, &[PTW_VIEW, PTW_CLOSE]).is_ok(),
+            "user {user} reads the lists"
+        );
+    }
+    let map = map_of(&f.db, f.nobody).await;
+    assert!(access::check_any_anywhere(&map, &[PTW_VIEW, PTW_CLOSE]).is_err());
+}

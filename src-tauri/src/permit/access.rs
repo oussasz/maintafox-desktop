@@ -433,6 +433,33 @@ pub async fn require_anywhere(
     Ok(scope)
 }
 
+/// The first of `permissions` the user holds somewhere (at any site, or plant-wide); refused as
+/// "held nowhere" with the first permission otherwise. For the plant-wide choice lists a permit
+/// form reads (hand-over roles, contact methods): a site-only supervisor reads them too.
+pub fn check_any_anywhere<'a>(map: &AccessMap, permissions: &[&'a str]) -> AppResult<&'a str> {
+    let mut first_err = None;
+    for permission in permissions {
+        match check_anywhere(map, permission) {
+            Ok(_) => return Ok(permission),
+            Err(e) => {
+                first_err.get_or_insert(e);
+            }
+        }
+    }
+    Err(first_err.unwrap_or_else(|| AppError::PermissionDenied("no permission given".into())))
+}
+
+/// [`check_any_anywhere`], then entitlement and licence of the permission held.
+pub async fn require_any_anywhere(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+    permissions: &[&str],
+) -> AppResult<()> {
+    let held = check_any_anywhere(&access_map(db, cache, user_id).await?, permissions)?;
+    enforce(db, user_id, held).await
+}
+
 /// [`check_on_permit`], then entitlement and licence.
 pub async fn require_on_permit(
     db: &DatabaseConnection,

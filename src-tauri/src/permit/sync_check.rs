@@ -324,6 +324,17 @@ fn lock_removal_breach(iso: &Payload, point: &str) -> Option<(&'static str, Stri
     }
     if field(iso, "removal_verified_at").is_some() {
         let verified = time(iso, "removal_verified_at");
+        // A removal verified with no trace of the lock taken off at all: verified on a PC before
+        // the update (migration 249) and received here (CMMS Advisor, S2 option a: kept refused,
+        // a person checks on site, then resolves the conflict; the lock stays fitted here).
+        if remover.is_none() && removed_at.is_none() {
+            return invalid(
+                "PERMIT_REMOVAL_PRE_UPGRADE",
+                "lock removal verified before the update, with no trace of the lock taken off by its applier \
+                 (retrait vérifié avant la mise à jour, sans trace du retrait par le poseur) — check on site, then \
+                 resolve",
+            );
+        }
         if removed.is_none() || verified.is_none_or(|v| removed.is_some_and(|r| v < r)) {
             return invalid(
                 "PERMIT_REMOVAL_LOCK_NOT_REMOVED",

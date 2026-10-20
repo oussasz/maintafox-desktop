@@ -311,6 +311,13 @@ describe("PermitDetailPanel — taking a lock off", () => {
     expect(button(row, enPermits.isolation.verifyRemoval)).toBeNull();
     expect(button(row, enPermits.forced.action)).toBeNull();
     fireEvent.click(button(row, enPermits.isolation.takeOff) as HTMLElement);
+    // A confirmation first, saying the lock then no longer protects the work.
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      fill(enPermits.isolation.takeOffConfirmDescription, { point: "MCC-1 breaker" }),
+    );
+    expect(svc.recordPermitIsolationRemoved).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: enPermits.isolation.takeOff }));
     await waitFor(() =>
       expect(svc.recordPermitIsolationRemoved).toHaveBeenCalledWith({
         isolation_id: 300,
@@ -318,6 +325,17 @@ describe("PermitDetailPanel — taking a lock off", () => {
         lock_number: null,
       }),
     );
+  });
+
+  it("records nothing when the take-off confirmation is cancelled", async () => {
+    session.userId = 7;
+    svc.listPermitIsolations.mockResolvedValue([LOCK_ON]);
+    const row = await renderPanel();
+    fireEvent.click(button(row, enPermits.isolation.takeOff) as HTMLElement);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "ds.confirm.cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(svc.recordPermitIsolationRemoved).not.toHaveBeenCalled();
   });
 
   it("offers a forced removal to a close-right holder while the lock is on, and waits for the applier", async () => {

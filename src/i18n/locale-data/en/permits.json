@@ -177,7 +177,9 @@
     "takeOff": "I removed my lock",
     "removedBy": "Lock taken off by {{name}} on {{date}}",
     "removerBlocked": "You took this lock off — another person must verify its removal.",
-    "awaitingTakeOff": "Waiting for {{name}} to record “I removed my lock” (or a forced removal if they are absent)."
+    "awaitingTakeOff": "Waiting for {{name}} to record “I removed my lock” (or a forced removal if they are absent).",
+    "takeOffConfirmTitle": "Confirm you took your lock off",
+    "takeOffConfirmDescription": "You confirm that you have taken your lock off the isolation “{{point}}”. From now on this isolation no longer protects the work: nobody may work under it, and another person must verify the removal before the permit can be closed."
   },
   "card": {
     "title": "LOTO card",
@@ -368,7 +370,9 @@
     "title": "One of your locks was taken off while you were absent",
     "intro": "A forced removal was recorded for a lock you fitted. Read it and acknowledge it before continuing: you cannot fit a new lock until you do.",
     "lock": "Lock “{{point}}” — permit {{permit}} — {{equipment}}",
-    "acknowledge": "I have read it"
+    "acknowledge": "I have read it",
+    "loadError": "Your forced lock removals could not be read. Try again: the app stays blocked until they can be checked.",
+    "retry": "Try again"
   },
   "review": {
     "title": "Forced removals to follow up ({{count}})",
