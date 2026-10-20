@@ -135,7 +135,8 @@ pub(crate) async fn before_upsert_checked(
         | "notification_categories"
         | "notification_events"
         | "notifications"
-        | "notification_acknowledgements" => Some(
+        | "notification_acknowledgements"
+        | "notification_preferences" => Some(
             crate::settings::received_notice::inbound_local_only_check(
                 conn,
                 layout.def.entity_type,
@@ -286,7 +287,8 @@ pub(crate) async fn before_delete_checked(
         | "notification_categories"
         | "notification_events"
         | "notifications"
-        | "notification_acknowledgements" => {
+        | "notification_acknowledgements"
+        | "notification_preferences" => {
             crate::settings::received_notice::inbound_local_only_check(
                 conn,
                 layout.def.entity_type,

@@ -1127,7 +1127,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
         )
     },
     // ── Personal items (per user, only to that user's devices) ─────────────────────────────
-    spec("notification_preferences", &[r("user_id", USER)]),
+    RowSpec {
+        // The safety rule notice ignores preferences and its preference rows stay on the PC.
+        row_filter: Some("{row}.category_code IS NOT 'safety_rule_received'"),
+        ..spec("notification_preferences", &[r("user_id", USER)])
+    },
     RowSpec {
         // Ids a saved activity filter narrows on (`commands::activity_feed::ActivityFilter`).
         json_refs: &[

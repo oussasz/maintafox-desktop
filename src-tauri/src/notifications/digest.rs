@@ -45,9 +45,10 @@ pub const DIGEST_CATCH_UP_DAYS: i64 = 7;
 pub const DIGEST_TICK: Duration = Duration::from_secs(15 * 60);
 
 /// SQL condition (preferences `p`, events `e`): the notification is delivered right away. Holds
-/// for the digest category itself, whatever its preference says.
-pub const INSTANT_DELIVERY_SQL: &str =
-    "(e.category_code = 'daily_digest' OR COALESCE(p.digest_mode, 'instant') = 'instant')";
+/// for the digest category itself and for the safety rule notice (`catalog::ALWAYS_DELIVERED`),
+/// whatever their preference says.
+pub const INSTANT_DELIVERY_SQL: &str = "(e.category_code IN ('daily_digest', 'safety_rule_received') \
+     OR COALESCE(p.digest_mode, 'instant') = 'instant')";
 
 /// Checks a delivery mode for a category: `instant`, `daily_digest` or `off`, and only `instant`
 /// for the digest category itself (a digest of digests would never be delivered).
@@ -130,7 +131,7 @@ pub async fn build_due_digests<Tz: TimeZone>(
                       ON p.user_id = n.recipient_user_id AND p.category_code = e.category_code \
                  LEFT JOIN notification_categories c ON c.code = e.category_code \
                  WHERE n.recipient_user_id = ? AND p.digest_mode = 'daily_digest' \
-                   AND e.category_code <> ? AND n.delivery_state IN ('pending', 'delivered', 'escalated')                    AND n.read_at IS NULL AND n.archived_at IS NULL AND n.resolved_at IS NULL",
+                   AND e.category_code <> ? AND e.category_code <> 'safety_rule_received' AND n.delivery_state IN ('pending', 'delivered', 'escalated')                    AND n.read_at IS NULL AND n.archived_at IS NULL AND n.resolved_at IS NULL",
                 [user_id.into(), DIGEST_CATEGORY.into()],
             ))
             .await?;

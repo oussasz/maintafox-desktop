@@ -16,9 +16,10 @@
 //! When: from the apply hook (`sync::apply_hooks::before_upsert_checked`), once the row passed its
 //! safety check, inside the transaction that applies the row. A row refused or left waiting rolls
 //! that transaction back, so no notice is left; a local change never goes through it. The event has
-//! a random identity and a device-local key built from the row and its recorded change (who, when,
-//! value), so applying the same row again (a second pass, "take theirs") creates no second notice and
-//! nothing received can predict, plant or take over the event. An error while notifying
+//! a random identity and carries a nonce checked after writing, so nothing received can predict,
+//! plant or take over the event. Every change applied here gets its own notice: the hook runs only
+//! when the received row changes the value held here (a row already applied stops before it), so
+//! a site lifted, restored and lifted again at the same recorded instant gives three notices. An error while notifying
 //! (only a database failure; the notice is written in its own savepoint, undone on error) depends on
 //! the direction of the change:
 //! - a change that RELAXES a rule (opt-out on, three-person chain off) fails the apply: the row
@@ -37,8 +38,12 @@
 //! rule rows, events, notifications and acknowledgements are kept out of capture (row filters,
 //! `sync::row_spec`) and any received upsert or delete of them is refused
 //! ([`inbound_local_only_check`]). Each PC that applies a change tells its own administrators, and
-//! reading the notice on one PC sends nothing that another PC would wait for. The category row is
-//! thus never removed or renamed (no local writer, sync refused), so the inbox always shows it.
+//! reading the notice on one PC sends nothing that another PC would wait for. Its category and rule
+//! rows are re-created with their fixed values at start-up, after a tenant data reset and before each
+//! notice ([`ensure_notice_rows`]), so the inbox always shows it. Delivery ignores preferences on
+//! every channel: in-app and desktop toast always, never folded into the daily digest, never emailed
+//! (`notifications::os_toast`, `digest`, `email`); its preference rows stay local and received ones are
+//! refused. Like any notice it is removed after the plant's notification retention (at least 7 days).
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde_json::{json, Map, Value};
@@ -164,12 +169,10 @@ async fn site_rule(conn: &impl ConnectionTrait, entity_sync_id: &str, received: 
             ),
         )
     };
-    let basis = format!("{RECEIVED_RULE_CATEGORY}|site|{entity_sync_id}|{changed_at}|{new_value}");
     send(
         conn,
         "site_settings",
         entity_sync_id,
-        &basis,
         // Back to four-eyes is the stricter direction.
         !new_value,
         title,
@@ -235,6 +238,9 @@ pub(crate) async fn inbound_local_only_check(
         "notification_categories" => "SELECT code AS c FROM notification_categories WHERE entity_sync_id = ?",
         "notification_rules" => "SELECT category_code AS c FROM notification_rules WHERE entity_sync_id = ?",
         "notification_events" => "SELECT category_code AS c FROM notification_events WHERE entity_sync_id = ?",
+        "notification_preferences" => {
+            "SELECT category_code AS c FROM notification_preferences WHERE entity_sync_id = ?"
+        }
         "notifications" => {
             "SELECT e.category_code AS c FROM notifications n \
                JOIN notification_events e ON e.id = n.notification_event_id WHERE n.entity_sync_id = ?"
@@ -260,7 +266,9 @@ pub(crate) async fn inbound_local_only_check(
         None => None,
         Some(p) => match entity_type {
             "notification_categories" => text(p, "code").map(str::to_string),
-            "notification_rules" | "notification_events" => text(p, "category_code").map(str::to_string),
+            "notification_rules" | "notification_events" | "notification_preferences" => {
+                text(p, "category_code").map(str::to_string)
+            }
             "notifications" => match text(p, "notification_event_sync_id") {
                 Some(event) => {
                     category_of(
@@ -296,6 +304,73 @@ pub(crate) async fn inbound_local_only_check(
         }));
     }
     Ok(None)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests only: the id the next notice event takes (to plant a row under it first).
+    pub(crate) static FORCED_EVENT_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A random id for a notice event (tests may force one, [`FORCED_EVENT_ID`]).
+fn new_event_id() -> String {
+    #[cfg(test)]
+    if let Some(id) = FORCED_EVENT_ID.with(|f| f.borrow_mut().take()) {
+        return id;
+    }
+    crate::sync::identity::new_entity_sync_id()
+}
+
+/// The fixed category and rule rows of the notice (migration 246's ids and values), created when
+/// missing and put back to their fixed values: run by the startup seed (also after a tenant data
+/// reset, which wipes them) and before each notice. They never travel, so nothing else brings them
+/// back. Idempotent.
+pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult<()> {
+    let audiences = serde_json::to_string(
+        &crate::notifications::catalog::ALWAYS_DELIVERED
+            .iter()
+            .filter(|(c, _)| *c == RECEIVED_RULE_CATEGORY)
+            .map(|(_, a)| *a)
+            .collect::<Vec<_>>(),
+    )
+    .map_err(hook_err)?;
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO notification_categories \
+         (entity_sync_id, code, label, default_severity, default_requires_ack, is_user_configurable, module_code, \
+          is_offered) VALUES (?, ?, 'Safety rule changed on another PC', 'warning', 0, 0, 'system', 1) \
+         ON CONFLICT(code) DO UPDATE SET default_severity = 'warning', default_requires_ack = 0, \
+           is_user_configurable = 0, module_code = 'system', is_offered = 1",
+        [
+            crate::sync::identity::seeded_entity_sync_id("notification_categories", RECEIVED_RULE_CATEGORY).into(),
+            RECEIVED_RULE_CATEGORY.into(),
+        ],
+    ))
+    .await?;
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE notification_rules SET routing_mode = 'manual', requires_ack = 0, dedupe_window_minutes = 0, \
+           escalation_policy_id = NULL, is_active = 1, lead_time_minutes = NULL, audiences_json = ? \
+         WHERE category_code = ?",
+        [audiences.clone().into(), RECEIVED_RULE_CATEGORY.into()],
+    ))
+    .await?;
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO notification_rules \
+         (entity_sync_id, category_code, routing_mode, requires_ack, dedupe_window_minutes, escalation_policy_id, \
+          is_active, lead_time_minutes, audiences_json) \
+         SELECT ?, ?, 'manual', 0, 0, NULL, 1, NULL, ? \
+         WHERE NOT EXISTS (SELECT 1 FROM notification_rules WHERE category_code = ?)",
+        [
+            crate::sync::identity::seeded_entity_sync_id("notification_rules", RECEIVED_RULE_CATEGORY).into(),
+            RECEIVED_RULE_CATEGORY.into(),
+            audiences.into(),
+            RECEIVED_RULE_CATEGORY.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
 }
 
 async fn three_person(conn: &impl ConnectionTrait, entity_sync_id: &str, received: &Payload) -> AppResult<()> {
@@ -338,12 +413,10 @@ async fn three_person(conn: &impl ConnectionTrait, entity_sync_id: &str, receive
             ),
         )
     };
-    let basis = format!("{RECEIVED_RULE_CATEGORY}|three_person|{entity_sync_id}|{changed_at}|{new_value}");
     send(
         conn,
         "permit_types",
         entity_sync_id,
-        &basis,
         // The three-person chain switched on is the stricter direction.
         new_value,
         title,
@@ -365,7 +438,6 @@ async fn send(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
-    basis: &str,
     tightens: bool,
     title: String,
     body: String,
@@ -373,17 +445,7 @@ async fn send(
     message: NotificationMessage,
 ) -> AppResult<()> {
     conn.execute_unprepared("SAVEPOINT received_rule_notice").await?;
-    let written = emit_notice(
-        conn,
-        entity_type,
-        entity_sync_id,
-        basis,
-        title,
-        body,
-        action_url,
-        &message,
-    )
-    .await;
+    let written = emit_notice(conn, entity_type, entity_sync_id, title, body, action_url, &message).await;
     match written {
         Ok(()) => {
             conn.execute_unprepared("RELEASE received_rule_notice").await?;
@@ -412,25 +474,19 @@ async fn emit_notice(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
-    basis: &str,
     title: String,
     body: String,
     action_url: &str,
     message: &NotificationMessage,
 ) -> AppResult<()> {
-    // Once per change on this PC: keyed by the device-local `dedupe_key` (never sent, never
-    // received). The event id itself is random: nothing received can predict or plant it.
-    let noticed = conn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT 1 AS x FROM notification_events WHERE dedupe_key = ? AND category_code = ?",
-            [basis.into(), RECEIVED_RULE_CATEGORY.into()],
-        ))
-        .await?
-        .is_some();
-    if noticed {
-        return Ok(());
-    }
+    // Every change applied here gets its own notice: the hook runs only when the received row
+    // changes the value held here, and a row already applied stops before it (Unchanged). The fixed
+    // category and rule rows are made sure of first, so the notice always shows in the inbox.
+    ensure_notice_rows(conn).await?;
+    // A random event id, and a nonce in the event: after writing, the event must be the one written
+    // here (never an existing row adopted under the same id).
+    let event_id = new_event_id();
+    let nonce = crate::sync::identity::new_entity_sync_id();
     emit(
         conn,
         &NotificationEventInput {
@@ -439,23 +495,25 @@ async fn emit_notice(
             event_code: RECEIVED_RULE_CATEGORY.to_string(),
             category_code: RECEIVED_RULE_CATEGORY.to_string(),
             severity: "warning".to_string(),
-            dedupe_key: Some(basis.to_string()),
-            payload_json: Some(json!({ "entity_type": entity_type, "entity_sync_id": entity_sync_id }).to_string()),
+            dedupe_key: None,
+            payload_json: Some(
+                json!({ "entity_type": entity_type, "entity_sync_id": entity_sync_id, "notice": nonce }).to_string(),
+            ),
             title,
             body: Some(body),
             action_url: Some(action_url.to_string()),
         },
-        None,
+        Some(event_id.clone()),
         Some(message),
         Arrival::New,
     )
     .await?;
-    // The event written is this category's, created here (its local key is set only here).
     let created = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT 1 AS x FROM notification_events WHERE dedupe_key = ? AND category_code = ?",
-            [basis.into(), RECEIVED_RULE_CATEGORY.into()],
+            "SELECT 1 AS x FROM notification_events WHERE entity_sync_id = ? AND category_code = ? \
+               AND json_extract(payload_json, '$.notice') = ?",
+            [event_id.into(), RECEIVED_RULE_CATEGORY.into(), nonce.into()],
         ))
         .await?
         .is_some();

@@ -2253,6 +2253,9 @@ pub(crate) async fn seed_system_data_for(db: &DatabaseConnection, profile: Build
     // ── 8. Ensure default session/backup policy snapshots ─────────────────
     crate::settings::ensure_default_policies(db).await?;
 
+    // The safety rule notice's fixed category and rule rows (never synchronised: a tenant data
+    // reset wipes them and only this brings them back, `settings::received_notice`).
+    crate::settings::received_notice::ensure_notice_rows(db).await?;
     tracing::info!("seeder::complete — system seed version {} applied", SEED_SCHEMA_VERSION);
     Ok(())
 }

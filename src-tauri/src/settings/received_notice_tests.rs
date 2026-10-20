@@ -401,18 +401,20 @@ async fn the_notice_goes_to_the_plant_wide_settings_administrators_only() {
     assert_eq!(recipients(&db).await, expected);
 }
 
-/// The seeded identity alone keeps one notice when the hook runs twice for the same change (the
-/// row not yet written in between, as a second pass or "take theirs" could).
+/// A replay of a row already applied (a second pass, "take theirs" again) stops before the notifier
+/// (nothing changes here): one notice, one notification per recipient.
 #[tokio::test]
-async fn the_same_change_notified_twice_gives_one_notice() {
+async fn a_replayed_row_gives_no_second_notice() {
     let db = crate::sync::test_support::started_db().await;
     let (_, rule) = opted_out_site(&db).await;
     let received = back_to_four_eyes(&db, &rule, "2026-10-20T09:00:00Z").await;
-    for _ in 0..2 {
-        super::received_notice::notify_received_rule_change(&db, "site_settings", &rule, &received)
-            .await
-            .expect("notify");
-    }
+    let first = apply(&db, "site_settings", &rule, &received).await;
+    assert!(matches!(first, ApplyOutcome::Applied), "{first:?}");
+    let again = apply(&db, "site_settings", &rule, &received).await;
+    assert!(
+        matches!(again, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+        "{again:?}"
+    );
     assert_eq!(notices(&db, "site_rule_received_off").await, 1);
     let delivered = recipients(&db).await;
     assert!(!delivered.is_empty());
@@ -934,4 +936,335 @@ async fn nothing_of_the_notice_rule_can_be_changed_here() {
         .find(|r| r.category_code == RECEIVED_RULE_CATEGORY)
         .expect("listed");
     assert!(shown.locked && shown.is_active && !shown.requires_ack);
+}
+
+// ── Review of 024c13aa ─────────────────────────────────────────────────────────────────────
+
+/// An audited opt-out change (the record another PC sends with it): `on` at `at`, by the admin.
+async fn audited_event(db: &DatabaseConnection, site: i64, sync: &str, value: bool, at: &str) {
+    exec(
+        db,
+        "INSERT INTO site_setting_events (entity_sync_id, site_node_id, setting_key, old_value_json, \
+         new_value_json, reason, changed_by_id, required_step_up, changed_at) \
+         VALUES (?, ?, ?, ?, ?, 'Single permit issuer on this site', ?, 1, ?)",
+        vec![
+            sync.into(),
+            site.into(),
+            SELF_APPROVAL_SETTING.into(),
+            (if value { "false" } else { "true" }).into(),
+            (if value { "true" } else { "false" }).into(),
+            admin(db).await.into(),
+            at.into(),
+        ],
+    )
+    .await;
+}
+
+async fn site_rule_payload(db: &DatabaseConnection, site: i64, value: bool, at: &str) -> Payload {
+    let site_sync = scalar_opt_text(
+        db,
+        "SELECT entity_sync_id FROM org_nodes WHERE id = ?",
+        vec![site.into()],
+    )
+    .await
+    .expect("site");
+    let admin_sync = scalar_opt_text(
+        db,
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        vec![admin(db).await.into()],
+    )
+    .await
+    .expect("admin");
+    payload(serde_json::json!({
+        "site_node_sync_id": site_sync,
+        "setting_key": SELF_APPROVAL_SETTING,
+        "value_json": if value { "true" } else { "false" },
+        "updated_by_sync_id": admin_sync,
+        "updated_at": at,
+        "row_version": 1,
+    }))
+}
+
+async fn site_notices(db: &DatabaseConnection) -> Vec<String> {
+    db.query_all(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Sqlite,
+        "SELECT message_key AS k FROM notification_events WHERE category_code = ? ORDER BY id",
+        [RECEIVED_RULE_CATEGORY.into()],
+    ))
+    .await
+    .expect("events")
+    .iter()
+    .map(|r| r.try_get::<String>("", "k").expect("key"))
+    .collect()
+}
+
+/// A site lifted at T1 (audited), restored without a record, then lifted again at the same T1:
+/// three changes applied here, three notices, the last one saying the site is relaxed.
+#[tokio::test]
+async fn lifted_restored_and_lifted_again_at_the_same_instant_gives_three_notices() {
+    let db = crate::sync::test_support::started_db().await;
+    let site = planning_site(&db).await;
+    let t1 = "2026-10-20T08:00:00Z";
+    audited_event(&db, site, "sse-lift-t1", true, t1).await;
+    let rule = "site-rule-received";
+    for (value, at) in [(true, t1), (false, "2026-10-20T09:00:00Z"), (true, t1)] {
+        let outcome = apply(
+            &db,
+            "site_settings",
+            rule,
+            &site_rule_payload(&db, site, value, at).await,
+        )
+        .await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{value} at {at}: {outcome:?}");
+    }
+    assert_eq!(
+        site_notices(&db).await,
+        vec![
+            "site_rule_received_on".to_string(),
+            "site_rule_received_off".to_string(),
+            "site_rule_received_on".to_string(),
+        ]
+    );
+}
+
+/// The fixed category and rule rows come back: wiped (as a tenant data reset does), a relaxing
+/// change received afterwards still shows in the administrator's inbox; the startup seed puts them
+/// back too.
+#[tokio::test]
+async fn the_notice_shows_in_the_inbox_after_its_rows_were_wiped() {
+    let db = crate::sync::test_support::started_db().await;
+    let site = planning_site(&db).await;
+    for table in ["notification_rules", "notification_categories"] {
+        let column = if table == "notification_rules" {
+            "category_code"
+        } else {
+            "code"
+        };
+        exec(
+            &db,
+            &format!("DELETE FROM {table} WHERE {column} = ?"),
+            vec![RECEIVED_RULE_CATEGORY.into()],
+        )
+        .await;
+    }
+    let admin_id = admin(&db).await;
+    let vis = crate::notifications::inbox::visible_to(&db, i32::try_from(admin_id).expect("id"))
+        .await
+        .expect("visibility");
+    let before = crate::notifications::inbox::unread_count(&db, admin_id, &vis)
+        .await
+        .expect("count");
+    audited_event(&db, site, "sse-wiped", true, "2026-10-20T08:00:00Z").await;
+    let outcome = apply(
+        &db,
+        "site_settings",
+        "site-rule-after-wipe",
+        &site_rule_payload(&db, site, true, "2026-10-20T08:00:00Z").await,
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let vis = crate::notifications::inbox::visible_to(&db, i32::try_from(admin_id).expect("id"))
+        .await
+        .expect("visibility");
+    assert_eq!(
+        crate::notifications::inbox::unread_count(&db, admin_id, &vis)
+            .await
+            .expect("count"),
+        before + 1,
+        "shown in the inbox"
+    );
+    // Wiped again, the startup seed (also run after a tenant data reset) brings them back.
+    exec(
+        &db,
+        "DELETE FROM notification_rules WHERE category_code = ?",
+        vec![RECEIVED_RULE_CATEGORY.into()],
+    )
+    .await;
+    crate::db::seeder::seed_system_data(&db).await.expect("seed");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM notification_rules r JOIN notification_categories c ON c.code = r.category_code \
+             WHERE c.code = ? AND r.is_active = 1 AND c.module_code = 'system' AND c.is_user_configurable = 0",
+            vec![RECEIVED_RULE_CATEGORY.into()],
+        )
+        .await,
+        1
+    );
+}
+
+/// The post-write check: an event of the category already sitting under the id the notice takes
+/// is never adopted; a relaxing change then fails (a conflict for a person), a stricter one goes on.
+#[tokio::test]
+async fn an_event_already_under_the_notice_id_is_never_adopted() {
+    let db = crate::sync::test_support::started_db().await;
+    let sync = scalar_opt_text(
+        &db,
+        "SELECT entity_sync_id FROM permit_types WHERE code = 'hot_work'",
+        vec![],
+    )
+    .await
+    .expect("type");
+    exec(
+        &db,
+        "UPDATE permit_types SET requires_three_person_removal = 1 WHERE code = 'hot_work'",
+        vec![],
+    )
+    .await;
+    let planted = "event-planted-under-the-notice-id";
+    exec(
+        &db,
+        "INSERT INTO notification_events (entity_sync_id, source_module, event_code, category_code, severity, \
+         message_key, payload_json) VALUES (?, 'settings', ?, ?, 'info', 'site_rule_received_off', '{}')",
+        vec![
+            planted.into(),
+            RECEIVED_RULE_CATEGORY.into(),
+            RECEIVED_RULE_CATEGORY.into(),
+        ],
+    )
+    .await;
+    super::received_notice::FORCED_EVENT_ID.with(|f| *f.borrow_mut() = Some(planted.to_string()));
+    let off = payload(serde_json::json!({
+        "code": "hot_work",
+        "requires_three_person_removal": 0,
+        "three_person_changed_at": "2026-10-20T08:00:00Z",
+    }));
+    assert!(
+        super::received_notice::notify_received_rule_change(&db, "permit_types", &sync, &off)
+            .await
+            .is_err(),
+        "a relaxed rule is never applied with an adopted notice"
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+             WHERE e.entity_sync_id = ?",
+            vec![planted.into()],
+        )
+        .await,
+        0,
+        "nothing attached to the planted event"
+    );
+    super::received_notice::FORCED_EVENT_ID.with(|f| *f.borrow_mut() = None);
+}
+
+/// A local change of the category or rule rows, of a preference of the category, is never captured
+/// (even outside the apply's suppression); "keep mine" on a conflict about them stages nothing.
+#[tokio::test]
+async fn the_notice_rows_are_never_captured_nor_restaged() {
+    let db = crate::sync::test_support::started_db().await;
+    let admin_id = admin(&db).await;
+    exec(
+        &db,
+        "UPDATE notification_categories SET label = 'Changed here' WHERE code = ?",
+        vec![RECEIVED_RULE_CATEGORY.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE notification_rules SET dedupe_window_minutes = 5 WHERE category_code = ?",
+        vec![RECEIVED_RULE_CATEGORY.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO notification_preferences (user_id, category_code, in_app_enabled) VALUES (?, ?, 1)",
+        vec![admin_id.into(), RECEIVED_RULE_CATEGORY.into()],
+    )
+    .await;
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type IN \
+             ('notification_categories', 'notification_rules', 'notification_preferences')",
+            vec![],
+        )
+        .await,
+        0
+    );
+    let rule = sync_id_of(
+        &db,
+        "SELECT entity_sync_id FROM notification_rules WHERE category_code = ?",
+    )
+    .await;
+    crate::sync::capture::restage_current_state(&db, "notification_rules", &rule, &[])
+        .await
+        .expect("keep mine");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_outbox WHERE entity_type = 'notification_rules' AND entity_sync_id = ?",
+            vec![rule.into()],
+        )
+        .await,
+        0,
+        "nothing sent"
+    );
+    // A preference of the category received from another PC: refused.
+    let received = payload(serde_json::json!({
+        "user_sync_id": "user-sync-admin",
+        "category_code": RECEIVED_RULE_CATEGORY,
+        "in_app_enabled": 0,
+        "os_enabled": 0,
+    }));
+    let outcome = apply(&db, "notification_preferences", "pref-from-another-pc", &received).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("NOTIFICATION_CATEGORY_LOCKED"),
+        "{outcome:?}"
+    );
+}
+
+/// Delivery ignores preferences on every channel: muted, toast off, daily digest and email on, the
+/// notice is still toasted, never folded into the digest, never emailed.
+#[tokio::test]
+async fn delivery_of_the_notice_ignores_preferences_on_every_channel() {
+    let db = crate::sync::test_support::started_db().await;
+    let (_, rule) = opted_out_site(&db).await;
+    let admin_id = admin(&db).await;
+    exec(
+        &db,
+        "INSERT INTO notification_preferences (user_id, category_code, in_app_enabled, os_enabled, email_enabled, \
+         digest_mode, muted_until) VALUES (?, ?, 0, 0, 1, 'daily_digest', '2999-01-01T00:00:00Z')",
+        vec![admin_id.into(), RECEIVED_RULE_CATEGORY.into()],
+    )
+    .await;
+    let outcome = apply(
+        &db,
+        "site_settings",
+        &rule,
+        &back_to_four_eyes(&db, &rule, "2026-10-20T09:00:00Z").await,
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let notification = scalar_i64(
+        &db,
+        "SELECT n.id FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+         WHERE e.category_code = ? AND n.recipient_user_id = ?",
+        vec![RECEIVED_RULE_CATEGORY.into(), admin_id.into()],
+    )
+    .await;
+    let toasts = crate::notifications::os_toast::pending_os_toasts(&db, admin_id, Some(0))
+        .await
+        .expect("toasts");
+    assert!(
+        toasts.items.iter().any(|t| t.notification_id == notification),
+        "toasted"
+    );
+    assert!(
+        !crate::notifications::email::enqueue_email(&db, notification)
+            .await
+            .expect("email"),
+        "never emailed"
+    );
+    let digests = crate::notifications::digest::build_due_digests(
+        &db,
+        &chrono::Utc,
+        chrono::Utc::now() + chrono::Duration::days(2),
+        "en",
+    )
+    .await
+    .expect("digest");
+    assert_eq!(digests, 0, "never folded into the digest");
 }

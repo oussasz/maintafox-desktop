@@ -153,6 +153,10 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &["budget_control_alert", "daily_d
 /// a rogue PC, which could otherwise switch it off first (`settings::received_notice`).
 pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[("safety_rule_received", "permission:adm.settings")];
 
+/// Delivery of an [`ALWAYS_DELIVERED`] category ignores preferences on every channel: in-app and
+/// desktop toast always, never folded into the daily digest, never emailed (the delivery SQL of
+/// `os_toast`, `digest` and `email` names `safety_rule_received`, checked by a test).
+///
 /// The fixed audience of an [`ALWAYS_DELIVERED`] category.
 pub fn always_delivered_audience(category: &str) -> Option<Audience> {
     ALWAYS_DELIVERED

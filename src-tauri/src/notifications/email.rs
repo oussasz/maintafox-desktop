@@ -128,6 +128,7 @@ pub async fn enqueue_email(conn: &impl ConnectionTrait, notification_id: i64) ->
                  LEFT JOIN notification_preferences p \
                         ON p.user_id = n.recipient_user_id AND p.category_code = e.category_code \
                  WHERE n.id = ? AND n.recipient_user_id IS NOT NULL \
+                   AND e.category_code <> 'safety_rule_received' \
                    AND COALESCE(p.email_enabled, 0) = 1 \
                    AND {} \
                    AND (p.muted_until IS NULL OR p.muted_until <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) \

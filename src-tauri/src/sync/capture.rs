@@ -713,6 +713,25 @@ async fn stage_current_state(
     natural_key: Option<&Map<String, Value>>,
     delete_owner: Option<String>,
 ) -> AppResult<bool> {
+    // A row the capture filter keeps on this device (`row_spec` row filters) is never staged here
+    // either ("keep mine" on a conflict about it sends nothing).
+    if layout.natural_pk.is_none() {
+        let local_only = conn
+            .query_one(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                format!(
+                    "SELECT 1 AS x FROM {} r WHERE r.entity_sync_id = ? AND NOT {}",
+                    quote(layout.table()),
+                    layout.filter_sql("r")
+                ),
+                [entity_sync_id.into()],
+            ))
+            .await?
+            .is_some();
+        if local_only {
+            return Ok(false);
+        }
+    }
     let current = match locate(conn, layout, entity_sync_id, natural_key).await? {
         Some(locator) => row_codec::load_row_payload(conn, layout, &locator).await?,
         None => None,
