@@ -59,6 +59,7 @@
       "OUTBOX_DEAD_LETTER": "Une modification locale n'a pas pu être envoyée après plusieurs tentatives",
       "AUTHORITY_MISMATCH": "Le serveur a refusé une modification protégée",
       "APPEND_ONLY_DELETE": "L'historique ne peut pas être supprimé par la synchronisation",
+      "AUDIT_STUB_REFUSED": "Un maillon du journal d'audit reçu d'un autre PC a été refusé (pour le journal de ce PC, ou mal formé)",
       "INVALID_VALUE": "Une modification reçue contient une valeur refusée par cette version",
       "SETTING_LOCKED": "Un paramètre qui ne peut plus changer ici (des écritures en dépendent)",
       "WEEK_LIFECYCLE_BACKWARDS": "Une semaine de planification reviendrait en arrière dans son cycle",

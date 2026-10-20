@@ -95,12 +95,16 @@ pub(crate) fn before_upsert(
     }
 }
 
+/// Conflict code of an audit chain stub refused on arrival (`audit::chain::inbound_stub_check`).
+pub(crate) const AUDIT_STUB_REFUSED: &str = "AUDIT_STUB_REFUSED";
+
 /// Checks of an inbound row that need the local database; `Some` stops the apply with that
 /// outcome (recorded like every other sync conflict, for a person to decide).
 /// - `app_settings`: the fiscal-year start month and the tenant currency cannot change once this
 ///   device stores postings that depend on them (`finance::fiscal`, `inventory::fx`). A change
 ///   made on a device where they were still free is refused here, as it is in Settings.
 /// - `weekly_schedules`: a week never moves backwards in its lifecycle by synchronisation.
+/// - `audit_chain_stubs`: never this PC's own chain, never malformed (`audit::chain`).
 pub(crate) async fn before_upsert_checked(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
@@ -108,6 +112,14 @@ pub(crate) async fn before_upsert_checked(
     payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
     use crate::sync::materialize::ApplyOutcome;
+    if layout.def.entity_type == "audit_chain_stubs" {
+        return Ok(crate::audit::chain::inbound_stub_check(conn, payload)
+            .await?
+            .map(|message| ApplyOutcome::Conflict {
+                code: AUDIT_STUB_REFUSED.into(),
+                message,
+            }));
+    }
     // `user_accounts` / `user_scope_assignments` / `roles`: a change that would leave this PC
     // without an active administrator is a conflict (`auth::last_admin`).
     if let Some(outcome) = crate::auth::last_admin::inbound_change_check(

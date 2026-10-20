@@ -59,6 +59,7 @@
       "OUTBOX_DEAD_LETTER": "A local change could not be sent after repeated attempts",
       "AUTHORITY_MISMATCH": "The server refused a protected change",
       "APPEND_ONLY_DELETE": "History cannot be deleted by synchronisation",
+      "AUDIT_STUB_REFUSED": "An audit trail link received from another PC was refused (for this PC's own trail, or malformed)",
       "INVALID_VALUE": "A received change holds a value this version does not accept",
       "SETTING_LOCKED": "A setting that can no longer change here (postings depend on it)",
       "WEEK_LIFECYCLE_BACKWARDS": "A planning week would go back in its lifecycle",

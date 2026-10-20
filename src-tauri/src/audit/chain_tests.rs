@@ -272,22 +272,29 @@ async fn other_text(db: &DatabaseConnection, table: &str, column: &str, seq: i64
     .expect("text")
 }
 
+/// `"L2:" ‖ SHA-256(prev ‖ "\n" ‖ digest)`: the stub-era hash, computed here independently of
+/// `audit::chain`.
+fn stub_era(prev: Option<&str>, digest: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(prev.unwrap_or("").as_bytes());
+    hasher.update(b"\n");
+    hasher.update(digest.as_bytes());
+    format!("L2:{}", hex::encode(hasher.finalize()))
+}
+
 /// Puts a stub of the other device's chain at `seq` in place of the one received (stubs are
-/// never updated: removed and inserted again).
-async fn replace_stub(db: &DatabaseConnection, seq: i64, prev: Option<String>, hash: String) {
-    exec(
-        db,
-        &format!("DELETE FROM audit_chain_stubs WHERE {OTHER} AND chain_seq = ?"),
-        vec![seq.into()],
-    )
-    .await;
+/// never updated: removed and inserted again; there is no delete trigger).
+async fn replace_stub(db: &DatabaseConnection, seq: i64, prev: Option<String>, hash: String, digest: Option<String>) {
+    remove_other(db, "audit_chain_stubs", seq).await;
     exec(
         db,
         &format!(
-            "INSERT INTO audit_chain_stubs (entity_sync_id, chain_origin, chain_seq, chain_prev_hash, chain_hash) \
-             VALUES ('forged-' || ?, (SELECT chain_origin FROM audit_events WHERE {OTHER} LIMIT 1), ?, ?, ?)"
+            "INSERT INTO audit_chain_stubs \
+             (entity_sync_id, chain_origin, chain_seq, chain_prev_hash, chain_hash, content_digest) \
+             VALUES ('forged-' || ?, (SELECT chain_origin FROM audit_events WHERE {OTHER} LIMIT 1), ?, ?, ?, ?)"
         ),
-        vec![seq.into(), seq.into(), prev.into(), hash.into()],
+        vec![seq.into(), seq.into(), prev.into(), hash.into(), digest.into()],
     )
     .await;
 }
@@ -314,7 +321,7 @@ async fn a_kept_event_between_travelling_ones_verifies_on_another_pc() {
         "SELECT COUNT(*) FROM audit_chain_stubs s JOIN audit_events e \
          ON e.chain_origin = s.chain_origin AND e.chain_seq = s.chain_seq \
          WHERE s.chain_seq = 2 AND s.chain_hash = e.chain_hash AND s.chain_prev_hash = e.chain_prev_hash \
-         AND s.chain_hash LIKE 'L2:%'",
+         AND s.chain_hash LIKE 'L2:%' AND length(s.content_digest) = 64",
         vec![],
     )
     .await;
@@ -341,11 +348,12 @@ async fn a_kept_event_between_travelling_ones_verifies_on_another_pc() {
         ),
         (3, 4, 1, 0)
     );
-    // A stub holds nothing but the chain position.
+    // A stub holds nothing but the chain position and the content digest.
     let other_columns = scalar_i64(
         &b,
         "SELECT COUNT(*) FROM pragma_table_info('audit_chain_stubs') \
-         WHERE name NOT IN ('id', 'entity_sync_id', 'chain_origin', 'chain_seq', 'chain_prev_hash', 'chain_hash')",
+         WHERE name NOT IN ('id', 'entity_sync_id', 'chain_origin', 'chain_seq', 'chain_prev_hash', \
+         'chain_hash', 'content_digest')",
         vec![],
     )
     .await;
@@ -373,18 +381,69 @@ async fn a_travelling_event_replaced_by_a_forged_stub_is_detected() {
     remove_other(&b, "audit_events", 3).await;
 
     // A stub claiming the travelling event's own hash: not a local-form hash.
-    replace_stub(&b, 3, prev_3.clone(), hash_3).await;
+    replace_stub(&b, 3, prev_3.clone(), hash_3, None).await;
     let problem = chain_of_other(&b).await.first_problem.expect("problem");
     assert_eq!(
         (problem.chain_seq, problem.audit_event_id, problem.kind),
         (3, None, ChainProblemKind::HashMismatch)
     );
 
-    // A stub with a local-form hash: the next event still points to the travelling event's hash.
-    replace_stub(&b, 3, prev_3, format!("L2:{}", "a".repeat(64))).await;
+    // A local-form hash its digest does not give.
+    replace_stub(
+        &b,
+        3,
+        prev_3.clone(),
+        format!("L2:{}", "a".repeat(64)),
+        Some("d".repeat(64)),
+    )
+    .await;
+    let problem = chain_of_other(&b).await.first_problem.expect("problem");
+    assert_eq!(
+        (problem.chain_seq, problem.audit_event_id, problem.kind),
+        (3, None, ChainProblemKind::HashMismatch)
+    );
+
+    // A consistent forged stub: the next event still points to the travelling event's hash.
+    let digest = "d".repeat(64);
+    replace_stub(
+        &b,
+        3,
+        prev_3.clone(),
+        stub_era(prev_3.as_deref(), &digest),
+        Some(digest),
+    )
+    .await;
     let problem = chain_of_other(&b).await.first_problem.expect("problem");
     assert_eq!((problem.chain_seq, problem.kind), (4, ChainProblemKind::PrevMismatch));
     assert!(problem.audit_event_id.is_some());
+}
+
+/// Review B1: deleting the travelling event just before a kept position, forging a stub in its
+/// place and relinking the kept position's stub to it must not verify.
+#[tokio::test]
+async fn a_travelling_event_hidden_by_relinking_the_next_stub_is_detected() {
+    let (_a, b) = a_then_b(&[false, true, false]).await;
+    let hash_2 = other_text(&b, "audit_chain_stubs", "chain_hash", 2)
+        .await
+        .expect("stub hash");
+    let digest_2 = other_text(&b, "audit_chain_stubs", "content_digest", 2).await;
+    assert!(chain_of_other(&b).await.intact);
+
+    // 1. Delete E1. 2. A forged, self-consistent stub at 1. 3. Stub 2 relinked to it, its hash
+    // and digest kept (E3 still points to that hash).
+    remove_other(&b, "audit_events", 1).await;
+    let forged_digest = "e".repeat(64);
+    let forged_hash = stub_era(None, &forged_digest);
+    replace_stub(&b, 1, None, forged_hash.clone(), Some(forged_digest)).await;
+    replace_stub(&b, 2, Some(forged_hash), hash_2, digest_2).await;
+
+    let from_a = chain_of_other(&b).await;
+    assert!(!from_a.intact, "{from_a:?}");
+    let problem = from_a.first_problem.expect("problem");
+    assert_eq!(
+        (problem.chain_seq, problem.audit_event_id, problem.kind),
+        (2, None, ChainProblemKind::HashMismatch)
+    );
 }
 
 #[tokio::test]
@@ -394,16 +453,33 @@ async fn a_changed_or_removed_stub_is_detected() {
         .await
         .expect("stub hash");
     let prev_2 = other_text(&b, "audit_chain_stubs", "chain_prev_hash", 2).await;
+    let digest_2 = other_text(&b, "audit_chain_stubs", "content_digest", 2).await;
 
-    // Changed hash (still a well-formed local hash): the next event no longer points to it.
-    let digest = &hash_2[3..];
-    let changed = format!("L2:{}{}", if digest.starts_with('0') { "1" } else { "0" }, &digest[1..]);
-    replace_stub(&b, 2, prev_2.clone(), changed).await;
+    // Changed digest, hash recomputed from it: the next event no longer points to it.
+    let other_digest = "f".repeat(64);
+    replace_stub(
+        &b,
+        2,
+        prev_2.clone(),
+        stub_era(prev_2.as_deref(), &other_digest),
+        Some(other_digest),
+    )
+    .await;
     let problem = chain_of_other(&b).await.first_problem.expect("problem");
     assert_eq!((problem.chain_seq, problem.kind), (3, ChainProblemKind::PrevMismatch));
 
+    // Changed hash only: it no longer matches its own link and digest.
+    let digest = &hash_2[3..];
+    let changed = format!("L2:{}{}", if digest.starts_with('0') { "1" } else { "0" }, &digest[1..]);
+    replace_stub(&b, 2, prev_2.clone(), changed, digest_2.clone()).await;
+    let problem = chain_of_other(&b).await.first_problem.expect("problem");
+    assert_eq!(
+        (problem.chain_seq, problem.audit_event_id, problem.kind),
+        (2, None, ChainProblemKind::HashMismatch)
+    );
+
     // Changed link to the previous position.
-    replace_stub(&b, 2, Some("b".repeat(64)), hash_2.clone()).await;
+    replace_stub(&b, 2, Some("b".repeat(64)), hash_2.clone(), digest_2.clone()).await;
     let problem = chain_of_other(&b).await.first_problem.expect("problem");
     assert_eq!(
         (problem.chain_seq, problem.audit_event_id, problem.kind),
@@ -421,28 +497,37 @@ async fn a_changed_or_removed_stub_is_detected() {
     );
 
     // Put back as received: intact again.
-    replace_stub(&b, 2, prev_2, hash_2).await;
+    replace_stub(&b, 2, prev_2, hash_2, digest_2).await;
     assert!(chain_of_other(&b).await.intact);
 }
 
-/// Turns A's kept position 2 into one written by the previous version: hashed `L1:`, no stub.
-async fn as_before_stubs(a: &DatabaseConnection) {
-    exec(a, "DELETE FROM audit_chain_stubs", vec![]).await;
-    exec(
-        a,
-        "UPDATE audit_events SET chain_hash = 'L1:' || substr(chain_hash, 4) WHERE chain_seq = 2",
-        vec![],
-    )
-    .await;
+/// Turns this database's kept position `seq` into one written by the previous version: hashed
+/// `L1:`, no stub.
+async fn as_before_stubs(db: &DatabaseConnection, seq: i64) {
+    exec(db, "DELETE FROM audit_chain_stubs", vec![]).await;
+    let sync_id = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM audit_events WHERE chain_seq = ?",
+            [seq.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("event")
+        .try_get_by_index::<String>(0)
+        .expect("sync id");
+    crate::audit::chain::reseal_before_stubs(db, &sync_id)
+        .await
+        .expect("reseal");
 }
 
 #[tokio::test]
-async fn positions_kept_before_stubs_existed_get_their_own_status() {
+async fn one_position_kept_before_stubs_existed_gets_its_own_status() {
     let mut server = TestServer::new();
     let a = started_device_db().await;
     let b = started_device_db().await;
     write_sequence(&a, &[false, true]).await;
-    as_before_stubs(&a).await;
+    as_before_stubs(&a, 2).await;
     write_sequence(&a, &[false, false]).await;
     // The older local form still verifies on A itself.
     assert!(verify_audit_chain(&a).await.expect("verify on A").intact);
@@ -476,22 +561,179 @@ async fn positions_kept_before_stubs_existed_get_their_own_status() {
     );
 }
 
+/// Review S1: a run of two missing positions before an `L1:` pointer is not "kept": the first
+/// one may be a removed travelling event.
 #[tokio::test]
-async fn migration_250_gives_older_kept_events_their_stub() {
+async fn a_longer_run_before_an_older_kept_position_is_not_intact() {
+    let mut server = TestServer::new();
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    write_sequence(&a, &[false, true]).await;
+    as_before_stubs(&a, 2).await;
+    write_sequence(&a, &[false]).await;
+    server.exchange("A", &a).await;
+    server.exchange("B", &b).await;
+    assert!(chain_of_other(&b).await.intact);
+
+    remove_other(&b, "audit_events", 1).await;
+    let from_a = chain_of_other(&b).await;
+    assert!(!from_a.intact, "{from_a:?}");
+    assert_eq!(from_a.kept_before_stubs, 0);
+    let problem = from_a.first_problem.expect("problem");
+    assert_eq!(
+        (problem.chain_seq, problem.kind),
+        (3, ChainProblemKind::MissingPositions)
+    );
+}
+
+#[tokio::test]
+async fn migration_250_gives_this_pcs_older_kept_events_their_stub() {
     let db = started_db().await;
-    write_sequence(&db, &[false, true, false]).await;
-    as_before_stubs(&db).await;
+    write_sequence(&db, &[false, true]).await;
+    as_before_stubs(&db, 2).await;
+    // An `L1:` event of another PC (one that travelled by mistake) gets no stub here.
+    exec(
+        &db,
+        "INSERT INTO audit_events (entity_sync_id, action_code, auth_context, result, retention_class, \
+         happened_at, chain_origin, chain_seq, chain_hash) VALUES ('other-l1', 'x.y', 'system', 'success', \
+         'standard', '2026-01-01T00:00:00Z', 'another-pc', 1, 'L1:' || hex(randomblob(32)))",
+        vec![],
+    )
+    .await;
     exec(&db, &crate::migrations::audit_chain_stubs_backfill_sql(), vec![]).await;
     let stub = scalar_i64(
         &db,
         "SELECT COUNT(*) FROM audit_chain_stubs s JOIN audit_events e \
          ON e.chain_origin = s.chain_origin AND e.chain_seq = s.chain_seq AND e.chain_hash = s.chain_hash \
          AND e.chain_prev_hash = s.chain_prev_hash \
-         WHERE s.chain_seq = 2 AND s.chain_hash LIKE 'L1:%' AND length(s.entity_sync_id) = 36",
+         WHERE s.chain_seq = 2 AND s.chain_hash LIKE 'L1:%' AND s.content_digest IS NULL \
+         AND length(s.entity_sync_id) = 36",
         vec![],
     )
     .await;
     assert_eq!(stub, 1);
     let total = scalar_i64(&db, "SELECT COUNT(*) FROM audit_chain_stubs", vec![]).await;
-    assert_eq!(total, 1, "travelling events get no stub");
+    assert_eq!(total, 1, "travelling events and other PCs' events get no stub");
+}
+
+// ── Stubs received by synchronisation (review S2) ───────────────────────────────────────────
+
+fn stub_payload(
+    origin: &str,
+    seq: i64,
+    prev: Option<&str>,
+    hash: &str,
+    digest: Option<&str>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let value = serde_json::json!({
+        "chain_origin": origin,
+        "chain_seq": seq,
+        "chain_prev_hash": prev,
+        "chain_hash": hash,
+        "content_digest": digest,
+    });
+    value.as_object().expect("object").clone()
+}
+
+#[tokio::test]
+async fn received_stubs_are_checked_on_arrival() {
+    use crate::audit::chain::inbound_stub_check;
+    let db = started_db().await;
+    let own = crate::sync::queries::local_replica_id(&db).await.expect("replica id");
+    let d = "a".repeat(64);
+    let p = "c".repeat(64);
+    let good = stub_era(Some(&p), &d);
+    let check = |payload| {
+        let db = &db;
+        async move { inbound_stub_check(db, &payload).await.expect("check") }
+    };
+    assert_eq!(check(stub_payload("other", 2, Some(&p), &good, Some(&d))).await, None);
+    let first = stub_era(None, &d);
+    assert_eq!(check(stub_payload("other", 1, None, &first, Some(&d))).await, None);
+    let older = format!("L1:{d}");
+    assert_eq!(check(stub_payload("other", 2, Some(&p), &older, None)).await, None);
+
+    let refused = [
+        ("this PC's own chain", stub_payload(&own, 2, Some(&p), &good, Some(&d))),
+        ("position 0", stub_payload("other", 0, None, &first, Some(&d))),
+        ("no link after 1", stub_payload("other", 2, None, &good, Some(&d))),
+        ("a link at 1", stub_payload("other", 1, Some(&p), &good, Some(&d))),
+        ("malformed link", stub_payload("other", 2, Some("x"), &good, Some(&d))),
+        ("not a kept hash", stub_payload("other", 2, Some(&p), &d, Some(&d))),
+        ("no digest", stub_payload("other", 2, Some(&p), &good, None)),
+        (
+            "malformed digest",
+            stub_payload("other", 2, Some(&p), &good, Some("zz")),
+        ),
+        (
+            "digest on an older stub",
+            stub_payload("other", 2, Some(&p), &older, Some(&d)),
+        ),
+    ];
+    for (what, payload) in refused {
+        assert!(check(payload).await.is_some(), "{what} must be refused");
+    }
+}
+
+#[tokio::test]
+async fn a_stub_for_this_pcs_own_chain_is_refused_and_never_blocks_its_kept_events() {
+    let mut server = TestServer::new();
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    write_sequence(&b, &[false]).await;
+    let b_origin = crate::sync::queries::local_replica_id(&b).await.expect("replica id");
+    // A (modified, or a copy) sends a stub for B's next position.
+    let d = "a".repeat(64);
+    let prev = other_text_own(&b).await;
+    exec(
+        &a,
+        "INSERT INTO audit_chain_stubs \
+         (entity_sync_id, chain_origin, chain_seq, chain_prev_hash, chain_hash, content_digest) \
+         VALUES ('stub-for-b', ?, 2, ?, ?, ?)",
+        vec![
+            b_origin.clone().into(),
+            prev.clone().into(),
+            stub_era(prev.as_deref(), &d).into(),
+            d.clone().into(),
+        ],
+    )
+    .await;
+    server.exchange("A", &a).await;
+    let report = server.exchange("B", &b).await;
+    assert_eq!(report.materialized.conflicts, 1, "{report:?}");
+    let refused = scalar_i64(
+        &b,
+        "SELECT COUNT(*) FROM sync_conflicts WHERE entity_type = 'audit_chain_stubs' \
+         AND conflict_type = 'AUDIT_STUB_REFUSED'",
+        vec![],
+    )
+    .await;
+    assert_eq!(refused, 1);
+    let held = scalar_i64(&b, "SELECT COUNT(*) FROM audit_chain_stubs", vec![]).await;
+    assert_eq!(held, 0);
+
+    // Even with such a row already here (a copied database), B's next kept event is written.
+    exec(
+        &b,
+        "INSERT INTO audit_chain_stubs \
+         (entity_sync_id, chain_origin, chain_seq, chain_prev_hash, chain_hash, content_digest) \
+         VALUES ('stale-own', ?, 2, NULL, ?, ?)",
+        vec![b_origin.into(), format!("L2:{d}").into(), d.into()],
+    )
+    .await;
+    write_audit_event(&b, kept(9)).await.expect("kept event still written");
+    assert!(verify_audit_chain(&b).await.expect("verify on B").chains[0].intact);
+}
+
+/// This device's last chain hash.
+async fn other_text_own(db: &DatabaseConnection) -> Option<String> {
+    db.query_one(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT chain_hash FROM audit_events WHERE chain_seq IS NOT NULL ORDER BY chain_seq DESC LIMIT 1".to_string(),
+    ))
+    .await
+    .expect("query")
+    .expect("row")
+    .try_get_by_index::<Option<String>>(0)
+    .expect("text")
 }

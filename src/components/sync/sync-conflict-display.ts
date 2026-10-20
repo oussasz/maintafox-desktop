@@ -68,6 +68,8 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "CODE_CLASH",
   // Rules re-checked on a received row (`sync::apply_hooks`): safety, four-eyes, site rules.
   "APPEND_ONLY_DELETE",
+  // An audit chain stub for this PC's own chain, or malformed (`audit::chain`).
+  "AUDIT_STUB_REFUSED",
   "INVALID_VALUE",
   "SETTING_LOCKED",
   "WEEK_LIFECYCLE_BACKWARDS",

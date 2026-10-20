@@ -12,22 +12,26 @@
 //! that a column added to the table later (null on older events) does not change older hashes.
 //!
 //! Events kept on their device (the `audit_events` row filter of `sync::row_spec`, or a target the
-//! sync codec cannot encode) never travel: their content is hashed in its local form, the hash
-//! prefixed [`LOCAL_FORM_PREFIX`] (`L2:`; `L1:` for events written before stubs existed). For each
-//! of them the writer also records a hash-only stub (`audit_chain_stubs`, migration 250: origin,
-//! position, previous hash, hash; no content), which travels. Another device verifies a chain it
-//! received across those positions with the stubs:
-//! - a stub must carry a local-form hash, point to the previous position's hash, and be what the
-//!   next position points to. A travelling event removed and replaced by a forged stub is found:
-//!   the next event points to a hash without the local prefix (and that pointer is hashed);
+//! sync codec cannot encode) never travel. Their content is hashed in its local form:
+//! `D = SHA-256(canonical local form)` and `chain_hash = "L2:" ‖ SHA-256(prev ‖ "\n" ‖ D)`
+//! ([`LOCAL_FORM_PREFIX`]). For each of them the writer also records a hash-only stub
+//! (`audit_chain_stubs`, migration 250: origin, position, previous hash, hash and `D`; no content,
+//! and `D` reveals nothing since the content includes the random sync id), which travels. Another
+//! device verifies a chain it received across those positions with the stubs:
+//! - a stub's hash is recomputed from its own link and digest, and must be what the next position
+//!   points to: a stub cannot be relinked, so removing a travelling event before a kept position
+//!   breaks the chain; a travelling event replaced by a forged stub is found too (the next event
+//!   points to a hash without the local prefix, and that pointer is hashed);
 //! - removing a stub leaves a missing position, changing one breaks its links;
-//! - positions missing without a stub are reported missing, except a run of positions kept on a
-//!   device before stubs existed: when the chain of that device shows no stub and no `L2:` hash at
-//!   all (that device has not upgraded, or its stubs have not arrived) and the position after the
-//!   run points to an `L1:` hash, the run is counted as "kept on its device before stubs" and
-//!   verification goes on after it. Only the last position of such a run is known to be local: a
-//!   travelling event removed inside a longer run is not detected (KNOWN_LIMITS). Once that device
-//!   upgrades, migration 250 sends stubs for those older positions and they are linked one by one.
+//! - stubs received for this device's own chain, or malformed, are refused on arrival
+//!   ([`inbound_stub_check`]).
+//!
+//! Events kept before this version are hashed `L1:` (`SHA-256(prev ‖ "\n" ‖ local form)`), which
+//! another device cannot recompute: migration 250 gives them a stub without digest, checked for
+//! its form and links only (KNOWN_LIMITS). When the chain of a device shows no stub and no `L2:`
+//! hash at all (that device has not upgraded, or its stubs have not arrived), one missing position
+//! followed by a position that points to an `L1:` hash is counted "kept on its device before
+//! stubs" (the pointer proves it was kept); a longer run is reported missing.
 //!
 //! On the device that wrote the chain, stubs are not used: every event is there and verified
 //! with its content.
@@ -55,16 +59,42 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
 
 /// `SHA-256(prev_hash ‖ canonical JSON)` in lowercase hex. `prev_hash` is empty for position 1.
 pub fn chain_hash_of(prev_hash: Option<&str>, payload: &serde_json::Map<String, Value>) -> AppResult<String> {
+    Ok(linked_hash(prev_hash, &canonical_json(payload)?))
+}
+
+/// Canonical JSON of a payload: sorted keys, without null fields and the unhashed keys.
+fn canonical_json(payload: &serde_json::Map<String, Value>) -> AppResult<String> {
     let canonical: BTreeMap<&str, &Value> = payload
         .iter()
         .filter(|(k, v)| !v.is_null() && !UNHASHED_KEYS.contains(&k.as_str()))
         .map(|(k, v)| (k.as_str(), v))
         .collect();
+    Ok(serde_json::to_string(&canonical)?)
+}
+
+/// `SHA-256(prev_hash ‖ "\n" ‖ content)` in lowercase hex.
+fn linked_hash(prev_hash: Option<&str>, content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(prev_hash.unwrap_or("").as_bytes());
     hasher.update(b"\n");
-    hasher.update(serde_json::to_string(&canonical)?.as_bytes());
-    Ok(hex::encode(hasher.finalize()))
+    hasher.update(content.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+/// Content digest of an event kept on its device (`D`): `SHA-256(canonical local form)`. It
+/// travels in the event's stub and reveals nothing (the content includes the random sync id).
+fn content_digest(local: &serde_json::Map<String, Value>) -> AppResult<String> {
+    Ok(hex::encode(Sha256::digest(canonical_json(local)?.as_bytes())))
+}
+
+/// Hash of a kept event in the stub era: `"L2:" ‖ SHA-256(prev ‖ "\n" ‖ D)`. It binds the link to
+/// the previous position, so another device recomputes it from the stub (`prev`, `D`).
+fn stub_era_hash(prev_hash: Option<&str>, digest: &str) -> String {
+    format!("{LOCAL_FORM_PREFIX}{}", linked_hash(prev_hash, digest))
+}
+
+fn is_hex_digest(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Canonical payload of one audit event (sync ids for references).
@@ -93,12 +123,28 @@ fn local_prefix(hash: &str) -> Option<&'static str> {
         .find(|p| hash.starts_with(p))
 }
 
+/// Test helper: re-seals an event as the previous version did (`L1:` over its local form), to
+/// stand for an event kept before stubs existed.
+#[cfg(test)]
+pub(crate) async fn reseal_before_stubs(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<()> {
+    let local = local_form(conn, entity_sync_id).await?;
+    let prev = local.get("chain_prev_hash").and_then(Value::as_str).map(str::to_string);
+    let hash = format!(
+        "{LOCAL_FORM_PREFIX_BEFORE_STUBS}{}",
+        chain_hash_of(prev.as_deref(), &local)?
+    );
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE audit_events SET chain_hash = ? WHERE entity_sync_id = ?",
+        [hash.into(), entity_sync_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
 /// A stub's hash: a local-form prefix and a SHA-256 in lowercase hex.
 fn is_local_form_hash(hash: &str) -> bool {
-    local_prefix(hash).is_some_and(|p| {
-        let digest = &hash[p.len()..];
-        digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    })
+    local_prefix(hash).is_some_and(|p| is_hex_digest(&hash[p.len()..]))
 }
 
 /// Columns of the local form (content and chain position; not `id`, not `chain_hash`).
@@ -148,20 +194,29 @@ async fn local_form(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppRes
     Ok(out)
 }
 
-/// Hash of an event at its chain position: over the sync payload when the codec can encode the
-/// event, otherwise over the local form (prefixed with `local_prefix`).
+/// Hash of an event at its chain position, and its content digest when it is kept on this
+/// device: over the sync payload when the codec can encode the event, otherwise over the local
+/// form (`L2:` with its digest in the stub era, `L1:` before the stubs table exists).
 async fn event_hash(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     prev_hash: Option<&str>,
-    local_prefix: &str,
-) -> AppResult<String> {
+    stub_era: bool,
+) -> AppResult<(String, Option<String>)> {
     match event_payload(conn, entity_sync_id).await {
-        Ok(payload) => chain_hash_of(prev_hash, &payload),
-        Err(AppError::SyncError(_)) => Ok(format!(
-            "{local_prefix}{}",
-            chain_hash_of(prev_hash, &local_form(conn, entity_sync_id).await?)?
-        )),
+        Ok(payload) => Ok((chain_hash_of(prev_hash, &payload)?, None)),
+        Err(AppError::SyncError(_)) => {
+            let local = local_form(conn, entity_sync_id).await?;
+            if stub_era {
+                let digest = content_digest(&local)?;
+                Ok((stub_era_hash(prev_hash, &digest), Some(digest)))
+            } else {
+                Ok((
+                    format!("{LOCAL_FORM_PREFIX_BEFORE_STUBS}{}", chain_hash_of(prev_hash, &local)?),
+                    None,
+                ))
+            }
+        }
         Err(other) => Err(other),
     }
 }
@@ -216,34 +271,93 @@ pub(crate) async fn seal(
     prev_hash: Option<&str>,
 ) -> AppResult<()> {
     let with_stubs = stubs_table_exists(conn).await?;
-    let prefix = if with_stubs {
-        LOCAL_FORM_PREFIX
-    } else {
-        LOCAL_FORM_PREFIX_BEFORE_STUBS
-    };
-    let hash = event_hash(conn, entity_sync_id, prev_hash, prefix).await?;
+    let (hash, digest) = event_hash(conn, entity_sync_id, prev_hash, with_stubs).await?;
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE audit_events SET chain_hash = ? WHERE entity_sync_id = ?",
         [hash.clone().into(), entity_sync_id.into()],
     ))
     .await?;
-    if with_stubs && local_prefix(&hash).is_some() {
-        conn.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO audit_chain_stubs (entity_sync_id, chain_origin, chain_seq, chain_prev_hash, chain_hash) \
-             VALUES (?, ?, ?, ?, ?)",
-            [
-                crate::sync::identity::new_entity_sync_id().into(),
-                origin.into(),
-                seq.into(),
-                prev_hash.map(str::to_string).into(),
-                hash.into(),
-            ],
-        ))
-        .await?;
+    if let (true, Some(digest)) = (with_stubs, digest) {
+        // A row already at this position (only from a database copied or restored with this
+        // device's stubs; received ones are refused by `inbound_stub_check`) never rolls back the
+        // business change: the event is kept and chained, and other devices report the position,
+        // as for any stub that does not match.
+        let written = conn
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO audit_chain_stubs \
+                 (entity_sync_id, chain_origin, chain_seq, chain_prev_hash, chain_hash, content_digest) \
+                 VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (chain_origin, chain_seq) DO NOTHING",
+                [
+                    crate::sync::identity::new_entity_sync_id().into(),
+                    origin.into(),
+                    seq.into(),
+                    prev_hash.map(str::to_string).into(),
+                    hash.into(),
+                    digest.into(),
+                ],
+            ))
+            .await?;
+        if written.rows_affected() != 1 {
+            tracing::error!(
+                chain_seq = seq,
+                "audit chain: a stub already holds this device's position; the kept event has no stub of its own"
+            );
+        }
     }
     Ok(())
+}
+
+/// Checks a stub received by synchronisation (`sync::apply_hooks::before_upsert_checked`):
+/// `Some(message)` refuses it as a sync conflict. A stub never names this device's own chain
+/// (this device writes its own stubs; a received one would take the position of its next kept
+/// event), and it must be well formed: a position from 1, a link to the previous position exactly
+/// after position 1, a local-form hash, and the content digest of a stub-era (`L2:`) hash.
+pub(crate) async fn inbound_stub_check(
+    conn: &impl ConnectionTrait,
+    payload: &serde_json::Map<String, Value>,
+) -> AppResult<Option<String>> {
+    let text = |key: &str| payload.get(key).and_then(Value::as_str);
+    let Some(origin) = text("chain_origin") else {
+        return Ok(Some("Audit chain stub without a device.".to_string()));
+    };
+    if origin == crate::sync::queries::local_replica_id(conn).await? {
+        return Ok(Some(
+            "Audit chain stub for this PC's own chain: only this PC writes those.".to_string(),
+        ));
+    }
+    let seq = payload.get("chain_seq").and_then(Value::as_i64).unwrap_or(0);
+    if seq < 1 {
+        return Ok(Some(format!("Audit chain stub at position {seq}.")));
+    }
+    let prev_ok = match text("chain_prev_hash") {
+        None => seq == 1,
+        Some(p) => seq > 1 && is_hex_digest(local_prefix(p).map_or(p, |pre| &p[pre.len()..])),
+    };
+    if !prev_ok {
+        return Ok(Some(format!(
+            "Audit chain stub at position {seq}: malformed link to the previous position."
+        )));
+    }
+    let hash = text("chain_hash").unwrap_or("");
+    if !is_local_form_hash(hash) {
+        return Ok(Some(format!(
+            "Audit chain stub at position {seq}: not a kept event's hash."
+        )));
+    }
+    let digest = text("content_digest");
+    let digest_ok = if hash.starts_with(LOCAL_FORM_PREFIX) {
+        digest.is_some_and(is_hex_digest)
+    } else {
+        digest.is_none()
+    };
+    if !digest_ok {
+        return Ok(Some(format!(
+            "Audit chain stub at position {seq}: malformed content digest."
+        )));
+    }
+    Ok(None)
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -279,8 +393,8 @@ pub struct ChainOriginReport {
     pub last_seq: i64,
     /// Positions kept on that device, linked through their stub (another device's chain only).
     pub kept_positions: i64,
-    /// Positions kept on that device before stubs existed, with no stub here: accepted as a run
-    /// before a position that points to a local-form hash, not linked one by one.
+    /// Single positions kept on that device before stubs existed, with no stub here: accepted
+    /// because the next position points to a local-form hash; their own link is not checked.
     pub kept_before_stubs: i64,
     pub intact: bool,
     pub first_problem: Option<ChainProblem>,
@@ -342,8 +456,12 @@ enum Position {
         prev: Option<String>,
         hash: Option<String>,
     },
-    /// Kept on its device: only the stub is here.
-    Stub { prev: Option<String>, hash: String },
+    /// Kept on its device: only the stub is here (with its content digest in the stub era).
+    Stub {
+        prev: Option<String>,
+        hash: String,
+        digest: Option<String>,
+    },
 }
 
 impl Position {
@@ -378,7 +496,8 @@ async fn chain_positions(
         let stubs = conn
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT chain_seq, chain_prev_hash, chain_hash FROM audit_chain_stubs WHERE chain_origin = ?",
+                "SELECT chain_seq, chain_prev_hash, chain_hash, content_digest FROM audit_chain_stubs \
+                 WHERE chain_origin = ?",
                 [origin.into()],
             ))
             .await?;
@@ -391,6 +510,9 @@ async fn chain_positions(
                         .try_get("", "chain_prev_hash")
                         .map_err(|e| decode_err("chain_prev_hash", e))?,
                     hash: r.try_get("", "chain_hash").map_err(|e| decode_err("chain_hash", e))?,
+                    digest: r
+                        .try_get("", "content_digest")
+                        .map_err(|e| decode_err("content_digest", e))?,
                 },
             );
         }
@@ -423,6 +545,18 @@ async fn chain_positions(
     Ok((positions, i64::try_from(rows.len()).unwrap_or(i64::MAX)))
 }
 
+/// Whether a stub's hash is what its link and content digest give: a stub-era (`L2:`) hash is
+/// recomputed from the stub (`prev`, `D`), so a stub relinked to another position no longer
+/// matches the hash the next position points to. An older (`L1:`) stub carries no digest: only
+/// its form is checked (KNOWN_LIMITS).
+fn stub_hash_matches(prev: Option<&str>, hash: &str, digest: Option<&str>) -> bool {
+    match local_prefix(hash) {
+        Some(LOCAL_FORM_PREFIX) => digest.is_some_and(|d| is_hex_digest(d) && stub_era_hash(prev, d) == hash),
+        Some(_) => digest.is_none() && is_local_form_hash(hash),
+        None => false,
+    }
+}
+
 /// Whether an event's stored hash matches its content.
 async fn event_hash_matches(
     conn: &impl ConnectionTrait,
@@ -431,6 +565,7 @@ async fn event_hash_matches(
     stored_hash: Option<&str>,
 ) -> AppResult<bool> {
     let actual = match stored_hash.and_then(local_prefix) {
+        Some(LOCAL_FORM_PREFIX) => stub_era_hash(prev, &content_digest(&local_form(conn, sync_id).await?)?),
         Some(prefix) => format!("{prefix}{}", chain_hash_of(prev, &local_form(conn, sync_id).await?)?),
         None => match event_payload(conn, sync_id).await {
             Ok(payload) => chain_hash_of(prev, &payload)?,
@@ -471,16 +606,18 @@ async fn verify_origin(
         if first_problem.is_some() {
             continue;
         }
-        if seq != expected_seq
+        if seq == expected_seq + 1
             && !is_this_device
             && !has_stubs
             && position
                 .prev()
                 .is_some_and(|p| p.starts_with(LOCAL_FORM_PREFIX_BEFORE_STUBS))
         {
-            // A run kept on that device before stubs existed: the position after it points to a
-            // local-form hash, which is all that can be known of the run.
-            kept_before_stubs += seq - expected_seq;
+            // One position kept on that device before stubs existed: the position after it points
+            // to a local-form hash, so the missing one was kept, not removed. Its own link to the
+            // position before it cannot be checked. A longer run is reported missing: only its
+            // last position is known to be kept.
+            kept_before_stubs += 1;
             expected_seq = seq;
             prev_hash = position.prev().map(str::to_string);
         }
@@ -493,7 +630,7 @@ async fn verify_origin(
                 Position::Event {
                     sync_id, prev, hash, ..
                 } => event_hash_matches(conn, sync_id, prev.as_deref(), hash.as_deref()).await?,
-                Position::Stub { hash, .. } => is_local_form_hash(hash),
+                Position::Stub { prev, hash, digest } => stub_hash_matches(prev.as_deref(), hash, digest.as_deref()),
             };
             (!matches).then_some(ChainProblemKind::HashMismatch)
         };
