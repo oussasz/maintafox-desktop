@@ -1,4 +1,4 @@
-//! Migration 244 — "Assign a site" to old records without one (CMMS Advisor decision Q1, step 6).
+//! Migration 245 — "Assign a site" to old records without one (CMMS Advisor decision Q1, step 6).
 //!
 //! Work orders, requests and planning windows recorded before a site was required may have none
 //! (`work_orders.entity_id` NULL, `intervention_requests.org_node_id` 0, `planning_windows.entity_id`
@@ -20,7 +20,7 @@ pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20261020_000244_legacy_site_assignment"
+        "m20261020_000245_legacy_site_assignment"
     }
 }
 

@@ -82,6 +82,7 @@ function data(records: NoSiteRecord[]): RecordsWithoutSite {
     listed_limit: 500,
     max_batch: 500,
     reason_min_chars: 10,
+    reason_max_chars: 1000,
     nodes: [
       { id: 7, parent_id: null, code: "S7", name: "Site 7", type_label: "Site", depth: 1 },
       { id: 8, parent_id: null, code: "S8", name: "Site 8", type_label: "Site", depth: 1 },

@@ -52,6 +52,7 @@ export const RecordsWithoutSiteSchema = z.object({
   listed_limit: z.number(),
   max_batch: z.number(),
   reason_min_chars: z.number(),
+  reason_max_chars: z.number(),
   nodes: z.array(AssignableScopeNodeSchema),
 });
 

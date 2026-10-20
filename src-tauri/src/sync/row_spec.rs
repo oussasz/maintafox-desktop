@@ -461,7 +461,7 @@ pub const ROW_SPECS: &[RowSpec] = &[
                 r("submitter_id", USER),
                 r("reviewer_id", USER),
                 r("closed_by_id", USER),
-                // Who gave an old request without a site its site (migration 244).
+                // Who gave an old request without a site its site (migration 245).
                 r("site_assigned_by_id", USER),
                 r("sla_rule_id", "di_sla_rules"),
                 r("related_di_id", "intervention_requests"),
@@ -517,7 +517,7 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("planning_approved_by_id", USER),
             // Who cleared the permit flag a conversion rule set (migration 233).
             r("permit_rule_cleared_by_id", USER),
-            // Who gave an old work order without a site its site (migration 244).
+            // Who gave an old work order without a site its site (migration 245).
             r("site_assigned_by_id", USER),
             r("assigned_team_id", "teams"),
             r("urgency_id", "reference_values"),
@@ -618,7 +618,7 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("pm_findings", &[]),
     spec("pm_occurrence_transitions", &[]),
     spec("pm_trigger_events", &[]),
-    // Who gave a window without a site its site (migration 244).
+    // Who gave a window without a site its site (migration 245).
     spec("planning_windows", &[r("site_assigned_by_id", USER)]),
     spec("capacity_rules", &[]),
     spec(
@@ -926,6 +926,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
             json_ref_hist("details_json", "$.detail.role_id", "roles"),
             json_ref_hist("details_json", "$.detail.assignment_id", "user_scope_assignments"),
             json_ref_hist("details_json", "$.filter.actor_id", USER),
+            // The site before and after a site given to an old record (`org::site_assignment`).
+            json_ref_hist("details_json", "$.site_before", "org_nodes"),
+            json_ref_hist("details_json", "$.site_after", "org_nodes"),
         ],
         ..spec(
             "audit_events",

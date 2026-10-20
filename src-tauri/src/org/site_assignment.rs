@@ -8,17 +8,22 @@
 //! give them a site:
 //! - only a record that has no site gets one (a record with a site is refused: never an edit-site
 //!   path), whatever its status, closed and cancelled ones included;
-//! - the right is `org.admin` held plant-wide; a site-limited administrator is refused;
+//! - a record is given a site this way once: a record that already carries the trace of an
+//!   assignment (a planning window a planner set back to plant-wide since) is refused and not
+//!   listed, because that trace is fixed for good on the other PCs;
+//! - the right is `org.admin` held plant-wide through a permanent role (as the other PCs re-check
+//!   it); a site-limited administrator, or one holding it only by an emergency grant, is refused;
 //! - the site is a live node of the published organisation structure, valid for the record kind
 //!   (the rule used when such a record is created: a live node for a work order, an active node for a
 //!   request, the node holding the window's equipment for a planning window);
-//! - one reason for the batch, one audit entry per record (before: no site, after: the node; who,
-//!   when, why), written in the same transaction; the batch is applied in full or not at all;
+//! - one reason for the batch (at most [`MAX_REASON_CHARS`] characters), one audit entry per record
+//!   (before: no site, after: the node; who, when, why), written in the same transaction; the batch
+//!   is applied in full or not at all;
 //! - nothing else of the record changes (its row version moves on, as for every edit, and the change
 //!   is captured for sync as usual). A planning window flagged "Site to re-enter" is settled by it,
 //!   as when a planner re-enters its site.
 //!
-//! The record keeps who gave the site, when and why (migration 244); that trace travels with the row
+//! The record keeps who gave the site, when and why (migration 245); that trace travels with the row
 //! and the other PCs re-check it on arrival ([`inbound_site_assignment_check`]): the author holds the
 //! right plant-wide there and the record still has no site there, else a sync conflict.
 //!
@@ -44,6 +49,10 @@ pub const MAX_LISTED: i64 = 500;
 
 /// Records given a site in one batch.
 pub const MAX_BATCH: usize = 500;
+
+/// The reason has at most this many characters (Unicode characters, as [`MIN_REASON_CHARS`] counts
+/// them; the screen counts the same way). It is stored on the record and travels with it to every PC.
+pub const MAX_REASON_CHARS: usize = 1000;
 
 /// Audit action of an assigned site (`audit_events.action_code`).
 pub const AUDIT_ACTION: &str = "record.site_assigned";
@@ -107,6 +116,15 @@ impl NoSiteKind {
             Self::WorkOrder | Self::PlanningWindow => "(t.entity_id IS NULL OR t.entity_id <= 0)",
             Self::Request => "(t.org_node_id IS NULL OR t.org_node_id <= 0)",
         }
+    }
+
+    /// A record (alias `t`) without a site that can be given one here: no site, and no trace of an
+    /// earlier assignment ([`assign_site`] refuses a second one).
+    fn assignable_sql(self) -> String {
+        format!(
+            "{} AND t.site_assigned_by_id IS NULL AND t.site_assigned_at IS NULL AND t.site_assign_reason IS NULL",
+            self.without_site_sql()
+        )
     }
 
     /// An org node (alias `n`) that can be suggested or given to this kind of record: live, in the
@@ -182,6 +200,8 @@ pub struct RecordsWithoutSite {
     pub max_batch: usize,
     /// The reason has at least this many characters.
     pub reason_min_chars: usize,
+    /// The reason has at most this many characters.
+    pub reason_max_chars: usize,
     pub nodes: Vec<AssignableScopeNode>,
 }
 
@@ -228,14 +248,15 @@ async fn count(db: &impl ConnectionTrait, sql: &str) -> AppResult<i64> {
     row.try_get::<i64>("", "c").map_err(|e| decode_err("c", e))
 }
 
-/// How many records have no site, per kind (every record, whatever its status).
+/// How many records have no site and can be given one here, per kind (every record, whatever its
+/// status; a record already given a site once is not counted, see [`NoSiteKind::assignable_sql`]).
 pub async fn count_records_without_site(db: &impl ConnectionTrait) -> AppResult<NoSiteCounts> {
     Ok(NoSiteCounts {
         work_orders: count(
             db,
             &format!(
                 "SELECT COUNT(*) AS c FROM work_orders t WHERE {}",
-                NoSiteKind::WorkOrder.without_site_sql()
+                NoSiteKind::WorkOrder.assignable_sql()
             ),
         )
         .await?,
@@ -243,7 +264,7 @@ pub async fn count_records_without_site(db: &impl ConnectionTrait) -> AppResult<
             db,
             &format!(
                 "SELECT COUNT(*) AS c FROM intervention_requests t WHERE {}",
-                NoSiteKind::Request.without_site_sql()
+                NoSiteKind::Request.assignable_sql()
             ),
         )
         .await?,
@@ -251,7 +272,7 @@ pub async fn count_records_without_site(db: &impl ConnectionTrait) -> AppResult<
             db,
             &format!(
                 "SELECT COUNT(*) AS c FROM planning_windows t WHERE {} AND t.scope_review_required = 1",
-                NoSiteKind::PlanningWindow.without_site_sql()
+                NoSiteKind::PlanningWindow.assignable_sql()
             ),
         )
         .await?,
@@ -259,18 +280,18 @@ pub async fn count_records_without_site(db: &impl ConnectionTrait) -> AppResult<
             db,
             &format!(
                 "SELECT COUNT(*) AS c FROM planning_windows t WHERE {} AND t.scope_review_required = 0",
-                NoSiteKind::PlanningWindow.without_site_sql()
+                NoSiteKind::PlanningWindow.assignable_sql()
             ),
         )
         .await?,
     })
 }
 
-/// The records of `kind` without a site (most recent first; windows to review first), at most
-/// [`MAX_LISTED`].
+/// The records of `kind` without a site that can be given one here (most recent first; windows to
+/// review first), at most [`MAX_LISTED`].
 pub async fn list_records_of_kind(db: &impl ConnectionTrait, kind: NoSiteKind) -> AppResult<Vec<NoSiteRecord>> {
     let usable = kind.usable_node_sql();
-    let without = kind.without_site_sql();
+    let without = kind.assignable_sql();
     let sql = match kind {
         NoSiteKind::WorkOrder => format!(
             "SELECT t.id, t.code AS code, t.title AS title, s.code AS status_code, t.created_at AS created_at, \
@@ -358,37 +379,51 @@ pub async fn list_records_without_site(db: &DatabaseConnection, kind: NoSiteKind
         listed_limit: MAX_LISTED,
         max_batch: MAX_BATCH,
         reason_min_chars: MIN_REASON_CHARS,
+        reason_max_chars: MAX_REASON_CHARS,
         nodes: crate::commands::admin_users::list_assignable_scope_nodes_impl(db).await?,
     })
 }
 
-/// Refuses unless `user_id` holds `org.admin` plant-wide (the right of the plant-wide organisation
-/// tools; administration stays plant-wide, `docs/SITE_SCOPED_ROLES.md` §9). A site-limited
-/// administrator gets the coded plant-wide refusal. Plant-wide as `require_permission!` with
-/// `PermissionScope::Global` counts it: a plant-wide assignment, or an elevated administrator.
-pub async fn require_plant_wide_org_admin(db: &DatabaseConnection, user_id: i32) -> AppResult<()> {
-    let scope = crate::auth::scope::access_scope(db, user_id, ORG_ADMIN).await?;
-    if scope.is_everywhere() {
-        return Ok(());
+/// Refuses unless `user_id` holds `org.admin` plant-wide through a permanent role, or is an
+/// administrator: the rule the other PCs apply when the assignment arrives
+/// (`settings::site::holds_tenant_right`). An emergency grant is temporary and never lets its
+/// holder administer anything lasting (`rbac::resolver::PERMANENT_ASSIGNMENT_IN_FORCE_SQL`); a site
+/// given here is for good, so a holder of the right only by an emergency grant gets a coded
+/// refusal. Anyone else (no right, or the right on some sites only) is refused as the command
+/// refuses them (`require_permission!` with `PermissionScope::Global`, the check of every
+/// plant-wide organisation command): permission denied.
+pub async fn require_plant_wide_org_admin(conn: &impl ConnectionTrait, user_id: i32) -> AppResult<()> {
+    let scope = crate::auth::scope::access_scope(conn, user_id, ORG_ADMIN).await?;
+    if !scope.is_everywhere() {
+        return Err(AppError::PermissionDenied(format!("Permission requise : {ORG_ADMIN}")));
     }
-    if scope.is_anywhere() {
+    if !crate::settings::site::holds_tenant_right(conn, i64::from(user_id), ORG_ADMIN).await? {
         return Err(refusal(
-            "SCOPE_PLANT_WIDE_ONLY",
-            "Giving a site to a record without one needs the organisation administration right for the whole plant.",
+            "SITE_ASSIGN_PERMANENT_RIGHT_REQUIRED",
+            "Giving a site to a record without one needs the organisation administration right for the whole \
+             plant through a permanent role: an emergency grant is not enough.",
             &[("permission", ORG_ADMIN.to_string())],
         ));
     }
-    Err(AppError::PermissionDenied(format!("Permission requise : {ORG_ADMIN}")))
+    Ok(())
 }
 
-/// The reason, trimmed, when it is long enough.
+/// The reason, trimmed, when it is long enough and not too long (counted in Unicode characters).
 fn checked_reason(reason: &str) -> AppResult<String> {
     let reason = reason.trim();
-    if reason.chars().count() < MIN_REASON_CHARS {
+    let chars = reason.chars().count();
+    if chars < MIN_REASON_CHARS {
         return Err(refusal(
             "SITE_ASSIGN_REASON_REQUIRED",
             format!("Give the reason (at least {MIN_REASON_CHARS} characters) for the site you assign."),
             &[("min", MIN_REASON_CHARS.to_string())],
+        ));
+    }
+    if chars > MAX_REASON_CHARS {
+        return Err(refusal(
+            "SITE_ASSIGN_REASON_TOO_LONG",
+            format!("The reason has at most {MAX_REASON_CHARS} characters."),
+            &[("max", MAX_REASON_CHARS.to_string())],
         ));
     }
     Ok(reason.to_string())
@@ -428,6 +463,8 @@ struct Held {
     site: Option<i64>,
     code: Option<String>,
     equipment_id: Option<i64>,
+    /// It carries the trace of an earlier assignment (who, when or why).
+    assigned_before: bool,
 }
 
 async fn held_record(conn: &impl ConnectionTrait, kind: NoSiteKind, id: i64) -> AppResult<Held> {
@@ -435,7 +472,9 @@ async fn held_record(conn: &impl ConnectionTrait, kind: NoSiteKind, id: i64) -> 
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT t.id AS id, t.{site} AS site, {code} AS code, t.equipment_id AS equipment_id \
+                "SELECT t.id AS id, t.{site} AS site, {code} AS code, t.equipment_id AS equipment_id, \
+                        CASE WHEN t.site_assigned_by_id IS NULL AND t.site_assigned_at IS NULL \
+                              AND t.site_assign_reason IS NULL THEN 0 ELSE 1 END AS assigned_before \
                    FROM {table} t WHERE t.id = ?",
                 site = kind.site_column(),
                 code = kind.code_sql(),
@@ -455,6 +494,10 @@ async fn held_record(conn: &impl ConnectionTrait, kind: NoSiteKind, id: i64) -> 
         equipment_id: row
             .try_get("", "equipment_id")
             .map_err(|e| decode_err("equipment_id", e))?,
+        assigned_before: row
+            .try_get::<i64>("", "assigned_before")
+            .map_err(|e| decode_err("assigned_before", e))?
+            != 0,
     })
 }
 
@@ -463,8 +506,9 @@ fn has_site(site: Option<i64>) -> bool {
 }
 
 /// Gives the site `input.org_node_id` to the records of `input.kind` that have none, as `actor_id`
-/// (checked here: `org.admin` plant-wide). All or nothing: a record that has a site, or that does
-/// not exist, refuses the whole batch. One audit entry per record.
+/// (checked here: `org.admin` plant-wide through a permanent role). All or nothing: a record that
+/// has a site, that was already given one once, or that does not exist, refuses the whole batch.
+/// One audit entry per record.
 pub async fn assign_site(
     db: &DatabaseConnection,
     actor_id: i32,
@@ -491,6 +535,8 @@ pub async fn assign_site(
     let node = input.org_node_id;
 
     let txn = db.begin().await?;
+    // Read again with the records, in the same transaction.
+    require_plant_wide_org_admin(&txn, actor_id).await?;
     let (node_code, node_name) = checked_node(&txn, kind, node).await?;
     let mut held = Vec::with_capacity(ids.len());
     for id in &ids {
@@ -511,6 +557,27 @@ pub async fn assign_site(
             &[("records", with_site.join(", "))],
         ));
     }
+    // A record given a site once keeps the trace of it (who, when, why) for good: the other PCs
+    // refuse any received row that rewrites or removes it (`SITE_ASSIGNMENT_TRACE_CHANGED`, see
+    // [`inbound_site_assignment_check`]). A planning window a planner set back to plant-wide since
+    // still carries it: assigning it again here would write a second trace that every other PC
+    // refuses, so it is refused here (the planner gives it its site again in the window dialog).
+    let assigned_before: Vec<String> = held
+        .iter()
+        .filter(|h| h.assigned_before)
+        .map(|h| h.code.clone().unwrap_or_else(|| format!("#{}", h.id)))
+        .collect();
+    if !assigned_before.is_empty() {
+        return Err(refusal(
+            "SITE_ASSIGN_ALREADY_ASSIGNED",
+            format!(
+                "These records were already given a site once, which is kept for good; they cannot be given one \
+                 again here: {}.",
+                assigned_before.join(", ")
+            ),
+            &[("records", assigned_before.join(", "))],
+        ));
+    }
     if kind == NoSiteKind::PlanningWindow {
         // The rule of a window: its equipment, when it names one, is installed on its site or below.
         for h in &held {
@@ -528,7 +595,8 @@ pub async fn assign_site(
     let update_sql = format!(
         "UPDATE {table} SET {site} = ?, site_assigned_by_id = ?, site_assigned_at = ?, site_assign_reason = ?, \
                 row_version = row_version + 1, updated_at = ?{settle_review} \
-          WHERE id = ? AND ({site} IS NULL OR {site} <= 0)",
+          WHERE id = ? AND ({site} IS NULL OR {site} <= 0) \
+            AND site_assigned_by_id IS NULL AND site_assigned_at IS NULL AND site_assign_reason IS NULL",
         table = kind.table(),
         site = kind.site_column(),
     );
@@ -656,9 +724,10 @@ async fn local_copy(
 /// Re-check on arrival of a received work order, request or planning window (`sync::apply_hooks`):
 /// - the site-assignment trace recorded here (who, when, why) is never removed nor rewritten;
 /// - a new assignment on the row is accepted only when it is complete (who, when, not in the future,
-///   a reason of [`MIN_REASON_CHARS`] or more, a site), its author holds `org.admin` plant-wide here,
-///   the site is a live node here, and the record still has no site here; a person or a node not
-///   applied here yet makes the row wait;
+///   a reason of [`MIN_REASON_CHARS`] to [`MAX_REASON_CHARS`] characters, a site), its author holds
+///   `org.admin` plant-wide here through a permanent role, the site is a live node here, and the
+///   record still has no site here; a person, their rights or a node not applied here yet makes the
+///   row wait;
 /// - a work order or request that has no site here and arrives with one but without an assignment
 ///   is a conflict (no edit gives such a record a site), except a work order whose equipment changes
 ///   with it (a work order moves with its equipment) and a planning window (a planner re-enters its
@@ -742,6 +811,12 @@ pub(crate) async fn inbound_site_assignment_check(
             format!("{what}: its site assignment has no reason of at least {MIN_REASON_CHARS} characters"),
         );
     }
+    if reason.chars().count() > MAX_REASON_CHARS {
+        return conflict(
+            "SITE_ASSIGNMENT_INCOMPLETE",
+            format!("{what}: the reason of its site assignment is longer than {MAX_REASON_CHARS} characters"),
+        );
+    }
     match instant(at) {
         None => {
             return conflict(
@@ -793,6 +868,13 @@ pub(crate) async fn inbound_site_assignment_check(
     };
     let author_id: i64 = author.try_get("", "id").map_err(|e| decode_err("id", e))?;
     if !crate::settings::site::holds_tenant_right(conn, author_id, ORG_ADMIN).await? {
+        // The right is held before it is used, so its rows (the author's plant-wide role, the
+        // role's permission) come before or with this one: while some still wait here, wait too.
+        if crate::permit::sync_check::rights_may_still_arrive(conn, by_sync, ORG_ADMIN).await? {
+            return Ok(Some(InboundVerdict::Defer(format!(
+                "{what}: the rights of the person who gave its site ({by_sync}) are still arriving"
+            ))));
+        }
         return conflict(
             "SITE_ASSIGNMENT_NOT_ALLOWED",
             format!(

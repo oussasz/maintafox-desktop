@@ -152,8 +152,11 @@ export function RecordsWithoutSitePanel({
   };
 
   const minReason = data?.reason_min_chars ?? 0;
+  const maxReason = data?.reason_max_chars ?? 0;
   const maxBatch = data?.max_batch ?? 0;
-  const reasonOk = data != null && reason.trim().length >= minReason;
+  // Counted in Unicode characters, as the backend counts them (`chars()`), not UTF-16 units.
+  const reasonChars = Array.from(reason.trim()).length;
+  const reasonOk = data != null && reasonChars >= minReason && reasonChars <= maxReason;
   const tooMany = data != null && selected.size > maxBatch;
   const canAssign =
     !busy && data != null && selected.size > 0 && !tooMany && node !== "" && reasonOk;
@@ -362,7 +365,7 @@ export function RecordsWithoutSitePanel({
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
                     rows={2}
-                    maxLength={1000}
+                    maxLength={maxReason > 0 ? maxReason : undefined}
                   />
                   <p className="text-xs text-text-muted">
                     {t("org:noSite.reasonHint", { min: minReason })}

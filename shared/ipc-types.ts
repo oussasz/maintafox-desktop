@@ -11187,6 +11187,8 @@ export interface RecordsWithoutSite {
   max_batch: number;
   /** The reason has at least this many characters. */
   reason_min_chars: number;
+  /** The reason has at most this many characters. */
+  reason_max_chars: number;
   nodes: AssignableScopeNode[];
 }
 

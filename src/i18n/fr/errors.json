@@ -167,6 +167,9 @@
     "SITE_ASSIGN_NO_RECORDS": "Sélectionnez les enregistrements auxquels donner un site.",
     "SITE_ASSIGN_TOO_MANY": "Au plus {{max}} enregistrements peuvent recevoir un site à la fois.",
     "SITE_ASSIGN_ALREADY_HAS_SITE": "Ces enregistrements ont déjà un site, qui ne peut pas être changé ici : {{records}}. Rechargez la liste.",
-    "SITE_ASSIGN_NODE_INVALID": "Le site choisi n'est pas une unité de l'organisation publiée (supprimée, ou encore en brouillon)."
+    "SITE_ASSIGN_NODE_INVALID": "Le site choisi n'est pas une unité de l'organisation publiée (supprimée, ou encore en brouillon).",
+    "SITE_ASSIGN_ALREADY_ASSIGNED": "Ces enregistrements ont déjà reçu un site une fois, ce qui est conservé définitivement : ils ne peuvent pas en recevoir un nouveau ici ({{records}}). Un planificateur redonne son site à une fenêtre de planification dans la fenêtre de saisie de celle-ci.",
+    "SITE_ASSIGN_PERMANENT_RIGHT_REQUIRED": "Donner un site à un enregistrement qui n'en a pas demande le droit d'administration de l'organisation pour toute l'usine par un rôle permanent : une attribution d'urgence ne suffit pas.",
+    "SITE_ASSIGN_REASON_TOO_LONG": "Le motif compte au plus {{max}} caractères."
   }
 }

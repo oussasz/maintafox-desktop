@@ -374,6 +374,10 @@ async fn a_record_that_has_a_site_refuses_the_whole_batch() {
     assert!(matches!(err, crate::errors::AppError::NotFound { .. }), "{err:?}");
 }
 
+/// Plant-wide through a permanent role only: an administrator of one site is refused as the command
+/// refuses them (`require_permission!` with `PermissionScope::Global`: permission denied), and a
+/// plant-wide administrator only by an emergency grant gets the coded refusal (a site given here is
+/// for good; the other PCs would refuse it, `settings::site::holds_tenant_right`).
 #[tokio::test]
 async fn only_a_plant_wide_organisation_administrator_assigns_a_site() {
     let f = fixture().await;
@@ -384,7 +388,26 @@ async fn only_a_plant_wide_organisation_administrator_assigns_a_site() {
     )
     .await
     .expect_err("an administrator of site A only");
-    assert_eq!(code_of(&err), "SCOPE_PLANT_WIDE_ONLY");
+    assert_eq!(code_of(&err), "PERMISSION_DENIED");
+    let emergency = user(&f.db, "sa_emergency").await;
+    let emergency_role = role(&f.db, "SA org admin by emergency", &[ORG_VIEW, ORG_ADMIN]).await;
+    assign(&f.db, emergency, emergency_role, "tenant", None).await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE user_scope_assignments SET is_emergency = 1, emergency_expires_at = '2099-01-01T00:00:00Z'
+              WHERE user_id = {emergency}"
+        ),
+    )
+    .await;
+    let err = site_assignment::assign_site(
+        &f.db,
+        emergency,
+        input(NoSiteKind::WorkOrder, &[f.wo_none], f.t.site_a, REASON),
+    )
+    .await
+    .expect_err("org.admin plant-wide by an emergency grant only");
+    assert_eq!(code_of(&err), "SITE_ASSIGN_PERMANENT_RIGHT_REQUIRED");
     let err = site_assignment::assign_site(
         &f.db,
         f.viewer,
@@ -436,7 +459,25 @@ async fn a_deleted_or_unknown_node_and_a_missing_reason_are_refused() {
         .await
         .expect_err("no record");
     assert_eq!(code_of(&err), "SITE_ASSIGN_NO_RECORDS");
+    let too_long = "x".repeat(site_assignment::MAX_REASON_CHARS + 1);
+    let err = site_assignment::assign_site(
+        &f.db,
+        f.admin,
+        input(NoSiteKind::WorkOrder, &[f.wo_none], f.t.site_a, &too_long),
+    )
+    .await
+    .expect_err("reason too long");
+    assert_eq!(code_of(&err), "SITE_ASSIGN_REASON_TOO_LONG");
     assert_eq!(audit_count(&f.db, "work_order", &[f.wo_none]).await, 0);
+    // Counted in characters, not bytes: the longest reason in accented letters is accepted.
+    let longest = "é".repeat(site_assignment::MAX_REASON_CHARS);
+    site_assignment::assign_site(
+        &f.db,
+        f.admin,
+        input(NoSiteKind::WorkOrder, &[f.wo_none], f.t.site_a, &longest),
+    )
+    .await
+    .expect("the longest reason");
 }
 
 #[tokio::test]
@@ -532,6 +573,81 @@ async fn a_planning_window_without_site_gets_a_site_holding_its_equipment() {
     )
     .await
     .expect("site A holds its equipment");
+}
+
+/// A planning window given a site, then set back to plant-wide by a planner, keeps the trace of that
+/// assignment: the other PCs refuse any row that rewrites it, so it is neither listed nor counted here
+/// and a second assignment is refused (the planner gives it its site again in the window dialog).
+#[tokio::test]
+async fn a_record_given_a_site_once_is_not_offered_nor_given_one_again() {
+    let f = fixture().await;
+    site_assignment::assign_site(
+        &f.db,
+        f.admin,
+        input(NoSiteKind::PlanningWindow, &[f.win_eq], f.t.site_a, REASON),
+    )
+    .await
+    .expect("assign");
+    let before = site_assignment::count_records_without_site(&f.db)
+        .await
+        .expect("counts");
+    // The planner sets it back to plant-wide (`planning::scheduling::update_planning_window`, site
+    // `null`): the site is cleared, the trace stays.
+    exec(
+        &f.db,
+        &format!("UPDATE planning_windows SET entity_id = NULL WHERE id = {}", f.win_eq),
+    )
+    .await;
+    let after = site_assignment::count_records_without_site(&f.db)
+        .await
+        .expect("counts");
+    assert_eq!(after, before, "not counted: it cannot be given a site here");
+    let windows = site_assignment::list_records_of_kind(&f.db, NoSiteKind::PlanningWindow)
+        .await
+        .expect("windows");
+    assert!(!windows.iter().any(|r| r.id == f.win_eq), "not listed");
+    assert!(windows.iter().any(|r| r.id == f.win_review), "the others still are");
+
+    let at = opt_text(
+        &f.db,
+        &format!("SELECT site_assigned_at FROM planning_windows WHERE id = {}", f.win_eq),
+    )
+    .await;
+    let err = site_assignment::assign_site(
+        &f.db,
+        f.admin,
+        input(
+            NoSiteKind::PlanningWindow,
+            &[f.win_review, f.win_eq],
+            f.t.site_a,
+            REASON,
+        ),
+    )
+    .await
+    .expect_err("given a site once");
+    assert_eq!(code_of(&err), "SITE_ASSIGN_ALREADY_ASSIGNED");
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!(
+                "SELECT COUNT(*) FROM planning_windows WHERE id IN ({}, {}) AND entity_id IS NULL",
+                f.win_review, f.win_eq
+            )
+        )
+        .await,
+        2,
+        "nothing of the batch is applied"
+    );
+    assert_eq!(
+        opt_text(
+            &f.db,
+            &format!("SELECT site_assigned_at FROM planning_windows WHERE id = {}", f.win_eq),
+        )
+        .await,
+        at,
+        "the trace is unchanged"
+    );
+    assert_eq!(audit_count(&f.db, "planning_window", &[f.win_eq]).await, 1);
 }
 
 #[tokio::test]
@@ -682,6 +798,29 @@ async fn a_received_assignment_is_a_conflict_when_its_author_lacks_the_plant_wid
             "{author}"
         );
     }
+    // The author's plant-wide role (with `org.admin`) is received but not applied here yet: the
+    // row waits for it instead of becoming a conflict.
+    let pending = json!({
+        "user_sync_id": "scope-user-sa_viewer",
+        "role_sync_id": "scope-role-SA org admin",
+        "scope_type": "tenant",
+        "is_emergency": 0,
+    });
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
+             row_version, payload_json, payload_hash, apply_status) VALUES ('b-sa-usa', 'c1', \
+             'user_scope_assignments', 'sa-usa-viewer-admin', 'upsert', 1, '{pending}', 'h-sa-usa', 'pending')"
+        ),
+    )
+    .await;
+    let row = assignment("entity_sync_id", SITE_A_SYNC, "scope-user-sa_viewer", &now(), REASON);
+    assert!(waits(
+        &inbound_site_assignment_check(&f.db, NoSiteKind::WorkOrder, &wo, &row)
+            .await
+            .expect("check")
+    ));
 }
 
 #[tokio::test]
@@ -726,6 +865,13 @@ async fn a_received_assignment_without_reason_or_dated_in_the_future_is_a_confli
         .to_string();
     for row in [
         assignment("entity_sync_id", SITE_A_SYNC, ADMIN_SYNC, &now(), "short"),
+        assignment(
+            "entity_sync_id",
+            SITE_A_SYNC,
+            ADMIN_SYNC,
+            &now(),
+            &"x".repeat(site_assignment::MAX_REASON_CHARS + 1),
+        ),
         assignment("entity_sync_id", SITE_A_SYNC, ADMIN_SYNC, &future, REASON),
         assignment("entity_sync_id", SITE_A_SYNC, ADMIN_SYNC, "not a time", REASON),
         payload(&[
