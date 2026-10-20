@@ -413,11 +413,13 @@ fn bool_of(raw: Option<&str>) -> Option<bool> {
 /// conflict; a move while the site held here is still live (the node deletes not received yet)
 /// waits like a rule turned on.
 ///
-/// A rule received (on or off) on a node deleted here or on a node of a draft structure is a
-/// conflict, as `set_site_setting` refuses it: neither is a site, and a rule on a draft copy would
-/// block every later publish (`org::validation::collect_site_rules_on_draft_copies`). Except a
-/// rule moved by a publish that arrived here only in part (its former nodes deleted, its new
-/// structure not activated yet: `org::validation::node_copy_awaits_activation`): it waits.
+/// A rule received turned on at a node deleted here, or received (on or off) on a node of a draft
+/// structure, is a conflict, as `set_site_setting` refuses it: neither is a site, and a rule on a
+/// draft copy would block every later publish (`org::validation::collect_site_rules_on_draft_copies`).
+/// Except a rule moved by a publish that arrived here only in part (its former nodes deleted, its
+/// new structure not activated yet: `org::validation::node_copy_awaits_activation`): it waits. A
+/// rule received turned off at a node deleted here (turned off there before the publish) is
+/// applied: the strict side, which takes the rule off the copy it was moved to.
 pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
     conn: &C,
     entity_sync_id: &str,
@@ -440,7 +442,7 @@ pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
     let Some(site) = local_id(conn, "org_nodes", site_sync).await? else {
         return Ok(Some(InboundVerdict::Defer("site not applied yet".into())));
     };
-    if let Some(verdict) = received_site_not_a_site(conn, key, site).await? {
+    if let Some(verdict) = received_site_not_a_site(conn, key, site, value).await? {
         return Ok(Some(verdict));
     }
     if !value {
@@ -538,10 +540,17 @@ pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
 /// A received rule whose site (`site`, local id) is no site here: a node deleted here, or a node of
 /// a draft structure. `None`: a live node outside a draft. A node of a draft that is the copy of
 /// a node deleted here while its structure awaits activation (a publish arrived in part) waits.
+///
+/// Also `None` for a rule turned off (`value` false) on a node deleted here: an "off" made at a
+/// site before a publish replaced it, received after the publish. The publish moved the rule held
+/// here to the copy; applying the "off" (same row) takes it back off the copy, so the copy falls to
+/// the strict default, as on the PC that turned it off. Refusing it would leave the copy on here
+/// while the "off" event at the former node (append-only) reaches every PC.
 async fn received_site_not_a_site<C: ConnectionTrait>(
     conn: &C,
     key: &str,
     site: i64,
+    value: bool,
 ) -> AppResult<Option<InboundVerdict>> {
     let Some(node) = conn
         .query_one(Statement::from_sql_and_values(
@@ -559,7 +568,7 @@ async fn received_site_not_a_site<C: ConnectionTrait>(
     };
     let deleted = get::<i64>(&node, "deleted")? != 0;
     let draft = get::<i64>(&node, "draft")? != 0;
-    if !deleted && !draft {
+    if (!deleted && !draft) || (deleted && !value) {
         return Ok(None);
     }
     if !deleted && crate::org::validation::node_copy_awaits_activation(conn, None, site).await? {

@@ -630,6 +630,7 @@
       "validityHint": "Sans dates, le rôle est valable jusqu'à ce qu'on le retire. La date de fin est incluse.",
       "windowInvalid": "La date de début doit précéder la date de fin.",
       "replaces": "Ce compte a déjà le rôle « {{role}} » sur ce périmètre : il sera remplacé.",
+      "replacesMany": "Ce compte a déjà les rôles {{roles}} sur ce périmètre : ils seront tous remplacés.",
       "confirm": "Attribuer"
     },
     "user": {

@@ -2458,11 +2458,12 @@ mod tests {
         ));
     }
 
-    /// A site rule received (on or off) on a node deleted here or on a node of a draft structure
-    /// is refused, as setting it here is (`set_site_setting`): neither is a site, and a rule on a
-    /// draft copy would block every later publish. A rule received on the copy while the publish
-    /// of its structure arrived here only in part (its former nodes deleted, the structure not
-    /// activated yet) waits.
+    /// A site rule received turned on at a node deleted here, or received (on or off) on a node of
+    /// a draft structure, is refused, as setting it here is (`set_site_setting`): neither is a
+    /// site, and a rule on a draft copy would block every later publish. A rule turned off at a
+    /// node deleted here is applied (the strict side). A rule received on the copy while the
+    /// publish of its structure arrived here only in part (its former nodes deleted, the structure
+    /// not activated yet) waits.
     #[tokio::test]
     async fn a_site_rule_received_on_a_deleted_or_draft_node_is_refused() {
         use crate::settings::site::{inbound_site_setting_check, InboundVerdict};
@@ -2502,10 +2503,9 @@ mod tests {
                 })
             )
         };
-        // The former node, deleted by the publish: off and on refused.
-        for value in ["false", "true"] {
-            assert!(refused(received(old_plant, value).await), "deleted node, {value}");
-        }
+        // The former node, deleted by the publish: on refused, off applied.
+        assert!(refused(received(old_plant, "true").await), "deleted node, on");
+        assert_eq!(received(old_plant, "false").await, None, "deleted node, off");
         // A node of an ordinary draft (the structure in use is live): off and on refused.
         let next_draft = fork_active_model(&db, "Model v3").await;
         let draft_plant = scalar(
@@ -2536,5 +2536,69 @@ mod tests {
         )
         .await;
         assert_eq!(received(new_plant, "false").await, None);
+    }
+
+    /// A rule turned off at a site on another PC before a publish replaced that site, received
+    /// after the publish (which moved the rule, still on, to the copy): the "off" is applied and
+    /// takes the rule off the copy, which falls to the strict default as on the PC that turned it
+    /// off. It is never a conflict leaving the copy on here.
+    #[tokio::test]
+    async fn a_site_rule_turned_off_before_a_publish_and_received_after_it_takes_the_copy_off() {
+        use crate::settings::site::{inbound_site_setting_check, site_setting};
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, old_plant, _) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+        site_rule_on(&db, old_plant).await;
+        let (draft_id, _, _, _) = create_matching_draft_model(&db).await;
+        validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect("publish with remap");
+        let new_plant = active_node_id_by_code(&db, "PLT1").await;
+        assert_eq!(
+            site_setting(&db, new_plant, SITE_RULE).await.expect("read"),
+            Some(true),
+            "the publish moved the rule, on, to the copy"
+        );
+        let rule_sync = text(
+            &db,
+            &format!("SELECT entity_sync_id FROM site_settings WHERE setting_key = '{SITE_RULE}'"),
+        )
+        .await;
+        let old_plant_sync = text(
+            &db,
+            &format!("SELECT entity_sync_id FROM org_nodes WHERE id = {old_plant}"),
+        )
+        .await;
+        let admin_sync = text(&db, "SELECT entity_sync_id FROM user_accounts WHERE username = 'admin'").await;
+        // The same row as the other PC holds it: off, at the former node, changed after the time
+        // the publish kept (the "off" was made after the rule was turned on, before the publish).
+        let payload = serde_json::json!({
+            "entity_sync_id": rule_sync,
+            "site_node_sync_id": old_plant_sync,
+            "setting_key": SITE_RULE,
+            "value_json": "false",
+            "updated_by_sync_id": admin_sync,
+            "updated_at": "2099-01-01T00:00:00Z",
+        });
+        assert_eq!(
+            inbound_site_setting_check(&db, &rule_sync, payload.as_object().expect("object"))
+                .await
+                .expect("check"),
+            None,
+            "the off is applied"
+        );
+        // Applied as received: the row back at the former node, off.
+        exec(
+            &db,
+            &format!(
+                "UPDATE site_settings SET site_node_id = {old_plant}, value_json = 'false'                  WHERE entity_sync_id = '{rule_sync}'"
+            ),
+        )
+        .await;
+        assert_eq!(
+            site_setting(&db, new_plant, SITE_RULE).await.expect("read"),
+            None,
+            "the copy falls to the strict default"
+        );
     }
 }
