@@ -228,6 +228,15 @@
     "none": "No chained audit event yet.",
     "unchained_one": "{{count}} older event was written before chaining existed and is not covered.",
     "unchained_other": "{{count}} older events were written before chaining existed and are not covered.",
+    "kept_one": "{{count}} event kept on that device, linked by its fingerprint",
+    "kept_other": "{{count}} events kept on that device, linked by their fingerprint",
+    "keptBeforeStubs_one": "{{count}} position kept on that device before this version, not linked one by one",
+    "keptBeforeStubs_other": "{{count}} positions kept on that device before this version, not linked one by one",
+    "problemKept": {
+      "hash_mismatch": "the fingerprint of the event kept on that device at position {{seq}} is not valid",
+      "prev_mismatch": "the chain is relinked at position {{seq}} (event kept on that device): an event before it was removed or replaced",
+      "missing_positions": "positions before {{seq}} are missing (event kept on that device): removed, or not received from that device yet"
+    },
     "problem": {
       "hash_mismatch": "event #{{id}} (position {{seq}}) was changed",
       "prev_mismatch": "the chain is relinked at position {{seq}} (event #{{id}}): an event before it was removed or replaced",

@@ -982,6 +982,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
             ],
         )
     },
+    // Hash-only stubs of the audit events kept on their PC (`audit::chain`): no reference, no
+    // content.
+    spec("audit_chain_stubs", &[]),
     RowSpec {
         json_refs: &[
             json_ref_hist("diff_json", "$.role_id", "roles"),

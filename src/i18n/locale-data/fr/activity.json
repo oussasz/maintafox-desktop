@@ -228,6 +228,15 @@
     "none": "Aucun événement d'audit chaîné pour l'instant.",
     "unchained_one": "{{count}} événement plus ancien a été écrit avant le chaînage et n'est pas couvert.",
     "unchained_other": "{{count}} événements plus anciens ont été écrits avant le chaînage et ne sont pas couverts.",
+    "kept_one": "{{count}} événement conservé sur cet appareil, relié par son empreinte",
+    "kept_other": "{{count}} événements conservés sur cet appareil, reliés par leur empreinte",
+    "keptBeforeStubs_one": "{{count}} position conservée sur cet appareil avant cette version, non reliée une à une",
+    "keptBeforeStubs_other": "{{count}} positions conservées sur cet appareil avant cette version, non reliées une à une",
+    "problemKept": {
+      "hash_mismatch": "l'empreinte de l'événement conservé sur cet appareil en position {{seq}} n'est pas valide",
+      "prev_mismatch": "la chaîne est rattachée autrement à la position {{seq}} (événement conservé sur cet appareil) : un événement précédent a été supprimé ou remplacé",
+      "missing_positions": "des positions avant {{seq}} manquent (événement conservé sur cet appareil) : supprimées, ou pas encore reçues de cet appareil"
+    },
     "problem": {
       "hash_mismatch": "l'événement n°{{id}} (position {{seq}}) a été modifié",
       "prev_mismatch": "la chaîne est rattachée autrement à la position {{seq}} (événement n°{{id}}) : un événement précédent a été supprimé ou remplacé",

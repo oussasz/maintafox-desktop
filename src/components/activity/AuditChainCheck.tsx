@@ -61,11 +61,21 @@ export function AuditChainCheck() {
                 })}
                 {" — "}
                 {t("chain.events", { count: c.events })}
+                {c.kept_positions > 0 ? ` — ${t("chain.kept", { count: c.kept_positions })}` : ""}
+                {c.kept_before_stubs > 0
+                  ? ` — ${t("chain.keptBeforeStubs", { count: c.kept_before_stubs })}`
+                  : ""}
                 {c.first_problem
-                  ? ` — ${t(`chain.problem.${c.first_problem.kind}`, {
-                      seq: c.first_problem.chain_seq,
-                      id: c.first_problem.audit_event_id,
-                    })}`
+                  ? ` — ${
+                      c.first_problem.audit_event_id === null
+                        ? t(`chain.problemKept.${c.first_problem.kind}`, {
+                            seq: c.first_problem.chain_seq,
+                          })
+                        : t(`chain.problem.${c.first_problem.kind}`, {
+                            seq: c.first_problem.chain_seq,
+                            id: c.first_problem.audit_event_id,
+                          })
+                    }`
                   : ""}
               </li>
             ))}
