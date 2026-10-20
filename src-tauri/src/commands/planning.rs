@@ -310,7 +310,8 @@ pub async fn get_planning_gantt_snapshot(
         crate::rbac::permissions::PLAN_VIEW,
         PermissionScope::Global
     );
-    scheduling::get_planning_gantt_snapshot(&state.db, filter).await
+    let detail = scheduling::absence_detail_for(&state.db, &state.permission_cache, user.user_id).await?;
+    scheduling::get_planning_gantt_snapshot(&state.db, filter, detail).await
 }
 
 /// The assignee picker: each crew member's shift and hours left over a slot.

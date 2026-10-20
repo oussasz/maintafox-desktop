@@ -9,7 +9,7 @@ use crate::notifications::emitter::{emit_event, NotificationEventInput};
 use crate::{activity, notifications};
 
 use super::domain::{
-    AssigneeCapacityInput, CapacityRule, CapacityRuleFilter, CapacityWindow, CreateCapacityRuleInput,
+    AbsenceDetail, AssigneeCapacityInput, CapacityRule, CapacityRuleFilter, CapacityWindow, CreateCapacityRuleInput,
     CreatePlanningWindowInput, CreateScheduleBreakInInput, CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput,
     ExportedBinaryDocument, FreezeSchedulePeriodInput, NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane,
     PlanningCrewLane, PlanningGanttFilter, PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter,
@@ -647,40 +647,101 @@ async fn compute_capacity_gate(
     Ok((true, None))
 }
 
+/// What the board may show a user of the assignees' absences (decision register 2026-10-19, Q2):
+/// holders of `per.view` (plant-wide, the personnel screens' read rule) read each absence's type;
+/// any other planner only when the person is away and whether it is critical for planning. Decided
+/// here, on the server, so the type never reaches them.
+pub async fn absence_detail_for(
+    db: &DatabaseConnection,
+    cache: &tokio::sync::RwLock<crate::rbac::cache::PermissionCache>,
+    user_id: i32,
+) -> AppResult<AbsenceDetail> {
+    let reads_personnel = crate::auth::rbac::check_permission_cached(
+        db,
+        cache,
+        user_id,
+        crate::rbac::permissions::PER_VIEW,
+        &crate::auth::rbac::PermissionScope::Global,
+    )
+    .await?;
+    Ok(if reads_personnel {
+        AbsenceDetail::Full
+    } else {
+        AbsenceDetail::AvailabilityOnly
+    })
+}
+
+/// A person's absence blocks touching `[start, end)`, as the planning board draws them, ordered by
+/// start. `Full` (holders of `per.view`): `{start_at, end_at, block_type, critical}` — `critical` is
+/// the block's own flag, the screen adds the type's tag from the plant's list. `AvailabilityOnly`:
+/// `{start_at, end_at, critical}` — `critical` when the absence type carries the `critical` tag in
+/// Données de référence (`PERSONNEL.ABSENCE_TYPES`) or the block is marked critical; nothing else.
+pub(crate) async fn absence_intervals(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+    start: &str,
+    end: &str,
+    detail: AbsenceDetail,
+) -> AppResult<Vec<Value>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT b.start_at, b.end_at, b.block_type, b.is_critical, {tag} AS tag
+                 FROM personnel_availability_blocks b
+                 WHERE b.personnel_id = ?
+                   AND b.start_at < ?
+                   AND b.end_at > ?
+                 ORDER BY b.start_at ASC, b.id ASC",
+                tag = crate::personnel::reference_lists::BLOCK_TAG_SQL
+            ),
+            [personnel_id.into(), end.to_string().into(), start.to_string().into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|row| {
+            let start_at: String = row.try_get("", "start_at").map_err(|e| decode_err("start_at", e))?;
+            let end_at: String = row.try_get("", "end_at").map_err(|e| decode_err("end_at", e))?;
+            let block_critical = row
+                .try_get::<i64>("", "is_critical")
+                .map_err(|e| decode_err("is_critical", e))?
+                == 1;
+            Ok(match detail {
+                AbsenceDetail::Full => json!({
+                    "start_at": start_at,
+                    "end_at": end_at,
+                    "block_type": row.try_get::<String>("", "block_type").map_err(|e| decode_err("block_type", e))?,
+                    "critical": block_critical,
+                }),
+                AbsenceDetail::AvailabilityOnly => {
+                    let tag: Option<String> = row.try_get("", "tag").map_err(|e| decode_err("tag", e))?;
+                    json!({
+                        "start_at": start_at,
+                        "end_at": end_at,
+                        "critical": block_critical
+                            || tag.as_deref() == Some(crate::personnel::reference_lists::ABSENCE_TAG_CRITICAL),
+                    })
+                }
+            })
+        })
+        .collect()
+}
+
 async fn enforce_assignee_availability(
     db: &impl ConnectionTrait,
     personnel_id: i64,
     start: &str,
     end: &str,
 ) -> AppResult<()> {
-    let blocks = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT start_at, end_at, block_type, is_critical
-             FROM personnel_availability_blocks
-             WHERE personnel_id = ?
-               AND start_at < ?
-               AND end_at > ?",
-            [personnel_id.into(), end.to_string().into(), start.to_string().into()],
-        ))
-        .await?;
-    if !blocks.is_empty() {
-        let payload: Vec<Value> = blocks
-            .into_iter()
-            .map(|row| {
-                json!({
-                    "start_at": row.try_get::<String>("", "start_at").unwrap_or_default(),
-                    "end_at": row.try_get::<String>("", "end_at").unwrap_or_default(),
-                    "block_type": row.try_get::<String>("", "block_type").unwrap_or_default(),
-                    "critical": row.try_get::<i64>("", "is_critical").unwrap_or_default() == 1
-                })
-            })
-            .collect();
+    // The refusal names when the person is away and whether it is critical for planning, never the
+    // absence type: it reaches any planner (and the logs), whatever their personnel rights.
+    let intervals = absence_intervals(db, personnel_id, start, end, AbsenceDetail::AvailabilityOnly).await?;
+    if !intervals.is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
             "ASSIGNEE_UNAVAILABLE {}",
             json!({
                 "personnel_id": personnel_id,
-                "intervals": payload
+                "intervals": intervals
             })
         )]));
     }
@@ -2438,9 +2499,12 @@ pub async fn freeze_schedule_period(
     Ok(updated.rows_affected() as i64)
 }
 
+/// The planning board over a period. `detail` is what the caller may read of the assignees'
+/// absences ([`AbsenceDetail`]; the IPC command decides it from `per.view`).
 pub async fn get_planning_gantt_snapshot(
     db: &DatabaseConnection,
     filter: PlanningGanttFilter,
+    detail: AbsenceDetail,
 ) -> AppResult<PlanningGanttSnapshot> {
     validate_window(&filter.period_start, &filter.period_end, "period_start", "period_end")?;
     let commitments = list_schedule_commitments(
@@ -2588,32 +2652,7 @@ pub async fn get_planning_gantt_snapshot(
                 .and_then(|r| r.try_get::<String>("", "full_name").ok())
                 .unwrap_or_else(|| format!("Personnel #{personnel_id}"));
 
-            let blocked_rows = db
-                .query_all(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT start_at, end_at, block_type, is_critical
-                     FROM personnel_availability_blocks
-                     WHERE personnel_id = ?
-                       AND start_at < ?
-                       AND end_at > ?",
-                    [
-                        personnel_id.into(),
-                        filter.period_end.clone().into(),
-                        filter.period_start.clone().into(),
-                    ],
-                ))
-                .await?;
-            let blocked: Vec<Value> = blocked_rows
-                .into_iter()
-                .map(|row| {
-                    json!({
-                        "start_at": row.try_get::<String>("", "start_at").unwrap_or_default(),
-                        "end_at": row.try_get::<String>("", "end_at").unwrap_or_default(),
-                        "block_type": row.try_get::<String>("", "block_type").unwrap_or_default(),
-                        "critical": row.try_get::<i64>("", "is_critical").unwrap_or_default() == 1
-                    })
-                })
-                .collect();
+            let blocked = absence_intervals(db, personnel_id, &filter.period_start, &filter.period_end, detail).await?;
             let lane_commitments: Vec<Value> = commitments
                 .iter()
                 .filter(|c| c.assigned_personnel_id == Some(personnel_id))
@@ -2710,6 +2749,8 @@ pub async fn export_planning_gantt_pdf(
             period_end: input.period_end.clone(),
             team_id: input.team_id,
         },
+        // The PDF prints commitments and capacity only, never absences.
+        AbsenceDetail::AvailabilityOnly,
     )
     .await?;
     let paper_size = input.paper_size.unwrap_or_else(|| "A4".to_string());
@@ -2848,6 +2889,8 @@ pub async fn list_team_capacity_load(
             period_end,
             team_id,
         },
+        // Only the capacity is returned.
+        AbsenceDetail::AvailabilityOnly,
     )
     .await?;
     Ok(snapshot.capacity)

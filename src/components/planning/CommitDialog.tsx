@@ -16,6 +16,7 @@ import {
   PLANNING_TIMELINE_MAX_ZOOM_MS,
   PLANNING_UNASSIGNED_GROUP_ID,
   type PlanningBoardScope,
+  absenceTagText,
   buildPlanningTimelineItems,
   buildPlanningTimelineLanes,
   buildPlanningWindowHighlights,
@@ -447,6 +448,7 @@ export function CommitDialog({
         gantt,
         canDrag: false,
         absenceType,
+        absenceTag: (critical) => absenceTagText(critical, t),
       }).map((row) => ({
         id: row.id,
         group: row.groupId,

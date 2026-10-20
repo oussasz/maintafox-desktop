@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { useAbsenceTypeLookup } from "@/components/personnel/use-personnel-lists";
 import {
+  absenceTagText,
   buildPlanningTimelineItems,
   buildPlanningTimelineLanes,
   buildPlanningWindowHighlights,
@@ -163,7 +164,13 @@ export function PlanningBoard({
       return next;
     }
 
-    return buildPlanningTimelineItems({ commitments, gantt, canDrag, absenceType }).map((row) => ({
+    return buildPlanningTimelineItems({
+      commitments,
+      gantt,
+      canDrag,
+      absenceType,
+      absenceTag: (critical) => absenceTagText(critical, t),
+    }).map((row) => ({
       id: row.id,
       group: row.groupId,
       title: row.title,

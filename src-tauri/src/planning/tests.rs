@@ -8,7 +8,7 @@ use crate::planning::domain::{
 use crate::planning::queries;
 use crate::planning::scheduling;
 
-async fn setup_db() -> DatabaseConnection {
+pub(super) async fn setup_db() -> DatabaseConnection {
     let db = crate::db::test_db::seeded().await;
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
@@ -185,7 +185,7 @@ async fn give_team_roster_capacity(db: &DatabaseConnection, team_id: i64) {
     .expect("roster member");
 }
 
-async fn get_any_team_id(db: &DatabaseConnection) -> i64 {
+pub(super) async fn get_any_team_id(db: &DatabaseConnection) -> i64 {
     let team_id = get_any_team_id_inner(db).await;
     give_team_roster_capacity(db, team_id).await;
     team_id
@@ -325,7 +325,7 @@ async fn join_test_crew(db: &DatabaseConnection, personnel_id: i64) {
     .expect("join test crew");
 }
 
-async fn ensure_personnel_with_rate(db: &DatabaseConnection, employee_code: &str) -> i64 {
+pub(super) async fn ensure_personnel_with_rate(db: &DatabaseConnection, employee_code: &str) -> i64 {
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -647,6 +647,14 @@ async fn assignee_unavailable_is_hard_rejected() {
     .await
     .expect_err("availability must hard reject");
     assert!(format!("{err:?}").contains("ASSIGNEE_UNAVAILABLE"));
+    // The refusal says when the person is away and whether it is critical, never the absence type
+    // or its reason (decision register 2026-10-19, Q2): it reaches planners without per.view.
+    let text = format!("{err:?}");
+    assert!(text.contains("\\\"critical\\\":true"), "{text}");
+    assert!(
+        !text.contains("block_type") && !text.contains("leave") && !text.contains("PTO"),
+        "{text}"
+    );
 }
 
 #[tokio::test]
@@ -1042,6 +1050,7 @@ async fn gantt_snapshot_and_pdf_export_use_real_commitments() {
             period_end: "2026-09-02T00:00:00Z".to_string(),
             team_id: Some(team_id),
         },
+        crate::planning::domain::AbsenceDetail::Full,
     )
     .await
     .expect("snapshot");
@@ -1066,6 +1075,7 @@ async fn gantt_snapshot_and_pdf_export_use_real_commitments() {
             period_end: "2026-09-02T00:00:00Z".to_string(),
             team_id: None,
         },
+        crate::planning::domain::AbsenceDetail::Full,
     )
     .await
     .expect("plant-wide snapshot");

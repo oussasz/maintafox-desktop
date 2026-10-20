@@ -98,7 +98,11 @@
     "emptyAllCrews": "Aucun engagement usine sur cet horizon — choisissez une carte Prêt et engagez vers une équipe cible.",
     "unknownCrew": "Équipe inconnue",
     "noCrewTitle": "Sélectionnez une équipe du tableau",
-    "noCrewHint": "Utilisez le contexte planning ci-dessus pour choisir Toutes les équipes ou une équipe unique et la période Du–Au."
+    "noCrewHint": "Utilisez le contexte planning ci-dessus pour choisir Toutes les équipes ou une équipe unique et la période Du–Au.",
+    "absenceTag": {
+      "critical": "Absent — critique pour la planification",
+      "plain": "Absent"
+    }
   },
   "commitment": {
     "formTitle": "Engager au planning",

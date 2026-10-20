@@ -9286,9 +9286,28 @@ export interface CapacityWindow {
   hours: number;
 }
 
+/**
+ * One absence of an assignee lane (an element of `PlanningAssigneeLane.blocked_intervals_json`).
+ * Decision register 2026-10-19, Q2: a caller without `per.view` receives only when the person is
+ * away and `critical` (the absence type's `critical` tag in Données de référence, or the block
+ * marked critical) — the server never sends them the type, its label, reason or colour.
+ */
+export interface PlanningBlockedInterval {
+  start_at: string;
+  end_at: string;
+  /** Absence type code — present only for holders of `per.view`. */
+  block_type?: string;
+  /**
+   * With `block_type`: the block's own critical flag (the screen adds the type's tag). Without
+   * it: critical for planning.
+   */
+  critical: boolean;
+}
+
 export interface PlanningAssigneeLane {
   personnel_id: number;
   full_name: string;
+  /** JSON array of `PlanningBlockedInterval`. */
   blocked_intervals_json: string;
   commitments_json: string;
 }
