@@ -266,17 +266,27 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 24. Retour de pièce (et transfert entre magasins)
+### 24. Retour de pièce
 
 - **FR :** Pièces de rechange › « Articles » › l'article › « Ajuster le stock » : type « Entrée », motif de retour, et l'OT dont la pièce revient.
 - **EN :** Spare Parts › Articles › the article › “Ajuster le stock”: type Entrée, return reason, and the OT the part comes back from.
-- **Attendu :** Le solde remonte dans le bon magasin et l'activité de l'article montre « Retour en stock ». Il n'existe pas d'écran de transfert entre deux magasins : ne pas chercher.
-- **Expected:** The balance goes up in the right store and the article activity shows a stock return. There is no screen to transfer between two stores.
+- **Attendu :** Le solde remonte dans le bon magasin et l'activité de l'article montre « Retour en stock ».
+- **Expected:** The balance goes up in the right store and the article activity shows a stock return.
 - **Rôle :** Magasinier.
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 25. Commande en retard
+### 25. Transfert de stock entre deux magasins
+
+- **FR :** Pièces de rechange › « Articles » › l'article (qui a du stock disponible dans un magasin) › onglet « Positions de stock » › sur la ligne du magasin de départ, bouton « Transférer ». Choisissez le « Magasin de destination », saisissez une quantité, écrivez le « Motif » (au moins 5 caractères) : la phrase « Transférer N … du magasin … vers … ? » résume le mouvement. Validez avec « Transférer ». Puis : essayez une quantité supérieure à la ligne « Disponible » (stock en magasin moins stock réservé), et un motif de moins de 5 caractères.
+- **EN :** Spare Parts › Articles › the article (with available stock in a store) › “Positions de stock” tab › on the line of the source store, “Transférer” button. Choose the “Magasin de destination”, enter a quantity, write the “Motif” (at least 5 characters): the sentence “Transférer N … du magasin … vers … ?” sums up the move. Confirm with “Transférer”. Then try a quantity above the “Disponible” line (stock in store minus reserved stock) and a reason shorter than 5 characters.
+- **Attendu :** Le solde du magasin de départ baisse et celui du magasin de destination monte de la même quantité ; une notification de réussite s'affiche ; le stock réservé ne bouge pas et ne peut pas être transféré (la quantité est limitée à « Disponible »). Dans l'activité de l'article, les deux mouvements (sortie et entrée de transfert) portent le motif saisi, l'auteur et la date. Une quantité trop grande ou un motif trop court est refusé avec un message en français.
+- **Expected:** The source store balance drops and the destination balance goes up by the same quantity; a success notification shows; reserved stock does not move and cannot be transferred (the quantity is capped at “Disponible”). In the article activity both movements (transfer out and transfer in) carry the reason, the author and the date. A quantity that is too large or a reason that is too short is refused with a translated message.
+- **Rôle :** Magasinier (droit de gestion du stock, sur toute l'usine). Sans ce droit, le bouton « Transférer » n'apparaît pas. Un utilisateur limité à un site ne peut pas encore transférer (voir « Limites connues »).
+- [ ] OK
+- Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
+
+### 26. Commande en retard
 
 - **FR :** Pièces de rechange › « Achats & réparables » : filtre « En retard (livraison attendue dépassée) » et une commande en retard.
 - **EN :** Spare Parts › “Achats & réparables”: the late filter and a late purchase order.
@@ -286,7 +296,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 26. Écart critique d'un comptage
+### 27. Écart critique d'un comptage
 
 - **FR :** Paramètres › Général › catégorie « Inventaire » : lisez « Écart critique d'un comptage d'inventaire ». Pièces de rechange › « Inventaires & contrôles » : ouvrez un comptage.
 - **EN :** Settings › General › Inventory: read “Écart critique d'un comptage d'inventaire”. Spare Parts › “Inventaires & contrôles”: open a count.
@@ -296,7 +306,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 27. Valorisation et fiche fournisseur
+### 28. Valorisation et fiche fournisseur
 
 - **FR :** Pièces de rechange › « Valorisation » et la « Fiche de performance » d'un fournisseur (dans « Achats & réparables »).
 - **EN :** Spare Parts › “Valorisation” and a supplier's “Fiche de performance”.
@@ -308,7 +318,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ## E. Fiabilité (RAMS)
 
-### 28. Décision de fiabilité approuvée par une seconde personne
+### 29. Décision de fiabilité approuvée par une seconde personne
 
 - **FR :** Fiabilité (RAMS) › ouvrez une étude › étape « Décisions » : la personne A « Enregistre une décision », la personne B « Approuve » (A voit « Vous l'avez proposée : une autre personne approuve »).
 - **EN :** Reliability (RAMS) › open a study › “Décisions”: A records a decision, B approves (A is told another person approves).
@@ -318,7 +328,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 29. Grilles de cotation
+### 30. Grilles de cotation
 
 - **FR :** Données de référence › « Échelles AMDEC » : changez une grille. Fiabilité (RAMS) › une étude › étape « AMDEC » › « Grilles de cotation ».
 - **EN :** Reference Data › FMECA scales: change a rating grid. Reliability › a study › FMECA › rating grids.
@@ -328,7 +338,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 30. Coût d'une réparation repris de Finance
+### 31. Coût d'une réparation repris de Finance
 
 - **FR :** Fiabilité (RAMS) › une étude avec diagramme de fiabilité › étape « Modèle système » › « Simulation de Monte-Carlo » › « Coût d'une réparation » : cliquez « Utiliser le coût correctif moyen de {équipement} ».
 - **EN :** Reliability › a study with a reliability diagram › “Modèle système” › Monte Carlo simulation › “Cost of one repair”: click “Utiliser le coût correctif moyen de …”.
@@ -340,7 +350,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ## F. Équipements
 
-### 31. Remise en service
+### 32. Remise en service
 
 - **FR :** Équipements › ouvrez un équipement retiré.
 - **EN :** Equipment › open a retired asset.
@@ -350,7 +360,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 32. Onglet Maintenance
+### 33. Onglet Maintenance
 
 - **FR :** Équipements › un équipement › onglet « Maintenance ».
 - **EN :** Equipment › an asset › “Maintenance” tab.
@@ -360,7 +370,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 33. Assistant d'import
+### 34. Assistant d'import
 
 - **FR :** Équipements › « Importer » : un CSV avec 1 ligne en erreur et 1 avertissement (Téléverser › Valider › Aperçu › « Appliquer l'import »). Faites aussi un import de personnel ou d'une liste de référence.
 - **EN :** Equipment › “Importer”: a CSV with 1 bad row and 1 warning (upload, validate, preview, apply). Also import personnel or a reference list.
@@ -372,7 +382,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ## G. Personnel, listes de l'usine, données de référence
 
-### 34. Nouvelle valeur « Stage »
+### 35. Nouvelle valeur « Stage »
 
 - **FR :** Données de référence › « Types d'absence » : « Ajouter une valeur » « Stage », comportement « Formation », puis publiez (« Valider et publier »), sans redémarrer. Même chose pour « Catégories de documents ».
 - **EN :** Reference Data › “Types d'absence”: add “Stage”, behaviour Formation, publish, no restart. Same for “Catégories de documents”.
@@ -382,7 +392,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 35. Marqueur « À revoir »
+### 36. Marqueur « À revoir »
 
 - **FR :** Cherchez le marqueur ambre « À revoir » sur : fiche personne, dossier, colonne de liste, absence, onglet « Documents et photos », menu de la bibliothèque.
 - **EN :** Look for the amber “À revoir” marker on: person card, record, list column, absence, documents tab, library menu.
@@ -392,7 +402,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 36. Statuts à revoir
+### 37. Statuts à revoir
 
 - **FR :** Personnel : la ligne ambre « Statuts à revoir (N) ». Ouvrez une personne, choisissez un statut, « Enregistrer ».
 - **EN :** Personnel: the amber “Statuts à revoir (N)” line. Open a person, choose a status, save.
@@ -402,7 +412,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 37. Types d'OT sans nature
+### 38. Types d'OT sans nature
 
 - **FR :** Données de référence : en haut de la page, la ligne « N types d'OT n'ont pas de nature de maintenance ». Cliquez « Attribuer une nature », choisissez la nature, écrivez un motif de 10 caractères au moins, « Enregistrer ».
 - **EN :** Reference Data: at the top, “N work-order types have no maintenance nature”. Click “Attribuer une nature”, pick one, write a reason, save.
@@ -414,7 +424,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ## H. Accueil et petits points
 
-### 38. Chiffres de l'accueil
+### 39. Chiffres de l'accueil
 
 - **FR :** Vue d'ensemble › panneau « Supervision » › « Arriéré OT » : cliquez « À réaliser », « En retard », un de « Planifié / Réactif / Urgence », puis « Stock à réapprovisionner » (« Articles sous le seuil »).
 - **EN :** Overview › “Supervision” panel › “Arriéré OT”: click To do, Overdue, one of Planned/Reactive/Emergency, then “Stock à réapprovisionner”.
@@ -424,7 +434,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 39. Messages de Réglages
+### 40. Messages de Réglages
 
 - **FR :** Paramètres › Général : enregistrez 2 ou 3 réglages.
 - **EN :** Settings › General: save 2 or 3 settings.
@@ -434,7 +444,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 40. Vue du journal d'activité
+### 41. Vue du journal d'activité
 
 - **FR :** Paramètres › « Sécurité & Logs » › « Journal d'activité » › « Fil d'activité » : filtre « Unité d'organisation », nom de la vue, « Enregistrer la vue », rechargez l'application.
 - **EN :** Settings › “Sécurité & Logs” › Activity log › “Fil d'activité”: pick an organisation unit, name the view, save, reload.
@@ -444,7 +454,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 41. Afficher plus dans un tableau
+### 42. Afficher plus dans un tableau
 
 - **FR :** Ordres de travail ou Demandes d'intervention › vue « Kanban » : mettez un filtre, puis « Charger plus (N restants) » (OT) ou « Afficher N de plus » (demandes) dans une colonne.
 - **EN :** Work Orders or Requests › Kanban: set a filter, then load more in a lane.
@@ -454,7 +464,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 42. Cockpit budget
+### 43. Cockpit budget
 
 - **FR :** Budget & coûts › onglet « Pilotage » : ouvrez une ligne avec beaucoup d'écritures. Cliquez une ligne juste après l'ouverture du cockpit.
 - **EN :** Budget & Costs › “Pilotage” tab: open a line with many postings. Click a line right after the cockpit opens.
@@ -464,7 +474,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 43. Changer de langue sur une liste
+### 44. Changer de langue sur une liste
 
 - **FR :** Sur une liste avec une ligne choisie, menu utilisateur › « Langue » : changez de langue.
 - **EN :** On a list with a row selected, user menu › “Langue”: switch language.
@@ -474,7 +484,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 44. Code PIN de verrouillage
+### 45. Code PIN de verrouillage
 
 - **FR :** Paramètres › « Mon profil » : définissez un PIN. Verrouillez la session, saisissez de mauvais PIN jusqu'au blocage.
 - **EN :** Settings › “Mon profil”: set a PIN. Lock the session, enter wrong PINs until disabled.
@@ -484,7 +494,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 45. Formulaires standard
+### 46. Formulaires standard
 
 - **FR :** Ouvrez : Formations & habilitations › « Sessions de formation » › « Nouvelle session » ; « Catalogue » › « Nouvelle habilitation » ; « Exigences des travaux » › « Nouvelle exigence » ; Vue d'ensemble › « Personnaliser » ; Analytique › « Personnaliser ».
 - **EN :** Open: Training › new session; Catalogue › new certification; Requirements › new requirement; Overview › Customise; Analytics › Customise.
@@ -496,7 +506,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ## I. Droits par site et droits réduits
 
-### 46. Utilisateur limité à un site
+### 47. Utilisateur limité à un site
 
 - **FR :** Utilisateurs & rôles › Utilisateurs › « Nouvel utilisateur » : rôle Maintenance Technician, « Où ce rôle s'applique » = le site S1 (un second compte pour S2). Connectez-vous avec le compte S1 : Demandes d'intervention, Ordres de travail, Permis de travail, Vue d'ensemble.
 - **EN :** Users & Roles › “Nouvel utilisateur”: Technician role limited to site S1 (a second account for S2). Sign in as S1 and open requests, work orders, permits, overview.
@@ -506,7 +516,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 47. Utilisateur de toute l'usine
+### 48. Utilisateur de toute l'usine
 
 - **FR :** Connectez-vous avec un Superviseur « Toute l'usine » et ouvrez les mêmes écrans que l'étape précédente.
 - **EN :** Sign in as a plant-wide Supervisor and open the same screens.
@@ -516,7 +526,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 48. Planificateur à droits réduits
+### 49. Planificateur à droits réduits
 
 - **FR :** Connectez-vous en planificateur sans droit personnel ni organisation (copie de Planner/Scheduler sans les droits de lire le personnel, l'organisation et les données de référence). Ouvrez Planification (fenêtre de production), la planification d'un OT, un plan préventif, le choix d'un équipement dans une demande, un formulaire de personne.
 - **EN :** Sign in as a planner without personnel or organisation rights. Open Planning (production window), an OT's planning, a PM plan, an asset picker in a request, a person form.
@@ -526,7 +536,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 49. Étiquette d'absence neutre du planificateur
+### 50. Étiquette d'absence neutre du planificateur
 
 - **FR :** Avec le planificateur à droits réduits : Planification › « Tableau Gantt » (et la fenêtre « Engager au planning ») sur un technicien absent. Puis avec le planificateur livré (qui lit le personnel).
 - **EN :** As the reduced planner: Planning › Gantt board (and the commit dialog) on an absent technician. Then as the shipped planner.
@@ -536,7 +546,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 50. Facultatif : enregistrements sans site
+### 51. Facultatif : enregistrements sans site
 
 - **FR :** Organisation : si le bouton « Enregistrements sans site (N) » existe, ouvrez-le et donnez un site à un ancien enregistrement (motif de 10 caractères au moins).
 - **EN :** Organisation: if “Enregistrements sans site (N)” exists, open it and give an old record a site (reason required).
@@ -548,7 +558,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ## J. Organisation et sécurité du poste
 
-### 51. Boucle dans l'organisation
+### 52. Boucle dans l'organisation
 
 - **FR :** Organisation › « Règles de hiérarchie » (mode « Brouillon ») › « Règles parent → enfant » : ajoutez A → B puis B → A, puis publiez.
 - **EN :** Organisation › “Règles de hiérarchie” (draft mode): add A → B then B → A, then publish.
@@ -558,7 +568,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 52. Test de politique d'accès
+### 53. Test de politique d'accès
 
 - **FR :** Paramètres › « Sécurité & Logs » › politique de session : « Modifier le brouillon », puis « Tester le brouillon ».
 - **EN :** Settings › “Sécurité & Logs” › session policy: edit the draft, then test it.
@@ -568,17 +578,17 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 53. Verrouillage après inactivité
+### 54. Verrouillage après inactivité
 
 - **FR :** Même panneau : baissez « Délai d'inactivité (minutes) » dans le brouillon, testez, « Activer » (mot de passe), puis laissez l'écran se verrouiller.
 - **EN :** Same panel: lower the idle time in the draft, test, activate, let the screen lock.
-- **Attendu :** « Session verrouillée » s'affiche sur un arrière-plan assombri ; « Déverrouiller » redonne l'accès. (Le point visuel est l'étape 62.)
+- **Attendu :** « Session verrouillée » s'affiche sur un arrière-plan assombri ; « Déverrouiller » redonne l'accès. (Le point visuel est l'étape 63.)
 - **Expected:** “Session verrouillée” shows over a dimmed background; unlock works.
 - **Rôle :** Administrateur (droit paramètres).
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 54. Licence (lecture)
+### 55. Licence (lecture)
 
 - **FR :** Paramètres › « Système & Sync » › « Licence ». Ouvrez la ligne « événements de licence récents (détails techniques) ».
 - **EN :** Settings › “Système & Sync” › Licence. Open the “recent licence events (technical details)” line.
@@ -590,7 +600,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 
 ## K. Deux PC (même usine, même serveur de synchronisation)
 
-### 55. Règle par site et avis aux administrateurs
+### 56. Règle par site et avis aux administrateurs
 
 - **FR :** PC 1 : Paramètres › Général › « Règles par site », site S1 › « Activé » (mot de passe, motif). Synchronisez. PC 2 : connectez-vous avec un administrateur : un avis « Règle des quatre yeux désactivée à S1 sur un autre poste » est affiché en haut ; essayez de le masquer, puis cliquez « J'ai pris connaissance ». Relisez l'« Historique » de la règle.
 - **EN :** PC 1: Settings › General › Rules per site, S1 › On (password, reason). Sync. PC 2: sign in as an administrator: a notice “Règle des quatre yeux désactivée à S1 sur un autre poste” is shown; try to hide it, then acknowledge it.
@@ -600,7 +610,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 56. Semaine gelée
+### 57. Semaine gelée
 
 - **FR :** PC 1 : Planification › « Programme hebdomadaire » : « Approuver » puis « Geler » une semaine. Synchronisez. PC 2 : même écran.
 - **EN :** PC 1: Planning › Weekly schedule: approve then freeze a week. Sync. PC 2: same screen.
@@ -610,7 +620,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 57. Liste modifiée
+### 58. Liste modifiée
 
 - **FR :** PC 1 : Données de référence › modifiez une liste et publiez. PC 2 : ouvrez un écran qui l'utilise (copie de plus de 5 minutes, ou après redémarrage).
 - **EN :** PC 1: Reference Data: change a list and publish. PC 2: open a screen using it (copy older than 5 minutes, or after restart).
@@ -620,7 +630,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 58. Carte de conflit
+### 59. Carte de conflit
 
 - **FR :** Modifiez le même enregistrement sur les deux PC hors ligne, puis synchronisez. Ouvrez le nuage de la barre du haut : « Centre de synchronisation » › « Conflits non résolus ».
 - **EN :** Edit the same record on both PCs offline, then sync. Open the top-bar cloud: Sync center › Unresolved conflicts.
@@ -630,7 +640,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 59. Facultatif : décision auto-approuvée hors ligne
+### 60. Facultatif : décision auto-approuvée hors ligne
 
 - **FR :** PC 2 hors ligne passe S1 à « Désactivé » ; PC 1 (« Activé ») fait approuver une décision de fiabilité par son auteur ; synchronisez.
 - **EN :** PC 2 offline sets S1 Off; PC 1 (On) has a decision self-approved; sync.
@@ -640,7 +650,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 60. Facultatif : permis auto-approuvé reçu après retour aux quatre yeux
+### 61. Facultatif : permis auto-approuvé reçu après retour aux quatre yeux
 
 - **FR :** PC 1 (site S1 « Activé ») : l'auteur rédige, soumet et approuve un permis. PC 2 : S1 est « Désactivé ». Synchronisez et ouvrez « Conflits non résolus » sur PC 2.
 - **EN :** PC 1 (S1 On): the author writes, submits and approves a permit. PC 2: S1 is Off. Sync and open the conflicts on PC 2.
@@ -650,7 +660,7 @@ Légende : FR = quoi cliquer ; EN = same in English ; Attendu = résultat attend
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 61. Facultatif : ligne de pièce annulée sur un autre poste
+### 62. Facultatif : ligne de pièce annulée sur un autre poste
 
 - **FR :** PC 1 : annulez une ligne de pièce planifiée (comme à l'étape 22). PC 2 (hors ligne avant) : sortez du magasin une pièce pour cette ligne. Synchronisez.
 - **EN :** PC 1: cancel a planned part line. PC 2 (offline before): issue a part from the store for that line. Sync.
@@ -666,17 +676,17 @@ Pour le sombre : Paramètres › Général › « Apparence » › « Mode de co
 
 For dark: Settings › General › “Apparence” › “Mode de couleur” › “Sombre” (or My profile). The badge “Enregistré sur ce poste” confirms the choice is kept on this PC. Keep “Sombre” for the dark boxes below, then switch back if you like.
 
-### 62. Verrouillage
+### 63. Verrouillage
 
-- **FR :** Après l'étape 53 : l'arrière-plan est assombri (ni noir, ni clair) et la carte est lisible.
-- **EN :** After step 53: the background is dimmed (neither black nor clear), the card readable.
+- **FR :** Après l'étape 54 : l'arrière-plan est assombri (ni noir, ni clair) et la carte est lisible.
+- **EN :** After step 54: the background is dimmed (neither black nor clear), the card readable.
 - **Attendu :** Correct en thème clair et en thème sombre (texte lisible, rien de blanc éclatant ni d'illisible).
 - **Expected:** Correct in the light and the dark theme (readable text, nothing glaring or unreadable).
 - **Rôle :** Tout compte.
 - [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 63. Cartes
+### 64. Cartes
 
 - **FR :** Vue d'ensemble, Analytique, Équipements, Planification : cartes à teinte légère, un peu plus sombres au survol.
 - **EN :** Overview, Analytics, Equipment, Planning: cards have a light tint and darken slightly on hover.
@@ -686,7 +696,7 @@ For dark: Settings › General › “Apparence” › “Mode de couleur” ›
 - [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 64. Message d'erreur
+### 65. Message d'erreur
 
 - **FR :** Clôturez un OT avec une tâche obligatoire ouverte : le message est sur fond rouge doux, texte lisible.
 - **EN :** Close a work order with a mandatory task open: soft red background, readable text.
@@ -696,7 +706,7 @@ For dark: Settings › General › “Apparence” › “Mode de couleur” ›
 - [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 65. Ligne survolée et choisie
+### 66. Ligne survolée et choisie
 
 - **FR :** Liste des OT : une ligne survolée a une teinte légère, la ligne choisie se distingue.
 - **EN :** Work-order list: hovered row has a faint tint, the selected row stands out.
@@ -706,7 +716,7 @@ For dark: Settings › General › “Apparence” › “Mode de couleur” ›
 - [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 66. Licence
+### 67. Licence
 
 - **FR :** Paramètres › Système & Sync › Licence › « événements de licence récents (détails techniques) » : la boîte a une teinte légère, texte lisible.
 - **EN :** Settings › System & Sync › Licence › technical details box: light tint, readable text.
@@ -716,7 +726,7 @@ For dark: Settings › General › “Apparence” › “Mode de couleur” ›
 - [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 67. Lignes d'import
+### 68. Lignes d'import
 
 - **FR :** Pendant l'import d'équipements : erreurs en rouge, avertissements en ambre, lignes valides sans teinte.
 - **EN :** During the equipment import: errors red, warnings amber, valid rows plain.
@@ -726,7 +736,7 @@ For dark: Settings › General › “Apparence” › “Mode de couleur” ›
 - [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 68. Calendrier de date
+### 69. Calendrier de date
 
 - **FR :** Dans un sélecteur de date : jours hors du mois en gris, jours désactivés encore plus pâles.
 - **EN :** In any date picker: days outside the month grey, disabled days fainter.
@@ -736,7 +746,7 @@ For dark: Settings › General › “Apparence” › “Mode de couleur” ›
 - [ ] Clair OK  - [ ] Sombre OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 69. Facultatif : le choix « Système » suit Windows
+### 70. Facultatif : le choix « Système » suit Windows
 
 - **FR :** Mode de couleur › « Système ». Changez le mode de couleur de Windows (Paramètres Windows › Personnalisation › Couleurs : clair puis sombre). Ouvrez ensuite l'écran de connexion (déconnexion).
 - **EN :** Colour mode › “Système”. Change the Windows colour mode (light then dark). Then open the sign-in screen (sign out).
@@ -748,7 +758,7 @@ For dark: Settings › General › “Apparence” › “Mode de couleur” ›
 
 ## M. Anglais et journée réaliste
 
-### 70. Coup d'œil en anglais
+### 71. Coup d'œil en anglais
 
 - **FR :** Passez en anglais (menu utilisateur › « Langue ») et reparcourez : demande, permis, OT, accueil, nouvelle valeur « Stage ».
 - **EN :** Switch to English and go through: request, permit, work order, overview, the new “Stage” value.
@@ -758,7 +768,7 @@ For dark: Settings › General › “Apparence” › “Mode de couleur” ›
 - [ ] OK
 - Si pas conforme, écrire : écran · ce que j'ai fait · ce que j'ai vu : ______
 
-### 71. Une journée réaliste
+### 72. Une journée réaliste
 
 - **FR :** Pour chaque module ancien (stock, fiabilité, préventif, analytique, finance, personnel, « Rondes et checklists ») faites une journée de travail normale et notez toute limite ou gêne.
 - **EN :** For each earlier module (stock, reliability, PM, analytics, finance, personnel, inspection rounds) do one normal working day and note every limit or annoyance.
@@ -771,9 +781,9 @@ For dark: Settings › General › “Apparence” › “Mode de couleur” ›
 ## Étapes de l'ancienne liste qui n'existent plus
 
 - Ancienne étape 36 « Voyant base de données en mode client » : il n'y a pas de mode client avec liaison serveur dans cette version ; la base est locale et le voyant « Base de données » de la barre d'état ne teste que cette base locale (états « OK », « ne répond pas à temps », « erreur » prouvés par des tests automatiques). À retirer de la recette à la main.
-- Ancien « transfert entre deux magasins » (ancienne étape 12) : aucun écran ne le propose (voir l'étape 24).
+- Ancien « transfert entre deux magasins » (ancienne étape 12) : il a maintenant son écran (étape 25).
 - « Entrée en force » (ancienne étape 10) s'appelle maintenant « break-in » ; « En traitement » (ancienne étape 1) n'est plus un statut.
 
 ---
 
-Total : 71 étapes (dont 9 facultatives).
+Total : 72 étapes (dont 9 facultatives).
