@@ -2402,3 +2402,83 @@ async fn a_database_failure_during_a_transfer_is_not_presented_as_a_business_ref
         "a real database error must propagate, got {err:?}"
     );
 }
+
+#[tokio::test]
+async fn a_transfer_never_rewrites_the_reserved_quantity_and_reservations_stay_releasable() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-XFER-RSV").await;
+    let main_loc = main_location_id(&db).await;
+    let aux_loc = insert_aux_location(&db, "AUX-RSV").await;
+    seed_stock(&db, article_id, main_loc, 5.0).await;
+    let mut reservations = Vec::new();
+    for (qty, wo) in [(0.1, 9201_i64), (0.2, 9202)] {
+        reservations.push(
+            queries::reserve_stock(
+                &db,
+                InventoryReserveInput {
+                    article_id,
+                    location_id: main_loc,
+                    quantity: qty,
+                    source_type: "WO".to_string(),
+                    source_id: Some(wo),
+                    source_ref: Some(format!("WO-{wo}")),
+                    notes: None,
+                },
+            )
+            .await
+            .expect("reserve"),
+        );
+    }
+    // 0.1 + 0.2 is stored as 0.30000000000000004: the exact bits must survive a transfer.
+    let (_, reserved_before) = balance_of(&db, article_id, main_loc).await.expect("balance");
+    assert_eq!(reserved_before.to_bits(), (0.1_f64 + 0.2_f64).to_bits());
+
+    queries::transfer_stock(
+        &db,
+        transfer_input(article_id, main_loc, aux_loc, 2.0, Some("Renfort magasin atelier")),
+        None,
+    )
+    .await
+    .expect("free stock transfers");
+    let (on_hand_after, reserved_after) = balance_of(&db, article_id, main_loc).await.expect("balance");
+    assert_eq!(
+        reserved_after.to_bits(),
+        reserved_before.to_bits(),
+        "reserved is untouched"
+    );
+    assert_eq!(
+        on_hand_after.to_bits(),
+        (5.0_f64 - 2.0_f64).to_bits(),
+        "on hand is raw arithmetic"
+    );
+
+    // The movement history still adds up to the balance (no snapping drift).
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(SUM(CASE movement_type WHEN 'ADJUST_IN' THEN quantity
+                                                    WHEN 'TRANSFER_OUT' THEN -quantity ELSE 0 END), 0) AS qty
+             FROM inventory_transactions WHERE article_id = ? AND location_id = ?",
+            [article_id.into(), main_loc.into()],
+        ))
+        .await
+        .expect("sum")
+        .expect("row");
+    let history: f64 = row.try_get("", "qty").expect("qty");
+    assert_eq!(history.to_bits(), on_hand_after.to_bits());
+
+    // Both reservations can still be released, in the opposite order of their creation.
+    for reservation in reservations.iter().rev() {
+        queries::release_stock_reservation(
+            &db,
+            InventoryReleaseReservationInput {
+                reservation_id: reservation.id,
+                notes: None,
+            },
+        )
+        .await
+        .expect("release");
+    }
+    let (_, reserved_end) = balance_of(&db, article_id, main_loc).await.expect("balance");
+    assert!(reserved_end.abs() < 1e-12, "nothing stays reserved, got {reserved_end}");
+}

@@ -2838,11 +2838,9 @@ fn coded_or_propagate(err: AppError, refusal: impl FnOnce() -> AppError) -> AppE
     }
 }
 
-/// Quantities are compared and stored on the same 9-decimal grid: a figure the screen shows as
-/// available (checked with the 1e-9 tolerance) is never refused by the balance rules afterwards.
-fn snap_qty(value: f64) -> f64 {
-    (value * 1e9).round() / 1e9
-}
+/// Tolerance of the available-stock check: float noise (0.3 - 0.1 = 0.19999999999999998) must not
+/// refuse a quantity the screen shows as available.
+const TRANSFER_QTY_TOLERANCE: f64 = 1e-9;
 
 /// A quantity as shown to the storekeeper: up to 3 decimals, no trailing zeros.
 fn transfer_qty_text(value: f64) -> String {
@@ -2923,11 +2921,9 @@ pub async fn transfer_stock(
     })?;
 
     let (from_on_hand, from_reserved) = get_balance_snapshot(&tx, input.article_id, input.from_location_id).await?;
-    let from_on_hand = snap_qty(from_on_hand);
-    let from_reserved = snap_qty(from_reserved);
-    let quantity_requested = snap_qty(input.quantity);
-    let from_available = snap_qty(from_on_hand - from_reserved);
-    if from_available < quantity_requested {
+    let quantity_requested = input.quantity;
+    let from_available = from_on_hand - from_reserved;
+    if from_available + TRANSFER_QTY_TOLERANCE < quantity_requested {
         let available = transfer_qty_text(from_available.max(0.0));
         return Err(transfer_refusal(
             transfer_codes::INSUFFICIENT_AVAILABLE,
@@ -2980,13 +2976,25 @@ pub async fn transfer_stock(
 
     let (to_on_hand, to_reserved) = get_balance_snapshot(&tx, input.article_id, input.to_location_id).await?;
 
+    // Raw arithmetic, like every other movement: the reserved quantity is written back exactly as
+    // read (a transfer never changes it). Only when the result falls below the raw reserved
+    // quantity by float noise (within the tolerance of the check above) is the on-hand raised to
+    // it, so the balance rules never refuse a quantity the check accepted.
+    let source_on_hand_after = {
+        let after = from_on_hand - quantity_requested;
+        if after < from_reserved && from_reserved - after <= TRANSFER_QTY_TOLERANCE {
+            from_reserved
+        } else {
+            after
+        }
+    };
+
     upsert_balance(
         &tx,
         input.article_id,
         from_warehouse,
         input.from_location_id,
-        // Never below the reserved quantity: only the tolerance of the check above can reach it.
-        snap_qty(from_on_hand - quantity_requested).max(from_reserved),
+        source_on_hand_after,
         from_reserved,
     )
     .await?;
@@ -2995,7 +3003,7 @@ pub async fn transfer_stock(
         input.article_id,
         to_warehouse,
         input.to_location_id,
-        snap_qty(to_on_hand + quantity_requested),
+        to_on_hand + quantity_requested,
         to_reserved,
     )
     .await?;
