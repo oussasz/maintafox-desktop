@@ -4,6 +4,12 @@
  */
 import type { SyncConflictRecord } from "@shared/ipc-types";
 
+/**
+ * Shortest reason the server accepts for a choice on a conflict: `MIN_REASON_CHARS` in
+ * `src-tauri/src/settings/catalog.rs` (counted trimmed, in code points; a test pins both values).
+ */
+export const CONFLICT_REASON_MIN = 10;
+
 /** Record types with a translated name in `shell:sync.entity.*`; others read "other record". */
 export const KNOWN_SYNC_ENTITY_TYPES = new Set([
   "equipment",

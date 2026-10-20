@@ -244,7 +244,6 @@
       "conflictsTitle": "Conflits à examiner",
       "recommended": "Recommandé : {{action}}",
       "apply": "Appliquer",
-      "resolutionNote": "Résolu par un opérateur avec l'action « {{action}} ».",
       "action": {
         "accept_local": "Garder la version de cet appareil",
         "accept_remote": "Prendre la version du serveur",
@@ -275,7 +274,13 @@
       "accept_local": "La version de cet appareil pour « {{record}} » sera conservée et renvoyée au serveur ; la version reçue sera écartée.",
       "accept_remote": "La version du serveur pour « {{record}} » remplacera celle de cet appareil. Les modifications faites ici sur cet enregistrement seront perdues.",
       "renumber_local": "L'enregistrement de cet appareil reçoit un nouveau numéro ; l'enregistrement reçu garde le sien (« {{record}} »).",
-      "dismiss": "Le conflit sur « {{record}} » sera écarté sans appliquer aucune des deux versions."
+      "dismiss": "Le conflit sur « {{record}} » sera écarté sans appliquer aucune des deux versions.",
+      "retry_later": "Le conflit sur « {{record}} » reste ouvert et sera réexaminé plus tard ; rien n'est appliqué.",
+      "escalate": "Le conflit sur « {{record}} » est signalé pour examen par un responsable ; rien n'est appliqué."
+    },
+    "reason": {
+      "label": "Motif de ce choix",
+      "hint": "Obligatoire, au moins {{min}} caractères. Conservé avec le conflit et dans le journal d'audit."
     },
     "entity": {
       "other": "Autre enregistrement",

@@ -2,24 +2,28 @@
  * The one conflict review list of the app (sync centre dialog and Settings → sync diagnostics).
  *
  * Each conflict reads as: what happened (translated kind), which record (type + number + name
- * from the payload — never the uuid), the two versions, and the choices. Choices that overwrite
- * or drop a version ask for confirmation first; "retry later" and "escalate" (diagnostics only)
- * are reversible and run directly. A failed inbox load is an error with retry, never
+ * from the payload — never the uuid), the two versions, and the choices. Every choice, "retry
+ * later" and "escalate" (diagnostics only) included, opens a dialog that says what it does and
+ * asks why (at least `CONFLICT_REASON_MIN` characters): the reason is stored on the conflict and
+ * written to the audit trail with the choice. A failed inbox load is an error with retry, never
  * "nothing to review".
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { serverTextLength, serverTrim } from "@/components/permits/permit-rules";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
+import { Textarea } from "@/components/ui/textarea";
 import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type { ResolveSyncConflictInput, SyncConflictRecord } from "@shared/ipc-types";
 
 import {
+  CONFLICT_REASON_MIN,
   KNOWN_CONFLICT_KINDS,
   KNOWN_SYNC_ENTITY_TYPES,
   clashingNumber,
@@ -28,29 +32,29 @@ import {
 
 type ConflictAction = ResolveSyncConflictInput["action"];
 
-/** Actions that replace or drop a version: confirmed before they run. */
-const CONFIRMED_ACTIONS = new Set<ConflictAction>([
+/** Every action the server knows (others read "review"). */
+const KNOWN_ACTIONS = new Set<string>([
   "accept_local",
   "accept_remote",
   "renumber_local",
+  "retry_later",
+  "escalate",
   "dismiss",
 ]);
 
 export interface SyncConflictListProps {
   /** Also offer "retry later" and "escalate" (Settings → sync diagnostics). */
   showTriageActions?: boolean;
-  /** Note stored with the resolution; none when omitted. */
-  withResolutionNote?: boolean;
   /** Load the inbox when the list mounts (default true). */
   loadOnMount?: boolean;
 }
 
 export function SyncConflictList({
   showTriageActions = false,
-  withResolutionNote = false,
   loadOnMount = true,
 }: SyncConflictListProps) {
   const { t } = useTranslation("shell");
+  const reasonId = useId();
   const { formatDateTime } = useFormatters();
   const conflictInbox = useSyncOrchestratorStore((s) => s.conflictInbox);
   const refreshInbox = useSyncOrchestratorStore((s) => s.refreshInbox);
@@ -64,6 +68,8 @@ export function SyncConflictList({
     conflict: SyncConflictRecord;
     action: ConflictAction;
   } | null>(null);
+  const [reason, setReason] = useState("");
+  const reasonOk = serverTextLength(reason) >= CONFLICT_REASON_MIN;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,22 +88,9 @@ export function SyncConflictList({
   }, [loadOnMount, load]);
 
   const actionLabel = (action: string) =>
-    t(
-      `sync.panel.action.${
-        [
-          "accept_local",
-          "accept_remote",
-          "renumber_local",
-          "retry_later",
-          "escalate",
-          "dismiss",
-        ].includes(action)
-          ? action
-          : "review"
-      }`,
-    );
+    t(`sync.panel.action.${KNOWN_ACTIONS.has(action) ? action : "review"}`);
 
-  const run = async (c: SyncConflictRecord, action: ConflictAction) => {
+  const run = async (c: SyncConflictRecord, action: ConflictAction, why: string) => {
     setBusyId(c.id);
     setErrorById((prev) => {
       const next = { ...prev };
@@ -109,9 +102,7 @@ export function SyncConflictList({
         conflict_id: c.id,
         expected_row_version: c.row_version,
         action,
-        resolution_note: withResolutionNote
-          ? t("sync.panel.resolutionNote", { action: actionLabel(action) })
-          : null,
+        resolution_note: serverTrim(why),
       });
     } catch (err) {
       setErrorById((prev) => ({ ...prev, [c.id]: describeAppError(err).title }));
@@ -122,11 +113,8 @@ export function SyncConflictList({
   };
 
   const choose = (c: SyncConflictRecord, action: ConflictAction) => {
-    if (CONFIRMED_ACTIONS.has(action)) {
-      setPending({ conflict: c, action });
-    } else {
-      void run(c, action).catch(() => {});
-    }
+    setReason("");
+    setPending({ conflict: c, action });
   };
 
   const kindOf = (c: SyncConflictRecord) =>
@@ -247,8 +235,7 @@ export function SyncConflictList({
                   );
                 })}
               </div>
-              {CONFIRMED_ACTIONS.has(recommended as ConflictAction) ||
-              ["retry_later", "escalate"].includes(recommended) ? (
+              {KNOWN_ACTIONS.has(recommended) ? (
                 <p className="mt-1 text-xs text-text-muted">
                   {t("sync.panel.recommended", { action: actionLabel(recommended) })}
                 </p>
@@ -264,10 +251,24 @@ export function SyncConflictList({
         description={confirmText}
         confirmLabel={pending ? actionLabel(pending.action) : ""}
         destructive={pending?.action === "dismiss" || pending?.action === "accept_remote"}
+        confirmDisabled={!reasonOk}
         onConfirm={async () => {
-          if (pending) await run(pending.conflict, pending.action);
+          if (pending && reasonOk) await run(pending.conflict, pending.action, reason);
         }}
-      />
+      >
+        <label className="grid gap-1.5 text-sm">
+          <span className="text-text-secondary">{t("sync.reason.label")}</span>
+          <Textarea
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            aria-describedby={`${reasonId}-hint`}
+          />
+          <span id={`${reasonId}-hint`} className="text-xs text-text-muted">
+            {t("sync.reason.hint", { min: CONFLICT_REASON_MIN })}
+          </span>
+        </label>
+      </ConfirmDialog>
     </>
   );
 }

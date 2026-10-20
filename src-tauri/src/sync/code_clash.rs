@@ -379,7 +379,7 @@ mod tests {
                 conflict_id: clash.id,
                 expected_row_version: clash.row_version,
                 action: "renumber_local".to_string(),
-                resolution_note: None,
+                resolution_note: Some("Both people exist; renumber ours".to_string()),
             },
         )
         .await
@@ -395,6 +395,16 @@ mod tests {
         )
         .await;
         assert_eq!(history, 1);
+        // The choice itself is audited with its reason, as every conflict choice.
+        let choice = scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'sync.conflict_resolved' \
+             AND json_extract(details_json, '$.action') = 'renumber_local' \
+             AND json_extract(details_json, '$.reason') = 'Both people exist; renumber ours'",
+            vec![],
+        )
+        .await;
+        assert_eq!(choice, 1);
 
         // The new number travels like any edit; A ends with both records, no conflict.
         server.exchange("B", &b).await;

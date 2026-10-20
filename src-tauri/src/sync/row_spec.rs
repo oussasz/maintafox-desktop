@@ -943,9 +943,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // acknowledgement of a safety rule notice (`settings::received_notice`, the notice itself
         // never travels), and the audits of permit and permit type changes (`permit::queries`):
         // the change itself travels on its own row (who submitted, approved, changed the setting,
-        // when and why), while these details hold local ids that mean nothing on another PC.
+        // when and why), while these details hold local ids that mean nothing on another PC. The
+        // choice made on a sync conflict (`sync::queries::resolve_sync_conflict`, its reason) stays
+        // on the PC with the conflict, which is local-only; the data it changed travels on its row.
         row_filter: Some(
-            "{row}.action_code IS NOT 'notification.safety_notice_acknowledged' \
+            "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved') \
              AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type')",
         ),
         ..spec(

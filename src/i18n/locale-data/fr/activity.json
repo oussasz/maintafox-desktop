@@ -112,6 +112,7 @@
       "sync__repair__preview": "Réparation de synchronisation prévisualisée",
       "sync__repair__execute": "Réparation de synchronisation exécutée",
       "sync__code_clash__renumbered": "Code en doublon renuméroté à la synchronisation",
+      "sync__conflict_resolved": "Choix fait sur un conflit de synchronisation",
       "qualification__requirement__update": "Exigence de qualification modifiée",
       "qualification__requirement__create": "Exigence de qualification créée",
       "qualification__override": "Dérogation de qualification",

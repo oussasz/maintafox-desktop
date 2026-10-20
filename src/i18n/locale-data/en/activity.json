@@ -112,6 +112,7 @@
       "sync__repair__preview": "Sync repair previewed",
       "sync__repair__execute": "Sync repair executed",
       "sync__code_clash__renumbered": "Clashing code renumbered on sync",
+      "sync__conflict_resolved": "Sync conflict choice made",
       "qualification__requirement__update": "Qualification requirement updated",
       "qualification__requirement__create": "Qualification requirement created",
       "qualification__override": "Qualification override",
