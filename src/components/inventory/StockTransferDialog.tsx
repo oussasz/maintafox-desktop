@@ -29,13 +29,14 @@ import { appErrorReason } from "@/lib/app-error";
 import { formatSiteLabel } from "@/lib/display";
 import {
   type InventoryArticleRow,
+  type LotStock,
   isLotTracked,
   listInventoryLocations,
   listInventoryLotStock,
   transferInventoryStock,
 } from "@/services/inventory-service";
 import { pushAppToast } from "@/store/app-toast-store";
-import type { InventoryStockBalance, LotStock, StockLocation } from "@shared/ipc-types";
+import type { InventoryStockBalance, StockLocation } from "@shared/ipc-types";
 
 /** Same minimum as the backend rule (INV_TRANSFER_NOTE_TOO_SHORT). */
 export const TRANSFER_NOTE_MIN_CHARS = 5;
