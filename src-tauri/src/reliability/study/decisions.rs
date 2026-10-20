@@ -987,6 +987,12 @@ pub(crate) async fn inbound_self_approval_check<C: ConnectionTrait>(
         // judged; the deleted node no longer holds a rule.
         let replaced = match (l.site_node_id, payload_site) {
             (Some(held), Some(received)) if held != received => {
+                if crate::org::validation::node_copy_awaits_activation(conn, Some(held), received).await? {
+                    // The copy's structure is not activated here yet (the publish arrived in part).
+                    return Ok(Some(InboundDecisionVerdict::Defer(
+                        "the new organisation structure is not active here yet".into(),
+                    )));
+                }
                 crate::org::validation::node_replaces_deleted_node(conn, held, received).await?
             }
             _ => false,

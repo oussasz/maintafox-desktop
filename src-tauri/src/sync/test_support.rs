@@ -363,6 +363,18 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // The approver of an override must hold the certification right on the receiving device
     // (`qualification::sync_check`): generic accounts (administrators, `is_*` = 1) are not deleted.
     ("user_accounts", "deleted_at", "NULL"),
+    // A site rule received on a deleted node is refused (`settings::site::inbound_site_setting_check`):
+    // the generic node is live, as every node of the structure in use is.
+    ("org_nodes", "deleted_at", "NULL"),
+    // A live node belongs to a structure (trigger of migration 127): the one of its node type, the
+    // last created (the node type is created just before as its parent).
+    (
+        "org_nodes",
+        "structure_model_id",
+        "(SELECT structure_model_id FROM org_node_types ORDER BY id DESC LIMIT 1)",
+    ),
+    // Site rules are received only on a node of the structure in use (`settings::site`).
+    ("org_structure_models", "status", "'active'"),
     // A received permit is judged on its status (`permit::sync_check`): the generic permit is
     // active (its generic times are in order: fitted, verified, activated, lock removed, expiry),
     // so its generic isolations arrive with it as a valid group.

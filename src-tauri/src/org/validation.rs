@@ -825,8 +825,11 @@ fn site_rule_on_draft_copy_issue(c: &SiteRuleOnDraftCopy) -> AppValidationIssue 
 /// code); neither the code of a node nor its type nor a type's code can be edited afterwards (only
 /// a draft node's parent can change, so the depth is not compared); a code is unique among the
 /// live nodes of a model. Hence: `held` exists here and is deleted (only a publish deletes the
-/// nodes of the structure in use), `received` is live, belongs to another structure model and has
-/// the same code and the same node-type code ([`NODES_REPLACED_BY_SQL`]).
+/// nodes of the structure in use), `received` is live in the structure model in use here, and
+/// `held` belongs to a structure that model replaced, publish after publish, each of them holding
+/// a node of the same code and node-type code ([`NODES_REPLACED_BY_SQL`]). A node of a draft (never
+/// published here) is no copy: while the publish that activates its model has not arrived here,
+/// [`node_copy_awaits_activation`] tells the callers to wait.
 pub(crate) async fn node_replaces_deleted_node(
     conn: &impl ConnectionTrait,
     held: i64,
@@ -842,15 +845,62 @@ pub(crate) async fn node_replaces_deleted_node(
         .is_some())
 }
 
-/// The ids of the deleted nodes that the live node bound to its one `?` replaced, one per publish
-/// of a new organisation structure since that node's code and type exist (see
-/// [`node_replaces_deleted_node`]); none when that node is deleted.
-pub(crate) const NODES_REPLACED_BY_SQL: &str = "SELECT h.id FROM org_nodes h \
-     JOIN org_node_types ht ON ht.id = h.node_type_id \
-     JOIN org_nodes n ON n.id = ? AND n.deleted_at IS NULL \
-     JOIN org_node_types nt ON nt.id = n.node_type_id \
-    WHERE h.deleted_at IS NOT NULL AND h.code = n.code AND ht.code = nt.code \
-      AND h.structure_model_id IS NOT n.structure_model_id";
+/// Whether `received` would be the copy of a node deleted here (`held`, or any node when `None`)
+/// but the publish of its structure has only partly arrived: the former nodes are deleted here,
+/// their structure model is still the one in use here, and `received` belongs to a model still a
+/// draft here with the same code and node-type code. The publish deletes the former nodes and
+/// moves the records before it activates the new model (`publish_model_with_remap`), so an
+/// exchange can end between them: the received row waits for the activation. Outside a publish,
+/// the nodes of the model in use are live, so a row received on a node of an ordinary draft is
+/// not covered (the callers refuse it).
+pub(crate) async fn node_copy_awaits_activation(
+    conn: &impl ConnectionTrait,
+    held: Option<i64>,
+    received: i64,
+) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM org_nodes n \
+               JOIN org_node_types nt ON nt.id = n.node_type_id \
+               JOIN org_structure_models nm ON nm.id = n.structure_model_id AND nm.status = 'draft' \
+               JOIN org_nodes h ON h.deleted_at IS NOT NULL AND h.code = n.code \
+                AND h.structure_model_id IS NOT n.structure_model_id \
+               JOIN org_node_types ht ON ht.id = h.node_type_id AND ht.code = nt.code \
+               JOIN org_structure_models hm ON hm.id = h.structure_model_id AND hm.status = 'active' \
+              WHERE n.id = ? AND n.deleted_at IS NULL AND (? IS NULL OR h.id = ?) LIMIT 1",
+            [received.into(), held.into(), held.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// The ids of the deleted nodes that the live node bound to its one `?` replaced (see
+/// [`node_replaces_deleted_node`]); none when that node is deleted or is not in the structure
+/// model in use here. The chain of structures is followed back through the publishes recorded on
+/// the models themselves (synced to every PC): a publish supersedes the former model at the very
+/// moment it activates the new one (`superseded_at` = `activated_at`, same value on both rows,
+/// here and in `structure_model::publish_model`). Each structure on the way must hold a node of the
+/// same code and node-type code: a code dropped by one publish and reused by a later one for
+/// another site does not take over the history of the node it once named. A PC that missed a
+/// structure entirely (none of its rows here) sees the chain stop there: it fails closed (no
+/// replacement), never wider.
+pub(crate) const NODES_REPLACED_BY_SQL: &str = "WITH RECURSIVE replaced(model_id, code, type_code, start) AS ( \
+       SELECT n.structure_model_id, n.code, nt.code, 1 FROM org_nodes n \
+         JOIN org_node_types nt ON nt.id = n.node_type_id \
+         JOIN org_structure_models nm ON nm.id = n.structure_model_id AND nm.status = 'active' \
+        WHERE n.id = ? AND n.deleted_at IS NULL \
+       UNION \
+       SELECT pm.id, r.code, r.type_code, 0 FROM replaced r \
+         JOIN org_structure_models cm ON cm.id = r.model_id \
+         JOIN org_structure_models pm ON pm.status = 'superseded' AND pm.superseded_at = cm.activated_at \
+          AND pm.id <> cm.id \
+         JOIN org_nodes x ON x.structure_model_id = pm.id AND x.code = r.code AND x.deleted_at IS NOT NULL \
+         JOIN org_node_types xt ON xt.id = x.node_type_id AND xt.code = r.type_code) \
+     SELECT h.id FROM replaced r \
+       JOIN org_nodes h ON h.structure_model_id = r.model_id AND h.code = r.code AND h.deleted_at IS NOT NULL \
+       JOIN org_node_types ht ON ht.id = h.node_type_id AND ht.code = r.type_code \
+      WHERE r.start = 0";
 
 // ─── Publish ──────────────────────────────────────────────────────────────────
 

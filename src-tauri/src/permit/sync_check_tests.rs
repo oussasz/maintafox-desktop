@@ -3125,13 +3125,17 @@ async fn a_received_site_change_is_rechecked_against_the_permit_held_here() {
 }
 
 /// A new organisation structure as received here from the PC that published it: node 1 (the
-/// first site) deleted, and in structure model 90 its copy (node 90, sync id
-/// `permit-test-org-090`: same code and node type) under a new top node (node 91,
-/// `permit-test-org-091`, another code). Returns the copy's id.
+/// first site) deleted, and in structure model 90 (active, superseding model 1 at the moment it
+/// was activated, as a publish records it) its copy (node 90, sync id `permit-test-org-090`: same
+/// code and node type) under a new top node (node 91, `permit-test-org-091`, another code).
+/// Returns the copy's id.
 async fn receive_structure_replacing_first_site(db: &DatabaseConnection) -> i64 {
     for sql in [
-        "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, \
-         updated_at) VALUES (90, 'permit-test-model-090', 90, 'draft', datetime('now'), datetime('now'))",
+        "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, activated_at, \
+         created_at, updated_at) VALUES (90, 'permit-test-model-090', 90, 'active', '2026-10-01T00:00:00+00:00', \
+         datetime('now'), datetime('now'))",
+        "UPDATE org_structure_models SET status = 'superseded', superseded_at = '2026-10-01T00:00:00+00:00' \
+         WHERE id = 1",
         // The node types of the new structure, matched by their stable code.
         "INSERT INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, \
          updated_at) SELECT 90, 'permit-test-type-090', 90, t.code, t.label, 1, datetime('now'), datetime('now') \
@@ -3215,6 +3219,21 @@ async fn a_received_site_move_off_a_deleted_node_is_accepted_only_to_its_copy() 
     // A site not applied here yet: the row waits.
     let outcome = moved_to(99).await;
     assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    // The copy while its structure is still a draft here (the publish arrived in part: model 1
+    // still in use, its node deleted): no copy yet, the row waits for the activation.
+    exec(
+        &db,
+        "UPDATE org_structure_models SET status = CASE id WHEN 90 THEN 'draft' ELSE 'active' END WHERE id IN (1, 90)",
+    )
+    .await;
+    let outcome = moved_to(copy).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    exec(
+        &db,
+        "UPDATE org_structure_models SET status = CASE id WHEN 90 THEN 'active' ELSE 'superseded' END \
+         WHERE id IN (1, 90)",
+    )
+    .await;
     let kept = queries::get_work_permit(&db, approved.id)
         .await
         .expect("read")

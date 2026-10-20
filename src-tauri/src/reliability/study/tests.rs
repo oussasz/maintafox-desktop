@@ -2174,11 +2174,15 @@ async fn a_received_decision_moved_to_the_copy_of_its_deleted_site_is_judged_on_
     // Site 2 allows self-approval (set while it is a site of the structure in use).
     set_opt_out(&f, 2, true, None).await;
     // The publish as received here: site 1 deleted; its copy (node 90, same code and node type, in
-    // structure model 90) holds the site's rule, moved there turned on; P-101 moved there too.
+    // structure model 90, which superseded model 1 at the moment it was activated, as a publish
+    // records it) holds the site's rule, moved there turned on; P-101 moved there too.
     for sql in [
-        "UPDATE org_structure_models SET status = 'superseded' WHERE id = 1".to_string(),
-        "INSERT INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
-         VALUES (90, 'st-model-90', 90, 'active', datetime('now'), datetime('now'))"
+        "UPDATE org_structure_models SET status = 'superseded', superseded_at = '2026-10-01T00:00:00+00:00' \
+         WHERE id = 1"
+            .to_string(),
+        "INSERT INTO org_structure_models (id, entity_sync_id, version_number, status, activated_at, created_at, \
+         updated_at) VALUES (90, 'st-model-90', 90, 'active', '2026-10-01T00:00:00+00:00', datetime('now'), \
+         datetime('now'))"
             .to_string(),
         "INSERT INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, can_own_work, is_active, \
          created_at, updated_at) SELECT 90, 'st-type-90', 90, code, label, can_own_work, 1, datetime('now'), \

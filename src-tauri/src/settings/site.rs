@@ -402,12 +402,22 @@ fn bool_of(raw: Option<&str>) -> Option<bool> {
 ///
 /// One move needs no new audit event: the publish of a new organisation structure moves every
 /// rule from a former node to the node replacing it (`org::validation::publish_model_with_remap`),
-/// keeping its value. A rule held here (same row) turned on, received still on but on another
-/// site, is applied when the site held here is a node deleted here and the received site is the
-/// node that replaced it (`org::validation::node_replaces_deleted_node`): nothing is turned on that
-/// was not already on, and the rule stays on the site it was audited for, under its new node. A
-/// move off a node deleted here onto any other site is a conflict; a move while the site held here
-/// is still live (the node deletes not received yet) waits like a rule turned on.
+/// keeping its value, time and author. A rule held here (same row) turned on, received still on,
+/// with the same time and author, but on another site, is applied when the site held here is a
+/// node deleted here, the received site is the node that replaced it
+/// (`org::validation::node_replaces_deleted_node`) and no change of the rule is recorded here at
+/// that site or the nodes it replaced after the time held: nothing is turned on that was not
+/// already on, and the rule stays on the site it was audited for, under its new node. Any other
+/// such row (another time or author, or a later change recorded here, such as an audited "off" at
+/// the copy) is judged as a rule turned on. A move off a node deleted here onto any other site is a
+/// conflict; a move while the site held here is still live (the node deletes not received yet)
+/// waits like a rule turned on.
+///
+/// A rule received (on or off) on a node deleted here or on a node of a draft structure is a
+/// conflict, as `set_site_setting` refuses it: neither is a site, and a rule on a draft copy would
+/// block every later publish (`org::validation::collect_site_rules_on_draft_copies`). Except a
+/// rule moved by a publish that arrived here only in part (its former nodes deleted, its new
+/// structure not activated yet: `org::validation::node_copy_awaits_activation`): it waits.
 pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
     conn: &C,
     entity_sync_id: &str,
@@ -430,10 +440,13 @@ pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
     let Some(site) = local_id(conn, "org_nodes", site_sync).await? else {
         return Ok(Some(InboundVerdict::Defer("site not applied yet".into())));
     };
+    if let Some(verdict) = received_site_not_a_site(conn, key, site).await? {
+        return Ok(Some(verdict));
+    }
     if !value {
         return Ok(None);
     }
-    if let Some(verdict) = moved_by_publish(conn, entity_sync_id, key, site).await? {
+    if let Some(verdict) = moved_by_publish(conn, entity_sync_id, key, site, payload).await? {
         return Ok(verdict);
     }
     let Some(changed_at) = text(payload, "updated_at").and_then(instant) else {
@@ -522,21 +535,77 @@ pub(crate) async fn inbound_site_setting_check<C: ConnectionTrait>(
     })))
 }
 
+/// A received rule whose site (`site`, local id) is no site here: a node deleted here, or a node of
+/// a draft structure. `None`: a live node outside a draft. A node of a draft that is the copy of
+/// a node deleted here while its structure awaits activation (a publish arrived in part) waits.
+async fn received_site_not_a_site<C: ConnectionTrait>(
+    conn: &C,
+    key: &str,
+    site: i64,
+) -> AppResult<Option<InboundVerdict>> {
+    let Some(node) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT CASE WHEN n.deleted_at IS NULL THEN 0 ELSE 1 END AS deleted, \
+                        CASE WHEN {NOT_A_DRAFT_NODE_SQL} THEN 0 ELSE 1 END AS draft \
+                   FROM org_nodes n WHERE n.id = ?"
+            ),
+            [site.into()],
+        ))
+        .await?
+    else {
+        return Ok(Some(InboundVerdict::Defer("site not applied yet".into())));
+    };
+    let deleted = get::<i64>(&node, "deleted")? != 0;
+    let draft = get::<i64>(&node, "draft")? != 0;
+    if !deleted && !draft {
+        return Ok(None);
+    }
+    if !deleted && crate::org::validation::node_copy_awaits_activation(conn, None, site).await? {
+        return Ok(Some(InboundVerdict::Defer(format!(
+            "site rule '{key}': the new organisation structure of its site is not active here yet"
+        ))));
+    }
+    Ok(Some(InboundVerdict::Conflict {
+        code: "SITE_SETTING_NOT_A_SITE",
+        message: format!(
+            "site rule '{key}' received on a node that is no site here ({})",
+            if deleted {
+                "deleted by a new organisation structure"
+            } else {
+                "a node of a draft organisation structure"
+            }
+        ),
+    }))
+}
+
 /// A received rule turned on (`key` at local site `site`) judged as the move of the row held here
 /// by an organisation publish ([`inbound_site_setting_check`]). `None`: not such a move (no row held
-/// here, same site, another rule, or not on here, or its site here not deleted): judged as a rule
-/// turned on. `Some(None)`: the rule held on moves to the node replacing its deleted node: applied.
-/// `Some(Some(conflict))`: moved off a node deleted here onto a site that does not replace it.
+/// here, same site, another rule, or not on here, or its site here not deleted), or not the row as
+/// the publish moved it (another time or author than held here, or a change of the rule recorded
+/// here at the site or the nodes it replaced after that time): judged as a rule turned on.
+/// `Some(None)`: the rule held on moves, unchanged, to the node replacing its deleted node:
+/// applied. `Some(Some(conflict))`: moved off a node deleted here onto a site that does not replace
+/// it.
+///
+/// The time and author must be the ones held here because the publish keeps both: a row received
+/// with another time or author was changed after the move, and only an audit event can accept that
+/// (otherwise the author shown in Settings could be forged, or an older "on" replayed with a new
+/// time). The later changes recorded here are checked because this PC may hold the rule on at the
+/// former node while it already holds a later audited "off" at the copy (made on another PC after
+/// the publish): a replayed "on" must meet that "off", which [`inbound_site_setting_check`] refuses.
 async fn moved_by_publish<C: ConnectionTrait>(
     conn: &C,
     entity_sync_id: &str,
     key: &str,
     site: i64,
+    payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<Option<Option<InboundVerdict>>> {
     let Some(held) = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT s.site_node_id, s.setting_key, s.value_json, \
+            "SELECT s.site_node_id, s.setting_key, s.value_json, s.updated_by_id, s.updated_at, \
                     CASE WHEN n.deleted_at IS NULL THEN 0 ELSE 1 END AS site_deleted \
              FROM site_settings s JOIN org_nodes n ON n.id = s.site_node_id \
              WHERE s.entity_sync_id = ?",
@@ -552,16 +621,45 @@ async fn moved_by_publish<C: ConnectionTrait>(
     if held_site == site || held_key != key || !held_on || get::<i64>(&held, "site_deleted")? == 0 {
         return Ok(None);
     }
-    if crate::org::validation::node_replaces_deleted_node(conn, held_site, site).await? {
-        return Ok(Some(None));
+    if !crate::org::validation::node_replaces_deleted_node(conn, held_site, site).await? {
+        return Ok(Some(Some(InboundVerdict::Conflict {
+            code: "SITE_SETTING_MOVED",
+            message: format!(
+                "site rule '{key}' turned on here at a site deleted here: received on another site that does not \
+                 replace it (a new organisation structure moves a rule only to the copy of its site)"
+            ),
+        })));
     }
-    Ok(Some(Some(InboundVerdict::Conflict {
-        code: "SITE_SETTING_MOVED",
-        message: format!(
-            "site rule '{key}' turned on here at a site deleted here: received on another site that does not \
-             replace it (a new organisation structure moves a rule only to the copy of its site)"
-        ),
-    })))
+    // The row as the publish moved it: same time (as instants: formats differ between devices)
+    // and same author as held here.
+    let Some(held_at) = get::<Option<String>>(&held, "updated_at")?.as_deref().and_then(instant) else {
+        return Ok(None);
+    };
+    let held_by: Option<i64> = get(&held, "updated_by_id")?;
+    let received_by = local_id(conn, "user_accounts", text(payload, "updated_by_sync_id")).await?;
+    if text(payload, "updated_at").and_then(instant) != Some(held_at) || held_by.is_none() || received_by != held_by {
+        return Ok(None);
+    }
+    // No change of the rule recorded here after that time, at the site or the nodes it replaced.
+    let events = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT changed_at FROM site_setting_events \
+                  WHERE (site_node_id = ? OR site_node_id IN ({})) AND setting_key = ?",
+                crate::org::validation::NODES_REPLACED_BY_SQL
+            ),
+            [site.into(), site.into(), key.into()],
+        ))
+        .await?;
+    for e in &events {
+        // An unreadable time cannot be ordered: not the row as moved, judged as a rule turned on.
+        match instant(&get::<String>(e, "changed_at")?) {
+            Some(at) if at <= held_at => {}
+            _ => return Ok(None),
+        }
+    }
+    Ok(Some(None))
 }
 
 /// An audit event of a per-site rule received by synchronisation (`site_setting_events`): known

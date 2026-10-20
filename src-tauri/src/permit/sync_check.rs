@@ -589,7 +589,8 @@ async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> Ap
 /// same code and node type, in another structure). Never any other live node, such as the plant
 /// above it: the publish moves a permit only to the copy of its own node. A held node missing here,
 /// or no node, is not deleted: nothing tells it apart from a site change. `None`: the held node is
-/// deleted here and the received one is not applied yet (the row waits).
+/// deleted here and the received one is not applied yet, or its structure model is still a draft
+/// here (`org::validation::node_copy_awaits_activation`): the row waits.
 async fn site_moved_to_replacing_node(
     conn: &impl ConnectionTrait,
     held_node: Option<&str>,
@@ -610,9 +611,14 @@ async fn site_moved_to_replacing_node(
     let Some(node_id) = local_id(conn, "org_nodes", node).await? else {
         return Ok(None);
     };
-    Ok(Some(
-        crate::org::validation::node_replaces_deleted_node(conn, held_id, node_id).await?,
-    ))
+    if crate::org::validation::node_replaces_deleted_node(conn, held_id, node_id).await? {
+        return Ok(Some(true));
+    }
+    // The copy's structure is not activated here yet (the publish arrived in part): wait.
+    if crate::org::validation::node_copy_awaits_activation(conn, Some(held_id), node_id).await? {
+        return Ok(None);
+    }
+    Ok(Some(false))
 }
 
 /// A received permit whose equipment, linked work order or site differs from the copy held here
@@ -676,7 +682,7 @@ async fn equipment_change_check(
             Some(reanchored) => reanchored,
             None => {
                 return wait(format!(
-                    "permit {code}: its site {} is not applied yet",
+                    "permit {code}: its site {} is not applied yet, or its new structure is not active here yet",
                     node.unwrap_or("none")
                 ))
             }
