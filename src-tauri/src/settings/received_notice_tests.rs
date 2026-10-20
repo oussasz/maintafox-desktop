@@ -340,7 +340,7 @@ async fn settings_admin(db: &DatabaseConnection, name: &str, site: Option<i64>) 
     )
     .await;
     let user = scalar_i64(db, "SELECT id FROM user_accounts WHERE username = ?", vec![name.into()]).await;
-    if let Some(perm) = (name != "plain_user").then_some("adm.settings") {
+    if let Some(perm) = (name != "plain_user").then_some(crate::rbac::permissions::ADM_SETTINGS) {
         exec(
             db,
             "INSERT INTO roles (entity_sync_id, name, description, is_system, role_type, status, created_at, updated_at) \
