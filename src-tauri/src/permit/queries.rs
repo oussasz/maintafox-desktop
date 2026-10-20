@@ -3219,14 +3219,153 @@ async fn verify_permit_isolation_removal_in(
             &[],
         ));
     }
+    // The lock is taken off first, by its applier or by a forced removal (migration 249), for
+    // every lock, the ones fitted before this rule too; the verifier is not who took it off.
+    if iso.removed_at.is_none() || iso.removed_by_id.is_none() {
+        return Err(refused(
+            CODE_LOCK_NOT_REMOVED,
+            "The lock has not been taken off yet: its applier records \"J'ai retiré mon cadenas\" (or a forced removal is recorded) before the removal is verified.",
+            &[],
+        ));
+    }
+    if iso.removed_by_id == Some(actor_id) {
+        return Err(refused(
+            CODE_REMOVAL_VERIFIER_IS_REMOVER,
+            "The person who took the lock off cannot verify its removal.",
+            &[],
+        ));
+    }
     ensure_linked_work_not_running(db, &permit).await?;
-    write_isolation_action(
+    let verified_at = now_ts();
+    let out = write_isolation_action(
         db,
         &iso,
         "removal_verified_by_id = ?, removal_verified_at = ?",
-        vec![actor_id.into(), now_ts().into()],
+        vec![actor_id.into(), verified_at.clone().into()],
     )
-    .await
+    .await?;
+    crate::audit::writer::write_audit_event_in(
+        db,
+        permit_audit_event(
+            AUDIT_LOCK_REMOVAL_VERIFIED,
+            permit.id,
+            actor_id,
+            serde_json::json!({
+                "code": permit.code,
+                "isolation_id": iso.id,
+                "isolation_sync_id": iso.entity_sync_id,
+                "isolation_point": iso.isolation_point,
+                "lock_number": iso.lock_number,
+                "applied_by_id": iso.applied_by_id,
+                "removed_by_id": iso.removed_by_id,
+                "removed_at": iso.removed_at,
+                "forced_removal": iso.forced_removal,
+                "removal_verified_at": verified_at,
+            }),
+        ),
+    )
+    .await?;
+    Ok(out)
+}
+
+/// Stable code: the removal of a lock not taken off yet cannot be verified (migration 249).
+pub const CODE_LOCK_NOT_REMOVED: &str = "PERMIT_REMOVAL_LOCK_NOT_REMOVED";
+/// Stable code: the person who took a lock off verifies its removal.
+pub const CODE_REMOVAL_VERIFIER_IS_REMOVER: &str = "PERMIT_REMOVAL_VERIFIER_IS_REMOVER";
+/// Stable code: a normal lock removal recorded by someone other than the lock's applier.
+pub const CODE_REMOVAL_NOT_APPLIER: &str = "PERMIT_LOCK_REMOVAL_NOT_APPLIER";
+/// Stable code: the lock is already recorded as taken off.
+pub const CODE_LOCK_ALREADY_REMOVED: &str = "PERMIT_LOCK_ALREADY_REMOVED";
+
+/// Audit action: the applier took their lock off ("J'ai retiré mon cadenas").
+pub const AUDIT_LOCK_REMOVED: &str = "permit.lock_removed";
+/// Audit action: a lock removal was verified.
+pub const AUDIT_LOCK_REMOVAL_VERIFIED: &str = "permit.lock_removal_verified";
+
+/// The applier records that they took their own lock off ("J'ai retiré mon cadenas", OSHA
+/// 1910.147(e)(3)): only the person who fitted it (`actor_id`, the session user), on an applied
+/// lock not taken off yet, while lock removal is open on the permit (active, or abandoned
+/// cancelled / expired) and not under running work. Audited. The removal is then verified by
+/// someone else (`verify_permit_isolation_removal`).
+pub async fn record_permit_isolation_removed(
+    db: &DatabaseConnection,
+    input: PermitIsolationActionInput,
+    actor_id: i64,
+) -> AppResult<PermitIsolation> {
+    let txn = db.begin().await?;
+    let out = record_permit_isolation_removed_in(&txn, input, actor_id).await?;
+    txn.commit().await?;
+    Ok(out)
+}
+
+/// The lock of `iso` can be taken off now (both paths): permit status, not cancelled, applied, not
+/// already off, no running work.
+async fn ensure_lock_removable(
+    db: &impl ConnectionTrait,
+    iso: &PermitIsolation,
+    permit: &WorkPermit,
+) -> AppResult<i64> {
+    ensure_permit_status_in(permit, ISOLATION_REMOVAL_STATUSES, "take a lock off")?;
+    refuse_if_cancelled(iso)?;
+    let Some(applier) = iso.applied_by_id.filter(|_| iso.applied_at.is_some()) else {
+        return Err(refused(
+            "PERMIT_ISOLATION_NOT_APPLIED",
+            "This isolation was never applied: there is no lock to take off.",
+            &[],
+        ));
+    };
+    if iso.removed_at.is_some() || iso.removed_by_id.is_some() {
+        return Err(refused(
+            CODE_LOCK_ALREADY_REMOVED,
+            "This lock is already recorded as taken off.",
+            &[],
+        ));
+    }
+    ensure_linked_work_not_running(db, permit).await?;
+    Ok(applier)
+}
+
+async fn record_permit_isolation_removed_in(
+    db: &impl ConnectionTrait,
+    input: PermitIsolationActionInput,
+    actor_id: i64,
+) -> AppResult<PermitIsolation> {
+    let (iso, permit) = load_isolation_for_action(db, &input).await?;
+    let applier = ensure_lock_removable(db, &iso, &permit).await?;
+    if applier != actor_id {
+        return Err(refused(
+            CODE_REMOVAL_NOT_APPLIER,
+            "Only the person who fitted this lock records that they took it off; when they are absent, a forced removal is recorded.",
+            &[],
+        ));
+    }
+    let removed_at = now_ts();
+    let out = write_isolation_action(
+        db,
+        &iso,
+        "removed_by_id = ?, removed_at = ?, forced_removal = 0",
+        vec![actor_id.into(), removed_at.clone().into()],
+    )
+    .await?;
+    crate::audit::writer::write_audit_event_in(
+        db,
+        permit_audit_event(
+            AUDIT_LOCK_REMOVED,
+            permit.id,
+            actor_id,
+            serde_json::json!({
+                "code": permit.code,
+                "isolation_id": iso.id,
+                "isolation_sync_id": iso.entity_sync_id,
+                "isolation_point": iso.isolation_point,
+                "lock_number": iso.lock_number,
+                "removed_at": removed_at,
+                "permit_status": permit.status,
+            }),
+        ),
+    )
+    .await?;
+    Ok(out)
 }
 
 fn map_loto_card_print_job(row: &sea_orm::QueryResult) -> AppResult<LotoCardPrintJob> {

@@ -929,6 +929,7 @@ pub fn run() {
             commands::permit::upsert_permit_isolation,
             commands::permit::apply_permit_isolation,
             commands::permit::verify_permit_isolation,
+            commands::permit::record_permit_isolation_removed,
             commands::permit::verify_permit_isolation_removal,
             commands::permit::cancel_permit_isolation,
             commands::permit::suspend_work_permit,

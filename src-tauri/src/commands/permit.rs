@@ -268,7 +268,21 @@ pub async fn cancel_permit_isolation(
     queries::cancel_permit_isolation(&state.db, input, i64::from(user.user_id)).await
 }
 
-/// Records verified lock removal by the session user (part of closing a permit).
+/// "J'ai retiré mon cadenas": the session user, who fitted the lock, records that they took it off
+/// (the removal is then verified by someone else). Requires `ptw.issue` at the permit's site, as
+/// fitting it did; the save refuses anyone but the lock's applier.
+#[tauri::command]
+pub async fn record_permit_isolation_removed(
+    input: PermitIsolationActionInput,
+    state: State<'_, AppState>,
+) -> AppResult<PermitIsolation> {
+    let user = require_session!(state);
+    require_on_isolation(&state, user.user_id, PTW_ISSUE, input.isolation_id).await?;
+    queries::record_permit_isolation_removed(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Records verified lock removal by the session user (part of closing a permit); the lock must have
+/// been taken off first, by someone other than the verifier.
 #[tauri::command]
 pub async fn verify_permit_isolation_removal(
     input: PermitIsolationActionInput,
