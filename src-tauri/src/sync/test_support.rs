@@ -341,6 +341,12 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // active (its generic times are in order: fitted, verified, activated, lock removed, expiry),
     // so its generic isolations arrive with it as a valid group.
     ("work_permits", "status", "'active'"),
+    // An active permit names who approved it (four-eyes, `permit::sync_check::four_eyes_check`): its
+    // author, submitter and approver are three generic accounts (one parent row per reference), so
+    // a four-eyes approval, not flagged a self-approval, approved after it was submitted.
+    ("work_permits", "self_approved", "0"),
+    ("work_permits", "submitted_at", "'2026-01-01T08:00:00Z'"),
+    ("work_permits", "approved_at", "'2026-01-01T09:00:00Z'"),
     // The generic isolation is fitted, verified and removed under that active permit: a line in
     // use, never cancelled (a cancelled line is one never applied, on a draft or a permit waiting
     // for review, `permit::sync_check::cancellation_check`).

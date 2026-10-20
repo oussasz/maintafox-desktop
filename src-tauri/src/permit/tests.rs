@@ -126,12 +126,29 @@ pub(super) async fn create_permit(db: &DatabaseConnection, type_code: &str, asse
             linked_work_order_id: None,
             expires_at: Some(future_expiry()),
         },
+        APPLIER,
     )
     .await
     .expect("create permit")
 }
 
+/// Moves a permit to `status` as APPLIER, who wrote and submitted it; the approval is made by a
+/// second account (four-eyes: the approver is neither the author nor the submitter).
 pub(super) async fn set_status(db: &DatabaseConnection, wp: &WorkPermit, status: &str) -> Result<WorkPermit, AppError> {
+    let actor = if status == "approved" {
+        second_approver(db).await
+    } else {
+        APPLIER
+    };
+    set_status_as(db, wp, status, actor).await
+}
+
+pub(super) async fn set_status_as(
+    db: &DatabaseConnection,
+    wp: &WorkPermit,
+    status: &str,
+    actor: i64,
+) -> Result<WorkPermit, AppError> {
     queries::set_work_permit_status(
         db,
         WorkPermitStatusInput {
@@ -139,9 +156,24 @@ pub(super) async fn set_status(db: &DatabaseConnection, wp: &WorkPermit, status:
             status: status.into(),
             expected_row_version: wp.row_version,
         },
-        APPLIER,
+        actor,
     )
     .await
+}
+
+/// A second account approving permits in tests that sign everything else as the seeded admin
+/// (four-eyes: the approver is neither the author nor the submitter).
+pub(super) async fn second_approver(db: &DatabaseConnection) -> i64 {
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, \
+         is_admin, force_password_change, created_at, updated_at) VALUES ('user-sync-ptw-approver', 'ptw_approver', \
+         'PTW Approver', 'local', 1, 0, 0, datetime('now'), datetime('now'))"
+            .to_string(),
+    ))
+    .await
+    .expect("insert approver account");
+    scalar_i64(db, "SELECT id FROM user_accounts WHERE username = 'ptw_approver'").await
 }
 
 /// `draft` → `pending_review` → `approved` → `issued`
@@ -236,6 +268,7 @@ async fn create_rejects_past_expiry() {
             linked_work_order_id: None,
             expires_at: Some("2020-01-01T00:00:00Z".into()),
         },
+        APPLIER,
     )
     .await;
     assert_validation(res, "future");
@@ -1042,6 +1075,7 @@ pub(super) async fn create_from_wo(
             linked_work_order_id: Some(wo_id),
             expires_at: Some(future_expiry()),
         },
+        APPLIER,
     )
     .await
 }
@@ -1617,16 +1651,16 @@ async fn a_permit_always_has_a_bounded_future_expiry() {
     };
     let hot = type_id(&db, "hot_work").await; // max 8 h
     assert_validation(
-        queries::create_work_permit(&db, create(None, hot)).await,
+        queries::create_work_permit(&db, create(None, hot), APPLIER).await,
         "PERMIT_EXPIRY_REQUIRED",
     );
     assert_validation(
-        queries::create_work_permit(&db, create(Some("  ".into()), hot)).await,
+        queries::create_work_permit(&db, create(Some("  ".into()), hot), APPLIER).await,
         "PERMIT_EXPIRY_REQUIRED",
     );
     let too_long = (chrono::Utc::now() + chrono::Duration::hours(10)).to_rfc3339();
     assert_validation(
-        queries::create_work_permit(&db, create(Some(too_long.clone()), hot)).await,
+        queries::create_work_permit(&db, create(Some(too_long.clone()), hot), APPLIER).await,
         "PERMIT_EXPIRY_TOO_LONG",
     );
     let wp = queries::create_work_permit(
@@ -1635,6 +1669,7 @@ async fn a_permit_always_has_a_bounded_future_expiry() {
             Some((chrono::Utc::now() + chrono::Duration::hours(2)).to_rfc3339()),
             hot,
         ),
+        APPLIER,
     )
     .await
     .expect("within the type's duration");
@@ -3499,4 +3534,230 @@ async fn the_three_person_reason_refusal_names_the_minimum() {
         }
         other => panic!("expected a coded refusal, got {other:?}"),
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Four-eyes on permit approval (owner decision 2026-10-17, migration 244)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Opts the test site (org node 1, created with the first equipment) out of four-eyes: a planning site whose per-site rule (the one
+/// reliability decisions use) allows self-approval.
+pub(super) async fn opt_site_out_of_four_eyes(db: &DatabaseConnection) {
+    for sql in [
+        "UPDATE org_node_types SET can_own_work = 1 WHERE id = 1".to_string(),
+        format!(
+            "INSERT INTO site_settings (entity_sync_id, site_node_id, setting_key, value_json) \
+             VALUES ('site-setting-ptw-test', 1, '{}', 'true')",
+            crate::reliability::study::decisions::SELF_APPROVAL_SETTING
+        ),
+    ] {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql))
+            .await
+            .expect("opt out");
+    }
+}
+
+async fn audit_details(db: &DatabaseConnection, action: &str, permit_id: i64) -> Vec<serde_json::Value> {
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "SELECT details_json FROM audit_events WHERE action_code = '{action}' AND target_type = 'work_permit' \
+             AND target_id = '{permit_id}' ORDER BY id"
+        ),
+    ))
+    .await
+    .expect("audit")
+    .iter()
+    .map(|r| serde_json::from_str(&r.try_get_by_index::<String>(0).expect("details")).expect("json"))
+    .collect()
+}
+
+/// The approver is neither the person who wrote the permit nor the person who submitted it (each
+/// refused on its own); a second person approves, recorded with the submitter, and both steps are
+/// audited.
+#[tokio::test]
+async fn four_eyes_the_author_and_the_submitter_never_approve_a_permit() {
+    let db = setup().await;
+    let submitter = second_approver(&db).await;
+    let asset = insert_equipment(&db, "EQ-4EYES-1").await;
+    let wp = create_permit(&db, "hot_work", asset).await;
+    assert_eq!(wp.created_by_id, Some(APPLIER), "the author is the session user");
+    let wp = set_status_as(&db, &wp, "pending_review", submitter)
+        .await
+        .expect("submit");
+    assert_eq!(wp.submitted_by_id, Some(submitter));
+    assert!(wp.submitted_at.is_some());
+    assert_eq!((wp.approved_by_id, wp.approved_at.as_deref()), (None, None));
+
+    let err = set_status_as(&db, &wp, "approved", APPLIER).await.unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_APPROVER_IS_CREATOR");
+    let err = set_status_as(&db, &wp, "approved", submitter).await.unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_APPROVER_IS_SUBMITTER");
+    let held = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!(
+        (held.status.as_str(), held.row_version),
+        ("pending_review", wp.row_version)
+    );
+
+    let approved = set_status_as(&db, &wp, "approved", VERIFIER)
+        .await
+        .expect("a second person");
+    assert_eq!(approved.approved_by_id, Some(VERIFIER));
+    assert_eq!(approved.approved_by_name.as_deref(), Some("PTW Verifier"));
+    assert!(approved.approved_at.is_some());
+    assert!(!approved.self_approved);
+    assert_eq!(approved.submitted_by_id, Some(submitter), "the submission is kept");
+    assert_eq!(approved.created_by_id, Some(APPLIER));
+
+    let submitted = audit_details(&db, "permit.submitted", wp.id).await;
+    assert_eq!(submitted.len(), 1);
+    let approvals = audit_details(&db, "permit.approved", wp.id).await;
+    assert_eq!(approvals.len(), 1, "refusals write nothing");
+    assert_eq!(approvals[0]["self_approved"], serde_json::json!(false));
+    assert_eq!(approvals[0]["submitted_by_id"], serde_json::json!(submitter));
+
+    // Further steps keep the record.
+    let issued = set_status(&db, &approved, "issued").await.expect("issue");
+    assert_eq!(
+        (issued.approved_by_id, issued.submitted_by_id, issued.created_by_id),
+        (Some(VERIFIER), Some(submitter), Some(APPLIER))
+    );
+}
+
+/// On a site that opted out of four-eyes (the per-site rule), the author who submitted it may
+/// approve: allowed, flagged "auto-approbation" on the permit and in the audit. The same approval
+/// is refused once the site keeps four-eyes again.
+#[tokio::test]
+async fn four_eyes_an_opted_out_site_allows_a_flagged_self_approval() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-4EYES-2").await;
+    opt_site_out_of_four_eyes(&db).await;
+    let wp = create_permit(&db, "hot_work", asset).await;
+    let wp = set_status_as(&db, &wp, "pending_review", APPLIER)
+        .await
+        .expect("submit");
+    let approved = set_status_as(&db, &wp, "approved", APPLIER)
+        .await
+        .expect("self-approval allowed");
+    assert!(approved.self_approved, "flagged");
+    assert_eq!(approved.approved_by_id, Some(APPLIER));
+    let approvals = audit_details(&db, "permit.approved", wp.id).await;
+    assert_eq!(approvals[0]["self_approved"], serde_json::json!(true));
+    assert_eq!(approvals[0]["site_rule"], serde_json::json!("four_eyes_opted_out"));
+
+    // A second person on the same site: a four-eyes approval, not flagged.
+    let other = create_permit(&db, "hot_work", asset).await;
+    let other = set_status_as(&db, &other, "pending_review", APPLIER)
+        .await
+        .expect("submit");
+    let other = set_status_as(&db, &other, "approved", VERIFIER).await.expect("approve");
+    assert!(!other.self_approved);
+
+    // The site keeps four-eyes again: refused.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE site_settings SET value_json = 'false'".to_string(),
+    ))
+    .await
+    .expect("opt in");
+    let third = create_permit(&db, "hot_work", asset).await;
+    let third = set_status_as(&db, &third, "pending_review", APPLIER)
+        .await
+        .expect("submit");
+    let err = set_status_as(&db, &third, "approved", APPLIER).await.unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_APPROVER_IS_SUBMITTER");
+}
+
+/// A permit written before the author was recorded cannot show four-eyes: refused on a four-eyes
+/// site (nobody is invented); on an opted-out site it is allowed and flagged.
+#[tokio::test]
+async fn four_eyes_an_unrecorded_author_is_never_taken_as_a_second_person() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-4EYES-3").await;
+    let wp = create_permit(&db, "hot_work", asset).await;
+    let wp = set_status_as(&db, &wp, "pending_review", APPLIER)
+        .await
+        .expect("submit");
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        format!("UPDATE work_permits SET created_by_id = NULL WHERE id = {}", wp.id),
+    ))
+    .await
+    .expect("as before the version");
+    let err = set_status_as(&db, &wp, "approved", VERIFIER).await.unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_APPROVAL_AUTHOR_UNKNOWN");
+
+    opt_site_out_of_four_eyes(&db).await;
+    let approved = set_status_as(&db, &wp, "approved", VERIFIER).await.expect("opted out");
+    assert!(approved.self_approved, "no verified second person: flagged");
+}
+
+/// A permit sent back to draft while waiting for review (its equipment changed, or a planned
+/// isolation line cancelled) loses its submission: it is submitted again, and the reset is audited
+/// with the submission it cleared.
+#[tokio::test]
+async fn four_eyes_a_permit_back_to_draft_is_submitted_again() {
+    let db = setup().await;
+    let submitter = second_approver(&db).await;
+    let asset = insert_equipment(&db, "EQ-4EYES-4").await;
+    let other = insert_equipment(&db, "EQ-4EYES-5").await;
+
+    // Equipment changed in review.
+    let wp = create_permit(&db, "hot_work", asset).await;
+    let wp = set_status_as(&db, &wp, "pending_review", submitter)
+        .await
+        .expect("submit");
+    let back = queries::update_work_permit(
+        &db,
+        WorkPermitUpdateInput {
+            id: wp.id,
+            linked_work_order_id: None,
+            asset_id: Some(other),
+            entity_id: None,
+            expires_at: None,
+            expected_row_version: wp.row_version,
+        },
+        APPLIER,
+    )
+    .await
+    .expect("equipment changed");
+    assert_eq!(back.status, "draft");
+    assert_eq!((back.submitted_by_id, back.submitted_at.as_deref()), (None, None));
+    let resets = audit_details(&db, "permit.review_reset", wp.id).await;
+    assert_eq!(resets[0]["cleared_submitted_by_id"], serde_json::json!(submitter));
+    // Approving needs a fresh submission; the new submitter is the one judged.
+    let err = set_status_as(&db, &back, "approved", VERIFIER).await.unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_TRANSITION_NOT_ALLOWED");
+    let again = set_status_as(&db, &back, "pending_review", VERIFIER)
+        .await
+        .expect("submit again");
+    assert_eq!(again.submitted_by_id, Some(VERIFIER));
+    let err = set_status_as(&db, &again, "approved", VERIFIER).await.unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_APPROVER_IS_SUBMITTER");
+    set_status_as(&db, &again, "approved", submitter)
+        .await
+        .expect("the former submitter is a second person now");
+
+    // A planned isolation line cancelled in review.
+    let wp = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, wp.id, "Q1 breaker").await;
+    let submitted = set_status_as(&db, &wp, "pending_review", submitter)
+        .await
+        .expect("submit");
+    assert_eq!(submitted.submitted_by_id, Some(submitter));
+    let (back, _) = queries::cancel_permit_isolation(
+        &db,
+        crate::permit::domain::PermitIsolationCancelInput {
+            isolation_id: iso.id,
+            expected_row_version: iso.row_version,
+        },
+        APPLIER,
+    )
+    .await
+    .expect("cancel line");
+    assert_eq!(back.status, "draft");
+    assert_eq!((back.submitted_by_id, back.submitted_at.as_deref()), (None, None));
 }

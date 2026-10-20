@@ -74,11 +74,19 @@ const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.l
      pt.code AS permit_type_code, pt.name AS permit_type_name, \
      COALESCE(pt.requires_energy_isolation, 0) AS permit_type_requires_energy_isolation, \
      COALESCE(pt.requires_three_person_removal, 0) AS permit_type_requires_three_person_removal, \
-     e.asset_id_code AS asset_code, e.name AS asset_label, wo.code AS linked_work_order_code \
+     e.asset_id_code AS asset_code, e.name AS asset_label, wo.code AS linked_work_order_code, \
+     wp.created_by_id, wp.submitted_by_id, wp.submitted_at, wp.approved_by_id, wp.approved_at, \
+     COALESCE(wp.self_approved, 0) AS self_approved, \
+     COALESCE(ucr.display_name, ucr.username) AS created_by_name, \
+     COALESCE(usu.display_name, usu.username) AS submitted_by_name, \
+     COALESCE(uap.display_name, uap.username) AS approved_by_name \
      FROM work_permits wp \
      LEFT JOIN permit_types pt ON pt.id = wp.permit_type_id \
      LEFT JOIN equipment e ON e.id = wp.asset_id \
-     LEFT JOIN work_orders wo ON wo.id = wp.linked_work_order_id";
+     LEFT JOIN work_orders wo ON wo.id = wp.linked_work_order_id \
+     LEFT JOIN user_accounts ucr ON ucr.id = wp.created_by_id \
+     LEFT JOIN user_accounts usu ON usu.id = wp.submitted_by_id \
+     LEFT JOIN user_accounts uap ON uap.id = wp.approved_by_id";
 
 const PERMIT_ISOLATION_SELECT: &str = "SELECT pi.id, pi.entity_sync_id, pi.permit_id, pi.isolation_point, \
      pi.energy_type, pi.isolation_method, pi.energy_type_id, et.code AS energy_type_code, \
@@ -298,6 +306,34 @@ fn map_work_permit(row: &sea_orm::QueryResult) -> AppResult<WorkPermit> {
         permit_type_requires_three_person_removal: i64_to_bool(
             row.try_get::<i64>("", "permit_type_requires_three_person_removal")
                 .map_err(|e| decode_err("permit_type_requires_three_person_removal", e))?,
+        ),
+        created_by_id: row
+            .try_get("", "created_by_id")
+            .map_err(|e| decode_err("created_by_id", e))?,
+        created_by_name: row
+            .try_get("", "created_by_name")
+            .map_err(|e| decode_err("created_by_name", e))?,
+        submitted_by_id: row
+            .try_get("", "submitted_by_id")
+            .map_err(|e| decode_err("submitted_by_id", e))?,
+        submitted_by_name: row
+            .try_get("", "submitted_by_name")
+            .map_err(|e| decode_err("submitted_by_name", e))?,
+        submitted_at: row
+            .try_get("", "submitted_at")
+            .map_err(|e| decode_err("submitted_at", e))?,
+        approved_by_id: row
+            .try_get("", "approved_by_id")
+            .map_err(|e| decode_err("approved_by_id", e))?,
+        approved_by_name: row
+            .try_get("", "approved_by_name")
+            .map_err(|e| decode_err("approved_by_name", e))?,
+        approved_at: row
+            .try_get("", "approved_at")
+            .map_err(|e| decode_err("approved_at", e))?,
+        self_approved: i64_to_bool(
+            row.try_get::<i64>("", "self_approved")
+                .map_err(|e| decode_err("self_approved", e))?,
         ),
     })
 }
@@ -1610,14 +1646,24 @@ pub(crate) async fn resolve_permit_scope(
     Ok((asset_id, entity_id))
 }
 
-pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreateInput) -> AppResult<WorkPermit> {
+/// `actor_id` is the session user: it is recorded as the person who wrote the permit (four-eyes:
+/// they never approve it on a site that keeps four-eyes).
+pub async fn create_work_permit(
+    db: &DatabaseConnection,
+    input: WorkPermitCreateInput,
+    actor_id: i64,
+) -> AppResult<WorkPermit> {
     let txn = db.begin().await?;
-    let out = create_work_permit_in(&txn, input).await?;
+    let out = create_work_permit_in(&txn, input, actor_id).await?;
     txn.commit().await?;
     Ok(out)
 }
 
-async fn create_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitCreateInput) -> AppResult<WorkPermit> {
+async fn create_work_permit_in(
+    db: &impl ConnectionTrait,
+    input: WorkPermitCreateInput,
+    actor_id: i64,
+) -> AppResult<WorkPermit> {
     // The type must exist (NotFound otherwise).
     let _ = permit_type_requires_energy_isolation(db, input.permit_type_id).await?;
     let (asset_id, entity_id) = resolve_permit_scope(db, &input).await?;
@@ -1640,7 +1686,7 @@ async fn create_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitCreat
     let requested = now_ts();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id,          asset_id, entity_id, status, requested_at, expires_at, row_version)          VALUES (?, '', ?, ?, ?, ?, 'draft', ?, ?, 1)",
+        "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id,          asset_id, entity_id, status, requested_at, expires_at, row_version, created_by_id)          VALUES (?, '', ?, ?, ?, ?, 'draft', ?, ?, 1, ?)",
         [
             entity_sync_id.into(),
             opt_i64(input.linked_work_order_id),
@@ -1649,6 +1695,7 @@ async fn create_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitCreat
             entity_id.into(),
             requested.into(),
             opt_string(expires_at),
+            actor_id.into(),
         ],
     ))
     .await?;
@@ -1814,7 +1861,7 @@ async fn audit_equipment_change(
     if review_reset {
         audit_review_reset(
             db,
-            &before.status,
+            before,
             after,
             if equipment_changed {
                 "equipment_changed"
@@ -1829,11 +1876,12 @@ async fn audit_equipment_change(
 }
 
 /// Records that a change sent a permit waiting for review back to draft (`permit.review_reset`):
-/// the review it waited for judged what changed. `reason`: `equipment_changed`, `site_changed` or
+/// the review it waited for judged what changed, and the submission it cleared (who submitted it
+/// and when: it must be submitted again). `reason`: `equipment_changed`, `site_changed` or
 /// `isolation_cancelled`.
 async fn audit_review_reset(
     db: &impl ConnectionTrait,
-    status_before: &str,
+    before: &WorkPermit,
     after: &WorkPermit,
     reason: &str,
     actor_id: i64,
@@ -1847,7 +1895,9 @@ async fn audit_review_reset(
             serde_json::json!({
                 "code": after.code,
                 "reason": reason,
-                "status_before": status_before,
+                "cleared_submitted_by_id": before.submitted_by_id,
+                "cleared_submitted_at": before.submitted_at,
+                "status_before": before.status,
                 "status_after": after.status,
             }),
         ),
@@ -1962,12 +2012,13 @@ async fn update_work_permit_in(
     };
     // A change of equipment, work order or site while waiting for review sends the permit back to
     // draft: the review it waited for judged the former equipment at the former site, and who
-    // issues it may change (permits record no reviewer: the review is the status itself).
+    // issues it may change. Its submission is cleared with it (four-eyes): it is submitted again.
     let status = if (target.equipment_changes || target.site_changes) && current.status == "pending_review" {
         "draft".to_string()
     } else {
         current.status.clone()
     };
+    let back_to_draft = current.status == "pending_review" && status == "draft";
 
     let new_rv = current.row_version + 1;
     let affected = db
@@ -1993,11 +2044,99 @@ async fn update_work_permit_in(
             "Concurrent update on work_permits.".into()
         ]));
     }
+    if back_to_draft {
+        clear_review_record(db, input.id).await?;
+    }
     let updated = require_work_permit(db, input.id).await?;
     if target.equipment_changes || target.site_changes {
         audit_equipment_change(db, &current, &updated, actor_id).await?;
     }
     Ok(updated)
+}
+
+/// A permit back to draft is submitted again (four-eyes, migration 244): who submitted it and any
+/// approval are cleared, in the transaction that sends it back.
+async fn clear_review_record(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET submitted_by_id = NULL, submitted_at = NULL, approved_by_id = NULL, \
+         approved_at = NULL, self_approved = NULL WHERE id = ? AND status = 'draft'",
+        [permit_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Four-eyes or the site's opt-out for a permit at org node `entity_id`: the per-site rule shared
+/// with reliability decisions (owner decision 2026-10-17: one opt-out per site,
+/// `reliability::study::decisions::SELF_APPROVAL_SETTING`, `settings::site`), read at the
+/// permit's planning site (`planning_site_of_node`). A node with no planning site: four-eyes.
+pub(crate) async fn permit_four_eyes_rule(
+    db: &impl ConnectionTrait,
+    entity_id: i64,
+) -> AppResult<crate::reliability::study::decisions::SelfApprovalRule> {
+    use crate::reliability::study::decisions::{SelfApprovalRule, SELF_APPROVAL_SETTING};
+    let Some(site) = crate::planning::weekly_schedule::planning_site_of_node(db, entity_id).await? else {
+        return Ok(SelfApprovalRule::SiteUnresolved);
+    };
+    Ok(
+        if crate::settings::site::site_setting(db, site, SELF_APPROVAL_SETTING).await? == Some(true) {
+            SelfApprovalRule::Allowed
+        } else {
+            SelfApprovalRule::FourEyes
+        },
+    )
+}
+
+/// Whether `approver` is shown to be a second person: the permit records who wrote it and who
+/// submitted it, and the approver is neither (`permit::sync_check` judges a received approval on
+/// the same rule, by sync identity).
+pub(crate) fn approver_is_second_person<T: PartialEq>(
+    creator: Option<&T>,
+    submitter: Option<&T>,
+    approver: &T,
+) -> bool {
+    creator.is_some_and(|c| c != approver) && submitter.is_some_and(|s| s != approver)
+}
+
+/// The four-eyes check of an approval by `actor_id` (pending_review → approved). Returns whether
+/// it is a self-approval (no verified second person), allowed only where the permit's site opted
+/// out of four-eyes; elsewhere it is refused, saying why: the approver wrote the permit, submitted
+/// it, or who did was not recorded (written or submitted before this version: nobody is invented,
+/// so the separation cannot be shown).
+async fn four_eyes_approval(db: &impl ConnectionTrait, permit: &WorkPermit, actor_id: i64) -> AppResult<bool> {
+    use crate::reliability::study::decisions::SelfApprovalRule;
+    let creator = permit.created_by_id;
+    let submitter = permit.submitted_by_id;
+    if approver_is_second_person(creator.as_ref(), submitter.as_ref(), &actor_id) {
+        return Ok(false);
+    }
+    if permit_four_eyes_rule(db, permit.entity_id).await? == SelfApprovalRule::Allowed {
+        return Ok(true);
+    }
+    let code = permit.code.clone();
+    Err(if submitter == Some(actor_id) {
+        refused(
+            "PERMIT_APPROVER_IS_SUBMITTER",
+            format!("Permit {code} was submitted for review by you: another person approves it (four-eyes)."),
+            &[("permit", code.clone())],
+        )
+    } else if creator == Some(actor_id) {
+        refused(
+            "PERMIT_APPROVER_IS_CREATOR",
+            format!("Permit {code} was written by you: another person approves it (four-eyes)."),
+            &[("permit", code.clone())],
+        )
+    } else {
+        refused(
+            "PERMIT_APPROVAL_AUTHOR_UNKNOWN",
+            format!(
+                "Permit {code} was written or submitted before the app recorded who did it: four-eyes cannot be \
+                 shown. Cancel it and raise a new permit."
+            ),
+            &[("permit", code.clone())],
+        )
+    })
 }
 
 /// `actor_id` is the session user; it is recorded as the reinstating person when a
@@ -2030,6 +2169,8 @@ async fn set_work_permit_status_in(
     let to = input.status.as_str();
     assert_transition_set_status(from, to)?;
 
+    // Four-eyes (migration 244): who submitted and who approved, recorded with the status.
+    let mut self_approved = None;
     match (from, to) {
         ("draft", "pending_review") => {
             if !draft_fields_complete(&current) {
@@ -2039,6 +2180,9 @@ async fn set_work_permit_status_in(
                     &[],
                 ));
             }
+        }
+        ("pending_review", "approved") => {
+            self_approved = Some(four_eyes_approval(db, &current, actor_id).await?);
         }
         ("issued", "active") => {
             // No open-ended permit is activated (permits created before expiry was required).
@@ -2072,6 +2216,13 @@ async fn set_work_permit_status_in(
     let mut activated_at = current.activated_at.clone();
     let mut closed_at = current.closed_at.clone();
     let mut handed_back_at = current.handed_back_at.clone();
+    let mut submitted = (current.submitted_by_id, current.submitted_at.clone());
+    let mut approved = (current.approved_by_id, current.approved_at.clone());
+    match (from, to) {
+        ("draft", "pending_review") => submitted = (Some(actor_id), Some(now.clone())),
+        ("pending_review", "approved") => approved = (Some(actor_id), Some(now.clone())),
+        _ => {}
+    }
     match to {
         "issued" => issued_at = issued_at.or(Some(now)),
         "active" => activated_at = activated_at.or(Some(now)),
@@ -2084,7 +2235,8 @@ async fn set_work_permit_status_in(
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_permits SET status = ?, issued_at = ?, activated_at = ?, closed_at = ?, \
-             handed_back_at = ?, row_version = ? \
+             handed_back_at = ?, submitted_by_id = ?, submitted_at = ?, approved_by_id = ?, approved_at = ?, \
+             self_approved = COALESCE(?, self_approved), row_version = ? \
              WHERE id = ? AND row_version = ?",
             [
                 input.status.into(),
@@ -2092,6 +2244,11 @@ async fn set_work_permit_status_in(
                 opt_string(activated_at),
                 opt_string(closed_at),
                 opt_string(handed_back_at),
+                opt_i64(submitted.0),
+                opt_string(submitted.1),
+                opt_i64(approved.0),
+                opt_string(approved.1),
+                opt_i64(self_approved.map(i64::from)),
                 new_rv.into(),
                 input.id.into(),
                 current.row_version.into(),
@@ -2104,7 +2261,48 @@ async fn set_work_permit_status_in(
         ]));
     }
     let updated = require_work_permit(db, input.id).await?;
+    audit_review_step(db, &current, &updated, actor_id).await?;
     Ok(updated)
+}
+
+/// Audits a submission for review (`permit.submitted`) and an approval (`permit.approved`, with
+/// `self_approved` and the site's four-eyes rule: a self-approval on a site that opted out is
+/// recorded as such), in the transaction of the status change.
+async fn audit_review_step(
+    db: &impl ConnectionTrait,
+    before: &WorkPermit,
+    after: &WorkPermit,
+    actor_id: i64,
+) -> AppResult<()> {
+    let (action, details) = match (before.status.as_str(), after.status.as_str()) {
+        ("draft", "pending_review") => (
+            "permit.submitted",
+            serde_json::json!({
+                "code": after.code,
+                "created_by_id": after.created_by_id,
+                "submitted_at": after.submitted_at,
+                "status_before": before.status,
+                "status_after": after.status,
+            }),
+        ),
+        ("pending_review", "approved") => (
+            "permit.approved",
+            serde_json::json!({
+                "code": after.code,
+                "created_by_id": after.created_by_id,
+                "submitted_by_id": after.submitted_by_id,
+                "submitted_at": after.submitted_at,
+                "approved_at": after.approved_at,
+                "self_approved": after.self_approved,
+                "site_rule": if after.self_approved { "four_eyes_opted_out" } else { "four_eyes" },
+                "status_before": before.status,
+                "status_after": after.status,
+            }),
+        ),
+        _ => return Ok(()),
+    };
+    crate::audit::writer::write_audit_event_in(db, permit_audit_event(action, after.id, actor_id, details)).await?;
+    Ok(())
 }
 
 pub async fn suspend_work_permit(
@@ -2747,6 +2945,7 @@ async fn cancel_permit_isolation_in(
                 "Concurrent update on work_permits.".into()
             ]));
         }
+        clear_review_record(db, permit.id).await?;
         require_work_permit(db, permit.id).await?
     } else {
         permit.clone()
@@ -2779,7 +2978,7 @@ async fn cancel_permit_isolation_in(
     )
     .await?;
     if after.status != permit.status {
-        audit_review_reset(db, &permit.status, &after, "isolation_cancelled", actor_id).await?;
+        audit_review_reset(db, &permit, &after, "isolation_cancelled", actor_id).await?;
     }
     let cancelled = get_permit_isolation(db, iso.id).await?;
     Ok((after, cancelled))

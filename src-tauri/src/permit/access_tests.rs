@@ -117,12 +117,18 @@ fn create_input(type_id: i64, asset: Option<i64>, entity: Option<i64>, wo: Optio
 
 async fn permit(db: &DatabaseConnection, asset: i64) -> WorkPermit {
     let type_id = hot_work(db).await;
-    queries::create_work_permit(db, create_input(type_id, Some(asset), None, None))
+    queries::create_work_permit(db, create_input(type_id, Some(asset), None, None), 1)
         .await
         .expect("create permit")
 }
 
+/// As user 1 (who writes and submits); the approval by a second account (four-eyes).
 async fn set_status(db: &DatabaseConnection, wp: &WorkPermit, status: &str) -> WorkPermit {
+    let actor = if status == "approved" {
+        super::tests::second_approver(db).await
+    } else {
+        1
+    };
     queries::set_work_permit_status(
         db,
         WorkPermitStatusInput {
@@ -130,7 +136,7 @@ async fn set_status(db: &DatabaseConnection, wp: &WorkPermit, status: &str) -> W
             status: status.into(),
             expected_row_version: wp.row_version,
         },
-        1,
+        actor,
     )
     .await
     .unwrap_or_else(|e| panic!("-> {status}: {e:?}"))
@@ -590,7 +596,7 @@ async fn creating_a_permit_needs_the_right_at_its_site_its_equipment_and_its_wor
         let err = access::check_create_at(&f.db, &site, &input).await.unwrap_err();
         assert_eq!(code_of(&err), expected, "{input:?}");
         let plant_result = access::check_create_at(&f.db, &plant, &input).await;
-        let create_result = queries::create_work_permit(&f.db, input.clone()).await;
+        let create_result = queries::create_work_permit(&f.db, input.clone(), 1).await;
         match plant_wide {
             None => {
                 plant_result.unwrap_or_else(|e| panic!("plant {input:?}: {e:?}"));
@@ -635,11 +641,11 @@ async fn creating_a_permit_needs_the_right_at_its_site_its_equipment_and_its_wor
             let err = access::check_create_at(&f.db, map, &input).await.unwrap_err();
             assert!(matches!(err, AppError::ValidationFailed(_)), "{input:?}: {err:?}");
             // The same error as the create itself.
-            let create_err = queries::create_work_permit(&f.db, input.clone()).await.unwrap_err();
+            let create_err = queries::create_work_permit(&f.db, input.clone(), 1).await.unwrap_err();
             assert_eq!(format!("{err:?}"), format!("{create_err:?}"));
         }
     }
-    let create_err = queries::create_work_permit(&f.db, create_input(ty, Some(missing), None, None))
+    let create_err = queries::create_work_permit(&f.db, create_input(ty, Some(missing), None, None), 1)
         .await
         .unwrap_err();
     assert!(is_not_found(&create_err), "{create_err:?}");
@@ -1307,7 +1313,7 @@ async fn permits_on_equipment_of_another_site_are_listed_for_review_not_rewritte
     )
     .await;
     let ty = hot_work(&f.db).await;
-    let follows_wo = queries::create_work_permit(&f.db, create_input(ty, Some(f.eq_a), None, Some(wo_on_b)))
+    let follows_wo = queries::create_work_permit(&f.db, create_input(ty, Some(f.eq_a), None, Some(wo_on_b)), 1)
         .await
         .expect("permit on the work order");
     assert_eq!(follows_wo.entity_id, f.t.site_b, "the work order's site");
@@ -1337,7 +1343,7 @@ async fn permits_on_equipment_of_another_site_are_listed_for_review_not_rewritte
         "approved",
     )
     .await;
-    let on_deleted_site = queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), Some(area), None))
+    let on_deleted_site = queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), Some(area), None), 1)
         .await
         .expect("permit on the area");
     let on_deleted_site = set_status(
@@ -1394,7 +1400,7 @@ async fn a_deleted_parent_or_a_missing_derived_node_is_no_permit_site() {
     let cell = crate::auth::scope_tests::node(&f.db, "PTW-DEL-CELL", Some(area)).await;
     let eq_cell = equipment(&f.db, "DEL-CELL", Some(cell)).await;
     // Before the deletion the area above the cell is a valid site.
-    let before = queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), Some(area), None))
+    let before = queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), Some(area), None), 1)
         .await
         .expect("area above the cell");
     assert_eq!(before.entity_id, area);
@@ -1403,13 +1409,13 @@ async fn a_deleted_parent_or_a_missing_derived_node_is_no_permit_site() {
         &format!("UPDATE org_nodes SET deleted_at = '2026-01-02T00:00:00Z' WHERE id = {area}"),
     )
     .await;
-    let err = queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), Some(area), None))
+    let err = queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), Some(area), None), 1)
         .await
         .unwrap_err();
     assert_eq!(code_of(&err), "PERMIT_SITE_NOT_EQUIPMENT_SITE");
     // The cell itself and the live site above stay valid.
     for node in [None, Some(f.t.site_a)] {
-        queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), node, None))
+        queries::create_work_permit(&f.db, create_input(ty, Some(eq_cell), node, None), 1)
             .await
             .unwrap_or_else(|e| panic!("{node:?}: {e:?}"));
     }
@@ -1434,10 +1440,10 @@ async fn a_deleted_parent_or_a_missing_derived_node_is_no_permit_site() {
     // Equipment installed on a node missing here: refused given or not, the same way.
     let missing = 8_888_888;
     let eq_lost = equipment(&f.db, "LOST-NODE", Some(missing)).await;
-    let omitted = queries::create_work_permit(&f.db, create_input(ty, Some(eq_lost), None, None))
+    let omitted = queries::create_work_permit(&f.db, create_input(ty, Some(eq_lost), None, None), 1)
         .await
         .unwrap_err();
-    let given = queries::create_work_permit(&f.db, create_input(ty, Some(eq_lost), Some(missing), None))
+    let given = queries::create_work_permit(&f.db, create_input(ty, Some(eq_lost), Some(missing), None), 1)
         .await
         .unwrap_err();
     assert!(matches!(omitted, AppError::ValidationFailed(_)), "{omitted:?}");
@@ -1568,7 +1574,9 @@ async fn creating_a_permit_on_a_node_off_its_equipments_chain_is_refused() {
         access::check_create_at(&f.db, &plant, &input)
             .await
             .unwrap_or_else(|e| panic!("check {input:?}: {e:?}"));
-        let wp = queries::create_work_permit(&f.db, input).await.expect("on the chain");
+        let wp = queries::create_work_permit(&f.db, input, 1)
+            .await
+            .expect("on the chain");
         assert_eq!(wp.entity_id, node);
     }
     for (asset, node) in [
@@ -1580,7 +1588,7 @@ async fn creating_a_permit_on_a_node_off_its_equipments_chain_is_refused() {
         let input = create_input(ty, Some(asset), Some(node), None);
         let err = access::check_create_at(&f.db, &plant, &input).await.unwrap_err();
         assert_eq!(code_of(&err), "PERMIT_SITE_NOT_EQUIPMENT_SITE", "check {input:?}");
-        let err = queries::create_work_permit(&f.db, input.clone()).await.unwrap_err();
+        let err = queries::create_work_permit(&f.db, input.clone(), 1).await.unwrap_err();
         assert_eq!(code_of(&err), "PERMIT_SITE_NOT_EQUIPMENT_SITE", "create {input:?}");
     }
 }
@@ -1598,7 +1606,7 @@ async fn a_work_order_without_a_usable_site_gives_its_permit_no_site() {
         &format!("UPDATE work_orders SET entity_id = 0 WHERE id = {wo_zero}"),
     )
     .await;
-    let err = queries::create_work_permit(&f.db, create_input(ty, None, None, Some(wo_zero)))
+    let err = queries::create_work_permit(&f.db, create_input(ty, None, None, Some(wo_zero)), 1)
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::ValidationFailed(_)), "{err:?}");
@@ -1619,7 +1627,7 @@ async fn a_work_order_without_a_usable_site_gives_its_permit_no_site() {
     .unwrap_err();
     assert!(matches!(err, AppError::ValidationFailed(_)), "{err:?}");
     // NULL: the equipment's site.
-    let on_null = queries::create_work_permit(&f.db, create_input(ty, None, None, Some(f.wo_none)))
+    let on_null = queries::create_work_permit(&f.db, create_input(ty, None, None, Some(f.wo_none)), 1)
         .await
         .expect("work order without a node");
     assert_eq!(on_null.entity_id, f.t.site_a);

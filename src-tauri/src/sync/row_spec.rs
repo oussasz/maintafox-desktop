@@ -755,6 +755,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("permit_type_id", "permit_types"),
             r("asset_id", "equipment"),
             r("entity_id", "org_nodes"),
+            // Who wrote, submitted and approved the permit (four-eyes, migration 244).
+            r("created_by_id", USER),
+            r("submitted_by_id", USER),
+            r("approved_by_id", USER),
         ],
     ),
     spec("permit_handover_logs", &[r("permit_id", "work_permits")]),
