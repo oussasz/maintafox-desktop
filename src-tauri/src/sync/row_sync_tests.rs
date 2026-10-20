@@ -19,6 +19,8 @@ pub(crate) const FOUNDATION_TYPES: &[&str] = &[
     "user_accounts",
     "user_scope_assignments",
     "delegated_admin_policies",
+    "admin_recovery_notices",
+    "admin_recovery_acknowledgements",
     "org_structure_models",
     "org_node_types",
     "org_type_relationship_rules",

@@ -137,6 +137,11 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "PERMIT_TYPE_LOTO_ISOLATION_LOCKED",
   "PERMIT_TYPE_CODE_LOCKED",
   "LAST_ADMINISTRATOR_REQUIRED",
+  // Vendor recovery-code notices: never changed, acknowledged by their recipient only.
+  "ADMIN_RECOVERY_NOTICE_CHANGED",
+  "ADMIN_RECOVERY_NOTICE_INVALID",
+  "ADMIN_RECOVERY_ACK_NOT_RECIPIENT",
+  "ADMIN_RECOVERY_ACK_CHANGED",
 ]);
 
 const CODE_FIELDS = [

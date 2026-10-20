@@ -943,6 +943,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("sync_conflict", LOCAL_ROW),
                         ("audit_events", LOCAL_ROW),
                         ("personnel_import_batch", LOCAL_ROW),
+                        // A refused vendor recovery code: the target is the vendor's code id
+                        // (`auth::recovery_code`), sent as it is.
+                        ("admin_recovery_code", NOT_A_ROW),
                     ],
                 ),
             ],
@@ -1239,6 +1242,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("schedule_class_versions", &[]),
     spec("team_schedule_assignments", &[]),
     spec("personnel_schedule_exceptions", &[]),
+    // Vendor administrator recovery notices and their acknowledgements (`auth::recovery_code`):
+    // append-only, references by declared foreign keys (recipient, created account, notice, who
+    // acknowledged); `code_id` is the vendor's code id (a value: the spent register stays local).
+    spec("admin_recovery_notices", &[]),
+    spec("admin_recovery_acknowledgements", &[]),
 ];
 
 /// Rules of an entity type synchronised by the generic engine.

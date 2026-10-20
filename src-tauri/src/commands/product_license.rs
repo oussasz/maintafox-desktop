@@ -828,6 +828,8 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         "connection_profiles",
         // System signing trust anchors — not tenant data; required for entitlement apply after wipe.
         "licensing_trust_keys",
+        // Spent vendor recovery codes: a reset must not make a code usable again (`auth::recovery_code`).
+        "admin_recovery_codes_used",
     ]);
 
     tracing::warn!(

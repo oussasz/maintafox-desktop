@@ -52,6 +52,10 @@
 //! - `user_accounts` / `user_scope_assignments` / `roles`: a received change or delete that would
 //!   leave this PC without an active administrator is refused as a conflict
 //!   (`auth::last_admin::inbound_change_check`, `before_upsert_checked`, `before_delete_checked`).
+//! - `admin_recovery_notices` / `admin_recovery_acknowledgements`: a notice or acknowledgement
+//!   already here is never changed, and an acknowledgement made by anyone but the notice's
+//!   recipient is refused as a conflict (`auth::recovery_code::inbound_notice_check`,
+//!   `inbound_acknowledgement_check`); both are append-only, so a received delete is a conflict.
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -144,6 +148,12 @@ pub(crate) async fn before_upsert_checked(
             Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)
         }
         "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
+        crate::auth::recovery_code::NOTICE_ENTITY => {
+            Some(crate::auth::recovery_code::inbound_notice_check(conn, entity_sync_id, payload).await?)
+        }
+        crate::auth::recovery_code::ACK_ENTITY => {
+            Some(crate::auth::recovery_code::inbound_acknowledgement_check(conn, entity_sync_id, payload).await?)
+        }
         _ => None,
     };
     if let Some(verdict) = safety_check {

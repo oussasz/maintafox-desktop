@@ -3,6 +3,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { AdminRecoveryCodeDialog } from "@/components/auth/AdminRecoveryCodeDialog";
 import { ForgotPasswordDialog } from "@/components/auth/ForgotPasswordDialog";
 import { formatLicenseDate } from "@/components/auth/activation/OrganizationLicenseCard";
 import { AuthField } from "@/components/auth/shell/AuthField";
@@ -41,6 +42,7 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
+  const [recoveryCodeOpen, setRecoveryCodeOpen] = useState(false);
   const [postActivationHint, setPostActivationHint] = useState(false);
   const [showLicenseMeta, setShowLicenseMeta] = useState(false);
   const [licenseMeta, setLicenseMeta] = useState<ActivationLicenseMetadata | null>(null);
@@ -359,7 +361,20 @@ export function LoginPage() {
         </div>
       </form>
 
+      <div className="mt-3 text-center">
+        <button
+          type="button"
+          onClick={() => setRecoveryCodeOpen(true)}
+          disabled={activationCheckLoading}
+          className={cn("text-xs", mfAuth.linkPrimary)}
+          data-testid="login-recovery-code-link"
+        >
+          {t("login.recoveryCode.link")}
+        </button>
+      </div>
+
       <ForgotPasswordDialog open={forgotOpen} onOpenChange={setForgotOpen} />
+      <AdminRecoveryCodeDialog open={recoveryCodeOpen} onOpenChange={setRecoveryCodeOpen} />
       <ConfirmDialog
         open={confirmResetOpen}
         onOpenChange={setConfirmResetOpen}

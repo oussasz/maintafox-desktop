@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use crate::errors::{AppError, AppResult};
 
 /// Crockford base 32 alphabet (no I, L, O, U: never confused with 1, 0 or V when read aloud).
-const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+pub(crate) const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /// Characters of a device code (5 bits each, 20 bits).
 pub const DEVICE_CODE_LEN: usize = 4;
