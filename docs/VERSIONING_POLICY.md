@@ -46,7 +46,7 @@ All Git tags are annotated and GPG-signed (see `docs/BRANCHING_STRATEGY.md`).
 
 ## Current Version Sync Status
 
-All three files are currently synchronized at `0.4.0-dev` (Phase 4).
+All three files are currently synchronized at `0.9.0` (Phase 8 test installer).
 
 ## Minimum Required Files in Every Release PR (to `main`)
 
