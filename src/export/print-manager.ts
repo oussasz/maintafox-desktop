@@ -34,11 +34,27 @@ function nextPaint(frameWindow: Window): Promise<void> {
   });
 }
 
+/** The print request in progress; a second request made meanwhile (double click) joins it. */
+let inFlight: Promise<void> | null = null;
+
 /**
  * Print a dedicated HTML document through a hidden frame of the current window.
  * Rejects when the frame cannot be created or the runtime has no `print()` for it.
+ *
+ * Only one print runs at a time: while one is being prepared or its print dialog is open, a
+ * further call returns that same pending promise (the second document is NOT printed) so a
+ * double click never appends two frames or calls `print()` twice.
  */
-export async function printHtml(html: string, options: PrintHtmlOptions = {}): Promise<void> {
+export function printHtml(html: string, options: PrintHtmlOptions = {}): Promise<void> {
+  if (inFlight) return inFlight;
+  const run = printInFrame(html, options).finally(() => {
+    if (inFlight === run) inFlight = null;
+  });
+  inFlight = run;
+  return run;
+}
+
+async function printInFrame(html: string, options: PrintHtmlOptions): Promise<void> {
   const title = options.title ?? "Print";
 
   const frame = document.createElement("iframe");
@@ -53,9 +69,11 @@ export async function printHtml(html: string, options: PrintHtmlOptions = {}): P
   document.body.appendChild(frame);
 
   let removed = false;
+  let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
   const remove = () => {
     if (removed) return;
     removed = true;
+    clearTimeout(fallbackTimer);
     frame.remove();
   };
 
@@ -80,11 +98,12 @@ export async function printHtml(html: string, options: PrintHtmlOptions = {}): P
   }
 
   frameWindow.onafterprint = () => {
+    clearTimeout(fallbackTimer);
     // Give the runtime a moment to finish handing the job over before the frame goes away.
     setTimeout(remove, 300);
   };
   // The runtime may never emit `afterprint`.
-  setTimeout(remove, PRINT_FRAME_FALLBACK_MS);
+  fallbackTimer = setTimeout(remove, PRINT_FRAME_FALLBACK_MS);
 
   try {
     await nextPaint(frameWindow);

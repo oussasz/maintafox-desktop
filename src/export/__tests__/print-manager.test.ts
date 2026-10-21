@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { type MockInstance, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const webviewWindowCtor = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/webviewWindow", () => ({ WebviewWindow: webviewWindowCtor }));
@@ -83,5 +83,29 @@ describe("printHtml", () => {
     stubFrame({ doc: false });
     await expect(printHtml("<p>x</p>")).rejects.toThrow(/print frame/);
     expect(document.querySelector("iframe")).toBeNull();
+  });
+
+  it("a second request while one is open joins it: one frame, one print()", async () => {
+    const { win } = stubFrame();
+    const first = printHtml("<p>a</p>");
+    const second = printHtml("<p>b</p>");
+    expect(second).toBe(first);
+    await Promise.all([first, second]);
+    expect(document.querySelectorAll("iframe")).toHaveLength(1);
+    expect(win.print).toHaveBeenCalledTimes(1);
+    // once finished, a new request prints again
+    await printHtml("<p>c</p>");
+    expect(win.print).toHaveBeenCalledTimes(2);
+  });
+
+  it("removes the frame and rejects when print() throws, and allows a retry", async () => {
+    const { win } = stubFrame();
+    (win.print as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+      throw new Error("print boom");
+    });
+    await expect(printHtml("<p>x</p>")).rejects.toThrow("print boom");
+    expect(document.querySelector("iframe")).toBeNull();
+    await printHtml("<p>y</p>");
+    expect(win.print).toHaveBeenCalledTimes(2);
   });
 });
