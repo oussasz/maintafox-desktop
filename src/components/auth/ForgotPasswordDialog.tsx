@@ -55,7 +55,10 @@ export function ForgotPasswordDialog({ open, onOpenChange }: ForgotPasswordDialo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md" data-testid="forgot-password-dialog">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] max-w-md overflow-y-auto"
+        data-testid="forgot-password-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{t("login.forgotPassword.title")}</DialogTitle>
           <DialogDescription>{t("login.forgotPassword.description")}</DialogDescription>

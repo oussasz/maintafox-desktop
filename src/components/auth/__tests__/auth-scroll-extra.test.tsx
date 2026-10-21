@@ -22,4 +22,17 @@ describe("recovery code dialog and update lock scroll", () => {
     expect(src).not.toContain("items-center justify-center bg-surface-0/95");
     expect(src).toContain('className="m-auto w-full max-w-md');
   });
+
+  it("forgot password dialog is height-capped and scrolls", () => {
+    const src = read("src/components/auth/ForgotPasswordDialog.tsx");
+    expect(src).toContain("max-h-[calc(100dvh-2rem)]");
+    expect(src).toContain("overflow-y-auto");
+  });
+
+  it("startup error screen uses the scrolling startup shell", () => {
+    const src = read("src/components/layout/AppShell.tsx");
+    expect(src).toContain("mfAuth.startupShell");
+    const errorBranch = src.slice(src.indexOf('appStatus === "error"'));
+    expect(errorBranch.slice(0, 200)).toContain("mfAuth.startupShell");
+  });
 });
