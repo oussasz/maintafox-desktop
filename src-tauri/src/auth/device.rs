@@ -44,13 +44,27 @@ pub fn derive_device_fingerprint() -> AppResult<String> {
     Ok(encode(hasher.finalize()))
 }
 
+/// A console program (`reg`, `ipconfig`) started without a window. The release app is a GUI
+/// program (`windows_subsystem = "windows"`), so Windows opens a new console window for every
+/// console program it starts unless told not to: a black window flashing over the app at each
+/// licence or device check (owner test of 0.9.0). The program, its arguments and its output are
+/// unchanged, so the device fingerprint is the same.
+#[cfg(target_os = "windows")]
+pub(crate) fn hidden_console_command(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    /// `CREATE_NO_WINDOW` (Win32 process creation flag).
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut command = std::process::Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
 /// Read the platform machine ID.
 /// Returns Err if the platform doesn't expose a machine ID.
 fn read_machine_id() -> AppResult<String> {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-        let output = Command::new("reg")
+        let output = hidden_console_command("reg")
             .args(["query", r"HKLM\SOFTWARE\Microsoft\Cryptography", "/v", "MachineGuid"])
             .output()?;
         let text = String::from_utf8_lossy(&output.stdout);
@@ -381,8 +395,7 @@ async fn read_offline_grace_hours(db: &DatabaseConnection) -> AppResult<i64> {
 pub fn is_network_available() -> bool {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-        let output = Command::new("ipconfig").output();
+        let output = hidden_console_command("ipconfig").output();
         if let Ok(out) = output {
             let text = String::from_utf8_lossy(&out.stdout);
             // Look for any non-loopback IPv4 address (reject APIPA 169.254.x.x)
