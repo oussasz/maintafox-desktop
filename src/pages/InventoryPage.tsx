@@ -203,20 +203,28 @@ export function InventoryPage() {
     }
     setSearchParams(withoutParams(searchParams, LIST_PARAM.stock), { replace: true });
   }, [searchParams, setSearchParams]);
-  // The list starts empty: only resolve the link once a load has run and finished.
-  const articleLoadSeenRef = useRef(false);
+  // The list starts empty: only resolve the link once a load has run and finished. Each load
+  // that starts bumps the counter, so after clearing the search the link waits for a NEW load
+  // (setArticleSearch sets the search before its reload starts: a render in between still shows
+  // the list loaded with the old search).
+  const articleLoadCountRef = useRef(0);
+  const linkWaitsForLoadAfterRef = useRef<number | null>(null);
   useEffect(() => {
-    if (loading) articleLoadSeenRef.current = true;
+    if (loading) articleLoadCountRef.current += 1;
   }, [loading]);
   useEffect(() => {
     if (!Number.isInteger(linkedArticleId) || linkedArticleId <= 0) return;
-    if (loading || !articleLoadSeenRef.current) return;
+    if (loading || articleLoadCountRef.current === 0) return;
+    const waitsAfter = linkWaitsForLoadAfterRef.current;
+    if (waitsAfter !== null && articleLoadCountRef.current <= waitsAfter) return;
     const linked = articles.find((a) => a.id === linkedArticleId);
     if (!linked && articleSearchStore) {
       // The current search may hide the article: clear it, the list reloads and this runs again.
+      linkWaitsForLoadAfterRef.current = articleLoadCountRef.current;
       void setArticleSearch("");
       return;
     }
+    linkWaitsForLoadAfterRef.current = null;
     if (linked) {
       setInvTab("master");
       setSelectedArticle(linked);

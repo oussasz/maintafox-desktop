@@ -343,8 +343,12 @@ describe("InventoryPage", () => {
 
     renderPage("/inventory?articleId=4");
 
-    // Two list loads in a row (the search hiding the article, then the cleared search): give them
-    // more than the default second under a loaded full-suite run.
+    // Two list loads in a row: the search hiding the article, then the cleared search.
+    await waitFor(() =>
+      expect(svc.listInventoryArticles).toHaveBeenCalledWith(
+        expect.objectContaining({ search: null }),
+      ),
+    );
     expect(await screen.findByText("detail ART-001", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(useInventoryStore.getState().articleSearch).toBe("");
   });
