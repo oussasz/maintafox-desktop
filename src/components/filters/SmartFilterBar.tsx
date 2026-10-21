@@ -92,11 +92,13 @@ export function SmartFilterBar({
   }, [debouncedSearch, draftSearch, onSearchChange]);
 
   const handleSearchInput = (value: string) => {
+    pendingExternal.current = null;
     setDraftSearch(value);
     onSearchInputChange?.(value);
   };
 
   const clearSearch = () => {
+    pendingExternal.current = null;
     setDraftSearch("");
     lastEmittedSearch.current = "";
     onSearchInputChange?.("");
