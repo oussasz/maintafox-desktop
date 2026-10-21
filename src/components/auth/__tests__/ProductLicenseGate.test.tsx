@@ -194,6 +194,7 @@ describe("ProductLicenseGate", () => {
     mockedGetActivationBootstrapState.mockResolvedValue({
       has_tenant_admin: true,
       tenant_id: "ten_test",
+      plant_join: "sign_in",
       company_display_name: null,
     });
     mockedGetEntitlementSummary.mockResolvedValue({

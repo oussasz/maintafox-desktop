@@ -21,13 +21,13 @@ import { i18n } from "@/i18n";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
+  type ActivationLicenseMetadata,
+  POST_ACTIVATION_LOGIN_HINT_KEY,
   clearProductLicenseBrowserState,
   getActivationBootstrapState,
   getActivationLicenseMetadata,
   getProductLicenseOnboardingState,
-  POST_ACTIVATION_LOGIN_HINT_KEY,
   resetProductLicenseActivation,
-  type ActivationLicenseMetadata,
 } from "@/services/product-license-service";
 
 export function LoginPage() {
@@ -52,7 +52,9 @@ export function LoginPage() {
    * The PC is activated and has no administrator yet (`get_activation_bootstrap_state`): no named
    * administrator was ever created here, so the first-start screen is still open. Also true on a
    * PC whose only administrator is the built-in "admin" account with its password never changed.
-   * The backend alone decides whether the creation is allowed (`bootstrap_initial_tenant_admin`).
+   * Not offered once accounts have arrived from the plant (`plant_join` "sign_in"). The first-start
+   * screen joins the plant before it offers the creation; the backend alone decides whether the
+   * creation is allowed (`bootstrap_initial_tenant_admin`).
    */
   const [firstAdminPending, setFirstAdminPending] = useState(false);
   const [resettingActivation, setResettingActivation] = useState(false);
@@ -82,7 +84,10 @@ export function LoginPage() {
       if (ready) {
         try {
           const bootstrap = await getActivationBootstrapState();
-          pending = Boolean(bootstrap.tenant_id?.trim()) && !bootstrap.has_tenant_admin;
+          pending =
+            Boolean(bootstrap.tenant_id?.trim()) &&
+            !bootstrap.has_tenant_admin &&
+            bootstrap.plant_join !== "sign_in";
         } catch {
           // No answer: offer nothing; the sign-in form stays available.
         }
