@@ -1,4 +1,43 @@
 {
+  "toast": {
+    "dismiss": "Fermer le message"
+  },
+  "partNecessity": {
+    "legend": "Pièce obligatoire ou optionnelle",
+    "legendFor": "{{part}} : obligatoire ou optionnelle",
+    "required": "Obligatoire",
+    "optional": "Optionnelle",
+    "choose": "Indiquez si la pièce est obligatoire ou optionnelle.",
+    "requiredHint": "En rupture, elle bloque l'engagement du travail.",
+    "optionalHint": "En rupture, elle avertit seulement : le travail peut être engagé sans elle."
+  },
+  "listValue": {
+    "review": "À revoir",
+    "reviewHint": "Ancienne valeur, ou valeur absente de la liste de l'usine : à vérifier dans Données de référence."
+  },
+  "woOpenRule": {
+    "figure": "OT — {{rule}}",
+    "open_work_to_do": "Ouverts (travail à faire)",
+    "not_yet_closed": "Pas encore clôturés",
+    "hint": {
+      "open_work_to_do": "OT de brouillon à en attente : le travail reste à faire.",
+      "not_yet_closed": "Tous les OT sauf clôturés ou annulés, y compris ceux terminés en attente de clôture."
+    }
+  },
+  "listAccess": {
+    "permitTypes": "Lire les types de permis demande le droit de consultation des permis.",
+    "documentCategories": "Lire les catégories de documents demande le droit de consultation de la documentation.",
+    "people": "Lire la liste du personnel demande le droit de consultation du personnel.",
+    "teams": "Lire les équipes demande le droit de consultation du personnel.",
+    "companies": "Lire les entreprises extérieures demande le droit de consultation du personnel.",
+    "assets": "Lire les équipements demande le droit de consultation des équipements.",
+    "articles": "Lire les articles de stock demande le droit de consultation du stock.",
+    "warehouses": "Lire les magasins demande le droit de consultation du stock.",
+    "costCentres": "Lire les centres de coût demande le droit de consultation des finances.",
+    "orgNodes": "Lire l'organisation (sites, zones) demande le droit de consultation de l'organisation.",
+    "users": "Lire les comptes utilisateurs demande le droit d'administration des utilisateurs.",
+    "woTypes": "Lire les types d'ordre de travail demande le droit de consultation ou de création des OT, ou de consultation des données de référence."
+  },
   "app": {
     "name": "Maintafox",
     "tagline": "Gestion de maintenance industrielle",
@@ -14,14 +53,14 @@
     "delete": "Supprimer",
     "edit": "Modifier",
     "add": "Ajouter",
-    "create": "Cr\u00e9er",
+    "create": "Créer",
     "close": "Fermer",
     "back": "Retour",
     "next": "Suivant",
-    "previous": "Pr\u00e9c\u00e9dent",
+    "previous": "Précédent",
     "search": "Rechercher",
     "filter": "Filtrer",
-    "reset": "R\u00e9initialiser",
+    "reset": "Réinitialiser",
     "export": "Exporter",
     "import": "Importer",
     "refresh": "Actualiser",
@@ -29,21 +68,21 @@
     "approve": "Approuver",
     "reject": "Rejeter",
     "assign": "Assigner",
-    "unassign": "D\u00e9sassigner",
+    "unassign": "Désassigner",
     "activate": "Activer",
-    "deactivate": "D\u00e9sactiver",
+    "deactivate": "Désactiver",
     "archive": "Archiver",
     "restore": "Restaurer",
     "print": "Imprimer",
     "duplicate": "Dupliquer",
     "publish": "Publier",
-    "revoke": "R\u00e9voquer",
+    "revoke": "Révoquer",
     "apply": "Appliquer",
-    "select": "S\u00e9lectionner",
-    "selectAll": "Tout s\u00e9lectionner",
+    "select": "Sélectionner",
+    "selectAll": "Tout sélectionner",
     "clear": "Effacer",
-    "download": "T\u00e9l\u00e9charger",
-    "upload": "T\u00e9l\u00e9verser",
+    "download": "Télécharger",
+    "upload": "Téléverser",
     "ok": "OK",
     "yes": "Oui",
     "no": "Non",
@@ -55,15 +94,15 @@
     "draft": "Brouillon",
     "pending": "En attente",
     "inProgress": "En cours",
-    "completed": "Termin\u00e9",
-    "cancelled": "Annul\u00e9",
-    "closed": "Cl\u00f4tur\u00e9",
-    "archived": "Archiv\u00e9",
-    "deleted": "Supprim\u00e9",
-    "approved": "Approuv\u00e9",
-    "rejected": "Rejet\u00e9",
-    "published": "Publi\u00e9",
-    "locked": "Verrouill\u00e9",
+    "completed": "Terminé",
+    "cancelled": "Annulé",
+    "closed": "Clôturé",
+    "archived": "Archivé",
+    "deleted": "Supprimé",
+    "approved": "Approuvé",
+    "rejected": "Rejeté",
+    "published": "Publié",
+    "locked": "Verrouillé",
     "unknown": "Inconnu"
   },
   "label": {
@@ -71,15 +110,15 @@
     "description": "Description",
     "code": "Code",
     "type": "Type",
-    "category": "Cat\u00e9gorie",
+    "category": "Catégorie",
     "status": "Statut",
     "date": "Date",
-    "createdAt": "Cr\u00e9\u00e9 le",
-    "updatedAt": "Modifi\u00e9 le",
-    "createdBy": "Cr\u00e9\u00e9 par",
-    "updatedBy": "Modifi\u00e9 par",
+    "createdAt": "Créé le",
+    "updatedAt": "Modifié le",
+    "createdBy": "Créé par",
+    "updatedBy": "Modifié par",
     "notes": "Notes",
-    "reference": "R\u00e9f\u00e9rence",
+    "reference": "Référence",
     "id": "Identifiant",
     "yes": "Oui",
     "no": "Non",
@@ -92,63 +131,86 @@
     "count": "Nombre",
     "page": "Page",
     "of": "sur",
-    "resultsPerPage": "R\u00e9sultats par page",
-    "noResults": "Aucun r\u00e9sultat",
-    "noData": "Aucune donn\u00e9e disponible",
+    "resultsPerPage": "Résultats par page",
+    "noResults": "Aucun résultat",
+    "noData": "Aucune donnée disponible",
     "site": "Site",
-    "entity": "Entit\u00e9",
-    "team": "\u00c9quipe",
+    "entity": "Entité",
+    "team": "Équipe",
     "comments": "Commentaires",
-    "attachments": "Pi\u00e8ces jointes",
+    "attachments": "Pièces jointes",
     "history": "Historique",
-    "details": "D\u00e9tails",
-    "summary": "R\u00e9sum\u00e9"
+    "details": "Détails",
+    "summary": "Résumé"
   },
   "confirm": {
     "deleteTitle": "Confirmer la suppression",
-    "deleteMessage": "Cette action est irr\u00e9versible. Voulez-vous vraiment supprimer cet \u00e9l\u00e9ment ?",
-    "unsavedChanges": "Des modifications non enregistr\u00e9es seront perdues. Continuer ?",
-    "dangerousAction": "Cette action est sensible et n\u00e9cessite une confirmation. Continuer ?"
+    "deleteMessage": "Cette action est irréversible. Voulez-vous vraiment supprimer cet élément ?",
+    "unsavedChanges": "Des modifications non enregistrées seront perdues. Continuer ?",
+    "dangerousAction": "Cette action est sensible et nécessite une confirmation. Continuer ?"
   },
   "pagination": {
-    "showing": "Affichage de {{from}}\u2013{{to}} sur {{total}}",
-    "firstPage": "Premi\u00e8re page",
-    "lastPage": "Derni\u00e8re page",
+    "showing": "Affichage de {{from}}–{{to}} sur {{total}}",
+    "firstPage": "Première page",
+    "lastPage": "Dernière page",
     "nextPage": "Page suivante",
-    "previousPage": "Page pr\u00e9c\u00e9dente",
+    "previousPage": "Page précédente",
     "pageOf": "Page {{page}} sur {{total}}"
   },
   "table": {
     "sortAscending": "Trier par ordre croissant",
-    "sortDescending": "Trier par ordre d\u00e9croissant",
+    "sortDescending": "Trier par ordre décroissant",
     "clearSort": "Effacer le tri",
     "searchPlaceholder": "Rechercher...",
-    "loading": "Chargement des donn\u00e9es..."
+    "loading": "Chargement des données..."
   },
   "smartFilter": {
-    "reset": "R\u00e9initialiser les filtres",
+    "reset": "Réinitialiser les filtres",
     "all": "Tous",
     "activeCount": "{{count}} actif(s)",
-    "resultCount": "{{count}} r\u00e9sultat(s)",
+    "resultCount": "{{count}} résultat(s)",
     "clearSearch": "Effacer la recherche",
     "removeFilter": "Retirer le filtre {{label}}",
     "searchChip": "Recherche : {{query}}",
-    "addFilter": "Ajouter\u2026",
-    "noMoreOptions": "Plus d\u2019options"
+    "addFilter": "Ajouter…",
+    "noMoreOptions": "Plus d’options"
   },
   "assetPicker": {
-    "searchPlaceholder": "Rechercher un actif par code, nom, s\u00e9rie, QR\u2026",
-    "recent": "R\u00e9cemment utilis\u00e9s",
-    "frequent": "Fr\u00e9quemment utilis\u00e9s",
-    "results": "R\u00e9sultats",
-    "empty": "Aucun actif trouv\u00e9",
-    "emptySuggestions": "Aucun actif r\u00e9cent — saisissez pour rechercher",
+    "searchFailed": "La recherche a échoué :",
+    "retry": "Réessayer",
+    "legacyLabel": "Étiquette à réimprimer : cet ancien format ne permet pas d'identifier l'équipement sûrement. Saisissez le code de l'actif imprimé sur l'étiquette, puis réimprimez-la depuis la fiche de l'actif.",
+    "more": "{{shown}} sur {{total}} affichés : précisez la recherche",
+    "searchPlaceholder": "Rechercher un actif par code, nom, série, QR…",
+    "recent": "Récemment utilisés",
+    "frequent": "Fréquemment utilisés",
+    "results": "Résultats",
+    "empty": "Aucun actif trouvé",
+    "emptySuggestions": "Aucun actif récent — saisissez pour rechercher",
     "scan": "Scanner QR",
-    "scanHint": "Focalisez ici, scannez avec un lecteur USB, puis Entr\u00e9e",
-    "clear": "Effacer la s\u00e9lection"
+    "scanHint": "Focalisez ici, scannez avec un lecteur USB, puis Entrée",
+    "clear": "Effacer la sélection"
   },
   "kanban": {
-    "emptyColumn": "—"
+    "emptyColumn": "—",
+    "boardLabel": "Tableau",
+    "showMore": "Afficher {{count}} de plus",
+    "move": "Déplacer",
+    "moveTo": "Déplacer vers…",
+    "moveCard": "Déplacer {{card}} vers une autre colonne",
+    "moveHint": "Alt+flèche gauche ou Alt+flèche droite déplace cette carte vers la colonne voisine ; le bouton Déplacer propose toutes les colonnes possibles.",
+    "moved": "{{card}} déplacé vers « {{column}} ».",
+    "noTarget": "Aucune autre colonne n’accepte {{card}} dans cette direction.",
+    "refused": "{{card}} n’a pas été déplacé : le changement a été refusé.",
+    "refusedReason": "{{card}} n’a pas été déplacé : {{reason}}"
+  },
+  "timeline": {
+    "label": "Historique",
+    "today": "Aujourd’hui",
+    "empty": "Aucun événement",
+    "details": "Détails",
+    "olderHidden": "Seuls les {{count}} derniers événements sont affichés.",
+    "loadOlder": "Afficher les événements plus anciens",
+    "loadingOlder": "Chargement…"
   },
   "resourceTimeline": {
     "loading": "Chargement du chronogramme…",
@@ -161,13 +223,21 @@
   "linkedEntity": {
     "work_order": "{{code}}",
     "di": "{{code}}",
+    "permit": "{{code}}",
+    "pm_plan": "{{code}}",
     "open": {
-      "work_order": "Ouvrir l\u2019ordre de travail {{code}}",
-      "di": "Ouvrir la demande {{code}}"
-    }
+      "work_order": "Ouvrir l’ordre de travail {{code}}",
+      "di": "Ouvrir la demande {{code}}",
+      "permit": "Ouvrir le permis {{code}}",
+      "pm_plan": "Ouvrir le plan de maintenance préventive {{code}}",
+      "asset": "Ouvrir l’équipement {{code}}",
+      "inspection_round": "Ouvrir la tournée d’inspection {{code}}"
+    },
+    "asset": "{{code}}",
+    "inspection_round": "Tournée {{code}}"
   },
   "time": {
-    "just_now": "\u00c0 l'instant",
+    "just_now": "À l'instant",
     "minutes_ago_one": "Il y a 1 minute",
     "minutes_ago_other": "Il y a {{count}} minutes",
     "hours_ago_one": "Il y a 1 heure",
@@ -180,12 +250,55 @@
       "scanId": "ID scan",
       "expand": "Agrandir le QR",
       "printLabel": "Imprimer",
-      "downloadPng": "T\u00e9l\u00e9charger",
+      "downloadPng": "Télécharger",
       "openFolder": "Ouvrir le dossier",
-      "exportSavedTitle": "QR enregistr\u00e9",
-      "exportFailedTitle": "\u00c9chec de l'export",
-      "printStartedTitle": "Impression lanc\u00e9e",
-      "printStartedDescription": "L'\u00e9tiquette a \u00e9t\u00e9 envoy\u00e9e \u00e0 l'imprimante."
+      "exportSavedTitle": "QR enregistré",
+      "exportFailedTitle": "Échec de l'export",
+      "printStartedTitle": "Impression lancée",
+      "printStartedDescription": "L'étiquette a été envoyée à l'imprimante."
     }
+  },
+  "ds": {
+    "state": {
+      "loading": "Chargement…",
+      "loadErrorTitle": "Ce contenu n'a pas pu être chargé",
+      "retry": "Réessayer",
+      "technicalDetails": "Détails techniques",
+      "truncated": "Affichage de {{shown}} sur {{total}}.",
+      "choose": "Choisir…",
+      "loadMore": "Charger la suite"
+    },
+    "view": {
+      "label": "Affichage",
+      "list": "Liste",
+      "kanban": "Tableau",
+      "calendar": "Calendrier",
+      "dashboard": "Tableau de bord"
+    },
+    "toolbar": {
+      "showFilters": "Afficher les filtres",
+      "hideFilters": "Masquer les filtres",
+      "refresh": "Actualiser",
+      "refreshing": "Actualisation…"
+    },
+    "confirm": {
+      "title": "Confirmation",
+      "cancel": "Annuler"
+    },
+    "kpi": {
+      "open": "Ouvrir la liste"
+    },
+    "chart": {
+      "bar": "Graphique en barres",
+      "line": "Graphique en courbe"
+    }
+  },
+  "urgency": {
+    "placeholder": "Choisir un niveau d’urgence",
+    "loading": "Chargement de l’échelle…",
+    "loadError": "L’échelle d’urgence n’a pas pu être chargée.",
+    "none": "Sans urgence",
+    "targetsShort": "Prise en charge ≤ {{response}} h · réalisation ≤ {{completion}} h",
+    "targetsTooltip": "Délais cibles : prise en charge ≤ {{response}} h, réalisation ≤ {{completion}} h"
   }
 }

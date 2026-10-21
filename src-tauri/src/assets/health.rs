@@ -130,21 +130,26 @@ pub async fn get_asset_health_score(db: &DatabaseConnection, asset_id: i64) -> A
         62
     };
 
+    // Open requests and work orders by their modules' own definitions (DI page, OT backlog).
     let open_di = count_i64(
         db,
-        "SELECT COUNT(*) AS cnt FROM intervention_requests \
-         WHERE equipment_id = ? AND status NOT IN (\
-           'rejected','converted_to_work_order','closed_as_non_executable','archived'\
-         )",
+        &format!(
+            "SELECT COUNT(*) AS cnt FROM intervention_requests ir \
+             WHERE ir.equipment_id = ? AND {}",
+            crate::di::stats::OPEN_SQL
+        ),
         asset_id,
     )
     .await?;
 
     let open_wo = count_i64(
         db,
-        "SELECT COUNT(*) AS cnt FROM work_orders wo \
-         JOIN work_order_statuses s ON s.id = wo.status_id \
-         WHERE wo.equipment_id = ? AND s.code NOT IN ('closed','cancelled')",
+        &format!(
+            "SELECT COUNT(*) AS cnt FROM work_orders wo \
+             JOIN work_order_statuses s ON s.id = wo.status_id \
+             WHERE wo.equipment_id = ? AND s.code IN {}",
+            crate::wo::backlog::OPEN_STATUS_SQL
+        ),
         asset_id,
     )
     .await?;

@@ -865,7 +865,7 @@ ACCEPTANCE CRITERIA
 Log in as admin. Run in DevTools:
 ```javascript
 // First verify: no step-up done yet
-window.__TAURI__.core.invoke('verify_step_up', { payload: { password: 'Admin#2026!' } })
+window.__TAURI__.core.invoke('verify_step_up', { payload: { password: '<DEV_ADMIN_PASSWORD>' } })
   .then(r => console.log('step up:', r));
 // Should return { success: true, expires_at: '...' }
 ```

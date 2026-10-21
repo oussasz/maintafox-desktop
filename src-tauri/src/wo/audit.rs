@@ -64,40 +64,7 @@ pub struct WoAuditFilter {
 /// level but is NOT returned. This ensures that a transient audit-write failure
 /// never blocks the primary WO workflow.
 pub async fn record_wo_change_event(db: &DatabaseConnection, input: WoAuditInput) {
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let result = db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"INSERT INTO wo_change_events
-                   (wo_id, action, actor_id, acted_at, summary, details_json, requires_step_up, apply_result)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                input
-                    .wo_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::BigInt(None)),
-                input.action.clone().into(),
-                input
-                    .actor_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::BigInt(None)),
-                now.into(),
-                input
-                    .summary
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::String(None)),
-                input
-                    .details_json
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::String(None)),
-                i32::from(input.requires_step_up).into(),
-                input.apply_result.clone().into(),
-            ],
-        ))
-        .await;
-
-    if let Err(e) = result {
+    if let Err(e) = insert_wo_change_event(db, &input).await {
         tracing::warn!(
             wo_id = ?input.wo_id,
             action = %input.action,
@@ -108,27 +75,74 @@ pub async fn record_wo_change_event(db: &DatabaseConnection, input: WoAuditInput
     }
 }
 
+/// Insert one audit event on `conn` (a transaction included) and return the failure: for a change
+/// whose audit entry must be written with it or not at all (the caller rolls back on error).
+pub async fn insert_wo_change_event<C: ConnectionTrait>(conn: &C, input: &WoAuditInput) -> Result<(), sea_orm::DbErr> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r"INSERT INTO wo_change_events
+               (wo_id, action, actor_id, acted_at, summary, details_json, requires_step_up, apply_result)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            input
+                .wo_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::BigInt(None)),
+            input.action.clone().into(),
+            input
+                .actor_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::BigInt(None)),
+            now.into(),
+            input
+                .summary
+                .clone()
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::String(None)),
+            input
+                .details_json
+                .clone()
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::String(None)),
+            i32::from(input.requires_step_up).into(),
+            input.apply_result.clone().into(),
+        ],
+    ))
+    .await
+    .map(|_| ())
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // B) list_wo_change_events — per-WO timeline query
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Return audit events for a single WO, ordered chronologically (oldest first).
+/// Largest page of the per-WO history.
+pub const WO_CHANGE_EVENTS_MAX_LIMIT: i64 = 500;
+
+/// Return the `limit` MOST RECENT audit events of a single WO, ordered chronologically
+/// (oldest first). Capping keeps the latest events: the screen offers "show older" when the
+/// page is full, instead of silently hiding what happened last.
 pub async fn list_wo_change_events(
     db: &DatabaseConnection,
     wo_id: i64,
     limit: i64,
 ) -> crate::errors::AppResult<Vec<WoChangeEvent>> {
+    let limit = limit.clamp(1, WO_CHANGE_EVENTS_MAX_LIMIT);
     let rows = WoChangeEvent::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r"SELECT e.id, e.wo_id, e.action, e.actor_id,
-                 COALESCE(ua.display_name, ua.username) AS actor_display_name,
-                 e.acted_at, e.summary, e.details_json,
-                 e.requires_step_up, e.apply_result
-            FROM wo_change_events e
-            LEFT JOIN user_accounts ua ON ua.id = e.actor_id
-           WHERE e.wo_id = ?
-           ORDER BY e.acted_at ASC, e.id ASC
-           LIMIT ?",
+        r"SELECT * FROM (
+            SELECT e.id, e.wo_id, e.action, e.actor_id,
+                   COALESCE(ua.display_name, ua.username) AS actor_display_name,
+                   e.acted_at, e.summary, e.details_json,
+                   e.requires_step_up, e.apply_result
+              FROM wo_change_events e
+              LEFT JOIN user_accounts ua ON ua.id = e.actor_id
+             WHERE e.wo_id = ?
+             ORDER BY e.acted_at DESC, e.id DESC
+             LIMIT ?
+          ) latest
+          ORDER BY latest.acted_at ASC, latest.id ASC",
         [wo_id.into(), limit.into()],
     ))
     .all(db)
@@ -146,6 +160,17 @@ pub async fn list_wo_change_events(
 pub async fn list_all_wo_change_events(
     db: &DatabaseConnection,
     filter: WoAuditFilter,
+) -> crate::errors::AppResult<Vec<WoChangeEvent>> {
+    list_all_wo_change_events_in_scope(db, filter, &super::access::ScopeSql::everywhere()).await
+}
+
+/// [`list_all_wo_change_events`] limited to the work orders of the reader's scope
+/// (`wo::access::ScopeSql` on the event's work order; an event without a work order, or whose
+/// work order is gone, has no site: plant-wide readers only).
+pub async fn list_all_wo_change_events_in_scope(
+    db: &DatabaseConnection,
+    filter: WoAuditFilter,
+    scope: &super::access::ScopeSql,
 ) -> crate::errors::AppResult<Vec<WoChangeEvent>> {
     let limit = filter.limit.unwrap_or(50).min(500);
     let offset = filter.offset.unwrap_or(0);
@@ -175,11 +200,11 @@ pub async fn list_all_wo_change_events(
         values.push(wo_id.into());
     }
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
+    // Last condition: its binds follow the filters' and precede LIMIT / OFFSET.
+    conditions.push(format!("({})", scope.predicate));
+    values.extend(scope.binds.iter().cloned());
+
+    let where_clause = format!("WHERE {}", conditions.join(" AND "));
 
     values.push(limit.into());
     values.push(offset.into());
@@ -191,6 +216,7 @@ pub async fn list_all_wo_change_events(
                  e.requires_step_up, e.apply_result
             FROM wo_change_events e
             LEFT JOIN user_accounts ua ON ua.id = e.actor_id
+            LEFT JOIN work_orders wo ON wo.id = e.wo_id
            {where_clause}
            ORDER BY e.acted_at DESC, e.id DESC
            LIMIT ? OFFSET ?"

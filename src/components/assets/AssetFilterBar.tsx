@@ -1,21 +1,30 @@
 /**
  * AssetFilterBar — equipment registry filters via SmartFilterBar.
- * Loads class/family options from published reference domains.
+ * Class / family / status / criticality options come from the published reference lists; when they
+ * cannot be loaded the bar says so with a retry instead of offering empty lists.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { criticalityLabelKey } from "@/components/assets/asset-tones";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef, SmartFilterOption } from "@/components/filters/smart-filter-types";
+import { ErrorState } from "@/components/ui/data-state";
+import { useCanReadList } from "@/lib/list-access";
+import { listOrgTree } from "@/services/org-node-service";
 import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
+import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 import type { AssetSearchFilters } from "@shared/ipc-types";
 
 export function AssetFilterBar() {
   const { t } = useTranslation("equipment");
+  // Without the organisation view right the location filter is not offered (and not requested:
+  // a refused request used to break every other filter's options).
+  const canReadOrg = useCanReadList("orgNodes");
   const filters = useAssetSearchStore((s) => s.filters);
-  const results = useAssetSearchStore((s) => s.results);
+  const total = useAssetSearchStore((s) => s.total);
   const updateFilters = useAssetSearchStore((s) => s.updateFilters);
   const clearFilters = useAssetSearchStore((s) => s.clearFilters);
 
@@ -23,32 +32,51 @@ export function AssetFilterBar() {
   const [classOptions, setClassOptions] = useState<SmartFilterOption[]>([]);
   const [familyOptions, setFamilyOptions] = useState<SmartFilterOption[]>([]);
   const [statusOptions, setStatusOptions] = useState<SmartFilterOption[]>([]);
+  const [locationOptions, setLocationOptions] = useState<SmartFilterOption[]>([]);
+  const [optionsError, setOptionsError] = useState<unknown>(null);
+  const [optionsReload, setOptionsReload] = useState(0);
+  const { catalog } = useEquipmentTaxonomy();
+  const criticalityOptions = useMemo<SmartFilterOption[]>(
+    () =>
+      (catalog?.criticalities ?? []).map((c) => {
+        const key = criticalityLabelKey(c.code);
+        return { value: c.code, label: `${c.code} — ${key ? t(key as never) : c.label}` };
+      }),
+    [catalog, t],
+  );
 
   useEffect(() => {
     let cancelled = false;
+    setOptionsError(null);
     void (async () => {
       try {
-        const [classes, families, statuses] = await Promise.all([
+        const [classes, families, statuses, orgRows] = await Promise.all([
           listPublishedReferenceValuesByDomainCode("EQUIPMENT.CLASS"),
           listPublishedReferenceValuesByDomainCode("EQUIPMENT.FAMILY"),
           listPublishedReferenceValuesByDomainCode("EQUIPMENT.STATUS"),
+          canReadOrg ? listOrgTree() : Promise.resolve([]),
         ]);
         if (cancelled) return;
+        // Tree order (ancestor path); the indentation shows the level. Includes the whole subtree.
+        setLocationOptions(
+          orgRows
+            .filter((r) => r.node.status === "active")
+            .map((r) => ({
+              value: String(r.node.id),
+              label: `${"  ".repeat(Math.max(0, r.node.depth))}${r.node.name}`,
+            })),
+        );
         setClassOptions(classes.map((v) => ({ value: v.code, label: v.label })));
         setFamilyOptions(families.map((v) => ({ value: v.code, label: v.label })));
         setStatusOptions(statuses.map((v) => ({ value: v.code, label: v.label })));
-      } catch {
-        if (!cancelled) {
-          setClassOptions([]);
-          setFamilyOptions([]);
-          setStatusOptions([]);
-        }
+      } catch (err) {
+        if (!cancelled) setOptionsError(err);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [optionsReload, canReadOrg]);
 
   const onSearchChange = useCallback(
     (value: string) => {
@@ -92,6 +120,27 @@ export function AssetFilterBar() {
         onChange: (v) => void updateFilters({ family_codes: v ? [v] : null }),
       },
       {
+        id: "criticality",
+        kind: "select",
+        label: t("list.filters.criticality"),
+        options: criticalityOptions,
+        value: filters.criticality_codes?.[0] ?? null,
+        onChange: (v) => void updateFilters({ criticality_codes: v ? [v] : null }),
+      },
+      ...(canReadOrg
+        ? [
+            {
+              id: "location",
+              kind: "select" as const,
+              label: t("list.filters.site"),
+              options: locationOptions,
+              value: filters.org_node_ids?.[0] != null ? String(filters.org_node_ids[0]) : null,
+              onChange: (v: string | null) =>
+                void updateFilters({ org_node_ids: v ? [Number(v)] : null, org_subtree: true }),
+            },
+          ]
+        : []),
+      {
         id: "status",
         kind: "select",
         label: t("list.filters.status"),
@@ -119,18 +168,39 @@ export function AssetFilterBar() {
       });
     }
     return defs;
-  }, [t, classOptions, familyOptions, statusOptions, focusOptions, filters, updateFilters]);
+  }, [
+    t,
+    classOptions,
+    familyOptions,
+    statusOptions,
+    criticalityOptions,
+    locationOptions,
+    canReadOrg,
+    focusOptions,
+    filters,
+    updateFilters,
+  ]);
 
   return (
-    <SmartFilterBar
-      searchPlaceholder={t("registry.search.placeholder")}
-      searchValue={searchInput}
-      onSearchInputChange={setSearchInput}
-      onSearchChange={onSearchChange}
-      filters={filterDefs}
-      resultCount={results.length}
-      resultCountLabel={t("registry.resultCount", { count: results.length })}
-      onReset={onReset}
-    />
+    <div className="space-y-2">
+      {optionsError != null ? (
+        <ErrorState
+          error={optionsError}
+          title={t("registry.filterOptionsError")}
+          onRetry={() => setOptionsReload((n) => n + 1)}
+          className="py-3"
+        />
+      ) : null}
+      <SmartFilterBar
+        searchPlaceholder={t("registry.search.placeholder")}
+        searchValue={searchInput}
+        onSearchInputChange={setSearchInput}
+        onSearchChange={onSearchChange}
+        filters={filterDefs}
+        resultCount={total}
+        resultCountLabel={t("registry.resultCount", { count: total })}
+        onReset={onReset}
+      />
+    </div>
   );
 }

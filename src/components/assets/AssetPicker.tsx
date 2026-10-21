@@ -3,6 +3,10 @@
  *
  * Used by DI, WO, and later PM / Inspection / LOTO / Inventory / Reliability.
  * Modules pass value/onChange only — no inline search gates or custom lists.
+ *
+ * A failed search is shown as a failure with a retry, never as "no asset". When more assets match
+ * than are listed, the list says so. A scanned identification label (`@/lib/asset-qr`) selects the
+ * asset by its code; a label of the former local-id format is reported as to reprint.
  */
 
 import { Loader2, ScanLine, Search, X } from "lucide-react";
@@ -18,11 +22,17 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
+import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
+import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ListAccessNote } from "@/components/ui/list-access-note";
+import { describeAppError } from "@/lib/app-error";
+import { parseAssetScan } from "@/lib/asset-qr";
+import { useCanReadList } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
-import { searchAssets, suggestPickerAssets } from "@/services/asset-search-service";
+import { searchAssetsPage, suggestPickerAssets } from "@/services/asset-search-service";
 import type { AssetSearchResult } from "@shared/ipc-types";
 
 // ── Accent / case fold (mirrors Rust fold_search_text) ────────────────────────
@@ -100,10 +110,21 @@ export function highlightMatch(text: string, query: string): ReactNode {
   return (
     <>
       {before}
-      <mark className="bg-amber-200/80 text-inherit rounded-sm px-0.5 dark:bg-amber-500/40">
-        {match}
-      </mark>
+      <mark className="rounded-sm bg-tone-attention-bg px-0.5 text-inherit">{match}</mark>
       {after}
+    </>
+  );
+}
+
+/** The asset's criticality, with "à revoir" when it only comes from the old list. */
+function PickerCriticality({ asset }: { asset: AssetSearchResult }) {
+  if (!asset.criticality_code && !asset.criticality_to_review) return null;
+  return (
+    <>
+      {asset.criticality_code ? (
+        <CriticalityBadge criticality={asset.criticality_code} compact />
+      ) : null}
+      {asset.criticality_to_review ? <CriticalityReviewMark /> : null}
     </>
   );
 }
@@ -113,6 +134,16 @@ function findExactCodeMatch(items: AssetSearchResult[], query: string): AssetSea
   if (!folded) return null;
   const matches = items.filter((a) => foldSearchText(a.asset_code) === folded);
   return matches.length === 1 ? (matches[0] ?? null) : null;
+}
+
+/** Search page size of the picker (the list states when more assets match). */
+const SEARCH_LIMIT = 20;
+
+/** Text to search for: a scanned label's asset code, else what was typed. */
+function searchTextOf(q: string): string | null {
+  const scan = parseAssetScan(q);
+  if (scan.kind === "legacy_label") return null;
+  return scan.kind === "code" ? scan.code : scan.text;
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -139,6 +170,7 @@ export function AssetPicker({
   className,
 }: AssetPickerProps) {
   const { t } = useTranslation("common");
+  const canReadAssets = useCanReadList("assets");
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -152,12 +184,27 @@ export function AssetPicker({
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [scanMode, setScanMode] = useState(false);
+  const [searchError, setSearchError] = useState<unknown>(null);
+  const [total, setTotal] = useState<number | null>(null);
+  const [legacyLabel, setLegacyLabel] = useState(false);
 
   const loadSuggestions = useCallback(async (q: string) => {
     const gen = ++requestGen.current;
+    setSearchError(null);
+    setLegacyLabel(false);
+    const text = searchTextOf(q);
+    if (text == null) {
+      // A label of the former id format: never resolved to a possibly wrong asset.
+      setItems([]);
+      setTotal(null);
+      setMode("search");
+      setLegacyLabel(true);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const trimmed = q.trim();
+      const trimmed = text.trim();
       if (!trimmed) {
         const res = await suggestPickerAssets({
           limit: 15,
@@ -165,22 +212,28 @@ export function AssetPicker({
         });
         if (gen !== requestGen.current) return;
         setItems(res.items);
+        setTotal(null);
         setMode(res.mode === "frequent" ? "frequent" : "recent");
         setActiveIndex(0);
         return;
       }
-      const results = await searchAssets({
+      const page = await searchAssetsPage({
         query: trimmed,
-        limit: 20,
+        limit: SEARCH_LIMIT,
+        offset: 0,
         include_decommissioned: false,
       });
       if (gen !== requestGen.current) return;
-      setItems(results);
+      setItems(page.items);
+      setTotal(page.total);
       setMode("search");
       setActiveIndex(0);
-    } catch {
+    } catch (err) {
       if (gen !== requestGen.current) return;
+      // Shown as a failure with a retry: an empty list would read "no asset found".
       setItems([]);
+      setTotal(null);
+      setSearchError(err);
       setMode("search");
     } finally {
       if (gen === requestGen.current) setLoading(false);
@@ -264,26 +317,46 @@ export function AssetPicker({
 
       if (e.key === "Enter") {
         e.preventDefault();
-        const trimmed = query.trim();
+        const text = searchTextOf(query);
+        if (text == null) {
+          // Former label format: say so instead of searching.
+          void loadSuggestions(query);
+          setOpen(true);
+          return;
+        }
+        const trimmed = text.trim();
         if (trimmed && tryExactSelect(trimmed, items)) {
           return;
         }
-        // Unique exact among async results: fetch once more if list not loaded
+        // Unique exact among async results (a scan ends with Enter): fetch once if not loaded.
         if (trimmed && items.length === 0) {
           void (async () => {
+            const gen = ++requestGen.current;
+            setLoading(true);
+            setSearchError(null);
             try {
-              const results = await searchAssets({
+              const page = await searchAssetsPage({
                 query: trimmed,
-                limit: 20,
+                limit: SEARCH_LIMIT,
+                offset: 0,
                 include_decommissioned: false,
               });
-              if (tryExactSelect(trimmed, results)) return;
-              setItems(results);
+              if (gen !== requestGen.current) return;
+              if (tryExactSelect(trimmed, page.items)) return;
+              setItems(page.items);
+              setTotal(page.total);
               setMode("search");
               setOpen(true);
               setActiveIndex(0);
-            } catch {
-              /* keep quiet; user can retry */
+            } catch (err) {
+              if (gen !== requestGen.current) return;
+              setItems([]);
+              setTotal(null);
+              setSearchError(err);
+              setMode("search");
+              setOpen(true);
+            } finally {
+              if (gen === requestGen.current) setLoading(false);
             }
           })();
           return;
@@ -294,7 +367,7 @@ export function AssetPicker({
         }
       }
     },
-    [activeIndex, items, open, openAndLoad, query, selectAsset, tryExactSelect],
+    [activeIndex, items, loadSuggestions, open, openAndLoad, query, selectAsset, tryExactSelect],
   );
 
   useEffect(() => {
@@ -340,6 +413,7 @@ export function AssetPicker({
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-mono text-sm font-semibold">{value.asset_code}</span>
               <AssetStatusBadge code={value.status_code} />
+              <PickerCriticality asset={value} />
               {value.family_name && (
                 <Badge variant="outline" className="text-[10px]">
                   {value.family_name}
@@ -358,7 +432,7 @@ export function AssetPicker({
               type="button"
               variant="ghost"
               size="sm"
-              className="h-6 w-6 p-0 shrink-0"
+              className="h-9 w-9 p-0 shrink-0"
               onClick={clearSelection}
               aria-label={t("assetPicker.clear")}
             >
@@ -367,6 +441,16 @@ export function AssetPicker({
           )}
         </div>
         {error && <p className="text-xs text-status-danger">{error}</p>}
+      </div>
+    );
+  }
+
+  // Without the equipment view right the search is not offered (the server would refuse it).
+  if (!canReadAssets) {
+    return (
+      <div className={cn("space-y-1", className)}>
+        <Input id={id} disabled placeholder={t("assetPicker.searchPlaceholder")} />
+        <ListAccessNote list="assets" />
       </div>
     );
   }
@@ -427,11 +511,31 @@ export function AssetPicker({
               {groupLabel}
             </div>
           )}
-          {items.length === 0 && !loading && (
+          {searchError != null && !loading ? (
+            <div role="alert" className="flex flex-wrap items-center gap-2 px-3 py-3 text-sm">
+              <span className="text-tone-danger-fg">
+                {t("assetPicker.searchFailed")} {describeAppError(searchError).title}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9"
+                onMouseDown={(ev) => ev.preventDefault()}
+                onClick={() => void loadSuggestions(query)}
+              >
+                {t("assetPicker.retry")}
+              </Button>
+            </div>
+          ) : legacyLabel ? (
+            <p role="alert" className="px-3 py-3 text-sm text-tone-attention-fg">
+              {t("assetPicker.legacyLabel")}
+            </p>
+          ) : items.length === 0 && !loading ? (
             <p className="px-3 py-3 text-sm text-text-muted">
               {query.trim() ? t("assetPicker.empty") : t("assetPicker.emptySuggestions")}
             </p>
-          )}
+          ) : null}
           {items.map((asset, index) => (
             <button
               key={asset.id}
@@ -455,6 +559,7 @@ export function AssetPicker({
                   {highlightMatch(asset.asset_code, query)}
                 </span>
                 <AssetStatusBadge code={asset.status_code} />
+                <PickerCriticality asset={asset} />
                 {asset.family_name && (
                   <Badge variant="outline" className="text-[10px] ml-auto shrink-0">
                     {asset.family_name}
@@ -469,6 +574,11 @@ export function AssetPicker({
               )}
             </button>
           ))}
+          {total != null && total > items.length ? (
+            <p className="border-t border-surface-border px-3 py-2 text-xs text-text-muted">
+              {t("assetPicker.more", { shown: items.length, total })}
+            </p>
+          ) : null}
         </div>
       )}
 

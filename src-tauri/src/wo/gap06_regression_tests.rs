@@ -3,8 +3,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::analytics_contract::list_contract_versions;
     use crate::data_integrity::detectors::run_data_integrity_detectors;
@@ -20,26 +19,7 @@ mod tests {
     use crate::wo::workflow::actions::submit::{submit_wo, WoSubmitInput};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {
@@ -189,7 +169,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Gap06 regression WO".into(),
                 description: Some("regression".into()),
                 notes: None,
@@ -229,9 +210,13 @@ mod tests {
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
+                planned_crew_size: None,
+                clear_crew_size: false,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -424,37 +409,19 @@ mod tests {
         .await
         .expect("ins mode fc");
 
-        let cause_id: i64 = match db
+        // Causes are coded from the WORK.FAILURE_CAUSES reference domain (migration 178 points the
+        // foreign key at reference_values; the domain is seeded with the ISO 14224 starter set).
+        let cause_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM failure_codes WHERE code_type IN ('cause','mechanism') LIMIT 1".to_string(),
+                "SELECT rv.id AS id FROM reference_values rv                  INNER JOIN reference_sets rs ON rs.id = rv.set_id                  INNER JOIN reference_domains rd ON rd.id = rs.domain_id                  WHERE rd.code = 'WORK.FAILURE_CAUSES' AND rv.is_active = 1 ORDER BY rv.id LIMIT 1"
+                    .to_string(),
             ))
             .await
             .expect("cause q")
-        {
-            Some(row) => row.try_get("", "id").unwrap(),
-            None => {
-                db.execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "INSERT INTO failure_codes \
-                     (entity_sync_id, hierarchy_id, parent_id, code, label, code_type, is_active, row_version) \
-                     VALUES ('fc:gap06:cause', ?, NULL, 'GAP06_C', 'Gap06 cause', 'cause', 1, 1)",
-                    [hid.into()],
-                ))
-                .await
-                .expect("ins cause");
-                db.query_one(Statement::from_string(
-                    DbBackend::Sqlite,
-                    "SELECT id FROM failure_codes WHERE code = 'GAP06_C' LIMIT 1".to_string(),
-                ))
-                .await
-                .expect("cause id q")
-                .expect("cause")
-                .try_get("", "id")
-                .unwrap()
-            }
-        };
-
+            .expect("seeded WORK.FAILURE_CAUSES value")
+            .try_get("", "id")
+            .unwrap();
         (mode_id, cause_id)
     }
 
@@ -537,6 +504,7 @@ mod tests {
                 auto_reserve: Some(false),
                 notes: None,
                 origin: None,
+                is_required: true,
             },
         )
         .await

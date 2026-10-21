@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "Permis de travail",
-    "description": "PRD §6.23 — cycle de vie, isolations LOTO, suspensions et mainlevées."
+    "description": "Cycle de vie des permis, isolations LOTO, suspensions et mainlevées."
   },
   "actions": {
     "refresh": "Actualiser",
@@ -11,20 +11,50 @@
     "save": "Enregistrer",
     "cancel": "Annuler",
     "close": "Fermer",
-    "select": "Sélectionner {{code}}"
+    "select": "Sélectionner {{code}}",
+    "retry": "Réessayer"
+  },
+  "siteScope": {
+    "hidden": {
+      "outsideScope_one": "{{count}} permis n’est pas affiché : hors de vos sites.",
+      "outsideScope_other": "{{count}} permis ne sont pas affichés : hors de vos sites.",
+      "withoutSite_one": "{{count}} permis n’est pas affiché : il n’a pas de site.",
+      "withoutSite_other": "{{count}} permis ne sont pas affichés : ils n’ont pas de site.",
+      "allPermits": "Ces nombres portent sur tous les permis, quels que soient les filtres ou la recherche.",
+      "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l’usine pour les voir."
+    },
+    "noSite": {
+      "badge": "À revoir : sans site",
+      "hint": "Permis enregistré sans site. Seuls les utilisateurs ayant un rôle valable pour toute l’usine le voient et peuvent agir dessus."
+    },
+    "openHidden_one": "{{count}} autre permis ouvert est hors de vos sites ou sans site : non compté",
+    "openHidden_other": "{{count}} autres permis ouverts sont hors de vos sites ou sans site : non comptés",
+    "noIssueRightAtSite": "Vous n’avez pas le droit de délivrer des permis sur le site de cet équipement."
   },
   "kpi": {
     "title": "Conformité LOTO (30 j.)",
     "summary": "Activations : {{activated}} · Mainlevées à temps : {{onTime}}",
-    "rate": "Taux : {{rate}} %"
+    "rate": "Taux : {{rate}} %",
+    "loadError": "Les indicateurs des permis n’ont pas pu être chargés",
+    "open": "Permis ouverts",
+    "openHint": "Ni clôturés, ni levés, ni annulés, ni expirés",
+    "activated": "Permis activés",
+    "period30d": "30 derniers jours",
+    "onTimeRate": "Mainlevées à temps",
+    "onTimeHint": "{{onTime}} sur {{activated}} permis activés, 30 derniers jours"
   },
   "open": {
     "title": "Permis ouverts (non expirés)",
-    "empty": "Aucun permis ouvert."
+    "empty": "Aucun permis ouvert.",
+    "count_one": "{{count}} permis ouvert (non expiré)",
+    "count_other": "{{count}} permis ouverts (non expirés)"
   },
   "list": {
     "title": "Permis",
-    "empty": "Aucun permis pour le moment."
+    "empty": "Aucun permis pour le moment.",
+    "noMatch": "Aucun permis ne correspond à la recherche.",
+    "moreAvailable": "Les {{shown}} premiers permis sont affichés ; d'autres existent.",
+    "loadMore": "Afficher plus"
   },
   "columns": {
     "code": "Code",
@@ -45,7 +75,8 @@
     "closed": "Clôturé",
     "handed_back": "Mainlevée faite",
     "cancelled": "Annulé",
-    "expired": "Expiré"
+    "expired": "Expiré",
+    "unknown": "Statut inconnu"
   },
   "detail": {
     "title": "Permis {{code}}",
@@ -59,7 +90,18 @@
     "expiresAt": "Expire",
     "closedAt": "Clôturé",
     "handedBackAt": "Mainlevée",
-    "none": "—"
+    "createdBy": "Rédigé par",
+    "submittedBy": "Soumis par",
+    "approvedBy": "Approuvé par",
+    "byAt": "{{name}}, {{date}}",
+    "unknownPerson": "Utilisateur inconnu",
+    "approverNotRecorded": "approbateur non enregistré",
+    "approverNotRecordedHint": "Approuvé avant que l’application n’enregistre qui approuve les permis.",
+    "selfApproved": "auto-approbation (site sans 4 yeux)",
+    "selfApprovedHint": "Approuvé sans deuxième personne : le site de ce permis a levé les quatre yeux (Paramètres › Règles par site).",
+    "none": "—",
+    "dialogDescription": "Statut, isolations LOTO, suspensions et passations du permis.",
+    "linkError": "Ce permis n’a pas pu être ouvert"
   },
   "transition": {
     "submitReview": "Soumettre en revue",
@@ -75,12 +117,13 @@
     "confirmCancel": "Annuler ce permis ? Cette action est irréversible."
   },
   "gate": {
-    "noIsolation": "Un permis LOTO exige au moins une isolation avant activation.",
+    "noIsolation": "Ce type de permis exige au moins une isolation d’énergie avant activation.",
     "unverified": "Chaque isolation doit être posée puis vérifiée par une seconde personne avant activation.",
     "removed": "Un cadenas a déjà été retiré : ce permis ne protège plus l'intervention.",
     "expired": "Ce permis a expiré.",
     "pendingRemoval": "Chaque retrait de cadenas doit être vérifié avant de clôturer le permis.",
-    "handoverRequired": "Enregistrez une passation avant la mainlevée."
+    "handoverRequired": "Enregistrez une passation avant la mainlevée.",
+    "isolationsUnavailable": "Les isolations de ce permis n’ont pas pu être lues : aucune étape du cycle tant qu’elles ne le sont pas."
   },
   "isolation": {
     "title": "Points d'isolation LOTO",
@@ -102,9 +145,41 @@
       "pending": "Non posée",
       "applied": "Posée",
       "verified": "Vérifiée",
-      "removed": "Retirée"
+      "removed": "Retirée",
+      "cancelled": "Annulée",
+      "takenOff": "Cadenas retiré — à vérifier"
     },
-    "editLocked": "Les isolations ne peuvent être ajoutées que si le permis n'est pas actif."
+    "editLocked": "Les isolations ne peuvent être ajoutées que si le permis n'est pas actif.",
+    "loadError": "Les isolations de ce permis n’ont pas pu être chargées",
+    "loading": "Chargement des isolations…",
+    "notSet": "Non renseigné",
+    "toReview": "À revoir",
+    "toReviewHint": "Le texte saisi avant les listes n’a pas pu être reconnu : choisissez le type d’énergie et la méthode.",
+    "originalEntry": "Saisie d’origine : {{text}}",
+    "energyPlaceholder": "Choisir l’énergie",
+    "methodPlaceholder": "Choisir la méthode",
+    "optionsError": "Les listes des énergies et des méthodes n’ont pas pu être chargées.",
+    "listsHint": "Types d’énergie selon ISO 14118 / OSHA 1910.147 ; les méthodes d’isolement sont la liste de votre site (Données de référence).",
+    "threePersonNotice": "Règle des trois personnes : {{name}} a vérifié cette isolation et ne peut pas confirmer son retrait.",
+    "threePersonNoticeUnknown": "Règle des trois personnes : la personne qui a vérifié cette isolation ne peut pas confirmer son retrait.",
+    "threePersonSelf": "Vous avez vérifié cette isolation — une troisième personne doit confirmer son retrait.",
+    "cancel": "Annuler la ligne",
+    "cancelTitle": "Annuler la ligne d'isolement",
+    "cancelKeep": "Garder la ligne",
+    "cancelConfirm": "La ligne « {{point}} » ({{energy}} · {{method}}) n'a jamais été posée. Elle sera marquée « Annulée » et gardée dans l'historique du permis : elle ne pourra plus être posée, vérifiée ni modifiée.",
+    "cancelResetNotice": "Ce permis attend sa revue : il repassera en brouillon et devra être soumis de nouveau.",
+    "cancelHint": "Une ligne jamais posée peut être annulée tant que le permis est en brouillon ou en attente de revue ; un cadenas posé se retire avec une dépose vérifiée.",
+    "cancelledBy": "Annulée par {{name}} le {{date}}",
+    "cancelledAt": "Annulée le {{date}}",
+    "removalConfirmTitle": "Confirmer le retrait des cadenas",
+    "removalConfirmDescription": "Vous confirmez que l’isolation « {{point}} » est retirée. Posée par {{applier}}, vérifiée par {{verifier}}. Votre nom sera inscrit comme celui qui a vérifié le retrait.",
+    "personUnknown": "personne non enregistrée",
+    "takeOff": "J'ai retiré mon cadenas",
+    "removedBy": "Cadenas retiré par {{name}} le {{date}}",
+    "removerBlocked": "Vous avez retiré ce cadenas — une autre personne doit vérifier son retrait.",
+    "awaitingTakeOff": "En attente de « J'ai retiré mon cadenas » par {{name}} (ou d'un retrait forcé s'il est absent).",
+    "takeOffConfirmTitle": "Confirmer le retrait de votre cadenas",
+    "takeOffConfirmDescription": "Vous confirmez avoir retiré votre cadenas de l'isolement « {{point}} ». Dès maintenant cet isolement ne protège plus le travail : personne ne doit travailler sous sa protection, et une autre personne doit vérifier le retrait avant la clôture du permis."
   },
   "card": {
     "title": "Fiche LOTO",
@@ -116,7 +191,16 @@
     "verifier": "Vérificateur",
     "expiry": "Expiration",
     "show": "Afficher la fiche",
-    "recordPrint": "Enregistrer l'impression"
+    "recordPrint": "Enregistrer l'impression",
+    "print": "Imprimer la fiche LOTO",
+    "doNotOperate": "DANGER — NE PAS MANŒUVRER. Équipement consigné.",
+    "signature": "Signature de l'intervenant",
+    "forcedRemoval": "Retrait forcé",
+    "forcedRemovalYes": "Oui — travailleur absent",
+    "forcedAuthorisedBy": "Autorisé par",
+    "forcedAt": "Retiré le",
+    "forcedReason": "Motif",
+    "forcedLine": "Retrait forcé — autorisé par {{authoriser}} le {{date}} : {{reason}}"
   },
   "suspension": {
     "title": "Suspensions",
@@ -129,13 +213,34 @@
     "submit": "Suspendre"
   },
   "handover": {
+    "handedTo": "remis à",
+    "rolesHint": "Choisissez la fonction de la personne qui remet et de celle qui reçoit parmi les rôles de passation de l’usine.",
+    "onlyWhenClosed": "La remise se consigne une fois le permis clôturé.",
     "title": "Mainlevées / passations",
     "empty": "Aucune passation enregistrée.",
     "add": "Enregistrer une passation",
     "from": "Remis par (rôle)",
     "to": "Remis à (rôle)",
     "note": "Note de confirmation",
-    "submit": "Enregistrer"
+    "submit": "Enregistrer",
+    "rolePlaceholder": "Choisir un rôle…",
+    "roleToReview": "{{label}} (à revoir)",
+    "noRoles": "Aucun rôle de passation : un administrateur doit remplir la liste « Rôles de passation de permis » dans Données de référence.",
+    "signerYou": "Signée par vous : {{name}}",
+    "signerSession": "Signée par vous (l’utilisateur connecté).",
+    "receiver": "Personne qui reçoit (facultatif)",
+    "receiverNone": "Non nommée",
+    "receiverSearch": "Rechercher un nom…",
+    "receiverHint": "Vous signez vous-même la passation ; la personne qui reçoit ne peut pas être vous.",
+    "receiversPartial": "{{shown}} personnes affichées sur {{total}} : tapez un nom pour affiner la liste.",
+    "receiversMore": "Afficher plus de personnes",
+    "receiversAll": "Les {{total}} personnes correspondantes sont affichées.",
+    "receiversNone": "Personne ne correspond à ce nom.",
+    "noteMin": "Écrivez au moins {{min}} caractères.",
+    "noteCount": "{{length}} caractères (au moins {{min}}).",
+    "signedBy": "Signée par {{name}}",
+    "receivedBy": "reçue par {{name}}",
+    "signerNotRecorded": "Signataire non enregistré (passation antérieure à l’enregistrement des signataires)"
   },
   "create": {
     "title": "Nouveau permis de travail",
@@ -155,7 +260,16 @@
     "submit": "Enregistrer"
   },
   "types": {
+    "noViewRight": "Consulter les types de permis demande le droit de lecture des permis de travail.",
+    "readOnly": "Modifier les types de permis demande le droit d'émettre des permis.",
     "title": "Types de permis",
+    "shipped": {
+      "loto": "Consignation / déconsignation (LOTO)",
+      "hot_work": "Travail par point chaud",
+      "confined_space": "Espace confiné",
+      "cold_work": "Travail à froid",
+      "electrical_lv": "Électricité basse tension"
+    },
     "new": "Nouveau type",
     "code": "Code",
     "name": "Nom",
@@ -163,10 +277,27 @@
     "hse": "Approbation HSE requise",
     "operations": "Approbation exploitation requise",
     "atmospheric": "Test atmosphérique requis",
+    "codeLocked": "Le code d’un type existant ne peut plus être modifié : permis et règles s’y réfèrent. Créez un nouveau type si besoin.",
     "maxHours": "Durée max (h)",
     "version": "Version",
     "save": "Enregistrer le type",
-    "empty": "Aucun type de permis."
+    "empty": "Aucun type de permis.",
+    "energyIsolation": "Isolation d’énergie obligatoire (LOTO)",
+    "energyIsolationHint": "Un permis de ce type ne peut pas démarrer sans au moins une isolation posée puis vérifiée par une seconde personne.",
+    "energyIsolationLocked": "Le type LOTO exige toujours une isolation d’énergie.",
+    "energyIsolationAdminOnly": "Seul un administrateur (droit paramètres) peut ne plus l’exiger.",
+    "disableReason": "Pourquoi ne plus exiger d’isolation ?",
+    "disableReasonHint": "Au moins {{min}} caractères. Réservé à un administrateur : le mot de passe est redemandé et la modification est tracée dans le journal d’audit.",
+    "energyIsolationShort": "Isolation",
+    "yes": "Oui",
+    "no": "Non",
+    "threePerson": "Règle des trois personnes : une troisième personne confirme le retrait des cadenas",
+    "threePersonShort": "3e personne",
+    "threePersonHint": "Activé : la personne qui a vérifié une isolation ne peut pas non plus confirmer son retrait ; une troisième personne doit le faire.",
+    "threePersonAdminOnly": "Seul un administrateur (droit paramètres) peut modifier ce réglage.",
+    "threePersonReason": "Pourquoi modifier la règle des trois personnes ?",
+    "threePersonReasonHint": "Au moins {{min}} caractères. Votre mot de passe est redemandé et la modification est inscrite au journal d’audit.",
+    "reasonMin": "Écrivez au moins {{min}} caractères."
   },
   "woGate": {
     "title": "Permis de travail",
@@ -181,5 +312,72 @@
   "errors": {
     "required": "Ce champ est obligatoire.",
     "invalidNumber": "Saisissez un nombre valide."
+  },
+  "filters": {
+    "searchPlaceholder": "Rechercher un permis, un équipement, un OT…",
+    "status": "Statut",
+    "type": "Type de permis"
+  },
+  "forced": {
+    "action": "Retrait forcé (travailleur absent)",
+    "title": "Retrait forcé du cadenas — travailleur absent",
+    "description": "Le cadenas « {{point}} » a été posé par {{worker}}, absent. En tant que titulaire du droit de clôture des permis sur ce site, vous autorisez une autre personne à le retirer. Votre mot de passe sera redemandé.",
+    "remover": "Personne qui retire le cadenas",
+    "removerHint": "Ni {{worker}}, ni vous.",
+    "removerSearch": "Rechercher par nom",
+    "removerPlaceholder": "Choisir la personne",
+    "removersPartial": "{{shown}} personnes affichées sur {{total}} : précisez la recherche.",
+    "reason": "Motif",
+    "reasonCount": "{{length}} / {{min}} caractères au moins",
+    "reasonMin": "Indiquez le motif en {{min}} caractères au moins.",
+    "attempts": "Tentatives pour joindre le travailleur",
+    "attemptsHint": "Au moins une : quand, comment (moyens de contact du site, Données de référence) et le résultat.",
+    "noMethods": "Aucun moyen de contact actif dans Données de référence (PERMIT.CONTACT_METHODS) : demandez à un administrateur d'en ajouter.",
+    "attemptAt": "Heure de la tentative {{n}}",
+    "attemptMethod": "Moyen de la tentative {{n}}",
+    "attemptResult": "Résultat de la tentative {{n}}",
+    "methodPlaceholder": "Choisir le moyen",
+    "resultPlaceholder": "Pas de réponse, messagerie…",
+    "removeAttempt": "Supprimer la tentative {{n}}",
+    "attemptsIncomplete": "Indiquez l'heure, le moyen et le résultat de chaque tentative.",
+    "addAttempt": "Ajouter une tentative",
+    "attest": "J'atteste que le travailleur n'est pas sur le site.",
+    "attestHint": "Exigé par OSHA 1910.147(e)(3)(ii) : l'employeur vérifie que la personne autorisée n'est pas sur le site.",
+    "attestRequired": "L'attestation est obligatoire.",
+    "stepUpHint": "Le retrait forcé redemande votre mot de passe ; il est tracé et annoncé aux titulaires du droit de clôture des permis du site.",
+    "submit": "Enregistrer le retrait forcé",
+    "chip": "Retrait forcé",
+    "summary": "Autorisé par {{authoriser}} le {{date}}",
+    "reasonShown": "Motif : {{reason}}",
+    "attemptShown": "{{date}} — {{method}} : {{result}}",
+    "removedAt": "Retiré le",
+    "removedBy": "Retiré par",
+    "authorisedBy": "Autorisé par"
+  },
+  "informed": {
+    "action": "Travailleur informé",
+    "title": "Le travailleur a été informé du retrait forcé",
+    "description": "Enregistrez que {{worker}} a été informé du retrait de son cadenas « {{point}} » (travailleur sans compte Maintafox, ou informé en personne). Vous êtes enregistré comme la personne qui l'a informé.",
+    "method": "Comment",
+    "at": "Quand",
+    "hint": "Un travailleur qui a un compte doit aussi en prendre connaissance à sa prochaine connexion.",
+    "submit": "Enregistrer",
+    "pending": "Travailleur pas encore informé : il ne pose aucun nouveau cadenas avant de l'être.",
+    "doneInApp": "Travailleur informé : pris connaissance dans l'application le {{date}}",
+    "done": "Travailleur informé par {{name}} le {{date}} ({{method}})"
+  },
+  "gateAck": {
+    "title": "Un de vos cadenas a été retiré pendant votre absence",
+    "intro": "Un retrait forcé a été enregistré pour un cadenas que vous aviez posé. Lisez-le et confirmez en avoir pris connaissance avant de continuer : vous ne pouvez poser aucun nouveau cadenas avant.",
+    "lock": "Cadenas « {{point}} » — permis {{permit}} — {{equipment}}",
+    "acknowledge": "J'ai pris connaissance",
+    "loadError": "Vos retraits forcés de cadenas n'ont pas pu être lus. Réessayez : l'application reste bloquée tant qu'ils ne peuvent pas être vérifiés.",
+    "retry": "Réessayer"
+  },
+  "review": {
+    "title": "Retraits forcés à suivre ({{count}})",
+    "hint": "Cadenas retirés en l'absence de leur travailleur : le travailleur doit en être informé (à sa prochaine connexion, ou enregistrez-le ici).",
+    "item": "{{point}} — {{worker}}, retiré le {{date}}, autorisé par {{authoriser}}",
+    "loadError": "Les retraits forcés à suivre n'ont pas pu être chargés"
   }
 }

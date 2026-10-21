@@ -32,7 +32,15 @@ export const mfLayout = {
   /** Segmented view control (list / kanban / …) */
   viewToggleGroup:
     "flex items-center rounded-md border border-surface-border p-0.5 gap-0.5 bg-surface-1/80",
-  viewToggleButton: "h-7 px-2",
+  /** 40 px button inside a 2 px-padded group = 44 px target row */
+  viewToggleButton:
+    "inline-flex h-10 w-10 items-center justify-center rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+  /** Icon-only toolbar button (filter toggle, refresh): 44 px target */
+  toolbarIconButton: "h-11 w-11 p-0",
+  /** Primary header action (create): 44 px high */
+  primaryAction: "h-11 gap-1.5 px-4",
+  /** Count badge next to the module title */
+  moduleCount: "font-mono tabular-nums",
 } as const;
 
 /** Elevated panels — matches DI/OT cards and Settings sections (`border-surface-border`, `shadow-panel`). */
@@ -44,15 +52,33 @@ export const mfCard = {
 
 /** Standalone auth / activation surfaces (login, lock, license gate, …) */
 export const mfAuth = {
-  shell: "flex min-h-screen w-screen items-center justify-center bg-surface-0 px-4",
+  /**
+   * Page canvas. `mf-auth` (styles/auth.css) pins the light brand palette for these screens only;
+   * `min-h-[100dvh]` + vertical padding lets short windows scroll instead of clipping the card.
+   */
+  shell:
+    "mf-auth mf-auth-backdrop flex min-h-[100dvh] w-full flex-col items-center justify-center px-4 py-8 sm:px-6",
   /** Lock screen — same canvas as auth, no card */
-  lockShell: "flex min-h-screen w-full items-center justify-center bg-surface-0 px-4",
-  /** Primary login card — elevated panel shadow from theme */
-  card: "w-full max-w-[420px] rounded-2xl border border-surface-border bg-surface-1 px-10 py-12 shadow-panel animate-in fade-in zoom-in-95 duration-300",
+  lockShell:
+    "mf-auth mf-auth-backdrop flex min-h-[100dvh] w-full flex-col items-center justify-center px-4 py-8 sm:px-6",
+  /** Primary login card: compact, white, subtle border and restrained shadow. */
+  card: "w-full max-w-[400px] rounded-xl border border-surface-border bg-surface-1 p-6 shadow-[var(--mfa-shadow-card)] motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200 sm:p-8",
   cardCompact:
-    "w-full max-w-md rounded-xl border border-surface-border bg-surface-1 p-6 shadow-panel",
-  cardBrandSeparator: "mb-6 flex justify-center border-b border-surface-border pb-5",
-  linkPrimary: "text-sm font-medium text-primary hover:text-primary-dark transition-colors",
+    "w-full max-w-[480px] rounded-xl border border-surface-border bg-surface-1 p-6 shadow-[var(--mfa-shadow-card)] motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200 sm:p-8",
+  cardBrandSeparator: "mb-6 flex justify-center",
+  title: "text-xl font-semibold tracking-tight text-text-primary",
+  subtitle: "mt-1.5 text-sm leading-relaxed text-text-secondary",
+  linkPrimary:
+    "rounded-sm text-sm font-medium text-[var(--mfa-blue)] underline-offset-4 transition-colors hover:text-[var(--mfa-blue-dark)] hover:underline disabled:opacity-50",
+  /** Primary action: logo orange with navy text (6.7:1). One per screen. */
+  buttonPrimary:
+    "inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--mfa-orange)] px-4 text-[15px] font-semibold text-[var(--mfa-navy)] shadow-sm transition-colors hover:bg-[var(--mfa-orange-dark)] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50",
+  /** Secondary action: white with brand-blue outline. */
+  buttonSecondary:
+    "inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-[var(--mfa-blue)] bg-white px-4 text-[15px] font-semibold text-[var(--mfa-blue)] transition-colors hover:bg-[var(--mfa-blue-tint)] disabled:cursor-not-allowed disabled:opacity-50",
+  /** Tertiary action: text only. */
+  buttonGhost:
+    "inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium text-[var(--mfa-blue)] transition-colors hover:bg-[var(--mfa-blue-tint)] disabled:cursor-not-allowed disabled:opacity-50",
 } as const;
 
 /** Form controls aligned with shadcn `Input` + DI/OT filter bars */
@@ -61,10 +87,30 @@ export const mfInput = {
   filterSelect: "h-8 text-sm",
   /** Auth-style fields (login) — use with `Input` or native `<input>` + cn() */
   authField:
-    "w-full rounded-lg border border-surface-border bg-surface-2 py-2.5 pl-10 pr-3 text-sm text-text-primary shadow-sm placeholder:text-text-muted transition-all focus:border-primary-light focus:bg-surface-1 focus:outline-none focus:ring-2 focus:ring-primary/25",
+    "h-11 w-full rounded-lg border border-[var(--mfa-border-strong)] bg-white pl-10 pr-3 text-[15px] text-text-primary placeholder:text-text-muted transition-[border-color,box-shadow] focus:border-[var(--mfa-blue)] focus:outline-none focus:ring-[3px] focus:ring-[var(--mfa-blue)]/20 disabled:cursor-not-allowed disabled:bg-surface-2 disabled:opacity-70 aria-[invalid=true]:border-[var(--mfa-danger)]",
   authFieldWithTrailing:
-    "w-full rounded-lg border border-surface-border bg-surface-2 py-2.5 pl-10 pr-10 text-sm text-text-primary shadow-sm placeholder:text-text-muted transition-all focus:border-primary-light focus:bg-surface-1 focus:outline-none focus:ring-2 focus:ring-primary/25",
-  authLabel: "mb-1.5 block text-sm font-medium text-text-secondary",
+    "h-11 w-full rounded-lg border border-[var(--mfa-border-strong)] bg-white pl-10 pr-10 text-[15px] text-text-primary placeholder:text-text-muted transition-[border-color,box-shadow] focus:border-[var(--mfa-blue)] focus:outline-none focus:ring-[3px] focus:ring-[var(--mfa-blue)]/20 disabled:cursor-not-allowed disabled:bg-surface-2 disabled:opacity-70 aria-[invalid=true]:border-[var(--mfa-danger)]",
+  authLabel: "mb-1.5 block text-[13px] font-medium text-text-primary",
+  /**
+   * A native `<select>` that stays in a form (long or dynamic option lists): same height, border,
+   * surface and focus ring as the design-system `Select` trigger.
+   */
+  nativeSelect:
+    "h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm text-text-primary shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
+} as const;
+
+/**
+ * Alert surfaces for authentication screens (scoped to `.mf-auth`): orange for attention,
+ * red for errors, blue for information. Each is paired with an icon and `role` at the call site.
+ */
+export const mfAuthAlert = {
+  info: "rounded-lg border border-[var(--mfa-border)] bg-[var(--mfa-blue-tint)] px-3.5 py-3 text-sm text-text-primary",
+  warning:
+    "rounded-lg border border-[var(--mfa-orange-border)] bg-[var(--mfa-orange-tint)] px-3.5 py-3 text-sm text-text-primary",
+  danger:
+    "rounded-lg border border-[#f3b8b3] bg-[var(--mfa-danger-tint)] px-3.5 py-3 text-sm text-text-primary",
+  success:
+    "rounded-lg border border-[#b5e0c4] bg-[var(--mfa-success-tint)] px-3.5 py-3 text-sm text-text-primary",
 } as const;
 
 /** Alert / callout surfaces (login errors, license meta, …) */
@@ -154,6 +200,8 @@ export const mfExport = {
 } as const;
 
 /** Table / list rows — prefer with DataTable; fallback for plain lists */
+export { mfTone, type Tone } from "./tone";
+
 export const mfTable = {
   rowHover: "transition-colors duration-fast hover:bg-surface-3/80",
   header: "bg-surface-2 text-xs font-semibold uppercase tracking-wide text-text-secondary",
@@ -212,8 +260,8 @@ export const mfVisualMetric = {
   unit: "font-mono text-sm font-medium text-text-muted",
   badge:
     "inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-text-secondary",
-  badgeUp: "bg-status-success/12 text-status-success",
-  badgeDown: "bg-status-danger/12 text-status-danger",
+  badgeUp: "bg-status-success/10 text-status-success",
+  badgeDown: "bg-status-danger/10 text-status-danger",
   vizWrap:
     "flex h-[3.25rem] min-h-[3.25rem] min-w-[7rem] flex-1 basis-[48%] items-center justify-center self-stretch",
   viz: "h-full w-full min-h-[3.25rem]",
@@ -270,28 +318,28 @@ export const mfChip = {
  * Keys align with RBAC domain prefixes used in admin panels.
  */
 export const mfPermissionDomainChip: Record<string, string> = {
-  eq: "border border-orange-500/35 bg-orange-500/10 text-orange-200",
-  di: "border border-blue-500/35 bg-blue-500/10 text-blue-200",
-  ot: "border border-emerald-500/35 bg-emerald-500/10 text-emerald-200",
-  org: "border border-pink-500/35 bg-pink-500/10 text-pink-200",
-  per: "border border-cyan-500/35 bg-cyan-500/10 text-cyan-200",
+  eq: "border border-orange-500/35 bg-orange-500/10 text-orange-800 dark:text-orange-200",
+  di: "border border-blue-500/35 bg-blue-500/10 text-blue-800 dark:text-blue-200",
+  ot: "border border-emerald-500/35 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
+  org: "border border-pink-500/35 bg-pink-500/10 text-pink-800 dark:text-pink-200",
+  per: "border border-cyan-500/35 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200",
   ref: "border border-surface-border bg-surface-3/70 text-text-secondary",
-  inv: "border border-amber-500/35 bg-amber-500/10 text-amber-200",
-  pm: "border border-violet-500/35 bg-violet-500/10 text-violet-200",
-  ram: "border border-teal-500/35 bg-teal-500/10 text-teal-200",
-  rep: "border border-indigo-500/35 bg-indigo-500/10 text-indigo-200",
+  inv: "border border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+  pm: "border border-violet-500/35 bg-violet-500/10 text-violet-800 dark:text-violet-200",
+  ram: "border border-teal-500/35 bg-teal-500/10 text-teal-800 dark:text-teal-200",
+  rep: "border border-indigo-500/35 bg-indigo-500/10 text-indigo-800 dark:text-indigo-200",
   arc: "border border-surface-border bg-surface-2/90 text-text-secondary",
-  doc: "border border-lime-500/35 bg-lime-500/10 text-lime-200",
-  plan: "border border-sky-500/35 bg-sky-500/10 text-sky-200",
+  doc: "border border-lime-500/35 bg-lime-500/10 text-lime-800 dark:text-lime-200",
+  plan: "border border-sky-500/35 bg-sky-500/10 text-sky-800 dark:text-sky-200",
   log: "border border-surface-border bg-surface-3/70 text-text-secondary",
-  trn: "border border-fuchsia-500/35 bg-fuchsia-500/10 text-fuchsia-200",
-  iot: "border border-rose-500/35 bg-rose-500/10 text-rose-200",
-  erp: "border border-yellow-500/35 bg-yellow-500/10 text-yellow-200",
-  ptw: "border border-red-500/35 bg-red-500/10 text-red-200",
-  fin: "border border-green-500/35 bg-green-500/10 text-green-200",
-  ins: "border border-purple-500/35 bg-purple-500/10 text-purple-200",
+  trn: "border border-fuchsia-500/35 bg-fuchsia-500/10 text-fuchsia-800 dark:text-fuchsia-200",
+  iot: "border border-rose-500/35 bg-rose-500/10 text-rose-800 dark:text-rose-200",
+  erp: "border border-yellow-500/35 bg-yellow-500/10 text-yellow-800 dark:text-yellow-200",
+  ptw: "border border-red-500/35 bg-red-500/10 text-red-800 dark:text-red-200",
+  fin: "border border-green-500/35 bg-green-500/10 text-green-800 dark:text-green-200",
+  ins: "border border-purple-500/35 bg-purple-500/10 text-purple-800 dark:text-purple-200",
   cfg: "border border-surface-border bg-surface-3/70 text-text-secondary",
-  adm: "border border-red-500/40 bg-red-500/12 text-red-200",
+  adm: "border border-red-500/40 bg-red-500/10 text-red-800 dark:text-red-200",
   cst: "border border-surface-border bg-surface-3/70 text-text-secondary",
 };
 
@@ -303,17 +351,20 @@ export const mfKanban = {
   root: "relative flex h-full flex-col",
   scroller: "flex flex-1 gap-3 overflow-x-auto p-1 pb-2",
   column:
-    "flex min-w-[220px] max-w-[260px] flex-1 flex-col rounded-lg border border-surface-border bg-muted/30",
+    "flex min-w-[220px] max-w-[260px] flex-1 flex-col rounded-lg border border-surface-border bg-surface-0",
   columnDragOver: "ring-2 ring-primary ring-offset-1",
-  columnHeader: "flex items-center justify-between gap-2 rounded-t-lg border-b px-3 py-2",
+  /** White bar with a tone dot — the lane's status colour, same tone as the list chip. */
+  columnHeader:
+    "flex items-center justify-between gap-2 rounded-t-lg border-b border-surface-border bg-surface-1 px-3 py-2 text-text-primary",
   columnHeaderLabel: "flex min-w-0 items-center gap-2",
   columnTitle: "truncate text-xs font-semibold",
-  countBadge: "shrink-0 border-0 bg-white/60 px-1.5 py-0 text-[10px]",
+  columnDot: "h-2 w-2 shrink-0 rounded-full",
+  countBadge: "shrink-0 border-0 bg-surface-2 px-1.5 py-0 text-[10px] text-text-secondary",
   columnBody: "min-h-[120px] flex-1 space-y-2 overflow-y-auto p-2",
-  columnEmpty: "py-4 text-center text-[11px] text-muted-foreground",
+  columnEmpty: "py-4 text-center text-[11px] text-text-muted",
   loadMore: "border-t p-2",
   loadMoreButton: "w-full gap-1 text-xs",
-  card: "group cursor-pointer overflow-hidden rounded-md border border-surface-border bg-background shadow-sm transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+  card: "group cursor-pointer overflow-hidden rounded-md border border-surface-border bg-surface-1 shadow-sm transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
   cardSelected: "ring-2 ring-primary",
   cardDisabled: "pointer-events-none opacity-50",
   cardDraggable: "cursor-grab active:cursor-grabbing",
@@ -329,11 +380,9 @@ export const mfKanban = {
   metaIcon: "h-2.5 w-2.5 shrink-0",
   metaLabel: "truncate",
   badgeRow: "flex flex-wrap items-center gap-1",
-  badge: "h-5 gap-0.5 border-0 px-1.5 py-0 text-[10px] font-normal",
-  badgeIcon: "h-2.5 w-2.5 shrink-0",
   linkBadge: "h-5 px-1.5 py-0 text-[10px]",
   cardActions: "flex flex-wrap items-center gap-1 pt-1",
-  cardActionButton: "h-6 gap-1 px-1.5 text-[10px]",
+  cardActionButton: "h-7 gap-1 px-2 text-[11px]",
   cardActionIcon: "h-3 w-3 shrink-0",
   boardEmpty: "py-8 text-center text-sm text-muted-foreground",
 } as const;
@@ -356,6 +405,8 @@ export const mfTimeline = {
   meta: "mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground",
   badge: "h-5 px-1.5 text-[10px] font-normal",
   groupHeader: "text-xs font-semibold uppercase tracking-wide text-text-muted",
+  olderNotice:
+    "flex flex-wrap items-center justify-between gap-2 rounded-md border border-tone-info-border bg-tone-info-bg px-3 py-2 text-xs text-tone-info-fg",
 } as const;
 
 /** Recharts / export — use CSS vars in SVG where supported; PNG needs resolved hex */

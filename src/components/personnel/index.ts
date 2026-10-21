@@ -4,4 +4,3 @@ export { PersonnelCreateDialog } from "./PersonnelCreateDialog";
 export { PersonnelDetailWorkspace } from "./PersonnelDetailWorkspace";
 export { PositionCombobox } from "./PositionCombobox";
 export { PositionCreateDialog } from "./PositionCreateDialog";
-export { PositionsPanel } from "./PositionsPanel";

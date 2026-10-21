@@ -6,9 +6,11 @@
  * TC1 - Blockers present → confirm button disabled
  * TC2 - Warnings only → warning list shown, confirm enabled after acknowledgement
  * TC3 - Closing drawer clears preview state in the store
+ * TC4 - Confirm applies the previewed change (move, deactivate, handover). These
+ *       actions used to fail on every attempt (unknown action, no target, unsupported).
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // ── Service mocks (store imports the service) ─────────────────────────────────
@@ -26,9 +28,18 @@ vi.mock("@/services/org-designer-service", () => ({
   previewOrgChange: vi.fn().mockResolvedValue(null),
 }));
 
+const mockMoveOrgNode = vi.fn().mockResolvedValue({ id: 2, row_version: 4 });
+const mockDeactivateOrgNode = vi.fn().mockResolvedValue({ id: 1, row_version: 2 });
+const mockAssignResponsibility = vi.fn().mockResolvedValue({ id: 99 });
+
 vi.mock("@/services/org-node-service", () => ({
-  moveOrgNode: vi.fn(),
-  deactivateOrgNode: vi.fn().mockResolvedValue({ id: 1, row_version: 2 }),
+  moveOrgNode: (...args: unknown[]) => mockMoveOrgNode(...args),
+  deactivateOrgNode: (...args: unknown[]) => mockDeactivateOrgNode(...args),
+  assignOrgNodeResponsibility: (...args: unknown[]) => mockAssignResponsibility(...args),
+  getOrgNode: vi.fn().mockResolvedValue(null),
+  listOrgTree: vi.fn().mockResolvedValue([]),
+  listOrgNodeResponsibilities: vi.fn().mockResolvedValue([]),
+  listOrgEntityBindings: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/hooks/use-step-up", () => ({
@@ -50,7 +61,7 @@ vi.mock("react-i18next", () => ({
 
 import { ImpactPreviewDrawer } from "@/components/org/ImpactPreviewDrawer";
 import { useOrgDesignerStore } from "@/stores/org-designer-store";
-import type { OrgImpactPreview } from "@shared/ipc-types";
+import type { OrgDesignerNodeRow, OrgDesignerSnapshot, OrgImpactPreview } from "@shared/ipc-types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -152,6 +163,7 @@ function resetStore() {
     selectedNodeId: null,
     preview: null,
     previewPayload: null,
+    previewTargetLabel: null,
     previewOpen: false,
     loading: false,
     previewLoading: false,
@@ -375,7 +387,6 @@ describe("ImpactPreviewDrawer — Sprint S3 smoke tests", () => {
       expect(screen.getByText("preview.dependencies")).toBeInTheDocument();
       expect(screen.getByText("preview.dependencyDomain.assets")).toBeInTheDocument();
       expect(screen.getByText("preview.dependencyDomain.open_work")).toBeInTheDocument();
-      expect(screen.getByText("preview.dependencyNote.assets")).toBeInTheDocument();
       expect(
         screen.getAllByText("preview.dependencyStatus.unavailable").length,
       ).toBeGreaterThanOrEqual(2);
@@ -400,5 +411,181 @@ describe("ImpactPreviewDrawer — Sprint S3 smoke tests", () => {
       expect(screen.getByText("3")).toBeInTheDocument(); // active_responsibility_count
       expect(screen.getByText("1")).toBeInTheDocument(); // active_binding_count
     });
+  });
+});
+
+// ── TC4 — Confirm applies the previewed change ───────────────────────────────
+
+function row(overrides: Partial<OrgDesignerNodeRow>): OrgDesignerNodeRow {
+  return {
+    node_id: 1,
+    parent_id: null,
+    ancestor_path: "/1/",
+    depth: 0,
+    code: "SITE-A",
+    name: "Site Alpha",
+    status: "active",
+    row_version: 1,
+    node_type_id: 10,
+    node_type_code: "SITE",
+    node_type_label: "Site",
+    can_host_assets: true,
+    can_own_work: true,
+    can_carry_cost_center: true,
+    can_aggregate_kpis: true,
+    can_receive_permits: false,
+    child_count: 0,
+    active_responsibility_count: 0,
+    active_binding_count: 0,
+    structure_model_id: 1,
+    origin_node_id: null,
+    ...overrides,
+  };
+}
+
+/** Draft workspace: draft model 2 holds copies (node 12 copies published node 2). */
+const draftSnapshot: OrgDesignerSnapshot = {
+  active_model_id: 1,
+  active_model_version: 3,
+  draft_model_id: 2,
+  draft_model_version: 4,
+  display_model_id: 2,
+  nodes: [
+    row({ node_id: 11, structure_model_id: 2, origin_node_id: 1 }),
+    row({
+      node_id: 12,
+      parent_id: 11,
+      ancestor_path: "/11/12/",
+      depth: 1,
+      code: "WS-1",
+      name: "Workshop 1",
+      row_version: 3,
+      structure_model_id: 2,
+      origin_node_id: 2,
+    }),
+    row({
+      node_id: 13,
+      parent_id: 11,
+      ancestor_path: "/11/13/",
+      depth: 1,
+      code: "WS-2",
+      name: "Workshop 2",
+      structure_model_id: 2,
+      origin_node_id: 3,
+    }),
+  ],
+};
+
+const cleanOf = (action: OrgImpactPreview["action"], subject: number): OrgImpactPreview => ({
+  ...cleanPreview,
+  action,
+  subject_node_id: subject,
+});
+
+describe("TC4 - confirm applies the previewed change", () => {
+  beforeEach(() => {
+    resetStore();
+    vi.clearAllMocks();
+  });
+
+  it("MoveNode: moves the unit under the chosen parent with its current row version", async () => {
+    useOrgDesignerStore.setState({
+      snapshot: draftSnapshot,
+      workspaceMode: "draft",
+      preview: cleanOf("MoveNode", 12),
+      previewPayload: { action: "MoveNode", node_id: 12, new_parent_id: 13 },
+      previewTargetLabel: "Workshop 2",
+      previewOpen: true,
+    });
+
+    render(<ImpactPreviewDrawer />);
+    expect(screen.getByText("preview.target.MoveNode")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /preview\.confirmAction\.MoveNode/ }));
+
+    await waitFor(() => expect(mockMoveOrgNode).toHaveBeenCalledTimes(1));
+    expect(mockMoveOrgNode).toHaveBeenCalledWith({
+      node_id: 12,
+      new_parent_id: 13,
+      expected_row_version: 3,
+    });
+    await waitFor(() => expect(useOrgDesignerStore.getState().previewOpen).toBe(false));
+  });
+
+  it("MoveNode without a chosen parent explains why instead of calling the backend", () => {
+    useOrgDesignerStore.setState({
+      snapshot: draftSnapshot,
+      preview: cleanOf("MoveNode", 12),
+      previewPayload: { action: "MoveNode", node_id: 12 },
+      previewOpen: true,
+    });
+
+    render(<ImpactPreviewDrawer />);
+    fireEvent.click(screen.getByRole("button", { name: /preview\.confirmAction\.MoveNode/ }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("preview.moveRequiresParent");
+    expect(mockMoveOrgNode).not.toHaveBeenCalled();
+  });
+
+  it("DeactivateNode: deactivates with the row version of the unit", async () => {
+    useOrgDesignerStore.setState({
+      snapshot: draftSnapshot,
+      preview: cleanOf("DeactivateNode", 13),
+      previewPayload: { action: "DeactivateNode", node_id: 13 },
+      previewOpen: true,
+    });
+
+    render(<ImpactPreviewDrawer />);
+    fireEvent.click(screen.getByRole("button", { name: /preview\.confirmAction\.DeactivateNode/ }));
+
+    await waitFor(() => expect(mockDeactivateOrgNode).toHaveBeenCalledWith(13, 1));
+  });
+
+  it("ReassignResponsibility: hands over on the published unit in one call", async () => {
+    // Draft copy 12 previews; the operational records live on published unit 2.
+    useOrgDesignerStore.setState({
+      snapshot: draftSnapshot,
+      preview: cleanOf("ReassignResponsibility", 12),
+      previewPayload: {
+        action: "ReassignResponsibility",
+        node_id: 12,
+        responsibility_type: "MAINTENANCE_OWNER",
+        replacement_person_id: 7,
+        replacement_team_id: null,
+      },
+      previewTargetLabel: "Nadia B.",
+      previewOpen: true,
+    });
+
+    render(<ImpactPreviewDrawer />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /preview\.confirmAction\.ReassignResponsibility/ }),
+    );
+
+    await waitFor(() => expect(mockAssignResponsibility).toHaveBeenCalledTimes(1));
+    expect(mockAssignResponsibility).toHaveBeenCalledWith({
+      node_id: 2,
+      responsibility_type: "MAINTENANCE_OWNER",
+      person_id: 7,
+      team_id: null,
+      replace_active: true,
+    });
+  });
+
+  it("keeps the drawer open when the backend rejects the change", async () => {
+    mockMoveOrgNode.mockRejectedValueOnce({ code: "VALIDATION_FAILED", message: "nope" });
+    useOrgDesignerStore.setState({
+      snapshot: draftSnapshot,
+      preview: cleanOf("MoveNode", 12),
+      previewPayload: { action: "MoveNode", node_id: 12, new_parent_id: 13 },
+      previewOpen: true,
+    });
+
+    render(<ImpactPreviewDrawer />);
+    fireEvent.click(screen.getByRole("button", { name: /preview\.confirmAction\.MoveNode/ }));
+
+    await waitFor(() => expect(mockMoveOrgNode).toHaveBeenCalled());
+    expect(useOrgDesignerStore.getState().previewOpen).toBe(true);
+    // No raw backend text on screen (the global toast reports it).
+    expect(screen.queryByText("nope")).not.toBeInTheDocument();
   });
 });

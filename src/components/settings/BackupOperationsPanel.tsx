@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useStepUp } from "@/hooks/use-step-up";
+import { describeAppError } from "@/lib/app-error";
 import {
   factoryReset,
   listBackupRuns,
@@ -38,6 +39,9 @@ interface BackupOperationsPanelProps {
     variant?: "default" | "destructive" | "success";
   }) => void;
 }
+
+/** The confirmation phrases the backend accepts (`commands::backup`), shown to the user. */
+const FACTORY_RESET_PHRASES = ["EFFACER TOUTES LES DONNÉES", "ERASE ALL DATA"];
 
 export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
   const { t } = useTranslation("settings");
@@ -76,7 +80,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
     } catch (err) {
       onToast({
         title: t("backupOps.loadError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {
@@ -109,7 +113,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
     } catch (err) {
       onToast({
         title: t("backupOps.runError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {
@@ -139,7 +143,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
     } catch (err) {
       onToast({
         title: t("backupOps.validateError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {
@@ -160,7 +164,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
     } catch (err) {
       onToast({
         title: t("backupOps.restoreError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     }
@@ -177,7 +181,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
     } catch (err) {
       onToast({
         title: t("backupOps.restoreError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {
@@ -193,7 +197,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
     } catch (err) {
       onToast({
         title: t("backupOps.resetError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {
@@ -247,7 +251,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
             {t("backupOps.computedChecksum")}: {validation.computed_checksum}
           </p>
           {validation.warnings.length > 0 ? (
-            <ul className="mt-2 list-disc pl-5 text-amber-700">
+            <ul className="mt-2 list-disc pl-5 text-tone-warning-fg">
               {validation.warnings.map((w) => (
                 <li key={w}>{w}</li>
               ))}
@@ -316,7 +320,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
           <Button
             type="button"
             variant="destructive"
-            disabled={busy || resetPhrase.trim().length < 8}
+            disabled={busy || !FACTORY_RESET_PHRASES.includes(resetPhrase.trim())}
             onClick={() => void handleFactoryReset()}
           >
             {t("backupOps.resetAction")}

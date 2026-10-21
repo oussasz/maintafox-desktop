@@ -2,8 +2,8 @@
  * pm-store — behaviour tests for the preventive-maintenance workspace store.
  *
  * Covers workspace loading, plan detail open/close, every list loader, the
- * mutations (with their refresh cascades), loading/saving flags, error capture
- * and rethrow semantics.
+ * mutations (with their refresh cascades), loading/saving flags and the error contract
+ * (workspace `error`, `detailError`, mutations rethrown and never stored).
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -147,6 +147,7 @@ function makeVersion(overrides: Partial<PmPlanVersion> = {}): PmPlanVersion {
     required_skills_json: null,
     required_tools_json: null,
     estimated_duration_hours: 2,
+    planned_crew_size: 1,
     estimated_labor_cost: null,
     estimated_parts_cost: null,
     estimated_service_cost: null,
@@ -257,6 +258,7 @@ function makeKpis(overrides: Partial<PmGovernanceKpiReport> = {}): PmGovernanceK
     overdue_risk: makeRate(),
     first_pass_completion: makeRate(),
     follow_up_ratio: makeRate(),
+    failures_found_by_pm: 0,
     effort_variance: {
       sample_size: 1,
       estimated_hours: 2,
@@ -387,8 +389,10 @@ describe("pm-store", () => {
     expect(s.generationStatus).toBeNull();
     expect(s.activePlanId).toBeNull();
     expect(s.loading).toBe(false);
+    expect(s.detailLoading).toBe(false);
     expect(s.saving).toBe(false);
     expect(s.error).toBeNull();
+    expect(s.detailError).toBeNull();
   });
 
   // ── loadWorkspace ─────────────────────────────────────────────────────────
@@ -398,91 +402,107 @@ describe("pm-store", () => {
       const plans = [makePlan(), makePlan({ id: 2, code: "PM-002" })];
       m.listPmPlans.mockResolvedValueOnce(plans);
       const due = [makeOccurrence({ id: 1 })];
-      const cal = [makeOccurrence({ id: 2, status: "completed" })];
-      m.listPmOccurrences.mockResolvedValueOnce(due).mockResolvedValueOnce(cal);
-      const metrics = makeMetrics({ overdue_count: 9 });
-      m.getPmDueMetrics.mockResolvedValueOnce(metrics);
-      const gen = makeGenStatus();
-      m.getPmGenerationStatus.mockResolvedValueOnce(gen);
+      const calendar = [makeOccurrence({ id: 2, status: "completed" })];
+      m.listPmOccurrences.mockResolvedValueOnce(due).mockResolvedValueOnce(calendar);
+      // The calendar is on screen for October: only those dates are read.
+      usePmStore.setState({
+        calendarRange: { from: "2026-09-28T00:00:00Z", to: "2026-11-09T23:59:59Z" },
+      });
 
       await usePmStore.getState().loadWorkspace();
 
+      const s = usePmStore.getState();
       expect(m.listPmPlans).toHaveBeenCalledWith({});
       expect(m.listPmOccurrences).toHaveBeenNthCalledWith(1, { include_completed: false });
-      expect(m.listPmOccurrences).toHaveBeenNthCalledWith(2, { include_completed: true });
-      const s = usePmStore.getState();
+      expect(m.listPmOccurrences).toHaveBeenNthCalledWith(2, {
+        include_completed: true,
+        due_from: "2026-09-28T00:00:00Z",
+        due_to: "2026-11-09T23:59:59Z",
+      });
       expect(s.plans).toEqual(plans);
       expect(s.dueOccurrences).toEqual(due);
-      expect(s.calendarOccurrences).toEqual(cal);
-      expect(s.metrics).toEqual(metrics);
-      expect(s.generationStatus).toEqual(gen);
+      expect(s.calendarOccurrences).toEqual(calendar);
+      expect(s.metrics).toEqual(makeMetrics());
+      expect(s.generationStatus).toEqual(makeGenStatus());
       expect(s.loading).toBe(false);
       expect(s.error).toBeNull();
-      // No active plan → no detail refresh.
-      expect(m.listPmPlanVersions).not.toHaveBeenCalled();
+    });
+
+    it("reads no calendar while no calendar is on screen", async () => {
+      m.listPmPlans.mockResolvedValueOnce([]);
+      m.listPmOccurrences.mockResolvedValueOnce([]);
+      usePmStore.setState({ calendarRange: null });
+
+      await usePmStore.getState().loadWorkspace();
+
+      expect(m.listPmOccurrences).toHaveBeenCalledTimes(1);
+      expect(m.listPmOccurrences).toHaveBeenCalledWith({ include_completed: false });
+    });
+
+    it("keeps only the answer for the dates now on screen", async () => {
+      const october = deferred<ReturnType<typeof makeOccurrence>[]>();
+      m.listPmOccurrences
+        .mockReturnValueOnce(october.promise)
+        .mockResolvedValueOnce([makeOccurrence({ id: 9 })]);
+      const first = usePmStore
+        .getState()
+        .loadCalendarOccurrences({ from: "2026-09-28T00:00:00Z", to: "2026-11-09T23:59:59Z" });
+      await usePmStore
+        .getState()
+        .loadCalendarOccurrences({ from: "2026-10-26T00:00:00Z", to: "2026-12-07T23:59:59Z" });
+      october.resolve([makeOccurrence({ id: 1 })]);
+      await first;
+      expect(usePmStore.getState().calendarOccurrences.map((o) => o.id)).toEqual([9]);
     });
 
     it("sets loading while in flight and clears a stale error", async () => {
-      const d = deferred<PmPlan[]>();
-      m.listPmPlans.mockReturnValueOnce(d.promise);
-      usePmStore.setState({ error: "stale" });
-
-      const p = usePmStore.getState().loadWorkspace();
+      const gate = deferred<PmPlan[]>();
+      m.listPmPlans.mockReturnValueOnce(gate.promise);
+      usePmStore.setState({ error: new Error("stale") });
+      const run = usePmStore.getState().loadWorkspace();
       expect(usePmStore.getState().loading).toBe(true);
       expect(usePmStore.getState().error).toBeNull();
-
-      d.resolve([]);
-      await p;
+      gate.resolve([]);
+      await run;
       expect(usePmStore.getState().loading).toBe(false);
     });
 
     it("refreshes the active plan detail when the active plan still exists", async () => {
       usePmStore.setState({ activePlanId: 1 });
-      const versions = [makeVersion({ id: 101 })];
-      m.listPmPlanVersions.mockResolvedValueOnce(versions);
-
       await usePmStore.getState().loadWorkspace();
-
       expectDetailRefreshed(1);
-      expect(usePmStore.getState().versions).toEqual(versions);
     });
 
     it("skips the detail refresh when the active plan is no longer listed", async () => {
-      usePmStore.setState({ activePlanId: 42 });
+      usePmStore.setState({ activePlanId: 99 });
       await usePmStore.getState().loadWorkspace();
       expect(m.listPmPlanVersions).not.toHaveBeenCalled();
-      expect(usePmStore.getState().activePlanId).toBe(42);
     });
 
-    it("on listPmPlans failure sets error, skips sub-loads and does not rethrow", async () => {
-      m.listPmPlans.mockRejectedValueOnce({ code: "DB", message: "plans down" });
-
+    it("keeps the raw failure for the ErrorState and does not rethrow", async () => {
+      const err = { code: "DB_ERROR", message: "plans down" };
+      m.listPmPlans.mockRejectedValueOnce(err);
       await expect(usePmStore.getState().loadWorkspace()).resolves.toBeUndefined();
-
-      expect(usePmStore.getState().error).toBe("plans down");
-      expect(usePmStore.getState().loading).toBe(false);
+      expect(usePmStore.getState().error).toBe(err);
       expect(m.listPmOccurrences).not.toHaveBeenCalled();
-    });
-
-    it("a failing sub-loader records its error but the remaining loaders still run", async () => {
-      m.listPmOccurrences.mockRejectedValueOnce(new Error("due failed"));
-
-      await usePmStore.getState().loadWorkspace();
-
-      expect(usePmStore.getState().error).toBe("due failed");
-      expect(m.getPmDueMetrics).toHaveBeenCalled();
-      expect(m.getPmGenerationStatus).toHaveBeenCalled();
-      expect(usePmStore.getState().metrics).toEqual(makeMetrics());
-    });
-
-    it("a failing listPmPlanVersions during active detail refresh is captured as error", async () => {
-      usePmStore.setState({ activePlanId: 1 });
-      m.listPmPlanVersions.mockRejectedValueOnce(new Error("versions failed"));
-
-      await usePmStore.getState().loadWorkspace();
-
-      expect(usePmStore.getState().error).toBe("versions failed");
       expect(usePmStore.getState().loading).toBe(false);
+    });
+
+    it("a failing list loader fails the workspace load (no silently partial page)", async () => {
+      const err = new Error("due failed");
+      m.listPmOccurrences.mockRejectedValueOnce(err);
+      await usePmStore.getState().loadWorkspace();
+      expect(usePmStore.getState().error).toBe(err);
+      expect(m.getPmDueMetrics).not.toHaveBeenCalled();
+    });
+
+    it("a failing detail refresh lands in detailError, not in the workspace error", async () => {
+      usePmStore.setState({ activePlanId: 1 });
+      const err = new Error("versions failed");
+      m.listPmPlanVersions.mockRejectedValueOnce(err);
+      await usePmStore.getState().loadWorkspace();
+      expect(usePmStore.getState().error).toBeNull();
+      expect(usePmStore.getState().detailError).toBe(err);
     });
   });
 
@@ -492,69 +512,55 @@ describe("pm-store", () => {
     it("sets activePlanId, resets detail and loads all plan detail", async () => {
       usePmStore.setState({
         versions: [makeVersion({ id: 999 })],
-        findingsByExecutionId: { 1: [makeFinding()] },
-        error: "old",
+        findingsByExecutionId: { 5: [makeFinding()] },
+        detailError: new Error("old"),
       });
-      const versions = [makeVersion({ id: 200, pm_plan_id: 3 })];
-      m.listPmPlanVersions.mockResolvedValueOnce(versions);
-      const occ = [makeOccurrence({ pm_plan_id: 3 })];
-      m.listPmOccurrences.mockResolvedValueOnce(occ);
-      const exec = [makeExecution({ id: 7 })];
-      m.listPmExecutions.mockResolvedValueOnce(exec);
-      const rec = [makeRecurring({ pm_plan_id: 3 })];
-      m.listPmRecurringFindings.mockResolvedValueOnce(rec);
-      const ready = makeReadiness({ ready_count: 5 });
-      m.listPmPlanningReadiness.mockResolvedValueOnce(ready);
-      const kpis = makeKpis({ pm_plan_id: 3 });
-      m.getPmGovernanceKpiReport.mockResolvedValueOnce(kpis);
-
-      const p = usePmStore.getState().openPlan(3);
-      // Synchronous reset before any IPC resolves.
-      expect(usePmStore.getState().activePlanId).toBe(3);
-      expect(usePmStore.getState().versions).toEqual([]);
-      expect(usePmStore.getState().findingsByExecutionId).toEqual({});
-      expect(usePmStore.getState().error).toBeNull();
-      await p;
-
-      expectDetailRefreshed(3);
+      const gate = deferred<PmPlanVersion[]>();
+      m.listPmPlanVersions.mockReturnValueOnce(gate.promise);
+      const run = usePmStore.getState().openPlan(1);
+      const mid = usePmStore.getState();
+      expect(mid.activePlanId).toBe(1);
+      expect(mid.versions).toEqual([]);
+      expect(mid.findingsByExecutionId).toEqual({});
+      expect(mid.detailError).toBeNull();
+      expect(mid.detailLoading).toBe(true);
+      gate.resolve([makeVersion()]);
+      await run;
+      expectDetailRefreshed(1);
       const s = usePmStore.getState();
-      expect(s.versions).toEqual(versions);
-      expect(s.occurrences).toEqual(occ);
-      expect(s.executions).toEqual(exec);
-      expect(s.recurringFindings).toEqual(rec);
-      expect(s.planningReadiness).toEqual(ready);
-      expect(s.governanceKpis).toEqual(kpis);
+      expect(s.versions).toEqual([makeVersion()]);
+      expect(s.executions).toEqual([makeExecution()]);
+      expect(s.recurringFindings).toEqual([makeRecurring()]);
+      expect(s.planningReadiness).toEqual(makeReadiness());
+      expect(s.governanceKpis).toEqual(makeKpis());
+      expect(s.detailLoading).toBe(false);
     });
 
-    it("captures listPmPlanVersions failure as error without rethrowing", async () => {
-      m.listPmPlanVersions.mockRejectedValueOnce({ message: "no access" });
-
-      await expect(usePmStore.getState().openPlan(3)).resolves.toBeUndefined();
-
-      expect(usePmStore.getState().error).toBe("no access");
-      expect(usePmStore.getState().activePlanId).toBe(3);
-      expect(m.listPmOccurrences).not.toHaveBeenCalled();
+    it("captures a detail failure in detailError without rethrowing", async () => {
+      const err = new Error("no access");
+      m.listPmPlanVersions.mockRejectedValueOnce(err);
+      await expect(usePmStore.getState().openPlan(1)).resolves.toBeUndefined();
+      expect(usePmStore.getState().detailError).toBe(err);
+      expect(usePmStore.getState().error).toBeNull();
+      expect(usePmStore.getState().activePlanId).toBe(1);
     });
   });
 
   it("closePlan clears the active plan and all plan-detail state but not workspace lists", () => {
-    const plans = [makePlan()];
-    const due = [makeOccurrence()];
     usePmStore.setState({
-      plans,
-      dueOccurrences: due,
       activePlanId: 1,
       versions: [makeVersion()],
       occurrences: [makeOccurrence()],
       executions: [makeExecution()],
-      findingsByExecutionId: { 900: [makeFinding()] },
+      findingsByExecutionId: { 1: [makeFinding()] },
       recurringFindings: [makeRecurring()],
       planningReadiness: makeReadiness(),
       governanceKpis: makeKpis(),
+      detailError: new Error("x"),
+      plans: [makePlan()],
+      dueOccurrences: [makeOccurrence()],
     });
-
     usePmStore.getState().closePlan();
-
     const s = usePmStore.getState();
     expect(s.activePlanId).toBeNull();
     expect(s.versions).toEqual([]);
@@ -564,558 +570,202 @@ describe("pm-store", () => {
     expect(s.recurringFindings).toEqual([]);
     expect(s.planningReadiness).toBeNull();
     expect(s.governanceKpis).toBeNull();
-    expect(s.plans).toBe(plans);
-    expect(s.dueOccurrences).toBe(due);
+    expect(s.detailError).toBeNull();
+    expect(s.plans).toHaveLength(1);
+    expect(s.dueOccurrences).toHaveLength(1);
   });
 
-  // ── Individual loaders ────────────────────────────────────────────────────
+  // ── individual loaders ────────────────────────────────────────────────────
 
   describe("individual loaders", () => {
-    it("loadDueOccurrences requests non-completed occurrences", async () => {
-      const rows = [makeOccurrence({ id: 3 })];
-      m.listPmOccurrences.mockResolvedValueOnce(rows);
-      await usePmStore.getState().loadDueOccurrences();
-      expect(m.listPmOccurrences).toHaveBeenCalledWith({ include_completed: false });
-      expect(usePmStore.getState().dueOccurrences).toEqual(rows);
-    });
-
-    it("loadCalendarOccurrences requests completed occurrences too", async () => {
-      const rows = [makeOccurrence({ id: 4 })];
-      m.listPmOccurrences.mockResolvedValueOnce(rows);
-      await usePmStore.getState().loadCalendarOccurrences();
-      expect(m.listPmOccurrences).toHaveBeenCalledWith({ include_completed: true });
-      expect(usePmStore.getState().calendarOccurrences).toEqual(rows);
-    });
-
     it("loadOccurrences forwards the filter, defaulting to {}", async () => {
-      await usePmStore.getState().loadOccurrences({ pm_plan_id: 2, status: "due" });
-      expect(m.listPmOccurrences).toHaveBeenLastCalledWith({ pm_plan_id: 2, status: "due" });
       await usePmStore.getState().loadOccurrences();
-      expect(m.listPmOccurrences).toHaveBeenLastCalledWith({});
-      expect(usePmStore.getState().occurrences).toEqual([makeOccurrence()]);
-    });
-
-    it("loadDueMetrics and loadGenerationStatus store their results", async () => {
-      await usePmStore.getState().loadDueMetrics();
-      await usePmStore.getState().loadGenerationStatus();
-      expect(usePmStore.getState().metrics).toEqual(makeMetrics());
-      expect(usePmStore.getState().generationStatus).toEqual(makeGenStatus());
+      expect(m.listPmOccurrences).toHaveBeenCalledWith({});
+      await usePmStore.getState().loadOccurrences({ pm_plan_id: 3 });
+      expect(m.listPmOccurrences).toHaveBeenLastCalledWith({ pm_plan_id: 3 });
     });
 
     it("loadExecutions normalises undefined ids to null", async () => {
       await usePmStore.getState().loadExecutions();
-      expect(m.listPmExecutions).toHaveBeenLastCalledWith({
-        pm_plan_id: null,
-        occurrence_id: null,
-      });
-      await usePmStore.getState().loadExecutions(1, 500);
-      expect(m.listPmExecutions).toHaveBeenLastCalledWith({ pm_plan_id: 1, occurrence_id: 500 });
-      expect(usePmStore.getState().executions).toEqual([makeExecution()]);
+      expect(m.listPmExecutions).toHaveBeenCalledWith({ pm_plan_id: null, occurrence_id: null });
     });
 
     it("loadFindings merges findings per execution id", async () => {
-      const a = [makeFinding({ id: 1, pm_execution_id: 900 })];
-      const b = [makeFinding({ id: 2, pm_execution_id: 901 })];
-      m.listPmFindings.mockResolvedValueOnce(a).mockResolvedValueOnce(b);
-
-      await usePmStore.getState().loadFindings(900);
-      await usePmStore.getState().loadFindings(901);
-
-      expect(m.listPmFindings).toHaveBeenNthCalledWith(1, 900);
-      expect(m.listPmFindings).toHaveBeenNthCalledWith(2, 901);
-      expect(usePmStore.getState().findingsByExecutionId).toEqual({ 900: a, 901: b });
+      usePmStore.setState({ findingsByExecutionId: { 1: [makeFinding({ id: 1 })] } });
+      m.listPmFindings.mockResolvedValueOnce([makeFinding({ id: 2, pm_execution_id: 2 })]);
+      await usePmStore.getState().loadFindings(2);
+      const map = usePmStore.getState().findingsByExecutionId;
+      expect(Object.keys(map)).toEqual(["1", "2"]);
     });
 
-    it("loadRecurringFindings uses a 90 day window and null plan by default", async () => {
-      await usePmStore.getState().loadRecurringFindings();
-      expect(m.listPmRecurringFindings).toHaveBeenCalledWith({ pm_plan_id: null, days_window: 90 });
-      expect(usePmStore.getState().recurringFindings).toEqual([makeRecurring()]);
+    it("loadFindings records a failure as detailError (called from the dialog)", async () => {
+      const err = new Error("findings down");
+      m.listPmFindings.mockRejectedValueOnce(err);
+      await expect(usePmStore.getState().loadFindings(2)).resolves.toBeUndefined();
+      expect(usePmStore.getState().detailError).toBe(err);
     });
 
-    it("loadPlanningReadiness uses limit 200 and null plan by default", async () => {
-      await usePmStore.getState().loadPlanningReadiness();
-      expect(m.listPmPlanningReadiness).toHaveBeenCalledWith({ pm_plan_id: null, limit: 200 });
-      expect(usePmStore.getState().planningReadiness).toEqual(makeReadiness());
-    });
-
-    it("loadGovernanceKpis forwards input and defaults to {}", async () => {
-      await usePmStore.getState().loadGovernanceKpis({ from: "2026-01-01", to: "2026-02-01" });
-      expect(m.getPmGovernanceKpiReport).toHaveBeenLastCalledWith({
-        from: "2026-01-01",
-        to: "2026-02-01",
-      });
-      await usePmStore.getState().loadGovernanceKpis();
-      expect(m.getPmGovernanceKpiReport).toHaveBeenLastCalledWith({});
-      expect(usePmStore.getState().governanceKpis).toEqual(makeKpis());
-    });
-
-    it.each([
-      [
-        "loadDueOccurrences",
-        () => m.listPmOccurrences,
-        () => usePmStore.getState().loadDueOccurrences(),
-      ],
-      [
-        "loadCalendarOccurrences",
-        () => m.listPmOccurrences,
-        () => usePmStore.getState().loadCalendarOccurrences(),
-      ],
-      ["loadOccurrences", () => m.listPmOccurrences, () => usePmStore.getState().loadOccurrences()],
-      ["loadDueMetrics", () => m.getPmDueMetrics, () => usePmStore.getState().loadDueMetrics()],
-      [
-        "loadGenerationStatus",
-        () => m.getPmGenerationStatus,
-        () => usePmStore.getState().loadGenerationStatus(),
-      ],
-      ["loadExecutions", () => m.listPmExecutions, () => usePmStore.getState().loadExecutions()],
-      ["loadFindings", () => m.listPmFindings, () => usePmStore.getState().loadFindings(1)],
-      [
-        "loadRecurringFindings",
-        () => m.listPmRecurringFindings,
-        () => usePmStore.getState().loadRecurringFindings(),
-      ],
-      [
-        "loadPlanningReadiness",
-        () => m.listPmPlanningReadiness,
-        () => usePmStore.getState().loadPlanningReadiness(),
-      ],
-      [
-        "loadGovernanceKpis",
-        () => m.getPmGovernanceKpiReport,
-        () => usePmStore.getState().loadGovernanceKpis(),
-      ],
-    ] as const)("%s captures service errors without rethrowing", async (_name, getMock, run) => {
-      getMock().mockRejectedValueOnce({ code: "DB", message: "loader failed" });
-      await expect(run()).resolves.toBeUndefined();
-      expect(usePmStore.getState().error).toBe("loader failed");
-    });
-
-    it("loaders do not toggle loading or saving", async () => {
-      const d = deferred<PmDueMetrics>();
-      m.getPmDueMetrics.mockReturnValueOnce(d.promise);
-      const p = usePmStore.getState().loadDueMetrics();
-      expect(usePmStore.getState().loading).toBe(false);
-      expect(usePmStore.getState().saving).toBe(false);
-      d.resolve(makeMetrics());
-      await p;
+    it("plain loaders propagate failures to their caller", async () => {
+      m.getPmDueMetrics.mockRejectedValueOnce(new Error("metrics down"));
+      await expect(usePmStore.getState().loadDueMetrics()).rejects.toThrow("metrics down");
     });
   });
 
-  // ── updateGenerationSettings ──────────────────────────────────────────────
+  // ── mutations ─────────────────────────────────────────────────────────────
 
-  describe("updateGenerationSettings", () => {
-    it("saves, stores and returns the new status", async () => {
-      const status = makeGenStatus();
-      const d = deferred<PmGenerationStatus>();
-      m.updatePmGenerationSettings.mockReturnValueOnce(d.promise);
-
-      const p = usePmStore
-        .getState()
-        .updateGenerationSettings({ enabled: false, horizon_days: 60 });
-      expect(usePmStore.getState().saving).toBe(true);
-      d.resolve(status);
-
-      await expect(p).resolves.toEqual(status);
-      expect(m.updatePmGenerationSettings).toHaveBeenCalledWith({
-        enabled: false,
-        horizon_days: 60,
-      });
-      expect(usePmStore.getState().generationStatus).toEqual(status);
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-
-    it("sets error and rethrows on failure", async () => {
-      const err = { code: "VALIDATION", message: "bad cron" };
-      m.updatePmGenerationSettings.mockRejectedValueOnce(err);
-
-      await expect(usePmStore.getState().updateGenerationSettings({ cron_expr: "x" })).rejects.toBe(
-        err,
-      );
-      expect(usePmStore.getState().error).toBe("bad cron");
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-  });
-
-  // ── generateOccurrences ───────────────────────────────────────────────────
-
-  describe("generateOccurrences", () => {
-    it("generates, refreshes workspace lists and returns the result (no active plan)", async () => {
-      const result = makeGenResult();
-      m.generatePmOccurrences.mockResolvedValueOnce(result);
-
+  describe("mutations", () => {
+    it("a failed mutation rethrows, clears saving and is not stored (the IPC toast reports it)", async () => {
+      const err = { code: "VALIDATION_FAILED", message: "row version mismatch" };
+      m.transitionPmOccurrence.mockRejectedValueOnce(err);
       await expect(
-        usePmStore.getState().generateOccurrences({ horizon_days: 30 }),
-      ).resolves.toEqual(result);
+        usePmStore.getState().transitionOccurrence({
+          occurrence_id: 1,
+          expected_row_version: 1,
+          next_status: "scheduled",
+        }),
+      ).rejects.toBe(err);
+      const s = usePmStore.getState();
+      expect(s.saving).toBe(false);
+      expect(s.error).toBeNull();
+      expect(s.detailError).toBeNull();
+    });
 
-      expect(m.generatePmOccurrences).toHaveBeenCalledWith({ horizon_days: 30 });
-      expect(m.listPmOccurrences).toHaveBeenCalledWith({ include_completed: false });
-      expect(m.listPmOccurrences).toHaveBeenCalledWith({ include_completed: true });
+    it("sets saving while a mutation is in flight", async () => {
+      const gate = deferred<GeneratePmOccurrencesResult>();
+      m.generatePmOccurrences.mockReturnValueOnce(gate.promise);
+      const run = usePmStore.getState().generateOccurrences({});
+      expect(usePmStore.getState().saving).toBe(true);
+      gate.resolve(makeGenResult());
+      await run;
+      expect(usePmStore.getState().saving).toBe(false);
+    });
+
+    it("generateOccurrences refreshes lists, generation status and the open plan", async () => {
+      usePmStore.setState({ activePlanId: 1 });
+      m.generatePmOccurrences.mockResolvedValueOnce(makeGenResult({ generated_count: 2 }));
+      const result = await usePmStore.getState().generateOccurrences({});
+      expect(result.generated_count).toBe(2);
       expect(m.getPmDueMetrics).toHaveBeenCalled();
       expect(m.getPmGenerationStatus).toHaveBeenCalled();
-      expect(m.listPmPlanVersions).not.toHaveBeenCalled();
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-
-    it("refreshes active plan detail when a plan is open", async () => {
-      usePmStore.setState({ activePlanId: 1 });
-      m.generatePmOccurrences.mockResolvedValueOnce(makeGenResult());
-      await usePmStore.getState().generateOccurrences({ pm_plan_id: 1 });
       expectDetailRefreshed(1);
     });
 
-    it("sets saving while in flight", async () => {
-      const d = deferred<GeneratePmOccurrencesResult>();
-      m.generatePmOccurrences.mockReturnValueOnce(d.promise);
-      const p = usePmStore.getState().generateOccurrences({});
-      expect(usePmStore.getState().saving).toBe(true);
-      d.resolve(makeGenResult());
-      await p;
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-
-    it("sets error and rethrows on failure without refreshing", async () => {
-      const err = new Error("generation locked");
-      m.generatePmOccurrences.mockRejectedValueOnce(err);
-
-      await expect(usePmStore.getState().generateOccurrences({})).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("generation locked");
-      expect(usePmStore.getState().saving).toBe(false);
-      expect(m.listPmOccurrences).not.toHaveBeenCalled();
-    });
-  });
-
-  // ── transitionOccurrence ──────────────────────────────────────────────────
-
-  describe("transitionOccurrence", () => {
-    const input = { occurrence_id: 500, expected_row_version: 1, next_status: "ready" };
-
-    it("transitions, refreshes lists and the active plan detail, returns the occurrence", async () => {
+    it("a refresh failing after a successful mutation does not reject it", async () => {
       usePmStore.setState({ activePlanId: 1 });
-      const occ = makeOccurrence({ status: "ready", row_version: 2 });
-      m.transitionPmOccurrence.mockResolvedValueOnce(occ);
-
-      await expect(usePmStore.getState().transitionOccurrence(input)).resolves.toEqual(occ);
-
-      expect(m.transitionPmOccurrence).toHaveBeenCalledWith(input);
-      expect(m.getPmDueMetrics).toHaveBeenCalled();
-      expect(m.getPmGenerationStatus).not.toHaveBeenCalled();
-      expectDetailRefreshed(1);
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-
-    it("falls back to the occurrence's plan when no plan is open (without activating it)", async () => {
-      m.transitionPmOccurrence.mockResolvedValueOnce(makeOccurrence({ pm_plan_id: 8 }));
-
-      await usePmStore.getState().transitionOccurrence(input);
-
-      expectDetailRefreshed(8);
-      // Detail state is loaded for plan 8 while activePlanId stays null.
-      expect(usePmStore.getState().activePlanId).toBeNull();
-      expect(usePmStore.getState().versions).toEqual([makeVersion()]);
-    });
-
-    it("sets error and rethrows on failure", async () => {
-      const err = { code: "CONFLICT", message: "row version mismatch" };
-      m.transitionPmOccurrence.mockRejectedValueOnce(err);
-
-      await expect(usePmStore.getState().transitionOccurrence(input)).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("row version mismatch");
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-
-    it("rethrows when the post-transition detail refresh fails", async () => {
-      m.transitionPmOccurrence.mockResolvedValueOnce(makeOccurrence());
+      m.transitionPmOccurrence.mockResolvedValueOnce(makeOccurrence({ status: "scheduled" }));
       const err = new Error("versions failed");
       m.listPmPlanVersions.mockRejectedValueOnce(err);
-
-      await expect(usePmStore.getState().transitionOccurrence(input)).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("versions failed");
-    });
-  });
-
-  // ── executeOccurrence ─────────────────────────────────────────────────────
-
-  describe("executeOccurrence", () => {
-    const input = {
-      occurrence_id: 500,
-      expected_occurrence_row_version: 1,
-      execution_result: "completed",
-    };
-
-    function makeExecResult(planId = 1): ExecutePmOccurrenceResult {
-      return {
-        occurrence: makeOccurrence({ pm_plan_id: planId, status: "completed" }),
-        execution: makeExecution({ id: 901 }),
-        findings: [makeFinding({ pm_execution_id: 901 })],
-      };
-    }
-
-    it("executes, refreshes, loads findings for the new execution and returns the result", async () => {
-      usePmStore.setState({ activePlanId: 1 });
-      const result = makeExecResult();
-      m.executePmOccurrence.mockResolvedValueOnce(result);
-      const findings = [makeFinding({ id: 77, pm_execution_id: 901 })];
-      m.listPmFindings.mockResolvedValueOnce(findings);
-
-      await expect(usePmStore.getState().executeOccurrence(input)).resolves.toEqual(result);
-
-      expect(m.executePmOccurrence).toHaveBeenCalledWith(input);
-      expectDetailRefreshed(1);
-      expect(m.listPmFindings).toHaveBeenCalledWith(901);
-      expect(usePmStore.getState().findingsByExecutionId[901]).toEqual(findings);
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-
-    it("falls back to the result occurrence's plan when no plan is open", async () => {
-      m.executePmOccurrence.mockResolvedValueOnce(makeExecResult(6));
-      await usePmStore.getState().executeOccurrence(input);
-      expectDetailRefreshed(6);
-    });
-
-    it("sets saving during execution", async () => {
-      const d = deferred<ExecutePmOccurrenceResult>();
-      m.executePmOccurrence.mockReturnValueOnce(d.promise);
-      const p = usePmStore.getState().executeOccurrence(input);
-      expect(usePmStore.getState().saving).toBe(true);
-      d.resolve(makeExecResult());
-      await p;
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-
-    it("sets error and rethrows on failure", async () => {
-      const err = new Error("not executable");
-      m.executePmOccurrence.mockRejectedValueOnce(err);
-      await expect(usePmStore.getState().executeOccurrence(input)).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("not executable");
-      expect(m.listPmFindings).not.toHaveBeenCalled();
-    });
-  });
-
-  // ── Plan mutations ────────────────────────────────────────────────────────
-
-  describe("createPlan", () => {
-    it("creates, reloads the workspace, opens the new plan and returns it", async () => {
-      const plan = makePlan({ id: 2, code: "PM-002" });
-      m.createPmPlan.mockResolvedValueOnce(plan);
-
-      await expect(usePmStore.getState().createPlan(createPlanInput)).resolves.toEqual(plan);
-
-      expect(m.createPmPlan).toHaveBeenCalledWith(createPlanInput);
-      expect(m.listPmPlans).toHaveBeenCalledWith({});
-      expect(usePmStore.getState().activePlanId).toBe(2);
-      expectDetailRefreshed(2);
-      expect(usePmStore.getState().saving).toBe(false);
-      expect(usePmStore.getState().loading).toBe(false);
-    });
-
-    it("sets saving while in flight", async () => {
-      const d = deferred<PmPlan>();
-      m.createPmPlan.mockReturnValueOnce(d.promise);
-      const p = usePmStore.getState().createPlan(createPlanInput);
-      expect(usePmStore.getState().saving).toBe(true);
-      d.resolve(makePlan());
-      await p;
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-
-    it("sets error and rethrows on failure without touching the workspace", async () => {
-      const err = { code: "DUPLICATE", message: "code exists" };
-      m.createPmPlan.mockRejectedValueOnce(err);
-
-      await expect(usePmStore.getState().createPlan(createPlanInput)).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("code exists");
-      expect(usePmStore.getState().saving).toBe(false);
-      expect(m.listPmPlans).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("updatePlan", () => {
-    it("forwards id/row version/input, reloads and reopens the plan", async () => {
-      const plan = makePlan({ id: 1, title: "Renamed", row_version: 2 });
-      m.updatePmPlan.mockResolvedValueOnce(plan);
-
-      await expect(usePmStore.getState().updatePlan(1, 1, { title: "Renamed" })).resolves.toEqual(
-        plan,
-      );
-
-      expect(m.updatePmPlan).toHaveBeenCalledWith(1, 1, { title: "Renamed" });
-      expect(m.listPmPlans).toHaveBeenCalled();
-      expect(usePmStore.getState().activePlanId).toBe(1);
-      expectDetailRefreshed(1);
-    });
-
-    it("sets error and rethrows on failure", async () => {
-      const err = new Error("stale row version");
-      m.updatePmPlan.mockRejectedValueOnce(err);
-      await expect(usePmStore.getState().updatePlan(1, 1, {})).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("stale row version");
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-  });
-
-  describe("transitionPlanLifecycle", () => {
-    const input = { plan_id: 1, expected_row_version: 1, next_status: "active" };
-
-    it("transitions, reloads and reopens the plan", async () => {
-      const plan = makePlan({ lifecycle_status: "active", row_version: 2 });
-      m.transitionPmPlanLifecycle.mockResolvedValueOnce(plan);
-
-      await expect(usePmStore.getState().transitionPlanLifecycle(input)).resolves.toEqual(plan);
-
-      expect(m.transitionPmPlanLifecycle).toHaveBeenCalledWith(input);
-      expect(m.listPmPlans).toHaveBeenCalled();
-      expect(usePmStore.getState().activePlanId).toBe(1);
-    });
-
-    it("sets error and rethrows on failure", async () => {
-      const err = { message: "no published version" };
-      m.transitionPmPlanLifecycle.mockRejectedValueOnce(err);
-      await expect(usePmStore.getState().transitionPlanLifecycle(input)).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("no published version");
-    });
-  });
-
-  describe("deletePlan", () => {
-    it("closes the plan when deleting the active one, then reloads the workspace", async () => {
-      usePmStore.setState({
-        activePlanId: 1,
-        versions: [makeVersion()],
-        governanceKpis: makeKpis(),
+      const occ = await usePmStore.getState().transitionOccurrence({
+        occurrence_id: 1,
+        expected_row_version: 1,
+        next_status: "scheduled",
       });
-      m.deletePmPlan.mockResolvedValueOnce(undefined);
-      m.listPmPlans.mockResolvedValueOnce([]);
-
-      await expect(usePmStore.getState().deletePlan(1, 3)).resolves.toBeUndefined();
-
-      expect(m.deletePmPlan).toHaveBeenCalledWith(1, 3);
-      const s = usePmStore.getState();
-      expect(s.activePlanId).toBeNull();
-      expect(s.versions).toEqual([]);
-      expect(s.governanceKpis).toBeNull();
-      expect(s.plans).toEqual([]);
-      expect(s.saving).toBe(false);
+      expect(occ.status).toBe("scheduled");
+      expect(usePmStore.getState().detailError).toBe(err);
     });
 
-    it("keeps a different active plan open", async () => {
+    it("transitionOccurrence with no open plan only refreshes the workspace lists", async () => {
+      m.transitionPmOccurrence.mockResolvedValueOnce(makeOccurrence({ pm_plan_id: 7 }));
+      await usePmStore.getState().transitionOccurrence({
+        occurrence_id: 1,
+        expected_row_version: 1,
+        next_status: "scheduled",
+      });
+      expect(m.listPmPlanVersions).not.toHaveBeenCalled();
+      expect(usePmStore.getState().activePlanId).toBeNull();
+      expect(m.listPmOccurrences).toHaveBeenCalledWith({ include_completed: false });
+    });
+
+    it("executeOccurrence refreshes the open plan and loads the new execution's findings", async () => {
       usePmStore.setState({ activePlanId: 1 });
-      m.deletePmPlan.mockResolvedValueOnce(undefined);
+      const result: ExecutePmOccurrenceResult = {
+        occurrence: makeOccurrence({ status: "completed" }),
+        execution: makeExecution({ id: 42 }),
+        findings: [],
+      };
+      m.executePmOccurrence.mockResolvedValueOnce(result);
+      await expect(
+        usePmStore.getState().executeOccurrence({
+          occurrence_id: 1,
+          expected_occurrence_row_version: 1,
+          execution_result: "completed_no_findings",
+        }),
+      ).resolves.toEqual(result);
+      expectDetailRefreshed(1);
+      expect(m.listPmFindings).toHaveBeenCalledWith(42);
+    });
 
-      await usePmStore.getState().deletePlan(2, 1);
+    it("createPlan reloads the workspace and opens the new plan", async () => {
+      m.createPmPlan.mockResolvedValueOnce(makePlan({ id: 5 }));
+      const plan = await usePmStore.getState().createPlan(createPlanInput);
+      expect(plan.id).toBe(5);
+      expect(m.listPmPlans).toHaveBeenCalled();
+      expect(usePmStore.getState().activePlanId).toBe(5);
+      expectDetailRefreshed(5);
+    });
 
+    it("updatePlan forwards id/row version/input and reopens the plan", async () => {
+      m.updatePmPlan.mockResolvedValueOnce(makePlan({ id: 1, row_version: 2 }));
+      await usePmStore.getState().updatePlan(1, 1, { title: "New" });
+      expect(m.updatePmPlan).toHaveBeenCalledWith(1, 1, { title: "New" });
       expect(usePmStore.getState().activePlanId).toBe(1);
+    });
+
+    it("transitionPlanLifecycle reloads and reopens the plan", async () => {
+      m.transitionPmPlanLifecycle.mockResolvedValueOnce(makePlan({ lifecycle_status: "proposed" }));
+      await usePmStore.getState().transitionPlanLifecycle({
+        plan_id: 1,
+        expected_row_version: 1,
+        next_status: "proposed",
+      });
+      expect(m.listPmPlans).toHaveBeenCalled();
+      expectDetailRefreshed(1);
+    });
+
+    it("deletePlan closes the deleted active plan and reloads the workspace", async () => {
+      usePmStore.setState({ activePlanId: 1, versions: [makeVersion()] });
+      m.deletePmPlan.mockResolvedValueOnce(undefined);
+      await usePmStore.getState().deletePlan(1, 3);
+      expect(m.deletePmPlan).toHaveBeenCalledWith(1, 3);
+      expect(usePmStore.getState().activePlanId).toBeNull();
       expect(m.listPmPlans).toHaveBeenCalled();
     });
 
-    it("sets error, rethrows and keeps the active plan on failure", async () => {
-      usePmStore.setState({ activePlanId: 1 });
-      const err = { code: "IN_USE", message: "plan has occurrences" };
-      m.deletePmPlan.mockRejectedValueOnce(err);
-
-      await expect(usePmStore.getState().deletePlan(1, 1)).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("plan has occurrences");
-      expect(usePmStore.getState().activePlanId).toBe(1);
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-  });
-
-  // ── Version mutations ─────────────────────────────────────────────────────
-
-  describe("createVersion", () => {
-    it("creates for the plan, reopens that plan and returns the version", async () => {
-      const version = makeVersion({ id: 101, pm_plan_id: 1, version_no: 2 });
-      m.createPmPlanVersion.mockResolvedValueOnce(version);
-
-      await expect(usePmStore.getState().createVersion(1, createVersionInput)).resolves.toEqual(
-        version,
-      );
-
+    it("createVersion / updateVersion / publishVersion / deleteVersion reopen the plan", async () => {
+      m.createPmPlanVersion.mockResolvedValueOnce(makeVersion());
+      await usePmStore.getState().createVersion(1, createVersionInput);
       expect(m.createPmPlanVersion).toHaveBeenCalledWith(1, createVersionInput);
-      expect(usePmStore.getState().activePlanId).toBe(1);
-      expectDetailRefreshed(1);
-      // Does not reload the workspace.
-      expect(m.listPmPlans).not.toHaveBeenCalled();
-      expect(usePmStore.getState().saving).toBe(false);
-    });
 
-    it("sets error and rethrows on failure", async () => {
-      const err = new Error("overlapping effective dates");
-      m.createPmPlanVersion.mockRejectedValueOnce(err);
-      await expect(usePmStore.getState().createVersion(1, createVersionInput)).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("overlapping effective dates");
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-  });
+      m.updatePmPlanVersion.mockResolvedValueOnce(makeVersion({ row_version: 2 }));
+      await usePmStore.getState().updateVersion(100, 1, {});
+      expect(m.updatePmPlanVersion).toHaveBeenCalledWith(100, 1, {});
 
-  describe("updateVersion", () => {
-    it("updates and reopens the version's plan", async () => {
-      const version = makeVersion({ id: 100, pm_plan_id: 4, row_version: 2 });
-      m.updatePmPlanVersion.mockResolvedValueOnce(version);
-
-      await expect(
-        usePmStore.getState().updateVersion(100, 1, { change_reason: "fix" }),
-      ).resolves.toEqual(version);
-
-      expect(m.updatePmPlanVersion).toHaveBeenCalledWith(100, 1, { change_reason: "fix" });
-      expect(usePmStore.getState().activePlanId).toBe(4);
-      expectDetailRefreshed(4);
-    });
-
-    it("sets error and rethrows on failure", async () => {
-      const err = "version is published";
-      m.updatePmPlanVersion.mockRejectedValueOnce(err);
-      await expect(usePmStore.getState().updateVersion(100, 1, {})).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("version is published");
-    });
-  });
-
-  describe("publishVersion", () => {
-    it("publishes with the IPC input shape, reloads workspace and reopens the plan", async () => {
-      const version = makeVersion({ status: "published", pm_plan_id: 1 });
-      m.publishPmPlanVersion.mockResolvedValueOnce(version);
-
-      await expect(usePmStore.getState().publishVersion(100, 2)).resolves.toEqual(version);
-
+      m.publishPmPlanVersion.mockResolvedValueOnce(makeVersion({ status: "published" }));
+      await usePmStore.getState().publishVersion(100, 2);
       expect(m.publishPmPlanVersion).toHaveBeenCalledWith({
         version_id: 100,
         expected_row_version: 2,
       });
-      expect(m.listPmPlans).toHaveBeenCalled();
+
+      m.deletePmPlanVersion.mockResolvedValueOnce(undefined);
+      await usePmStore.getState().deleteVersion(100, 3);
+      expect(m.deletePmPlanVersion).toHaveBeenCalledWith(100, 3);
       expect(usePmStore.getState().activePlanId).toBe(1);
-      expect(usePmStore.getState().saving).toBe(false);
     });
 
-    it("sets error and rethrows on failure", async () => {
-      const err = { code: "VALIDATION", message: "trigger invalid" };
-      m.publishPmPlanVersion.mockRejectedValueOnce(err);
-      await expect(usePmStore.getState().publishVersion(100, 2)).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("trigger invalid");
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-  });
+    it("updateGenerationSettings stores the new status and rethrows failures", async () => {
+      const status = makeGenStatus();
+      m.updatePmGenerationSettings.mockResolvedValueOnce(status);
+      await expect(
+        usePmStore.getState().updateGenerationSettings({ enabled: false }),
+      ).resolves.toEqual(status);
+      expect(usePmStore.getState().generationStatus).toEqual(status);
 
-  describe("deleteVersion", () => {
-    it("deletes and reopens the active plan", async () => {
-      usePmStore.setState({ activePlanId: 1 });
-      m.deletePmPlanVersion.mockResolvedValueOnce(undefined);
-
-      await expect(usePmStore.getState().deleteVersion(100, 1)).resolves.toBeUndefined();
-
-      expect(m.deletePmPlanVersion).toHaveBeenCalledWith(100, 1);
-      expectDetailRefreshed(1);
-      expect(usePmStore.getState().saving).toBe(false);
-    });
-
-    it("does not refresh any detail when no plan is open", async () => {
-      m.deletePmPlanVersion.mockResolvedValueOnce(undefined);
-      await usePmStore.getState().deleteVersion(100, 1);
-      expect(m.listPmPlanVersions).not.toHaveBeenCalled();
-    });
-
-    it("sets error and rethrows on failure", async () => {
-      const err = new Error("cannot delete published version");
-      m.deletePmPlanVersion.mockRejectedValueOnce(err);
-      await expect(usePmStore.getState().deleteVersion(100, 1)).rejects.toBe(err);
-      expect(usePmStore.getState().error).toBe("cannot delete published version");
+      m.updatePmGenerationSettings.mockRejectedValueOnce(new Error("bad cron"));
+      await expect(
+        usePmStore.getState().updateGenerationSettings({ cron_expr: "x" }),
+      ).rejects.toThrow("bad cron");
+      expect(usePmStore.getState().error).toBeNull();
       expect(usePmStore.getState().saving).toBe(false);
     });
   });

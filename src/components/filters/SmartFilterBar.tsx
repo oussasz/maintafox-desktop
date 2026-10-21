@@ -61,6 +61,9 @@ export function SmartFilterBar({
   const [draftSearch, setDraftSearch] = useState(searchValue);
   const debouncedSearch = useDebouncedValue(draftSearch, debounceMs);
   const lastEmittedSearch = useRef(searchValue);
+  // Set when the parent replaced the value from code: the debounce still holds the old text
+  // until the draft catches up, so nothing may be emitted before that.
+  const pendingExternal = useRef<string | null>(null);
 
   // Sync external resets / parent-driven value into the draft input.
   // Only mark as emitted when the parent value actually differs from draft
@@ -70,23 +73,32 @@ export function SmartFilterBar({
     setDraftSearch((current) => {
       if (current === searchValue) return current;
       lastEmittedSearch.current = searchValue;
+      pendingExternal.current = searchValue;
       return searchValue;
     });
   }, [searchValue]);
 
-  // Emit settled search to the parent once per debounce window.
+  // Emit settled search to the parent once per debounce window. A debounced value that lags
+  // behind the draft is stale (e.g. the parent replaced the value meanwhile): never emit it.
   useEffect(() => {
+    if (pendingExternal.current !== null) {
+      if (draftSearch !== pendingExternal.current) return;
+      pendingExternal.current = null;
+    }
+    if (debouncedSearch !== draftSearch) return;
     if (debouncedSearch === lastEmittedSearch.current) return;
     lastEmittedSearch.current = debouncedSearch;
     onSearchChange(debouncedSearch);
-  }, [debouncedSearch, onSearchChange]);
+  }, [debouncedSearch, draftSearch, onSearchChange]);
 
   const handleSearchInput = (value: string) => {
+    pendingExternal.current = null;
     setDraftSearch(value);
     onSearchInputChange?.(value);
   };
 
   const clearSearch = () => {
+    pendingExternal.current = null;
     setDraftSearch("");
     lastEmittedSearch.current = "";
     onSearchInputChange?.("");

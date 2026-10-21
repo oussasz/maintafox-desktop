@@ -1,16 +1,37 @@
 {
+  "permitRules": {
+    "unusable": "Inutilisable",
+    "problem": {
+      "unknownClass": "Classe « {{code}} » absente de la liste publiée des classes.",
+      "unknownWorkType": "Type de travail « {{code}} » absent de la liste publiée.",
+      "unknownPermitType": "Type de permis « {{code}} » inconnu."
+    },
+    "unusableBanner_one": "{{count}} règle ne peut pas être appliquée ({{codes}}) : elle est ignorée quand une demande devient un OT. Corrigez-la.",
+    "unusableBanner_other": "{{count}} règles ne peuvent pas être appliquées ({{codes}}) : elles sont ignorées quand une demande devient un OT. Corrigez-les.",
+    "intro": "Chaque règle nomme une classe d'équipement et/ou un type de travail, et le type de permis qu'elle exige. Quand une demande devient un OT qui correspond, l'OT est marqué « permis requis ».",
+    "colClass": "Classe d'équipement",
+    "colWorkType": "Type de travail",
+    "colPermitType": "Type de permis exigé",
+    "anyClass": "Toute classe",
+    "anyWorkType": "Tout type de travail",
+    "choosePermitType": "Choisir un type de permis",
+    "incomplete": "Règle incomplète",
+    "incompleteHint": "Une règle nomme un type de permis et au moins une classe d'équipement ou un type de travail.",
+    "optionsLoadError": "Les classes, types de travail ou types de permis n'ont pas pu être lus"
+  },
   "page": {
     "title": "Données de référence",
-    "domainCount": "{{count}} domaine",
-    "domainCount_plural": "{{count}} domaines",
     "refresh": "Actualiser",
     "newDomain": "Nouveau domaine",
     "import": "Importer",
-    "emptyState": "Sélectionnez un domaine pour gérer ses valeurs de référence",
-    "valueEditorPlaceholder": "Éditeur de valeurs (en cours de développement)",
-    "setId": "Set #{{id}}",
+    "emptyState": "Sélectionnez un référentiel dans la liste",
     "noPermission": "Vous n'avez pas la permission d'accéder à cette page",
-    "retry": "Réessayer"
+    "retry": "Réessayer",
+    "domainCount_one": "{{count}} domaine",
+    "domainCount_other": "{{count}} domaines",
+    "noPermissionHint": "Demandez à un administrateur la permission de consulter les données de référence.",
+    "emptyStateHint": "Classes et familles d'équipement, modes de défaillance, criticités, compétences, types d'OT… Ouvrez une version pour voir et gérer ses valeurs.",
+    "valuesPane": "Valeurs du référentiel"
   },
   "browser": {
     "searchPlaceholder": "Rechercher des domaines...",
@@ -22,7 +43,7 @@
     "protectedDomain": "Domaine protégé (analytique)",
     "expand": "Développer",
     "collapse": "Réduire",
-    "newSet": "Nouveau jeu",
+    "newSet": "Nouveau brouillon",
     "workingCatalog": "Catalogue de travail",
     "renameDomain": "Renommer le domaine",
     "systemCatalogDomain": "Catalogue système (lecture seule)",
@@ -30,8 +51,11 @@
       "draft": "Brouillon",
       "validated": "Validé",
       "published": "Publié",
-      "superseded": "Remplacé"
-    }
+      "superseded": "Remplacé",
+      "unknown": "Statut inconnu"
+    },
+    "liveTable": "Table en direct",
+    "domainActions": "Actions pour {{domain}}"
   },
   "governance": {
     "category": {
@@ -47,24 +71,30 @@
       "unknown": "Catalogue"
     },
     "readOnly": {
-      "published": "Cette version est publiée. Créez un brouillon pour modifier ce référentiel.",
+      "published": "Cette version est publiée et utilisée par les formulaires. Créez un brouillon pour ajouter ou modifier des valeurs, puis publiez-le.",
       "publishedProtected": "Ce référentiel est publié et protégé. Les modifications ne sont pas autorisées.",
       "superseded": "Cette version a été remplacée. Créez un brouillon à partir de la version publiée pour modifier ce référentiel.",
       "supersededProtected": "Cette version a été remplacée. Les modifications ne sont pas autorisées.",
-      "systemCatalog": "Ce catalogue système est en lecture seule.",
+      "systemCatalog": "Ce catalogue est fourni par le produit et ne peut pas être modifié. Ajoutez des alias pour utiliser vos propres libellés dans les formulaires.",
       "createDraft": "Créer un brouillon",
       "creatingDraft": "Création du brouillon…",
       "discardDraft": "Abandonner le brouillon",
       "discardingDraft": "Abandon…",
       "discardDraftTitle": "Abandonner le brouillon ?",
-      "discardDraftDescription": "Cette action supprime définitivement le brouillon et toutes ses valeurs. Le catalogue publié n’est pas modifié."
-    }
+      "discardDraftDescription": "Cette action supprime définitivement le brouillon et toutes ses valeurs. Le catalogue publié n’est pas modifié.",
+      "candidateInProgress": "Une nouvelle version (v{{version}}) est en préparation. Les modifications se font dans cette version, puis elle est publiée.",
+      "openCandidate": "Ouvrir la version v{{version}}",
+      "noManagePermission": "Vous pouvez consulter ce référentiel. Sa modification demande la permission de gérer les données de référence.",
+      "validated": "Cette version est validée et attend sa publication ; elle ne peut plus être modifiée."
+    },
+    "systemValuesLocked": "Les valeurs marquées d'un cadenas sont fournies par le produit : elles ne peuvent être ni modifiées ni désactivées. Ajoutez vos propres valeurs, ou des alias pour un libellé local.",
+    "capsError": "Les droits de modification de ce référentiel n'ont pas pu être chargés : aucune modification n'est proposée."
   },
   "editor": {
     "addValue": "Ajouter une valeur",
     "publishSet": "Publier le jeu",
     "protected": "Protégé",
-    "emptyState": "Aucune valeur dans ce jeu",
+    "emptyState": "Aucune valeur dans cette version",
     "colCode": "Code",
     "colLabel": "Libellé",
     "colDescription": "Description",
@@ -92,7 +122,18 @@
       "noPermission": "Vous n'avez pas la permission de modifier cette valeur.",
       "systemValue": "Les valeurs système ne peuvent pas être modifiées ni supprimées.",
       "alreadyInactive": "Cette valeur est déjà inactive."
-    }
+    },
+    "version": "Version {{version}}",
+    "publishedOn": "publiée le {{date}}",
+    "emptyStateCanAdd": "Aucune valeur pour le moment. Utilisez « Ajouter une valeur » ou importez un fichier CSV.",
+    "addInProgress": "Terminez d'abord la valeur en cours de saisie.",
+    "previousPage": "Page précédente",
+    "nextPage": "Page suivante",
+    "codeImmutable": "Le code ne change pas après la création : il relie les enregistrements à cette valeur.",
+    "systemValue": "Valeur fournie par le produit",
+    "activeToggle": "Valeur « {{label}} » active",
+    "editValue": "Modifier « {{label}} »",
+    "deactivateValue": "Désactiver « {{label}} »"
   },
   "alias": {
     "title": "Alias – {{label}}",
@@ -113,7 +154,7 @@
     "preferred": "Préféré"
   },
   "publish": {
-    "title": "Prêt à publier",
+    "title": "Publication de cette version",
     "ready": "Prêt",
     "notReady": "{{count}} bloquant(s)",
     "blockers": "Bloquants",
@@ -127,7 +168,7 @@
     "noImpactData": "Aucune donnée d'impact disponible",
     "close": "Fermer",
     "confirmTitle": "Confirmer la publication",
-    "confirmDescription": "Ceci publiera le jeu brouillon et remplacera la version publiée actuelle.",
+    "confirmDescription": "Cette version sera mise en service et remplacera la version publiée actuelle.",
     "confirmProtected": "Il s'agit d'un domaine protégé. La publication nécessite des privilèges élevés et sera auditée.",
     "cancel": "Annuler",
     "confirm": "Publier",
@@ -149,11 +190,56 @@
       "personnel": "Personnel",
       "other": "Autres enregistrements",
       "external_integrations": "Intégrations externes"
+    },
+    "validateAndPublish": "Valider et publier",
+    "draftHint": "Les modifications de ce brouillon ne sont visibles dans les formulaires qu'après la publication. La publication vérifie la version, montre son impact puis la met en service.",
+    "validatedHint": "Cette version est validée. La publication la met en service et remplace la version actuelle.",
+    "noPublishPermission": "La publication demande la permission de publier les données de référence.",
+    "impactLoading": "Calcul de l'impact…",
+    "noRecordAffected": "Aucun enregistrement n'utilise une valeur retirée ou désactivée.",
+    "unverifiedModules": "Non vérifié sur ce poste : {{modules}}.",
+    "remapHint": "Les enregistrements qui utilisent une valeur conservée suivent automatiquement la nouvelle version.",
+    "publishedToast": "Version {{version}} publiée",
+    "check": {
+      "set_status": "La version doit être validée avant sa publication.",
+      "validation_report_missing": "La version n'a pas encore été vérifiée.",
+      "validation_blockers": "La dernière vérification a trouvé des problèmes à corriger.",
+      "validation_failed": "La dernière vérification a échoué.",
+      "unresolved_migrations": "Des valeurs désactivées dans cette version n'ont pas de valeur de remplacement. Réactivez-les, ou fusionnez-les dans une autre valeur, avant de publier.",
+      "impact_preview_required": "Ce référentiel est protégé : consultez l'aperçu de l'impact avant de publier."
     }
   },
   "import": {
+    "problem": {
+      "REF_IMPORT_MISSING_CODE": "Ligne {{row}} : code manquant.",
+      "REF_IMPORT_INVALID_CODE_FORMAT": "Ligne {{row}} : le code « {{code}} » n'est pas valide (majuscules, chiffres, « _ » et « . », 1 à 64 caractères).",
+      "REF_IMPORT_DUPLICATE_IN_BATCH": "Ligne {{row}} : le code « {{code}} » figure déjà à la ligne {{firstRow}} du fichier.",
+      "REF_IMPORT_PROTECTED_DOMAIN_UPDATE": "Ligne {{row}} : « {{code}} » existe déjà dans la liste protégée {{domain}} ; sa mise à jour sera tracée.",
+      "REF_IMPORT_MISSING_LABEL": "Ligne {{row}} : libellé manquant.",
+      "REF_IMPORT_BLANK_LABEL": "Ligne {{row}} : libellé vide.",
+      "REF_IMPORT_MISSING_PARENT": "Ligne {{row}} : la valeur doit être rattachée à une valeur de {{parentDomain}} (colonne parent_code).",
+      "REF_IMPORT_INVALID_PARENT": "Ligne {{row}} : parent « {{parentCode}} » introuvable dans {{parentDomain}}.",
+      "REF_IMPORT_INVALID_NATURE_TAG": "Ligne {{row}} : nature « {{tag}} » refusée. {{detail}}",
+      "REF_IMPORT_INVALID_UNIT": "Ligne {{row}} : unité refusée. {{detail}}",
+      "REF_IMPORT_INVALID_CURRENCY": "Ligne {{row}} : devise « {{code}} » refusée. {{detail}}"
+    },
+    "messageDetail": "Détail",
+    "category": {
+      "MissingCode": "Code manquant",
+      "InvalidCodeFormat": "Format de code invalide",
+      "DuplicateInBatch": "Code en double dans le fichier",
+      "ProtectedDomainUpdate": "Liste protégée : la mise à jour de cette valeur sera tracée",
+      "MissingLabel": "Libellé manquant",
+      "BlankLabel": "Libellé vide",
+      "MissingParent": "Parent manquant (obligatoire pour cette liste)",
+      "InvalidParent": "Parent introuvable",
+      "InvalidNatureTag": "Nature de maintenance invalide",
+      "InvalidUnit": "Unité invalide",
+      "InvalidCurrency": "Devise invalide",
+      "other": "Autre contrôle"
+    },
     "title": "Importer des valeurs de référence",
-    "description": "Téléchargez un fichier CSV pour importer des valeurs dans le jeu sélectionné.",
+    "description": "Importez un fichier CSV (colonnes code, label, description…) dans le brouillon ouvert. Le fichier exporté par « Exporter (CSV) » peut être réimporté après modification.",
     "stepUpload": "Télécharger",
     "stepValidate": "Valider",
     "stepResult": "Résultat",
@@ -179,43 +265,41 @@
     "created": "Créés",
     "updated": "Mis à jour",
     "skipped": "Ignorés",
-    "errored": "En erreur"
+    "errored": "En erreur",
+    "action": {
+      "create": "Création",
+      "update": "Mise à jour",
+      "other": "Autre"
+    },
+    "rowStatus": {
+      "valid": "Valide",
+      "warning": "Avertissement",
+      "error": "Erreur",
+      "other": "Inconnu"
+    }
   },
-  "woTypes": {
-    "panelTitle": "Types d'ordre de travail",
-    "colCode": "Code",
-    "colLabel": "Libellé",
-    "colSystem": "Origine",
-    "colActive": "Actif",
-    "colActions": "Actions",
-    "systemBadge": "Système",
-    "customBadge": "Personnalisé",
-    "lockedHint": "Code verrouillé (type système)",
-    "addType": "Ajouter un type",
-    "deleteTitle": "Supprimer le type",
-    "deleteDescription": "Supprimer définitivement le type « {{code}} » ?",
-    "empty": "Aucun type chargé.",
-    "active": "Actif",
-    "inactive": "Inactif"
-  },
-  "woPriorities": {
-    "panelTitle": "Priorités d'ordre de travail",
+  "urgencyScale": {
+    "panelTitle": "Échelle d'urgence (DI / OT)",
+    "hint": "Une seule échelle pour les demandes et les ordres de travail. Les cinq niveaux sont fixés par Maintafox (ils pilotent le SLA des demandes, l'ordre du carnet de travaux et les indicateurs) : vous ajustez leurs libellés et leurs délais cibles. Les délais « valeurs de départ » sont proposés par le produit et sont à valider par le site.",
+    "colRank": "Rang",
     "colLevel": "Niveau",
-    "colCode": "Code",
-    "colSystem": "Origine",
-    "colLabelEn": "Libellé (EN)",
     "colLabelFr": "Libellé (FR)",
-    "colColor": "Couleur",
-    "colActive": "Actif",
+    "colLabelEn": "Libellé (EN)",
+    "colResponse": "Prise en charge",
+    "colCompletion": "Réalisation",
+    "colEscalation": "Seuil d'alerte",
+    "colSource": "Délais",
     "colActions": "Actions",
-    "systemBadge": "Système",
-    "customBadge": "Personnalisé",
-    "lockedHint": "Priorité système (code et niveau protégés)",
-    "active": "Actif",
-    "inactive": "Inactif",
-    "empty": "Aucune priorité chargée.",
-    "deactivateTitle": "Désactiver la priorité",
-    "deactivateDescription": "Désactiver la priorité « {{code}} » ?"
+    "hours_one": "{{count}} h",
+    "hours_other": "{{count}} h",
+    "lockedHint": "Niveau fixé par Maintafox (code et rang protégés)",
+    "editLevel": "Modifier le niveau « {{level}} »",
+    "sourceStarter": "Valeurs de départ",
+    "sourceStarterHint": "Délais proposés par Maintafox, à valider ou ajuster par le site.",
+    "sourceSlaRule": "Repris des règles SLA",
+    "sourceSlaRuleHint": "Délais repris de l'ancienne règle SLA « toutes origines » de ce niveau.",
+    "sourceCompany": "Paramétré par le site",
+    "empty": "Échelle non chargée."
   },
   "woStatuses": {
     "panelTitle": "Statuts d'ordre de travail",
@@ -231,10 +315,11 @@
     "terminalYes": "Oui",
     "terminalNo": "Non",
     "lockedHint": "Code statut verrouillé (contrat moteur)",
-    "empty": "Aucun statut chargé."
+    "empty": "Aucun statut chargé.",
+    "systemBadge": "Système",
+    "customBadge": "Personnalisé"
   },
   "synthetic": {
-    "published": "v1 — publié",
     "articleFamilies": {
       "title": "Familles d’articles de stock",
       "add": "Ajouter une famille",
@@ -257,11 +342,19 @@
       "deactivateTitle": "Désactiver la catégorie TVA",
       "deactivateDescription": "Désactiver la catégorie TVA « {{code}} » ?"
     },
-    "woTypes": {
-      "codePlaceholder": "type_personnalise"
-    },
     "woStatuses": {
       "colorPlaceholder": "#RRGGBB"
+    },
+    "liveTable": "Table en direct",
+    "liveTableHint": "Cette liste appartient à un autre module et n'a pas de versions : chaque modification s'applique immédiatement.",
+    "domains": {
+      "permitTypes": "Types de permis de travail",
+      "articleFamilies": "Familles d'articles de stock",
+      "taxCategories": "Catégories TVA des articles",
+      "woStatuses": "Statuts d'ordre de travail",
+      "urgencyScale": "Échelle d'urgence (DI / OT)",
+      "notificationRules": "Notifications (destinataires et escalade)",
+      "notificationCategories": "Catégories de notification"
     }
   },
   "combobox": {
@@ -280,8 +373,24 @@
     "cancel": "Annuler",
     "save": "Enregistrer"
   },
+  "absenceBehaviour": {
+    "column": "Comportement",
+    "hint": "Ce que le programme fait des absences de ce type. Obligatoire.",
+    "placeholder": "Choisir un comportement",
+    "tags": {
+      "leave": "Congé (absence simple)",
+      "critical": "Critique (critique pour la planification)",
+      "training": "Formation"
+    },
+    "criticalRemovedWarning": "Les absences déjà saisies de ce type restent marquées critiques."
+  },
+  "maintenanceNature": {
+    "column": "Nature de l'OT (EN 13306)",
+    "fallback": "Non précisée : corrective (immédiate si urgence)",
+    "fallbackHint": "Sans nature, la conversion de la demande en OT crée un OT correctif : immédiat si l'urgence est au niveau le plus haut de l'échelle, différé sinon."
+  },
   "schedulePattern": {
-    "title": "Calendrier hebdomadaire",
+    "title": "Horaire de la classe horaire",
     "column": "Horaire",
     "cancel": "Annuler",
     "close": "Fermer le modèle horaire",
@@ -345,6 +454,56 @@
       "friday": "Ven",
       "saturday": "Sam",
       "sunday": "Dim"
-    }
+    },
+    "open": "Ouvrir l’horaire",
+    "afterCreate": "Après création"
+  },
+  "export": {
+    "action": "Exporter (CSV)",
+    "dialogTitle": "Enregistrer les valeurs du référentiel",
+    "done_one": "{{count}} valeur exportée",
+    "done_other": "{{count}} valeurs exportées",
+    "nothingToExport": "Aucune valeur à exporter"
+  },
+  "units": {
+    "none": "Sans unité",
+    "choose": "Choisir une unité",
+    "retired": "{{unit}} (retirée des données de référence)",
+    "colSymbol": "Symbole",
+    "colLabelEn": "Libellé anglais",
+    "colDimension": "Grandeur",
+    "colBase": "Unité de base et facteur",
+    "colRec20": "Code UN/CEFACT",
+    "noDimension": "Non renseignée",
+    "standard": "Unité standard (protégée)",
+    "factorRule": "1 {{unit}} = {{factor}} {{base}}",
+    "toReview": "À revoir",
+    "toReviewHint": "Unité créée à la migration pour un code ou un texte inconnu : indiquez son unité standard de base et le facteur. Aucune conversion ne l'utilise avant.",
+    "symbolPlaceholder": "ex. sac",
+    "dimensionFromBase": "Celle de l'unité de base",
+    "factor": "Facteur",
+    "baseUnit": "Unité standard de base",
+    "chooseBase": "Unité de base…",
+    "factorInvalid": "Le facteur doit être un nombre strictement positif.",
+    "reviewFilter": "À revoir ({{count}})"
+  },
+  "natureReview": {
+    "title_one": "{{count}} type d’OT n’a pas de nature de maintenance",
+    "title_other": "{{count}} types d’OT n’ont pas de nature de maintenance",
+    "hint": "Repris de l’ancienne liste de l’usine, ils ne comptent dans aucune part (planifiée, réactive, urgence). Attribuez une nature à chacun, une fois.",
+    "workOrders_one": "{{count}} OT",
+    "workOrders_other": "{{count}} OT",
+    "inactive": "(inactif)",
+    "give": "Attribuer une nature",
+    "dialogTitle": "Nature de « {{label}} »",
+    "dialogHint": "La nature détermine comment comptent les OT de ce type (codification des défaillances, travaux planifiés / réactifs / urgents). Elle s’attribue une seule fois et est enregistrée avec votre motif.",
+    "nature": "Nature de maintenance",
+    "naturePlaceholder": "Choisir une nature…",
+    "natureRequired": "Choisissez une nature.",
+    "naturesUnavailable": "Les natures de maintenance n’ont pas pu être lues. Vérifiez la liste « WORK.MAINTENANCE_NATURES » dans les données de référence.",
+    "reason": "Motif",
+    "reasonMin": "Écrivez au moins {{min}} caractères.",
+    "cancel": "Annuler",
+    "save": "Enregistrer"
   }
 }

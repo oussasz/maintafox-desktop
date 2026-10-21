@@ -65,4 +65,7 @@ pub struct UpsertReportScheduleInput {
 pub struct ExportReportInput {
     pub template_code: String,
     pub export_format: String,
+    /// Report language (`"fr"` | `"en"`); the app language is used when absent.
+    #[serde(default)]
+    pub locale: Option<String>,
 }

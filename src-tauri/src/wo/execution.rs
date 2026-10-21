@@ -5,7 +5,7 @@
 
 use crate::errors::{AppError, AppResult};
 use crate::wo::queries;
-use crate::wo::time::now_utc_z;
+use crate::wo::time::{now_utc_second, now_utc_z, stamp};
 use crate::wo::workflow::events::emit_action_event;
 use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
@@ -25,9 +25,24 @@ pub struct WoPlanInput {
     pub planner_id: i64,
     pub planned_start: Option<String>,
     pub planned_end: Option<String>,
+    /// Old fixed shift code: refused; use `shift_class_version_id` (`wo::shifts`).
     pub shift: Option<String>,
+    /// A shift window of the team's Classe horaire on the planned day; `None` keeps the current.
+    #[serde(default)]
+    pub shift_class_version_id: Option<i64>,
+    /// Removes the shift.
+    #[serde(default)]
+    pub clear_shift: bool,
     pub expected_duration_hours: Option<f64>,
-    pub urgency_id: Option<i64>,
+    /// People the job takes; `None` keeps the current one.
+    #[serde(default)]
+    pub planned_crew_size: Option<i64>,
+    /// Removes the crew size.
+    #[serde(default)]
+    pub clear_crew_size: bool,
+    /// Level of the shared DI / OT urgency scale (`emergency` … `low`).
+    #[serde(default)]
+    pub urgency_code: Option<String>,
     pub planned_downtime_hours: Option<f64>,
 }
 
@@ -50,6 +65,12 @@ pub struct WoEmergencyReassignInput {
     pub assigned_team_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
     pub override_reason: String,
+    /// The new team's shift window; `None` keeps the current one (the new team must work it).
+    #[serde(default)]
+    pub shift_class_version_id: Option<i64>,
+    /// Removes the shift.
+    #[serde(default)]
+    pub clear_shift: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -73,6 +94,11 @@ pub struct WoResumeInput {
     pub wo_id: i64,
     pub actor_id: i64,
     pub expected_row_version: i64,
+    /// Estimated remaining time (hours, > 0) for the permit gate instead of the full expected
+    /// duration (`permit::wo_gate`); recorded on the resume's transition-log row, never written
+    /// over the work order's planned or expected duration. Absent: the full expected duration.
+    #[serde(default)]
+    pub estimated_remaining_hours: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -199,8 +225,12 @@ pub async fn plan_wo(db: &DatabaseConnection, input: WoPlanInput) -> AppResult<W
             planned_start: input.planned_start,
             planned_end: input.planned_end,
             shift: input.shift,
+            shift_class_version_id: input.shift_class_version_id,
+            clear_shift: input.clear_shift,
             expected_duration_hours: input.expected_duration_hours,
-            urgency_id: input.urgency_id,
+            planned_crew_size: input.planned_crew_size,
+            clear_crew_size: input.clear_crew_size,
+            urgency_code: input.urgency_code,
             planned_downtime_hours: input.planned_downtime_hours,
         },
     )
@@ -237,6 +267,8 @@ pub async fn emergency_reassign_wo(db: &DatabaseConnection, input: WoEmergencyRe
             assigned_team_id: input.assigned_team_id,
             primary_responsible_id: input.primary_responsible_id,
             override_reason: input.override_reason,
+            shift_class_version_id: input.shift_class_version_id,
+            clear_shift: input.clear_shift,
         },
     )
     .await
@@ -247,18 +279,19 @@ pub async fn emergency_reassign_wo(db: &DatabaseConnection, input: WoEmergencyRe
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult<WorkOrder> {
-    crate::permit::wo_gate::assert_in_progress_permit_gate(db, input.wo_id).await?;
-    // Read before the transaction: the single pooled connection is held by `txn` afterwards.
-    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(db, input.wo_id).await?;
-
+    // One clock read: the moment judged by the permit gate is the start recorded below.
+    let at = now_utc_second();
     let txn = db.begin().await?;
+    // Permit gate in the same transaction as the status change (no window in between).
+    crate::permit::wo_gate::assert_in_progress_permit_gate_with(&txn, input.wo_id, None, at).await?;
+    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(&txn, input.wo_id).await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
     assert_action_allowed(&current_status, WoAction::Start).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     guard_wo_transition(&current_status, &WoStatus::InProgress).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let in_progress_status_id = resolve_status_id(&txn, "in_progress").await?;
-    let now = now_utc_z();
+    let now = stamp(at);
 
     // Close any open delay segment
     txn.execute(Statement::from_sql_and_values(
@@ -463,18 +496,20 @@ async fn hold_wo(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResult<WorkOrder> {
-    crate::permit::wo_gate::assert_in_progress_permit_gate(db, input.wo_id).await?;
-    // Read before the transaction: the single pooled connection is held by `txn` afterwards.
-    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(db, input.wo_id).await?;
-
+    let remaining = crate::permit::wo_gate::checked_remaining_hours(input.estimated_remaining_hours)?;
+    // One clock read: the moment judged by the permit gate is the resume recorded below.
+    let at = now_utc_second();
     let txn = db.begin().await?;
+    // Permit gate in the same transaction as the status change (no window in between).
+    crate::permit::wo_gate::assert_in_progress_permit_gate_with(&txn, input.wo_id, remaining, at).await?;
+    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(&txn, input.wo_id).await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
     assert_action_allowed(&current_status, WoAction::Resume).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     guard_wo_transition(&current_status, &WoStatus::InProgress).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let in_progress_status_id = resolve_status_id(&txn, "in_progress").await?;
-    let now = now_utc_z();
+    let now = stamp(at);
 
     // Close all open delay segments
     txn.execute(Statement::from_sql_and_values(
@@ -521,7 +556,8 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
         .await?;
     check_concurrency(result.rows_affected())?;
 
-    log_transition(
+    // The remaining time entered (if any) is recorded on this row: who, when, the value.
+    crate::wo::workflow::transition::log_transition_with_remaining(
         &txn,
         input.wo_id,
         &from_code,
@@ -531,6 +567,7 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
         None,
         None,
         &now,
+        remaining,
     )
     .await?;
 
@@ -667,7 +704,8 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
                     AND COALESCE(quantity_used, 0) <= 0) AS pending_planned, \
                 (SELECT COUNT(*) FROM work_order_parts \
                   WHERE work_order_id = ? \
-                    AND COALESCE(origin, 'planned') = 'planned') AS planned_count, \
+                    AND COALESCE(origin, 'planned') = 'planned' \
+                    AND consumption_status <> 'cancelled') AS planned_count, \
                 (SELECT COUNT(*) FROM work_order_parts \
                   WHERE work_order_id = ? \
                     AND (COALESCE(consumption_status, '') = 'used' \
@@ -732,13 +770,13 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
         },
     });
 
-    // ── RAMS (corrective / emergency only) ────────────────────────────────
+    // ── RAMS (corrective natures only, EN 13306) ──────────────────────────
     let wo_type_row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wot.code AS type_code, wo.root_cause_summary \
+            "SELECT wot.semantic_tag AS nature_code, wo.root_cause_summary \
              FROM work_orders wo \
-             JOIN work_order_types wot ON wot.id = wo.type_id \
+             LEFT JOIN reference_values wot ON wot.id = wo.type_id \
              WHERE wo.id = ?",
             [wo_id.into()],
         ))
@@ -747,10 +785,13 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
             entity: "WorkOrder".into(),
             id: wo_id.to_string(),
         })?;
-    let type_code: String = wo_type_row
-        .try_get("", "type_code")
-        .map_err(|e| decode_err("type_code", e))?;
-    let rams_required = matches!(type_code.as_str(), "corrective" | "emergency");
+    let nature_code: Option<String> = wo_type_row
+        .try_get("", "nature_code")
+        .map_err(|e| decode_err("nature_code", e))?;
+    let rams_required = nature_code
+        .as_deref()
+        .and_then(crate::wo::types::MaintenanceNature::parse)
+        .is_some_and(|n| n.is_corrective());
 
     let mut symptom_ok = true;
     let mut failure_mode_ok = true;
@@ -958,6 +999,8 @@ pub async fn complete_wo_mechanically(db: &DatabaseConnection, input: WoMechComp
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
+    // Its schedule commitments are closed with it (`planning::lifecycle`).
+    crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.wo_id).await?;
     txn.commit().await?;
     Ok(wo)
 }

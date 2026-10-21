@@ -7,6 +7,7 @@ import { DetailSectionCard } from "@/components/detail";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -23,12 +24,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { describeAppError } from "@/lib/app-error";
 import {
   deleteSupplierContact,
   listSupplierContacts,
   upsertSupplierContact,
 } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { SupplierContact } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -68,6 +69,7 @@ export function SupplierContactsSection({ supplierId }: SupplierContactsSectionP
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<ContactFormState>(EMPTY_FORM);
+  const [pendingDelete, setPendingDelete] = useState<SupplierContact | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,7 +77,7 @@ export function SupplierContactsSection({ supplierId }: SupplierContactsSectionP
     try {
       setContacts(await listSupplierContacts(supplierId));
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setLoading(false);
     }
@@ -93,7 +95,7 @@ export function SupplierContactsSection({ supplierId }: SupplierContactsSectionP
       await load();
       return true;
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
       return false;
     } finally {
       setSaving(false);
@@ -146,7 +148,26 @@ export function SupplierContactsSection({ supplierId }: SupplierContactsSectionP
         </PermissionGate>
       </div>
 
-      {error ? <p className="text-xs text-status-danger">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-xs text-tone-danger-fg">
+          {error}
+        </p>
+      ) : null}
+      <ConfirmDialog
+        open={pendingDelete != null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title={t("procurement.suppliers.contacts.deleteTitle")}
+        description={t("procurement.suppliers.contacts.deleteDescription", {
+          name: pendingDelete?.contact_name ?? "",
+        })}
+        confirmLabel={tc("action.delete")}
+        destructive
+        onConfirm={async () => {
+          if (pendingDelete) await runMutation(() => deleteSupplierContact(pendingDelete.id));
+        }}
+      />
 
       {loading ? (
         <p className="text-xs text-text-muted">{tc("app.loading")}</p>
@@ -190,7 +211,7 @@ export function SupplierContactsSection({ supplierId }: SupplierContactsSectionP
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="h-5 px-1.5 text-[11px]"
+                    className="h-9 px-2 text-xs"
                     disabled={saving}
                     onClick={() => openEditForm(contact)}
                   >
@@ -199,9 +220,9 @@ export function SupplierContactsSection({ supplierId }: SupplierContactsSectionP
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="h-5 px-1.5 text-[11px] text-status-danger hover:text-status-danger"
+                    className="h-9 px-2 text-xs text-tone-danger-fg hover:text-tone-danger-fg"
                     disabled={saving}
-                    onClick={() => void runMutation(() => deleteSupplierContact(contact.id))}
+                    onClick={() => setPendingDelete(contact)}
                   >
                     {tc("action.delete")}
                   </Button>

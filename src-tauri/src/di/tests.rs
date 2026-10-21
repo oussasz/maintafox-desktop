@@ -7,8 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::di::audit;
     use crate::di::conversion::{convert_di_to_work_order, WoConversionInput};
@@ -23,30 +22,14 @@ mod tests {
     };
     use crate::di::sla::{compute_sla_status, resolve_sla_rule, DiSlaLifecycleStatus};
     use crate::di::sla_poller::run_sla_poll_tick;
+    use crate::errors::AppError;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Setup helpers
     // ═══════════════════════════════════════════════════════════════════════════
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
+        let db = crate::db::test_db::seeded().await;
 
         seed_fk_data(&db).await;
 
@@ -151,7 +134,7 @@ mod tests {
             safety_flag: false,
             environmental_flag: false,
             quality_flag: false,
-            reported_urgency: "medium".to_string(),
+            reported_urgency: "normal".to_string(),
             observed_at: None,
             source_inspection_anomaly_id: None,
             submitter_id: user_id,
@@ -388,14 +371,14 @@ mod tests {
             DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
              target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
-             VALUES ('Critical', 'critical', NULL, NULL, 1, 8, 1, 1)",
+             VALUES ('Critical', 'emergency', NULL, NULL, 1, 8, 1, 1)",
             [],
         ))
         .await
         .expect("insert critical SLA rule");
 
         let mut input = make_create_input(&db, user_id).await;
-        input.reported_urgency = "critical".to_string();
+        input.reported_urgency = "emergency".to_string();
         let di = create_intervention_request(&db, input)
             .await
             .expect("create critical DI");
@@ -431,14 +414,14 @@ mod tests {
             DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
              target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
-             VALUES ('Critical', 'critical', NULL, NULL, 1, 8, 1, 1)",
+             VALUES ('Critical', 'emergency', NULL, NULL, 1, 8, 1, 1)",
             [],
         ))
         .await
         .expect("insert critical SLA rule");
 
         let mut input = make_create_input(&db, user_id).await;
-        input.reported_urgency = "critical".to_string();
+        input.reported_urgency = "emergency".to_string();
         let di = create_intervention_request(&db, input)
             .await
             .expect("create critical DI");
@@ -486,14 +469,14 @@ mod tests {
             DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
              target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
-             VALUES ('Medium', 'medium', NULL, NULL, 24, 72, 4, 1)",
+             VALUES ('Medium', 'normal', NULL, NULL, 24, 72, 4, 1)",
             [],
         ))
         .await
         .expect("insert rule");
 
         let mut input = make_create_input(&db, user_id).await;
-        input.reported_urgency = "medium".to_string();
+        input.reported_urgency = "normal".to_string();
         let di = create_intervention_request(&db, input).await.expect("create DI");
 
         db.execute(Statement::from_sql_and_values(
@@ -613,14 +596,14 @@ mod tests {
             DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
              target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
-             VALUES ('Critical', 'critical', NULL, NULL, 1, 8, 1, 1)",
+             VALUES ('Critical', 'emergency', NULL, NULL, 1, 8, 1, 1)",
             [],
         ))
         .await
         .expect("insert rule");
 
         let mut input = make_create_input(&db, user_id).await;
-        input.reported_urgency = "critical".to_string();
+        input.reported_urgency = "emergency".to_string();
         let di = create_intervention_request(&db, input).await.expect("create DI");
 
         db.execute(Statement::from_sql_and_values(
@@ -915,6 +898,7 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: rv,
                 reviewer_note: "Need more details on vibration frequency".into(),
+                reason_code: Some("unclear_description".into()),
             },
         )
         .await
@@ -987,7 +971,7 @@ mod tests {
                 di_id: di.id,
                 actor_id: user_id,
                 expected_row_version: rv,
-                validated_urgency: "medium".into(),
+                validated_urgency: "normal".into(),
                 classification_code_id: Some(900001),
                 reviewer_note: None,
             },
@@ -1035,5 +1019,100 @@ mod tests {
         // Guard: closed is immutable
         let invalid = guard_transition(&DiStatus::Closed, &DiStatus::InReview);
         assert!(invalid.is_err(), "Closed → InReview must be illegal");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TEST 30 – Shared urgency scale drives the request intake and its SLA
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_30_request_urgency_is_a_level_of_the_shared_scale() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let mut input = make_create_input(&db, user_id).await;
+        input.reported_urgency = "medium".to_string();
+        let err = create_intervention_request(&db, input)
+            .await
+            .expect_err("legacy code refused");
+        assert!(matches!(err, AppError::ValidationFailed(ref m)
+            if m.iter().any(|s| s.contains(crate::reference::urgency_scale::GATE_URGENCY_SCALE_INVALID))));
+
+        let mut input = make_create_input(&db, user_id).await;
+        input.reported_urgency = "Urgent".to_string();
+        let di = create_intervention_request(&db, input).await.expect("level accepted");
+        assert_eq!(di.reported_urgency, "urgent", "stored normalised");
+    }
+
+    #[tokio::test]
+    async fn test_31_sla_targets_come_from_the_level_unless_a_specific_rule_applies() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let level = crate::reference::urgency_scale::get_urgency_level(&db, "urgent")
+            .await
+            .unwrap()
+            .unwrap();
+
+        let mut input = make_create_input(&db, user_id).await;
+        input.reported_urgency = "urgent".to_string();
+        let di = create_intervention_request(&db, input).await.expect("create");
+        assert_eq!(di.sla_rule_id, None, "no rule: the level's own targets");
+        assert_eq!(di.sla_target_response_hours, level.response_target_hours);
+        assert_eq!(di.sla_target_resolution_hours, level.completion_target_hours);
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
+             target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
+             VALUES ('Urgent operator', 'urgent', 'operator', NULL, 1, 3, 1, 1)",
+            [],
+        ))
+        .await
+        .expect("specific rule");
+        let mut input = make_create_input(&db, user_id).await;
+        input.reported_urgency = "urgent".to_string();
+        let di = create_intervention_request(&db, input).await.expect("create");
+        assert!(di.sla_rule_id.is_some());
+        assert_eq!(di.sla_target_response_hours, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_32_an_sla_rule_needs_an_origin_or_a_criticality() {
+        let db = setup().await;
+        let rule = crate::di::sla::list_sla_rules(&db).await.expect("rules").remove(0);
+        let err = crate::di::sla::update_sla_rule(
+            &db,
+            crate::di::sla::SlaRuleUpdateInput {
+                id: rule.id,
+                name: rule.name.clone(),
+                urgency_level: "high".into(),
+                origin_type: None,
+                asset_criticality_class: None,
+                target_response_hours: 4,
+                target_resolution_hours: 24,
+                escalation_threshold_hours: 8,
+                is_active: true,
+            },
+        )
+        .await
+        .expect_err("all-origins targets live on the scale");
+        assert!(matches!(err, AppError::ValidationFailed(ref m) if m[0].contains("GATE_SLA_RULE_NEEDS_SCOPE")));
+
+        let err = crate::di::sla::update_sla_rule(
+            &db,
+            crate::di::sla::SlaRuleUpdateInput {
+                id: rule.id,
+                name: rule.name,
+                urgency_level: "critical".into(),
+                origin_type: Some("iot".into()),
+                asset_criticality_class: None,
+                target_response_hours: 1,
+                target_resolution_hours: 4,
+                escalation_threshold_hours: 2,
+                is_active: true,
+            },
+        )
+        .await
+        .expect_err("legacy code");
+        assert!(matches!(err, AppError::ValidationFailed(_)));
     }
 }

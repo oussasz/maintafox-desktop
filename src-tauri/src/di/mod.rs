@@ -11,10 +11,13 @@
 //!   `domain`  — enums, structs, state machine, transition guard, code generator
 //!   `queries` — list, get, create, update, transition log, recurrence queries
 
+pub mod access;
 pub mod attachments;
 pub mod audit;
 pub mod conversion;
 pub mod disposition;
+// The SLA pause SQL macros of `domain` are reused by `sla` and `stats`.
+#[macro_use]
 pub mod domain;
 pub mod notifications;
 pub mod permissions;
@@ -25,6 +28,8 @@ pub mod sla;
 pub mod sla_poller;
 pub mod stats;
 
+#[cfg(test)]
+mod access_tests;
 #[cfg(test)]
 mod conversion_tests;
 #[cfg(test)]

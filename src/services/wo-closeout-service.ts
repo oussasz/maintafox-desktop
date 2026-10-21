@@ -23,6 +23,10 @@ export interface SaveFailureDetailInput {
   is_permanent_repair: boolean;
   cause_not_determined: boolean;
   notes: string | null;
+  /** ISO 14224 B.2 mechanism (WORK.FAILURE_MECHANISMS). */
+  failure_mechanism_id?: number | null;
+  /** ISO 14224 B.4 detection method (WORK.DETECTION_METHODS). */
+  detection_method_id?: number | null;
 }
 
 export interface WoFailureDetail {
@@ -39,6 +43,10 @@ export interface WoFailureDetail {
   failure_mode_label?: string | null;
   failure_cause_label?: string | null;
   failure_effect_label?: string | null;
+  failure_mechanism_id?: number | null;
+  failure_mechanism_label?: string | null;
+  detection_method_id?: number | null;
+  detection_method_label?: string | null;
 }
 
 // -- Verification --
@@ -83,6 +91,8 @@ export interface WoReopenInput {
   expected_row_version: number;
   reason: string;
   target_status?: string | null;
+  /** Reopening to in progress: estimated remaining time (hours, > 0) for the permit gate. */
+  estimated_remaining_hours?: number | null;
 }
 
 export interface UpdateWoRcaInput {

@@ -9,6 +9,17 @@ use crate::inventory::domain::{
     UpsertInventoryCountLineInput,
 };
 
+/// Refusal code: a count of the same article and location was posted on this PC since the session
+/// was opened (its snapshot is stale).
+pub const REFUSED_COUNT_SESSION_STALE: &str = "COUNT_SESSION_STALE_SNAPSHOT";
+
+/// Tenant setting (catalog, decimal): a counted line whose variance is at least this much is
+/// critical. Each count session keeps the value it was opened with.
+pub const SETTING_COUNT_CRITICAL_VARIANCE: &str = "inventory.count_critical_variance";
+/// Tenant setting (catalog, decimal): a ledger / balance gap of at least this much is a
+/// reconciliation break.
+pub const SETTING_RECONCILIATION_DRIFT_BREAK: &str = "inventory.reconciliation_drift_break";
+
 fn now_iso() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
@@ -36,7 +47,7 @@ async fn ensure_count_session(db: &DatabaseConnection, session_id: i64) -> AppRe
     map_count_session(row)
 }
 
-async fn ensure_lookup_variance_reason_active(db: &DatabaseConnection, code: &str) -> AppResult<()> {
+async fn ensure_lookup_variance_reason_active<C: ConnectionTrait>(db: &C, code: &str) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -83,6 +94,8 @@ async fn get_balance<C: ConnectionTrait>(db: &C, article_id: i64, location_id: i
     }
 }
 
+/// Sets the counted on-hand stock of a location; its reservations are kept, so the available stock
+/// is the new on-hand minus what is reserved there.
 async fn upsert_balance<C: ConnectionTrait>(
     db: &C,
     article_id: i64,
@@ -96,7 +109,7 @@ async fn upsert_balance<C: ConnectionTrait>(
          VALUES (?, ?, ?, ?, 0, ?, ?)
          ON CONFLICT(article_id, location_id) DO UPDATE SET
             on_hand_qty = excluded.on_hand_qty,
-            available_qty = excluded.available_qty,
+            available_qty = excluded.on_hand_qty - stock_balances.reserved_qty,
             updated_at = excluded.updated_at",
         [
             article_id.into(),
@@ -123,6 +136,8 @@ async fn insert_count_transaction<C: ConnectionTrait>(
     reason: Option<&str>,
     actor_id: Option<i64>,
 ) -> AppResult<i64> {
+    // Count postings and reversals are dated today; refused when today falls in a closed period.
+    crate::inventory::periods::ensure_posting_date_open(db, &crate::inventory::fx::today()).await?;
     let entity_sync_id = uuid::Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -159,11 +174,8 @@ pub async fn create_count_session(
     db: &DatabaseConnection,
     input: CreateInventoryCountSessionInput,
 ) -> AppResult<InventoryCountSession> {
-    if input.critical_abs_threshold.unwrap_or(5.0) < 0.0 {
-        return Err(AppError::ValidationFailed(vec![
-            "critical_abs_threshold must be >= 0.".to_string()
-        ]));
-    }
+    // The tolerance is the tenant setting (Settings > Inventory), kept on the session.
+    let critical_abs_threshold = crate::settings::catalog::decimal_setting(db, SETTING_COUNT_CRITICAL_VARIANCE).await?;
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_count_sessions
@@ -173,7 +185,7 @@ pub async fn create_count_session(
             next_doc("CC").into(),
             input.warehouse_id.into(),
             input.location_id.map_or(Value::BigInt(None), Value::from),
-            input.critical_abs_threshold.unwrap_or(5.0).into(),
+            critical_abs_threshold.into(),
             input.actor_id.map_or(Value::BigInt(None), Value::from),
             now_iso().into(),
             now_iso().into(),
@@ -251,7 +263,11 @@ pub async fn upsert_count_line(
             "Count lines can only be edited in draft/counting status.".to_string(),
         ]));
     }
-    let (warehouse_id, system_qty) = get_balance(db, input.article_id, input.location_id).await?;
+    // The stock the count is set against and the counts it knows are read in one transaction (one
+    // snapshot): a sync pass in between can never make the count know a correction its stock does
+    // not include (`negative_stock::count_mark` also follows only counts whose movement is here).
+    let tx = db.begin().await?;
+    let (warehouse_id, system_qty) = get_balance(&tx, input.article_id, input.location_id).await?;
     if warehouse_id != session.warehouse_id {
         return Err(AppError::ValidationFailed(vec![
             "Count line location must belong to session warehouse.".to_string(),
@@ -264,16 +280,22 @@ pub async fn upsert_count_line(
         ]));
     }
     if let Some(code) = input.variance_reason_code.as_deref() {
-        ensure_lookup_variance_reason_active(db, code).await?;
+        ensure_lookup_variance_reason_active(&tx, code).await?;
     }
     let is_critical = i64::from(variance_qty.abs() >= session.critical_abs_threshold);
     let approval_required = i64::from(variance_qty.abs() > f64::EPSILON);
-    db.execute(Statement::from_sql_and_values(
+    // The count's mark is taken now, with the stock on record its variance is set against: the
+    // counts this PC knows at this moment, not at posting, so a count received in between still
+    // shows as a double count (`inventory::negative_stock`, CMMS Advisor). Each entry refreshes it.
+    let (replica_id, follows_json) =
+        crate::inventory::negative_stock::count_mark(&tx, input.article_id, input.location_id).await?;
+    tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_count_lines
             (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
-             variance_reason_code, is_critical, approval_required, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             variance_reason_code, is_critical, approval_required, created_at, updated_at,
+             count_replica_id, count_follows_json, count_path)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id, article_id, location_id) DO UPDATE SET
              counted_qty = excluded.counted_qty,
              system_qty = excluded.system_qty,
@@ -284,6 +306,9 @@ pub async fn upsert_count_line(
              approved_by_id = NULL,
              approved_at = NULL,
              approval_note = NULL,
+             count_replica_id = excluded.count_replica_id,
+             count_follows_json = excluded.count_follows_json,
+             count_path = excluded.count_path,
              row_version = inventory_count_lines.row_version + 1,
              updated_at = excluded.updated_at",
         [
@@ -299,9 +324,13 @@ pub async fn upsert_count_line(
             approval_required.into(),
             now_iso().into(),
             now_iso().into(),
+            replica_id.into(),
+            follows_json.into(),
+            crate::inventory::negative_stock::COUNT_PATH_COUNT_SESSION.into(),
         ],
     ))
     .await?;
+    tx.commit().await?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -323,7 +352,7 @@ pub async fn approve_count_line(
     db: &DatabaseConnection,
     input: ApproveInventoryCountLineInput,
 ) -> AppResult<InventoryCountLine> {
-    if input.reviewer_evidence.trim().len() < 8 {
+    if input.reviewer_evidence.trim().chars().count() < crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS {
         return Err(AppError::ValidationFailed(vec![
             "reviewer_evidence must be explicit and at least 8 characters.".to_string(),
         ]));
@@ -395,7 +424,78 @@ pub async fn post_count_session(
     }
 
     let tx = db.begin().await?;
+    // A count posted on this PC for the same article and location since this session was opened
+    // (times to the second; within the same second, a session opened after this one) makes its
+    // snapshot stale: its variance would correct the stock a second time. Refused; the
+    // session is counted again from a fresh snapshot (CMMS Advisor). Counts from other PCs are not
+    // refused here: they arrive later and show as a double count (`inventory::negative_stock`).
+    let replica_id = crate::sync::queries::local_replica_id(&tx).await?;
+    for line in &lines {
+        let stale = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT cs.session_code FROM inventory_count_lines cl
+                 JOIN inventory_count_sessions cs ON cs.id = cl.session_id
+                 WHERE cl.article_id = ? AND cl.location_id = ? AND cl.session_id <> ?
+                   AND cs.status IN ('posted', 'reversed') AND cl.count_replica_id = ?
+                   AND (cs.posted_at > ? OR (cs.posted_at = ? AND cs.id > ?))
+                 ORDER BY cs.posted_at DESC LIMIT 1",
+                [
+                    line.article_id.into(),
+                    line.location_id.into(),
+                    input.session_id.into(),
+                    replica_id.clone().into(),
+                    session.created_at.clone().into(),
+                    session.created_at.clone().into(),
+                    input.session_id.into(),
+                ],
+            ))
+            .await?;
+        if let Some(row) = stale {
+            let other: String = row.try_get("", "session_code")?;
+            return Err(crate::errors::org_validation_failed(
+                REFUSED_COUNT_SESSION_STALE,
+                format!(
+                    "A count was posted for {} at {} since this session was opened ({other}): cancel this session and count again in a new session.",
+                    line.article_code, line.location_code
+                ),
+                crate::errors::issue_params(&[
+                    ("article", line.article_code.clone()),
+                    ("location", line.location_code.clone()),
+                    ("session", other),
+                ]),
+            ));
+        }
+    }
     for line in lines {
+        // Every posted line is a count of its pair and keeps the mark taken when its quantity was
+        // entered (`upsert_count_line`). A line entered before this version has none: it is marked
+        // now, with what this PC knows at posting (`inventory::negative_stock`, CMMS Advisor).
+        let unmarked = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS unmarked FROM inventory_count_lines WHERE id = ? AND count_follows_json IS NULL",
+                [line.id.into()],
+            ))
+            .await?
+            .is_some();
+        if unmarked {
+            let (replica_id, follows_json) =
+                crate::inventory::negative_stock::count_mark(&tx, line.article_id, line.location_id).await?;
+            tx.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE inventory_count_lines SET count_replica_id = ?, count_follows_json = ?, count_path = ?,
+                     row_version = row_version + 1, updated_at = ? WHERE id = ?",
+                [
+                    replica_id.into(),
+                    follows_json.into(),
+                    crate::inventory::negative_stock::COUNT_PATH_COUNT_SESSION.into(),
+                    now_iso().into(),
+                    line.id.into(),
+                ],
+            ))
+            .await?;
+        }
         if line.variance_qty.abs() <= f64::EPSILON {
             continue;
         }
@@ -463,10 +563,13 @@ pub async fn reverse_count_session(
     db: &DatabaseConnection,
     input: ReverseInventoryCountSessionInput,
 ) -> AppResult<InventoryCountSession> {
-    if input.reason.trim().len() < 5 {
-        return Err(AppError::ValidationFailed(vec![
-            "Reversal reason must be explicit.".to_string()
-        ]));
+    // Like a count's approval: a reversal can bring a location below zero back to zero or more,
+    // which closes its item as an adjustment (`inventory::negative_stock`).
+    if input.reason.trim().chars().count() < crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Reversal reason must be explicit (at least {} characters).",
+            crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS
+        )]));
     }
     let session = ensure_count_session(db, input.session_id).await?;
     if session.row_version != input.expected_row_version {
@@ -487,7 +590,12 @@ pub async fn reverse_count_session(
         }
         let (_, current_qty) = get_balance(&tx, line.article_id, line.location_id).await?;
         let next_qty = current_qty - line.variance_qty;
-        if next_qty < 0.0 {
+        // A reversal never takes stock below zero, but one that raises a location already below
+        // zero is accepted even if it stays there (CMMS Advisor): its item stays open until the
+        // stock is zero or more, and it is audited.
+        let improves_negative =
+            current_qty < -crate::inventory::negative_stock::QTY_TOLERANCE && next_qty > current_qty;
+        if next_qty < 0.0 && !improves_negative {
             return Err(AppError::ValidationFailed(vec![format!(
                 "Reversal would produce negative stock for line {}.",
                 line.id
@@ -513,6 +621,36 @@ pub async fn reverse_count_session(
             [reverse_tx_id.into(), now_iso().into(), line.id.into()],
         ))
         .await?;
+        if improves_negative {
+            crate::inventory::negative_stock::reconcile_pair_in(&tx, line.article_id, line.location_id).await?;
+            crate::audit::writer::write_audit_event_in(
+                &tx,
+                crate::audit::writer::AuditEventInput {
+                    action_code: "inventory.negative_stock.count_reversed".to_string(),
+                    target_type: Some("stock_location_article".to_string()),
+                    target_id: Some(format!("{}:{}", line.article_id, line.location_id)),
+                    actor_id: input.actor_id,
+                    auth_context: "session".to_string(),
+                    result: "success".to_string(),
+                    before_hash: None,
+                    after_hash: None,
+                    retention_class: "standard".to_string(),
+                    details_json: Some(serde_json::json!({
+                        "summary": "Count reversed at a location below zero",
+                        "article_id": line.article_id,
+                        "location_id": line.location_id,
+                        "on_hand_before": current_qty,
+                        "on_hand_after": next_qty,
+                        "count_session_id": input.session_id,
+                        "count_session_code": session.session_code,
+                        "count_line_id": line.id,
+                        "transaction_id": reverse_tx_id,
+                        "reason": input.reason.trim(),
+                    })),
+                },
+            )
+            .await?;
+        }
     }
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -532,11 +670,177 @@ pub async fn reverse_count_session(
     ensure_count_session(db, input.session_id).await
 }
 
+/// One location counted for one article, recorded and posted at once by the person counting.
+pub(crate) struct LocationCount<'a> {
+    pub article_id: i64,
+    pub location_id: i64,
+    pub counted_qty: f64,
+    /// Code of the plant's `inventory.variance_reason` list (required when the count differs).
+    pub variance_reason_code: &'a str,
+    /// Why the count was made: kept as the line's reviewer evidence and on the movement's audit link.
+    pub evidence: &'a str,
+    pub actor_id: i64,
+    /// The count's mark (`negative_stock::count_mark`): this PC's sync replica id and the JSON list
+    /// of the counts of the pair it follows.
+    pub mark: (&'a str, &'a str),
+}
+
+/// What [`record_location_count_in`] wrote.
+pub(crate) struct PostedLocationCount {
+    pub session_id: i64,
+    pub session_code: String,
+    pub line_id: i64,
+    pub system_qty: f64,
+    pub variance_qty: f64,
+    /// The count movement (none when the count equals the stock on record).
+    pub transaction_id: Option<i64>,
+}
+
+/// Records a count of one article at one location as a posted count session, in the caller's
+/// transaction: a session of that location with one line, counted, approved (the evidence is the
+/// approval note) and posted by the same person, the `COUNT_ADJUST` movement of the variance and
+/// its audit link — the rows of the count workflow, so the count reaches the other PCs and shows in
+/// the count history like any posted count. Used where a count is the resolution of a review
+/// (`inventory::negative_stock`); the caller checks the right and the reason.
+pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
+    tx: &C,
+    count: &LocationCount<'_>,
+) -> AppResult<PostedLocationCount> {
+    if !count.counted_qty.is_finite() || count.counted_qty < 0.0 {
+        return Err(AppError::ValidationFailed(
+            vec!["counted_qty must be >= 0.".to_string()],
+        ));
+    }
+    let (warehouse_id, system_qty) = get_balance(tx, count.article_id, count.location_id).await?;
+    let variance_qty = count.counted_qty - system_qty;
+    let has_variance = variance_qty.abs() > f64::EPSILON;
+    if has_variance {
+        ensure_lookup_variance_reason_active(tx, count.variance_reason_code).await?;
+    }
+    let critical_abs_threshold = crate::settings::catalog::decimal_setting(tx, SETTING_COUNT_CRITICAL_VARIANCE).await?;
+    let now = now_iso();
+    let session_code = next_doc("CC");
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO inventory_count_sessions
+            (session_code, warehouse_id, location_id, status, critical_abs_threshold, opened_by_id,
+             submitted_by_id, submitted_at, posted_by_id, posted_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'posted', ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            session_code.clone().into(),
+            warehouse_id.into(),
+            count.location_id.into(),
+            critical_abs_threshold.into(),
+            count.actor_id.into(),
+            count.actor_id.into(),
+            now.clone().into(),
+            count.actor_id.into(),
+            now.clone().into(),
+            now.clone().into(),
+            now.clone().into(),
+        ],
+    ))
+    .await?;
+    let session_id = last_insert_id(tx).await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO inventory_count_lines
+            (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
+             variance_reason_code, is_critical, approval_required, approved_by_id, approved_at, approval_note,
+             created_at, updated_at, count_replica_id, count_follows_json, count_path)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            session_id.into(),
+            count.article_id.into(),
+            warehouse_id.into(),
+            count.location_id.into(),
+            system_qty.into(),
+            count.counted_qty.into(),
+            variance_qty.into(),
+            if has_variance {
+                Value::from(count.variance_reason_code)
+            } else {
+                Value::String(None)
+            },
+            i64::from(variance_qty.abs() >= critical_abs_threshold).into(),
+            i64::from(has_variance).into(),
+            count.actor_id.into(),
+            now.clone().into(),
+            count.evidence.into(),
+            now.clone().into(),
+            now.clone().into(),
+            count.mark.0.into(),
+            count.mark.1.into(),
+            crate::inventory::negative_stock::COUNT_PATH_RECONCILIATION.into(),
+        ],
+    ))
+    .await?;
+    let line_id = last_insert_id(tx).await?;
+    let mut transaction_id = None;
+    if has_variance {
+        upsert_balance(tx, count.article_id, warehouse_id, count.location_id, count.counted_qty).await?;
+        let tx_id = insert_count_transaction(
+            tx,
+            count.article_id,
+            warehouse_id,
+            count.location_id,
+            variance_qty,
+            "COUNT_ADJUST",
+            session_id,
+            &session_code,
+            Some(count.variance_reason_code),
+            Some(count.actor_id),
+        )
+        .await?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE inventory_count_lines SET posted_transaction_id = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
+            [tx_id.into(), now.clone().into(), line_id.into()],
+        ))
+        .await?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inventory_mutation_audit_links
+                (transaction_id, source_entity_type, source_entity_id, reviewer_id, reviewer_evidence, created_at)
+             VALUES (?, 'inventory_count_line', ?, ?, ?, ?)",
+            [
+                tx_id.into(),
+                line_id.into(),
+                count.actor_id.into(),
+                count.evidence.into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+        transaction_id = Some(tx_id);
+    }
+    Ok(PostedLocationCount {
+        session_id,
+        session_code,
+        line_id,
+        system_qty,
+        variance_qty,
+        transaction_id,
+    })
+}
+
+async fn last_insert_id<C: ConnectionTrait>(db: &C) -> AppResult<i64> {
+    let row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT last_insert_rowid() AS id".to_string(),
+        ))
+        .await?
+        .ok_or_else(|| AppError::ValidationFailed(vec!["Could not read the new row id.".to_string()]))?;
+    Ok(row.try_get("", "id")?)
+}
+
 pub async fn run_reconciliation(
     db: &DatabaseConnection,
     input: RunInventoryReconciliationInput,
 ) -> AppResult<InventoryReconciliationRun> {
-    let break_threshold = input.drift_break_threshold.unwrap_or(0.0001_f64).max(0.0);
+    // The tolerance is the tenant setting (Settings > Inventory).
+    let break_threshold = crate::settings::catalog::decimal_setting(db, SETTING_RECONCILIATION_DRIFT_BREAK).await?;
     let tx = db.begin().await?;
     let run_code = next_doc("RECON");
     let today = Utc::now().format("%Y-%m-%d").to_string();
@@ -562,39 +866,27 @@ pub async fn run_reconciliation(
         .ok_or_else(|| AppError::ValidationFailed(vec!["Unable to create reconciliation run.".to_string()]))?;
     let run_id: i64 = run_id_row.try_get("", "id")?;
 
+    // The expected on-hand is the sum of the movements' on-hand effect, from the one table the
+    // balance itself follows (`ledger::ON_HAND_MOVEMENTS`), so the two can never drift apart.
+    let ledger_sql = format!(
+        "WITH ledger AS (
+            SELECT t.article_id, t.warehouse_id, t.location_id,
+                   SUM({}) AS ledger_expected_on_hand
+            FROM inventory_transactions t
+            GROUP BY t.article_id, t.warehouse_id, t.location_id
+         )
+         SELECT sb.article_id, sb.warehouse_id, sb.location_id,
+                CAST(sb.on_hand_qty AS REAL) AS balance_on_hand,
+                CAST(COALESCE(l.ledger_expected_on_hand, 0) AS REAL) AS ledger_expected_on_hand
+         FROM stock_balances sb
+         LEFT JOIN ledger l
+           ON l.article_id = sb.article_id
+          AND l.warehouse_id = sb.warehouse_id
+          AND l.location_id = sb.location_id",
+        crate::inventory::ledger::on_hand_delta_sql("t")
+    );
     let rows = tx
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "WITH ledger AS (
-                SELECT article_id, warehouse_id, location_id,
-                       SUM(
-                         CASE movement_type
-                           WHEN 'ADJUST' THEN quantity
-                           WHEN 'ISSUE' THEN -quantity
-                           WHEN 'RETURN' THEN quantity
-                           WHEN 'TRANSFER_OUT' THEN -quantity
-                           WHEN 'TRANSFER_IN' THEN quantity
-                           WHEN 'GR_ACCEPT' THEN quantity
-                           WHEN 'REPAIRABLE_RELEASE' THEN -quantity
-                           WHEN 'REPAIRABLE_RETURN' THEN quantity
-                           WHEN 'COUNT_ADJUST' THEN quantity
-                           WHEN 'COUNT_REVERSAL' THEN quantity
-                           ELSE 0
-                         END
-                       ) AS ledger_expected_on_hand
-                FROM inventory_transactions
-                GROUP BY article_id, warehouse_id, location_id
-             )
-             SELECT sb.article_id, sb.warehouse_id, sb.location_id,
-                    CAST(sb.on_hand_qty AS REAL) AS balance_on_hand,
-                    CAST(COALESCE(l.ledger_expected_on_hand, 0) AS REAL) AS ledger_expected_on_hand
-             FROM stock_balances sb
-             LEFT JOIN ledger l
-               ON l.article_id = sb.article_id
-              AND l.warehouse_id = sb.warehouse_id
-              AND l.location_id = sb.location_id"
-                .to_string(),
-        ))
+        .query_all(Statement::from_string(DbBackend::Sqlite, ledger_sql))
         .await?;
 
     let mut checked_rows = 0_i64;
@@ -661,11 +953,13 @@ pub async fn list_count_lines(db: &DatabaseConnection, session_id: i64) -> AppRe
             DbBackend::Sqlite,
             "SELECT cl.id, cl.session_id, cl.article_id, a.article_code, a.article_name, cl.warehouse_id, cl.location_id,
                     sl.code AS location_code, cl.system_qty, cl.counted_qty, cl.variance_qty, cl.variance_reason_code,
-                    cl.is_critical, cl.approval_required, cl.approved_by_id, cl.approved_at, cl.approval_note,
+                    cl.is_critical, cl.approval_required, cl.approved_by_id,
+                    COALESCE(ua.display_name, ua.username) AS approved_by_name, cl.approved_at, cl.approval_note,
                     cl.posted_transaction_id, cl.reversed_transaction_id, cl.row_version, cl.created_at, cl.updated_at
              FROM inventory_count_lines cl
              JOIN articles a ON a.id = cl.article_id
              JOIN stock_locations sl ON sl.id = cl.location_id
+             LEFT JOIN user_accounts ua ON ua.id = cl.approved_by_id
              WHERE cl.session_id = ?
              ORDER BY cl.id ASC",
             [session_id.into()],
@@ -715,11 +1009,13 @@ async fn get_count_line(db: &DatabaseConnection, line_id: i64) -> AppResult<Inve
             DbBackend::Sqlite,
             "SELECT cl.id, cl.session_id, cl.article_id, a.article_code, a.article_name, cl.warehouse_id, cl.location_id,
                     sl.code AS location_code, cl.system_qty, cl.counted_qty, cl.variance_qty, cl.variance_reason_code,
-                    cl.is_critical, cl.approval_required, cl.approved_by_id, cl.approved_at, cl.approval_note,
+                    cl.is_critical, cl.approval_required, cl.approved_by_id,
+                    COALESCE(ua.display_name, ua.username) AS approved_by_name, cl.approved_at, cl.approval_note,
                     cl.posted_transaction_id, cl.reversed_transaction_id, cl.row_version, cl.created_at, cl.updated_at
              FROM inventory_count_lines cl
              JOIN articles a ON a.id = cl.article_id
              JOIN stock_locations sl ON sl.id = cl.location_id
+             LEFT JOIN user_accounts ua ON ua.id = cl.approved_by_id
              WHERE cl.id = ?",
             [line_id.into()],
         ))
@@ -786,6 +1082,7 @@ fn map_count_line(row: sea_orm::QueryResult) -> AppResult<InventoryCountLine> {
         is_critical: row.try_get("", "is_critical")?,
         approval_required: row.try_get("", "approval_required")?,
         approved_by_id: row.try_get("", "approved_by_id")?,
+        approved_by_name: row.try_get("", "approved_by_name").ok().flatten(),
         approved_at: row.try_get("", "approved_at")?,
         approval_note: row.try_get("", "approval_note")?,
         posted_transaction_id: row.try_get("", "posted_transaction_id")?,

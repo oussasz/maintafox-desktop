@@ -1,22 +1,23 @@
 /**
  * AssetResultTable.tsx
  *
- * Search result grid for the asset registry.
+ * Equipment grid of the asset registry.
  * Columns: code (tree), name, class, family, status, org, criticality.
- * Hierarchy is a filtered forest of the current search page (first column only).
+ * The hierarchy is read from the database level by level within the registry filters
+ * (`list_asset_tree_level`): matching assets and their ancestors (shown dimmed as context),
+ * children loaded when a branch is expanded — every branch is reachable on a large plant.
  */
 
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
+import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark";
 import { EquipmentTreeCell } from "@/components/assets/tree/EquipmentTreeCell";
 import { EquipmentTreeToolbar } from "@/components/assets/tree/EquipmentTreeToolbar";
-import {
-  buildEquipmentForest,
-  flattenVisibleRows,
-} from "@/components/assets/tree/equipment-tree-model";
+import { useEquipmentTree } from "@/components/assets/tree/use-equipment-tree";
+import { Button } from "@/components/ui/button";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
   Table,
   TableBody,
@@ -25,57 +26,57 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { mfTable } from "@/design-system/tokens";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
 import type { AssetSearchResult } from "@shared/ipc-types";
 
+/** Indent of one tree level in the status rows (matches the tree guides). */
+const LEVEL_INDENT_PX = 16;
+
 export function AssetResultTable() {
   const { t } = useTranslation("equipment");
-  const results = useAssetSearchStore((s) => s.results);
+  const filters = useAssetSearchStore((s) => s.filters);
   const selectedId = useAssetSearchStore((s) => s.selectedResultId);
-  const loading = useAssetSearchStore((s) => s.loading);
-  const error = useAssetSearchStore((s) => s.error);
-  const expandedIds = useAssetSearchStore((s) => s.expandedIds);
   const selectAsset = useAssetSearchStore((s) => s.selectAsset);
-  const toggleExpanded = useAssetSearchStore((s) => s.toggleExpanded);
-  const expandAll = useAssetSearchStore((s) => s.expandAll);
-  const collapseAll = useAssetSearchStore((s) => s.collapseAll);
+  const tree = useEquipmentTree(filters);
 
-  const forest = useMemo(() => buildEquipmentForest(results), [results]);
-  const visibleRows = useMemo(() => flattenVisibleRows(forest, expandedIds), [forest, expandedIds]);
-
+  // Opens the asset record (AssetDetailDialog); load errors are shown by the page.
   const handleRowClick = (asset: AssetSearchResult) => {
-    selectAsset(asset.id === selectedId ? null : asset.id);
+    selectAsset(asset.id);
   };
 
-  if (error) {
+  if (tree.rootError != null && !tree.rows.some((r) => r.kind === "asset")) {
     return (
-      <div className="flex flex-1 items-center justify-center p-6">
-        <p className="text-sm text-status-danger">{error}</p>
-      </div>
+      <ErrorState
+        error={tree.rootError}
+        title={t("tree.loadError")}
+        onRetry={() => tree.retry("root")}
+      />
     );
   }
 
-  if (!loading && results.length === 0) {
+  if (tree.rootLoading) {
+    return <LoadingState label={t("tree.loading")} />;
+  }
+
+  if (tree.rootEmpty) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
         <p className="text-sm text-text-muted">{t("empty.list")}</p>
-        <p className="text-xs text-text-muted mt-1">{t("empty.listHint")}</p>
+        <p className="mt-1 text-xs text-text-muted">{t("empty.listHint")}</p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-1 flex-col min-h-0">
-      <EquipmentTreeToolbar
-        onExpandAll={expandAll}
-        onCollapseAll={collapseAll}
-        disabled={loading || results.length === 0}
-      />
+    <div className="flex min-h-0 flex-1 flex-col">
+      <EquipmentTreeToolbar onExpandAll={tree.expandLoaded} onCollapseAll={tree.collapseAll} />
       <div className="flex-1 overflow-auto">
         <Table>
           <TableHeader>
-            <TableRow>
+            <TableRow className={mfTable.header}>
               <TableHead className="w-[180px]">{t("list.columns.code")}</TableHead>
               <TableHead>{t("list.columns.name")}</TableHead>
               <TableHead className="w-[100px]">{t("list.columns.class")}</TableHead>
@@ -86,20 +87,81 @@ export function AssetResultTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {visibleRows.map((row) => {
-              const asset = row.data;
+            {tree.rows.map((item) => {
+              if (item.kind === "status") {
+                return (
+                  <TableRow key={`status-${String(item.parent)}`}>
+                    <TableCell colSpan={7} className="py-1.5">
+                      <div
+                        className="flex flex-wrap items-center gap-2 text-xs"
+                        style={{ paddingLeft: (item.depth + 1) * LEVEL_INDENT_PX }}
+                      >
+                        {item.state === "loading" ? (
+                          <span className="text-text-muted" aria-busy="true">
+                            {t("tree.loadingChildren")}
+                          </span>
+                        ) : item.state === "error" ? (
+                          <>
+                            <span role="alert" className="text-tone-danger-fg">
+                              {t("tree.childrenError")} {describeAppError(item.error).title}
+                            </span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8"
+                              onClick={() => tree.retry(item.parent)}
+                            >
+                              {t("tree.retry")}
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-8"
+                            onClick={() => tree.loadMore(item.parent)}
+                          >
+                            {t("tree.showMore", { count: item.remaining ?? 0 })}
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              }
+              const asset = item.row;
+              const row = {
+                id: asset.id,
+                depth: item.depth,
+                isLeaf: asset.child_count === 0,
+                childCount: asset.child_count,
+                ancestorIsLast: item.ancestorIsLast,
+                isLastSibling: item.isLastSibling,
+                data: asset,
+              };
               return (
                 <TableRow
                   key={asset.id}
                   onClick={() => handleRowClick(asset)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleRowClick(asset);
+                  }}
+                  tabIndex={0}
                   data-state={asset.id === selectedId ? "selected" : undefined}
-                  className={cn("cursor-pointer", asset.id === selectedId && "bg-muted")}
+                  className={cn(
+                    "cursor-pointer",
+                    asset.id === selectedId && "bg-muted",
+                    !asset.is_match && "text-text-muted",
+                  )}
+                  title={asset.is_match ? undefined : t("tree.contextRow")}
                 >
                   <TableCell className="py-1.5">
                     <EquipmentTreeCell
                       row={row}
-                      isExpanded={expandedIds.has(row.id)}
-                      onToggle={toggleExpanded}
+                      isExpanded={tree.expanded.has(asset.id)}
+                      onToggle={tree.toggle}
                     />
                   </TableCell>
                   <TableCell className="text-sm">{asset.asset_name}</TableCell>
@@ -116,7 +178,10 @@ export function AssetResultTable() {
                     {asset.org_node_name ?? "—"}
                   </TableCell>
                   <TableCell>
-                    <CriticalityBadge criticality={asset.criticality_code} compact />
+                    <span className="inline-flex items-center gap-1">
+                      <CriticalityBadge criticality={asset.criticality_code} compact />
+                      {asset.criticality_to_review ? <CriticalityReviewMark /> : null}
+                    </span>
                   </TableCell>
                 </TableRow>
               );

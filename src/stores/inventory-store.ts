@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import {
+  type InventoryArticleRow,
   createInventoryArticle,
   listInventoryArticleFamilies,
   listInventoryArticles,
@@ -11,7 +12,6 @@ import {
 import { toErrorMessage } from "@/utils/errors";
 import type {
   ArticleFamily,
-  InventoryArticle,
   InventoryArticleInput,
   StockLocation,
   Warehouse,
@@ -21,10 +21,13 @@ interface InventoryStoreState {
   families: ArticleFamily[];
   warehouses: Warehouse[];
   locations: StockLocation[];
-  articles: InventoryArticle[];
+  articles: InventoryArticleRow[];
   loading: boolean;
   saving: boolean;
+  /** Last failure (load or save) as text, kept for callers that show it inline. */
   error: string | null;
+  /** Raw failure of the last `loadAll` (for `ErrorState`); null once a load succeeds. */
+  loadError: unknown;
   articleSearch: string;
 
   loadAll: () => Promise<void>;
@@ -41,6 +44,7 @@ export const useInventoryStore = create<InventoryStoreState>()((set, get) => ({
   loading: false,
   saving: false,
   error: null,
+  loadError: null,
   articleSearch: "",
 
   loadAll: async () => {
@@ -55,9 +59,9 @@ export const useInventoryStore = create<InventoryStoreState>()((set, get) => ({
         listInventoryLocations(null),
         listInventoryArticles({ search: articleSearch || null }),
       ]);
-      set({ families, warehouses, locations, articles });
+      set({ families, warehouses, locations, articles, loadError: null });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: toErrorMessage(err), loadError: err });
     } finally {
       set({ loading: false });
     }

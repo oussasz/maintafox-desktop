@@ -1,12 +1,14 @@
 {
   "page": {
     "title": "Inspection rounds",
-    "description": "Field checklists: schedule rounds, record readings, follow up on findings."
+    "description": "Field rounds and routes: schedule them, record readings, follow up on findings."
   },
   "tabs": {
     "rounds": "Rounds",
-    "templates": "Templates",
-    "signals": "Reliability signals"
+    "templates": "Checklists & routes",
+    "signals": "Reliability signals",
+    "anomalies": "Anomalies",
+    "schedules": "Schedules"
   },
   "status": {
     "scheduled": "Scheduled",
@@ -22,7 +24,14 @@
     "todo": "To do",
     "toReview": "To review",
     "done": "Done",
-    "all": "All"
+    "all": "All",
+    "finished": "Completed (all)",
+    "status": "Status",
+    "timing": "Timing",
+    "overdue": "Overdue now",
+    "period_one": "Planned in the last {{count}} day",
+    "period_other": "Planned in the last {{count}} days",
+    "search": "Search a checklist, a person, a team or a schedule"
   },
   "rounds": {
     "empty": "No round in this list.",
@@ -41,7 +50,19 @@
     "openAnomalies_one": "{{count}} open anomaly",
     "openAnomalies_other": "{{count}} open anomalies",
     "pendingSync_one": "{{count}} change waiting to sync",
-    "pendingSync_other": "{{count}} changes waiting to sync"
+    "pendingSync_other": "{{count}} changes waiting to sync",
+    "emptyHint": "Change the filters, schedule a round, or set up a recurring schedule.",
+    "overdue": "Overdue",
+    "team": "Team {{name}}",
+    "columns": {
+      "checklist": "Checklist",
+      "planned": "Planned",
+      "assignee": "Assigned to",
+      "status": "Status",
+      "progress": "Progress",
+      "findings": "Findings",
+      "action": "Action"
+    }
   },
   "schedule": {
     "title": "Schedule a round",
@@ -54,7 +75,12 @@
     "assigneeSearchError": "Search failed: {{message}}",
     "clearAssignee": "Remove",
     "submit": "Schedule",
-    "noTemplate": "Create a checklist first (Templates tab)."
+    "noTemplate": "Create a checklist first (Templates tab).",
+    "team": "Team",
+    "noTeam": "No team",
+    "teamNotAllowed": "Your role cannot list the teams; assign a technician instead.",
+    "teamLoadError": "The teams could not be loaded.",
+    "clearAssigneeNamed": "Remove {{name}}"
   },
   "runner": {
     "back": "Back to rounds",
@@ -104,7 +130,18 @@
       "not_accessible": "Not accessible",
       "not_done": "Not done"
     },
-    "anomalyOpen": "Anomaly to follow up: {{description}}"
+    "anomalyOpen": "Anomaly to follow up: {{description}}",
+    "progressOf": "{{done}} of {{total}} checkpoints done",
+    "checkpoints": "Checkpoints of the round",
+    "checkChip": "Checkpoint {{index}}: {{label}} — {{state}}",
+    "answer": "Answer",
+    "commentRequiredLabel": "Comment (required)",
+    "commentRequiredOutOfTolerance": "This reading is outside its limits: say what you saw.",
+    "proposeDi": "Create a request",
+    "history": "Previous results",
+    "historyNone": "No previous result for this checkpoint.",
+    "trend": "Trend of the last readings, from {{first}} to {{last}} {{unit}}",
+    "shortcuts": "Keyboard: ← → change checkpoint · 1–5 choose the answer · Enter saves a reading · Ctrl+Enter saves from the comment · P adds a photo"
   },
   "result": {
     "pass": "OK",
@@ -129,6 +166,7 @@
     }
   },
   "review": {
+    "decidedLoadError": "Could not read the findings already decided",
     "title": "Findings to follow up",
     "none": "No open anomaly.",
     "toDi": "Create a request",
@@ -143,7 +181,10 @@
     "anomalyType": {
       "threshold_breach": "Out of tolerance",
       "missing_mandatory_photo": "Mandatory photo missing"
-    }
+    },
+    "decided": "Decided findings",
+    "decideFirst_one": "{{count}} finding still needs a decision.",
+    "decideFirst_other": "{{count}} findings still need a decision."
   },
   "templates": {
     "empty": "No checklist yet.",
@@ -184,7 +225,42 @@
       "numeric": "Measurement",
       "observation": "Observation"
     },
-    "required": "Required"
+    "required": "Required",
+    "builderIntro": "Checkpoints are walked in this order. Bind each one to its equipment; insert another checklist for an equipment to build a route.",
+    "emptyHint": "Create a checklist: its ordered checkpoints, each on its equipment, are the route of the round.",
+    "unpublished": "Not published",
+    "published": "Published",
+    "newVersionNamed": "New version of {{name}}",
+    "minutes_one": "{{count}} min",
+    "minutes_other": "{{count}} min",
+    "durationInvalid": "Enter a whole number of minutes.",
+    "rowsInvalid_one": "{{count}} checkpoint has a problem. Nothing was saved.",
+    "rowsInvalid_other": "{{count}} checkpoints have a problem. Nothing was saved.",
+    "rowLabel": "Checkpoint {{index}} ({{code}})",
+    "noCode": "no code",
+    "checkCodeRow": "Code of checkpoint {{index}}",
+    "checkTypeRow": "Answer type of checkpoint {{index}}",
+    "moveUpRow": "Move checkpoint {{index}} up",
+    "moveDownRow": "Move checkpoint {{index}} down",
+    "removeRow": "Remove checkpoint {{index}}",
+    "addStop": "Insert a checklist for an equipment",
+    "addStopTitle": "Insert a checklist",
+    "addStopIntro": "Copies the checkpoints of another checklist at the end of this one, for example a standard pump check for each pump of the route.",
+    "addStopSource": "Checklist to insert",
+    "addStopAsset": "For the equipment",
+    "addStopAssetHint": "Optional. Each copied checkpoint is bound to this equipment and its code starts with the equipment code.",
+    "addStopSubmit": "Insert the checkpoints",
+    "columns": {
+      "name": "Checklist",
+      "state": "State"
+    },
+    "rowIssues": {
+      "codeRequired": "The code is required.",
+      "codeDuplicate": "Another checkpoint already uses this code.",
+      "limitInvalid": "{{field}} is not a number.",
+      "limitsOrder": "A minimum is greater than its maximum.",
+      "warningBand": "The warning range must contain the normal range."
+    }
   },
   "signals": {
     "description": "Per equipment, over a rolling window: warnings and failures recorded, open anomalies and checklist coverage.",
@@ -197,9 +273,185 @@
     "fails": "Failures",
     "openAnomalies": "Open anomalies",
     "coverage": "Coverage",
-    "invalidWindow": "Enter a number of days (1 or more)."
+    "invalidWindow": "Enter a whole number of days (1 to {{max}}).",
+    "emptyHint": "Recalculate to see, per equipment, the warnings, failures and open anomalies of the window."
   },
   "errors": {
     "load": "Could not load: {{message}}"
+  },
+  "kpi": {
+    "title": "Figures",
+    "loadError": "The figures could not be loaded",
+    "period": "Period",
+    "periodOption_one": "Last {{count}} day",
+    "periodOption_other": "Last {{count}} days",
+    "periodHint_one": "Planned in the last {{count}} day",
+    "periodHint_other": "Planned in the last {{count}} days",
+    "nowHint": "Right now",
+    "due": "Rounds due",
+    "done": "Rounds done",
+    "overdue": "Overdue",
+    "missed": "Missed",
+    "compliance": "Compliance",
+    "complianceHint": "{{done}} of {{due}} done on time",
+    "complianceNone": "No round due in the period",
+    "openAnomalies": "Open anomalies"
+  },
+  "anomalyStatus": {
+    "open": "To decide",
+    "triaged": "Followed up",
+    "deferred": "Deferred",
+    "resolved": "Resolved",
+    "cancelled": "Cancelled"
+  },
+  "anomalies": {
+    "filterStatus": "Status",
+    "otherType": "Finding",
+    "empty": "No anomaly in this list.",
+    "emptyHint": "Anomalies appear when a reading is out of tolerance or a mandatory photo is missing.",
+    "deferTitle": "Defer this finding?",
+    "deferBody": "The finding {{checkpoint}} is kept, with no request or work order for now. You can follow it up later from this list.",
+    "columns": {
+      "finding": "Finding",
+      "equipment": "Equipment",
+      "reading": "Reading",
+      "round": "Round",
+      "status": "Status",
+      "followUp": "Follow-up"
+    }
+  },
+  "followUp": {
+    "diTitle": "Create a request from the finding",
+    "woTitle": "Create a work order from the finding",
+    "intro": "Title and description are drafted from the round; check and edit them before creating.",
+    "equipment": "Equipment",
+    "noEquipment": "No equipment on this checkpoint",
+    "checkpoint": "Checkpoint",
+    "reading": "Result",
+    "round": "Round",
+    "titleLabel": "Title",
+    "titleRequired": "Give a title.",
+    "descriptionLabel": "Description",
+    "woTypePlaceholder": "Choose a type",
+    "cancel": "Cancel",
+    "createDi": "Create the request",
+    "createWo": "Create the work order",
+    "createdDi": "Request created:",
+    "createdWo": "Work order created:",
+    "blocked": {
+      "alreadyRouted": "This finding already has a request or a work order.",
+      "noEquipment": "This checkpoint has no equipment: a request or a work order needs one. Add the equipment to the checkpoint in a new version of the checklist.",
+      "noLocation": "The equipment has no installation location: a request needs one. Complete the equipment record first."
+    },
+    "title": {
+      "above": "{{label}} out of tolerance on {{asset}}: {{value}} > {{limit}}",
+      "aboveNoAsset": "{{label}} out of tolerance: {{value}} > {{limit}}",
+      "below": "{{label}} out of tolerance on {{asset}}: {{value}} < {{limit}}",
+      "belowNoAsset": "{{label}} out of tolerance: {{value}} < {{limit}}",
+      "photo": "{{label}}: mandatory photo missing on {{asset}}",
+      "photoNoAsset": "{{label}}: mandatory photo missing",
+      "finding": "{{label}} on {{asset}}: {{result}}",
+      "findingNoAsset": "{{label}}: {{result}}"
+    },
+    "description": {
+      "round": "Inspection round {{name}} ({{code}}), planned {{date}}.",
+      "checkpoint": "Checkpoint {{code}}: {{label}}.",
+      "asset": "Equipment: {{asset}} {{name}}.",
+      "reading": "Reading: {{value}} ({{status}}).",
+      "result": "Result: {{status}}.",
+      "normal": "Normal range: {{band}}.",
+      "warning": "Warning range: {{band}}.",
+      "observation": "Observation: {{text}}",
+      "comment": "Technician comment: {{comment}}"
+    }
+  },
+  "schedules": {
+    "metersLoadError": "Could not read this asset's meters",
+    "new": "New schedule",
+    "generate": "Generate due rounds",
+    "generated": "Rounds generated: {{generated}} · already there: {{skipped}} · marked missed: {{missed}}.",
+    "issue": "Schedule {{code}}:",
+    "empty": "No recurring schedule yet.",
+    "emptyHint": "A schedule creates the rounds of a checklist every day, week, month… or every meter interval.",
+    "active": "Active",
+    "inactive": "Inactive",
+    "edit": "Edit",
+    "editNamed": "Edit {{name}}",
+    "everyMeter": "Every {{value}} {{unit}} of {{meter}}",
+    "meterNow": "now {{value}} {{unit}}",
+    "from": "from {{date}}",
+    "open_one": "{{count}} to do",
+    "open_other": "{{count}} to do",
+    "overdue_one": "{{count}} overdue",
+    "overdue_other": "{{count}} overdue",
+    "missed_one": "{{count}} missed",
+    "missed_other": "{{count}} missed",
+    "columns": {
+      "schedule": "Schedule",
+      "route": "Checklist / route",
+      "trigger": "Recurrence",
+      "assignee": "Assigned to",
+      "next": "Next round",
+      "rounds": "Rounds",
+      "active": "State"
+    },
+    "every": {
+      "label": "Every",
+      "hour_one": "Every hour",
+      "hour_other": "Every {{count}} hours",
+      "day_one": "Every day",
+      "day_other": "Every {{count}} days",
+      "week_one": "Every week",
+      "week_other": "Every {{count}} weeks",
+      "month_one": "Every month",
+      "month_other": "Every {{count}} months",
+      "year_one": "Every year",
+      "year_other": "Every {{count}} years"
+    },
+    "units": {
+      "hour": "Hours",
+      "day": "Days",
+      "week": "Weeks",
+      "month": "Months",
+      "year": "Years"
+    },
+    "newTitle": "New recurring schedule",
+    "editTitle": "Schedule {{name}}",
+    "intro": "The rounds are generated with the published version of the checklist and assigned as set here. Future rounds nobody started are replaced when you save.",
+    "code": "Code",
+    "name": "Name",
+    "route": "Checklist / route",
+    "routeHint": "The checkpoints of the checklist, in their order, are the route walked in the field.",
+    "trigger": "Trigger",
+    "triggers": {
+      "calendar": "Calendar",
+      "meter": "Meter"
+    },
+    "unit": "Unit",
+    "horizon": "Generate ahead (days)",
+    "horizonHint": "Rounds are created this many days in advance (1 to {{max}}).",
+    "anchor": "First round",
+    "meterAsset": "Equipment of the meter",
+    "meter": "Meter",
+    "meterPlaceholder": "Choose a meter",
+    "noMeter": "This equipment has no active meter.",
+    "meterInterval": "Every (meter units)",
+    "meterStart": "Count from reading",
+    "meterStartHint": "Empty: the current reading when you save.",
+    "grace": "Time allowed after the due time (hours)",
+    "graceHint": "A round nobody started within this time is marked missed (1 to {{max}} hours).",
+    "activeLabel": "Schedule active (generates rounds)",
+    "save": "Save the schedule",
+    "errors": {
+      "required": "Required.",
+      "assigneeRequired": "Assign the rounds to a technician or a team.",
+      "graceRange": "Enter a whole number of hours (1 to {{hours}}).",
+      "intervalRequired": "Enter a whole number of 1 or more.",
+      "anchorRequired": "Choose the date and time of the first round.",
+      "horizonRange": "Enter a whole number of days (1 to {{days}}).",
+      "meterRequired": "Choose the meter.",
+      "meterIntervalRequired": "Enter an interval greater than zero.",
+      "notNumber": "Enter a number."
+    }
   }
 }

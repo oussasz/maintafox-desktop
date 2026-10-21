@@ -8,8 +8,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::di::conversion::{convert_di_to_work_order, WoConversionInput};
     use crate::di::queries::{create_intervention_request, update_di_draft_fields, DiCreateInput, DiDraftUpdateInput};
@@ -20,24 +19,7 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════════
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
+        let db = crate::db::test_db::seeded().await;
 
         seed_fk_data(&db).await;
 
@@ -142,7 +124,7 @@ mod tests {
             safety_flag: false,
             environmental_flag: false,
             quality_flag: false,
-            reported_urgency: "medium".to_string(),
+            reported_urgency: "normal".to_string(),
             observed_at: None,
             source_inspection_anomaly_id: None,
             submitter_id: user_id,
@@ -371,23 +353,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v2_conversion_permission_requires_step_up() {
+    async fn v2_approval_and_conversion_are_confirmed_without_step_up() {
+        // Owner decision (2026-10-14): approve and convert are confirmed in a dialog; the
+        // permissions stay dangerous (audited) but no longer require password re-entry.
         let db = setup().await;
 
-        let row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT requires_step_up FROM permissions WHERE name = ?",
-                [crate::rbac::permissions::DI_APPROVE.into()],
-            ))
-            .await
-            .expect("query");
-
-        if let Some(row) = row {
+        for name in [
+            crate::rbac::permissions::DI_APPROVE,
+            crate::rbac::permissions::DI_CONVERT,
+        ] {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT requires_step_up, is_dangerous FROM permissions WHERE name = ?",
+                    [name.into()],
+                ))
+                .await
+                .expect("query")
+                .unwrap_or_else(|| panic!("{name} must exist in seed data"));
             let requires: i64 = row.try_get("", "requires_step_up").expect("column");
-            assert_eq!(requires, 1, "di.approve must require step-up authentication");
+            let dangerous: i64 = row.try_get("", "is_dangerous").expect("column");
+            assert_eq!(requires, 0, "{name} must not require step-up");
+            assert_eq!(dangerous, 1, "{name} stays a dangerous, audited permission");
         }
-        // If permission doesn't exist in test seed, test is vacuously correct
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -715,5 +703,212 @@ mod tests {
             result.is_err(),
             "second conversion attempt must fail — DI is already closed"
         );
+    }
+    // ═══════════════════════════════════════════════════════════════════════
+    // V6 – Triage context carried onto the WO (urgency, permit / LOTO gate)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async fn wo_urgency_code_and_permit(db: &sea_orm::DatabaseConnection, wo_id: i64) -> (Option<String>, i64) {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT ul.code AS urgency_code, w.requires_permit \
+                 FROM work_orders w LEFT JOIN reference_values ul ON ul.id = w.urgency_id \
+                 WHERE w.id = ?",
+                [wo_id.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("WO must exist");
+        (
+            row.try_get::<Option<String>>("", "urgency_code").expect("urgency_code"),
+            row.try_get::<i64>("", "requires_permit").expect("requires_permit"),
+        )
+    }
+
+    #[tokio::test]
+    async fn v6_safety_flagged_di_converts_to_permit_required_wo_with_validated_urgency() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let (di_id, _) = advance_to_approved(&db, user_id).await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET safety_flag = 1 WHERE id = ?",
+            [di_id.into()],
+        ))
+        .await
+        .expect("flag DI as safety-relevant");
+
+        let result = convert_di_to_work_order(
+            &db,
+            WoConversionInput {
+                di_id,
+                actor_id: user_id,
+                expected_row_version: get_row_version(&db, di_id).await,
+                conversion_notes: None,
+            },
+        )
+        .await
+        .expect("conversion should succeed");
+
+        let (urgency, requires_permit) = wo_urgency_code_and_permit(&db, result.wo_id).await;
+        // Screening validated `high` over the reported `medium`.
+        assert_eq!(urgency.as_deref(), Some("high"), "validated urgency must be carried");
+        assert_eq!(
+            requires_permit, 1,
+            "safety flag must make the permit / LOTO gate mandatory"
+        );
+    }
+
+    #[tokio::test]
+    async fn v6_unvalidated_urgency_falls_back_to_reported_and_no_permit_without_safety_flag() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let (di_id, _) = advance_to_approved(&db, user_id).await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET validated_urgency = NULL, reported_urgency = 'emergency' WHERE id = ?",
+            [di_id.into()],
+        ))
+        .await
+        .expect("clear validated urgency");
+
+        let result = convert_di_to_work_order(
+            &db,
+            WoConversionInput {
+                di_id,
+                actor_id: user_id,
+                expected_row_version: get_row_version(&db, di_id).await,
+                conversion_notes: None,
+            },
+        )
+        .await
+        .expect("conversion should succeed");
+
+        let (urgency, requires_permit) = wo_urgency_code_and_permit(&db, result.wo_id).await;
+        assert_eq!(
+            urgency.as_deref(),
+            Some("emergency"),
+            "reported urgency is the fallback"
+        );
+        assert_eq!(requires_permit, 0, "no safety flag → no permit requirement forced");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // V7 – Shared urgency scale, maintenance nature and symptom carried onto the WO
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async fn convert(db: &sea_orm::DatabaseConnection, user_id: i64, di_id: i64) -> i64 {
+        convert_di_to_work_order(
+            db,
+            WoConversionInput {
+                di_id,
+                actor_id: user_id,
+                expected_row_version: get_row_version(db, di_id).await,
+                conversion_notes: None,
+            },
+        )
+        .await
+        .expect("conversion should succeed")
+        .wo_id
+    }
+
+    async fn wo_type_code(db: &sea_orm::DatabaseConnection, wo_id: i64) -> String {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT t.code FROM work_orders w JOIN reference_values t ON t.id = w.type_id WHERE w.id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("WO type")
+        .try_get::<String>("", "code")
+        .expect("code")
+    }
+
+    #[tokio::test]
+    async fn v7_emergency_request_becomes_immediate_corrective_work_on_the_shared_scale() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let (di_id, _) = advance_to_approved(&db, user_id).await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET validated_urgency = 'emergency' WHERE id = ?",
+            [di_id.into()],
+        ))
+        .await
+        .expect("validate as emergency");
+
+        let wo_id = convert(&db, user_id, di_id).await;
+        let (urgency, _) = wo_urgency_code_and_permit(&db, wo_id).await;
+        assert_eq!(urgency.as_deref(), Some("emergency"));
+        assert_eq!(wo_type_code(&db, wo_id).await, "emergency");
+        assert_eq!(
+            crate::wo::types::work_order_nature(&db, wo_id).await.unwrap(),
+            Some(crate::wo::types::MaintenanceNature::CorrectiveImmediate)
+        );
+        let wo = crate::wo::queries::get_work_order(&db, wo_id).await.unwrap().unwrap();
+        assert_eq!(wo.urgency_code.as_deref(), Some("emergency"));
+        assert_eq!(wo.urgency_rank, Some(1));
+        assert_eq!(wo.nature_code.as_deref(), Some("corrective_immediate"));
+    }
+
+    #[tokio::test]
+    async fn v7_non_emergency_repair_is_deferred_corrective_and_preventive_request_is_preventive() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let (repair, _) = advance_to_approved(&db, user_id).await;
+        let wo_repair = convert(&db, user_id, repair).await;
+        assert_eq!(wo_type_code(&db, wo_repair).await, "corrective");
+        assert_eq!(
+            crate::wo::types::work_order_nature(&db, wo_repair).await.unwrap(),
+            Some(crate::wo::types::MaintenanceNature::CorrectiveDeferred)
+        );
+
+        let (preventive, _) = advance_to_approved(&db, user_id).await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET request_type = 'preventive' WHERE id = ?",
+            [preventive.into()],
+        ))
+        .await
+        .expect("preventive request");
+        let wo_preventive = convert(&db, user_id, preventive).await;
+        assert_eq!(wo_type_code(&db, wo_preventive).await, "preventive");
+    }
+
+    #[tokio::test]
+    async fn v7_request_symptom_is_carried_as_is_onto_the_close_out() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let (di_id, _) = advance_to_approved(&db, user_id).await;
+        let di_symptom: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT symptom_code_id FROM intervention_requests WHERE id = ?",
+                [di_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "symptom_code_id")
+            .unwrap();
+        let wo_id = convert(&db, user_id, di_id).await;
+        let wo_symptom: Option<i64> = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT symptom_id FROM work_order_failure_details WHERE work_order_id = ?",
+                [wo_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "symptom_id")
+            .unwrap();
+        assert_eq!(wo_symptom, Some(di_symptom), "one list: the same value on both records");
+        let in_shared_list = crate::wo::closeout_reference_catalog::resolve_work_symptom_id_by_code(&db, "vibration")
+            .await
+            .unwrap();
+        assert_eq!(in_shared_list, Some(di_symptom));
     }
 }

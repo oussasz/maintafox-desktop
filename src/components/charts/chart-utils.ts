@@ -22,34 +22,34 @@ export const DEFAULT_MARGIN: ChartMargin = {
 };
 
 // ─── Design-token color palette ───────────────────────────────────
-// Mirrors the Maintafox brand tokens from tailwind.config.ts.
-// Charts reference these directly (SVG fill/stroke) since CSS custom
-// properties are not available outside the DOM cascade.
+// CSS variables from src/styles/globals.css, so charts follow the brand and the status tones
+// (one colour vocabulary, light + dark theme). SVG fill/stroke accept `var(--…)`.
 
 export const CHART_COLORS = {
-  primary: "#003d8f",
-  primaryLight: "#4d7bc5",
-  primaryDark: "#002b6a",
-  accent: "#f0a500",
-  accentDark: "#c47f00",
-  success: "#198754",
-  danger: "#dc3545",
-  warning: "#ffc107",
-  info: "#0dcaf0",
-  neutral: "#6c757d",
+  primary: "var(--color-primary)",
+  primaryLight: "var(--color-primary-light)",
+  primaryDark: "var(--color-primary-dark)",
+  /** Logo orange: the one attention point of a screen. */
+  accent: "var(--color-accent)",
+  accentDark: "var(--color-accent-dark)",
+  success: "var(--tone-success-fg)",
+  danger: "var(--tone-danger-fg)",
+  warning: "var(--tone-warning-fg)",
+  info: "var(--tone-info-fg)",
+  progress: "var(--tone-progress-fg)",
+  neutral: "var(--tone-neutral-fg)",
 } as const;
 
-/** Ordered color sequence for multi-series charts. */
+/** Ordered color sequence for multi-series charts (orange kept last: attention only). */
 export const CHART_PALETTE = [
   CHART_COLORS.primary,
-  CHART_COLORS.accent,
+  CHART_COLORS.progress,
   CHART_COLORS.success,
-  CHART_COLORS.info,
-  CHART_COLORS.danger,
-  CHART_COLORS.warning,
-  CHART_COLORS.primaryLight,
-  CHART_COLORS.accentDark,
   CHART_COLORS.neutral,
+  CHART_COLORS.primaryLight,
+  CHART_COLORS.warning,
+  CHART_COLORS.danger,
+  CHART_COLORS.accent,
 ] as const;
 
 // ─── Inner dimensions helper ──────────────────────────────────────

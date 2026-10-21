@@ -70,6 +70,61 @@ describe("SmartFilterBar", () => {
     expect(onSearchChange).toHaveBeenCalledWith("pump");
   });
 
+  it("emits a typed search exactly once after the debounce", () => {
+    const onSearchChange = vi.fn();
+
+    render(
+      <SmartFilterBar
+        searchPlaceholder="Search items"
+        searchValue=""
+        onSearchChange={onSearchChange}
+        filters={[]}
+        onReset={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Search items"), { target: { value: "pump" } });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(onSearchChange).toHaveBeenCalledTimes(1);
+    expect(onSearchChange).toHaveBeenCalledWith("pump");
+  });
+
+  it("emits nothing stale when the parent clears a search the user had typed", () => {
+    const onSearchChange = vi.fn();
+    const ui = (searchValue: string) => (
+      <SmartFilterBar
+        searchPlaceholder="Search items"
+        searchValue={searchValue}
+        onSearchChange={onSearchChange}
+        filters={[]}
+        onReset={vi.fn()}
+      />
+    );
+
+    const { rerender } = render(ui(""));
+    fireEvent.change(screen.getByPlaceholderText("Search items"), { target: { value: "seal" } });
+    // The page mirrors the input (onSearchInputChange), then clears it from code.
+    rerender(ui("seal"));
+    rerender(ui(""));
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(onSearchChange).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("Search items")).toHaveValue("");
+
+    // Typing still works after the external clear.
+    fireEvent.change(screen.getByPlaceholderText("Search items"), { target: { value: "gasket" } });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(onSearchChange).toHaveBeenCalledTimes(1);
+    expect(onSearchChange).toHaveBeenCalledWith("gasket");
+  });
+
   it("shows search chip and clears search immediately", () => {
     const onSearchChange = vi.fn();
 

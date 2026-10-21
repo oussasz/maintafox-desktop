@@ -918,6 +918,34 @@ async fn apply_single_row(
 
     let existing_id = resolve_existing_equipment(txn, ext_key, asset_code).await?;
 
+    // Retirement and return to service are not imported: Déclasser checks open work and records
+    // why; a recommission event records the return. An existing retired asset may keep its status.
+    let status_retired = identity::is_retired_status_code(txn, status_code).await?;
+    let current_status: Option<String> = match existing_id {
+        Some(equip_id) => txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT lifecycle_status FROM equipment WHERE id = ?",
+                [equip_id.into()],
+            ))
+            .await?
+            .map(|r| r.try_get::<String>("", "lifecycle_status"))
+            .transpose()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.lifecycle_status: {e}")))?,
+        None => None,
+    };
+    let unchanged = current_status.as_deref() == Some(status_code);
+    if status_retired && !unchanged {
+        return Err(AppError::ValidationFailed(vec![
+            identity::RETIRE_THROUGH_DECOMMISSION.into()
+        ]));
+    }
+    if let Some(current) = current_status.as_deref() {
+        if !unchanged && identity::is_retired_status_code(txn, current).await? {
+            return Err(AppError::ValidationFailed(vec![identity::RECOMMISSION_REQUIRED.into()]));
+        }
+    }
+
     match existing_id {
         Some(equip_id) => {
             update_equipment_from_import(txn, equip_id, normalized, class_id, criticality_value_id, status_code)

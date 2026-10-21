@@ -14,8 +14,7 @@ import {
   listOrgNodeResponsibilities,
   listOrgTree,
 } from "@/services/org-node-service";
-import { useOrgDesignerStore } from "@/stores/org-designer-store";
-import { formatOrgIpcError } from "@/utils/errors";
+import { operationalNodeIdOf, useOrgDesignerStore } from "@/stores/org-designer-store";
 import type {
   OrgEntityBinding,
   OrgNode,
@@ -31,7 +30,8 @@ interface OrgNodeStoreState {
   bindings: OrgEntityBinding[];
   loading: boolean;
   saving: boolean;
-  error: string | null;
+  /** Last load failure (raw; render with ErrorState / describeAppError). */
+  error: unknown;
 
   loadTree: () => Promise<void>;
   selectNode: (nodeId: number | null) => Promise<void>;
@@ -40,6 +40,18 @@ interface OrgNodeStoreState {
 
 function currentDisplayModelId(): number | null {
   return useOrgDesignerStore.getState().snapshot?.display_model_id ?? null;
+}
+
+async function loadOperationalContext(
+  nodeId: number,
+): Promise<{ responsibilities: OrgNodeResponsibility[]; bindings: OrgEntityBinding[] }> {
+  const opsId = operationalNodeIdOf(useOrgDesignerStore.getState().snapshot, nodeId);
+  if (opsId == null) return { responsibilities: [], bindings: [] };
+  const [responsibilities, bindings] = await Promise.all([
+    listOrgNodeResponsibilities(opsId),
+    listOrgEntityBindings(opsId),
+  ]);
+  return { responsibilities, bindings };
 }
 
 export const useOrgNodeStore = create<OrgNodeStoreState>()((set, get) => ({
@@ -58,7 +70,7 @@ export const useOrgNodeStore = create<OrgNodeStoreState>()((set, get) => ({
       const treeRows = await listOrgTree();
       set({ treeRows });
     } catch (err) {
-      set({ error: formatOrgIpcError(err) });
+      set({ error: err });
     } finally {
       set({ loading: false });
     }
@@ -78,14 +90,13 @@ export const useOrgNodeStore = create<OrgNodeStoreState>()((set, get) => ({
     set({ loading: true, error: null, selectedNodeId: nodeId });
     try {
       const modelId = currentDisplayModelId();
-      const [node, responsibilities, bindings] = await Promise.all([
+      const [node, context] = await Promise.all([
         getOrgNode(nodeId, modelId),
-        listOrgNodeResponsibilities(nodeId),
-        listOrgEntityBindings(nodeId),
+        loadOperationalContext(nodeId),
       ]);
-      set({ selectedNode: node, responsibilities, bindings });
+      set({ selectedNode: node, ...context });
     } catch (err) {
-      set({ error: formatOrgIpcError(err) });
+      set({ error: err });
     } finally {
       set({ loading: false });
     }
@@ -98,15 +109,14 @@ export const useOrgNodeStore = create<OrgNodeStoreState>()((set, get) => ({
     set({ loading: true, error: null });
     try {
       const modelId = currentDisplayModelId();
-      const [treeRows, node, responsibilities, bindings] = await Promise.all([
+      const [treeRows, node, context] = await Promise.all([
         listOrgTree(),
         getOrgNode(selectedNodeId, modelId),
-        listOrgNodeResponsibilities(selectedNodeId),
-        listOrgEntityBindings(selectedNodeId),
+        loadOperationalContext(selectedNodeId),
       ]);
-      set({ treeRows, selectedNode: node, responsibilities, bindings });
+      set({ treeRows, selectedNode: node, ...context });
     } catch (err) {
-      set({ error: formatOrgIpcError(err) });
+      set({ error: err });
     } finally {
       set({ loading: false });
     }

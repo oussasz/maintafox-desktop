@@ -28,7 +28,9 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, QueryResult, Statement, TransactionTrait,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -75,7 +77,20 @@ pub struct RecordLifecycleEventPayload {
     pub reason_code: Option<String>,
     pub notes: Option<String>,
     pub approved_by_id: Option<i64>,
+    /// The asset's row version the person saw (required to recommission: a concurrent edit is
+    /// refused instead of overwritten).
+    #[serde(default)]
+    pub expected_row_version: Option<i64>,
 }
+
+/// Refusal codes of a recommission (translated under `equipment:errors`).
+pub const RECOMMISSION_NOT_RETIRED: &str = "ASSET_RECOMMISSION_NOT_RETIRED";
+pub const RECOMMISSION_REASON_REQUIRED: &str = "ASSET_RECOMMISSION_REASON_REQUIRED";
+pub const RECOMMISSION_TARGET_RETIRED: &str = "ASSET_RECOMMISSION_TARGET_RETIRED";
+pub const RECOMMISSION_VERSION_REQUIRED: &str = "ASSET_RECOMMISSION_VERSION_REQUIRED";
+pub const ASSET_STALE_VERSION: &str = "ASSET_STALE_VERSION";
+/// Refusal code: an asset is retired only through Déclasser (`decommission_asset`).
+pub const DECOMMISSION_THROUGH_DECLASSER: &str = "ASSET_RETIRE_THROUGH_DECOMMISSION";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -312,16 +327,38 @@ pub async fn list_asset_lifecycle_events(
 ///     `payload.to_status_code` (required) and clears `decommissioned_at`
 pub async fn record_lifecycle_event(
     db: &DatabaseConnection,
+    payload: RecordLifecycleEventPayload,
+    actor_id: i32,
+) -> AppResult<AssetLifecycleEvent> {
+    // Retirement is recorded only by Déclasser (`decommission::decommission_asset`): it checks
+    // open requests and work orders, requires a reason and refuses an asset already retired.
+    if payload.event_type == "DECOMMISSIONED" {
+        return Err(AppError::ValidationFailed(vec![DECOMMISSION_THROUGH_DECLASSER.into()]));
+    }
+    let txn = db.begin().await?;
+    let event = record_lifecycle_event_in(&txn, payload, actor_id).await?;
+    txn.commit().await?;
+    tracing::info!(
+        event_id = event.id,
+        asset_id = event.asset_id,
+        event_type = %event.event_type,
+        "lifecycle event recorded"
+    );
+    Ok(event)
+}
+
+/// [`record_lifecycle_event`] inside the caller's transaction, without the Déclasser guard:
+/// `decommission_asset` records its event here after its own checks, in the same transaction.
+pub(crate) async fn record_lifecycle_event_in(
+    txn: &DatabaseTransaction,
     mut payload: RecordLifecycleEventPayload,
     actor_id: i32,
 ) -> AppResult<AssetLifecycleEvent> {
-    let txn = db.begin().await?;
-
     // ── 1. Validate event type against lookup domain ─────────────────────
-    validate_event_type(&txn, &payload.event_type).await?;
+    validate_event_type(txn, &payload.event_type).await?;
 
     // ── 2. Validate asset exists ─────────────────────────────────────────
-    let (current_status, current_node_id, _current_class_id) = assert_asset_exists(&txn, payload.asset_id).await?;
+    let (current_status, current_node_id, _current_class_id) = assert_asset_exists(txn, payload.asset_id).await?;
 
     // ── 2b. Auto-enrich payload from current asset state ─────────────────
     // For MOVED events, capture the current org node as from_org_node_id
@@ -339,7 +376,7 @@ pub async fn record_lifecycle_event(
 
     // ── 4. Validate related asset if provided ────────────────────────────
     if let Some(related_id) = payload.related_asset_id {
-        assert_related_asset_exists(&txn, related_id).await?;
+        assert_related_asset_exists(txn, related_id).await?;
     }
 
     // ── 5. Apply side-effects for status-changing events ─────────────────
@@ -362,7 +399,7 @@ pub async fn record_lifecycle_event(
             // Keep payload.to_status_code aligned with the applied status.
             payload.to_status_code = Some(terminal.clone());
 
-            let status_ref_id = crate::assets::identity::resolve_status_ref_id(&txn, &terminal).await?;
+            let status_ref_id = crate::assets::identity::resolve_status_ref_id(txn, &terminal).await?;
 
             txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -382,25 +419,45 @@ pub async fn record_lifecycle_event(
             .await?;
         }
         "RECOMMISSIONED" => {
+            // A return to service: only a retired asset, with a reason, to a status in service,
+            // on the version the person saw.
+            let refuse = |code: &str| AppError::ValidationFailed(vec![code.to_string()]);
+            if !crate::assets::identity::is_retired_status_code(txn, &current_status).await? {
+                return Err(refuse(RECOMMISSION_NOT_RETIRED));
+            }
+            if payload.notes.as_deref().map(str::trim).unwrap_or_default().is_empty() {
+                return Err(refuse(RECOMMISSION_REASON_REQUIRED));
+            }
+            let expected = payload
+                .expected_row_version
+                .ok_or_else(|| refuse(RECOMMISSION_VERSION_REQUIRED))?;
             let target_status = payload.to_status_code.as_deref().unwrap_or("ACTIVE_IN_SERVICE");
             let normalized = crate::assets::identity::normalize_status_code_for_reference(target_status)?;
-            let status_ref_id = crate::assets::identity::resolve_status_ref_id(&txn, &normalized).await?;
+            if crate::assets::identity::is_retired_status_code(txn, &normalized).await? {
+                return Err(refuse(RECOMMISSION_TARGET_RETIRED));
+            }
+            let status_ref_id = crate::assets::identity::resolve_status_ref_id(txn, &normalized).await?;
             payload.to_status_code = Some(normalized.clone());
-            txn.execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE equipment SET lifecycle_status = ?, \
-                 equipment_status_ref_id = ?, \
-                 decommissioned_at = NULL, updated_at = ?, \
-                 row_version = row_version + 1 \
-                 WHERE id = ?",
-                [
-                    normalized.into(),
-                    status_ref_id.into(),
-                    now.clone().into(),
-                    payload.asset_id.into(),
-                ],
-            ))
-            .await?;
+            let updated = txn
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE equipment SET lifecycle_status = ?, \
+                     equipment_status_ref_id = ?, \
+                     decommissioned_at = NULL, updated_at = ?, \
+                     row_version = row_version + 1 \
+                     WHERE id = ? AND row_version = ?",
+                    [
+                        normalized.into(),
+                        status_ref_id.into(),
+                        now.clone().into(),
+                        payload.asset_id.into(),
+                        expected.into(),
+                    ],
+                ))
+                .await?;
+            if updated.rows_affected() == 0 {
+                return Err(refuse(ASSET_STALE_VERSION));
+            }
         }
         "MOVED" => {
             // Update installed_at_node_id to reflect the move.
@@ -462,15 +519,5 @@ pub async fn record_lifecycle_event(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("lifecycle event created but not found after insert")))?;
-    let event = map_lifecycle_event(&row)?;
-
-    txn.commit().await?;
-
-    tracing::info!(
-        event_id = event.id,
-        asset_id = event.asset_id,
-        event_type = %event.event_type,
-        "lifecycle event recorded"
-    );
-    Ok(event)
+    map_lifecycle_event(&row)
 }

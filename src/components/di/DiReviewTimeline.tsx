@@ -8,10 +8,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useDiDecisionReasonLabels } from "@/components/di/di-reference-labels";
 import { dispositionLabelKey } from "@/components/di/disposition-meta";
+import { diStatusToI18nKey } from "@/components/di/status-meta";
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry } from "@/components/timeline";
-import { formatOrDash } from "@/lib/display";
+import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { getDiReviewEvents } from "@/services/di-review-service";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { DiReviewEvent } from "@shared/ipc-types";
@@ -30,6 +32,7 @@ export function DiReviewTimeline({ diId }: DiReviewTimelineProps) {
   const dateLocale = intlLocaleForLanguage(i18n.language);
   const [events, setEvents] = useState<DiReviewEvent[]>([]);
   const [loading, setLoading] = useState(false);
+  const { returnReasonLabel, deferralReasonLabel } = useDiDecisionReasonLabels();
 
   useEffect(() => {
     let cancelled = false;
@@ -64,18 +67,34 @@ export function DiReviewTimeline({ diId }: DiReviewTimelineProps) {
 
         const dispositionKey =
           ev.event_type === "closed" ? dispositionLabelKey(ev.reason_code) : null;
-        const dispositionText = dispositionKey ? t(dispositionKey as "disposition.other") : null;
+        const reasonText =
+          ev.event_type === "closed"
+            ? dispositionKey
+              ? t(dispositionKey as "disposition.other")
+              : null
+            : ev.event_type === "returned_for_clarification" && ev.reason_code
+              ? returnReasonLabel(ev.reason_code)
+              : ev.event_type === "deferred" && ev.reason_code
+                ? deferralReasonLabel(ev.reason_code)
+                : null;
+        const statusText = (code: string) =>
+          code === "none" ? "—" : t(`status.${diStatusToI18nKey(code)}` as const);
+        const move =
+          ev.from_status === ev.to_status
+            ? statusText(ev.to_status)
+            : `${statusText(ev.from_status)} → ${statusText(ev.to_status)}`;
 
         return {
           id: String(ev.id),
           title: eventLabel,
-          subtitle:
-            dispositionText != null
-              ? `${ev.from_status} → ${ev.to_status} · ${dispositionText}`
-              : `${ev.from_status} → ${ev.to_status}`,
+          subtitle: reasonText != null ? `${move} · ${reasonText}` : move,
           description: ev.notes ?? undefined,
           timestamp: ev.acted_at,
-          actor: `${t("reviewTimeline.actor")}: ${t("reviewTimeline.systemActor")}`,
+          actor: `${t("reviewTimeline.actor")}: ${
+            ev.actor_id != null
+              ? formatPersonLabel(ev.actor_display_name)
+              : t("reviewTimeline.systemActor")
+          }`,
           tone: breached ? ("danger" as const) : undefined,
           details: hasSla ? (
             <div className="grid grid-cols-2 gap-2 text-xs">
@@ -104,7 +123,7 @@ export function DiReviewTimeline({ diId }: DiReviewTimelineProps) {
                   : formatOrDash(null)}
               </div>
               {breached ? (
-                <div className="col-span-2 font-medium text-red-700">
+                <div className="col-span-2 font-medium text-tone-danger-fg">
                   {t("reviewTimeline.breachHint")}
                 </div>
               ) : null}
@@ -113,7 +132,7 @@ export function DiReviewTimeline({ diId }: DiReviewTimelineProps) {
           detailsLabel: t("reviewTimeline.slaDetails", { defaultValue: "SLA details" }),
         };
       }),
-    [events, t, dateLocale],
+    [events, t, dateLocale, returnReasonLabel, deferralReasonLabel],
   );
 
   return (

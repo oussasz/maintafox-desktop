@@ -55,6 +55,7 @@ export const AssetMeterSchema = z.object({
   name: z.string(),
   meter_code: z.string().nullable(),
   meter_type: z.string(),
+  unit_value_id: z.number().nullable(),
   unit: z.string().nullable(),
   current_reading: z.number(),
   last_read_at: z.string().nullable(),
@@ -195,6 +196,7 @@ export const AssetBindingSummarySchema = z.object({
   linked_erp_mapping_count: DomainBindingEntrySchema,
   open_di_count: DomainBindingEntrySchema,
   open_wo_count: DomainBindingEntrySchema,
+  open_wo_rule: z.string(),
 });
 
 export async function getAssetBindingSummary(assetId: number): Promise<AssetBindingSummary> {

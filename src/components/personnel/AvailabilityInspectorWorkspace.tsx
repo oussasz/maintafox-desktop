@@ -16,6 +16,7 @@ import {
   EntitySummaryKpiStrip,
   type EntitySummaryKpi,
 } from "@/components/detail";
+import { absenceBlockTitle } from "@/components/personnel/absence-block-display";
 import {
   CELL_STATE_CLASS,
   deriveCellState,
@@ -23,11 +24,14 @@ import {
   type AvailabilityCellState,
   type AvailabilityPersonRow,
 } from "@/components/personnel/availability-model";
+import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
+import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import {
   endAvailabilityBlock,
   getPersonnelAvailabilityState,
@@ -43,6 +47,14 @@ import type {
 import { P } from "@shared/rbac/permissions.generated";
 
 export type AvailabilityCertWarning = "expired" | "expiring";
+
+/** Reason codes of the availability state (`personnel::availability::REASON_*`); any other reason
+ * is the absence type code of an active block. */
+const AVAILABILITY_REASON_CODES: ReadonlySet<string> = new Set([
+  "employment_terminated",
+  "blocked_override",
+  "open_work_orders",
+]);
 
 export type AvailabilityInspectorWorkspaceProps = {
   person: AvailabilityPersonRow;
@@ -99,6 +111,9 @@ export function AvailabilityInspectorWorkspace({
   onBlocksChanged,
 }: AvailabilityInspectorWorkspaceProps) {
   const { t } = useTranslation("personnel");
+  const woOpenRuleText = useWoOpenRuleText();
+  // Absence types are named from the plant's list (Données de référence), by exact code.
+  const lists = usePersonnelLists();
   const [tab, setTab] = useState("overview");
   const [availabilityState, setAvailabilityState] = useState<PersonnelAvailabilityState | null>(
     null,
@@ -190,7 +205,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setAvailabilityState(null);
-          setStateError(err instanceof Error ? err.message : String(err));
+          setStateError(describeAppError(err).title);
         }
       })
       .finally(() => {
@@ -204,7 +219,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setSkills([]);
-          setSkillsError(err instanceof Error ? err.message : String(err));
+          setSkillsError(describeAppError(err).title);
         }
       })
       .finally(() => {
@@ -218,7 +233,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setWorkload(null);
-          setWorkloadError(err instanceof Error ? err.message : String(err));
+          setWorkloadError(describeAppError(err).title);
         }
       })
       .finally(() => {
@@ -239,7 +254,7 @@ export function AvailabilityInspectorWorkspace({
       onSelectBlock(null);
       onBlocksChanged();
     } catch (err) {
-      setEndError(err instanceof Error ? err.message : String(err));
+      setEndError(describeAppError(err).title);
     } finally {
       setEnding(false);
     }
@@ -350,7 +365,13 @@ export function AvailabilityInspectorWorkspace({
                 {availabilityState.reasons.length > 0 ? (
                   <ul className="mt-2 list-inside list-disc text-sm text-text-muted">
                     {availabilityState.reasons.map((reason) => (
-                      <li key={reason}>{reason}</li>
+                      <li key={reason}>
+                        {AVAILABILITY_REASON_CODES.has(reason)
+                          ? t(`availability.inspector.reason.${reason}`, {
+                              count: availabilityState.open_work_order_count ?? 0,
+                            })
+                          : lists.text("absence_types", reason)}
+                      </li>
                     ))}
                   </ul>
                 ) : (
@@ -397,12 +418,7 @@ export function AvailabilityInspectorWorkspace({
 
         <TabsContent value="constraint" className="mt-3 space-y-3">
           {selectedBlock ? (
-            <DetailSectionCard
-              title={t(
-                `availability.form.types.${selectedBlock.block_type}`,
-                selectedBlock.block_type,
-              )}
-            >
+            <DetailSectionCard title={absenceBlockTitle(selectedBlock, lists, t)}>
               <DetailFieldRow
                 label={t("availability.form.startAt")}
                 value={formatHorizonInstant(selectedBlock.start_at)}
@@ -479,9 +495,7 @@ export function AvailabilityInspectorWorkspace({
                       )}
                       onClick={() => onSelectBlock(b.id)}
                     >
-                      <div className="font-medium">
-                        {t(`availability.form.types.${b.block_type}`, b.block_type)}
-                      </div>
+                      <div className="font-medium">{absenceBlockTitle(b, lists, t)}</div>
                       <div className="text-xs text-text-muted">
                         {formatHorizonInstant(b.start_at)} → {formatHorizonInstant(b.end_at)}
                       </div>
@@ -542,11 +556,17 @@ export function AvailabilityInspectorWorkspace({
             {!workloadLoading && !workloadError && workload ? (
               <>
                 <DetailFieldRow
-                  label={t("detail.workload.openWo")}
+                  label={
+                    woOpenRuleText(workload.open_work_orders_rule)?.figure ??
+                    t("detail.workload.openWo")
+                  }
                   value={String(workload.open_work_orders)}
                 />
                 <DetailFieldRow
-                  label={t("detail.workload.inProgressWo")}
+                  label={
+                    woOpenRuleText(workload.in_progress_work_orders_rule)?.figure ??
+                    t("detail.workload.inProgressWo")
+                  }
                   value={String(workload.in_progress_work_orders)}
                 />
                 <DetailFieldRow

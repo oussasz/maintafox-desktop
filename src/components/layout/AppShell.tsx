@@ -1,9 +1,15 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AdminRecoveryNotice } from "@/components/auth/AdminRecoveryNotice";
+import { BuiltinAdminWarning } from "@/components/auth/BuiltinAdminWarning";
+import { SingleAdministratorWarning } from "@/components/auth/SingleAdministratorWarning";
+import { SafetyRuleNotice } from "@/components/notifications/SafetyRuleNotice";
+import { ForcedRemovalAcknowledgementGate } from "@/components/permits/ForcedRemovalAcknowledgementGate";
 import { AppToastHost } from "@/components/shell/AppToastHost";
 import { DatabaseRecoveryScreen } from "@/components/startup/DatabaseRecoveryScreen";
-import { useStartupBridge } from "@/hooks/use-startup-bridge";
+import { UpdateBanner } from "@/components/updates/UpdateBanner";
+import { useUpdateScheduler } from "@/hooks/use-updater";
 import { invokeSilent } from "@/lib/ipc-invoke";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { cn } from "@/lib/utils";
@@ -34,9 +40,26 @@ export function AppShell({ children }: AppShellProps) {
   const refreshCurrency = useLocaleStore((s) => s.refreshCurrency);
   const sessionAuthenticated = useSessionStore((s) => s.info?.is_authenticated === true);
   const sessionLocked = useSessionStore((s) => s.info?.is_locked === true);
+  const sessionUserId = useSessionStore((s) => s.info?.user_id ?? null);
+  // While the forced-removal acknowledgement screen is shown, the rest of the app is inert
+  // (unreachable by mouse, keyboard and screen readers).
+  const [gateActive, setGateActive] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    if (gateActive) {
+      shell.setAttribute("inert", "");
+      shell.setAttribute("aria-hidden", "true");
+    } else {
+      shell.removeAttribute("inert");
+      shell.removeAttribute("aria-hidden");
+    }
+  }, [gateActive]);
 
-  // Bridge Tauri startup events → app store
-  useStartupBridge();
+  // Startup events are bridged to the app store in App (before sign-in). In-app update
+  // checks run here once startup is complete: once now, then periodically.
+  useUpdateScheduler(appStatus === "ready");
 
   useEffect(() => {
     initializeSync();
@@ -101,21 +124,35 @@ export function AppShell({ children }: AppShellProps) {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-surface-0">
-      <TopBar />
-      <div className={cn("flex flex-1 overflow-hidden", "pt-topbar pb-statusbar")}>
-        <Sidebar items={defaultNavItems} />
-        <main
-          className={cn(
-            "flex-1 overflow-auto transition-all duration-normal",
-            collapsed ? "ml-sidebar-sm" : "ml-sidebar",
-          )}
-        >
-          {children}
-        </main>
+    <>
+      <div ref={shellRef} className="flex h-screen flex-col bg-surface-0" data-testid="app-shell">
+        <TopBar />
+        <div className={cn("flex flex-1 overflow-hidden", "pt-topbar pb-statusbar")}>
+          <Sidebar items={defaultNavItems} />
+          <main
+            className={cn(
+              "flex-1 overflow-auto transition-all duration-normal",
+              collapsed ? "ml-sidebar-sm" : "ml-sidebar",
+            )}
+          >
+            <UpdateBanner />
+            <BuiltinAdminWarning sessionUserId={sessionUserId} className="m-4" />
+            <SingleAdministratorWarning sessionUserId={sessionUserId} className="m-4" />
+            <AdminRecoveryNotice sessionUserId={sessionUserId} className="m-4" />
+            <SafetyRuleNotice sessionUserId={sessionUserId} className="m-4" />
+            {children}
+          </main>
+        </div>
+        <StatusBar />
+        <AppToastHost />
       </div>
-      <StatusBar />
-      <AppToastHost />
-    </div>
+      {/* A lock of the signed-in worker taken off by a forced removal: acknowledged before anything else. */}
+      {sessionAuthenticated && !sessionLocked ? (
+        <ForcedRemovalAcknowledgementGate
+          sessionUserId={sessionUserId}
+          onActiveChange={setGateActive}
+        />
+      ) : null}
+    </>
   );
 }

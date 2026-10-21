@@ -2,8 +2,7 @@
 //! permit-type requirements, crew gaps, input validation and expiry alerts.
 
 use chrono::{Duration, Utc};
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::AppError;
 use crate::qualification::domain::{
@@ -18,15 +17,7 @@ use crate::qualification::readiness::{evaluate_crew_permit_skill_gaps, list_pers
 use crate::wo::domain::WoCreateInput;
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    db.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "PRAGMA foreign_keys = ON;".to_string(),
-    ))
-    .await
-    .expect("PRAGMA foreign_keys");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+    let db = crate::db::test_db::seeded().await;
     for sql in [
         "INSERT INTO personnel (employee_code, full_name, availability_status) VALUES ('Q-1', 'Karim Elec', 'available')",
         "INSERT INTO personnel (employee_code, full_name, availability_status) VALUES ('Q-2', 'Lina Meca', 'available')",
@@ -70,6 +61,10 @@ async fn cert_type(db: &DatabaseConnection, code: &str) -> i64 {
             name: format!("{code} habilitation"),
             default_validity_months: Some(36),
             renewal_lead_days: Some(60),
+            category: Some("electrical".into()),
+            description: None,
+            is_active: None,
+            expected_row_version: None,
         },
     )
     .await
@@ -273,7 +268,8 @@ async fn crew_gaps_list_the_missing_certificates() {
             source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: "Isolate MCC".into(),
             description: None,
             notes: None,

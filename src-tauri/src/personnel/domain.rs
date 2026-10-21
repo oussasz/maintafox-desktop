@@ -79,6 +79,9 @@ pub struct SetTeamLeadInput {
 pub struct PersonnelAvailabilityBlock {
     pub id: i64,
     pub personnel_id: i64,
+    /// Absence type code. Left out of the payload (empty) when the caller may not read it
+    /// (`personnel::absence_access`; then `type_masked`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub block_type: String,
     pub start_at: String,
     pub end_at: String,
@@ -90,6 +93,14 @@ pub struct PersonnelAvailabilityBlock {
     /// True when `reason_note` was withheld (caller lacks `per.sensitiveview`, not own record).
     #[serde(default)]
     pub reason_masked: bool,
+    /// True when the absence type was withheld (decision register 2026-10-19, Q2 and (b)): the
+    /// caller sees a neutral tag only.
+    #[serde(default)]
+    pub type_masked: bool,
+    /// Critical for planning: the type carries the `critical` tag in Données de référence, or the
+    /// block is marked critical. Set by `personnel::absence_access` on every block it returns.
+    #[serde(default)]
+    pub critical_for_planning: bool,
 }
 
 impl PersonnelAvailabilityBlock {
@@ -112,8 +123,16 @@ pub struct PersonnelWorkHistoryEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonnelWorkloadSummary {
+    /// OTs of the person not yet closed (`wo::backlog::NOT_CLOSED_SQL`).
     pub open_work_orders: i64,
+    /// `wo::backlog::RULE_NOT_YET_CLOSED`.
+    #[serde(default)]
+    pub open_work_orders_rule: String,
+    /// OTs of the person with work still to do (`wo::backlog::OPEN_STATUS_SQL`).
     pub in_progress_work_orders: i64,
+    /// `wo::backlog::RULE_OPEN_WORK_TO_DO`.
+    #[serde(default)]
+    pub in_progress_work_orders_rule: String,
     pub pending_interventions: i64,
     pub interventions_last_30d: i64,
 }
@@ -286,7 +305,12 @@ pub struct PersonnelAvailabilityState {
     pub personnel_id: i64,
     pub status: String,
     pub blocked_override: bool,
+    /// Reason codes (`personnel::availability::REASON_*`), or the absence type codes of the
+    /// active blocks.
     pub reasons: Vec<String>,
+    /// Open work orders the person is on, when the check reached them (`None` when an earlier
+    /// rule — terminated, override, active block — already decided the state).
+    pub open_work_order_count: Option<i64>,
     pub as_of: String,
 }
 
@@ -692,7 +716,8 @@ pub struct ScheduleClass {
     pub name: String,
     pub shift_pattern_code: String,
     pub is_continuous: i64,
-    pub nominal_hours_per_day: f64,
+    /// As typed on the class; `None` when not set (never assumed).
+    pub nominal_hours_per_day: Option<f64>,
     pub is_active: i64,
     pub created_at: String,
 }
@@ -790,6 +815,18 @@ pub struct PersonnelCreateInput {
     pub certifications: Vec<PersonnelCertDraft>,
 }
 
+/// A field that is present (possibly `null`) deserialises to `Some(value)`; an absent one stays
+/// `None` — so an update can tell "leave unchanged" (absent) from "clear" (`null`).
+fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
+/// Update of a person. Required fields: absent = unchanged. Optional fields (`Option<Option<_>>`):
+/// absent = unchanged, `null` (or an empty text) = cleared, a value = set.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonnelUpdateInput {
     pub id: i64,
@@ -801,19 +838,29 @@ pub struct PersonnelUpdateInput {
     pub position_id: Option<i64>,
     pub primary_entity_id: Option<i64>,
     pub primary_team_id: Option<i64>,
-    pub supervisor_id: Option<i64>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub supervisor_id: Option<Option<i64>>,
     pub home_schedule_reference_value_id: Option<i64>,
     pub availability_status: Option<String>,
     pub blocked_override: Option<bool>,
-    pub hire_date: Option<String>,
-    pub termination_date: Option<String>,
-    pub email: Option<String>,
-    pub phone: Option<String>,
-    pub external_company_id: Option<i64>,
-    pub contract_number: Option<String>,
-    pub contract_start_date: Option<String>,
-    pub contract_end_date: Option<String>,
-    pub notes: Option<String>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub hire_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub termination_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub email: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub phone: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub external_company_id: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub contract_number: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub contract_start_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub contract_end_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub notes: Option<Option<String>>,
     pub assignment_reason: Option<String>,
     /// Privileged path only — omitted for normal updates.
     pub employee_code: Option<String>,
@@ -937,30 +984,10 @@ mod masking_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::ConnectionTrait;
 
     async fn setup_migrated_db() -> DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     #[test]

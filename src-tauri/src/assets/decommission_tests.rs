@@ -2,8 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::assets::decommission::{self, DecommissionAssetPayload};
     use crate::assets::identity::{self, CreateAssetPayload};
@@ -15,26 +14,7 @@ mod tests {
     use crate::org::structure_model::{self, CreateStructureModelPayload};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn setup_org_node(db: &sea_orm::DatabaseConnection) -> i64 {
@@ -161,6 +141,7 @@ mod tests {
                 rams_utilization_factor: Some(1.0),
                 org_node_id,
                 commissioned_at: None,
+                commercial: None,
             },
             1,
         )
@@ -208,7 +189,7 @@ mod tests {
         let type_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM work_order_types ORDER BY id ASC LIMIT 1".to_string(),
+                "SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'corrective'".to_string(),
             ))
             .await
             .expect("query type")
@@ -407,6 +388,21 @@ mod tests {
             }
             other => panic!("expected ValidationFailed, got {other:?}"),
         }
+        // Refused inside the transaction: nothing written (status, date, lifecycle event).
+        let after = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        assert_eq!(after.status_code, asset.status_code);
+        assert!(after.decommissioned_at.is_none());
+        let events = db
+            .query_one(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM equipment_lifecycle_events WHERE equipment_id = ? AND event_type = 'DECOMMISSIONED'",
+                [asset.id.into()],
+            ))
+            .await
+            .expect("count")
+            .and_then(|r| r.try_get::<i64>("", "n").ok())
+            .unwrap_or(-1);
+        assert_eq!(events, 0);
     }
 
     #[tokio::test]

@@ -9,7 +9,12 @@
 //! is closed as `not_available` by the email dispatcher).
 //!
 //! - Day boundaries follow the timezone of the device the job runs on (the user's computer); the
-//!   desktop has no other notion of a user timezone.
+//!   desktop has no other notion of a user timezone. The digest covers finished days only, and at
+//!   most the last [`DIGEST_CATCH_UP_DAYS`] of them (a device that was off for a few days catches
+//!   up; switching a category to the digest does not produce a digest for every old day).
+//! - Counted: notifications still unread, not archived and whose condition still holds.
+//! - The text is rendered in the reader's language from the message key `daily_digest` and the
+//!   counts per category code; `title` / `body` keep the device-language text for email.
 //! - Idempotent per user per day: the digest event and notification get identities seeded from
 //!   (user, local date), so a second run, or another device of the same user that computes the
 //!   same date, does not create a second digest. Notifications that arrive for a day after its
@@ -33,13 +38,20 @@ use crate::sync::identity::seeded_entity_sync_id;
 /// Category of the digest notification itself (seeded by migration 176).
 pub const DIGEST_CATEGORY: &str = "daily_digest";
 
+/// Finished days a digest round looks back at (yesterday and the six days before).
+pub const DIGEST_CATCH_UP_DAYS: i64 = 7;
+
 /// Pause between two digest rounds of the background job.
 pub const DIGEST_TICK: Duration = Duration::from_secs(15 * 60);
 
 /// SQL condition (preferences `p`, events `e`): the notification is delivered right away. Holds
-/// for the digest category itself, whatever its preference says.
-pub const INSTANT_DELIVERY_SQL: &str =
-    "(e.category_code = 'daily_digest' OR COALESCE(p.digest_mode, 'instant') = 'instant')";
+/// for the digest category itself and for the safety notices (`catalog::ALWAYS_DELIVERED`,
+/// `settings::received_notice::SAFETY_NOTICE_CATEGORIES`), whatever their preference says.
+pub const INSTANT_DELIVERY_SQL: &str = concat!(
+    "(e.category_code = 'daily_digest' OR e.category_code IN ",
+    crate::safety_notice_categories_sql!(),
+    " OR COALESCE(p.digest_mode, 'instant') = 'instant')"
+);
 
 /// Checks a delivery mode for a category: `instant`, `daily_digest` or `off`, and only `instant`
 /// for the digest category itself (a digest of digests would never be delivered).
@@ -62,6 +74,7 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
 }
 
 struct Pending {
+    category_code: String,
     category_label: String,
     created_at: DateTime<Utc>,
 }
@@ -114,14 +127,19 @@ pub async fn build_due_digests<Tz: TimeZone>(
         let rows = conn
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT n.created_at, COALESCE(c.label, e.category_code) AS category_label \
-                 FROM notifications n \
-                 JOIN notification_events e ON e.id = n.notification_event_id \
-                 JOIN notification_preferences p \
-                      ON p.user_id = n.recipient_user_id AND p.category_code = e.category_code \
-                 LEFT JOIN notification_categories c ON c.code = e.category_code \
-                 WHERE n.recipient_user_id = ? AND p.digest_mode = 'daily_digest' \
-                   AND e.category_code <> ? AND n.delivery_state IN ('pending', 'delivered')",
+                concat!(
+                    "SELECT n.created_at, e.category_code, COALESCE(c.label, e.category_code) AS category_label \
+                     FROM notifications n \
+                     JOIN notification_events e ON e.id = n.notification_event_id \
+                     JOIN notification_preferences p \
+                          ON p.user_id = n.recipient_user_id AND p.category_code = e.category_code \
+                     LEFT JOIN notification_categories c ON c.code = e.category_code \
+                     WHERE n.recipient_user_id = ? AND p.digest_mode = 'daily_digest' \
+                       AND e.category_code <> ? AND e.category_code NOT IN ",
+                    crate::safety_notice_categories_sql!(),
+                    " AND n.delivery_state IN ('pending', 'delivered', 'escalated') \
+                       AND n.read_at IS NULL AND n.archived_at IS NULL AND n.resolved_at IS NULL"
+                ),
                 [user_id.into(), DIGEST_CATEGORY.into()],
             ))
             .await?;
@@ -132,8 +150,11 @@ pub async fn build_due_digests<Tz: TimeZone>(
                 .map_err(|e| decode_err("created_at", e))?
                 .with_timezone(&Utc);
             let day = created_at.with_timezone(tz).date_naive();
-            if day < today {
+            if day < today && day >= today - chrono::Duration::days(DIGEST_CATCH_UP_DAYS) {
                 by_day.entry(day).or_default().push(Pending {
+                    category_code: r
+                        .try_get("", "category_code")
+                        .map_err(|e| decode_err("category_code", e))?,
                     category_label: r
                         .try_get("", "category_label")
                         .map_err(|e| decode_err("category_label", e))?,
@@ -160,18 +181,22 @@ async fn make_digest(
     lang: &str,
 ) -> AppResult<bool> {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_code: BTreeMap<String, usize> = BTreeMap::new();
     for i in items {
         *counts.entry(i.category_label.clone()).or_default() += 1;
+        *by_code.entry(i.category_code.clone()).or_default() += 1;
     }
     let (title, body) = digest_text(lang, day, &counts);
+    let total: usize = by_code.values().sum();
+    let message_params = serde_json::json!({ "date": day.to_string(), "total": total, "counts": by_code });
     let event_sync = seeded_entity_sync_id("notification_events", &format!("{DIGEST_CATEGORY}|{user_sync}|{day}"));
     let last = items.iter().map(|i| i.created_at).max().unwrap_or_else(Utc::now);
     let inserted = conn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO notification_events (entity_sync_id, source_module, source_record_id, event_code, \
-             category_code, severity, occurred_at, payload_json) \
-             VALUES (?, 'notifications', ?, 'notification.daily_digest', ?, 'info', ?, ?) \
+             category_code, severity, occurred_at, payload_json, message_key, message_params_json) \
+             VALUES (?, 'notifications', ?, 'notification.daily_digest', ?, 'info', ?, ?, 'daily_digest', ?) \
              ON CONFLICT(entity_sync_id) DO NOTHING",
             [
                 event_sync.clone().into(),
@@ -181,6 +206,7 @@ async fn make_digest(
                 serde_json::json!({ "date": day.to_string(), "counts": counts })
                     .to_string()
                     .into(),
+                message_params.to_string().into(),
             ],
         ))
         .await?;
@@ -197,8 +223,20 @@ async fn make_digest(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("digest event missing after insert")))?
         .try_get("", "id")
         .map_err(|e| decode_err("id", e))?;
-    let Some(notification_id) =
-        emitter::insert_notification(conn, event_id, user_id, &title, Some(&body), None, 0).await?
+    let Some(notification_id) = emitter::insert_notification_for(
+        conn,
+        event_id,
+        user_id,
+        &title,
+        Some(&body),
+        Some("/notifications"),
+        0,
+        Some(emitter::Reason {
+            code: "digest",
+            reference: None,
+        }),
+    )
+    .await?
     else {
         return Ok(false);
     };

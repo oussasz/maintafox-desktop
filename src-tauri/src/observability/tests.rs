@@ -1,7 +1,6 @@
 //! SP07 observability cross-module integration tests (roadmap 04).
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
 
 use crate::activity::emitter::{emit_activity_event, emit_di_event, emit_wo_event, ActivityEventInput};
@@ -27,26 +26,7 @@ use crate::wo::parts::{self, AddPartInput};
 use crate::wo::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("in-memory SQLite should connect");
-
-    db.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "PRAGMA foreign_keys = ON;".to_string(),
-    ))
-    .await
-    .expect("PRAGMA foreign_keys");
-
-    crate::migrations::Migrator::up(&db, None)
-        .await
-        .expect("migrations should apply cleanly");
-
-    crate::db::seeder::seed_system_data(&db)
-        .await
-        .expect("seeder should run cleanly");
-
-    db
+    crate::db::test_db::seeded().await
 }
 
 async fn admin_id(db: &DatabaseConnection) -> i64 {
@@ -206,7 +186,7 @@ async fn di_create_input(db: &sea_orm::DatabaseConnection, submitter_id: i64) ->
         safety_flag: false,
         environmental_flag: false,
         quality_flag: false,
-        reported_urgency: "medium".to_string(),
+        reported_urgency: "normal".to_string(),
         observed_at: None,
         source_inspection_anomaly_id: None,
         submitter_id,
@@ -295,9 +275,13 @@ async fn transition_planned_assigned_in_progress_for_user(
             planned_start: Some("2026-04-10T08:00:00Z".to_string()),
             planned_end: Some("2026-04-10T16:00:00Z".to_string()),
             shift: None,
+            shift_class_version_id: None,
+            clear_shift: false,
             expected_duration_hours: Some(8.0),
+            planned_crew_size: None,
+            clear_crew_size: false,
             planned_downtime_hours: None,
-            urgency_id: None,
+            urgency_code: None,
         },
     )
     .await
@@ -357,7 +341,8 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
             source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: "Obs close".into(),
             description: Some("test".into()),
             notes: None,
@@ -402,6 +387,7 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
             auto_reserve: Some(false),
             notes: None,
             origin: None,
+            is_required: true,
         },
     )
     .await
@@ -534,7 +520,8 @@ async fn test_obs_01_emit_creates_notification() {
             source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: "N1".into(),
             description: None,
             notes: None,
@@ -601,7 +588,8 @@ async fn test_obs_02_dedupe_prevents_flood() {
             source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: "N2".into(),
             description: None,
             notes: None,
@@ -686,7 +674,8 @@ async fn test_obs_03_snooze_wakes() {
             source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: "N3".into(),
             description: None,
             notes: None,
@@ -797,7 +786,8 @@ async fn test_obs_04_acknowledge_closes_escalation_path() {
             source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: "N4".into(),
             description: None,
             notes: None,
@@ -1343,6 +1333,7 @@ async fn test_obs_12_full_observability_chain() {
             auto_reserve: Some(false),
             notes: None,
             origin: None,
+            is_required: true,
         },
     )
     .await

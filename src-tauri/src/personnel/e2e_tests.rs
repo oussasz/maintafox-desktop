@@ -2,8 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::errors::AppError;
     use crate::personnel::domain::{PersonnelCreateInput, PersonnelListFilter, PersonnelUpdateInput};
@@ -15,20 +14,7 @@ mod tests {
     use crate::wo::queries as wo_queries;
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:").await.expect("connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-
-        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {
@@ -576,7 +562,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Block deactivate test".into(),
                 description: Some("test".into()),
                 notes: None,
@@ -602,14 +589,19 @@ mod tests {
         let err = deactivate_personnel(&db, p.id, p.row_version, actor)
             .await
             .expect_err("blocked");
-        let msg = match err {
-            AppError::ValidationFailed(v) => v.join(" "),
-            e => panic!("expected ValidationFailed, got {e:?}"),
-        };
-        assert!(
-            msg.contains("Ordres de travail actifs") && msg.contains(&wo.code),
-            "msg={msg}"
-        );
+        match err {
+            AppError::OrgValidationFailed(issues) => {
+                assert_eq!(issues[0].code, "PERSONNEL_DEACTIVATION_OPEN_WORK");
+                assert!(
+                    issues[0]
+                        .params
+                        .get("work_orders")
+                        .is_some_and(|w| w.contains(&wo.code)),
+                    "{issues:?}"
+                );
+            }
+            e => panic!("expected a coded refusal, got {e:?}"),
+        }
 
         let cancelled_id: i64 = db
             .query_one(Statement::from_string(

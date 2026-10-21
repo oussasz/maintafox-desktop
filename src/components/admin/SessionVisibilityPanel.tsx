@@ -16,8 +16,8 @@ import {
 } from "@/components/ui/dialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
-import { useToast } from "@/hooks/use-toast";
 import { listActiveSessions, revokeSession } from "@/services/rbac-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type { SessionSummary } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -48,7 +48,8 @@ function TrustBadge({ status, t }: { status: string; t: (k: string, d: string) =
 export function SessionVisibilityPanel() {
   const { t } = useTranslation("admin");
   const { can } = usePermissions();
-  const { toast } = useToast();
+  // The global toast host shows them (a local useToast list was never rendered here).
+  const toast = pushAppToast;
   const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -201,7 +202,7 @@ export function SessionVisibilityPanel() {
         </div>
         <Button variant="outline" size="sm" onClick={() => void fetchSessions()}>
           <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-          {t("common.close", "Refresh")}
+          {t("sessions.refresh")}
         </Button>
       </div>
 

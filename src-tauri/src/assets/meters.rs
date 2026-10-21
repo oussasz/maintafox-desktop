@@ -13,7 +13,8 @@
 //!   asset_id             → equipment_meters.equipment_id
 //!   meter_code           → equipment_meters.meter_code         (migration 011)
 //!   meter_type           → equipment_meters.meter_type
-//!   unit                 → equipment_meters.unit
+//!   unit                 → equipment_meters.unit_value_id → MEASURE.UNITS (migration 201;
+//!                          the read model carries the unit's symbol in `unit`)
 //!   current_reading      → equipment_meters.current_reading
 //!   last_read_at         → equipment_meters.last_read_at
 //!   expected_rate_per_day→ equipment_meters.expected_rate_per_day
@@ -50,6 +51,9 @@ pub struct AssetMeter {
     pub name: String,
     pub meter_code: Option<String>,
     pub meter_type: String,
+    /// Unit of the meter (`reference_values.id` of `MEASURE.UNITS`).
+    pub unit_value_id: Option<i64>,
+    /// Symbol of that unit (read from the reference data, never stored here).
     pub unit: Option<String>,
     pub current_reading: f64,
     pub last_read_at: Option<String>,
@@ -68,7 +72,8 @@ pub struct CreateAssetMeterPayload {
     pub name: String,
     pub meter_code: Option<String>,
     pub meter_type: String,
-    pub unit: Option<String>,
+    /// Unit of the meter: an active unit of `MEASURE.UNITS`.
+    pub unit_value_id: Option<i64>,
     pub initial_reading: Option<f64>,
     pub expected_rate_per_day: Option<f64>,
     pub rollover_value: Option<f64>,
@@ -87,6 +92,71 @@ pub struct MeterReading {
     pub quality_flag: String,
     pub created_by_id: Option<i64>,
     pub created_at: String,
+}
+
+/// How a reading continues the meter's lifetime count (migration 183).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeterReadingKind {
+    /// Same physical counter, value at or above the previous one.
+    Normal,
+    /// The counter passed its `rollover_value` and restarted from zero.
+    Rollover,
+    /// A new physical meter was fitted; the reading is the new meter's value.
+    Replacement,
+}
+
+impl MeterReadingKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Rollover => "rollover",
+            Self::Replacement => "replacement",
+        }
+    }
+}
+
+/// Offset to add to the raw reading so the lifetime value never goes back, and the kind of the
+/// reading. `requested` is what the user stated (`None` = let the meter decide: a lower value on
+/// a meter with a `rollover_value` is a rollover, otherwise it is refused).
+pub fn next_meter_offset(
+    previous_raw: Option<f64>,
+    current_offset: f64,
+    reading: f64,
+    rollover_value: Option<f64>,
+    requested: Option<MeterReadingKind>,
+) -> AppResult<(MeterReadingKind, f64)> {
+    let Some(prev) = previous_raw else {
+        return Ok((MeterReadingKind::Normal, current_offset));
+    };
+    match requested {
+        Some(MeterReadingKind::Replacement) => Ok((MeterReadingKind::Replacement, current_offset + prev - reading)),
+        Some(MeterReadingKind::Rollover) => {
+            let Some(rv) = rollover_value else {
+                return Err(AppError::ValidationFailed(vec![
+                    "Ce compteur n'a pas de valeur de retournement (rollover_value) : un retour \
+                     a zero ne peut pas etre enregistre."
+                        .into(),
+                ]));
+            };
+            if reading >= prev {
+                return Err(AppError::ValidationFailed(vec![format!(
+                    "Un retournement suppose un releve ({reading}) inferieur au precedent ({prev})."
+                )]));
+            }
+            Ok((MeterReadingKind::Rollover, current_offset + rv))
+        }
+        Some(MeterReadingKind::Normal) | None if reading >= prev => Ok((MeterReadingKind::Normal, current_offset)),
+        None if rollover_value.is_some() => Ok((
+            MeterReadingKind::Rollover,
+            current_offset + rollover_value.unwrap_or_default(),
+        )),
+        _ => Err(AppError::ValidationFailed(vec![format!(
+            "Le releve ({reading}) est inferieur au precedent ({prev}). Indiquez s'il s'agit d'un \
+             retour a zero du compteur (valeur de retournement configuree) ou d'un remplacement \
+             du compteur."
+        )])),
+    }
 }
 
 /// Payload for recording a meter reading.
@@ -122,6 +192,9 @@ fn map_meter(row: &QueryResult) -> AppResult<AssetMeter> {
         meter_type: row
             .try_get::<String>("", "meter_type")
             .map_err(|e| decode_err("meter_type", e))?,
+        unit_value_id: row
+            .try_get::<Option<i64>>("", "unit_value_id")
+            .map_err(|e| decode_err("unit_value_id", e))?,
         unit: row
             .try_get::<Option<String>>("", "unit")
             .map_err(|e| decode_err("unit", e))?,
@@ -283,11 +356,18 @@ async fn assert_single_primary(
 
 // ─── Select fragments ─────────────────────────────────────────────────────────
 
-const METER_SELECT: &str = r"
-    id, entity_sync_id, equipment_id, name, meter_code, meter_type, unit,
-    current_reading, last_read_at, expected_rate_per_day, rollover_value,
-    is_primary, is_active, created_at, updated_at
-";
+/// Meter columns over `equipment_meters em` joined to its unit `mu` (see [`meter_from`]).
+fn meter_select() -> String {
+    format!(
+        "em.id, em.entity_sync_id, em.equipment_id, em.name, em.meter_code, em.meter_type, em.unit_value_id, \
+         {} AS unit, em.current_reading, em.last_read_at, em.expected_rate_per_day, em.rollover_value, \
+         em.is_primary, em.is_active, em.created_at, em.updated_at",
+        crate::reference::units::symbol_sql("mu")
+    )
+}
+
+/// `FROM` clause matching [`meter_select`].
+const METER_FROM: &str = "equipment_meters em LEFT JOIN reference_values mu ON mu.id = em.unit_value_id";
 
 const READING_SELECT: &str = r"
     id, meter_id, reading_value, reading_at, source_type,
@@ -301,10 +381,10 @@ const READING_SELECT: &str = r"
 /// Returns active meters first, ordered by `is_primary DESC, name ASC`.
 pub async fn list_asset_meters(db: &DatabaseConnection, asset_id: i64) -> AppResult<Vec<AssetMeter>> {
     let sql = format!(
-        "SELECT {METER_SELECT} \
-         FROM equipment_meters \
-         WHERE equipment_id = ? \
-         ORDER BY is_active DESC, is_primary DESC, name ASC"
+        "SELECT {} FROM {METER_FROM} \
+         WHERE em.equipment_id = ? \
+         ORDER BY em.is_active DESC, em.is_primary DESC, em.name ASC",
+        meter_select()
     );
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -360,6 +440,9 @@ pub async fn create_asset_meter(
     if !errors.is_empty() {
         return Err(AppError::ValidationFailed(errors));
     }
+    if let Some(unit_id) = payload.unit_value_id {
+        crate::reference::units::ensure_unit(&txn, unit_id, "unit_value_id", true).await?;
+    }
 
     // ── 4. Enforce single-primary constraint ─────────────────────────────
     let is_primary = payload.is_primary.unwrap_or(false);
@@ -379,7 +462,7 @@ pub async fn create_asset_meter(
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO equipment_meters \
-         (entity_sync_id, equipment_id, name, meter_code, meter_type, unit, \
+         (entity_sync_id, equipment_id, name, meter_code, meter_type, unit_value_id, \
           current_reading, expected_rate_per_day, rollover_value, \
           is_primary, is_active, created_at, updated_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
@@ -389,7 +472,7 @@ pub async fn create_asset_meter(
             name.into(),
             meter_code.into(),
             payload.meter_type.into(),
-            payload.unit.into(),
+            payload.unit_value_id.into(),
             initial.into(),
             payload.expected_rate_per_day.into(),
             payload.rollover_value.into(),
@@ -404,7 +487,10 @@ pub async fn create_asset_meter(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("SELECT {METER_SELECT} FROM equipment_meters WHERE entity_sync_id = ?"),
+            format!(
+                "SELECT {} FROM {METER_FROM} WHERE em.entity_sync_id = ?",
+                meter_select()
+            ),
             [entity_sync_id.into()],
         ))
         .await?
@@ -441,6 +527,17 @@ pub async fn record_meter_reading(
     payload: RecordMeterReadingPayload,
     actor_id: i32,
 ) -> AppResult<MeterReading> {
+    record_meter_reading_of_kind(db, payload, None, actor_id).await
+}
+
+/// [`record_meter_reading`] with the user's statement of a rollover or a meter replacement
+/// (`kind`); the lifetime value of the meter stays continuous (migration 183).
+pub async fn record_meter_reading_of_kind(
+    db: &DatabaseConnection,
+    payload: RecordMeterReadingPayload,
+    kind: Option<MeterReadingKind>,
+    actor_id: i32,
+) -> AppResult<MeterReading> {
     let txn = db.begin().await?;
 
     // ── 1. Validate meter exists and is active ───────────────────────────
@@ -468,6 +565,20 @@ pub async fn record_meter_reading(
     let now = Utc::now().to_rfc3339();
     let reading_at = payload.reading_at.unwrap_or_else(|| now.clone());
 
+    let current_offset: f64 = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT reading_offset FROM equipment_meters WHERE id = ?",
+            [payload.meter_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<f64>("", "reading_offset"))
+        .transpose()
+        .map_err(|e| decode_err("reading_offset", e))?
+        .unwrap_or(0.0);
+    let mut reading_kind = MeterReadingKind::Normal;
+    let mut new_offset = current_offset;
+
     // ── 5. Monotonic timestamp check (skip for corrections) ──────────────
     if quality_flag != "corrected" {
         let latest = txn
@@ -491,28 +602,33 @@ pub async fn record_meter_reading(
                 )]));
             }
 
-            // Validate monotonic value unless rollover is configured
+            // A lower value is a rollover or a meter replacement (see `next_meter_offset`).
             let prev_val: f64 = prev_row
                 .try_get("", "reading_value")
                 .map_err(|e| decode_err("reading_value", e))?;
-            if payload.reading_value < prev_val && rollover_value.is_none() {
-                return Err(AppError::ValidationFailed(vec![format!(
-                    "Le releve ({}) est inferieur au precedent ({prev_val}). \
-                     Si le compteur se remet a zero, configurez une valeur \
-                     de retournement (rollover_value).",
-                    payload.reading_value
-                )]));
-            }
+            (reading_kind, new_offset) = next_meter_offset(
+                Some(prev_val),
+                current_offset,
+                payload.reading_value,
+                rollover_value,
+                kind,
+            )?;
+        } else if kind == Some(MeterReadingKind::Rollover) {
+            return Err(AppError::ValidationFailed(vec![
+                "Un retournement suppose un releve precedent.".into(),
+            ]));
         }
     }
+    let lifetime_value = payload.reading_value + new_offset;
 
     // ── 6. Insert the reading row ────────────────────────────────────────
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO asset_meter_readings \
          (meter_id, reading_value, reading_at, source_type, \
-          source_reference, quality_flag, created_by_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          source_reference, quality_flag, created_by_id, created_at, \
+          reading_kind, lifetime_value) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             payload.meter_id.into(),
             payload.reading_value.into(),
@@ -522,6 +638,8 @@ pub async fn record_meter_reading(
             quality_flag.clone().into(),
             (actor_id as i64).into(),
             now.clone().into(),
+            reading_kind.as_str().into(),
+            lifetime_value.into(),
         ],
     ))
     .await?;
@@ -531,11 +649,12 @@ pub async fn record_meter_reading(
     if quality_flag != "corrected" {
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE equipment_meters SET current_reading = ?, \
+            "UPDATE equipment_meters SET current_reading = ?, reading_offset = ?, \
              last_read_at = ?, updated_at = ? \
              WHERE id = ?",
             [
                 payload.reading_value.into(),
+                new_offset.into(),
                 reading_at.into(),
                 now.clone().into(),
                 payload.meter_id.into(),

@@ -80,6 +80,8 @@ pub struct FailureEvent {
     pub failure_cause_id: Option<i64>,
     pub failure_effect_id: Option<i64>,
     pub failure_mechanism_id: Option<i64>,
+    /// Observed symptom (`WORK.SYMPTOMS`, ISO 14224), from the request / close-out coding.
+    pub symptom_id: Option<i64>,
     pub cause_not_determined: bool,
     pub production_impact_level: Option<i64>,
     pub safety_impact_level: Option<i64>,

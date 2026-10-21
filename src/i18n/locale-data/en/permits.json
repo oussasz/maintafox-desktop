@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "Work permits",
-    "description": "PRD §6.23 — permit lifecycle, LOTO isolations, suspensions and handback."
+    "description": "Permit lifecycle, LOTO isolations, suspensions and hand-backs."
   },
   "actions": {
     "refresh": "Refresh",
@@ -11,20 +11,50 @@
     "save": "Save",
     "cancel": "Cancel",
     "close": "Close",
-    "select": "Select {{code}}"
+    "select": "Select {{code}}",
+    "retry": "Retry"
+  },
+  "siteScope": {
+    "hidden": {
+      "outsideScope_one": "{{count}} permit is not shown: outside your sites.",
+      "outsideScope_other": "{{count}} permits are not shown: outside your sites.",
+      "withoutSite_one": "{{count}} permit is not shown: it has no site.",
+      "withoutSite_other": "{{count}} permits are not shown: they have no site.",
+      "allPermits": "These counts cover all permits, whatever the filters or search.",
+      "askPlantWide": "Ask a plant-wide user to see them."
+    },
+    "noSite": {
+      "badge": "To review: no site",
+      "hint": "Permit recorded without a site. Only users with a plant-wide role see it and can act on it."
+    },
+    "openHidden_one": "{{count}} more open permit is outside your sites or has no site: not counted",
+    "openHidden_other": "{{count}} more open permits are outside your sites or have no site: not counted",
+    "noIssueRightAtSite": "You do not hold the permit issue right at the site of this equipment."
   },
   "kpi": {
     "title": "LOTO compliance (30 days)",
     "summary": "Activations: {{activated}} · Handed back on time: {{onTime}}",
-    "rate": "Rate: {{rate}} %"
+    "rate": "Rate: {{rate}} %",
+    "loadError": "The permit indicators could not be loaded",
+    "open": "Open permits",
+    "openHint": "Not closed, handed back, cancelled or expired",
+    "activated": "Permits activated",
+    "period30d": "Last 30 days",
+    "onTimeRate": "Handed back on time",
+    "onTimeHint": "{{onTime}} of {{activated}} activated permits, last 30 days"
   },
   "open": {
     "title": "Open permits (not expired)",
-    "empty": "No open permits."
+    "empty": "No open permits.",
+    "count_one": "{{count}} open permit (not expired)",
+    "count_other": "{{count}} open permits (not expired)"
   },
   "list": {
     "title": "Permits",
-    "empty": "No permits yet."
+    "empty": "No permits yet.",
+    "noMatch": "No permit matches the search.",
+    "moreAvailable": "The first {{shown}} permits are shown; more exist.",
+    "loadMore": "Show more"
   },
   "columns": {
     "code": "Code",
@@ -45,7 +75,8 @@
     "closed": "Closed",
     "handed_back": "Handed back",
     "cancelled": "Cancelled",
-    "expired": "Expired"
+    "expired": "Expired",
+    "unknown": "Unknown status"
   },
   "detail": {
     "title": "Permit {{code}}",
@@ -59,7 +90,18 @@
     "expiresAt": "Expires",
     "closedAt": "Closed",
     "handedBackAt": "Handed back",
-    "none": "—"
+    "createdBy": "Written by",
+    "submittedBy": "Submitted by",
+    "approvedBy": "Approved by",
+    "byAt": "{{name}}, {{date}}",
+    "unknownPerson": "Unknown user",
+    "approverNotRecorded": "approver not recorded",
+    "approverNotRecordedHint": "Approved before the app recorded who approved permits.",
+    "selfApproved": "self-approval (site without four-eyes)",
+    "selfApprovedHint": "Approved without a second person: this permit's site opted out of four-eyes (Settings › Rules per site).",
+    "none": "—",
+    "dialogDescription": "Permit status, LOTO isolations, suspensions and handovers.",
+    "linkError": "This permit could not be opened"
   },
   "transition": {
     "submitReview": "Submit for review",
@@ -75,12 +117,13 @@
     "confirmCancel": "Cancel this permit? This cannot be undone."
   },
   "gate": {
-    "noIsolation": "LOTO permits need at least one isolation before activation.",
+    "noIsolation": "This permit type requires at least one energy isolation before activation.",
     "unverified": "Every isolation must be applied and verified by a second person before activation.",
     "removed": "A lock has already been removed; this permit can no longer protect work.",
     "expired": "This permit has expired.",
     "pendingRemoval": "Every lock removal must be verified before the permit can be closed.",
-    "handoverRequired": "Record a handover before handing back."
+    "handoverRequired": "Record a handover before handing back.",
+    "isolationsUnavailable": "The isolations of this permit could not be read: no lifecycle step until they are."
   },
   "isolation": {
     "title": "LOTO isolation points",
@@ -102,9 +145,41 @@
       "pending": "Not applied",
       "applied": "Applied",
       "verified": "Verified",
-      "removed": "Removed"
+      "removed": "Removed",
+      "cancelled": "Cancelled",
+      "takenOff": "Lock off — to verify"
     },
-    "editLocked": "Isolations can only be added while the permit is not active."
+    "editLocked": "Isolations can only be added while the permit is not active.",
+    "loadError": "The isolations of this permit could not be loaded",
+    "loading": "Loading isolations…",
+    "notSet": "Not set",
+    "toReview": "To review",
+    "toReviewHint": "The text typed before the lists existed could not be matched: choose the energy type and the method.",
+    "originalEntry": "Original entry: {{text}}",
+    "energyPlaceholder": "Choose the energy",
+    "methodPlaceholder": "Choose the method",
+    "optionsError": "The energy and method lists could not be loaded.",
+    "listsHint": "Energy types follow ISO 14118 / OSHA 1910.147; isolation methods are your site’s list (Reference data).",
+    "threePersonNotice": "Three-person rule: {{name}} verified this isolation and may not confirm its removal.",
+    "threePersonNoticeUnknown": "Three-person rule: the person who verified this isolation may not confirm its removal.",
+    "threePersonSelf": "You verified this isolation — a third person must confirm its removal.",
+    "cancel": "Cancel the line",
+    "cancelTitle": "Cancel the isolation line",
+    "cancelKeep": "Keep the line",
+    "cancelConfirm": "The line “{{point}}” ({{energy}} · {{method}}) was never applied. It will be marked “Cancelled” and kept in the permit's history: it can no longer be applied, verified or edited.",
+    "cancelResetNotice": "This permit is waiting for review: it will go back to draft and must be submitted again.",
+    "cancelHint": "A line never applied can be cancelled while the permit is a draft or waiting for review; a fitted lock is removed with a verified removal.",
+    "cancelledBy": "Cancelled by {{name}} on {{date}}",
+    "cancelledAt": "Cancelled on {{date}}",
+    "removalConfirmTitle": "Confirm lock removal",
+    "removalConfirmDescription": "You confirm that the isolation \"{{point}}\" has been removed. Applied by {{applier}}, verified by {{verifier}}. Your name will be recorded as the person who verified the removal.",
+    "personUnknown": "no one recorded",
+    "takeOff": "I removed my lock",
+    "removedBy": "Lock taken off by {{name}} on {{date}}",
+    "removerBlocked": "You took this lock off — another person must verify its removal.",
+    "awaitingTakeOff": "Waiting for {{name}} to record “I removed my lock” (or a forced removal if they are absent).",
+    "takeOffConfirmTitle": "Confirm you took your lock off",
+    "takeOffConfirmDescription": "You confirm that you have taken your lock off the isolation “{{point}}”. From now on this isolation no longer protects the work: nobody may work under it, and another person must verify the removal before the permit can be closed."
   },
   "card": {
     "title": "LOTO card",
@@ -116,7 +191,16 @@
     "verifier": "Verifier",
     "expiry": "Expiry",
     "show": "Show card",
-    "recordPrint": "Record print"
+    "recordPrint": "Record print",
+    "print": "Print LOTO tag",
+    "doNotOperate": "DANGER — DO NOT OPERATE. Equipment locked out.",
+    "signature": "Worker signature",
+    "forcedRemoval": "Forced removal",
+    "forcedRemovalYes": "Yes — worker absent",
+    "forcedAuthorisedBy": "Authorised by",
+    "forcedAt": "Taken off on",
+    "forcedReason": "Reason",
+    "forcedLine": "Forced removal — authorised by {{authoriser}} on {{date}}: {{reason}}"
   },
   "suspension": {
     "title": "Suspensions",
@@ -129,13 +213,34 @@
     "submit": "Suspend"
   },
   "handover": {
+    "handedTo": "handed to",
+    "rolesHint": "Pick the role of the person handing over and of the one receiving, from the plant's hand-over roles.",
+    "onlyWhenClosed": "The hand-over is recorded once the permit is closed.",
     "title": "Handovers",
     "empty": "No handover recorded.",
     "add": "Record handover",
     "from": "Handed from (role)",
     "to": "Handed to (role)",
     "note": "Confirmation note",
-    "submit": "Record"
+    "submit": "Record",
+    "rolePlaceholder": "Choose a role…",
+    "roleToReview": "{{label}} (to review)",
+    "noRoles": "No hand-over role yet: an administrator must fill the list “Rôles de passation de permis” (permit hand-over roles) in Reference data.",
+    "signerYou": "Signed by you: {{name}}",
+    "signerSession": "Signed by you (the signed-in user).",
+    "receiver": "Receiving person (optional)",
+    "receiverNone": "Not named",
+    "receiverSearch": "Search a name…",
+    "receiverHint": "You sign the hand-over yourself; the receiving person cannot be you.",
+    "receiversPartial": "{{shown}} of {{total}} people shown: type a name to narrow the list.",
+    "receiversMore": "Show more people",
+    "receiversAll": "All {{total}} matching people shown.",
+    "receiversNone": "Nobody matches this name.",
+    "noteMin": "Write at least {{min}} characters.",
+    "noteCount": "{{length}} characters (at least {{min}}).",
+    "signedBy": "Signed by {{name}}",
+    "receivedBy": "received by {{name}}",
+    "signerNotRecorded": "Signer not recorded (hand-over recorded before signers were kept)"
   },
   "create": {
     "title": "New work permit",
@@ -155,7 +260,16 @@
     "submit": "Save"
   },
   "types": {
+    "noViewRight": "Viewing permit types needs the work-permit view right.",
+    "readOnly": "Changing permit types needs the permit issuer right.",
     "title": "Permit types",
+    "shipped": {
+      "loto": "LOTO",
+      "hot_work": "Hot work",
+      "confined_space": "Confined space",
+      "cold_work": "Cold work",
+      "electrical_lv": "Electrical LV"
+    },
     "new": "New type",
     "code": "Code",
     "name": "Name",
@@ -163,10 +277,27 @@
     "hse": "HSE approval required",
     "operations": "Operations approval required",
     "atmospheric": "Atmospheric test required",
+    "codeLocked": "The code of an existing type cannot be changed: permits and rules refer to it. Create a new type if needed.",
     "maxHours": "Max duration (h)",
     "version": "Version",
     "save": "Save type",
-    "empty": "No permit types."
+    "empty": "No permit types.",
+    "energyIsolation": "Energy isolation required (LOTO)",
+    "energyIsolationHint": "A permit of this type cannot start without at least one isolation applied and verified by a second person.",
+    "energyIsolationLocked": "The LOTO type always requires an energy isolation.",
+    "energyIsolationAdminOnly": "Only an administrator (settings right) can stop requiring it.",
+    "disableReason": "Why no longer require an isolation?",
+    "disableReasonHint": "At least {{min}} characters. Only an administrator can do this; the password is asked again and the change is recorded in the audit log.",
+    "energyIsolationShort": "Isolation",
+    "yes": "Yes",
+    "no": "No",
+    "threePerson": "Three-person rule: a third person confirms lock removal",
+    "threePersonShort": "3rd person",
+    "threePersonHint": "When on, the person who verified an isolation may not confirm its removal either: a third person must.",
+    "threePersonAdminOnly": "Only an administrator (settings right) can change this setting.",
+    "threePersonReason": "Why change the three-person rule?",
+    "threePersonReasonHint": "At least {{min}} characters. Your password is asked again and the change is recorded in the audit log.",
+    "reasonMin": "Write at least {{min}} characters."
   },
   "woGate": {
     "title": "Work permit",
@@ -181,5 +312,72 @@
   "errors": {
     "required": "This field is required.",
     "invalidNumber": "Enter a valid number."
+  },
+  "filters": {
+    "searchPlaceholder": "Search a permit, asset or work order…",
+    "status": "Status",
+    "type": "Permit type"
+  },
+  "forced": {
+    "action": "Forced removal (worker absent)",
+    "title": "Forced lock removal — worker absent",
+    "description": "The lock “{{point}}” was fitted by {{worker}}, who is absent. As a holder of the permit close right at this site, you authorise another person to take it off. Your password will be asked again.",
+    "remover": "Person who takes the lock off",
+    "removerHint": "Neither {{worker}} nor you.",
+    "removerSearch": "Search by name",
+    "removerPlaceholder": "Choose the person",
+    "removersPartial": "{{shown}} of {{total}} people shown: refine the search.",
+    "reason": "Reason",
+    "reasonCount": "{{length}} / {{min}} characters at least",
+    "reasonMin": "Give the reason in {{min}} characters at least.",
+    "attempts": "Attempts to reach the worker",
+    "attemptsHint": "At least one: when, how (your site's contact methods, Reference data) and what came of it.",
+    "noMethods": "No contact method is active in Reference data (PERMIT.CONTACT_METHODS): ask an administrator to add one.",
+    "attemptAt": "Time of attempt {{n}}",
+    "attemptMethod": "Method of attempt {{n}}",
+    "attemptResult": "Result of attempt {{n}}",
+    "methodPlaceholder": "Choose the method",
+    "resultPlaceholder": "No answer, voicemail…",
+    "removeAttempt": "Remove attempt {{n}}",
+    "attemptsIncomplete": "Give the time, the method and the result of each attempt.",
+    "addAttempt": "Add an attempt",
+    "attest": "I attest that the worker is not on the site.",
+    "attestHint": "Required by OSHA 1910.147(e)(3)(ii): the employer verifies that the authorised employee is not at the facility.",
+    "attestRequired": "The attestation is required.",
+    "stepUpHint": "Recording a forced removal asks for your password again; it is audited and announced to the permit close-right holders of the site.",
+    "submit": "Record the forced removal",
+    "chip": "Forced removal",
+    "summary": "Authorised by {{authoriser}} on {{date}}",
+    "reasonShown": "Reason: {{reason}}",
+    "attemptShown": "{{date}} — {{method}}: {{result}}",
+    "removedAt": "Taken off on",
+    "removedBy": "Taken off by",
+    "authorisedBy": "Authorised by"
+  },
+  "informed": {
+    "action": "Worker informed",
+    "title": "The worker was told of the forced removal",
+    "description": "Record that {{worker}} was told that their lock “{{point}}” was taken off (worker without an account in Maintafox, or told in person). You are recorded as the person who told them.",
+    "method": "How",
+    "at": "When",
+    "hint": "A worker with an account is also asked to acknowledge it at their next sign-in.",
+    "submit": "Record",
+    "pending": "Worker not told yet: they fit no new lock until they are.",
+    "doneInApp": "Worker told: acknowledged in the app on {{date}}",
+    "done": "Worker told by {{name}} on {{date}} ({{method}})"
+  },
+  "gateAck": {
+    "title": "One of your locks was taken off while you were absent",
+    "intro": "A forced removal was recorded for a lock you fitted. Read it and acknowledge it before continuing: you cannot fit a new lock until you do.",
+    "lock": "Lock “{{point}}” — permit {{permit}} — {{equipment}}",
+    "acknowledge": "I have read it",
+    "loadError": "Your forced lock removals could not be read. Try again: the app stays blocked until they can be checked.",
+    "retry": "Try again"
+  },
+  "review": {
+    "title": "Forced removals to follow up ({{count}})",
+    "hint": "Locks taken off while their worker was absent: the worker must be told (at their next sign-in, or record it here).",
+    "item": "{{point}} — {{worker}}, taken off on {{date}}, authorised by {{authoriser}}",
+    "loadError": "The forced removals to follow up could not be loaded"
   }
 }

@@ -13,6 +13,14 @@ pub struct PermitType {
     pub max_duration_hours: Option<f64>,
     pub mandatory_ppe_ids_json: String,
     pub mandatory_control_rules_json: String,
+    /// A permit of this type needs at least one verified energy isolation before it starts
+    /// (LOTO; migration 225, formerly a rule on the code `loto`).
+    #[serde(default)]
+    pub requires_energy_isolation: bool,
+    /// Three-person LOTO chain (migration 236, off by default): the person who verifies a lock
+    /// removal must differ from the isolation's applier (always) and from its verifier.
+    #[serde(default)]
+    pub requires_three_person_removal: bool,
     pub row_version: i64,
 }
 
@@ -44,6 +52,37 @@ pub struct WorkPermit {
     pub asset_label: Option<String>,
     #[serde(default)]
     pub linked_work_order_code: Option<String>,
+    /// The type's `requires_energy_isolation` (the start gate needs an isolation).
+    #[serde(default)]
+    pub permit_type_requires_energy_isolation: bool,
+    /// The type's `requires_three_person_removal` (lock removal verified by a third person).
+    #[serde(default)]
+    pub permit_type_requires_three_person_removal: bool,
+    /// Four-eyes (migration 244): who wrote the permit. `None` on a permit written before it
+    /// was recorded (nobody is invented).
+    #[serde(default)]
+    pub created_by_id: Option<i64>,
+    #[serde(default)]
+    pub created_by_name: Option<String>,
+    /// Who submitted it for review and when; cleared when the permit returns to draft.
+    #[serde(default)]
+    pub submitted_by_id: Option<i64>,
+    #[serde(default)]
+    pub submitted_by_name: Option<String>,
+    #[serde(default)]
+    pub submitted_at: Option<String>,
+    /// Who approved it and when. `None` past review: approved before the approver was recorded
+    /// ("approbateur non enregistré").
+    #[serde(default)]
+    pub approved_by_id: Option<i64>,
+    #[serde(default)]
+    pub approved_by_name: Option<String>,
+    #[serde(default)]
+    pub approved_at: Option<String>,
+    /// Approved without a verified second person, on a site that opted out of four-eyes
+    /// ("auto-approbation (site sans 4 yeux)").
+    #[serde(default)]
+    pub self_approved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,8 +110,25 @@ pub struct PermitHandoverLog {
     pub permit_id: i64,
     pub handed_from_role: String,
     pub handed_to_role: String,
+    /// Labels of the two roles in the plant's list (`PERMIT.HANDOVER_ROLES`), looked up over every
+    /// published version of the list, roles since deactivated included; `None` when the stored
+    /// code is in no version of the list.
+    #[serde(default)]
+    pub handed_from_label: Option<String>,
+    #[serde(default)]
+    pub handed_to_label: Option<String>,
     pub confirmation_note: String,
     pub signed_at: String,
+    /// Who recorded the hand-over (the session user; NULL on hand-overs recorded before 235).
+    #[serde(default)]
+    pub signed_by_id: Option<i64>,
+    #[serde(default)]
+    pub signed_by_name: Option<String>,
+    /// The receiving person, when named.
+    #[serde(default)]
+    pub received_by_id: Option<i64>,
+    #[serde(default)]
+    pub received_by_name: Option<String>,
     pub row_version: i64,
 }
 
@@ -82,8 +138,26 @@ pub struct PermitIsolation {
     pub entity_sync_id: String,
     pub permit_id: i64,
     pub isolation_point: String,
+    /// Text typed before migration 225, kept as read-only history ("Saisie d'origine"); empty
+    /// for isolations recorded on the lists.
     pub energy_type: String,
+    /// Text typed before migration 225 (history), empty otherwise.
     pub isolation_method: String,
+    /// `PERMIT.ENERGY_TYPES` value (SYSTEM list).
+    #[serde(default)]
+    pub energy_type_id: Option<i64>,
+    #[serde(default)]
+    pub energy_type_code: Option<String>,
+    #[serde(default)]
+    pub energy_type_label: Option<String>,
+    /// `PERMIT.ISOLATION_METHODS` value (COMPANY list).
+    #[serde(default)]
+    pub isolation_method_id: Option<i64>,
+    #[serde(default)]
+    pub isolation_method_label: Option<String>,
+    /// A migrated text could not be mapped onto the lists: a person must choose.
+    #[serde(default)]
+    pub mapping_review_required: bool,
     pub lock_number: Option<String>,
     pub applied_by_id: Option<i64>,
     pub verified_by_id: Option<i64>,
@@ -98,6 +172,121 @@ pub struct PermitIsolation {
     pub verified_by_name: Option<String>,
     #[serde(default)]
     pub removal_verified_by_name: Option<String>,
+    /// Set when a planned line (never applied) was cancelled: kept as history, "Annulée", never a
+    /// lock to fit (migration 243).
+    #[serde(default)]
+    pub cancelled_at: Option<String>,
+    #[serde(default)]
+    pub cancelled_by_id: Option<i64>,
+    #[serde(default)]
+    pub cancelled_by_name: Option<String>,
+    /// Who physically took the lock off and when (migration 249): the applier ("J'ai retiré mon
+    /// cadenas"), or the person named by a forced removal. The removal is verified only after.
+    #[serde(default)]
+    pub removed_by_id: Option<i64>,
+    #[serde(default)]
+    pub removed_by_name: Option<String>,
+    #[serde(default)]
+    pub removed_at: Option<String>,
+    /// The applier was absent: the lock was taken off on the authority of a `ptw.close` holder.
+    #[serde(default)]
+    pub forced_removal: bool,
+    #[serde(default)]
+    pub forced_authorized_by_id: Option<i64>,
+    #[serde(default)]
+    pub forced_authorized_by_name: Option<String>,
+    #[serde(default)]
+    pub forced_reason: Option<String>,
+    /// The authoriser attested that the worker is not on site.
+    #[serde(default)]
+    pub forced_worker_absent: bool,
+    /// The attempts made to reach the worker before the forced removal.
+    #[serde(default)]
+    pub forced_contact_attempts: Vec<ContactAttempt>,
+    /// The worker was told of the forced removal: by their own acknowledgement at sign-in
+    /// (`informed_in_app`), or by a `ptw.close` holder (`informed_method`, a contact method code).
+    #[serde(default)]
+    pub informed_by_id: Option<i64>,
+    #[serde(default)]
+    pub informed_by_name: Option<String>,
+    #[serde(default)]
+    pub informed_at: Option<String>,
+    #[serde(default)]
+    pub informed_method: Option<String>,
+    #[serde(default)]
+    pub informed_in_app: bool,
+}
+
+/// One attempt to reach an absent worker before a forced lock removal (stored as JSON on the
+/// isolation, `permit_isolations.forced_contact_attempts_json`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactAttempt {
+    /// When (RFC 3339; stored in the canonical UTC form).
+    pub at: String,
+    /// A code of `PERMIT.CONTACT_METHODS`.
+    pub method: String,
+    /// What came of it (no answer, voicemail, ...).
+    pub result: String,
+}
+
+/// Shortest reason a forced removal accepts (trimmed).
+pub const MIN_FORCED_REMOVAL_REASON_CHARS: usize = 20;
+/// Most contact attempts one forced removal records.
+pub const MAX_CONTACT_ATTEMPTS: usize = 20;
+/// Longest text of one attempt's result.
+pub const MAX_CONTACT_RESULT_CHARS: usize = 500;
+
+/// Forced removal of a lock whose applier is absent (`force_permit_isolation_removal`). The
+/// authoriser is the session user (holding `ptw.close` at the permit's site, after a step-up).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermitForcedRemovalInput {
+    pub isolation_id: i64,
+    pub expected_row_version: i64,
+    /// The person who physically takes the lock off (a user account, not the applier, not the
+    /// authoriser).
+    pub removed_by_id: i64,
+    /// At least [`MIN_FORCED_REMOVAL_REASON_CHARS`] characters once trimmed.
+    pub reason: String,
+    /// "Le travailleur n'est pas sur le site": must be true.
+    pub worker_absent_attested: bool,
+    /// At least one.
+    pub contact_attempts: Vec<ContactAttempt>,
+}
+
+/// The worker of a forced removal was told of it, recorded by a `ptw.close` holder at the site
+/// (worker without an account, or told in person). The recorder is the session user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermitWorkerInformedInput {
+    pub isolation_id: i64,
+    pub expected_row_version: i64,
+    /// A code of `PERMIT.CONTACT_METHODS`.
+    pub method: String,
+    /// When the worker was told (RFC 3339); now when omitted. Not before the removal, not in the future.
+    #[serde(default)]
+    pub informed_at: Option<String>,
+}
+
+/// A forced removal whose worker has not been told yet (the review list of the `ptw.close`
+/// holders, and the blocking screen of the worker at sign-in).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForcedRemovalItem {
+    pub isolation: PermitIsolation,
+    pub permit_id: i64,
+    pub permit_code: String,
+    pub permit_status: String,
+    pub equipment_label: Option<String>,
+}
+
+/// One list of permits limited to the reader's sites (`list_work_permits`, the open-permits
+/// report), with the permits left out and why (rule §2.4: shown as a count, never silently).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkPermitListPage {
+    pub items: Vec<WorkPermit>,
+    /// Permits the reader's sites do not cover, whatever the filters. Always 0 plant-wide.
+    pub hidden_outside_scope: i64,
+    /// Permits without an org node (plant-wide readers only), whatever the filters. Always 0
+    /// plant-wide.
+    pub hidden_without_site: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -107,6 +296,9 @@ pub struct WorkPermitListFilter {
     pub asset_id: Option<i64>,
     #[serde(default)]
     pub linked_work_order_id: Option<i64>,
+    /// Code, type, equipment or OT text (server-side search over every permit, not one page).
+    #[serde(default)]
+    pub search: Option<String>,
     pub limit: Option<i64>,
 }
 
@@ -122,6 +314,19 @@ pub struct PermitTypeUpsertInput {
     pub max_duration_hours: Option<f64>,
     pub mandatory_ppe_ids_json: Option<String>,
     pub mandatory_control_rules_json: Option<String>,
+    /// Omitted on update: unchanged. Omitted on create: false.
+    #[serde(default)]
+    pub requires_energy_isolation: Option<bool>,
+    /// Required (with `adm.settings` + step-up) when switching the energy-isolation rule off.
+    #[serde(default)]
+    pub disable_isolation_reason: Option<String>,
+    /// Three-person lock-removal chain. Omitted on update: unchanged. Omitted on create: false.
+    #[serde(default)]
+    pub requires_three_person_removal: Option<bool>,
+    /// Required (with `adm.settings` + step-up) whenever the three-person setting changes,
+    /// including creating a type with it on.
+    #[serde(default)]
+    pub three_person_change_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,10 +373,19 @@ pub struct PermitSuspendInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermitHandoverLogInput {
     pub permit_id: i64,
+    /// Codes of `PERMIT.HANDOVER_ROLES` (Données de référence).
     pub handed_from_role: String,
     pub handed_to_role: String,
+    /// At least `MIN_HANDOVER_NOTE_CHARS` characters.
     pub confirmation_note: String,
+    /// The receiving person (a user account), optional. The signer is never sent: the server takes
+    /// the session user.
+    #[serde(default)]
+    pub received_by_id: Option<i64>,
 }
+
+/// Shortest confirmation note a hand-over accepts.
+pub const MIN_HANDOVER_NOTE_CHARS: usize = 10;
 
 /// Defines (or edits, before application) an isolation point. Application,
 /// verification and removal verification go through dedicated actions so the
@@ -181,8 +395,12 @@ pub struct PermitIsolationUpsertInput {
     pub id: Option<i64>,
     pub permit_id: i64,
     pub isolation_point: String,
-    pub energy_type: String,
-    pub isolation_method: String,
+    /// Active `PERMIT.ENERGY_TYPES` value (required).
+    #[serde(default)]
+    pub energy_type_id: Option<i64>,
+    /// Active `PERMIT.ISOLATION_METHODS` value (required).
+    #[serde(default)]
+    pub isolation_method_id: Option<i64>,
     #[serde(default)]
     pub lock_number: Option<String>,
 }
@@ -194,6 +412,13 @@ pub struct PermitIsolationActionInput {
     /// Only for `apply`: lock number fitted at application time.
     #[serde(default)]
     pub lock_number: Option<String>,
+}
+
+/// Cancel a planned isolation line (`cancel_permit_isolation`): the session user is recorded.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermitIsolationCancelInput {
+    pub isolation_id: i64,
+    pub expected_row_version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,6 +442,16 @@ pub struct LotoCardView {
     pub lock_number: Option<String>,
     pub verifier_signature: Option<String>,
     pub expires_at: Option<String>,
+    /// The lock was taken off by a forced removal (applier absent): shown "Retrait forcé" with who
+    /// authorised it, when and why.
+    #[serde(default)]
+    pub forced_removal: bool,
+    #[serde(default)]
+    pub forced_authorized_by: Option<String>,
+    #[serde(default)]
+    pub forced_removed_at: Option<String>,
+    #[serde(default)]
+    pub forced_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,11 +1,15 @@
 //! Personnel availability computations and block mutations.
 
+use std::collections::HashMap;
+
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use super::domain::PersonnelAvailabilityState;
+
 use crate::errors::{AppError, AppResult};
+use crate::personnel::capacity::PersonDayCapacity;
 
 pub use super::domain::PersonnelAvailabilityBlock;
 
@@ -56,10 +60,16 @@ pub struct AvailabilityBlockCreateInput {
 #[derive(Debug, Clone, Deserialize)]
 pub struct AvailabilityBlockUpdateInput {
     pub id: i64,
-    pub block_type: String,
+    /// The new absence type; `None` keeps the stored one (a caller who may not read the type —
+    /// `personnel::absence_access` — edits dates and the critical flag without seeing it).
+    #[serde(default)]
+    pub block_type: Option<String>,
     pub start_at: String,
     pub end_at: String,
     pub reason_note: Option<String>,
+    /// Keeps the stored reason instead of `reason_note` (a caller the reason was withheld from).
+    #[serde(default)]
+    pub keep_reason_note: bool,
     pub is_critical: Option<bool>,
     pub confirm_overlap: Option<bool>,
 }
@@ -124,6 +134,8 @@ fn map_block_row(row: sea_orm::QueryResult) -> PersonnelAvailabilityBlock {
         created_by_label: row.try_get("", "created_by_label").unwrap_or(None),
         created_at: row.try_get("", "created_at").unwrap_or_default(),
         reason_masked: false,
+        type_masked: false,
+        critical_for_planning: false,
     }
 }
 
@@ -142,19 +154,27 @@ async fn fetch_block_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Person
     Ok(map_block_row(row))
 }
 
+/// Day-by-day availability of people: who, which team, and — from `personnel::capacity`, the
+/// same calculation as planning — the shift of their Classe horaire, scheduled / absent /
+/// available minutes and the absence types of the day.
 pub async fn list_availability_calendar(
     db: &DatabaseConnection,
     filter: AvailabilityCalendarFilter,
 ) -> AppResult<Vec<AvailabilityCalendarEntry>> {
-    if filter.date_from > filter.date_to {
+    let parse = |raw: &str, field: &str| {
+        chrono::NaiveDate::parse_from_str(raw.get(..10).unwrap_or(raw), "%Y-%m-%d")
+            .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be YYYY-MM-DD.")]))
+    };
+    let from = parse(&filter.date_from, "date_from")?;
+    let to = parse(&filter.date_to, "date_to")?;
+    if from > to {
         return Err(AppError::ValidationFailed(vec![
             "date_from must be <= date_to.".to_string()
         ]));
     }
 
     let mut personnel_where = vec!["1 = 1".to_string()];
-    let mut values: Vec<sea_orm::Value> = vec![filter.date_from.into(), filter.date_to.into()];
-
+    let mut values: Vec<sea_orm::Value> = vec![from.to_string().into(), to.to_string().into()];
     if let Some(entity_id) = filter.entity_id {
         personnel_where.push("p.primary_entity_id = ?".to_string());
         values.push(entity_id.into());
@@ -164,9 +184,8 @@ pub async fn list_availability_calendar(
         values.push(personnel_id.into());
     }
     if !filter.include_inactive.unwrap_or(false) {
-        personnel_where.push("p.availability_status <> 'inactive'".to_string());
+        personnel_where.push("p.employment_status = 'active'".to_string());
     }
-
     let team_filter_sql = if filter.team_id.is_some() {
         "AND COALESCE(t.id, home.id, pd.primary_team_id) = ?"
     } else {
@@ -182,67 +201,17 @@ pub async fn list_availability_calendar(
             UNION ALL
             SELECT date(work_date, '+1 day') FROM dates WHERE work_date < date(?)
          ),
-         base_personnel AS (
-            SELECT
-                p.id,
-                p.employee_code,
-                p.full_name,
-                p.primary_entity_id,
-                p.primary_team_id,
-                p.home_schedule_reference_value_id
-            FROM personnel p
-            WHERE {}
-         ),
          person_days AS (
-            SELECT
-                bp.*,
-                d.work_date,
-                ((CAST(strftime('%w', d.work_date) AS INTEGER) + 6) % 7) + 1 AS day_of_week
-            FROM base_personnel bp
-            CROSS JOIN dates d
+            SELECT p.id, p.employee_code, p.full_name, p.primary_entity_id, p.primary_team_id, d.work_date
+            FROM personnel p CROSS JOIN dates d
+            WHERE {}
          )
          SELECT
-            pd.id AS personnel_id,
-            pd.employee_code,
-            pd.full_name,
-            pd.primary_entity_id AS entity_id,
-            e.name AS entity_name,
+            pd.id AS personnel_id, pd.employee_code, pd.full_name,
+            pd.primary_entity_id AS entity_id, e.name AS entity_name,
             COALESCE(t.id, home.id, pd.primary_team_id) AS team_id,
             COALESCE(t.name, home.name) AS team_name,
-            pd.work_date,
-            sd.shift_start,
-            sd.shift_end,
-            CASE
-                WHEN sd.id IS NULL OR sd.is_rest_day = 1 THEN 0
-                ELSE MAX(CAST((julianday(pd.work_date || 'T' || sd.shift_end || ':00Z') - julianday(pd.work_date || 'T' || sd.shift_start || ':00Z')) * 1440 AS INTEGER), 0)
-            END AS scheduled_minutes,
-            COALESCE((
-                SELECT SUM(MAX(CAST((julianday(MIN(ab.end_at, pd.work_date || 'T' || sd.shift_end || ':00Z')) - julianday(MAX(ab.start_at, pd.work_date || 'T' || sd.shift_start || ':00Z'))) * 1440 AS INTEGER), 0))
-                FROM personnel_availability_blocks ab
-                WHERE ab.personnel_id = pd.id
-                  AND sd.id IS NOT NULL
-                  AND sd.is_rest_day = 0
-                  AND ab.start_at < pd.work_date || 'T' || sd.shift_end || ':00Z'
-                  AND ab.end_at > pd.work_date || 'T' || sd.shift_start || ':00Z'
-            ), 0) AS blocked_minutes,
-            CASE WHEN EXISTS (
-                SELECT 1 FROM personnel_availability_blocks ab2
-                WHERE ab2.personnel_id = pd.id
-                  AND ab2.is_critical = 1
-                  AND sd.id IS NOT NULL
-                  AND sd.is_rest_day = 0
-                  AND ab2.start_at < pd.work_date || 'T' || sd.shift_end || ':00Z'
-                  AND ab2.end_at > pd.work_date || 'T' || sd.shift_start || ':00Z'
-            ) THEN 1 ELSE 0 END AS has_critical_block,
-            COALESCE((
-                SELECT group_concat(DISTINCT ab3.block_type)
-                FROM personnel_availability_blocks ab3
-                WHERE ab3.personnel_id = pd.id
-                  AND sd.id IS NOT NULL
-                  AND sd.is_rest_day = 0
-                  AND ab3.start_at < pd.work_date || 'T' || sd.shift_end || ':00Z'
-                  AND ab3.end_at > pd.work_date || 'T' || sd.shift_start || ':00Z'
-            ), '') AS block_types
+            pd.work_date
          FROM person_days pd
          LEFT JOIN org_nodes e ON e.id = pd.primary_entity_id
          LEFT JOIN teams home ON home.id = pd.primary_team_id
@@ -255,54 +224,93 @@ pub async fn list_availability_calendar(
             ORDER BY pta.is_lead DESC, pta.id DESC
             LIMIT 1
          )
-         LEFT JOIN schedule_details sd
-            ON sd.reference_value_id = pd.home_schedule_reference_value_id
-           AND sd.day_of_week = pd.day_of_week
          WHERE 1 = 1
          {}
          ORDER BY pd.full_name ASC, pd.work_date ASC",
         personnel_where.join(" AND "),
         team_filter_sql
     );
-
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
-    let mapped = rows
-        .into_iter()
-        .map(|row| {
-            let scheduled_minutes: i64 = row.try_get("", "scheduled_minutes").unwrap_or_default();
-            let blocked_minutes: i64 = row.try_get("", "blocked_minutes").unwrap_or_default();
-            let available_minutes = (scheduled_minutes - blocked_minutes).max(0);
-            let raw_types: String = row.try_get("", "block_types").unwrap_or_default();
-            let block_types = if raw_types.is_empty() {
-                Vec::new()
-            } else {
-                raw_types.split(',').map(std::string::ToString::to_string).collect()
-            };
+    // Each person's days, computed once.
+    let mut days_of: HashMap<i64, HashMap<String, PersonDayCapacity>> = HashMap::new();
+    let mut critical_of: HashMap<i64, Vec<(chrono::NaiveDateTime, chrono::NaiveDateTime)>> = HashMap::new();
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let personnel_id: i64 = row.try_get("", "personnel_id").unwrap_or_default();
+        if let std::collections::hash_map::Entry::Vacant(slot) = days_of.entry(personnel_id) {
+            let days = crate::personnel::capacity::person_capacity_span(db, personnel_id, from, to).await?;
+            slot.insert(days.into_iter().map(|d| (d.day.clone(), d)).collect());
+            critical_of.insert(personnel_id, critical_blocks(db, personnel_id, from, to).await?);
+        }
+        let work_date: String = row.try_get("", "work_date").unwrap_or_default();
+        let day = days_of.get(&personnel_id).and_then(|d| d.get(&work_date));
+        let window = day.and_then(|d| {
+            let date = chrono::NaiveDate::parse_from_str(&d.day, "%Y-%m-%d").ok()?;
+            crate::personnel::capacity::shift_window(date, d.shift_start.as_deref()?, d.shift_end.as_deref()?)
+        });
+        let has_critical_block = window.is_some_and(|(s, e)| {
+            critical_of
+                .get(&personnel_id)
+                .is_some_and(|blocks| blocks.iter().any(|(bs, be)| *bs < e && *be > s))
+        });
+        out.push(AvailabilityCalendarEntry {
+            personnel_id,
+            employee_code: row.try_get("", "employee_code").unwrap_or_default(),
+            full_name: row.try_get("", "full_name").unwrap_or_default(),
+            entity_id: row.try_get("", "entity_id").unwrap_or(None),
+            entity_name: row.try_get("", "entity_name").unwrap_or(None),
+            team_id: row.try_get("", "team_id").unwrap_or(None),
+            team_name: row.try_get("", "team_name").unwrap_or(None),
+            work_date,
+            shift_start: day.and_then(|d| d.shift_start.clone()),
+            shift_end: day.and_then(|d| d.shift_end.clone()),
+            scheduled_minutes: day.map_or(0, |d| d.scheduled_minutes),
+            blocked_minutes: day.map_or(0, |d| d.absent_minutes),
+            available_minutes: day.map_or(0, |d| d.available_minutes),
+            has_critical_block,
+            block_types: day.map(|d| d.absence_types.clone()).unwrap_or_default(),
+        });
+    }
+    Ok(out)
+}
 
-            AvailabilityCalendarEntry {
-                personnel_id: row.try_get("", "personnel_id").unwrap_or_default(),
-                employee_code: row.try_get("", "employee_code").unwrap_or_default(),
-                full_name: row.try_get("", "full_name").unwrap_or_default(),
-                entity_id: row.try_get("", "entity_id").unwrap_or(None),
-                entity_name: row.try_get("", "entity_name").unwrap_or(None),
-                team_id: row.try_get("", "team_id").unwrap_or(None),
-                team_name: row.try_get("", "team_name").unwrap_or(None),
-                work_date: row.try_get("", "work_date").unwrap_or_default(),
-                shift_start: row.try_get("", "shift_start").unwrap_or(None),
-                shift_end: row.try_get("", "shift_end").unwrap_or(None),
-                scheduled_minutes,
-                blocked_minutes,
-                available_minutes,
-                has_critical_block: row.try_get::<i64>("", "has_critical_block").unwrap_or(0) == 1,
-                block_types,
-            }
+/// Critical absence blocks of a person that can touch a shift of `[from, to]`.
+async fn critical_blocks(
+    db: &DatabaseConnection,
+    personnel_id: i64,
+    from: chrono::NaiveDate,
+    to: chrono::NaiveDate,
+) -> AppResult<Vec<(chrono::NaiveDateTime, chrono::NaiveDateTime)>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT start_at, end_at FROM personnel_availability_blocks WHERE personnel_id = ? AND is_critical = 1 \
+             AND julianday(start_at) < julianday(?) AND julianday(end_at) > julianday(?)",
+            [
+                personnel_id.into(),
+                (to + chrono::Duration::days(2)).to_string().into(),
+                from.to_string().into(),
+            ],
+        ))
+        .await?;
+    let parse = |raw: &str| {
+        chrono::DateTime::parse_from_rfc3339(raw)
+            .map(|d| d.naive_utc())
+            .ok()
+            .or_else(|| chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S").ok())
+            .or_else(|| chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S").ok())
+    };
+    Ok(rows
+        .iter()
+        .filter_map(|r| {
+            let s: String = r.try_get("", "start_at").ok()?;
+            let e: String = r.try_get("", "end_at").ok()?;
+            Some((parse(&s)?, parse(&e)?))
         })
-        .collect();
-
-    Ok(mapped)
+        .collect())
 }
 
 pub async fn create_availability_block(
@@ -315,9 +323,8 @@ pub async fn create_availability_block(
             "start_at must be before end_at.".to_string()
         ]));
     }
-    if input.block_type.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["block_type is required.".to_string()]));
-    }
+    // A value of the plant's absence-type list; its tag decides whether it is always critical.
+    let (block_type, tag) = super::reference_lists::checked_absence_type(db, &input.block_type).await?;
 
     assert_no_overlapping_blocks(
         db,
@@ -329,8 +336,7 @@ pub async fn create_availability_block(
     )
     .await?;
 
-    let is_critical =
-        input.is_critical.unwrap_or(false) || matches!(input.block_type.as_str(), "medical" | "restriction");
+    let is_critical = input.is_critical.unwrap_or(false) || tag == super::reference_lists::ABSENCE_TAG_CRITICAL;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -339,7 +345,7 @@ pub async fn create_availability_block(
          VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             input.personnel_id.into(),
-            input.block_type.clone().into(),
+            block_type.into(),
             input.start_at.clone().into(),
             input.end_at.clone().into(),
             input.reason_note.clone().into(),
@@ -360,20 +366,57 @@ pub async fn create_availability_block(
     Ok(map_block_row(row))
 }
 
+/// Audit action of a change of a block's critical flag (who, block, person, before → after; never
+/// the absence type or reason).
+pub const AUDIT_BLOCK_CRITICAL_CHANGED: &str = "personnel.availability_block.critical_changed";
+
+/// Refusal of a type change by a caller the block's type is withheld from (translated in
+/// `training:errors`).
+pub const CODE_ABSENCE_TYPE_HIDDEN: &str = "PERSONNEL_ABSENCE_TYPE_HIDDEN";
+
+/// Edits a block. `access` is what the caller may read (`personnel::absence_access`): for a caller
+/// the block's type and reason are withheld from, the server never takes them from the payload —
+/// the stored reason is kept whatever is sent, and any type in the payload is refused
+/// ([`CODE_ABSENCE_TYPE_HIDDEN`]); dates and the critical flag stay editable.
 pub async fn update_availability_block(
     db: &DatabaseConnection,
     input: AvailabilityBlockUpdateInput,
+    actor_id: i64,
+    access: &crate::personnel::absence_access::AbsenceAccess,
 ) -> AppResult<PersonnelAvailabilityBlock> {
     if input.start_at >= input.end_at {
         return Err(AppError::ValidationFailed(vec![
             "start_at must be before end_at.".to_string()
         ]));
     }
-    if input.block_type.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["block_type is required.".to_string()]));
-    }
-
     let existing = fetch_block_by_id(db, input.id).await?;
+    let hidden =
+        access.detail_for(existing.personnel_id) == crate::personnel::absence_access::AbsenceDetail::AvailabilityOnly;
+    // Any type in the payload is refused, even the stored one: accepting a right guess would let
+    // the caller probe the hidden type.
+    if hidden && input.block_type.is_some() {
+        return Err(crate::errors::org_validation_failed(
+            CODE_ABSENCE_TYPE_HIDDEN,
+            "The absence type of this block is sensitive data you cannot read: it cannot be changed.",
+            HashMap::from([("block_id".to_string(), existing.id.to_string())]),
+        ));
+    }
+    // Only a change of type is checked against the list: a block whose stored type was retired
+    // or flagged stays editable and keeps that type's behaviour.
+    // Unchanged type: the stored critical flag is kept (a legacy type adopted "à revoir" never
+    // forces it, so a note edit cannot flip an old block); only a shipped or plant type tagged
+    // critical forces it, as on creation.
+    let requested_type = input.block_type.as_deref().unwrap_or(&existing.block_type);
+    let (block_type, forced_critical, keep_critical) = if requested_type == existing.block_type {
+        let forced = matches!(
+            super::reference_lists::stored_absence_type(db, &existing.block_type).await?,
+            Some((Some(ref tag), false)) if tag == super::reference_lists::ABSENCE_TAG_CRITICAL
+        );
+        (existing.block_type.clone(), forced, existing.is_critical)
+    } else {
+        let (code, tag) = super::reference_lists::checked_absence_type(db, requested_type).await?;
+        (code, tag == super::reference_lists::ABSENCE_TAG_CRITICAL, false)
+    };
     assert_no_overlapping_blocks(
         db,
         existing.personnel_id,
@@ -384,24 +427,56 @@ pub async fn update_availability_block(
     )
     .await?;
 
-    let is_critical =
-        input.is_critical.unwrap_or(false) || matches!(input.block_type.as_str(), "medical" | "restriction");
+    let is_critical = forced_critical || input.is_critical.unwrap_or(keep_critical);
+    // A caller the reason is withheld from never overwrites it.
+    let reason_note = if hidden || input.keep_reason_note {
+        existing.reason_note.clone()
+    } else {
+        input.reason_note.clone()
+    };
 
-    db.execute(Statement::from_sql_and_values(
+    // The change and its audit event commit together.
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE personnel_availability_blocks
          SET block_type = ?, start_at = ?, end_at = ?, reason_note = ?, is_critical = ?
          WHERE id = ?",
         [
-            input.block_type.clone().into(),
+            block_type.into(),
             input.start_at.clone().into(),
             input.end_at.clone().into(),
-            input.reason_note.clone().into(),
+            reason_note.into(),
             (if is_critical { 1 } else { 0 }).into(),
             input.id.into(),
         ],
     ))
     .await?;
+    if is_critical != existing.is_critical {
+        crate::audit::writer::write_audit_event_in(
+            &txn,
+            crate::audit::writer::AuditEventInput {
+                action_code: AUDIT_BLOCK_CRITICAL_CHANGED.to_string(),
+                target_type: Some("personnel_availability_block".to_string()),
+                target_id: Some(existing.id.to_string()),
+                actor_id: Some(actor_id),
+                auth_context: "session".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "standard".to_string(),
+                // Who (actor), which block and person, before → after; never the type or reason.
+                details_json: Some(serde_json::json!({
+                    "block_id": existing.id,
+                    "personnel_id": existing.personnel_id,
+                    "is_critical_before": existing.is_critical,
+                    "is_critical_after": is_critical,
+                })),
+            },
+        )
+        .await?;
+    }
+    txn.commit().await?;
 
     fetch_block_by_id(db, input.id).await
 }
@@ -466,12 +541,26 @@ pub async fn end_availability_block(db: &DatabaseConnection, id: i64) -> AppResu
 // Computed availability state (point-in-time)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Reason codes of [`compute_personnel_availability_state`]; the screen shows them in the user's
+/// language (`personnel` namespace, `availability.inspector.reason.<code>`). A block reason is the
+/// block's absence type code instead.
+pub const REASON_EMPLOYMENT_TERMINATED: &str = "employment_terminated";
+pub const REASON_BLOCKED_OVERRIDE: &str = "blocked_override";
+/// The person is on open work orders; their number is `open_work_order_count`.
+pub const REASON_OPEN_WORK_ORDERS: &str = "open_work_orders";
+/// The program's own reason codes (any other reason is an absence type code).
+pub const PROGRAM_REASON_CODES: &[&str] = &[
+    REASON_EMPLOYMENT_TERMINATED,
+    REASON_BLOCKED_OVERRIDE,
+    REASON_OPEN_WORK_ORDERS,
+];
+
 /// Compute the current availability state for a single personnel.
 ///
 /// Priority:
 /// 1. `blocked_override = 1` → blocked
 /// 2. Active `personnel_availability_blocks` (leave / training / medical) → on_leave / in_training / blocked
-/// 3. Open WO assignments as primary_responsible → assigned
+/// 3. Open WOs the person is on (responsible or booked labour, `queries::PERSON_ON_WO`) → assigned
 /// 4. Otherwise → available
 pub async fn compute_personnel_availability_state(
     db: &DatabaseConnection,
@@ -502,7 +591,8 @@ pub async fn compute_personnel_availability_state(
             personnel_id,
             status: "inactive".to_string(),
             blocked_override: false,
-            reasons: vec!["Employment terminated.".to_string()],
+            reasons: vec![REASON_EMPLOYMENT_TERMINATED.to_string()],
+            open_work_order_count: None,
             as_of,
         });
     }
@@ -512,34 +602,41 @@ pub async fn compute_personnel_availability_state(
             personnel_id,
             status: "blocked".to_string(),
             blocked_override: true,
-            reasons: vec!["Blocked by manual override.".to_string()],
+            reasons: vec![REASON_BLOCKED_OVERRIDE.to_string()],
+            open_work_order_count: None,
             as_of,
         });
     }
 
     // Check active blocks
+    // The status follows the behaviour tag of each block's absence type
+    // (`personnel::reference_lists`, PERSONNEL.ABSENCE_TYPES): training -> in training, leave -> on
+    // leave, otherwise (critical, or a type no longer in the list) blocked.
     let block_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT block_type FROM personnel_availability_blocks \
-             WHERE personnel_id = ? AND start_at <= ? AND end_at > ? \
-             ORDER BY is_critical DESC, id ASC LIMIT 10",
+            format!(
+                "SELECT b.block_type, {tag} AS tag FROM personnel_availability_blocks b \
+                 WHERE b.personnel_id = ? AND b.start_at <= ? AND b.end_at > ? \
+                 ORDER BY b.is_critical DESC, b.id ASC LIMIT 10",
+                tag = super::reference_lists::BLOCK_TAG_SQL
+            ),
             [personnel_id.into(), as_of.clone().into(), as_of.clone().into()],
         ))
         .await?;
 
     if !block_rows.is_empty() {
-        let block_types: Vec<String> = block_rows
-            .iter()
-            .filter_map(|r| r.try_get::<String>("", "block_type").ok())
-            .collect();
+        let mut block_types: Vec<String> = Vec::with_capacity(block_rows.len());
+        let mut tags: Vec<Option<String>> = Vec::with_capacity(block_rows.len());
+        for r in &block_rows {
+            block_types.push(r.try_get("", "block_type")?);
+            tags.push(r.try_get("", "tag")?);
+        }
+        let has = |wanted: &str| tags.iter().any(|t| t.as_deref() == Some(wanted));
 
-        let status = if block_types.iter().any(|t| t == "training") {
+        let status = if has(super::reference_lists::ABSENCE_TAG_TRAINING) {
             "in_training"
-        } else if block_types
-            .iter()
-            .any(|t| matches!(t.as_str(), "leave" | "vacation" | "sick"))
-        {
+        } else if has(super::reference_lists::ABSENCE_TAG_LEAVE) {
             "on_leave"
         } else {
             "blocked"
@@ -550,34 +647,41 @@ pub async fn compute_personnel_availability_state(
             status: status.to_string(),
             blocked_override: false,
             reasons: block_types,
+            open_work_order_count: None,
             as_of,
         });
     }
 
-    // Check open WO assignments
+    // Open work the person is on: "Open (work to do)" OTs (`wo::backlog::OPEN_STATUS_SQL`) where
+    // the person is responsible or booked as labour — the same rule as their workload
+    // (`queries::PERSON_ON_WO`). A failed read is an error, never "free".
     let wo_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS n FROM work_orders wo
-             JOIN work_order_statuses s ON s.id = wo.status_id
-             WHERE wo.primary_responsible_id = ?
-               AND s.code NOT IN ('closed', 'cancelled')
-             LIMIT 1",
-            [personnel_id.into()],
+            format!(
+                "SELECT COUNT(*) AS n FROM work_orders wo
+                 JOIN work_order_statuses s ON s.id = wo.status_id
+                 WHERE {person_on_wo}
+                   AND s.code IN {open}",
+                person_on_wo = super::queries::PERSON_ON_WO,
+                open = crate::wo::backlog::OPEN_STATUS_SQL
+            ),
+            [personnel_id.into(), personnel_id.into(), personnel_id.into()],
         ))
-        .await;
-
-    if let Ok(Some(wr)) = wo_row {
-        let count: i64 = wr.try_get("", "n").unwrap_or(0);
-        if count > 0 {
-            return Ok(PersonnelAvailabilityState {
-                personnel_id,
-                status: "assigned".to_string(),
-                blocked_override: false,
-                reasons: vec![format!("{count} ordre(s) de travail actif(s).")],
-                as_of,
-            });
-        }
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("open work order count returned no row")))?;
+    let count: i64 = wo_row
+        .try_get("", "n")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("open work order count decode: {e}")))?;
+    if count > 0 {
+        return Ok(PersonnelAvailabilityState {
+            personnel_id,
+            status: "assigned".to_string(),
+            blocked_override: false,
+            reasons: vec![REASON_OPEN_WORK_ORDERS.to_string()],
+            open_work_order_count: Some(count),
+            as_of,
+        });
     }
 
     Ok(PersonnelAvailabilityState {
@@ -585,6 +689,7 @@ pub async fn compute_personnel_availability_state(
         status: "available".to_string(),
         blocked_override: false,
         reasons: vec![],
+        open_work_order_count: Some(0),
         as_of,
     })
 }

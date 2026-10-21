@@ -4,19 +4,21 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui";
-import { usePermissions } from "@/hooks/use-permissions";
+import { useAccessAt } from "@/hooks/use-access-at";
+import { describeAppError } from "@/lib/app-error";
 import {
   TERMINAL_PERMIT_STATUSES,
   type WorkPermitRecord,
   getPermitForWorkOrder,
 } from "@/services/permit-service";
-import { toErrorMessage } from "@/utils/errors";
 import { P } from "@shared/rbac/permissions.generated";
 
 import { PERMIT_QUERY_CREATE_FOR_WO, PERMIT_QUERY_SELECT } from "./permit-rules";
 
 interface WoPermitGateCardProps {
   workOrderId: number;
+  /** The work order's site (`entity_id`); rights are read there. None: plant-wide rights only. */
+  workOrderSiteId?: number | null | undefined;
   /** Bump to refetch (e.g. after the WO row version changes). */
   refreshKey?: number | string;
 }
@@ -25,13 +27,21 @@ interface WoPermitGateCardProps {
  * Shown on a WO that `requires_permit`: tells the user whether the PTW gate
  * (`permit/wo_gate.rs`) will let the WO start, and links to create / open the permit.
  */
-export function WoPermitGateCard({ workOrderId, refreshKey }: WoPermitGateCardProps) {
+export function WoPermitGateCard({
+  workOrderId,
+  workOrderSiteId,
+  refreshKey,
+}: WoPermitGateCardProps) {
   const { t } = useTranslation("permits");
-  const { can } = usePermissions();
+  // The permit rights count at the work order's site (node 0 = plant-wide rights only).
+  const { can, loading: accessLoading } = useAccessAt(
+    workOrderSiteId != null && workOrderSiteId > 0 ? workOrderSiteId : 0,
+  );
   const navigate = useNavigate();
   const [permit, setPermit] = useState<WorkPermitRecord | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,7 +54,7 @@ export function WoPermitGateCard({ workOrderId, refreshKey }: WoPermitGateCardPr
       .catch((err: unknown) => {
         if (!cancelled) {
           setPermit(null);
-          setLoadError(toErrorMessage(err));
+          setLoadError(describeAppError(err).title);
         }
       })
       .finally(() => {
@@ -53,9 +63,9 @@ export function WoPermitGateCard({ workOrderId, refreshKey }: WoPermitGateCardPr
     return () => {
       cancelled = true;
     };
-  }, [workOrderId, refreshKey]);
+  }, [workOrderId, refreshKey, reload]);
 
-  if (!can(P.PTW_VIEW) || !loaded) return null;
+  if (accessLoading || !can(P.PTW_VIEW) || !loaded) return null;
 
   if (loadError) {
     return (
@@ -63,10 +73,15 @@ export function WoPermitGateCard({ workOrderId, refreshKey }: WoPermitGateCardPr
         aria-label={t("woGate.title")}
         data-testid="wo-permit-gate"
         role="alert"
-        className="flex items-center gap-3 rounded-md border border-status-danger/50 px-3 py-2 text-sm"
+        className="flex flex-wrap items-center gap-3 rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm"
       >
-        <HardHat className="h-4 w-4 shrink-0 text-text-muted" aria-hidden />
-        <p className="text-text-primary">{t("woGate.loadError", { message: loadError })}</p>
+        <HardHat className="h-4 w-4 shrink-0 text-tone-danger-fg" aria-hidden />
+        <p className="min-w-0 flex-1 text-text-primary">
+          {t("woGate.loadError", { message: loadError })}
+        </p>
+        <Button size="sm" variant="outline" onClick={() => setReload((n) => n + 1)}>
+          {t("actions.retry")}
+        </Button>
       </section>
     );
   }
@@ -79,7 +94,9 @@ export function WoPermitGateCard({ workOrderId, refreshKey }: WoPermitGateCardPr
       aria-label={t("woGate.title")}
       data-testid="wo-permit-gate"
       className={`flex flex-wrap items-center gap-3 rounded-md border px-3 py-2 text-sm ${
-        ready ? "border-status-success/40" : "border-status-warning/50"
+        ready
+          ? "border-tone-success-border bg-tone-success-bg"
+          : "border-tone-warning-border bg-tone-warning-bg"
       }`}
     >
       <HardHat className="h-4 w-4 shrink-0 text-text-muted" aria-hidden />

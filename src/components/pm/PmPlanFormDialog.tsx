@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -23,14 +24,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useCanReadList } from "@/lib/list-access";
 import { listActiveTeams } from "@/services/personnel-service";
-import type {
-  AssetSearchResult,
-  CreatePmPlanInput,
-  PmPlan,
-  UpdatePmPlanInput,
-} from "@shared/ipc-types";
+import {
+  type PmPlanRow as PmPlan,
+  type PmScopeAsset,
+  type PmScopeOption,
+  listPmScopeOptions,
+  previewPmScopeAssets,
+} from "@/services/pm-service";
+import type { AssetSearchResult, CreatePmPlanInput, UpdatePmPlanInput } from "@shared/ipc-types";
 
+import { formatPmAsset } from "./pm-cells";
+import { pmUnreportedErrorText } from "./pm-errors";
 import { PM_SCOPE_TYPES, PM_STRATEGY_TYPES } from "./pm-labels";
 
 interface PmPlanFormDialogProps {
@@ -53,6 +59,8 @@ export function PmPlanFormDialog({
   onUpdate,
 }: PmPlanFormDialogProps) {
   const { t } = useTranslation("pm");
+  // Crews are personnel teams: without the personnel view right they are not requested.
+  const canReadTeams = useCanReadList("teams");
   const [code, setCode] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -65,14 +73,72 @@ export function PmPlanFormDialog({
   const [requiresPermit, setRequiresPermit] = useState(false);
   const [isActive, setIsActive] = useState(true);
   const [teams, setTeams] = useState<Array<{ id: number; code: string; name: string }>>([]);
+  const [scopeId, setScopeId] = useState<string>("");
+  const [scopeOptions, setScopeOptions] = useState<PmScopeOption[]>([]);
+  const [scopeAssets, setScopeAssets] = useState<PmScopeAsset[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** A choice list that failed to load says so next to its field (never a silent empty list). */
+  const [teamsFailed, setTeamsFailed] = useState(false);
+  const [scopeFailed, setScopeFailed] = useState(false);
+  const [listAttempt, setListAttempt] = useState(0);
+  const retryLists = () => setListAttempt((n) => n + 1);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: listAttempt = explicit retry
   useEffect(() => {
     if (!open) return;
+    setTeamsFailed(false);
+    if (!canReadTeams) return;
     void listActiveTeams()
       .then((rows) => setTeams(rows.map((r) => ({ id: r.id, code: r.code, name: r.name }))))
-      .catch(() => setTeams([]));
-  }, [open]);
+      .catch(() => {
+        setTeams([]);
+        setTeamsFailed(true);
+      });
+  }, [open, listAttempt, canReadTeams]);
+
+  // Values of a fanned-out scope (family, location, criticality group).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: listAttempt = explicit retry
+  useEffect(() => {
+    setScopeFailed(false);
+    if (!open || scopeType === "equipment") {
+      setScopeOptions([]);
+      return;
+    }
+    let cancelled = false;
+    listPmScopeOptions(scopeType)
+      .then((rows) => {
+        if (!cancelled) setScopeOptions(rows);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setScopeOptions([]);
+          setScopeFailed(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, scopeType, listAttempt]);
+
+  // The assets the scope covers today (one occurrence stream each).
+  useEffect(() => {
+    if (!open || scopeType === "equipment" || !scopeId) {
+      setScopeAssets(null);
+      return;
+    }
+    let cancelled = false;
+    previewPmScopeAssets(scopeType, Number(scopeId))
+      .then((rows) => {
+        if (!cancelled) setScopeAssets(rows);
+      })
+      .catch(() => {
+        // Reported by the global IPC toast.
+        if (!cancelled) setScopeAssets(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, scopeType, scopeId]);
 
   useEffect(() => {
     if (!open) return;
@@ -82,6 +148,11 @@ export function PmPlanFormDialog({
       setDescription(plan.description ?? "");
       setStrategy(plan.strategy_type);
       setScopeType(plan.asset_scope_type);
+      setScopeId(
+        plan.asset_scope_type !== "equipment" && plan.asset_scope_id != null
+          ? String(plan.asset_scope_id)
+          : "",
+      );
       setAsset(null);
       setCrewId(plan.assigned_team_id != null ? String(plan.assigned_team_id) : "");
       setCriticalityId(plan.criticality_value_id != null ? String(plan.criticality_value_id) : "");
@@ -94,6 +165,7 @@ export function PmPlanFormDialog({
       setDescription("");
       setStrategy("fixed");
       setScopeType("equipment");
+      setScopeId("");
       setAsset(null);
       setCrewId("");
       setCriticalityId("");
@@ -110,12 +182,19 @@ export function PmPlanFormDialog({
       setError(t("errors.assetRequired"));
       return;
     }
+    if (scopeType !== "equipment" && !scopeId) {
+      setError(t("errors.scopeRequired"));
+      return;
+    }
     const assignedTeamId = crewId ? Number(crewId) : null;
     const criticalityValueId = criticalityId ? Number(criticalityId) : null;
     const assetScopeId =
       scopeType === "equipment"
-        ? (asset?.id ?? (mode === "edit" ? (plan?.asset_scope_id ?? null) : null))
-        : null;
+        ? (asset?.id ??
+          (mode === "edit" && plan?.asset_scope_type === "equipment"
+            ? (plan.asset_scope_id ?? null)
+            : null))
+        : Number(scopeId);
 
     try {
       if (mode === "create") {
@@ -148,7 +227,7 @@ export function PmPlanFormDialog({
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(pmUnreportedErrorText(err));
     }
   }
 
@@ -168,17 +247,18 @@ export function PmPlanFormDialog({
         <div className="grid gap-3 py-2">
           {mode === "create" ? (
             <div className="grid gap-1">
-              <Label>{t("fields.code")}</Label>
-              <Input value={code} onChange={(e) => setCode(e.target.value)} />
+              <Label htmlFor="pm-plan-code">{t("fields.code")}</Label>
+              <Input id="pm-plan-code" value={code} onChange={(e) => setCode(e.target.value)} />
             </div>
           ) : null}
           <div className="grid gap-1">
-            <Label>{t("fields.title")}</Label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Label htmlFor="pm-plan-title">{t("fields.title")}</Label>
+            <Input id="pm-plan-title" value={title} onChange={(e) => setTitle(e.target.value)} />
           </div>
           <div className="grid gap-1">
-            <Label>{t("fields.description")}</Label>
+            <Label htmlFor="pm-plan-description">{t("fields.description")}</Label>
             <Textarea
+              id="pm-plan-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
@@ -201,7 +281,13 @@ export function PmPlanFormDialog({
           </div>
           <div className="grid gap-1">
             <Label>{t("fields.scopeType")}</Label>
-            <Select value={scopeType} onValueChange={setScopeType}>
+            <Select
+              value={scopeType}
+              onValueChange={(v) => {
+                setScopeType(v);
+                setScopeId("");
+              }}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -219,10 +305,45 @@ export function PmPlanFormDialog({
               <Label>{t("fields.asset")}</Label>
               <AssetPicker value={asset} onChange={setAsset} />
               {mode === "edit" && plan?.asset_scope_id != null && !asset ? (
-                <p className="text-xs text-muted-foreground">
-                  {t("labels.none")} — select to change bound asset
+                <p className="text-xs text-text-muted">
+                  {formatPmAsset(plan.asset_code, plan.asset_name)
+                    ? `${t("fields.currentAsset", {
+                        asset: formatPmAsset(plan.asset_code, plan.asset_name),
+                      })} — `
+                    : ""}
+                  {t("fields.currentAssetHint")}
                 </p>
-              ) : null}
+              ) : (
+                <div className="grid gap-1">
+                  <Label htmlFor="pm-plan-scope">{t(`scope.${scopeType}`)}</Label>
+                  <Select value={scopeId} onValueChange={setScopeId}>
+                    <SelectTrigger id="pm-plan-scope">
+                      <SelectValue placeholder={t("errors.scopeRequired")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {scopeOptions.map((o) => (
+                        <SelectItem key={o.id} value={String(o.id)}>
+                          {o.label && o.label !== o.code ? `${o.code} — ${o.label}` : o.code}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {scopeFailed ? <ListLoadFailed onRetry={retryLists} /> : null}
+                  {scopeAssets ? (
+                    <p className="text-xs text-text-muted">
+                      {scopeAssets.length === 0
+                        ? t("hints.scopeNoAssets")
+                        : t("hints.scopeAssets", {
+                            count: scopeAssets.length,
+                            list: `${scopeAssets
+                              .slice(0, 5)
+                              .map((a) => a.asset_code)
+                              .join(", ")}${scopeAssets.length > 5 ? "…" : ""}`,
+                          })}
+                    </p>
+                  ) : null}
+                </div>
+              )}
             </div>
           ) : null}
           <div className="grid gap-1">
@@ -230,6 +351,7 @@ export function PmPlanFormDialog({
             <Select
               value={crewId || "__none"}
               onValueChange={(v) => setCrewId(v === "__none" ? "" : v)}
+              disabled={!canReadTeams}
             >
               <SelectTrigger>
                 <SelectValue placeholder={t("labels.none")} />
@@ -243,6 +365,8 @@ export function PmPlanFormDialog({
                 ))}
               </SelectContent>
             </Select>
+            {!canReadTeams ? <ListAccessNote list="teams" /> : null}
+            {teamsFailed ? <ListLoadFailed onRetry={retryLists} /> : null}
           </div>
           <div className="grid gap-1">
             <Label>{t("fields.criticality")}</Label>
@@ -271,7 +395,11 @@ export function PmPlanFormDialog({
             <Checkbox checked={isActive} onCheckedChange={(v) => setIsActive(v === true)} />
             {t("fields.isActive")}
           </label>
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {error ? (
+            <p role="alert" className="text-sm text-tone-danger-fg">
+              {error}
+            </p>
+          ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
@@ -286,5 +414,18 @@ export function PmPlanFormDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Field-level notice: the choices could not be loaded, with a retry. */
+function ListLoadFailed({ onRetry }: { onRetry: () => void }) {
+  const { t } = useTranslation("pm");
+  return (
+    <p role="alert" className="flex flex-wrap items-center gap-2 text-xs text-tone-danger-fg">
+      {t("errors.listLoad")}
+      <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={onRetry}>
+        {t("actions.retry")}
+      </Button>
+    </p>
   );
 }

@@ -32,6 +32,97 @@ import type {
   UpdatePmPlanVersionInput,
 } from "@shared/ipc-types";
 
+/**
+ * Target asset of an equipment-scoped plan (read-only join done by the backend). Kept here until
+ * `shared/ipc-types.ts` `PmPlan` / `PmOccurrence` carry these two optional fields.
+ */
+export interface PmAssetRef {
+  asset_code?: string | null | undefined;
+  asset_name?: string | null | undefined;
+}
+export type PmPlanRow = PmPlan &
+  PmAssetRef & {
+    /** Name of the family / location / criticality group of a fanned-out plan. */
+    asset_scope_label?: string | null | undefined;
+  };
+
+/** `on_time` | `early` | `late` against the occurrence's tolerance window. */
+export type PmTimingStatus = "on_time" | "early" | "late";
+
+/** Occurrence read model: its asset (one per asset for fanned-out plans) and tolerance window. */
+export type PmOccurrenceRow = PmOccurrence &
+  PmAssetRef & {
+    equipment_id?: number | null | undefined;
+    window_start_at?: string | null | undefined;
+    window_end_at?: string | null | undefined;
+    window_start_meter?: number | null | undefined;
+    window_end_meter?: number | null | undefined;
+    timing_status?: string | null | undefined;
+  };
+
+/** Execution with the meter reading at completion and its timing. */
+export type PmExecutionRow = PmExecution & {
+  meter_reading?: number | null | undefined;
+  timing_status?: string | null | undefined;
+};
+
+export interface PmComplianceInput {
+  from: string;
+  to: string;
+  pm_plan_id?: number | null;
+}
+
+/** PM compliance (SMRP 5.4.1 style): work inside its window ÷ PM occurrences due in the period. */
+export interface PmComplianceReport {
+  from: string;
+  to: string;
+  pm_plan_id: number | null;
+  due_count: number;
+  on_time_count: number;
+  early_count: number;
+  late_count: number;
+  not_done_count: number;
+  /** Due, still inside its window and not done: not judged yet (not in `due_count`). */
+  pending_count?: number | undefined;
+  compliance_pct: number | null;
+}
+
+export interface PmScopeOption {
+  id: number;
+  code: string;
+  label: string;
+}
+
+export interface PmScopeAsset {
+  equipment_id: number;
+  asset_code: string;
+  asset_name: string;
+}
+
+/** A meter with its lifetime value (rollover and replacement keep counting). */
+export interface PmAssetMeter {
+  id: number;
+  name: string;
+  meter_type: string;
+  /** Unit of the meter (MEASURE.UNITS) and its symbol. */
+  unit_value_id: number | null;
+  unit: string | null;
+  current_reading: number;
+  lifetime_reading: number;
+  rollover_value: number | null;
+  last_read_at: string | null;
+  is_primary: boolean;
+}
+
+export type PmMeterReadingKind = "normal" | "rollover" | "replacement";
+
+export interface RecordPmMeterReadingInput {
+  meter_id: number;
+  reading_value: number;
+  reading_at: string | null;
+  kind: PmMeterReadingKind | null;
+}
+
 const PmPlanSchema = z.object({
   id: z.number(),
   code: z.string(),
@@ -55,6 +146,9 @@ const PmPlanSchema = z.object({
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+  asset_code: z.string().nullable().optional(),
+  asset_name: z.string().nullable().optional(),
+  asset_scope_label: z.string().nullable().optional(),
 });
 
 const PmPlanVersionSchema = z.object({
@@ -70,6 +164,7 @@ const PmPlanVersionSchema = z.object({
   required_skills_json: z.string().nullable(),
   required_tools_json: z.string().nullable(),
   estimated_duration_hours: z.number().nullable(),
+  planned_crew_size: z.number().nullable(),
   estimated_labor_cost: z.number().nullable(),
   estimated_parts_cost: z.number().nullable(),
   estimated_service_cost: z.number().nullable(),
@@ -98,6 +193,14 @@ const PmOccurrenceSchema = z.object({
   plan_code: z.string().nullable(),
   plan_title: z.string().nullable(),
   strategy_type: z.string().nullable(),
+  asset_code: z.string().nullable().optional(),
+  asset_name: z.string().nullable().optional(),
+  equipment_id: z.number().nullable().optional(),
+  window_start_at: z.string().nullable().optional(),
+  window_end_at: z.string().nullable().optional(),
+  window_start_meter: z.number().nullable().optional(),
+  window_end_meter: z.number().nullable().optional(),
+  timing_status: z.string().nullable().optional(),
 });
 
 const PmDueMetricsSchema = z.object({
@@ -154,6 +257,7 @@ const PmGovernanceKpiReportSchema = z.object({
   overdue_risk: PmRateKpiSchema,
   first_pass_completion: PmRateKpiSchema,
   follow_up_ratio: PmRateKpiSchema,
+  failures_found_by_pm: z.number(),
   effort_variance: PmEffortVarianceKpiSchema,
   derivation_rules: z.array(z.string()),
 });
@@ -209,6 +313,42 @@ const PmExecutionSchema = z.object({
   actual_duration_hours: z.number().nullable(),
   actual_labor_hours: z.number().nullable(),
   created_at: z.string().nullable(),
+  meter_reading: z.number().nullable().optional(),
+  timing_status: z.string().nullable().optional(),
+});
+
+const PmComplianceReportSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  pm_plan_id: z.number().nullable(),
+  due_count: z.number(),
+  on_time_count: z.number(),
+  early_count: z.number(),
+  late_count: z.number(),
+  not_done_count: z.number(),
+  pending_count: z.number().optional(),
+  compliance_pct: z.number().nullable(),
+});
+
+const PmScopeOptionSchema = z.object({ id: z.number(), code: z.string(), label: z.string() });
+
+const PmScopeAssetSchema = z.object({
+  equipment_id: z.number(),
+  asset_code: z.string(),
+  asset_name: z.string(),
+});
+
+const PmAssetMeterSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  meter_type: z.string(),
+  unit_value_id: z.number().nullable(),
+  unit: z.string().nullable(),
+  current_reading: z.number(),
+  lifetime_reading: z.number(),
+  rollover_value: z.number().nullable(),
+  last_read_at: z.string().nullable(),
+  is_primary: z.boolean(),
 });
 
 const PmFindingSchema = z.object({
@@ -251,11 +391,22 @@ function isIpcError(err: unknown): err is IpcErrorShape {
 
 export class PmIpcError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  /**
+   * True when the failure came back from the backend: the global IPC toast has already told the
+   * user, so screens must not repeat it. False for a response the app could not read.
+   */
+  readonly reported: boolean;
+  constructor(code: string, message: string, reported = true) {
     super(message);
     this.name = "PmIpcError";
     this.code = code;
+    this.reported = reported;
   }
+}
+
+/** True when the global IPC toast already reported this failure. */
+export function isReportedPmError(err: unknown): boolean {
+  return err instanceof PmIpcError && err.reported;
 }
 
 function mapInvokeError(err: unknown): never {
@@ -269,24 +420,31 @@ async function invokeParsed<T>(
   args: Record<string, unknown> | undefined,
   schema: z.ZodType<T>,
 ): Promise<T> {
+  let raw: unknown;
   try {
-    const raw = await invoke<unknown>(command, args);
+    raw = await invoke<unknown>(command, args);
+  } catch (err) {
+    mapInvokeError(err);
+  }
+  try {
     return schema.parse(raw);
   } catch (err) {
-    if (err instanceof ZodError) throw new PmIpcError("VALIDATION_FAILED", err.message);
-    mapInvokeError(err);
+    if (err instanceof ZodError) {
+      throw new PmIpcError("RESPONSE_SHAPE_INVALID", err.message, false);
+    }
+    throw err;
   }
 }
 
-export function listPmPlans(filter: PmPlanFilter): Promise<PmPlan[]> {
+export function listPmPlans(filter: PmPlanFilter): Promise<PmPlanRow[]> {
   return invokeParsed("list_pm_plans", { filter }, z.array(PmPlanSchema));
 }
 
-export function getPmPlan(planId: number): Promise<PmPlan> {
+export function getPmPlan(planId: number): Promise<PmPlanRow> {
   return invokeParsed("get_pm_plan", { planId }, PmPlanSchema);
 }
 
-export function createPmPlan(input: CreatePmPlanInput): Promise<PmPlan> {
+export function createPmPlan(input: CreatePmPlanInput): Promise<PmPlanRow> {
   return invokeParsed("create_pm_plan", { input }, PmPlanSchema);
 }
 
@@ -294,11 +452,13 @@ export function updatePmPlan(
   planId: number,
   expectedRowVersion: number,
   input: UpdatePmPlanInput,
-): Promise<PmPlan> {
+): Promise<PmPlanRow> {
   return invokeParsed("update_pm_plan", { planId, expectedRowVersion, input }, PmPlanSchema);
 }
 
-export function transitionPmPlanLifecycle(input: TransitionPmPlanLifecycleInput): Promise<PmPlan> {
+export function transitionPmPlanLifecycle(
+  input: TransitionPmPlanLifecycleInput,
+): Promise<PmPlanRow> {
   return invokeParsed("transition_pm_plan_lifecycle", { input }, PmPlanSchema);
 }
 
@@ -329,7 +489,7 @@ export function publishPmPlanVersion(input: PublishPmPlanVersionInput): Promise<
   return invokeParsed("publish_pm_plan_version", { input }, PmPlanVersionSchema);
 }
 
-export function listPmOccurrences(filter: PmOccurrenceFilter): Promise<PmOccurrence[]> {
+export function listPmOccurrences(filter: PmOccurrenceFilter): Promise<PmOccurrenceRow[]> {
   return invokeParsed("list_pm_occurrences", { filter }, z.array(PmOccurrenceSchema));
 }
 
@@ -349,7 +509,9 @@ export function updatePmGenerationSettings(
   return invokeParsed("update_pm_generation_settings", { input }, PmGenerationStatusSchema);
 }
 
-export function transitionPmOccurrence(input: TransitionPmOccurrenceInput): Promise<PmOccurrence> {
+export function transitionPmOccurrence(
+  input: TransitionPmOccurrenceInput,
+): Promise<PmOccurrenceRow> {
   return invokeParsed("transition_pm_occurrence", { input }, PmOccurrenceSchema);
 }
 
@@ -364,6 +526,25 @@ export function getPmGovernanceKpiReport(
 ): Promise<PmGovernanceKpiReport> {
   return invokeParsed("get_pm_governance_kpi_report", { input }, PmGovernanceKpiReportSchema);
 }
+const PmOptionSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  label_en: z.string().nullable(),
+});
+
+const PmExecutionOptionsSchema = z.object({
+  reasons: z.array(PmOptionSchema),
+  severities: z.array(PmOptionSchema),
+});
+
+export type PmOption = z.infer<typeof PmOptionSchema>;
+export type PmExecutionOptions = z.infer<typeof PmExecutionOptionsSchema>;
+
+/** Deferral / miss / cancel reasons (PM.DEFERRAL_REASONS) and finding severities (PM.FINDING_SEVERITY). */
+export function listPmExecutionOptions(): Promise<PmExecutionOptions> {
+  return invokeParsed("list_pm_execution_options", undefined, PmExecutionOptionsSchema);
+}
+
 export function getPmDueMetrics(): Promise<PmDueMetrics> {
   return invokeParsed("get_pm_due_metrics", undefined, PmDueMetricsSchema);
 }
@@ -374,7 +555,7 @@ export function executePmOccurrence(
   return invokeParsed("execute_pm_occurrence", { input }, ExecutePmOccurrenceResultSchema);
 }
 
-export function listPmExecutions(filter: PmExecutionFilter): Promise<PmExecution[]> {
+export function listPmExecutions(filter: PmExecutionFilter): Promise<PmExecutionRow[]> {
   return invokeParsed("list_pm_executions", { filter }, z.array(PmExecutionSchema));
 }
 
@@ -394,4 +575,36 @@ export function deletePmPlan(planId: number, expectedRowVersion: number): Promis
 
 export function deletePmPlanVersion(versionId: number, expectedRowVersion: number): Promise<void> {
   return invoke("delete_pm_plan_version", { versionId, expectedRowVersion });
+}
+
+export function getPmOccurrence(occurrenceId: number): Promise<PmOccurrenceRow> {
+  return invokeParsed("get_pm_occurrence", { occurrenceId }, PmOccurrenceSchema);
+}
+
+export function getPmCompliance(input: PmComplianceInput): Promise<PmComplianceReport> {
+  return invokeParsed("get_pm_compliance", { input }, PmComplianceReportSchema);
+}
+
+export function listPmScopeOptions(scopeType: string): Promise<PmScopeOption[]> {
+  return invokeParsed("list_pm_scope_options", { scopeType }, z.array(PmScopeOptionSchema));
+}
+
+export function previewPmScopeAssets(scopeType: string, scopeId: number): Promise<PmScopeAsset[]> {
+  return invokeParsed(
+    "preview_pm_scope_assets",
+    { scopeType, scopeId },
+    z.array(PmScopeAssetSchema),
+  );
+}
+
+export function listPmAssetMeters(equipmentId: number): Promise<PmAssetMeter[]> {
+  return invokeParsed("list_pm_asset_meters", { equipmentId }, z.array(PmAssetMeterSchema));
+}
+
+export function recordPmMeterReading(input: RecordPmMeterReadingInput): Promise<PmAssetMeter> {
+  return invokeParsed("record_pm_meter_reading", { input }, PmAssetMeterSchema);
+}
+
+export function createPmRevisionFromFinding(findingId: number): Promise<PmPlanVersion> {
+  return invokeParsed("create_pm_revision_from_finding", { findingId }, PmPlanVersionSchema);
 }

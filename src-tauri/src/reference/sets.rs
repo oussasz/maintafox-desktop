@@ -238,13 +238,32 @@ async fn clone_published_values_into_draft(
         }
     }
 
-    // Pass 2: remap parents; fail if parent was not in the cloned set (orphan).
+    // Pass 2: remap parents; a parent in an allowed parent domain (OT sub-type → maintenance
+    // nature, family → class) is kept as it is; any other parent outside the set is an orphan.
+    let child_domain: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.code AS domain_code FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE rs.id = ?",
+            [source_set_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "domain_code"))
+        .transpose()
+        .map_err(|e| decode_err("domain_code", e))?
+        .unwrap_or_default();
     for (new_id, old_parent_id) in parent_jobs {
-        let Some(&new_parent_id) = id_map.get(&old_parent_id) else {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "Impossible de cloner le jeu : parent_id={old_parent_id} \
-                 introuvable dans le jeu publié (hiérarchie orpheline)."
-            )]));
+        let new_parent_id = match id_map.get(&old_parent_id) {
+            Some(&id) => id,
+            None if super::values::is_allowed_cross_domain_parent(db, &child_domain, old_parent_id).await? => {
+                old_parent_id
+            }
+            None => {
+                return Err(AppError::ValidationFailed(vec![format!(
+                    "Impossible de cloner le jeu : parent_id={old_parent_id} \
+                     introuvable dans le jeu publié (hiérarchie orpheline)."
+                )]));
+            }
         };
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -383,6 +402,7 @@ pub async fn get_reference_set(db: &DatabaseConnection, set_id: i64) -> AppResul
 /// new draft in one transaction. When none exists (bootstrap), the draft is empty.
 pub async fn create_draft_set(db: &DatabaseConnection, domain_id: i64, actor_id: i64) -> AppResult<ReferenceSet> {
     let domain = super::domains::get_reference_domain(db, domain_id).await?;
+    super::audience::assert_domain_editable(&domain)?;
     super::governance::assert_allows_create_draft_set(&domain)?;
     assert_no_active_draft(db, domain_id).await?;
 
@@ -427,6 +447,7 @@ pub async fn create_draft_set(db: &DatabaseConnection, domain_id: i64, actor_id:
 pub async fn discard_draft_set(db: &DatabaseConnection, set_id: i64) -> AppResult<()> {
     let set = get_set_by_id(db, set_id).await?;
     let domain = super::domains::get_reference_domain(db, set.domain_id).await?;
+    super::audience::assert_domain_editable(&domain)?;
     super::governance::assert_allows_create_draft_set(&domain)?;
 
     if set.status != SET_STATUS_DRAFT {
@@ -488,6 +509,7 @@ pub async fn discard_draft_set(db: &DatabaseConnection, set_id: i64) -> AppResul
 /// of the outcome.
 pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -> AppResult<ReferenceSet> {
     let set = get_set_by_id(db, set_id).await?;
+    super::audience::assert_domain_id_editable(db, set.domain_id).await?;
 
     if set.status != SET_STATUS_DRAFT {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -501,12 +523,22 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
     let result = super::validation::validate_reference_set(db, set_id, actor_id).await?;
 
     if result.blocking_count > 0 {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Le jeu contient {} problème(s) bloquant(s). \
-             Corrigez-les avant de valider. \
-             Rapport de validation : id={}.",
-            result.blocking_count, result.report_id
-        )]));
+        // Name each problem (with the value code) so the user can fix it without a report id.
+        let mut messages = vec![format!(
+            "Le jeu contient {} problème(s) bloquant(s). Corrigez-les avant de valider.",
+            result.blocking_count
+        )];
+        messages.extend(
+            result
+                .issues
+                .iter()
+                .filter(|i| i.severity == super::validation::IssueSeverity::Blocking)
+                .map(|i| match &i.value_code {
+                    Some(code) => format!("{code} : {}", i.message),
+                    None => i.message.clone(),
+                }),
+        );
+        return Err(AppError::ValidationFailed(messages));
     }
 
     db.execute(Statement::from_sql_and_values(
@@ -529,6 +561,7 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
 pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -> AppResult<ReferenceSet> {
     let set = get_set_by_id(db, set_id).await?;
     let domain = super::domains::get_reference_domain(db, set.domain_id).await?;
+    super::audience::assert_domain_editable(&domain)?;
     super::governance::assert_allows_publish(&domain)?;
 
     if set.status != SET_STATUS_VALIDATED {
@@ -539,17 +572,34 @@ pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -
         )]));
     }
 
+    let txn = db.begin().await?;
+
     // Supersede the current published set (if any) before publishing the new one.
-    supersede_previous_published(db, set.domain_id, set_id).await?;
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reference_sets SET status = 'superseded' \
+         WHERE domain_id = ? AND status = 'published' AND id != ?",
+        [set.domain_id.into(), set_id.into()],
+    ))
+    .await?;
 
     let now = Utc::now().to_rfc3339();
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE reference_sets SET status = 'published', published_at = ? WHERE id = ?",
         [now.into(), set_id.into()],
     ))
     .await?;
+
+    // Records saved against an earlier version follow their code into this version.
+    super::publish::remap_usage_to_published_set(&txn, set.domain_id, set_id).await?;
+    // The currency list feeds the operational copy stock costs link to (`currencies`).
+    if super::currencies::is_currency_domain(&domain.code) {
+        super::currencies::mirror_into_lookup(&txn).await?;
+    }
+
+    txn.commit().await?;
 
     get_set_by_id(db, set_id).await
 }

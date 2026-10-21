@@ -3,7 +3,7 @@
 // - Top-level keys match the defined schema
 // - All leaf values are non-empty strings (no stale nulls or objects)
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 // ── Imports ─────────────────────────────────────────────────────
 import enAuth from "../en/auth.json";
@@ -40,7 +40,22 @@ const COMMON_TOP_KEYS = [
   "kanban",
   "linkedEntity",
   "resourceTimeline",
+  "timeline",
   "smartFilter",
+  // Design-system states, toolbar and confirmation labels (docs/DESIGN_SYSTEM.md).
+  "ds",
+  // Shared DI / OT urgency scale (select, badge tooltips).
+  "urgency",
+  // Pickers whose list the user may not read (src/lib/list-access.ts).
+  "listAccess",
+  // Names of the two "open OT" rules (src/lib/wo-open-rule.ts).
+  "woOpenRule",
+  // "À revoir" marker of list values found in data but not in the list (src/components/ui/review-mark.tsx).
+  "listValue",
+  // Required / optional part lines (src/components/common/PartNecessityChoice.tsx).
+  "partNecessity",
+  // Dismiss button of the app-wide messages (src/components/shell/AppToastHost.tsx).
+  "toast",
 ];
 const AUTH_TOP_KEYS = [
   "activation",
@@ -51,6 +66,7 @@ const AUTH_TOP_KEYS = [
   "logout",
   "passwordExpiry",
   "session",
+  "setupAdmin",
   "stepUp",
   "unauthorized",
 ];

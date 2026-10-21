@@ -6,8 +6,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::errors::AppError;
     use crate::reference::domains::{self, CreateReferenceDomainPayload};
@@ -17,29 +16,7 @@ mod tests {
 
     /// In-memory SQLite with all migrations + seed data.
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        // Clear impact cache between tests.
-        publish::clear_impact_cache();
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Creates a flat tenant_managed domain + draft set with one valid value,
@@ -456,5 +433,133 @@ mod tests {
 
         assert!(result.set.effective_from.is_some(), "effective_from should be set");
         assert!(result.set.published_at.is_some(), "published_at should be set");
+    }
+
+    // V2b — the preview marker lives on the set row (`impact_previewed_at`)
+
+    async fn previewed(db: &sea_orm::DatabaseConnection, set_id: i64) -> bool {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT impact_previewed_at FROM reference_sets WHERE id = ?",
+            [set_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("set row")
+        .try_get::<Option<String>>("", "impact_previewed_at")
+        .expect("column")
+        .is_some()
+    }
+
+    fn value(set_id: i64, code: &str) -> CreateReferenceValuePayload {
+        CreateReferenceValuePayload {
+            set_id,
+            parent_id: None,
+            code: code.to_string(),
+            label: format!("Value {code}"),
+            description: None,
+            sort_order: None,
+            color_hex: None,
+            icon_name: None,
+            semantic_tag: None,
+            external_code: None,
+            metadata_json: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn v2_preview_marker_is_stored_on_the_set_and_cleared_by_value_changes() {
+        let db = setup().await;
+        let domain = domains::create_reference_domain(
+            &db,
+            CreateReferenceDomainPayload {
+                code: "PUB_MARKER".to_string(),
+                name: "Preview marker".to_string(),
+                structure_type: "flat".to_string(),
+                governance_level: "protected_analytical".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
+                is_extendable: Some(false),
+                validation_rules_json: None,
+            },
+            1,
+        )
+        .await
+        .expect("domain");
+        let draft = sets::create_draft_set(&db, domain.id, 1).await.expect("draft");
+        let a = values::create_value(&db, value(draft.id, "A"), 1).await.expect("A");
+        assert!(!previewed(&db, draft.id).await);
+
+        // Another database built from the same template has the same set ids: a preview there
+        // must not count here (the old process-wide marker leaked between them).
+        let other = setup().await;
+        let other_domain = domains::create_reference_domain(
+            &other,
+            CreateReferenceDomainPayload {
+                code: "PUB_MARKER".to_string(),
+                name: "Preview marker".to_string(),
+                structure_type: "flat".to_string(),
+                governance_level: "protected_analytical".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
+                is_extendable: Some(false),
+                validation_rules_json: None,
+            },
+            1,
+        )
+        .await
+        .expect("other domain");
+        let other_draft = sets::create_draft_set(&other, other_domain.id, 1)
+            .await
+            .expect("other draft");
+        assert_eq!(other_draft.id, draft.id, "same template, same ids");
+        publish::preview_publish_impact(&other, other_draft.id)
+            .await
+            .expect("other preview");
+        assert!(previewed(&other, other_draft.id).await);
+        assert!(
+            !previewed(&db, draft.id).await,
+            "a preview in another database does not count"
+        );
+
+        publish::preview_publish_impact(&db, draft.id).await.expect("preview");
+        assert!(previewed(&db, draft.id).await);
+        values::create_value(&db, value(draft.id, "B"), 1).await.expect("B");
+        assert!(!previewed(&db, draft.id).await, "a new value invalidates the preview");
+
+        publish::preview_publish_impact(&db, draft.id).await.expect("preview");
+        let edit = values::UpdateReferenceValuePayload {
+            label: Some("Renamed".into()),
+            description: None,
+            sort_order: None,
+            color_hex: None,
+            icon_name: None,
+            semantic_tag: None,
+            external_code: None,
+            metadata_json: None,
+        };
+        values::update_value(&db, a.id, edit, 1).await.expect("edit A");
+        assert!(
+            !previewed(&db, draft.id).await,
+            "an edited value invalidates the preview"
+        );
+
+        publish::preview_publish_impact(&db, draft.id).await.expect("preview");
+        values::deactivate_value(&db, a.id, 1).await.expect("deactivate A");
+        assert!(
+            !previewed(&db, draft.id).await,
+            "a deactivated value invalidates the preview"
+        );
+
+        publish::preview_publish_impact(&db, draft.id).await.expect("preview");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM reference_values WHERE set_id = ? AND code = 'B'",
+            [draft.id.into()],
+        ))
+        .await
+        .expect("delete B");
+        assert!(
+            !previewed(&db, draft.id).await,
+            "a removed value invalidates the preview"
+        );
     }
 }

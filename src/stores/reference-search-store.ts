@@ -12,7 +12,7 @@ import { create } from "zustand";
 
 import { createLatestRequestGuard } from "@/lib/latest-request";
 import { searchReferenceValues } from "@/services/reference-service";
-import { toErrorMessage } from "@/utils/errors";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import type { ReferenceSearchHit } from "@shared/ipc-types";
 
 const searches = createLatestRequestGuard();
@@ -65,7 +65,7 @@ export const useReferenceSearchStore = create<ReferenceSearchStoreState>()((set,
       set({ results, loading: false });
     } catch (err) {
       if (!isCurrent()) return;
-      set({ results: [], error: toErrorMessage(err), loading: false });
+      set({ results: [], error: referenceErrorText(err), loading: false });
     }
   },
 

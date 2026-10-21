@@ -5,12 +5,12 @@
  * V4 — Loading state: loadDis sets loading=true while awaiting and loading=false after.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { mockInvoke } from "@/test/mocks/tauri";
 import type { InterventionRequest } from "@shared/ipc-types";
 
-import { useDiStore } from "../di-store";
+import { DI_LIST_PAGE_SIZE, useDiStore } from "../di-store";
 
 // ── Fixture ───────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ function makeDi(overrides: Partial<InterventionRequest> = {}): InterventionReque
     safety_flag: false,
     environmental_flag: false,
     quality_flag: false,
-    reported_urgency: "medium",
+    reported_urgency: "normal",
     validated_urgency: null,
     observed_at: null,
     submitted_at: "2026-04-01T10:00:00Z",
@@ -49,7 +49,6 @@ function makeDi(overrides: Partial<InterventionRequest> = {}): InterventionReque
     classification_code_id: null,
     is_recurrence_flag: false,
     recurrence_di_id: null,
-    is_modified: false,
     row_version: 1,
     submitter_id: 42,
     created_at: "2026-04-01T10:00:00Z",
@@ -65,8 +64,10 @@ function resetStore() {
     activeDi: null,
     filter: { limit: 50, offset: 0 },
     loading: false,
+    loadingMore: false,
     saving: false,
     error: null,
+    listError: null,
   });
 }
 
@@ -126,7 +127,12 @@ describe("di-store — Supervisor Verification S3", () => {
       expect(useDiStore.getState().error).toBeNull();
 
       // Resolve the invoke call
-      resolveInvoke({ items: [makeDi()], total: 1 });
+      resolveInvoke({
+        items: [makeDi()],
+        total: 1,
+        hidden_outside_scope: 0,
+        hidden_without_site: 0,
+      });
 
       // Wait for loadDis to complete
       await loadPromise;
@@ -150,7 +156,12 @@ describe("di-store — Supervisor Verification S3", () => {
     it("loadDis uses the current filter from state", async () => {
       useDiStore.getState().setFilter({ status: ["in_review"], limit: 25 });
 
-      mockInvoke.mockResolvedValueOnce({ items: [], total: 0 });
+      mockInvoke.mockResolvedValueOnce({
+        items: [],
+        total: 0,
+        hidden_outside_scope: 0,
+        hidden_without_site: 0,
+      });
 
       await useDiStore.getState().loadDis();
 
@@ -207,7 +218,12 @@ describe("di-store — Supervisor Verification S3", () => {
 
   it("submitNewDi creates and reloads list", async () => {
     const newDi = makeDi({ id: 3, code: "DI-0003" });
-    const pageAfter = { items: [makeDi(), newDi], total: 2 };
+    const pageAfter = {
+      items: [makeDi(), newDi],
+      total: 2,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
+    };
 
     mockInvoke
       .mockResolvedValueOnce(newDi) // create_di
@@ -219,17 +235,177 @@ describe("di-store — Supervisor Verification S3", () => {
       title: "New DI",
       description: "Desc",
       origin_type: "operator",
+      request_type: "repair",
       impact_level: "minor",
       production_impact: false,
       safety_flag: false,
       environmental_flag: false,
       quality_flag: false,
-      reported_urgency: "medium",
+      reported_urgency: "normal",
       submitter_id: 42,
     });
 
     expect(result.code).toBe("DI-0003");
     expect(useDiStore.getState().items).toHaveLength(2);
+    expect(useDiStore.getState().saving).toBe(false);
+  });
+});
+
+describe("di-store — paging and load errors", () => {
+  it("loads pages of DI_LIST_PAGE_SIZE from the first record", async () => {
+    useDiStore.setState({ filter: { limit: DI_LIST_PAGE_SIZE, offset: 400 } });
+    mockInvoke.mockResolvedValueOnce({
+      items: [makeDi()],
+      total: 1,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
+    });
+
+    await useDiStore.getState().loadDis();
+
+    const [, args] = mockInvoke.mock.calls[0] as [string, { filter: Record<string, unknown> }];
+    expect(args.filter).toMatchObject({ limit: DI_LIST_PAGE_SIZE, offset: 0 });
+  });
+
+  it("appends the next page and skips records already loaded", async () => {
+    useDiStore.setState({
+      items: [makeDi({ id: 1 }), makeDi({ id: 2, code: "DI-0002" })],
+      total: 3,
+    });
+    mockInvoke.mockResolvedValueOnce({
+      items: [makeDi({ id: 2, code: "DI-0002" }), makeDi({ id: 3, code: "DI-0003" })],
+      total: 3,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
+    });
+
+    await useDiStore.getState().loadMoreDis();
+
+    const [, args] = mockInvoke.mock.calls[0] as [string, { filter: Record<string, unknown> }];
+    expect(args.filter).toMatchObject({ offset: 2 });
+    expect(useDiStore.getState().items.map((d) => d.id)).toEqual([1, 2, 3]);
+    expect(useDiStore.getState().loadingMore).toBe(false);
+  });
+
+  it("keeps the raw failure for the error state and stops loading", async () => {
+    mockInvoke.mockRejectedValueOnce({ code: "DATABASE_ERROR", message: "disk I/O error" });
+
+    await useDiStore.getState().loadDis();
+
+    const s = useDiStore.getState();
+    expect(s.listError).toEqual({ code: "DATABASE_ERROR", message: "disk I/O error" });
+    expect(s.loading).toBe(false);
+  });
+
+  it("keeps the list of the latest load when an older load answers last", async () => {
+    let resolveOlder!: (v: unknown) => void;
+    mockInvoke.mockReturnValueOnce(new Promise((r) => (resolveOlder = r))).mockResolvedValueOnce({
+      items: [makeDi({ id: 7, code: "DI-0007" })],
+      total: 1,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
+    });
+
+    const older = useDiStore.getState().loadDis();
+    await useDiStore.getState().loadDis();
+    resolveOlder({
+      items: [makeDi({ id: 1 }), makeDi({ id: 2, code: "DI-0002" })],
+      total: 2,
+      hidden_outside_scope: 0,
+      hidden_without_site: 0,
+    });
+    await older;
+
+    expect(useDiStore.getState().items.map((d) => d.id)).toEqual([7]);
+  });
+});
+
+describe("di-store — work queues and the requester's answer", () => {
+  const counts = {
+    to_screen: 2,
+    to_review: 1,
+    awaiting_info: 1,
+    to_approve: 0,
+    approved_not_converted: 1,
+    deferred_due: 0,
+    sla_at_risk: 3,
+    mine: 4,
+    mine_awaiting_info: 1,
+  };
+
+  it("loads the queue sizes", async () => {
+    mockInvoke.mockResolvedValueOnce(counts);
+    await useDiStore.getState().loadQueueCounts();
+    expect(useDiStore.getState().queueCounts).toEqual(counts);
+    expect(useDiStore.getState().queueCountsError).toBeNull();
+  });
+
+  it("keeps the last sizes and the failure when the count cannot be read", async () => {
+    useDiStore.setState({ queueCounts: counts, queueCountsError: null });
+    mockInvoke.mockRejectedValueOnce({ code: "DATABASE_ERROR", message: "locked" });
+    await useDiStore.getState().loadQueueCounts();
+    expect(useDiStore.getState().queueCounts).toEqual(counts);
+    expect(useDiStore.getState().queueCountsError).toEqual({
+      code: "DATABASE_ERROR",
+      message: "locked",
+    });
+  });
+
+  it("resubmits, then refreshes the list, the detail and the queue sizes", async () => {
+    const back = makeDi({ status: "in_review", row_version: 3 });
+    mockInvoke.mockImplementation((cmd: string) => {
+      switch (cmd) {
+        case "resubmit_di":
+          return Promise.resolve(back);
+        case "list_di":
+          return Promise.resolve({
+            items: [back],
+            total: 1,
+            hidden_outside_scope: 0,
+            hidden_without_site: 0,
+          });
+        case "get_di":
+          return Promise.resolve({ di: back, transitions: [], similar: [] });
+        case "get_di_queue_counts":
+          return Promise.resolve(counts);
+        default:
+          return Promise.reject(new Error(`unexpected ${cmd}`));
+      }
+    });
+
+    const di = await useDiStore.getState().resubmit({
+      di_id: 1,
+      actor_id: 0,
+      expected_row_version: 2,
+      response_note: "Leak is on the outlet flange",
+    });
+
+    expect(di.status).toBe("in_review");
+    const s = useDiStore.getState();
+    expect(s.items[0]?.status).toBe("in_review");
+    expect(s.activeDi?.di.row_version).toBe(3);
+    expect(s.saving).toBe(false);
+    expect(mockInvoke).toHaveBeenCalledWith("resubmit_di", {
+      input: {
+        di_id: 1,
+        actor_id: 0,
+        expected_row_version: 2,
+        response_note: "Leak is on the outlet flange",
+      },
+    });
+  });
+
+  it("reports a refused resubmission and rethrows it", async () => {
+    mockInvoke.mockRejectedValueOnce({ code: "VALIDATION_FAILED", message: "answer required" });
+    await expect(
+      useDiStore.getState().resubmit({
+        di_id: 1,
+        actor_id: 0,
+        expected_row_version: 2,
+        response_note: " ",
+      }),
+    ).rejects.toBeTruthy();
+    expect(useDiStore.getState().error).toBeTruthy();
     expect(useDiStore.getState().saving).toBe(false);
   });
 });

@@ -6,8 +6,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::assets::identity::{self, CreateAssetPayload};
     use crate::assets::lifecycle::{self, RecordLifecycleEventPayload};
@@ -19,26 +18,7 @@ mod tests {
 
     /// In-memory SQLite with all migrations + seed data.
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Publish an org model and create an active root org node.
@@ -212,6 +192,7 @@ mod tests {
                 rams_utilization_factor: Some(1.0),
                 org_node_id,
                 commissioned_at: None,
+                commercial: None,
             },
             1,
         )
@@ -246,6 +227,7 @@ mod tests {
                 reason_code: None,
                 notes: Some("Transfert vers site 2".to_string()),
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -300,6 +282,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -340,6 +323,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -379,6 +363,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -424,6 +409,7 @@ mod tests {
                 reason_code: None,
                 notes: Some("Remplacement pompe usee".to_string()),
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -476,6 +462,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -518,6 +505,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -547,7 +535,7 @@ mod tests {
         assert_eq!(asset.status_code, "ACTIVE_IN_SERVICE");
         assert!(asset.decommissioned_at.is_none());
 
-        let event = lifecycle::record_lifecycle_event(
+        let event = record_unguarded(
             &db,
             RecordLifecycleEventPayload {
                 asset_id: asset.id,
@@ -563,6 +551,7 @@ mod tests {
                 reason_code: None,
                 notes: Some("Fin de vie".to_string()),
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -602,7 +591,7 @@ mod tests {
 
         let asset = create_test_asset(&db, "DEC-B", node_id).await;
 
-        lifecycle::record_lifecycle_event(
+        record_unguarded(
             &db,
             RecordLifecycleEventPayload {
                 asset_id: asset.id,
@@ -618,6 +607,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -642,11 +632,14 @@ mod tests {
         let db = setup().await;
         let node_id = setup_org_node(&db).await;
         setup_equipment_class(&db).await;
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
 
         let asset = create_test_asset(&db, "REC-A", node_id).await;
 
         // First: decommission
-        lifecycle::record_lifecycle_event(
+        record_unguarded(
             &db,
             RecordLifecycleEventPayload {
                 asset_id: asset.id,
@@ -662,6 +655,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -690,6 +684,7 @@ mod tests {
                 reason_code: None,
                 notes: Some("Remise en service apres revision".to_string()),
                 approved_by_id: None,
+                expected_row_version: Some(decom.row_version),
             },
             1,
         )
@@ -708,6 +703,215 @@ mod tests {
             restored.decommissioned_at.is_none(),
             "decommissioned_at must be cleared after recommission"
         );
+    }
+
+    #[tokio::test]
+    async fn recommission_needs_a_retired_asset_a_reason_a_service_status_and_the_current_version() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
+        let asset = create_test_asset(&db, "REC-G", node_id).await;
+        let event = |event_type: &str, to: Option<&str>, notes: Option<&str>, version: Option<i64>| {
+            RecordLifecycleEventPayload {
+                asset_id: asset.id,
+                event_type: event_type.to_string(),
+                event_at: None,
+                from_org_node_id: None,
+                to_org_node_id: None,
+                from_status_code: None,
+                to_status_code: to.map(str::to_string),
+                from_class_code: None,
+                to_class_code: None,
+                related_asset_id: None,
+                reason_code: None,
+                notes: notes.map(str::to_string),
+                approved_by_id: None,
+                expected_row_version: version,
+            }
+        };
+        let code = |r: Result<lifecycle::AssetLifecycleEvent, AppError>| match r {
+            Err(AppError::ValidationFailed(m)) => m[0].clone(),
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+        let reason = Some("Back after overhaul");
+
+        // In service: nothing to recommission.
+        assert_eq!(
+            code(
+                lifecycle::record_lifecycle_event(
+                    &db,
+                    event(
+                        "RECOMMISSIONED",
+                        Some("ACTIVE_IN_SERVICE"),
+                        reason,
+                        Some(asset.row_version)
+                    ),
+                    1
+                )
+                .await
+            ),
+            lifecycle::RECOMMISSION_NOT_RETIRED
+        );
+
+        record_unguarded(&db, event("DECOMMISSIONED", Some("DECOMMISSIONED"), None, None), 1)
+            .await
+            .expect("decommission");
+        let retired = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+
+        assert_eq!(
+            code(
+                lifecycle::record_lifecycle_event(
+                    &db,
+                    event(
+                        "RECOMMISSIONED",
+                        Some("ACTIVE_IN_SERVICE"),
+                        Some("  "),
+                        Some(retired.row_version)
+                    ),
+                    1
+                )
+                .await
+            ),
+            lifecycle::RECOMMISSION_REASON_REQUIRED
+        );
+        assert_eq!(
+            code(
+                lifecycle::record_lifecycle_event(
+                    &db,
+                    event("RECOMMISSIONED", Some("SCRAPPED"), reason, Some(retired.row_version)),
+                    1
+                )
+                .await
+            ),
+            lifecycle::RECOMMISSION_TARGET_RETIRED
+        );
+        assert_eq!(
+            code(
+                lifecycle::record_lifecycle_event(
+                    &db,
+                    event("RECOMMISSIONED", Some("ACTIVE_IN_SERVICE"), reason, None),
+                    1
+                )
+                .await
+            ),
+            lifecycle::RECOMMISSION_VERSION_REQUIRED
+        );
+        // Someone changed the asset meanwhile: refused, nothing written.
+        assert_eq!(
+            code(
+                lifecycle::record_lifecycle_event(
+                    &db,
+                    event(
+                        "RECOMMISSIONED",
+                        Some("ACTIVE_IN_SERVICE"),
+                        reason,
+                        Some(retired.row_version - 1)
+                    ),
+                    1
+                )
+                .await
+            ),
+            lifecycle::ASSET_STALE_VERSION
+        );
+        let still = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        assert_eq!(still.status_code, "DECOMMISSIONED");
+
+        lifecycle::record_lifecycle_event(
+            &db,
+            event(
+                "RECOMMISSIONED",
+                Some("ACTIVE_IN_SERVICE"),
+                reason,
+                Some(retired.row_version),
+            ),
+            1,
+        )
+        .await
+        .expect("recommission");
+        let back = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        assert_eq!(back.status_code, "ACTIVE_IN_SERVICE");
+        assert!(back.decommissioned_at.is_none());
+    }
+
+    /// Records a retirement directly (the path `decommission_asset` uses inside its transaction).
+    async fn record_unguarded(
+        db: &sea_orm::DatabaseConnection,
+        payload: RecordLifecycleEventPayload,
+        actor_id: i32,
+    ) -> Result<lifecycle::AssetLifecycleEvent, AppError> {
+        use sea_orm::TransactionTrait;
+        let txn = db.begin().await?;
+        let event = lifecycle::record_lifecycle_event_in(&txn, payload, actor_id).await?;
+        txn.commit().await?;
+        Ok(event)
+    }
+
+    #[tokio::test]
+    async fn retirement_is_recorded_only_by_declasser() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
+        let asset = create_test_asset(&db, "DEC-G", node_id).await;
+        let retire = |to: &str| RecordLifecycleEventPayload {
+            asset_id: asset.id,
+            event_type: "DECOMMISSIONED".to_string(),
+            event_at: None,
+            from_org_node_id: None,
+            to_org_node_id: None,
+            from_status_code: None,
+            to_status_code: Some(to.to_string()),
+            from_class_code: None,
+            to_class_code: None,
+            related_asset_id: None,
+            reason_code: None,
+            notes: Some("Fin de vie".to_string()),
+            approved_by_id: None,
+            expected_row_version: None,
+        };
+        // The generic lifecycle command never retires an asset.
+        let refused = lifecycle::record_lifecycle_event(&db, retire("SCRAPPED"), 1).await;
+        assert!(
+            matches!(refused, Err(AppError::ValidationFailed(ref m)) if m[0] == lifecycle::DECOMMISSION_THROUGH_DECLASSER),
+            "{refused:?}"
+        );
+        let unchanged = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        assert_eq!(unchanged.status_code, "ACTIVE_IN_SERVICE");
+
+        // Déclasser retires once; a second retirement (DECOMMISSIONED -> SCRAPPED) is refused and
+        // the end-of-life date stays.
+        let first = crate::assets::decommission::decommission_asset(
+            &db,
+            crate::assets::decommission::DecommissionAssetPayload {
+                asset_id: asset.id,
+                target_status: "DECOMMISSIONED".into(),
+                reason: "Remplacée par une pompe neuve".into(),
+                notes: None,
+            },
+            1,
+        )
+        .await
+        .expect("decommission");
+        let again = crate::assets::decommission::decommission_asset(
+            &db,
+            crate::assets::decommission::DecommissionAssetPayload {
+                asset_id: asset.id,
+                target_status: "SCRAPPED".into(),
+                reason: "Mise au rebut".into(),
+                notes: None,
+            },
+            1,
+        )
+        .await;
+        assert!(again.is_err(), "already retired");
+        let after = identity::get_asset_by_id(&db, asset.id).await.expect("fetch");
+        assert_eq!(after.status_code, "DECOMMISSIONED");
+        assert_eq!(after.decommissioned_at, first.decommissioned_at);
     }
 
     // ── Additional: event type governance ─────────────────────────────────
@@ -736,6 +940,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -787,6 +992,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -827,6 +1033,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -872,6 +1079,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -894,6 +1102,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )

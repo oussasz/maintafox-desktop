@@ -207,7 +207,13 @@ async fn upsert_balance<C: ConnectionTrait>(
     reserved_qty: f64,
 ) -> AppResult<()> {
     let available_qty = on_hand_qty - reserved_qty;
-    if on_hand_qty < 0.0 || reserved_qty < 0.0 || available_qty < 0.0 {
+    // A receipt into a location below zero is accepted (CMMS Advisor decision 1): never made worse,
+    // its item stays open until the stock is zero or more (`negative_stock::balance_change_allowed`).
+    let current = get_balance_snapshot(db, article_id, warehouse_id, location_id).await?;
+    if !crate::inventory::negative_stock::balance_change_allowed(
+        (current.on_hand, current.reserved),
+        (on_hand_qty, reserved_qty),
+    ) {
         return Err(AppError::ValidationFailed(vec![
             "Stock invariants violated (negative on-hand/reserved/available).".to_string(),
         ]));
@@ -250,6 +256,9 @@ async fn append_stock_event<C: ConnectionTrait>(
     reason: Option<&str>,
     performed_by_id: Option<i64>,
 ) -> AppResult<i64> {
+    // No movement may be dated inside a closed valuation period (business date defaults to
+    // today; back-dated postings are checked by their command before they reach the ledger).
+    crate::inventory::periods::ensure_posting_date_open(db, &crate::inventory::fx::today()).await?;
     let entity_sync_id = uuid::Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -473,6 +482,43 @@ pub async fn transition_procurement_requisition(
         }
     }
 
+    if input.next_status == "APPROVED" {
+        let requested_by: Option<i64> = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT requested_by_id FROM procurement_requisitions WHERE id = ?",
+                [input.requisition_id.into()],
+            ))
+            .await?
+            .and_then(|r| r.try_get("", "requested_by_id").ok())
+            .flatten();
+        crate::inventory::approvals::ensure_can_approve(
+            db,
+            crate::inventory::approvals::DOC_REQUISITION,
+            input.requisition_id,
+            requested_by,
+            input.actor_id,
+        )
+        .await?;
+    }
+    if input.next_status == "SUBMITTED" {
+        let lines: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM procurement_requisition_lines WHERE requisition_id = ?",
+                [input.requisition_id.into()],
+            ))
+            .await?
+            .map(|r| r.try_get("", "n"))
+            .transpose()?
+            .unwrap_or(0);
+        if lines == 0 {
+            return Err(AppError::ValidationFailed(vec![
+                "A requisition needs at least one line before it is submitted.".to_string(),
+            ]));
+        }
+    }
+
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -549,6 +595,25 @@ pub async fn create_purchase_order_from_requisition(
             "Requisition must be APPROVED before creating a PO.".to_string(),
         ]));
     }
+    // PO currency: chosen currency, else the supplier's, else the tenant currency (stored NULL).
+    let tenant = crate::inventory::fx::tenant_currency(db).await?;
+    let supplier_currency: Option<String> = match resolved_supplier_id {
+        Some(sid) => db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT currency_code FROM inventory_suppliers WHERE id = ?",
+                [sid.into()],
+            ))
+            .await?
+            .and_then(|r| r.try_get("", "currency_code").ok())
+            .flatten(),
+        None => None,
+    };
+    let po_currency = match crate::inventory::fx::normalize_optional_currency(input.currency_code.as_deref())? {
+        Some(code) => Some(code),
+        None => supplier_currency,
+    }
+    .filter(|code| code != &tenant);
 
     let tx = db.begin().await?;
     let po_number = next_doc_number("PO");
@@ -556,8 +621,8 @@ pub async fn create_purchase_order_from_requisition(
         DbBackend::Sqlite,
         "INSERT INTO purchase_orders
             (po_number, requisition_id, supplier_id, supplier_company_id, status, posting_state,
-             ordered_by_id, ordered_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'DRAFT', 'PENDING_POSTING', ?, ?, ?, ?)",
+             ordered_by_id, ordered_at, created_at, updated_at, currency_code)
+         VALUES (?, ?, ?, ?, 'DRAFT', 'PENDING_POSTING', ?, ?, ?, ?, ?)",
         [
             po_number.clone().into(),
             input.requisition_id.into(),
@@ -567,6 +632,7 @@ pub async fn create_purchase_order_from_requisition(
             now_iso().into(),
             now_iso().into(),
             now_iso().into(),
+            po_currency.clone().map_or(Value::String(None), Value::from),
         ],
     ))
     .await?;
@@ -584,7 +650,7 @@ pub async fn create_purchase_order_from_requisition(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT rl.id, rl.article_id, rl.requested_qty, rl.source_reservation_id, rl.demand_source_line_id,
-                    r.demand_source_type, r.demand_source_id, r.demand_source_ref
+                    rl.projected_unit_cost, r.demand_source_type, r.demand_source_id, r.demand_source_ref
              FROM procurement_requisition_lines rl
              JOIN procurement_requisitions r ON r.id = rl.requisition_id
              WHERE rl.requisition_id = ?",
@@ -632,6 +698,10 @@ pub async fn create_purchase_order_from_requisition(
         } else {
             None
         };
+        // No catalog price: a PO in the tenant currency starts from the requisition's estimate
+        // (tenant currency too). A foreign-currency PO is priced by the buyer instead.
+        let estimated: Option<f64> = line.try_get("", "projected_unit_cost").ok().flatten();
+        let unit_price = unit_price.or(if po_currency.is_none() { estimated } else { None });
 
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -750,6 +820,25 @@ pub async fn transition_purchase_order(
         ],
         "purchase order",
     )?;
+    if input.next_status == "APPROVED" {
+        let ordered_by: Option<i64> = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT ordered_by_id FROM purchase_orders WHERE id = ?",
+                [input.purchase_order_id.into()],
+            ))
+            .await?
+            .and_then(|r| r.try_get("", "ordered_by_id").ok())
+            .flatten();
+        crate::inventory::approvals::ensure_can_approve(
+            db,
+            crate::inventory::approvals::DOC_PURCHASE_ORDER,
+            input.purchase_order_id,
+            ordered_by,
+            input.actor_id,
+        )
+        .await?;
+    }
     // Approval is the point where the delivery promise becomes measurable (KPI-019 Late PO %).
     // Never overwrite a date the buyer already agreed with the supplier.
     let expected_delivery_date = if input.next_status == "APPROVED" {
@@ -809,14 +898,41 @@ pub async fn receive_purchase_order_goods(
             "PO must be APPROVED or PARTIALLY_RECEIVED before receiving goods.".to_string(),
         ]));
     }
+    let posting_date = crate::inventory::periods::resolve_posting_date(db, input.posting_date.as_deref()).await?;
+
+    // Currency: the PO is priced in its currency; stock is valued in the tenant currency at the
+    // rate captured now (entered on the receipt, else the stored rate valid on the posting date).
+    let tenant = crate::inventory::fx::tenant_currency(db).await?;
+    let po_currency = po.currency_code.clone().filter(|c| c != &tenant);
+    let (rate, rate_source) = match (&po_currency, input.exchange_rate) {
+        (None, _) => (1.0, crate::inventory::fx::RATE_SOURCE_TENANT),
+        (Some(_), Some(rate)) => {
+            if !rate.is_finite() || rate <= 0.0 {
+                return Err(AppError::ValidationFailed(vec![
+                    "The exchange rate must be greater than 0.".to_string(),
+                ]));
+            }
+            (rate, crate::inventory::fx::RATE_SOURCE_ENTERED)
+        }
+        (Some(currency), None) => match crate::inventory::fx::rate_on(db, currency, &tenant, &posting_date).await? {
+            Some((rate, _)) => (rate, crate::inventory::fx::RATE_SOURCE_TABLE),
+            None => {
+                return Err(AppError::ValidationFailed(vec![format!(
+                    "GATE_PROC_NO_EXCHANGE_RATE: purchase order {} is in {currency}; enter the {currency} →                      {tenant} rate on the receipt or store a rate valid on {posting_date}.",
+                    po.po_number
+                )]))
+            }
+        },
+    };
 
     let tx = db.begin().await?;
     let gr_number = next_doc_number("GR");
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO goods_receipts
-            (gr_number, purchase_order_id, status, posting_state, received_by_id, received_at, created_at, updated_at)
-         VALUES (?, ?, 'RECEIVED', 'PENDING_POSTING', ?, ?, ?, ?)",
+            (gr_number, purchase_order_id, status, posting_state, received_by_id, received_at, created_at, updated_at,
+             currency_code, exchange_rate, exchange_rate_source, posting_date)
+         VALUES (?, ?, 'RECEIVED', 'PENDING_POSTING', ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             gr_number.clone().into(),
             input.purchase_order_id.into(),
@@ -824,6 +940,10 @@ pub async fn receive_purchase_order_goods(
             now_iso().into(),
             now_iso().into(),
             now_iso().into(),
+            po_currency.clone().map_or(Value::String(None), Value::from),
+            rate.into(),
+            rate_source.into(),
+            posting_date.clone().into(),
         ],
     ))
     .await?;
@@ -836,6 +956,8 @@ pub async fn receive_purchase_order_goods(
         .ok_or_else(|| AppError::ValidationFailed(vec!["Unable to create goods receipt.".to_string()]))?
         .try_get("", "id")?;
 
+    // Accepted quantity of each line in the stock unit (for the fulfillment step after commit).
+    let mut accepted_stock: Vec<f64> = Vec::with_capacity(input.lines.len());
     for line in &input.lines {
         if line.received_qty <= 0.0 || line.accepted_qty < 0.0 || line.rejected_qty < 0.0 {
             return Err(AppError::ValidationFailed(vec![
@@ -850,11 +972,24 @@ pub async fn receive_purchase_order_goods(
         }
         ensure_article_active(&tx, line.article_id).await?;
         let warehouse_id = ensure_location_active(&tx, line.location_id).await?;
+        // Quantities entered in a supplier / purchase unit are converted to the stock unit; the PO,
+        // the ledger, the balances and the valuation all count in the stock unit.
+        let received = crate::inventory::unit_conversions::to_stock_quantity(
+            &tx,
+            line.article_id,
+            line.entered_unit_value_id,
+            line.received_qty,
+        )
+        .await?;
+        let rejected_qty =
+            crate::inventory::unit_conversions::round_stock_quantity(line.rejected_qty * received.factor);
+        let received_qty = received.stock_quantity;
+        let accepted_qty = crate::inventory::unit_conversions::round_stock_quantity(received_qty - rejected_qty);
 
         let po_line_row = tx
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT ordered_qty, received_qty, demand_source_type, demand_source_id, demand_source_ref
+                "SELECT ordered_qty, received_qty, unit_price, demand_source_type, demand_source_id, demand_source_ref
                  FROM purchase_order_lines
                  WHERE id = ? AND purchase_order_id = ?",
                 [line.po_line_id.into(), input.purchase_order_id.into()],
@@ -867,8 +1002,10 @@ pub async fn receive_purchase_order_goods(
             )]));
         };
         let ordered_qty: f64 = po_line_row.try_get("", "ordered_qty")?;
+        // Agreed PO price: values the accepted quantity and feeds the weighted-average cost.
+        let po_unit_price: Option<f64> = po_line_row.try_get("", "unit_price").ok().flatten();
         let current_received_qty: f64 = po_line_row.try_get("", "received_qty")?;
-        if current_received_qty + line.received_qty > ordered_qty + f64::EPSILON {
+        if current_received_qty + received_qty > ordered_qty + 1e-6 {
             return Err(AppError::ValidationFailed(vec![
                 "Receiving quantity exceeds ordered quantity.".to_string(),
             ]));
@@ -878,16 +1015,18 @@ pub async fn receive_purchase_order_goods(
             DbBackend::Sqlite,
             "INSERT INTO goods_receipt_lines
              (goods_receipt_id, po_line_id, article_id, location_id, received_qty, accepted_qty, rejected_qty,
-              rejection_reason, ordered_qty, actual_lead_time_days, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RECEIVED', ?)",
+              rejection_reason, ordered_qty, actual_lead_time_days, status, created_at,
+             unit_price, unit_cost_tenant, entered_unit_value_id, entered_received_qty, entered_rejected_qty,
+             unit_conversion_factor)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RECEIVED', ?, ?, ?, ?, ?, ?, ?)",
             [
                 gr_id.into(),
                 line.po_line_id.into(),
                 line.article_id.into(),
                 line.location_id.into(),
-                line.received_qty.into(),
-                line.accepted_qty.into(),
-                line.rejected_qty.into(),
+                received_qty.into(),
+                accepted_qty.into(),
+                rejected_qty.into(),
                 line.rejection_reason.clone().map_or(Value::String(None), Value::from),
                 ordered_qty.into(),
                 {
@@ -908,9 +1047,32 @@ pub async fn receive_purchase_order_goods(
                     }
                 },
                 now_iso().into(),
+                po_unit_price.map_or(Value::Double(None), Value::from),
+                po_unit_price.map(|p| p * rate).map_or(Value::Double(None), Value::from),
+                received.entered_unit_value_id.map_or(Value::BigInt(None), Value::from),
+                received
+                    .entered_unit_value_id
+                    .map(|_| line.received_qty)
+                    .map_or(Value::Double(None), Value::from),
+                received
+                    .entered_unit_value_id
+                    .map(|_| line.rejected_qty)
+                    .map_or(Value::Double(None), Value::from),
+                received
+                    .entered_unit_value_id
+                    .map(|_| received.factor)
+                    .map_or(Value::Double(None), Value::from),
             ],
         ))
         .await?;
+        let grl_id: i64 = tx
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT last_insert_rowid() AS id".to_string(),
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read receipt line id")))?
+            .try_get("", "id")?;
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE purchase_order_lines
@@ -918,39 +1080,130 @@ pub async fn receive_purchase_order_goods(
                  updated_at = ?
              WHERE id = ?",
             [
-                line.received_qty.into(),
-                line.received_qty.into(),
+                received_qty.into(),
+                received_qty.into(),
                 now_iso().into(),
                 line.po_line_id.into(),
             ],
         ))
         .await?;
 
-        if line.accepted_qty > 0.0 {
+        accepted_stock.push(accepted_qty);
+        if accepted_qty > 0.0 {
+            // Tracked articles: the accepted quantity is received into its lots / serials.
+            let tracking = crate::inventory::lots::article_tracking(&tx, line.article_id).await?;
+            crate::inventory::unit_conversions::ensure_whole_stock_units(&tracking, &received)?;
+            crate::inventory::lots::ensure_whole_units(&tracking, accepted_qty)?;
+            let mut portions: Vec<(Option<i64>, f64)> = Vec::new();
+            if tracking.is_tracked() {
+                let lots = line.lots.clone().unwrap_or_default();
+                if lots.is_empty() {
+                    return Err(AppError::ValidationFailed(vec![format!(
+                        "Article {} is lot/serial-tracked: record the lots or serial numbers received.",
+                        line.article_id
+                    )]));
+                }
+                let total: f64 = lots.iter().map(|l| l.quantity).sum();
+                if (total - accepted_qty).abs() > 1e-6 {
+                    return Err(AppError::ValidationFailed(vec![format!(
+                        "The lots add up to {total}, but {accepted_qty} were accepted (in the stock unit)."
+                    )]));
+                }
+                for lot in &lots {
+                    if lot.quantity <= 0.0 {
+                        return Err(AppError::ValidationFailed(vec![
+                            "Each lot quantity must be greater than 0.".to_string(),
+                        ]));
+                    }
+                    if tracking.serial && (lot.quantity - 1.0).abs() > 1e-9 {
+                        return Err(AppError::ValidationFailed(vec![
+                            "A serial number stands for exactly one unit.".to_string(),
+                        ]));
+                    }
+                    let lot_id = crate::inventory::lots::create_or_reuse_lot(
+                        &tx,
+                        line.article_id,
+                        &crate::inventory::domain::NewLotInput {
+                            lot_number: lot.lot_number.clone(),
+                            serial_number: lot.serial_number.clone(),
+                            expiry_date: lot.expiry_date.clone(),
+                        },
+                        Some(grl_id),
+                        input.actor_id,
+                    )
+                    .await?;
+                    portions.push((Some(lot_id), lot.quantity));
+                }
+            } else {
+                if line.lots.as_ref().is_some_and(|l| !l.is_empty()) {
+                    return Err(AppError::ValidationFailed(vec![
+                        "This article is not lot-tracked; receive it without lots.".to_string(),
+                    ]));
+                }
+                portions.push((None, accepted_qty));
+            }
+
             let before = get_balance_snapshot(&tx, line.article_id, warehouse_id, line.location_id).await?;
             upsert_balance(
                 &tx,
                 line.article_id,
                 warehouse_id,
                 line.location_id,
-                before.on_hand + line.accepted_qty,
+                before.on_hand + accepted_qty,
                 before.reserved,
             )
             .await?;
-            append_stock_event(
-                &tx,
-                line.article_id,
-                warehouse_id,
-                line.location_id,
-                "GR_ACCEPT",
-                line.accepted_qty,
-                "PO_GR",
-                Some(gr_id),
-                Some(&gr_number),
-                line.rejection_reason.as_deref(),
-                input.actor_id,
-            )
-            .await?;
+            let unit_cost_tenant = po_unit_price.filter(|p| p.is_finite() && *p >= 0.0).map(|p| p * rate);
+            let mut prior_on_hand = before.on_hand;
+            for (lot_id, quantity) in portions {
+                let movement_id = append_stock_event(
+                    &tx,
+                    line.article_id,
+                    warehouse_id,
+                    line.location_id,
+                    "GR_ACCEPT",
+                    quantity,
+                    "PO_GR",
+                    Some(gr_id),
+                    Some(&gr_number),
+                    line.rejection_reason.as_deref(),
+                    input.actor_id,
+                )
+                .await?;
+                if let Some(lot) = lot_id {
+                    crate::inventory::lots::set_movement_lot(&tx, movement_id, lot).await?;
+                }
+                crate::inventory::unit_conversions::stamp_entered_unit(&tx, movement_id, &received, quantity).await?;
+                crate::inventory::periods::set_movement_posting_date(&tx, movement_id, &posting_date).await?;
+                match unit_cost_tenant {
+                    Some(cost) => {
+                        crate::inventory::valuation::apply_inbound_cost(
+                            &tx,
+                            line.article_id,
+                            line.location_id,
+                            prior_on_hand,
+                            quantity,
+                            cost,
+                            movement_id,
+                            crate::inventory::valuation::COST_SOURCE_PO_RECEIPT,
+                            Some(&gr_number),
+                        )
+                        .await?;
+                    }
+                    // No agreed price on the PO line: the receipt is valued at the current average.
+                    None => {
+                        crate::inventory::valuation::stamp_at_average(
+                            &tx,
+                            line.article_id,
+                            line.location_id,
+                            quantity,
+                            movement_id,
+                        )
+                        .await?;
+                    }
+                }
+                prior_on_hand += quantity;
+            }
         }
     }
 
@@ -993,8 +1246,8 @@ pub async fn receive_purchase_order_goods(
     if let Some(ref action) = input.fulfillment_action {
         if matches!(action.as_str(), "RESERVE_FOR_DEMAND" | "ISSUE_TO_DEMAND") {
             // For each accepted line, check if there's an open reservation linked to the PO demand
-            for line in &input.lines {
-                if line.accepted_qty <= 0.0 {
+            for (line, accepted_qty) in input.lines.iter().zip(accepted_stock.iter().copied()) {
+                if accepted_qty <= 0.0 {
                     continue;
                 }
                 // Find open reservation for this article/demand combo
@@ -1019,7 +1272,7 @@ pub async fn receive_purchase_order_goods(
                             db,
                             crate::inventory::domain::InventoryIssueInput {
                                 reservation_id,
-                                quantity: line.accepted_qty,
+                                quantity: accepted_qty,
                                 source_type: Some("PO_GR".to_string()),
                                 // A PO_GR movement points to its goods receipt, like the GR_ACCEPT
                                 // movement of the same receipt.
@@ -1381,11 +1634,19 @@ pub async fn list_procurement_requisitions(db: &DatabaseConnection) -> AppResult
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, req_number, demand_source_type, demand_source_id, demand_source_ref,
-                    COALESCE(purchase_priority, 'NORMAL') AS purchase_priority,
-                    status, posting_state, posting_error, requested_by_id, row_version, created_at, updated_at
-             FROM procurement_requisitions
-             ORDER BY id DESC"
+            "SELECT r.id, r.req_number, r.demand_source_type, r.demand_source_id, r.demand_source_ref,
+                    COALESCE(r.purchase_priority, 'NORMAL') AS purchase_priority,
+                    r.status, r.posting_state, r.posting_error, r.requested_by_id,
+                    COALESCE(ua.display_name, ua.username) AS requested_by_name,
+                    (SELECT COUNT(*) FROM procurement_requisition_lines x WHERE x.requisition_id = r.id) AS line_count,
+                    (SELECT SUM(x.requested_qty * x.projected_unit_cost) FROM procurement_requisition_lines x
+                      WHERE x.requisition_id = r.id AND x.projected_unit_cost IS NOT NULL) AS estimated_total,
+                    (SELECT COUNT(*) FROM procurement_requisition_lines x
+                      WHERE x.requisition_id = r.id AND x.projected_unit_cost IS NULL) AS unestimated_lines,
+                    r.row_version, r.created_at, r.updated_at
+             FROM procurement_requisitions r
+             LEFT JOIN user_accounts ua ON ua.id = r.requested_by_id
+             ORDER BY r.id DESC"
                 .to_string(),
         ))
         .await?;
@@ -1401,6 +1662,7 @@ pub async fn list_procurement_requisition_lines(
             DbBackend::Sqlite,
             "SELECT rl.id, rl.requisition_id, rl.article_id, a.article_code, a.article_name,
                     rl.preferred_location_id, sl.code AS preferred_location_code, rl.requested_qty,
+                    rl.projected_unit_cost AS estimated_unit_cost,
                     rl.demand_source_line_id, rl.source_reservation_id, rl.source_reorder_trigger,
                     rl.status, rl.created_at
              FROM procurement_requisition_lines rl
@@ -1421,12 +1683,17 @@ pub async fn list_purchase_orders(db: &DatabaseConnection) -> AppResult<Vec<Purc
             "SELECT po.id, po.po_number, po.requisition_id,
                     po.supplier_id, s.name AS supplier_name,
                     po.supplier_company_id, ec.name AS supplier_company_name,
-                    po.status, po.posting_state, po.posting_error, po.ordered_by_id, po.ordered_at,
-                    po.approved_by_id, po.approved_at, po.expected_delivery_date,
+                    po.status, po.posting_state, po.posting_error, po.ordered_by_id,
+                    COALESCE(ua.display_name, ua.username) AS ordered_by_name, po.ordered_at,
+                    po.approved_by_id, po.approved_at, po.expected_delivery_date, po.currency_code,
+                    (SELECT COUNT(*) FROM purchase_order_lines x WHERE x.purchase_order_id = po.id) AS line_count,
+                    (SELECT SUM(x.ordered_qty * x.unit_price) FROM purchase_order_lines x
+                      WHERE x.purchase_order_id = po.id AND x.unit_price IS NOT NULL) AS total_amount,
                     po.row_version, po.created_at, po.updated_at
              FROM purchase_orders po
              LEFT JOIN inventory_suppliers s ON s.id = po.supplier_id
              LEFT JOIN external_companies ec ON ec.id = po.supplier_company_id
+             LEFT JOIN user_accounts ua ON ua.id = po.ordered_by_id
              ORDER BY po.id DESC"
                 .to_string(),
         ))
@@ -1474,6 +1741,7 @@ pub async fn get_purchase_order_detail(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, gr_number, purchase_order_id, status, posting_state, posting_error, received_by_id, received_at,
+                    currency_code, exchange_rate, exchange_rate_source, posting_date,
                     row_version, created_at, updated_at
              FROM goods_receipts
              WHERE purchase_order_id = ?
@@ -1511,6 +1779,7 @@ pub async fn list_goods_receipts(db: &DatabaseConnection) -> AppResult<Vec<Goods
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT id, gr_number, purchase_order_id, status, posting_state, posting_error, received_by_id, received_at,
+                    currency_code, exchange_rate, exchange_rate_source, posting_date,
                     row_version, created_at, updated_at
              FROM goods_receipts
              ORDER BY id DESC"
@@ -1529,7 +1798,8 @@ pub async fn list_goods_receipt_lines(
             DbBackend::Sqlite,
             "SELECT grl.id, grl.goods_receipt_id, grl.po_line_id, grl.article_id, a.article_code, a.article_name,
                     grl.location_id, sl.code AS location_code, grl.received_qty, grl.accepted_qty, grl.rejected_qty,
-                    grl.rejection_reason, grl.ordered_qty, grl.actual_lead_time_days, grl.status, grl.created_at
+                    grl.rejection_reason, grl.ordered_qty, grl.actual_lead_time_days, grl.status, grl.created_at,
+                    grl.unit_price, grl.unit_cost_tenant
              FROM goods_receipt_lines grl
              JOIN articles a ON a.id = grl.article_id
              JOIN stock_locations sl ON sl.id = grl.location_id
@@ -1769,10 +2039,19 @@ async fn get_procurement_requisition(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, req_number, demand_source_type, demand_source_id, demand_source_ref,
-                    COALESCE(purchase_priority, 'NORMAL') AS purchase_priority,
-                    status, posting_state, posting_error, requested_by_id, row_version, created_at, updated_at
-             FROM procurement_requisitions WHERE id = ?",
+            "SELECT r.id, r.req_number, r.demand_source_type, r.demand_source_id, r.demand_source_ref,
+                    COALESCE(r.purchase_priority, 'NORMAL') AS purchase_priority,
+                    r.status, r.posting_state, r.posting_error, r.requested_by_id,
+                    COALESCE(ua.display_name, ua.username) AS requested_by_name,
+                    (SELECT COUNT(*) FROM procurement_requisition_lines x WHERE x.requisition_id = r.id) AS line_count,
+                    (SELECT SUM(x.requested_qty * x.projected_unit_cost) FROM procurement_requisition_lines x
+                      WHERE x.requisition_id = r.id AND x.projected_unit_cost IS NOT NULL) AS estimated_total,
+                    (SELECT COUNT(*) FROM procurement_requisition_lines x
+                      WHERE x.requisition_id = r.id AND x.projected_unit_cost IS NULL) AS unestimated_lines,
+                    r.row_version, r.created_at, r.updated_at
+             FROM procurement_requisitions r
+             LEFT JOIN user_accounts ua ON ua.id = r.requested_by_id
+             WHERE r.id = ?",
             [requisition_id.into()],
         ))
         .await?
@@ -1790,12 +2069,17 @@ async fn get_purchase_order(db: &DatabaseConnection, purchase_order_id: i64) -> 
             "SELECT po.id, po.po_number, po.requisition_id,
                     po.supplier_id, s.name AS supplier_name,
                     po.supplier_company_id, ec.name AS supplier_company_name,
-                    po.status, po.posting_state, po.posting_error, po.ordered_by_id, po.ordered_at,
-                    po.approved_by_id, po.approved_at, po.expected_delivery_date,
+                    po.status, po.posting_state, po.posting_error, po.ordered_by_id,
+                    COALESCE(ua.display_name, ua.username) AS ordered_by_name, po.ordered_at,
+                    po.approved_by_id, po.approved_at, po.expected_delivery_date, po.currency_code,
+                    (SELECT COUNT(*) FROM purchase_order_lines x WHERE x.purchase_order_id = po.id) AS line_count,
+                    (SELECT SUM(x.ordered_qty * x.unit_price) FROM purchase_order_lines x
+                      WHERE x.purchase_order_id = po.id AND x.unit_price IS NOT NULL) AS total_amount,
                     po.row_version, po.created_at, po.updated_at
              FROM purchase_orders po
              LEFT JOIN inventory_suppliers s ON s.id = po.supplier_id
              LEFT JOIN external_companies ec ON ec.id = po.supplier_company_id
+             LEFT JOIN user_accounts ua ON ua.id = po.ordered_by_id
              WHERE po.id = ?",
             [purchase_order_id.into()],
         ))
@@ -1812,6 +2096,7 @@ async fn get_goods_receipt(db: &DatabaseConnection, goods_receipt_id: i64) -> Ap
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, gr_number, purchase_order_id, status, posting_state, posting_error, received_by_id, received_at,
+                    currency_code, exchange_rate, exchange_rate_source, posting_date,
                     row_version, created_at, updated_at
              FROM goods_receipts WHERE id = ?",
             [goods_receipt_id.into()],
@@ -1853,6 +2138,10 @@ fn map_requisition_row(row: sea_orm::QueryResult) -> AppResult<ProcurementRequis
         posting_state: row.try_get("", "posting_state")?,
         posting_error: row.try_get("", "posting_error")?,
         requested_by_id: row.try_get("", "requested_by_id")?,
+        requested_by_name: row.try_get("", "requested_by_name").ok().flatten(),
+        line_count: row.try_get("", "line_count").unwrap_or(0),
+        estimated_total: row.try_get("", "estimated_total").ok().flatten(),
+        estimate_complete: row.try_get::<i64>("", "unestimated_lines").unwrap_or(0) == 0,
         row_version: row.try_get("", "row_version")?,
         created_at: row.try_get("", "created_at")?,
         updated_at: row.try_get("", "updated_at")?,
@@ -1869,6 +2158,7 @@ fn map_requisition_line_row(row: sea_orm::QueryResult) -> AppResult<ProcurementR
         preferred_location_id: row.try_get("", "preferred_location_id")?,
         preferred_location_code: row.try_get("", "preferred_location_code")?,
         requested_qty: row.try_get("", "requested_qty")?,
+        estimated_unit_cost: row.try_get("", "estimated_unit_cost").ok().flatten(),
         demand_source_line_id: row.try_get("", "demand_source_line_id").ok().flatten(),
         source_reservation_id: row.try_get("", "source_reservation_id")?,
         source_reorder_trigger: row.try_get("", "source_reorder_trigger")?,
@@ -1890,10 +2180,14 @@ fn map_purchase_order_row(row: sea_orm::QueryResult) -> AppResult<PurchaseOrder>
         posting_state: row.try_get("", "posting_state")?,
         posting_error: row.try_get("", "posting_error")?,
         ordered_by_id: row.try_get("", "ordered_by_id")?,
+        ordered_by_name: row.try_get("", "ordered_by_name").ok().flatten(),
         ordered_at: row.try_get("", "ordered_at")?,
         approved_by_id: row.try_get("", "approved_by_id")?,
         approved_at: row.try_get("", "approved_at")?,
         expected_delivery_date: row.try_get("", "expected_delivery_date").ok().flatten(),
+        currency_code: row.try_get("", "currency_code").ok().flatten(),
+        line_count: row.try_get("", "line_count").unwrap_or(0),
+        total_amount: row.try_get("", "total_amount").ok().flatten(),
         row_version: row.try_get("", "row_version")?,
         created_at: row.try_get("", "created_at")?,
         updated_at: row.try_get("", "updated_at")?,
@@ -1939,6 +2233,10 @@ fn map_goods_receipt_row(row: sea_orm::QueryResult) -> AppResult<GoodsReceipt> {
         posting_error: row.try_get("", "posting_error")?,
         received_by_id: row.try_get("", "received_by_id")?,
         received_at: row.try_get("", "received_at")?,
+        currency_code: row.try_get("", "currency_code").ok().flatten(),
+        exchange_rate: row.try_get("", "exchange_rate").ok().flatten(),
+        exchange_rate_source: row.try_get("", "exchange_rate_source").ok().flatten(),
+        posting_date: row.try_get("", "posting_date").ok().flatten(),
         row_version: row.try_get("", "row_version")?,
         created_at: row.try_get("", "created_at")?,
         updated_at: row.try_get("", "updated_at")?,
@@ -1958,6 +2256,8 @@ fn map_goods_receipt_line_row(row: sea_orm::QueryResult) -> AppResult<GoodsRecei
         received_qty: row.try_get("", "received_qty")?,
         accepted_qty: row.try_get("", "accepted_qty")?,
         rejected_qty: row.try_get("", "rejected_qty")?,
+        unit_price: row.try_get("", "unit_price").ok().flatten(),
+        unit_cost_tenant: row.try_get("", "unit_cost_tenant").ok().flatten(),
         rejection_reason: row.try_get("", "rejection_reason")?,
         ordered_qty: row.try_get("", "ordered_qty").ok().flatten(),
         actual_lead_time_days: row.try_get("", "actual_lead_time_days").ok().flatten(),
@@ -2036,6 +2336,7 @@ pub async fn check_wo_part_stock_availability(
              ) sb_sum ON sb_sum.article_id = wop.article_id
              WHERE wop.work_order_id = ?
                AND wop.article_id IS NOT NULL
+               AND wop.consumption_status <> 'cancelled'
                AND COALESCE(wop.quantity_planned, 0) > 0",
             [work_order_id.into()],
         ))
@@ -2157,4 +2458,236 @@ pub async fn create_procurement_requisition_from_wo_part(
         },
     )
     .await
+}
+
+// ── Multi-line requisitions ──────────────────────────────────────────────────
+
+async fn validate_requisition_lines<C: ConnectionTrait>(
+    db: &C,
+    lines: &[crate::inventory::domain::RequisitionLineInput],
+) -> AppResult<()> {
+    if lines.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "A requisition needs at least one line.".to_string(),
+        ]));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for line in lines {
+        if !line.requested_qty.is_finite() || line.requested_qty <= 0.0 {
+            return Err(AppError::ValidationFailed(vec![
+                "Every line needs a quantity greater than zero.".to_string(),
+            ]));
+        }
+        if let Some(cost) = line.estimated_unit_cost {
+            if !cost.is_finite() || cost < 0.0 {
+                return Err(AppError::ValidationFailed(vec![
+                    "An estimated unit price cannot be negative.".to_string(),
+                ]));
+            }
+        }
+        ensure_article_active(db, line.article_id).await?;
+        if let Some(location_id) = line.preferred_location_id.filter(|id| *id > 0) {
+            ensure_location_active(db, location_id).await?;
+        }
+        if !seen.insert((line.article_id, line.preferred_location_id)) {
+            return Err(AppError::ValidationFailed(vec![
+                "The same article and location appear on two lines; merge them into one.".to_string(),
+            ]));
+        }
+    }
+    Ok(())
+}
+
+async fn insert_requisition_lines<C: ConnectionTrait>(
+    db: &C,
+    requisition_id: i64,
+    lines: &[crate::inventory::domain::RequisitionLineInput],
+    reorder_trigger: Option<&str>,
+) -> AppResult<()> {
+    for line in lines {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO procurement_requisition_lines
+                (requisition_id, article_id, preferred_location_id, requested_qty, demand_source_line_id,
+                 source_reservation_id, source_reorder_trigger, status, created_at, projected_unit_cost)
+             VALUES (?, ?, ?, ?, NULL, NULL, ?, 'OPEN', ?, ?)",
+            [
+                requisition_id.into(),
+                line.article_id.into(),
+                line.preferred_location_id
+                    .filter(|id| *id > 0)
+                    .map_or(Value::BigInt(None), Value::from),
+                line.requested_qty.into(),
+                reorder_trigger
+                    .map(str::to_string)
+                    .map_or(Value::String(None), Value::from),
+                now_iso().into(),
+                line.estimated_unit_cost.map_or(Value::Double(None), Value::from),
+            ],
+        ))
+        .await?;
+    }
+    Ok(())
+}
+
+/// Requisition with several articles (header + lines). Each line may carry an estimated unit
+/// price (tenant currency) used for the approval amount.
+pub async fn create_multi_line_requisition(
+    db: &DatabaseConnection,
+    input: crate::inventory::domain::CreateMultiLineRequisitionInput,
+) -> AppResult<ProcurementRequisition> {
+    if input.demand_source_type.trim().is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "demand_source_type is required.".to_string()
+        ]));
+    }
+    ensure_lookup_code_active(db, PROC_STATUS_DOMAIN, "DRAFT").await?;
+    ensure_lookup_code_active(db, ERP_POSTING_DOMAIN, "PENDING_POSTING").await?;
+    validate_requisition_lines(db, &input.lines).await?;
+
+    let tx = db.begin().await?;
+    let req_number = next_doc_number("REQ");
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO procurement_requisitions
+            (req_number, demand_source_type, demand_source_id, demand_source_ref, purchase_priority,
+             status, posting_state, requested_by_id, created_at, updated_at)
+         VALUES (?, ?, NULL, ?, ?, 'DRAFT', 'PENDING_POSTING', ?, ?, ?)",
+        [
+            req_number.into(),
+            input.demand_source_type.trim().to_string().into(),
+            normalize_optional_text(input.demand_source_ref.clone()).map_or(Value::String(None), Value::from),
+            input
+                .purchase_priority
+                .clone()
+                .unwrap_or_else(|| "NORMAL".to_string())
+                .into(),
+            input.actor_id.map_or(Value::BigInt(None), Value::from),
+            now_iso().into(),
+            now_iso().into(),
+        ],
+    ))
+    .await?;
+    let req_id: i64 = tx
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT last_insert_rowid() AS id".to_string(),
+        ))
+        .await?
+        .ok_or_else(|| AppError::ValidationFailed(vec!["Unable to create requisition.".to_string()]))?
+        .try_get("", "id")?;
+    let trigger = (input.demand_source_type == "REORDER").then_some("threshold_crossed");
+    insert_requisition_lines(&tx, req_id, &input.lines, trigger).await?;
+    record_state_event(
+        &tx,
+        "requisition",
+        req_id,
+        None,
+        "DRAFT",
+        input.actor_id,
+        input.reason.as_deref(),
+        Some("requisition_created"),
+    )
+    .await?;
+    tx.commit().await?;
+    get_procurement_requisition(db, req_id).await
+}
+
+/// Replaces the lines of a draft requisition (edit before submission).
+pub async fn replace_requisition_lines(
+    db: &DatabaseConnection,
+    input: crate::inventory::domain::ReplaceRequisitionLinesInput,
+) -> AppResult<ProcurementRequisition> {
+    let req = get_procurement_requisition(db, input.requisition_id).await?;
+    if req.status != "DRAFT" {
+        return Err(AppError::ValidationFailed(vec![
+            "Lines can only be changed while the requisition is a draft.".to_string(),
+        ]));
+    }
+    if req.row_version != input.expected_row_version {
+        return Err(AppError::ValidationFailed(vec![
+            "Requisition row_version mismatch.".to_string()
+        ]));
+    }
+    validate_requisition_lines(db, &input.lines).await?;
+    let tx = db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM procurement_requisition_lines WHERE requisition_id = ?",
+        [input.requisition_id.into()],
+    ))
+    .await?;
+    let trigger = (req.demand_source_type == "REORDER").then_some("threshold_crossed");
+    insert_requisition_lines(&tx, input.requisition_id, &input.lines, trigger).await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE procurement_requisitions SET row_version = row_version + 1, updated_at = ? WHERE id = ?",
+        [now_iso().into(), input.requisition_id.into()],
+    ))
+    .await?;
+    record_state_event(
+        &tx,
+        "requisition",
+        input.requisition_id,
+        Some("DRAFT"),
+        "DRAFT",
+        input.actor_id,
+        None,
+        Some("requisition_lines_changed"),
+    )
+    .await?;
+    tx.commit().await?;
+    get_procurement_requisition(db, input.requisition_id).await
+}
+
+/// Sets the agreed unit price of a draft PO line (in the PO currency). None clears it.
+pub async fn set_purchase_order_line_price(
+    db: &DatabaseConnection,
+    po_line_id: i64,
+    unit_price: Option<f64>,
+) -> AppResult<PurchaseOrderLine> {
+    if let Some(price) = unit_price {
+        if !price.is_finite() || price < 0.0 {
+            return Err(AppError::ValidationFailed(vec![
+                "The unit price must be 0 or more.".to_string()
+            ]));
+        }
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT pol.purchase_order_id, po.status FROM purchase_order_lines pol
+             JOIN purchase_orders po ON po.id = pol.purchase_order_id WHERE pol.id = ?",
+            [po_line_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "purchase_order_lines".to_string(),
+            id: po_line_id.to_string(),
+        })?;
+    let purchase_order_id: i64 = row.try_get("", "purchase_order_id")?;
+    let status: String = row.try_get("", "status")?;
+    if status != "DRAFT" {
+        return Err(AppError::ValidationFailed(vec![
+            "Prices can only be changed while the purchase order is a draft.".to_string(),
+        ]));
+    }
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE purchase_order_lines SET unit_price = ?, updated_at = ? WHERE id = ?",
+        [
+            unit_price.map_or(Value::Double(None), Value::from),
+            now_iso().into(),
+            po_line_id.into(),
+        ],
+    ))
+    .await?;
+    list_purchase_order_lines(db, purchase_order_id)
+        .await?
+        .into_iter()
+        .find(|l| l.id == po_line_id)
+        .ok_or_else(|| AppError::NotFound {
+            entity: "purchase_order_lines".to_string(),
+            id: po_line_id.to_string(),
+        })
 }

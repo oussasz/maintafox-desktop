@@ -102,11 +102,11 @@ pub async fn get_plan_adherence(db: &impl ConnectionTrait, wo_id: i64) -> AppRes
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT \
-                SUM(CASE WHEN origin = 'planned' THEN 1 ELSE 0 END) AS planned, \
+                SUM(CASE WHEN origin = 'planned' AND consumption_status <> 'cancelled' THEN 1 ELSE 0 END) AS planned, \
                 SUM(CASE WHEN consumption_status = 'used' THEN 1 ELSE 0 END) AS used, \
                 SUM(CASE WHEN consumption_status = 'not_used' THEN 1 ELSE 0 END) AS unused, \
                 SUM(CASE WHEN origin = 'execution_added' THEN 1 ELSE 0 END) AS extra, \
-                COALESCE(SUM(CASE WHEN origin = 'planned' \
+                COALESCE(SUM(CASE WHEN origin = 'planned' AND consumption_status <> 'cancelled' \
                   THEN quantity_planned * COALESCE(unit_cost, 0.0) ELSE 0.0 END), 0.0) AS planned_cost, \
                 COALESCE(SUM(CASE WHEN consumption_status = 'used' \
                   THEN COALESCE(quantity_used, 0.0) * COALESCE(unit_cost, 0.0) ELSE 0.0 END), 0.0) AS used_cost \

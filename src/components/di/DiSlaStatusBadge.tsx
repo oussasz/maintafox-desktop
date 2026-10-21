@@ -1,41 +1,44 @@
 /**
  * DiSlaStatusBadge.tsx
  *
- * Presentational SLA lifecycle badge for DI detail views.
- * Labels: On Track / At Risk / Breached / Completed.
+ * Where a request stands against its SLA: on track / at risk / breached / completed / paused.
+ * A paused clock names why (waiting on the requester, deferred).
+ * Colour comes from the shared tone vocabulary (orange only when the request needs attention).
+ * Renders nothing when no target applies, so lists stay quiet.
  */
 
 import { useTranslation } from "react-i18next";
 
-import { Badge } from "@/components/ui/badge";
-import type { DiSlaStatus } from "@shared/ipc-types";
-
-const STATUS_STYLE: Record<string, string> = {
-  on_track: "bg-green-100 text-green-800 border-0",
-  at_risk: "bg-amber-100 text-amber-800 border-0",
-  breached: "bg-red-100 text-red-700 border-0",
-  completed: "bg-slate-100 text-slate-700 border-0",
-};
+import { StatusChip } from "@/components/ui/status-chip";
+import { DI_SLA_TONE, toneOf } from "@/design-system/tone";
+import type { DiSlaState } from "@shared/ipc-types";
 
 interface DiSlaStatusBadgeProps {
-  status: DiSlaStatus["status"];
+  status: DiSlaState | null | undefined;
+  /** Status of the request, to name the reason of a pause. */
+  requestStatus?: string;
   className?: string;
 }
 
-export function DiSlaStatusBadge({ status, className }: DiSlaStatusBadgeProps) {
+/** Translation key of the reason a request's clock is paused. */
+export function slaPauseReasonKey(
+  requestStatus: string | undefined,
+): "sla.pausedRequester" | "sla.pausedDeferred" | null {
+  if (requestStatus === "returned_for_clarification") return "sla.pausedRequester";
+  if (requestStatus === "deferred") return "sla.pausedDeferred";
+  return null;
+}
+
+export function DiSlaStatusBadge({ status, requestStatus, className }: DiSlaStatusBadgeProps) {
   const { t } = useTranslation("di");
-
-  if (!status) {
-    return (
-      <Badge variant="outline" className={className}>
-        {t("sla.status.none")}
-      </Badge>
-    );
-  }
-
+  if (!status) return null;
+  const reasonKey = status === "paused" ? slaPauseReasonKey(requestStatus) : null;
   return (
-    <Badge variant="outline" className={`${STATUS_STYLE[status] ?? ""} ${className ?? ""}`}>
-      {t(`sla.status.${status}`)}
-    </Badge>
+    <StatusChip
+      label={reasonKey ? t(reasonKey) : t(`sla.status.${status}`)}
+      tone={toneOf(DI_SLA_TONE, status)}
+      dot
+      {...(className ? { className } : {})}
+    />
   );
 }

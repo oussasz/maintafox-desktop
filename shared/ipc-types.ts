@@ -3,9 +3,15 @@ import type { P } from "@shared/rbac/permissions.generated";
 // Types defined here must be kept in sync with Rust structs in src-tauri/src/.
 
 export interface HealthCheckResponse {
+  /** `ok` when the database answered the health probe, `degraded` otherwise. */
   status: "ok" | "degraded";
   version: string;
+  /** The database answered a `SELECT 1` within 2 s. */
   db_connected: boolean;
+  /** Round trip of that probe (ms), when it answered. */
+  db_latency_ms?: number | null;
+  /** Why it did not answer: `DB_TIMEOUT` or `DB_ERROR`. */
+  db_error_code?: "DB_TIMEOUT" | "DB_ERROR" | null;
   locale: string;
 }
 
@@ -18,15 +24,26 @@ export type StartupStage =
   | "ready"
   | "failed"
   /** Encrypted database key missing/wrong: UI asks for the recovery key. */
-  | "database_key_required";
+  | "database_key_required"
+  /**
+   * The installed update could not update the database: the pre-update backup is staged and
+   * the UI offers to reinstall `from_version` (master plan Phase 5.5).
+   */
+  | "update_rollback_required";
 
-export interface StartupEvent {
-  stage: StartupStage;
-  /** Present only for stage = "migrations_complete" */
-  applied?: number;
-  /** Present for stage = "failed" and "database_key_required" */
-  reason?: string;
-}
+/** Payload of the `startup_event` Tauri event (`StartupEvent` in src-tauri/src/startup.rs). */
+export type StartupEvent =
+  | { stage: "db_ready" | "entitlement_cache_loaded" | "ready" }
+  | { stage: "migrations_complete"; applied: number }
+  | { stage: "failed" | "database_key_required"; reason: string }
+  | {
+      stage: "update_rollback_required";
+      from_version: string;
+      to_version: string;
+      reason: string;
+      /** The pre-update backup could not be verified: nothing was restored, no reinstall offered. */
+      backup_refusal: string | null;
+    };
 
 // â”€â”€â”€ App Info â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -255,6 +272,8 @@ export interface LicenseStatusView {
   license_edition: string | null;
   entitlement_tier: string | null;
   envelope_id: string | null;
+  /** Issuer of the active envelope's signing key (target of compromise responses). */
+  envelope_issuer: string | null;
   /** Signing key of the active envelope (target of compromise responses). */
   envelope_key_id: string | null;
   verification_result: string | null;
@@ -1049,6 +1068,10 @@ export interface PolicySnapshot {
 export interface PolicyTestResult {
   rule_name: string;
   severity: "pass" | "warn" | "fail";
+  /** Stable code (`POLICY_TEST_*`) the screen translates with `params`. */
+  code: string;
+  params: Record<string, string>;
+  /** The server's English text: shown only for a code this version does not know. */
   message: string;
 }
 
@@ -1078,9 +1101,55 @@ export interface SettingsChangeEvent {
   old_value_hash: string | null;
   new_value_hash: string | null;
   changed_by_id: number | null;
+  /** Display name (or username) of the author. */
+  changed_by_name: string | null;
   changed_at: string;
   required_step_up: boolean;
   apply_result: string;
+  /** Values before / after (null on events recorded before values were kept). */
+  old_value_json: string | null;
+  new_value_json: string | null;
+}
+
+/** A setting in use, as listed by `get_settings_overview`. */
+export interface SettingDefinitionView {
+  key: string;
+  category: string;
+  scope: string;
+  kind: "choice" | "integer" | "decimal" | "currency" | "month" | "document_header" | "module";
+  options: string[];
+  /** Bounds of an `integer`, `decimal` or `month` value (a decimal's bounds may be fractional). */
+  min: number | null;
+  max: number | null;
+  /** Value shipped with the application ("Valeur livrée"). */
+  shipped_value_json: string;
+  current_value_json: string | null;
+  differs_from_shipped: boolean;
+  /** `section` = edited in its Settings section; `dedicated` = own panel or module screen. */
+  editor: "section" | "dedicated";
+  risk: "low" | "high";
+  required_permission: string;
+  /** Stored data depends on the current value: the setting cannot change. */
+  locked_reason: string | null;
+  last_modified_at: string | null;
+  last_modified_by: string | null;
+}
+
+/** A currency of Données de référence › Devises (`list_reference_currencies`). */
+export interface CurrencyOption {
+  code: string;
+  /** French name (primary label of the list). */
+  label: string;
+  label_en: string | null;
+  symbol: string | null;
+  minor_units: number | null;
+  is_active: boolean;
+}
+
+export interface SettingsOverview {
+  definitions: SettingDefinitionView[];
+  /** Roles whose holders may change settings (`adm.settings`). */
+  roles_allowed_to_change: string[];
 }
 
 // â”€â”€â”€ Notifications â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1269,13 +1338,94 @@ export interface UpdateRetentionInput {
   requires_legal_hold_check?: boolean;
 }
 
-// â”€â”€â”€ Updater â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Updater ───────────────────────────────────────────────────────────────────
 
+/** Why a check has (or has not) an update (`CheckStatus` in src-tauri/src/updater/mod.rs). */
+export type UpdateCheckStatus =
+  | "available"
+  | "up_to_date"
+  /** This build has no updater public key: in-app updates are not set up yet. */
+  | "not_configured"
+  /** The device is not activated yet: the server cannot tell which releases it may have. */
+  | "not_activated"
+  /** The update server could not be reached or answered wrongly (details in `message`). */
+  | "unreachable";
+
+/** A newer release, or an older signed release after a recall / failed database update. */
+export type UpdateKind = "upgrade" | "rollback";
+
+/** Result of `check_for_update` (`UpdateCheckResult` in src-tauri/src/updater/mod.rs). */
 export interface UpdateCheckResult {
+  status: UpdateCheckStatus;
   available: boolean;
+  current_version: string;
   version: string | null;
+  /** The catalog release offered; the install names it back with `version` and `kind`. */
+  release_id: string | null;
   notes: string | null;
   pub_date: string | null;
+  kind: UpdateKind | null;
+  mandatory: boolean;
+  /** Code: forced_update_floor | emergency | rollback_requested | recalled_version (or unknown). */
+  mandatory_reason: string | null;
+  /** Optional operator text, shown as plain text. */
+  mandatory_message: string | null;
+  notes_en: string | null;
+  notes_fr: string | null;
+  message: string | null;
+}
+
+/** Progress sent on the `onProgress` channel while installing. */
+export type UpdateProgressEvent =
+  | { event: "backing_up" }
+  | { event: "restoring_backup" }
+  | { event: "downloading"; downloaded_bytes: number; total_bytes: number | null }
+  | { event: "installing" };
+
+/** Why an install was not started (`InstallRefusal` in src-tauri/src/updater/mod.rs). */
+export type InstallRefusal =
+  | { code: "rollback_backup_missing" }
+  /** The pre-update backup is there but changed since it was taken (checksum mismatch). */
+  | { code: "rollback_backup_changed" }
+  /** A database restore is staged for the next start: restart Maintafox before updating. */
+  | { code: "restore_pending" }
+  | { code: "rollback_refused" }
+  | { code: "rollback_unsynced_changes"; count: number }
+  | { code: "update_withdrawn" };
+
+/** Result of `install_pending_update` / `reinstall_previous_version`. */
+export type InstallOutcome =
+  /** The installer runs; the application process exits and restarts. */
+  { outcome: "restarting" } | { outcome: "refused"; refusal: InstallRefusal };
+
+export type UpdateJournalState =
+  | "installing"
+  | "completed"
+  | "rollback_required"
+  | "rolled_back"
+  | "install_not_completed";
+
+/** The last in-app update's journal (`UpdateJournalView` in src-tauri/src/updater/mod.rs). */
+export interface UpdateJournalView {
+  state: UpdateJournalState;
+  kind: UpdateKind;
+  from_version: string;
+  to_version: string;
+  failure: string | null;
+  /** Why the rollback after a failed database update was refused (kept for support). */
+  rollback_refusal: string | null;
+  /** The version the server's refusal named as allowed instead (information only, never installed). */
+  rollback_allowed_version: string | null;
+  /** Why the pre-update backup was not restored (missing, no checksum, changed): no reinstall. */
+  backup_refusal: string | null;
+  notice_acknowledged: boolean;
+}
+
+/** The offer the administrator confirmed (`ConfirmedOffer` in src-tauri/src/updater/mod.rs). */
+export interface ConfirmedUpdateOffer {
+  version: string;
+  kind: UpdateKind;
+  release_id: string;
 }
 
 // â”€â”€â”€ Diagnostics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1710,10 +1860,23 @@ export interface ReferenceDomain {
   governance_level: string;
   /** A/B/C: system_catalog | operational_dictionary | controlled_catalog */
   governance_category: string;
+  /**
+   * Who maintains the list. `system`: shipped by Maintafox, hidden from Données de référence and
+   * read-only (pickers still list its values). `company`: configured by the plant.
+   */
+  audience: ReferenceDomainAudience;
   is_extendable: boolean;
   validation_rules_json: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type ReferenceDomainAudience = "system" | "company";
+
+/** A module table (OT types, article families…) listed in the Données de référence tree. */
+export interface ReferenceModuleCatalog {
+  code: string;
+  audience: ReferenceDomainAudience;
 }
 
 /** Capability snapshot from governance engine (Manager / Combobox SSOT). */
@@ -1730,6 +1893,10 @@ export interface ReferenceGovernanceCapabilities {
   is_read_only: boolean;
   requires_analytical_protection: boolean;
   set_status: string | null;
+  /** Product-seeded values (`origin: system`) of this domain cannot be edited or deactivated. */
+  system_values_locked: boolean;
+  /** `system` domains are read-only whatever their category. */
+  audience: ReferenceDomainAudience;
 }
 
 export interface CreateReferenceDomainPayload {
@@ -1862,6 +2029,10 @@ export interface UpdateReferenceAliasPayload {
 export interface ImportRowMessage {
   category: string;
   severity: string;
+  /** Stable code (`REF_IMPORT_*`) and its details; empty on rows checked before the codes. */
+  code: string;
+  params: Record<string, string>;
+  /** The server's sentence: shown when the code cannot be said. */
   message: string;
 }
 
@@ -2013,6 +2184,11 @@ export interface Asset {
   subfamily_name: string | null;
   criticality_value_id: number | null;
   criticality_code: string | null;
+  /**
+   * The criticality is only read from the old criticality list (no value of the published list
+   * yet): shown "à revoir" until a planner sets it.
+   */
+  criticality_to_review: boolean;
   status_code: string;
   manufacturer: string | null;
   model: string | null;
@@ -2025,6 +2201,15 @@ export interface Asset {
   org_node_name: string | null;
   commissioned_at: string | null;
   decommissioned_at: string | null;
+  /** Commercial / warranty data (`YYYY-MM-DD`, tenant currency). */
+  purchase_date?: string | null;
+  warranty_expiry_date?: string | null;
+  replacement_value?: number | null;
+  /** Cost centre set on the asset (overrides the location's). */
+  cost_center_code?: string | null;
+  /** Cost centre of the installation location (nearest org node carrying one). */
+  org_cost_center_code?: string | null;
+  notes?: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -2038,6 +2223,8 @@ export interface EquipmentTaxonomyOption {
   label: string;
   parent_id: number | null;
   color_hex: string | null;
+  /** Product meaning (EQUIPMENT.STATUS: availability tag up / down / not_installed / retired). */
+  semantic_tag: string | null;
   is_system: boolean;
 }
 
@@ -2074,6 +2261,8 @@ export interface CreateAssetPayload {
   rams_utilization_factor?: number | null;
   org_node_id: number;
   commissioned_at?: string | null;
+  /** Commercial / warranty data saved with the asset. */
+  commercial?: AssetCommercialInput | null;
 }
 
 export interface UpdateAssetIdentityPayload {
@@ -2136,6 +2325,8 @@ export interface RecordLifecycleEventPayload {
   reason_code?: string | null;
   notes?: string | null;
   approved_by_id?: number | null;
+  /** Row version the person saw (required by a recommission; refused when the asset changed). */
+  expected_row_version?: number | null;
 }
 
 export interface AssetMeter {
@@ -2145,6 +2336,9 @@ export interface AssetMeter {
   name: string;
   meter_code: string | null;
   meter_type: string;
+  /** Unit of the meter: `reference_values.id` of the governed list MEASURE.UNITS. */
+  unit_value_id: number | null;
+  /** Symbol of that unit, read from the reference data. */
   unit: string | null;
   current_reading: number;
   last_read_at: string | null;
@@ -2161,7 +2355,8 @@ export interface CreateAssetMeterPayload {
   name: string;
   meter_code?: string | null;
   meter_type: string;
-  unit?: string | null;
+  /** Unit of the meter: an active unit of MEASURE.UNITS. */
+  unit_value_id?: number | null;
   initial_reading?: number | null;
   expected_rate_per_day?: number | null;
   rollover_value?: number | null;
@@ -2209,12 +2404,20 @@ export interface UpsertDocumentLinkPayload {
   valid_from?: string | null;
 }
 
-/** Tenant document library — `library_documents.category` (PRD §6.15). */
-export type LibraryDocumentCategory =
-  | "technical_manuals"
-  | "sops"
-  | "safety_protocols"
-  | "compliance_certificates";
+/**
+ * Tenant document library category code (`library_documents.category`). The categories are the
+ * plant's list `DOCUMENT.CATEGORIES` in Données de référence (`list_document_categories`).
+ */
+export type LibraryDocumentCategory = string;
+
+/** One document category (`list_document_categories`). */
+export interface DocumentCategoryOption {
+  code: string;
+  label: string;
+  label_en: string | null;
+  /** A category found on stored documents that is not in the list: kept, flagged "à revoir". */
+  review_required: boolean;
+}
 
 /** Row from `library_documents` (+ equipment join). */
 export interface LibraryDocument {
@@ -2258,6 +2461,8 @@ export interface AssetBindingSummary {
   open_di_count: DomainBindingEntry;
   /** Open (non-closed / non-cancelled) work orders — used for decommission blockers. */
   open_wo_count: DomainBindingEntry;
+  /** Which "open OT" rule `open_wo_count` counts (`WoOpenRule`). */
+  open_wo_rule: string;
 }
 
 // â”€â”€â”€ Asset â€” Search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -2272,6 +2477,12 @@ export interface AssetSearchFilters {
   limit?: number | null;
   /** KPI strip click-to-filter focus. */
   registry_focus?: "status_down" | "critical_at_risk" | "open_work" | "stale_meters" | null;
+  /** Rows to skip (paged registry list). */
+  offset?: number | null;
+  /** Canonical criticality classes A–D. */
+  criticality_codes?: string[] | null;
+  /** When true, `org_node_ids` also matches assets installed below those nodes. */
+  org_subtree?: boolean | null;
 }
 
 export type EquipmentRegistryMetricValueKind = "count" | "percent";
@@ -2281,7 +2492,6 @@ export interface EquipmentRegistryMetricCell {
   semantic_key: string;
   catalog_id: string;
   value: number;
-  previous_value: number;
   available: boolean;
   value_kind: EquipmentRegistryMetricValueKind;
   trend_sense: EquipmentRegistryMetricTrendSense;
@@ -2307,6 +2517,8 @@ export interface AssetSearchResult {
   subfamily_code: string | null;
   subfamily_name: string | null;
   criticality_code: string | null;
+  /** The criticality only comes from the old criticality list: shown "à revoir". */
+  criticality_to_review: boolean;
   status_code: string;
   org_node_id: number | null;
   org_node_name: string | null;
@@ -2392,7 +2604,10 @@ export interface AssetHistorySummary {
   wo_count: number;
   pm_count: number;
   failure_count: number;
+  /** Operational availability (%) of the latest reliability snapshot; null until computed. */
   availability_percent: number | null;
+  /** End of the period that availability covers. */
+  availability_period_end: string | null;
 }
 
 export type AssetHistoryPeriod = "today" | "last_7_days" | "last_30_days" | "this_year" | "all";
@@ -2535,6 +2750,8 @@ export interface InventoryArticle {
   unit_value_id: number;
   unit_code: string;
   unit_label: string;
+  /** Symbol of the stock unit (MEASURE.UNITS). */
+  unit_symbol: string;
   criticality_value_id: number | null;
   criticality_code: string | null;
   criticality_label: string | null;
@@ -2557,6 +2774,22 @@ export interface InventoryArticle {
   max_stock: number | null;
   reorder_point: number;
   safety_stock: number;
+  manufacturer_name: string | null;
+  manufacturer_part_number: string | null;
+  oem_part_number: string | null;
+  replenishment_policy_code: string | null;
+  economic_order_qty: number | null;
+  minimum_order_qty: number | null;
+  maximum_order_qty: number | null;
+  order_multiple_qty: number | null;
+  lead_time_days: number | null;
+  review_period_days: number | null;
+  abc_class_code: string | null;
+  xyz_class_code: string | null;
+  is_critical_spare: number;
+  requires_expiration: number;
+  shelf_life_days: number | null;
+  requires_batch_tracking: number;
   is_active: number;
   row_version: number;
   created_at: string;
@@ -2630,6 +2863,26 @@ export interface InventoryArticleInput {
   max_stock?: number | null;
   reorder_point: number;
   safety_stock: number;
+  /**
+   * Extended item-master fields. The backend update replaces every column, so callers must
+   * send the current values (see `articleToInput`) or the stored data is cleared.
+   */
+  manufacturer_name?: string | null;
+  manufacturer_part_number?: string | null;
+  oem_part_number?: string | null;
+  replenishment_policy_code?: string | null;
+  economic_order_qty?: number | null;
+  minimum_order_qty?: number | null;
+  maximum_order_qty?: number | null;
+  order_multiple_qty?: number | null;
+  lead_time_days?: number | null;
+  review_period_days?: number | null;
+  abc_class_code?: string | null;
+  xyz_class_code?: string | null;
+  is_critical_spare?: boolean | null;
+  requires_expiration?: boolean | null;
+  shelf_life_days?: number | null;
+  requires_batch_tracking?: boolean | null;
   is_active?: boolean;
 }
 
@@ -2752,7 +3005,10 @@ export interface InventoryTransferInput {
   source_type?: string | null;
   source_id?: number | null;
   source_ref?: string | null;
+  /** Required: why the stock moves (at least 5 characters). */
   notes?: string | null;
+  /** Lot to move (tracked articles); first-expired-first-out when absent. */
+  lot_id?: number | null;
 }
 
 export interface InventoryReleaseReservationInput {
@@ -3085,6 +3341,7 @@ export interface InventoryCountSession {
   warehouse_id: number;
   location_id: number | null;
   status: string;
+  /** Critical variance this session was opened with (Settings › Inventory at its creation). */
   critical_abs_threshold: number;
   submitted_by_id: number | null;
   submitted_at: string | null;
@@ -3126,7 +3383,6 @@ export interface InventoryCountLine {
 export interface CreateInventoryCountSessionInput {
   warehouse_id: number;
   location_id?: number | null;
-  critical_abs_threshold?: number;
   actor_id?: number | null;
 }
 
@@ -3197,7 +3453,6 @@ export interface InventoryReconciliationFinding {
 
 export interface RunInventoryReconciliationInput {
   actor_id?: number | null;
-  drift_break_threshold?: number;
 }
 
 // ── Supplier management ──────────────────────────────────────────────────────
@@ -3413,18 +3668,17 @@ export interface InventoryReplenishmentRecommendation {
   suggested_supplier_name: string | null;
   estimated_cost: number | null;
   expected_arrival: string | null;
-  reason: string | null;
   transfer_options: ReplenishmentTransferOption[];
 }
 
+/** Coded alert: the screen words it from `kind` and `params` in the UI language. */
 export interface ProcurementAlert {
   kind: string;
   severity: string;
-  title: string;
-  detail: string | null;
   entity_type: string | null;
   entity_id: number | null;
   entity_code: string | null;
+  params: Record<string, string>;
 }
 
 export interface ArticleConsumptionMonth {
@@ -3457,6 +3711,11 @@ export interface ProcurementDashboardSummary {
   repairables_in_repair: number;
   active_suppliers_count: number;
   receiving_today_count: number;
+  /** Statuses each count covers, so a tile opens exactly the list it counts. */
+  open_requisition_statuses: string[];
+  open_po_statuses: string[];
+  /** Late = one of these statuses and an expected delivery before now. */
+  late_po_statuses: string[];
 }
 
 export interface ArticleRepairableHistory {
@@ -3562,6 +3821,8 @@ export interface PmPlanVersion {
   required_skills_json: string | null;
   required_tools_json: string | null;
   estimated_duration_hours: number | null;
+  /** People the job takes; copied onto the OT the PM generates. */
+  planned_crew_size: number | null;
   estimated_labor_cost: number | null;
   estimated_parts_cost: number | null;
   estimated_service_cost: number | null;
@@ -3620,6 +3881,7 @@ export interface CreatePmPlanVersionInput {
   required_skills_json?: string | null;
   required_tools_json?: string | null;
   estimated_duration_hours?: number | null;
+  planned_crew_size?: number | null;
   estimated_labor_cost?: number | null;
   estimated_parts_cost?: number | null;
   estimated_service_cost?: number | null;
@@ -3635,6 +3897,9 @@ export interface UpdatePmPlanVersionInput {
   required_skills_json?: string | null;
   required_tools_json?: string | null;
   estimated_duration_hours?: number | null;
+  planned_crew_size?: number | null;
+  /** Removes the crew size (an omitted `planned_crew_size` keeps it). */
+  clear_planned_crew_size?: boolean;
   estimated_labor_cost?: number | null;
   estimated_parts_cost?: number | null;
   estimated_service_cost?: number | null;
@@ -3884,6 +4149,8 @@ export interface PmGovernanceKpiReport {
   overdue_risk: PmRateKpi;
   first_pass_completion: PmRateKpi;
   follow_up_ratio: PmRateKpi;
+  /** Failures found by PM: corrective follow-up OTs raised from the findings of the period. */
+  failures_found_by_pm: number;
   effort_variance: PmEffortVarianceKpi;
   derivation_rules: string[];
 }
@@ -3910,7 +4177,39 @@ export type DiOriginType =
   | "production"
   | "external";
 
-export type DiUrgency = "low" | "medium" | "high" | "critical";
+/**
+ * Level of the urgency scale shared by requests (DI) and work orders (OT) — reference list
+ * `WORK.URGENCY`, rank 1 (emergency) to 5 (low). Labels and target times come from
+ * `list_urgency_levels`, never from the frontend.
+ */
+export type UrgencyCode = "emergency" | "urgent" | "high" | "normal" | "low";
+
+/** One level of the shared DI / OT urgency scale with the plant's labels and target times. */
+export interface UrgencyLevel {
+  /** `reference_values.id` (what work orders store as `urgency_id`). */
+  id: number;
+  code: UrgencyCode;
+  /** 1 = most urgent … 5 = least urgent. */
+  rank: number;
+  label_fr: string;
+  label_en: string;
+  description: string | null;
+  color_hex: string | null;
+  response_target_hours: number | null;
+  completion_target_hours: number | null;
+  escalation_threshold_hours: number | null;
+  /** `starter` (product values to review), `company` (saved by the plant) or `di_sla_rule`. */
+  targets_source: "starter" | "company" | "di_sla_rule" | string;
+}
+
+/** Company attributes of a level (the levels themselves are fixed by Maintafox). */
+export interface UpdateUrgencyLevelInput {
+  label_fr: string;
+  label_en: string;
+  response_target_hours: number;
+  completion_target_hours: number;
+  escalation_threshold_hours: number;
+}
 
 export type DiImpactLevel = "unknown" | "none" | "minor" | "major" | "critical";
 
@@ -3932,8 +4231,9 @@ export interface InterventionRequest {
   safety_flag: boolean;
   environmental_flag: boolean;
   quality_flag: boolean;
-  reported_urgency: DiUrgency;
-  validated_urgency: DiUrgency | null;
+  /** Level of the shared DI / OT urgency scale. */
+  reported_urgency: UrgencyCode;
+  validated_urgency: UrgencyCode | null;
   observed_at: string | null;
   submitted_at: string;
   reviewer_id: number | null;
@@ -3964,7 +4264,6 @@ export interface InterventionRequest {
   classification_code_id: number | null;
   is_recurrence_flag: boolean;
   recurrence_di_id: number | null;
-  is_modified: boolean;
   row_version: number;
   submitter_id: number;
   created_at: string;
@@ -3979,6 +4278,57 @@ export interface InterventionRequest {
   converted_to_wo_code?: string | null;
   converted_to_wo_title?: string | null;
   related_di_code?: string | null;
+  /** Inspection round of the finding the request was raised from. */
+  source_inspection_anomaly_id?: number | null;
+  source_inspection_round_id?: number | null;
+  /** Code / name of the round's inspection template (a round has no code of its own). */
+  source_inspection_round_code?: string | null;
+  source_inspection_round_title?: string | null;
+  source_inspection_round_scheduled_at?: string | null;
+  /** Where the request stands against its frozen SLA, computed on read; null without a target. */
+  sla_state?: DiSlaState | null;
+  /** Hours the SLA clock was paused (waiting on the requester, deferred). */
+  sla_paused_hours?: number;
+  /** Paused hours before screening. */
+  sla_paused_response_hours?: number;
+}
+
+/** SLA state of a request (`di::sla::DiSlaLifecycleStatus`). */
+/** `paused`: waiting on the requester or deferred — the clock is stopped. */
+export type DiSlaState = "on_track" | "at_risk" | "breached" | "completed" | "paused";
+
+/** Work queues of the requests screen (`di::queries::DI_QUEUES`). */
+export type DiQueue =
+  | "to_screen"
+  | "to_review"
+  | "awaiting_info"
+  | "to_approve"
+  | "approved_not_converted"
+  | "deferred_due"
+  | "sla_at_risk"
+  | "mine";
+
+/** Size of every work queue (`get_di_queue_counts`). */
+export interface DiQueueCounts {
+  to_screen: number;
+  to_review: number;
+  awaiting_info: number;
+  to_approve: number;
+  approved_not_converted: number;
+  deferred_due: number;
+  sla_at_risk: number;
+  /** Open requests of the signed-in user. */
+  mine: number;
+  /** Requests of the signed-in user waiting for their answer. */
+  mine_awaiting_info: number;
+}
+
+/** The requester answers the reviewer's question and resubmits (`resubmit_di`). */
+export interface DiResubmitInput {
+  di_id: number;
+  actor_id: number;
+  expected_row_version: number;
+  response_note: string;
 }
 
 export interface DiListFilter {
@@ -3991,6 +4341,12 @@ export interface DiListFilter {
   urgency?: string | null;
   search?: string | null;
   disposition_code?: string | null;
+  /** Work queue; `mine` is always the signed-in user's requests. */
+  queue?: DiQueue | null;
+  /** Only open requests: the "open DI" count's rule (`di::stats::OPEN_SQL`). */
+  open_only?: boolean | null;
+  /** Only open requests submitted at least this many days ago (the overdue figure uses 7). */
+  waiting_days?: number | null;
   limit: number;
   offset: number;
 }
@@ -3998,6 +4354,10 @@ export interface DiListFilter {
 export interface DiListPage {
   items: InterventionRequest[];
   total: number;
+  /** Requests with a site outside the user's sites (site-scoped roles), whatever the filters or search; 0 plant-wide. */
+  hidden_outside_scope: number;
+  /** Requests without an org node (only plant-wide users see them), whatever the filters or search; 0 plant-wide. */
+  hidden_without_site: number;
 }
 
 export interface DiTransitionRow {
@@ -4026,8 +4386,8 @@ export interface DiCreateInput {
   title: string;
   description: string;
   origin_type: string;
-  /** Category A DI.REQUEST_TYPE code. Defaults to repair when omitted. */
-  request_type?: string;
+  /** Code of the plant's request type list (`DI.REQUEST_TYPE`). */
+  request_type: string;
   symptom_code_id?: number | null;
   impact_level: string;
   production_impact: boolean;
@@ -4084,6 +4444,8 @@ export interface DiReturnInput {
   actor_id: number;
   expected_row_version: number;
   reviewer_note: string;
+  /** Code of the plant's `DI.RETURN_REASON` list. */
+  reason_code: string;
 }
 
 export interface DiRejectInput {
@@ -4152,6 +4514,7 @@ export interface DiReviewEvent {
   di_id: number;
   event_type: string;
   actor_id: number | null;
+  actor_display_name: string | null;
   acted_at: string;
   from_status: string;
   to_status: string;
@@ -4260,7 +4623,9 @@ export interface DiSlaStatus {
   resolution_remaining_hours: number | null;
   is_response_breached: boolean;
   is_resolution_breached: boolean;
-  status: "on_track" | "at_risk" | "breached" | "completed" | null;
+  /** Hours the clock was paused; the deadlines above include them. */
+  paused_hours: number;
+  status: DiSlaState | null;
 }
 
 export interface SlaRuleUpdateInput {
@@ -4284,10 +4649,25 @@ export interface WoConversionInput {
   conversion_notes?: string | null;
 }
 
+/** Why the new work order needs a permit, or not (the plant's permit rules and the safety flag). */
+export interface PermitFlagOutcome {
+  requires_permit: boolean;
+  /** `PERMIT_RULE_MATCHED` | `PERMIT_RULES_NO_MATCH` | `PERMIT_RULES_NONE_CONFIGURED` */
+  reason_code: string;
+  /** The rule that matched, and the permit type it calls for. */
+  rule_code: string | null;
+  permit_type_code: string | null;
+  /** The request was flagged as a safety risk (flags the work order on its own). */
+  safety_flag: boolean;
+  /** Published rules that do not read (ignored, to fix in Données de référence). */
+  unreadable_rule_codes: string[];
+}
+
 export interface WoConversionResult {
   di: InterventionRequest;
   wo_id: number;
   wo_code: string;
+  permit_flag: PermitFlagOutcome;
 }
 
 // Frontend invokes via: invoke("shutdown_app")
@@ -4351,27 +4731,13 @@ export interface UploadAssetPhotoPayload {
 
 export interface DecommissionAssetPayload {
   asset_id: number;
-  target_status: "DECOMMISSIONED" | "SCRAPPED";
+  /** A status tagged `retired` in EQUIPMENT.STATUS (checked by the backend). */
+  target_status: string;
   reason: string;
   notes: string | null;
 }
 
 // â”€â”€â”€ Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-export interface KpiValue {
-  key: string;
-  value: number;
-  previous_value: number;
-  available: boolean;
-  quality_badge?: string | null | undefined;
-}
-
-export interface DashboardKpis {
-  open_dis: KpiValue;
-  open_wos: KpiValue;
-  total_assets: KpiValue;
-  overdue_items: KpiValue;
-}
 
 export type OverviewKpiValueKind = "count" | "percent" | "hours" | "currency";
 export type OverviewKpiTrendSense = "up-good" | "up-bad" | "neutral";
@@ -4382,10 +4748,11 @@ export interface OverviewKpiCell {
   value: number;
   previous_value: number;
   available: boolean;
+  /** False when the value at the start of the window cannot be rebuilt (no history): no trend shown. */
+  baseline_available?: boolean | undefined;
   quality_badge?: string | null | undefined;
   value_kind: OverviewKpiValueKind;
   trend_sense: OverviewKpiTrendSense;
-  series?: number[] | undefined;
 }
 
 export interface OverviewKpisPayload {
@@ -4401,29 +4768,275 @@ export interface SaveOverviewKpiLayoutInput {
   overview_kpis_json: string;
 }
 
-export interface KpiSqlSample {
-  key: string;
-  value: number;
-  sql: string;
-  sample_ids: number[];
-}
-
-export interface DashboardKpiValidation {
-  samples: KpiSqlSample[];
-  overdue_items_total: number;
-}
-
+/** One day of the home activity chart; a series the user may not see is `null` (never 0). */
 export interface WorkloadDay {
   date: string;
-  di_created: number;
-  wo_completed: number;
-  pm_due: number;
+  /** Requests submitted that day. */
+  di_created: number | null;
+  /** Work orders closed that day. */
+  wo_completed: number | null;
+  /** PM occurrences due that day (cancelled excluded). */
+  pm_due: number | null;
 }
 
 export interface DashboardWorkloadChart {
   days: WorkloadDay[];
   period_days: number;
   quality_badge?: string | null | undefined;
+}
+
+// ─── Home page (start centre, `commands::home`) ───────────────────────────────
+
+export interface HomeUrgencyCount {
+  urgency_code: string | null;
+  count: number;
+}
+
+export interface HomeMyWorkOrderItem {
+  id: number;
+  code: string;
+  title: string;
+  status_code: string;
+  urgency_code: string | null;
+  planned_start: string | null;
+  planned_end: string | null;
+  asset_label: string | null;
+  overdue: boolean;
+}
+
+export interface HomeMyWorkOrders {
+  open: number;
+  /** Which "open OT" rule `open` counts (`WoOpenRule`). */
+  open_rule: string;
+  overdue: number;
+  today: number;
+  by_urgency: HomeUrgencyCount[];
+  items: HomeMyWorkOrderItem[];
+}
+
+export interface HomeMyRequests {
+  open: number;
+  awaiting_my_answer: number;
+}
+
+export interface HomeMyRoundItem {
+  id: number;
+  template_code: string;
+  template_name: string;
+  status: string;
+  scheduled_at: string | null;
+  overdue: boolean;
+}
+
+export interface HomeMyRounds {
+  personnel_linked: boolean;
+  overdue: number;
+  today: number;
+  next_7_days: number;
+  /** Every round still to do (the list shows the first ones). */
+  todo: number;
+  items: HomeMyRoundItem[];
+}
+
+export interface HomeMyPmItem {
+  id: number;
+  plan_code: string;
+  plan_title: string;
+  due_at: string | null;
+  work_order_code: string;
+  overdue: boolean;
+}
+
+export interface HomeMyPm {
+  overdue: number;
+  due_next_7_days: number;
+  /** Every pending occurrence (the list shows the first ones). */
+  pending: number;
+  items: HomeMyPmItem[];
+}
+
+export interface HomeMyNotifications {
+  unread: number;
+  to_acknowledge: number;
+}
+
+/** A `null` section: the user may not open that module (no panel, no count). */
+export interface HomeMyWork {
+  as_of: string;
+  work_orders: HomeMyWorkOrders | null;
+  requests: HomeMyRequests | null;
+  rounds: HomeMyRounds | null;
+  pm: HomeMyPm | null;
+  notifications: HomeMyNotifications;
+}
+
+export interface HomeBlockerCount {
+  dimension: string;
+  count: number;
+}
+
+export interface HomePlanningBacklog {
+  candidates: number;
+  ready: number;
+  blocked: number;
+  blocked_by: HomeBlockerCount[];
+  truncated: boolean;
+}
+
+/** Why the week figure cannot be given. */
+export type HomeWeekUnavailable = "WEEK_NO_PLANNING_SITE" | "WEEK_NOT_FROZEN";
+
+/** This week's load on the planning KPIs' definition (frozen weekly baseline). */
+export interface HomeWeekLoad {
+  week_start: string;
+  week_end: string;
+  /** Planning sites whose current week is frozen (measured) / not frozen (not measured). */
+  sites: number;
+  sites_not_frozen: number;
+  baseline_hours: number;
+  available_hours: number;
+  overtime_hours: number;
+  /** baseline ÷ available × 100, without the overtime ceiling. */
+  load_pct: number | null;
+  relies_on_overtime: boolean;
+  weeks_awaiting_approval: number;
+}
+
+export interface HomeScheduleCompliance {
+  period_days: number;
+  scheduled_hours: number;
+  done_hours: number;
+  /** Baseline jobs later released or cancelled (counted as not done). */
+  released_jobs: number;
+  value_pct: number | null;
+  /** Why there is no value. */
+  unavailable: "NO_FROZEN_BASELINE" | null;
+}
+
+export interface HomePlanning {
+  as_of: string;
+  backlog: HomePlanningBacklog;
+  week: HomeWeekLoad | null;
+  week_unavailable: HomeWeekUnavailable | null;
+  schedule_compliance: HomeScheduleCompliance;
+}
+
+export interface HomeSlaOpenSplit {
+  on_track: number;
+  at_risk: number;
+  breached: number;
+  paused: number;
+  no_target: number;
+}
+
+export interface HomeSlaClosingOutcome {
+  met: number;
+  breached: number;
+  total: number;
+}
+
+export interface HomeSupervisionRequests {
+  sla_open: HomeSlaOpenSplit;
+  period_days: number;
+  sla_closing: HomeSlaClosingOutcome;
+  queues: DiQueueCounts;
+}
+
+export interface HomeWoBacklogCell {
+  nature_code: string | null;
+  urgency_code: string | null;
+  count: number;
+}
+
+export interface HomeSupervisionWorkOrders {
+  open: number;
+  /** Which "open OT" rule `open` counts (`WoOpenRule`). */
+  open_rule: string;
+  overdue: number;
+  planned: number;
+  reactive: number;
+  emergency: number;
+  without_nature: number;
+  cells: HomeWoBacklogCell[];
+}
+
+export interface HomeSupervisionPm {
+  overdue: number;
+  due_today: number;
+  due_next_7_days: number;
+  period_days: number;
+  compliance_done_on_time: number;
+  compliance_due: number;
+  compliance_pct: number | null;
+}
+
+export interface HomeStockItem {
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  warehouse_code: string;
+  available_qty: number;
+  reorder_point: number;
+  min_stock: number;
+  trigger_type: string;
+}
+
+export interface HomeSupervisionStock {
+  lines_to_reorder: number;
+  articles_to_reorder: number;
+  lines_out_of_stock: number;
+  items: HomeStockItem[];
+}
+
+export interface HomePermitItem {
+  permit_id: number;
+  code: string;
+  permit_type: string;
+  asset_code: string;
+  expires_at: string;
+}
+
+/** Permits found by a check: all counted, the first ones listed. */
+export interface HomePermitList {
+  total: number;
+  items: HomePermitItem[];
+  /** Found without a record to open (counted, never dropped). */
+  without_record: number;
+}
+
+export interface HomeSupervisionSafety {
+  open_permits: number;
+  /** State of the "permit expiring" notification rule. */
+  expiring_rule: "active" | "disabled" | "no_lead" | "missing";
+  expiring_lead_minutes: number | null;
+  expiring: HomePermitList;
+  expired_open: HomePermitList;
+  locks_in_place: number;
+  permits_with_locks: number;
+}
+
+export interface HomeAssetItem {
+  id: number;
+  asset_code: string;
+  name: string;
+  status_label: string | null;
+}
+
+export interface HomeSupervisionAssets {
+  critical_down: number;
+  criticality_label: string | null;
+  down_status_labels: string[];
+  items: HomeAssetItem[];
+}
+
+export interface HomeSupervision {
+  as_of: string;
+  requests: HomeSupervisionRequests | null;
+  work_orders: HomeSupervisionWorkOrders | null;
+  pm: HomeSupervisionPm | null;
+  stock: HomeSupervisionStock | null;
+  safety: HomeSupervisionSafety | null;
+  assets: HomeSupervisionAssets | null;
 }
 
 // â”€â”€â”€ DI Statistics (File 04) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -4447,17 +5060,16 @@ export interface SaveDashboardLayoutInput {
   layout_json: string;
 }
 
-export interface DashboardDiStatusChart {
-  segments: DiStatusCount[];
-  available: boolean;
+/** Open requests of one status (the DI module's open backlog). */
+export interface DashboardDiStatusSegment {
+  status: string;
+  count: number;
+  avg_age_days: number;
 }
 
-export interface DashboardReliabilitySnapshotSummary {
+export interface DashboardDiStatusChart {
+  segments: DashboardDiStatusSegment[];
   available: boolean;
-  snapshot_count: number;
-  avg_data_quality_score?: number | null | undefined;
-  avg_mtbf_hours?: number | null | undefined;
-  total_failure_events: number;
 }
 
 export interface DiPriorityCount {
@@ -4488,7 +5100,26 @@ export interface DiOverdueDi {
   code: string;
   title: string;
   priority: string;
-  days_overdue: number;
+  /** Hours since the first missed SLA target. */
+  hours_overdue: number;
+}
+
+/** Open requests of one status: how many and how old (days since submission). */
+export interface DiBacklogStatus {
+  status: string;
+  count: number;
+  avg_age_days: number;
+  max_age_days: number;
+}
+
+/** Open requests split by where they stand against their SLA. */
+export interface DiSlaOpenSplit {
+  on_track: number;
+  at_risk: number;
+  breached: number;
+  /** Waiting on the requester or deferred: clock paused. */
+  paused: number;
+  no_target: number;
 }
 
 export interface DiDispositionCount {
@@ -4517,6 +5148,13 @@ export interface DiStatsPayload {
   max_age_days: number;
   top_equipment: DiEquipmentCount[];
   overdue_dis: DiOverdueDi[];
+  backlog_by_status: DiBacklogStatus[];
+  sla_open: DiSlaOpenSplit;
+  /** Requests closed in the period (with or without a work order). */
+  closed_in_period: number;
+  converted_count: number;
+  avg_response_hours: number | null;
+  avg_conversion_hours: number | null;
 }
 
 // â”€â”€â”€ Work Orders (OT) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -4564,7 +5202,13 @@ export interface WorkOrder {
   // Timing
   planned_start: string | null;
   planned_end: string | null;
+  /** Old fixed shift code, readable on work orders planned before the Classe horaire shifts. */
   shift: WoShift | null;
+  /** Classe horaire version the work order is planned on, and the window it was planned with. */
+  shift_class_version_id: number | null;
+  shift_class_label: string | null;
+  shift_start: string | null;
+  shift_end: string | null;
   scheduled_at: string | null;
   actual_start: string | null;
   actual_end: string | null;
@@ -4574,11 +5218,15 @@ export interface WorkOrder {
   cancelled_at: string | null;
   // Duration accumulators
   expected_duration_hours: number | null;
+  /** People the job takes; planning books duration × crew size. */
+  planned_crew_size: number | null;
   actual_duration_hours: number | null;
   active_labor_hours: number | null;
   total_waiting_hours: number | null;
   downtime_hours: number | null;
   planned_downtime_hours: number | null;
+  /** The job needs the equipment stopped: planning checks it against shutdown windows. */
+  requires_shutdown: boolean;
   // Cost accumulators
   labor_cost: number | null;
   parts_cost: number | null;
@@ -4598,6 +5246,16 @@ export interface WorkOrder {
   reopen_count: number;
   last_closed_at: string | null;
   requires_permit: boolean;
+  /**
+   * The plant rule (Règles d'exigence de permis) that flagged this work order "permit required"
+   * when it was converted from a request, and the permit type it calls for.
+   */
+  permit_rule_code: string | null;
+  permit_rule_permit_type: string | null;
+  /** Who cleared that flag (permit-issue right), when and why. */
+  permit_rule_cleared_by_id: number | null;
+  permit_rule_cleared_at: string | null;
+  permit_rule_clear_reason: string | null;
   entity_sync_id?: string | null;
   closeout_validation_profile_id?: number | null;
   closeout_validation_passed?: boolean;
@@ -4612,7 +5270,17 @@ export interface WorkOrder {
   status_color?: string | null;
   type_code?: string | null;
   type_label?: string | null;
-  urgency_level?: number | null;
+  /** The plant's sub-type (`WORK.ORDER_SUBTYPES`), under the nature of the OT type. */
+  subtype_id?: number | null;
+  subtype_code?: string | null;
+  subtype_label?: string | null;
+  /** EN 13306 maintenance nature of the OT type (`MaintenanceNatureCode`). */
+  nature_code?: MaintenanceNatureCode | null;
+  nature_label?: string | null;
+  /** Level of the shared DI / OT urgency scale. */
+  urgency_code?: UrgencyCode | null;
+  /** 1 = most urgent … 5 = least urgent. */
+  urgency_rank?: number | null;
   urgency_label?: string | null;
   urgency_color?: string | null;
   asset_code?: string | null;
@@ -4634,6 +5302,16 @@ export interface WorkOrder {
   schedule_frozen?: boolean | null;
   /** PRD §6.5 lifecycle state derived from the WO's facts (Rust `wo::lifecycle`). */
   lifecycle_state?: string | null;
+  /** Inspection round of the finding the OT comes from (directly or through its request). */
+  source_inspection_round_id?: number | null;
+  source_inspection_round_code?: string | null;
+  source_inspection_round_title?: string | null;
+  source_inspection_round_scheduled_at?: string | null;
+  /** PM plan / occurrence whose finding raised this OT: a failure found by preventive maintenance. */
+  source_pm_plan_id?: number | null;
+  source_pm_plan_code?: string | null;
+  source_pm_plan_title?: string | null;
+  source_pm_occurrence_id?: number | null;
 }
 
 export interface WoTransitionRow {
@@ -4650,43 +5328,56 @@ export interface WoTransitionRow {
   lifecycle_state?: string | null;
 }
 
+/** An OT type without a maintenance nature (`list_work_order_types_to_review`). */
+export interface WorkOrderTypeToReview {
+  id: number;
+  code: string;
+  label: string;
+  is_active: boolean;
+  /** Work orders of this type (any status). */
+  work_order_count: number;
+}
+
+/** Give a plant's own OT type its nature (`set_work_order_type_nature`, ref.manage). */
+export interface SetWorkOrderTypeNatureInput {
+  type_id: number;
+  nature: MaintenanceNatureCode;
+  /** At least 10 characters. */
+  reason: string;
+}
+
+/** EN 13306 maintenance nature (reference list `WORK.MAINTENANCE_NATURES`, fixed by Maintafox). */
+export type MaintenanceNatureCode =
+  | "corrective_immediate"
+  | "corrective_deferred"
+  | "preventive_predetermined"
+  | "preventive_condition_based"
+  | "preventive_predictive"
+  | "improvement";
+
+/** A plant's OT sub-type (COMPANY list `WORK.ORDER_SUBTYPES`) under one protected nature. */
+export interface WorkOrderSubtypeOption {
+  id: number;
+  code: string;
+  label: string;
+  nature: MaintenanceNatureCode | null;
+  is_active: boolean;
+}
+
+/** OT type (reference list `WORK.ORDER_TYPES`, fixed by Maintafox) with its protected nature. */
 export interface WorkOrderTypeOption {
+  /** `reference_values.id` (what work orders store as `type_id`). */
   id: number;
   code: string;
+  /** French label. */
   label: string;
+  label_en: string;
+  /** Null only for a type carried over from a plant's own list without a nature. */
+  nature: MaintenanceNatureCode | null;
+  nature_label: string | null;
+  nature_label_en: string | null;
   is_system: boolean;
   is_active: boolean;
-}
-
-/** Tenant-defined work order type (inserted with `is_system = 0`). */
-export interface CreateWorkOrderTypeInput {
-  code: string;
-  label: string;
-}
-
-/** Partial update; omitted fields are left unchanged on the server. */
-export interface UpdateWorkOrderTypeInput {
-  label?: string | null;
-  code?: string | null;
-  is_active?: boolean | null;
-}
-
-/** Urgency / priority row (`urgency_levels`). */
-export interface WorkOrderPriorityOption {
-  id: number;
-  level: number;
-  code: string;
-  label: string;
-  label_fr: string;
-  hex_color: string;
-  is_system: boolean;
-  is_active: boolean;
-}
-
-export interface UpdateWorkOrderPriorityInput {
-  label?: string | null;
-  label_fr?: string | null;
-  is_active?: boolean | null;
 }
 
 /** Lifecycle status row (`work_order_statuses`) — codes & sequence are engine-managed. */
@@ -4717,7 +5408,10 @@ export interface WoCreateInput {
   source_rca_cause_text?: string | null;
   entity_id?: number | null;
   planner_id?: number | null;
-  urgency_id?: number | null;
+  /** Level of the shared DI / OT urgency scale. */
+  urgency_code?: UrgencyCode | null;
+  /** The plant's sub-type code; must belong to the nature of the OT type. */
+  subtype_code?: string | null;
   title: string;
   description?: string | null;
   notes?: string | null;
@@ -4742,7 +5436,9 @@ export interface WoDraftUpdateInput {
   shift?: WoShift | null;
   expected_duration_hours?: number | null;
   notes?: string | null;
-  urgency_id?: number | null;
+  urgency_code?: UrgencyCode | null;
+  /** Sub-type code; "" removes it. Changing the type without a sub-type removes it. */
+  subtype_code?: string | null;
   requires_permit?: boolean;
 }
 
@@ -4755,11 +5451,17 @@ export interface WoListFilter {
   entity_id?: number | null;
   planner_id?: number | null;
   primary_responsible_id?: number | null;
-  urgency_level?: number | null;
+  urgency_code?: UrgencyCode | null;
   source_di_id?: number | null;
   search?: string | null;
   date_from?: string | null;
   date_to?: string | null;
+  /** Only work still ahead: the "open OT" count's rule (`wo::backlog::OPEN_STATUS_SQL`). */
+  open_only?: boolean | null;
+  /** Only overdue work: the "overdue OT" count's rule (`wo::backlog::WO_OVERDUE_SQL`). */
+  overdue_only?: boolean | null;
+  /** Only OTs not yet closed: the reports' / analytics "open OT" rule (`wo::backlog::NOT_CLOSED_SQL`). */
+  not_closed_only?: boolean | null;
   limit: number;
   offset: number;
 }
@@ -4767,6 +5469,10 @@ export interface WoListFilter {
 export interface WoListPage {
   items: WorkOrder[];
   total: number;
+  /** Work orders outside the user’s sites (site-scoped roles), whatever the filters; 0 plant-wide. */
+  hidden_outside_scope: number;
+  /** Work orders without an org node (plant-wide users only), whatever the filters; 0 plant-wide. */
+  hidden_without_site: number;
 }
 
 export interface WoGetResponse {
@@ -4783,7 +5489,30 @@ export interface WoCancelInput {
 
 // â”€â”€ WO File 02 â€” Planning, Labor, Completion types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+/** Old fixed shift codes: still shown on work orders planned with them, refused on new plans. */
 export type WoShift = "morning" | "afternoon" | "night" | "full_day";
+
+/** One shift window the assigned team works on the planned day (`list_wo_shift_options`). */
+export interface WoShiftOption {
+  class_version_id: number;
+  schedule_class_id: number;
+  class_label: string;
+  shift_start: string;
+  shift_end: string;
+  break_minutes: number;
+  net_hours: number;
+  /** Members on this window that day, and those not fully absent. */
+  members: number;
+  members_available: number;
+}
+
+export interface WoShiftOptions {
+  team_id: number | null;
+  day: string | null;
+  options: WoShiftOption[];
+  /** Why nothing is offered: `no_team` | `no_day` | `no_shift`. */
+  reason: string | null;
+}
 
 export interface WoPlanInput {
   wo_id: number;
@@ -4793,10 +5522,19 @@ export interface WoPlanInput {
   /** Optional; ignored when a schedule commitment exists (Planning SSOT). */
   planned_start?: string | null;
   planned_end?: string | null;
+  /** Old fixed codes are refused; choose `shift_class_version_id`. */
   shift?: WoShift | null;
+  /** A window of the team's Classe horaire on the planned day; omitted keeps the current one. */
+  shift_class_version_id?: number | null;
+  /** Removes the shift. */
+  clear_shift?: boolean;
   expected_duration_hours?: number | null;
+  /** People the job takes; omitted keeps the current one. */
+  planned_crew_size?: number | null;
+  /** Removes the crew size. */
+  clear_crew_size?: boolean;
   planned_downtime_hours?: number | null;
-  urgency_id?: number | null;
+  urgency_code?: UrgencyCode | null;
 }
 
 export interface WoAssignInput {
@@ -4817,6 +5555,10 @@ export interface WoEmergencyReassignInput {
   assigned_team_id?: number | null;
   primary_responsible_id?: number | null;
   override_reason: string;
+  /** The new team's shift window; omitted keeps the current one, which the new team must work. */
+  shift_class_version_id?: number | null;
+  /** Removes the shift. */
+  clear_shift?: boolean;
 }
 
 export interface WoStartInput {
@@ -4837,6 +5579,8 @@ export interface WoResumeInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
+  /** Estimated remaining time (hours, > 0) for the permit gate instead of the full expected duration. */
+  estimated_remaining_hours?: number | null;
 }
 
 export interface WoHoldInput {
@@ -5015,14 +5759,19 @@ export interface WoExecTask {
   result_code: TaskResultCode | null;
   notes: string | null;
   /** "planned" | "execution_added" | "generated" — enriched by backend JOIN */
-  origin?: string | null;
+  origin?: string | null | undefined;
 }
 
 /** Labor/intervener row as returned by execution commands (raw FK columns). */
 export interface WoIntervener {
   id: number;
   work_order_id: number;
-  intervener_id: number;
+  /** Login of the person, when they have one. */
+  intervener_id: number | null;
+  /** The person (personnel register); people without a login are booked by this. */
+  personnel_id?: number | null;
+  /** Paid at the overtime rate. */
+  is_overtime?: boolean;
   skill_id: number | null;
   started_at: string | null;
   ended_at: string | null;
@@ -5051,13 +5800,20 @@ export interface WoExecPart {
   notes: string | null;
   article_label?: string | null;
   /** "planned" | "execution_added" — origin of this part line */
-  origin?: string | null;
-  /** "pending" | "used" | "not_used" | "partial" */
+  origin?: string | null | undefined;
+  /**
+   * "pending" | "used" | "not_used" | "cancelled" (a planned line withdrawn while the work order
+   * was prepared: kept for the history, out of every count, cost and reservation).
+   */
   consumption_status?: string | null;
   not_used_reason_id?: number | null;
   not_used_comment?: string | null;
   /** Enriched label for the not-used reason (JOIN from reference_values) */
   not_used_reason_label?: string | null;
+  /** Required for the job (short: blocks the plan) or optional (short: only warns). */
+  is_required: boolean;
+  /** Stock unit symbol of the article; null for a free-text line. */
+  unit_symbol?: string | null;
 }
 
 // ── Plan vs Actual adherence ──────────────────────────────────────────────────
@@ -5122,12 +5878,6 @@ export interface AddWoToolInput {
   tool_label: string;
   tool_code?: string | null;
   origin?: string;
-  notes?: string | null;
-}
-
-export interface MarkWoToolStatusInput {
-  tool_id: number;
-  usage_status: string;
   notes?: string | null;
 }
 
@@ -5269,11 +6019,24 @@ export interface UserPresence {
   last_activity_at: string | null;
 }
 
+/** Where the current user holds each permission (step 6, `get_my_access`). */
+export interface MyAccess {
+  /** Every permission (administrator). */
+  all: boolean;
+  /** Permissions held plant-wide. */
+  everywhere: string[];
+  /** Org node id → permissions held on that node and below only. */
+  by_node: Record<string, string[]>;
+}
+
 export interface CreateUserInput {
   username: string;
   identity_mode: string;
-  /** Tenant-scoped role assigned at creation (required). */
+  /** Role assigned at creation (required). */
   role_id: number;
+  /** Where the role applies: absent / null plant-wide, else that org node and below (site-only
+   * user, step 6). Administrator roles are plant-wide only. */
+  scope_node_id?: number | null;
   personnel_id?: number | null;
   initial_password?: string | null;
   force_password_change?: boolean;
@@ -5310,6 +6073,18 @@ export interface PasswordPolicySettings {
   require_lowercase: boolean;
   require_digit: boolean;
   require_special: boolean;
+  /**
+   * Stored keys that could not be read: the values above are then the stricter of the stored
+   * and shipped ones until the policy is saved again. Ignored by `set_password_policy`.
+   */
+  unreadable_keys: string[];
+}
+
+/** Sign-in lockout thresholds (`get_lockout_policy` / `set_lockout_policy`). */
+export interface LockoutPolicySettings {
+  max_attempts: number;
+  lockout_minutes: number;
+  progressive: boolean;
 }
 
 export interface RbacSettingEntry {
@@ -5329,6 +6104,9 @@ export interface RoleAssignmentSummary {
   valid_from: string | null;
   valid_to: string | null;
   is_emergency: boolean;
+  emergency_expires_at: string | null;
+  /** Name of the org node / team the assignment is limited to (null = whole plant). */
+  scope_label: string | null;
 }
 
 export interface UserWithRoles {
@@ -5342,7 +6120,10 @@ export interface UserWithRoles {
   is_active: boolean;
   force_password_change: boolean;
   last_seen_at: string | null;
+  last_login_at: string | null;
   locked_until: string | null;
+  /** A sign-in lockout is still running. */
+  is_locked: boolean;
   roles: RoleAssignmentSummary[];
 }
 
@@ -5371,8 +6152,45 @@ export interface UserDetail {
 
 export interface UserListFilter {
   is_active?: boolean;
+  status?: "active" | "inactive" | "locked";
   identity_mode?: string;
   search?: string;
+  role_id?: number;
+  /** Users with an assignment on this org node or below it. */
+  org_node_id?: number;
+}
+
+/** Disable / enable an account; the reason goes to the admin change ledger. */
+export interface SetUserActiveInput {
+  user_id: number;
+  reason: string;
+}
+
+/** Org node a role assignment can be limited to (covers the node and below). */
+export interface AssignableScopeNode {
+  id: number;
+  parent_id: number | null;
+  code: string;
+  name: string;
+  type_label: string | null;
+  depth: number;
+}
+
+export interface CloneRoleInput {
+  source_role_id: number;
+  name: string;
+  description?: string | null;
+}
+
+export interface RoleHolderCount {
+  role_id: number;
+  active_users: number;
+}
+
+export interface RoleEditorCatalog {
+  permissions: PermissionWithSystem[];
+  dependencies: PermissionDependencyRow[];
+  role_holders: RoleHolderCount[];
 }
 
 export interface UpdateUserInput {
@@ -5518,6 +6336,7 @@ export interface GrantEmergencyElevationInput {
 
 export interface RevokeEmergencyElevationInput {
   assignment_id: number;
+  reason?: string | null;
 }
 
 // â”€â”€â”€ Admin Governance â€” Session Visibility (SP06-F03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -5618,14 +6437,29 @@ export interface ImportResult {
 
 export interface AdminEventFilter {
   action?: string;
-  actorId?: number;
-  targetUserId?: number;
-  targetRoleId?: number;
-  dateFrom?: string;
-  dateTo?: string;
-  applyResult?: string;
+  actor_id?: number;
+  target_user_id?: number;
+  target_role_id?: number;
+  date_from?: string;
+  date_to?: string;
+  apply_result?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface AdminEventFacetOption {
+  id: number;
+  label: string;
+  count: number;
+}
+
+/** Filter choices taken from the ledger events the caller may see. */
+export interface AdminEventFacets {
+  actions: string[];
+  actors: AdminEventFacetOption[];
+  target_users: AdminEventFacetOption[];
+  target_roles: AdminEventFacetOption[];
+  apply_results: string[];
 }
 
 export interface AdminChangeEventDetail {
@@ -5871,6 +6705,32 @@ export interface PersonnelCreateInput {
   certifications?: PersonnelCertDraft[];
 }
 
+/** One value of a personnel list (Données de référence; `list_personnel_reference_options`). */
+export interface PersonnelOption {
+  code: string;
+  label: string;
+  label_en: string | null;
+  /** Absence types only: `leave` / `critical` / `training` — drives the display and blocking. */
+  tag: string | null;
+  /** A value found in stored data that is not in the list: kept, flagged "à revoir". */
+  review_required: boolean;
+}
+
+export interface PersonnelReferenceOptions {
+  employment_statuses: PersonnelOption[];
+  employment_types: PersonnelOption[];
+  absence_types: PersonnelOption[];
+  position_categories: PersonnelOption[];
+}
+
+/** A person whose stored employment status is not in the plant's list (`list_personnel_status_review`). */
+export interface PersonnelStatusReview {
+  personnel_id: number;
+  employee_code: string;
+  full_name: string;
+  stored_status: string;
+}
+
 export interface PersonnelUpdateInput {
   id: number;
   expected_row_version: number;
@@ -5974,7 +6834,10 @@ export interface PersonnelAvailabilityState {
   personnel_id: number;
   status: string;
   blocked_override: boolean;
+  /** Reason codes (shown through `availability.inspector.reason.<code>`) or absence type codes. */
   reasons: string[];
+  /** Open work orders the person is on; null when an earlier rule decided the state. */
+  open_work_order_count: number | null;
   as_of: string;
 }
 
@@ -5983,7 +6846,8 @@ export interface ScheduleClass {
   name: string;
   shift_pattern_code: string;
   is_continuous: number;
-  nominal_hours_per_day: number;
+  /** As typed on the class; null when not set (never assumed). */
+  nominal_hours_per_day: number | null;
   is_active: number;
   created_at: string;
 }
@@ -6017,7 +6881,8 @@ export interface SchedulePattern {
   is_active: boolean;
   shift_pattern_code: string;
   is_continuous: boolean;
-  nominal_hours_per_day: number;
+  /** As typed on the class; null when not set (never assumed). */
+  nominal_hours_per_day: number | null;
   details: ScheduleDayPattern[];
 }
 
@@ -6237,10 +7102,13 @@ export interface AvailabilityBlockCreateInput {
 
 export interface AvailabilityBlockUpdateInput {
   id: number;
-  block_type: string;
+  /** New absence type; omitted keeps the stored one (a caller the type is withheld from). */
+  block_type?: string;
   start_at: string;
   end_at: string;
   reason_note?: string | null;
+  /** Keeps the stored reason instead of `reason_note` (a caller the reason is withheld from). */
+  keep_reason_note?: boolean;
   is_critical?: boolean;
   confirm_overlap?: boolean;
 }
@@ -6248,7 +7116,11 @@ export interface AvailabilityBlockUpdateInput {
 export interface PersonnelAvailabilityBlock {
   id: number;
   personnel_id: number;
-  block_type: string;
+  /**
+   * Absence type code — sent only with the sensitive-data right (per.sensitiveview) or on the
+   * person's own record; otherwise absent and `type_masked` (decision register 2026-10-19).
+   */
+  block_type?: string;
   start_at: string;
   end_at: string;
   reason_note: string | null;
@@ -6256,6 +7128,12 @@ export interface PersonnelAvailabilityBlock {
   created_by_id: number | null;
   created_by_label: string | null;
   created_at: string;
+  /** `reason_note` withheld (no per.sensitiveview, not the person's own record). */
+  reason_masked: boolean;
+  /** The absence type withheld: show the neutral tag only. */
+  type_masked: boolean;
+  /** Critical for planning: the type's `critical` tag in Données de référence, or marked critical. */
+  critical_for_planning: boolean;
 }
 
 export interface PersonnelTeamAssignment {
@@ -6285,7 +7163,11 @@ export interface PersonnelWorkHistoryEntry {
 
 export interface PersonnelWorkloadSummary {
   open_work_orders: number;
+  /** Which "open OT" rule `open_work_orders` counts (`WoOpenRule`). */
+  open_work_orders_rule: string;
   in_progress_work_orders: number;
+  /** Which "open OT" rule `in_progress_work_orders` counts (`WoOpenRule`). */
+  in_progress_work_orders_rule: string;
   pending_interventions: number;
   interventions_last_30d: number;
 }
@@ -6326,6 +7208,10 @@ export interface PersonnelImportCreateInput {
 export interface PersonnelImportMessage {
   category: string;
   severity: "warning" | "error" | "info";
+  /** Stable code (`PERSONNEL_IMPORT_*`) and its details; empty on rows checked before the codes. */
+  code: string;
+  params: Record<string, string>;
+  /** The server's sentence: shown when the code cannot be said. */
   message: string;
 }
 
@@ -6408,6 +7294,10 @@ export interface CertificationType {
   default_validity_months: number | null;
   renewal_lead_days: number | null;
   row_version: number;
+  /** electrical | loto | confined_space | work_at_height | welding | lifting | first_aid | hot_work | other */
+  category: string;
+  description: string | null;
+  is_active: boolean;
 }
 
 export interface QualificationRequirementProfile {
@@ -6446,6 +7336,10 @@ export interface CertificationTypeUpsertInput {
   name: string;
   default_validity_months?: number | null;
   renewal_lead_days?: number | null;
+  category?: string | null;
+  description?: string | null;
+  is_active?: boolean | null;
+  expected_row_version?: number | null;
 }
 
 export interface QualificationRequirementProfileUpsertInput {
@@ -6883,6 +7777,8 @@ export interface FmecaItem {
   revised_rpn: number | null;
   source_ram_ishikawa_diagram_id: number | null;
   source_ishikawa_flow_node_id: string | null;
+  /** Ratings nobody chose (former root-cause placeholder): shown "to review", never ranked. */
+  review_required: boolean;
   row_version: number;
   updated_at: string;
 }
@@ -7186,6 +8082,8 @@ export interface FmecaCriticality {
   operating_hours: number;
   criticality_number: number;
   analysis_criticality: number;
+  /** Rows of the analysis still to review, not counted in Cr. */
+  analysis_rows_to_review: number;
 }
 
 export interface RcmDecision {
@@ -7562,6 +8460,9 @@ export interface InspectionCheckpoint {
   /** Instruction shown to the technician in the field. */
   description: string | null;
   check_type: string;
+  /** Unit of a measurement: `reference_values.id` of MEASURE.UNITS. */
+  measurement_unit_id: number | null;
+  /** Symbol of that unit, read from the reference data. */
   measurement_unit: string | null;
   normal_min: number | null;
   normal_max: number | null;
@@ -7587,6 +8488,16 @@ export interface InspectionRound {
   review_note: string | null;
   completion_percentage: number | null;
   row_version: number;
+  /** Schedule that generated the round (null for a round scheduled by hand). */
+  schedule_id: number | null;
+  /** Identity of the occurrence in its schedule. */
+  due_basis: string | null;
+  /** The round may still be done until then; an unstarted round is missed afterwards. */
+  window_end_at: string | null;
+  assigned_team_id: number | null;
+  /** Meter threshold of a meter-triggered round. */
+  due_meter_value: number | null;
+  missed_at: string | null;
 }
 
 export interface InspectionCheckpointDraft {
@@ -7596,7 +8507,8 @@ export interface InspectionCheckpointDraft {
   checkpoint_code: string;
   description?: string | null;
   check_type: string;
-  measurement_unit?: string | null;
+  /** Unit of a measurement: an active unit of MEASURE.UNITS. */
+  measurement_unit_id?: number | null;
   normal_min?: number | null;
   normal_max?: number | null;
   warning_min?: number | null;
@@ -7630,6 +8542,7 @@ export interface ScheduleInspectionRoundInput {
   scheduled_at?: string | null;
   assigned_to_id?: number | null;
   explicit_template_version_id?: number | null;
+  assigned_team_id?: number | null;
 }
 
 export interface InspectionTemplateVersionsFilter {
@@ -7693,6 +8606,7 @@ export interface RouteInspectionAnomalyToWoInput {
   expected_row_version: number;
   type_code: string;
   title?: string | null;
+  description?: string | null;
 }
 
 export interface DeferInspectionAnomalyInput {
@@ -7752,6 +8666,11 @@ export interface InspectionRoundSummary {
   /** The version asks for a supervisor review even after a clean round. */
   requires_review: boolean;
   assigned_to_name: string | null;
+  assigned_team_name: string | null;
+  schedule_code: string | null;
+  schedule_name: string | null;
+  /** Still to do and its planned time has passed. */
+  is_overdue: boolean;
   reviewed_by_name: string | null;
   checkpoint_count: number;
   recorded_count: number;
@@ -7764,6 +8683,32 @@ export interface InspectionRoundSummary {
 export interface InspectionRoundSummaryFilter {
   statuses?: string[] | null;
   limit?: number | null;
+  offset?: number | null;
+  /** Only rounds still to do whose planned time has passed. */
+  overdue_only?: boolean | null;
+  /** Planned between these instants (RFC 3339, inclusive). */
+  due_from?: string | null;
+  due_to?: string | null;
+  schedule_id?: number | null;
+  /** Checklist name or code, assignee, team or schedule containing this text. */
+  search?: string | null;
+}
+
+export interface InspectionRoundPage {
+  items: InspectionRoundSummary[];
+  total: number;
+}
+
+/** A previous result of the same checkpoint (same template, same code) in another round. */
+export interface InspectionCheckpointHistoryPoint {
+  round_id: number;
+  round_scheduled_at: string | null;
+  recorded_at: string;
+  result_status: string;
+  numeric_value: number | null;
+  text_value: string | null;
+  boolean_value: boolean | null;
+  comment: string | null;
 }
 
 export interface InspectionRunnerCheckpoint {
@@ -7776,6 +8721,8 @@ export interface InspectionRunnerCheckpoint {
   sync_state: InspectionRowSyncState;
   /** What is still required before the round can be completed: result, photo, comment. */
   missing: string[];
+  /** Latest results of this checkpoint in earlier rounds, newest first. */
+  history: InspectionCheckpointHistoryPoint[];
 }
 
 export interface InspectionRoundRunner {
@@ -7817,6 +8764,152 @@ export interface InspectionReliabilitySignalsFilter {
 
 export interface RefreshInspectionReliabilitySignalsInput {
   window_days: number;
+}
+
+// ── Recurring inspection rounds, module figures, anomaly follow-up (Phase 6.3) ──
+
+export type InspectionTriggerKind = "calendar" | "meter";
+
+export interface InspectionSchedule {
+  id: number;
+  entity_sync_id: string;
+  code: string;
+  name: string;
+  template_id: number;
+  trigger_kind: string;
+  interval_unit: string | null;
+  interval_value: number | null;
+  anchor_at: string | null;
+  meter_id: number | null;
+  meter_interval: number | null;
+  meter_start_reading: number | null;
+  assigned_to_id: number | null;
+  assigned_team_id: number | null;
+  grace_hours: number;
+  horizon_days: number;
+  is_active: boolean;
+  last_generated_at: string | null;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InspectionScheduleSummary {
+  schedule: InspectionSchedule;
+  template_code: string;
+  template_name: string;
+  assigned_to_name: string | null;
+  assigned_team_name: string | null;
+  meter_name: string | null;
+  meter_unit: string | null;
+  meter_asset_id: number | null;
+  meter_asset_code: string | null;
+  meter_lifetime_reading: number | null;
+  next_due_at: string | null;
+  open_round_count: number;
+  overdue_round_count: number;
+  missed_round_count: number;
+}
+
+export interface SaveInspectionScheduleInput {
+  id?: number | null;
+  expected_row_version?: number | null;
+  code: string;
+  name: string;
+  template_id: number;
+  trigger_kind: InspectionTriggerKind;
+  interval_unit?: string | null;
+  interval_value?: number | null;
+  anchor_at?: string | null;
+  meter_id?: number | null;
+  meter_interval?: number | null;
+  meter_start_reading?: number | null;
+  assigned_to_id?: number | null;
+  assigned_team_id?: number | null;
+  grace_hours: number;
+  horizon_days: number;
+  is_active: boolean;
+}
+
+export interface GenerateInspectionRoundsInput {
+  as_of?: string | null;
+  schedule_id?: number | null;
+}
+
+export interface InspectionScheduleIssue {
+  schedule_code: string;
+  message: string;
+}
+
+export interface GenerateInspectionRoundsResult {
+  generated: number;
+  skipped: number;
+  missed: number;
+  round_ids: number[];
+  issues: InspectionScheduleIssue[];
+}
+
+export interface InspectionKpisInput {
+  period_days: number;
+}
+
+export interface InspectionKpis {
+  period_start: string;
+  period_end: string;
+  due_count: number;
+  done_count: number;
+  done_on_time_count: number;
+  missed_count: number;
+  overdue_count: number;
+  compliance_pct: number | null;
+  open_anomaly_count: number;
+}
+
+export interface InspectionAnomalyRowFilter {
+  statuses?: string[] | null;
+  round_id?: number | null;
+  limit?: number | null;
+  offset?: number | null;
+}
+
+/** An anomaly with its round, checkpoint, equipment, reading and follow-up record. */
+export interface InspectionAnomalyRow {
+  anomaly: InspectionAnomaly;
+  round_status: string;
+  round_scheduled_at: string | null;
+  round_completed_at: string | null;
+  template_code: string;
+  template_name: string;
+  checkpoint_id: number | null;
+  checkpoint_code: string | null;
+  checkpoint_description: string | null;
+  check_type: string | null;
+  measurement_unit: string | null;
+  normal_min: number | null;
+  normal_max: number | null;
+  warning_min: number | null;
+  warning_max: number | null;
+  asset_id: number | null;
+  asset_code: string | null;
+  asset_name: string | null;
+  asset_has_location: boolean;
+  result_status: string | null;
+  numeric_value: number | null;
+  text_value: string | null;
+  result_comment: string | null;
+  recorded_at: string | null;
+  violation_direction: "above" | "below" | null;
+  violation_limit: number | null;
+  linked_di_code: string | null;
+  linked_di_title: string | null;
+  linked_di_status: string | null;
+  linked_wo_code: string | null;
+  linked_wo_title: string | null;
+}
+
+export interface InspectionAnomalyPage {
+  items: InspectionAnomalyRow[];
+  total: number;
 }
 
 export interface PersonnelReadinessRow {
@@ -7911,6 +9004,8 @@ export interface ScheduleCandidate {
   shutdown_requirement: string | null;
   prerequisite_status: string;
   estimated_duration_hours: number | null;
+  /** People the job takes; labour hours = duration × crew size. */
+  planned_crew_size: number | null;
   assigned_personnel_id: number | null;
   assigned_team_id: number | null;
   window_start: string | null;
@@ -7961,6 +9056,17 @@ export interface CandidateConflictSummary {
   blocker_dimensions: string[];
   readiness_status: string;
   readiness_score: number;
+  /** Each open conflict with its reason and details: what the card explains. */
+  reasons: ConflictReason[];
+}
+
+/** Why a job cannot be committed (or why its bar is critical). */
+export interface ConflictReason {
+  conflict_type: string;
+  reason_code: string;
+  severity: string;
+  /** JSON object whose fields depend on the reason. */
+  details_json: string | null;
 }
 
 export interface ScheduleBacklogSnapshot {
@@ -8011,38 +9117,55 @@ export interface CreateCapacityRuleInput {
   team_id: number;
   effective_start: string;
   effective_end?: string | null;
-  available_hours_per_day: number;
+  /** History only: capacity comes from the members' Classes horaires. */
+  available_hours_per_day?: number | null;
+  /** Overtime ceiling per day. */
   max_overtime_hours_per_day: number;
 }
 
 export interface UpdateCapacityRuleInput {
   effective_start?: string | null;
+  /** A new end; omit to keep the current one. */
   effective_end?: string | null;
+  /** The rule applies with no end again. */
+  clear_effective_end?: boolean;
   available_hours_per_day?: number | null;
   max_overtime_hours_per_day?: number | null;
 }
 
 export interface PlanningWindow {
   id: number;
+  /** Site (org node) the window applies to, with its sub-nodes; null = plant-wide. */
   entity_id: number | null;
+  /** The one equipment of the site the window applies to; null = the whole site. */
+  equipment_id: number | null;
+  /** A code of the SYSTEM list PLANNING.WINDOW_TYPES. */
   window_type: string;
   start_datetime: string;
   end_datetime: string;
   is_locked: number;
   lock_reason: string | null;
+  /** 1 = the site must be re-entered (window from before migration 211): plant-wide until then. */
+  scope_review_required: number;
   row_version: number;
   created_at: string;
   updated_at: string;
+  /** Names for display. */
+  entity_name: string | null;
+  equipment_code: string | null;
+  equipment_name: string | null;
 }
 
 export interface PlanningWindowFilter {
   entity_id?: number | null;
+  equipment_id?: number | null;
   window_type?: string | null;
   include_locked?: boolean | null;
 }
 
 export interface CreatePlanningWindowInput {
   entity_id?: number | null;
+  equipment_id?: number | null;
   window_type: string;
   start_datetime: string;
   end_datetime: string;
@@ -8051,6 +9174,10 @@ export interface CreatePlanningWindowInput {
 }
 
 export interface UpdatePlanningWindowInput {
+  /** Absent = unchanged; null = plant-wide. */
+  entity_id?: number | null;
+  /** Absent = unchanged; null = the whole site. */
+  equipment_id?: number | null;
   window_type?: string | null;
   start_datetime?: string | null;
   end_datetime?: string | null;
@@ -8075,7 +9202,17 @@ export interface ScheduleCommitment {
   budget_threshold: number | null;
   cost_variance_warning: number;
   has_blocking_conflict: number;
+  /** The job's open conflicts (JSON array of ConflictReason): why the bar is critical. */
+  conflict_reasons_json: string | null;
+  /** committed | released | cancelled | closed */
+  status: string;
+  status_reason: string | null;
+  status_changed_at: string | null;
   nearest_feasible_window: string | null;
+  /** Labour hours the commitment books; null for one from before they were stored. */
+  planned_labor_hours: number | null;
+  /** Hours the assigned technician works on it (the job's duration); null for an older one. */
+  planned_person_hours: number | null;
   row_version: number;
   created_at: string;
   updated_at: string;
@@ -8102,6 +9239,10 @@ export interface CreateScheduleCommitmentInput {
   allow_double_booking_override?: boolean | null;
   override_reason?: string | null;
   budget_threshold?: number | null;
+  /** Assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason. */
+  acknowledged_assignee_issues?: string[];
+  /** Committing into a frozen week: only as a recorded break-in. */
+  frozen_week_break_in?: CommitBreakIn | null;
 }
 
 export interface RescheduleCommitmentInput {
@@ -8114,6 +9255,8 @@ export interface RescheduleCommitmentInput {
   allow_double_booking_override?: boolean | null;
   override_reason?: string | null;
   budget_threshold?: number | null;
+  /** Assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason. */
+  acknowledged_assignee_issues?: string[];
 }
 
 export interface FreezeSchedulePeriodInput {
@@ -8145,8 +9288,10 @@ export interface ScheduleBreakIn {
   approved_by_user_id: number | null;
   approved_by_personnel_id: number | null;
   override_reason: string | null;
-  old_slot_start: string;
-  old_slot_end: string;
+  /** `move`: a held slot moved; `insert`: new work entering a frozen week (no old slot). */
+  kind: string;
+  old_slot_start: string | null;
+  old_slot_end: string | null;
   new_slot_start: string;
   new_slot_end: string;
   old_assignee_id: number | null;
@@ -8178,10 +9323,13 @@ export interface CreateScheduleBreakInInput {
   new_slot_end: string;
   new_assigned_team_id?: number | null;
   new_assigned_personnel_id?: number | null;
+  /** "Unassigned" chosen explicitly: removes the technician. */
+  clear_assignee?: boolean | null;
   bypass_availability?: boolean | null;
-  bypass_qualification?: boolean | null;
   override_reason?: string | null;
   dangerous_override_reason?: string | null;
+  /** Assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason. */
+  acknowledged_assignee_issues?: string[];
 }
 
 export interface TeamCapacityLoad {
@@ -8189,13 +9337,83 @@ export interface TeamCapacityLoad {
   work_date: string;
   available_hours: number;
   overtime_hours: number;
+  /** Labour hours committed that day (spread over the slots' working days; finished work excluded). */
   committed_hours: number;
-  utilization_ratio: number;
+  /** committed ÷ (available + overtime); null when the team has no hours that day (see `basis`). */
+  utilization_ratio: number | null;
+  /** `roster` (the members' Classes horaires) | `rest_day` | `holiday` | `no_schedule` | `no_members`. */
+  basis: string;
+  /** The members' shift windows that day (local time) and their hours: a slot is spread over them. */
+  work_windows: CapacityWindow[];
+  /** Hours of members whose shift window is not known (counted in full on the days a slot touches). */
+  unwindowed_hours: number;
+}
+
+/** The assignee picker's question for a slot (a job to commit or a commitment being moved). */
+export interface AssigneeCapacityInput {
+  team_id: number;
+  start: string;
+  end: string;
+  candidate_id?: number | null;
+  commitment_id?: number | null;
+}
+
+/** One day of a crew member over the slot. */
+export interface AssigneeDay {
+  day: string;
+  shift_start: string | null;
+  shift_end: string | null;
+  available_hours: number;
+  committed_hours: number;
+  remaining_hours: number;
+  /** `working` | `absent` | `rest_day` | `site_rest_day` | `holiday` | `no_schedule` | … */
+  reason: string;
+}
+
+/** A crew member as the assignee picker shows them: shift and hours left, net of all their work. */
+export interface AssigneeCapacity {
+  personnel_id: number;
+  full_name: string;
+  employee_code: string | null;
+  days: AssigneeDay[];
+  slot_working_hours: number;
+  /** What the commit would refuse for this job (`PLANNING_ASSIGNEE_*`), overridable with a reason. */
+  issues: string[];
+  /** Commitments of the person whose hours are unknown (not counted in the figures). */
+  unknown_hours_jobs: number;
+  /** OTs of the person whose planned dates cannot be read (skipped). */
+  unreadable_work_orders: { work_order_id: number; code: string }[];
+}
+
+/** One member's shift window (local `YYYY-MM-DDTHH:MM:SS`; a night shift ends the next day). */
+export interface CapacityWindow {
+  start: string;
+  end: string;
+  hours: number;
+}
+
+/**
+ * One absence of an assignee lane (an element of `PlanningAssigneeLane.blocked_intervals_json`).
+ * Decision register 2026-10-19, Q2: a caller without `per.view` receives only when the person is
+ * away and `critical` (the absence type's `critical` tag in Données de référence, or the block
+ * marked critical) — the server never sends them the type, its label, reason or colour.
+ */
+export interface PlanningBlockedInterval {
+  start_at: string;
+  end_at: string;
+  /** Absence type code — present only for holders of `per.view`. */
+  block_type?: string;
+  /**
+   * With `block_type`: the block's own critical flag (the screen adds the type's tag). Without
+   * it: critical for planning.
+   */
+  critical: boolean;
 }
 
 export interface PlanningAssigneeLane {
   personnel_id: number;
   full_name: string;
+  /** JSON array of `PlanningBlockedInterval`. */
   blocked_intervals_json: string;
   commitments_json: string;
 }
@@ -8324,6 +9542,8 @@ export interface AnalyticsExecutiveDashboard {
   org_node_id: number | null;
   open_dis: AnalyticsKpiValue;
   open_wos: AnalyticsKpiValue;
+  /** Which "open OT" rule `open_wos` counts (`WoOpenRule`; backend `wo::backlog::RULE_*`). */
+  open_wos_rule: string;
   total_assets: AnalyticsKpiValue;
   overdue_items: AnalyticsKpiValue;
   pm_overdue: AnalyticsKpiValue;
@@ -8333,7 +9553,10 @@ export interface AnalyticsExecutiveDashboard {
   avg_mttr_hours: AnalyticsKpiValue;
   avg_availability: AnalyticsKpiValue;
   avg_data_quality: AnalyticsKpiValue;
+  /** OT costs settled into the budget over the horizon (Finance settlement flow; finance view). */
   maintenance_cost: AnalyticsKpiValue;
+  /** Work orders closed in the horizon whose settlement is pending; null without finance view. */
+  maintenance_cost_pending: number | null;
   reliability_snapshot_count: number;
   reliability_total_events: number;
   workload_days: AnalyticsWorkloadDay[];
@@ -9314,7 +10537,12 @@ export interface ResolveSyncConflictInput {
     | "retry_later"
     | "escalate"
     | "dismiss";
-  resolution_note?: string | null;
+  /**
+   * Why this choice was made: required for every action, at least `MIN_REASON_CHARS`
+   * (src-tauri/src/settings/catalog.rs) characters once trimmed. Stored on the conflict and in the
+   * audit event `sync.conflict_resolved`.
+   */
+  resolution_note: string;
 }
 
 export interface ReplaySyncFailuresInput {
@@ -9586,19 +10814,41 @@ export interface PermitTypeUpsertInput {
   max_duration_hours: number | null;
   mandatory_ppe_ids_json: string | null;
   mandatory_control_rules_json: string | null;
+  /** Permits of this type need a verified energy isolation before they start (LOTO). */
+  requires_energy_isolation: boolean;
+  /** Required when switching the rule off (administrator + step-up, audited). */
+  disable_isolation_reason?: string | null;
+  /** Three-person lock-removal chain: the isolation's verifier may not confirm the removal.
+   * Update: omitted/null = unchanged. Create: omitted/null = off. */
+  requires_three_person_removal?: boolean | null;
+  /** At least 10 characters (trimmed), required whenever the setting changes (including a new
+   * type created with it on); administrator (`adm.settings`) + step-up, audited. */
+  three_person_change_reason?: string | null;
 }
 
 export interface WorkPermitCreateInput {
   permit_type_id: number;
   /** Omit when `linked_work_order_id` is set: the WO equipment is used. */
   asset_id: number | null;
-  /** Omit to derive from the WO entity or the asset installation node. */
+  /** Omit to derive from the WO entity or the asset installation node. When given, it must be that
+   * node or a level above it (`PERMIT_SITE_NOT_EQUIPMENT_SITE` otherwise); a WO or asset without a
+   * usable node is refused. */
   entity_id: number | null;
   linked_work_order_id: number | null;
   /** RFC 3339, must be in the future. */
   expires_at: string | null;
 }
 
+/** Edit of a permit (`update_work_permit`); `null` keeps the current value. The equipment, the
+ * linked work order or the site changes only in `draft` or `pending_review` (any of these changes in
+ * `pending_review` sends the permit back to `draft`); the permit then moves to their
+ * site, and an `entity_id` given must be that site or a level above it (never a sibling, a level
+ * below or another site). Coded refusals (`errors:scope`): `PERMIT_EQUIPMENT_LOCKED` (approved or
+ * later), `PERMIT_SITE_LOCKED` (site change, approved or later),
+ * `PERMIT_EQUIPMENT_LOCK_FITTED` (a lock fitted, removal not verified),
+ * `PERMIT_EQUIPMENT_ISOLATIONS_PLANNED` (isolation points planned), `PERMIT_SITE_NOT_EQUIPMENT_SITE`,
+ * `PERMIT_WO_EQUIPMENT_MISMATCH` (the work order is on other equipment). Expiry edits are allowed
+ * from `draft` to `issued`. */
 export interface WorkPermitUpdateInput {
   id: number;
   linked_work_order_id: number | null;
@@ -9636,17 +10886,48 @@ export interface PermitSuspendInput {
 
 export interface PermitHandoverLogInput {
   permit_id: number;
+  /** Codes of `PERMIT.HANDOVER_ROLES` (Données de référence). */
   handed_from_role: string;
   handed_to_role: string;
+  /** At least 10 characters. */
   confirmation_note: string;
+  /** The receiving person (a user account, never the signer), optional. The signer is the session
+   * user, set by the server. */
+  received_by_id?: number | null;
+}
+
+/** Someone who may receive a permit hand-over (`list_permit_handover_receivers`): name only. */
+export interface PermitHandoverReceiver {
+  id: number;
+  display_name: string;
+}
+
+/** One page of hand-over receivers with the total that match. Receivers hold the permit close
+ * right at the permit's site (plant-wide holders included). */
+export interface PermitHandoverReceiverPage {
+  items: PermitHandoverReceiver[];
+  total: number;
+  /** `PERMIT_HANDOVER_NO_RECEIVER_AT_SITE` when nobody but the signer holds the permit close right
+   * at the permit's site (whatever the search; `errors:scope`), else null. */
+  empty_reason: string | null;
+}
+
+/** One permit hand-over role of the plant (`list_permit_handover_roles`). */
+export interface PermitHandoverRoleOption {
+  code: string;
+  label: string;
+  /** Adopted from a stored free text: to review in Données de référence. */
+  review_required: boolean;
 }
 
 export interface PermitIsolationUpsertInput {
   id: number | null;
   permit_id: number;
   isolation_point: string;
-  energy_type: string;
-  isolation_method: string;
+  /** Active `PERMIT.ENERGY_TYPES` value. */
+  energy_type_id: number;
+  /** Active `PERMIT.ISOLATION_METHODS` value (the plant's list). */
+  isolation_method_id: number;
   lock_number: string | null;
 }
 
@@ -9657,10 +10938,436 @@ export interface PermitIsolationActionInput {
   lock_number: string | null;
 }
 
+/** One attempt to reach an absent worker before a forced lock removal. */
+export interface PermitContactAttempt {
+  /** RFC 3339. */
+  at: string;
+  /** A code of `PERMIT.CONTACT_METHODS` (Données de référence). */
+  method: string;
+  /** What came of it (no answer, voicemail…). */
+  result: string;
+}
+
+/** `force_permit_isolation_removal`: the applier is absent; the session user (ptw.close at the
+ * permit's site, after a step-up) authorises `removed_by_id` to take the lock off. */
+export interface PermitForcedRemovalInput {
+  isolation_id: number;
+  expected_row_version: number;
+  /** The person who physically takes the lock off: not the applier, not the authoriser. */
+  removed_by_id: number;
+  /** At least 20 characters once trimmed. */
+  reason: string;
+  /** "Le travailleur n'est pas sur le site": must be true. */
+  worker_absent_attested: boolean;
+  /** At least one. */
+  contact_attempts: PermitContactAttempt[];
+}
+
+/** `record_permit_worker_informed`: a ptw.close holder at the site records that the worker of a
+ * forced removal was told (worker without an account, or told in person). */
+export interface PermitWorkerInformedInput {
+  isolation_id: number;
+  expected_row_version: number;
+  /** A code of `PERMIT.CONTACT_METHODS`. */
+  method: string;
+  /** RFC 3339; now when null. Not before the removal, not in the future. */
+  informed_at: string | null;
+}
+
+/** `cancel_permit_isolation`: cancels a planned line never applied (draft or waiting for review);
+ * the session user is recorded, the line is kept as "cancelled". */
+export interface PermitIsolationCancelInput {
+  isolation_id: number;
+  expected_row_version: number;
+}
+
+/** Counts of a permit list the user's sites leave out (`list_work_permits`,
+ * `list_open_permits_report`), whatever the filters; both 0 plant-wide. */
+export interface WorkPermitHiddenCounts {
+  /** Permits outside the user's sites (site-scoped roles). */
+  hidden_outside_scope: number;
+  /** Permits without an org node (plant-wide users only). */
+  hidden_without_site: number;
+}
+
 export interface WorkPermitListFilter {
   status?: string;
   permit_type_id?: number;
   asset_id?: number;
   linked_work_order_id?: number;
+  /** Code, type, equipment or work order text (searched on the server). */
+  search?: string;
   limit?: number;
+}
+
+// ─── Organization — designer actions (append-only) ────────────────────────────
+
+/** Preview action names: what `preview_org_change` accepts and returns in `OrgImpactPreview.action`. */
+export type OrgPreviewActionName = OrgImpactPreview["action"];
+
+/**
+ * `assign_org_node_responsibility` payload with handover: when `replace_active` is true the
+ * current active assignment of the same type on the node is ended in the same transaction.
+ */
+export interface AssignOrReplaceResponsibilityPayload extends AssignResponsibilityPayload {
+  replace_active: boolean;
+}
+
+// ── Asset registry upgrade (paging, commercial data, maintenance profile, spares, criticality) ──
+
+export interface AssetSearchPage {
+  items: AssetSearchResult[];
+  total: number;
+}
+
+/** Commercial and warranty data; every field is replaced as given (null clears it). */
+export interface AssetCommercialInput {
+  purchase_date: string | null;
+  warranty_expiry_date: string | null;
+  replacement_value: number | null;
+  cost_center_code: string | null;
+  notes: string | null;
+}
+
+export interface AssetCostBreakdown {
+  labor: number;
+  parts: number;
+  services: number;
+  total: number;
+}
+
+export interface AssetYearCost {
+  year: number;
+  total: number;
+  work_order_count: number;
+}
+
+export interface AssetPmPlanLink {
+  id: number;
+  code: string;
+  title: string;
+  lifecycle_status: string;
+  next_due_at: string | null;
+}
+
+export interface AssetMaintenanceProfile {
+  asset_id: number;
+  include_descendants: boolean;
+  asset_count: number;
+  work_order_count: number;
+  open_work_order_count: number;
+  /** Which "open OT" rule `open_work_order_count` counts (`WoOpenRule`). */
+  open_work_order_rule: string;
+  failure_work_order_count: number;
+  planned_work_order_count: number;
+  downtime_hours: number;
+  last_failure_at: string | null;
+  cost_lifetime: AssetCostBreakdown;
+  cost_recent: AssetCostBreakdown;
+  recent_window_months: number;
+  cost_by_year: AssetYearCost[];
+  replacement_value: number | null;
+  cost_to_replacement_ratio: number | null;
+  pm_plans: AssetPmPlanLink[];
+}
+
+export interface AssetSparePart {
+  id: number;
+  asset_id: number;
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  unit_label: string | null;
+  article_is_active: boolean;
+  quantity: number;
+  position_label: string | null;
+  is_critical_spare: boolean;
+  notes: string | null;
+  on_hand_qty: number;
+  available_qty: number;
+  min_stock: number;
+  row_version: number;
+}
+
+export interface SparePartInput {
+  quantity: number;
+  position_label: string | null;
+  is_critical_spare: boolean;
+  notes: string | null;
+}
+
+export interface ArticleAssetUsage {
+  asset_id: number;
+  asset_code: string;
+  asset_name: string;
+  quantity: number;
+  is_critical_spare: boolean;
+}
+
+export interface CriticalityMethod {
+  code: string;
+  score_min: number;
+  score_max: number;
+  class_a_min_risk: number;
+  class_b_min_risk: number;
+  class_c_min_risk: number;
+  hse_override_score: number;
+}
+
+export interface CriticalityScores {
+  safety: number;
+  environment: number;
+  production: number;
+  quality: number;
+  cost: number;
+  likelihood: number;
+}
+
+export interface CriticalityResult {
+  method_code: string;
+  consequence: number;
+  risk_score: number;
+  resulting_class: "A" | "B" | "C" | "D";
+  hse_override: boolean;
+}
+
+export interface CriticalityAssessment {
+  id: number;
+  asset_id: number;
+  method_code: string;
+  safety_score: number;
+  environment_score: number;
+  production_score: number;
+  quality_score: number;
+  cost_score: number;
+  likelihood_score: number;
+  risk_score: number;
+  resulting_class: string;
+  previous_class: string | null;
+  rationale: string | null;
+  assessed_by_name: string | null;
+  assessed_at: string;
+}
+
+export interface AssessCriticalityResult {
+  assessment: CriticalityAssessment;
+  asset: Asset;
+}
+
+// ── Planning: weekly schedule (step D) ───────────────────────────────────────────────────
+
+/** Why new work enters a frozen week (a code of PLANNING.BREAK_IN_REASONS) and its evidence. */
+export interface CommitBreakIn {
+  reason: string;
+  approved_by_user_id?: number | null;
+  dangerous_override_reason?: string | null;
+}
+
+/** Releases a slot (back to the backlog) or cancels a job, with its reason. */
+export interface EndCommitmentInput {
+  commitment_id: number;
+  expected_row_version: number;
+  reason: string;
+}
+
+export interface SiteWeek {
+  entity_id: number;
+  week_start: string;
+  week_end: string;
+  working_days: string[];
+  last_working_day: string | null;
+}
+
+export interface WeeklySchedule {
+  id: number;
+  entity_id: number;
+  week_start: string;
+  week_end: string;
+  /** draft | approved | frozen | published */
+  status: string;
+  approved_by_id: number | null;
+  approved_at: string | null;
+  frozen_at: string | null;
+  /** null with frozen_at set: frozen automatically */
+  frozen_by_id: number | null;
+  frozen_without_approval: number;
+  baseline_no: number;
+  published_by_id: number | null;
+  published_at: string | null;
+  unfreeze_requested_by_id: number | null;
+  unfreeze_requested_at: string | null;
+  unfreeze_reason: string | null;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WeeklyScheduleEvent {
+  id: number;
+  action: string;
+  actor_id: number | null;
+  actor_name: string | null;
+  approver_id: number | null;
+  approver_name: string | null;
+  reason: string | null;
+  baseline_no: number | null;
+  created_at: string;
+}
+
+export interface WeeklyCrew {
+  team_id: number;
+  team_code: string;
+  team_name: string;
+}
+
+export interface WeeklyScheduleView {
+  week: SiteWeek;
+  site_name: string;
+  schedule: WeeklySchedule | null;
+  /** Frozen without approval and not approved after the fact yet. */
+  awaiting_approval: boolean;
+  freeze_due_at: string;
+  crews: WeeklyCrew[];
+  commitments: ScheduleCommitment[];
+  events: WeeklyScheduleEvent[];
+}
+
+export interface WeeklyScheduleRef {
+  site_id: number;
+  day: string;
+  expected_row_version?: number | null;
+}
+
+export interface UnfreezeRequestInput extends WeeklyScheduleRef {
+  reason: string;
+}
+
+/** Planning KPIs against the frozen weekly baseline (planning step E). */
+export interface PlanningKpiFilter {
+  site_id?: number | null;
+  /** Weeks whose first day is in `[from_day, to_day]` (`YYYY-MM-DD`). */
+  from_day: string;
+  to_day: string;
+  /** Leave out the weeks frozen without approval and not approved since. */
+  exclude_unapproved?: boolean;
+}
+
+export interface WeekKpi {
+  weekly_schedule_id: number;
+  site_id: number;
+  site_name: string;
+  week_start: string;
+  week_end: string;
+  status: string;
+  awaiting_approval: boolean;
+  /** Unfrozen for editing since its last freeze: measured on that last baseline. */
+  reopened: boolean;
+  baseline_no: number;
+  baseline_jobs: number;
+  baseline_hours: number;
+  /** Baseline jobs later released or cancelled (counted as not done). */
+  baseline_released_jobs: number;
+  /** null while the week is not over. */
+  done_hours: number | null;
+  compliance_pct: number | null;
+  break_in_jobs: number;
+  break_in_hours: number;
+  break_in_pct: number | null;
+  displaced_jobs: number;
+  available_hours: number;
+  overtime_hours: number;
+  loading_pct: number | null;
+}
+
+export interface PlanningKpiTotals {
+  weeks: number;
+  weeks_judged: number;
+  weeks_awaiting_approval: number;
+  weeks_reopened: number;
+  weeks_not_frozen: number;
+  baseline_hours: number;
+  baseline_released_jobs: number;
+  judged_baseline_hours: number;
+  done_hours: number;
+  compliance_pct: number | null;
+  break_in_hours: number;
+  break_in_pct: number | null;
+  displaced_jobs: number;
+  available_hours: number;
+  overtime_hours: number;
+  loading_pct: number | null;
+}
+
+export interface PlanningKpis {
+  weeks: WeekKpi[];
+  totals: PlanningKpiTotals;
+}
+
+export interface UnfreezeDecisionInput extends WeeklyScheduleRef {
+  approve: boolean;
+  comment?: string | null;
+}
+
+// ── Records without a site (CMMS Advisor decision Q1, step 6) ─────────────────
+
+/** Kinds of record an organisation administrator can give a site to (`org::site_assignment`). */
+export type NoSiteKind = "work_order" | "request" | "planning_window";
+
+/** How many records have no site, per kind (`count_records_without_site`). */
+export interface NoSiteCounts {
+  work_orders: number;
+  requests: number;
+  /** Windows without a site flagged "Site to re-enter" (they lost their site). */
+  planning_windows_to_review: number;
+  /** Windows without a site not flagged: plant-wide windows, valid as they are. */
+  planning_windows_plant_wide: number;
+}
+
+/** A record without a site, as the "Records without a site" screen lists it. */
+export interface NoSiteRecord {
+  kind: NoSiteKind;
+  id: number;
+  code: string | null;
+  /** Work-order or request title; the window type for a window. */
+  title: string | null;
+  status_code: string | null;
+  created_at: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  equipment_id: number | null;
+  equipment_code: string | null;
+  equipment_name: string | null;
+  /** The equipment's current location: a suggestion the administrator confirms. */
+  suggested_node_id: number | null;
+  suggested_node_name: string | null;
+  to_review: boolean;
+}
+
+export interface RecordsWithoutSite {
+  kind: NoSiteKind;
+  counts: NoSiteCounts;
+  records: NoSiteRecord[];
+  /** At most this many records are listed (`counts` gives the full number). */
+  listed_limit: number;
+  /** At most this many records are given a site in one batch. */
+  max_batch: number;
+  /** The reason has at least this many characters. */
+  reason_min_chars: number;
+  /** The reason has at most this many characters. */
+  reason_max_chars: number;
+  nodes: AssignableScopeNode[];
+}
+
+export interface AssignSiteInput {
+  kind: NoSiteKind;
+  record_ids: number[];
+  org_node_id: number;
+  reason: string;
+}
+
+export interface AssignSiteResult {
+  kind: NoSiteKind;
+  org_node_id: number;
+  assigned: number[];
+  counts: NoSiteCounts;
 }

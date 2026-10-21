@@ -1,8 +1,7 @@
 //! RCM / FMECA → PM loop persistence: decision logic record, PM revision and WO with links,
 //! criticality number.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::AppError;
 use crate::pm::domain::{CreatePmPlanInput, CreatePmPlanVersionInput};
@@ -29,9 +28,7 @@ struct Fixture {
 }
 
 async fn setup() -> Fixture {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+    let db = crate::db::test_db::seeded().await;
     for sql in [
         "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
          VALUES (1, 'rl-model', 1, 'active', datetime('now'), datetime('now'))",
@@ -79,6 +76,7 @@ async fn setup() -> Fixture {
             required_skills_json: Some("[]".into()),
             required_tools_json: None,
             estimated_duration_hours: Some(1.5),
+            planned_crew_size: None,
             estimated_labor_cost: None,
             estimated_parts_cost: None,
             estimated_service_cost: None,
@@ -315,6 +313,71 @@ async fn pm_revision_and_work_order_keep_their_source() {
         )
         .await,
         "not carried out by preventive maintenance",
+    );
+}
+
+#[tokio::test]
+async fn pm_revision_copies_a_flagless_legacy_part_list_as_required() {
+    let f = setup().await;
+    let rv = scalar(&f.db, "SELECT row_version FROM rcm_decisions").await;
+    apply_rcm_decision_logic(
+        &f.db,
+        ApplyRcmLogicInput {
+            decision_id: f.decision_id,
+            expected_row_version: rv,
+            answers: answers(),
+            selected_tactic: None,
+            justification: None,
+        },
+    )
+    .await
+    .expect("apply");
+    // The latest version holds a part list written before migration 231 (or received from a PC
+    // that has not run it): a bare code and an entry without the required / optional flag.
+    f.db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE pm_plan_versions SET required_parts_json = ? WHERE pm_plan_id = ?",
+        [
+            r#"["FLT-01", {"article_code":"BRG-6204","quantity":2}]"#.into(),
+            f.plan_id.into(),
+        ],
+    ))
+    .await
+    .expect("legacy part list");
+
+    let action = create_pm_revision_from_source(
+        &f.db,
+        PmRevisionFromSourceInput {
+            source_type: "rcm_decision".into(),
+            source_id: f.decision_id,
+            pm_plan_id: f.plan_id,
+            trigger_definition_json: None,
+            change_note: "Add vibration route".into(),
+        },
+    )
+    .await
+    .expect("the revision is created from a legacy part list, not refused");
+    let version_id = action.pm_plan_version_id.expect("version");
+    let copied: String =
+        f.db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT required_parts_json FROM pm_plan_versions WHERE id = ?",
+            [version_id.into()],
+        ))
+        .await
+        .expect("q")
+        .expect("row")
+        .try_get("", "required_parts_json")
+        .expect("parts");
+    crate::pm::wo_content::validate_required_parts_json(Some(&copied)).expect("the copy carries the flags");
+    let parts = crate::pm::wo_content::parse_required_parts(Some(&copied));
+    assert_eq!(
+        parts
+            .iter()
+            .map(|p| (p.code.as_str(), p.quantity, p.required))
+            .collect::<Vec<_>>(),
+        vec![("FLT-01", None, true), ("BRG-6204", Some(2.0), true)],
+        "the same parts, each read as required"
     );
 }
 

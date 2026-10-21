@@ -9,13 +9,18 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
-  WoEmergencyReassignInput,
+  SetWorkOrderTypeNatureInput,
+  UpdateWorkOrderStatusInput,
   WoApprovePlanningInput,
   WoAssignInput,
+  WoBacklogHeatmap,
+  WoBacklogHeatmapInput,
   WoCancelInput,
+  WoCompletionGate,
   WoCostSummary,
   WoCreateInput,
   WoDraftUpdateInput,
+  WoEmergencyReassignInput,
   WoEvaluateReadinessInput,
   WoGetResponse,
   WoHoldInput,
@@ -24,26 +29,20 @@ import type {
   WoMarkReadyInput,
   WoMechCompleteInput,
   WoMechCompleteResponse,
-  WoCompletionGate,
   WoPauseInput,
   WoPlanInput,
   WoPreflightError,
   WoReadinessResult,
-  WoReturnToPlanningInput,
   WoResumeInput,
+  WoReturnToPlanningInput,
   WoStartInput,
   WoStatsPayload,
   WoSubmitInput,
-  CreateWorkOrderTypeInput,
-  UpdateWorkOrderPriorityInput,
-  UpdateWorkOrderStatusInput,
-  UpdateWorkOrderTypeInput,
-  WorkOrderPriorityOption,
-  WorkOrderStatusOption,
-  WorkOrderTypeOption,
   WorkOrder,
-  WoBacklogHeatmap,
-  WoBacklogHeatmapInput,
+  WorkOrderStatusOption,
+  WorkOrderSubtypeOption,
+  WorkOrderTypeOption,
+  WorkOrderTypeToReview,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -86,6 +85,10 @@ export const WorkOrderSchema = z.object({
   planned_start: z.string().nullable(),
   planned_end: z.string().nullable(),
   shift: z.enum(["morning", "afternoon", "night", "full_day"]).nullable(),
+  shift_class_version_id: z.number().nullable().default(null),
+  shift_class_label: z.string().nullable().default(null),
+  shift_start: z.string().nullable().default(null),
+  shift_end: z.string().nullable().default(null),
   scheduled_at: z.string().nullable(),
   actual_start: z.string().nullable(),
   actual_end: z.string().nullable(),
@@ -94,11 +97,13 @@ export const WorkOrderSchema = z.object({
   closed_at: z.string().nullable(),
   cancelled_at: z.string().nullable(),
   expected_duration_hours: z.number().nullable(),
+  planned_crew_size: z.number().nullable(),
   actual_duration_hours: z.number().nullable(),
   active_labor_hours: z.number().nullable(),
   total_waiting_hours: z.number().nullable(),
   downtime_hours: z.number().nullable(),
   planned_downtime_hours: z.number().nullable().optional(),
+  requires_shutdown: z.boolean().default(false),
   labor_cost: z.number().nullable(),
   parts_cost: z.number().nullable(),
   service_cost: z.number().nullable(),
@@ -115,6 +120,11 @@ export const WorkOrderSchema = z.object({
   reopen_count: z.number(),
   last_closed_at: z.string().nullable(),
   requires_permit: z.boolean(),
+  permit_rule_code: z.string().nullable(),
+  permit_rule_permit_type: z.string().nullable(),
+  permit_rule_cleared_by_id: z.number().nullable(),
+  permit_rule_cleared_at: z.string().nullable(),
+  permit_rule_clear_reason: z.string().nullable(),
   entity_sync_id: z.string().nullable().optional(),
   closeout_validation_profile_id: z.number().nullable().optional(),
   closeout_validation_passed: z.boolean().optional(),
@@ -129,7 +139,23 @@ export const WorkOrderSchema = z.object({
   status_color: z.string().nullable().optional(),
   type_code: z.string().nullable().optional(),
   type_label: z.string().nullable().optional(),
-  urgency_level: z.number().nullable().optional(),
+  nature_code: z
+    .enum([
+      "corrective_immediate",
+      "corrective_deferred",
+      "preventive_predetermined",
+      "preventive_condition_based",
+      "preventive_predictive",
+      "improvement",
+    ])
+    .nullable()
+    .optional(),
+  nature_label: z.string().nullable().optional(),
+  subtype_id: z.number().nullable().optional(),
+  subtype_code: z.string().nullable().optional(),
+  subtype_label: z.string().nullable().optional(),
+  urgency_code: z.enum(["emergency", "urgent", "high", "normal", "low"]).nullable().optional(),
+  urgency_rank: z.number().nullable().optional(),
   urgency_label: z.string().nullable().optional(),
   urgency_color: z.string().nullable().optional(),
   asset_code: z.string().nullable().optional(),
@@ -147,6 +173,14 @@ export const WorkOrderSchema = z.object({
   schedule_commitment_id: z.number().nullable().optional(),
   schedule_frozen: z.boolean().nullable().optional(),
   lifecycle_state: z.string().nullable().optional(),
+  source_inspection_round_id: z.number().nullable().optional(),
+  source_inspection_round_code: z.string().nullable().optional(),
+  source_inspection_round_title: z.string().nullable().optional(),
+  source_inspection_round_scheduled_at: z.string().nullable().optional(),
+  source_pm_plan_id: z.number().nullable().optional(),
+  source_pm_plan_code: z.string().nullable().optional(),
+  source_pm_plan_title: z.string().nullable().optional(),
+  source_pm_occurrence_id: z.number().nullable().optional(),
 });
 
 export const WoTransitionRowSchema = z.object({
@@ -165,6 +199,8 @@ export const WoTransitionRowSchema = z.object({
 const WoListPageSchema = z.object({
   items: z.array(WorkOrderSchema),
   total: z.number(),
+  hidden_outside_scope: z.number(),
+  hidden_without_site: z.number(),
 });
 
 const WoGetResponseSchema = z.object({
@@ -172,22 +208,32 @@ const WoGetResponseSchema = z.object({
   transitions: z.array(WoTransitionRowSchema),
 });
 
+const NatureCodeSchema = z.enum([
+  "corrective_immediate",
+  "corrective_deferred",
+  "preventive_predetermined",
+  "preventive_condition_based",
+  "preventive_predictive",
+  "improvement",
+]);
+
 const WorkOrderTypeOptionSchema = z.object({
   id: z.number(),
   code: z.string(),
   label: z.string(),
+  label_en: z.string(),
+  nature: NatureCodeSchema.nullable(),
+  nature_label: z.string().nullable(),
+  nature_label_en: z.string().nullable(),
   is_system: z.boolean(),
   is_active: z.boolean(),
 });
 
-const WorkOrderPriorityOptionSchema = z.object({
+const WorkOrderSubtypeOptionSchema = z.object({
   id: z.number(),
-  level: z.number(),
   code: z.string(),
   label: z.string(),
-  label_fr: z.string(),
-  hex_color: z.string(),
-  is_system: z.boolean(),
+  nature: NatureCodeSchema.nullable(),
   is_active: z.boolean(),
 });
 
@@ -288,41 +334,37 @@ export async function getWo(id: number): Promise<WoGetResponse> {
   return WoGetResponseSchema.parse(raw) as WoGetResponse;
 }
 
+const WorkOrderTypeToReviewSchema = z.object({
+  id: z.number(),
+  code: z.string(),
+  label: z.string(),
+  is_active: z.boolean(),
+  work_order_count: z.number(),
+});
+
+/** OT types without a maintenance nature, with their use (reference or OT view right). */
+export async function listWorkOrderTypesToReview(): Promise<WorkOrderTypeToReview[]> {
+  const raw = await invoke<unknown>("list_work_order_types_to_review");
+  return z.array(WorkOrderTypeToReviewSchema).parse(raw);
+}
+
+/** Give a plant's own OT type its nature (ref.manage, reason, audited). */
+export async function setWorkOrderTypeNature(
+  input: SetWorkOrderTypeNatureInput,
+): Promise<WorkOrderTypeOption> {
+  const raw = await invoke<unknown>("set_work_order_type_nature", { input });
+  return WorkOrderTypeOptionSchema.parse(raw) as WorkOrderTypeOption;
+}
+
 export async function listWorkOrderTypes(): Promise<WorkOrderTypeOption[]> {
   const raw = await invoke<unknown>("list_work_order_types");
   return z.array(WorkOrderTypeOptionSchema).parse(raw) as WorkOrderTypeOption[];
 }
 
-export async function createWorkOrderType(
-  input: CreateWorkOrderTypeInput,
-): Promise<WorkOrderTypeOption> {
-  const raw = await invoke<unknown>("create_work_order_type", { input });
-  return WorkOrderTypeOptionSchema.parse(raw) as WorkOrderTypeOption;
-}
-
-export async function updateWorkOrderType(
-  id: number,
-  input: UpdateWorkOrderTypeInput,
-): Promise<WorkOrderTypeOption> {
-  const raw = await invoke<unknown>("update_work_order_type", { id, input });
-  return WorkOrderTypeOptionSchema.parse(raw) as WorkOrderTypeOption;
-}
-
-export async function deleteWorkOrderType(id: number): Promise<void> {
-  await invoke("delete_work_order_type", { id });
-}
-
-export async function listWorkOrderPriorities(): Promise<WorkOrderPriorityOption[]> {
-  const raw = await invoke<unknown>("list_work_order_priorities");
-  return z.array(WorkOrderPriorityOptionSchema).parse(raw) as WorkOrderPriorityOption[];
-}
-
-export async function updateWorkOrderPriority(
-  id: number,
-  input: UpdateWorkOrderPriorityInput,
-): Promise<WorkOrderPriorityOption> {
-  const raw = await invoke<unknown>("update_work_order_priority", { id, input });
-  return WorkOrderPriorityOptionSchema.parse(raw) as WorkOrderPriorityOption;
+/** The plant's OT sub-types (`WORK.ORDER_SUBTYPES`) with the nature each belongs to. */
+export async function listWorkOrderSubtypes(): Promise<WorkOrderSubtypeOption[]> {
+  const raw = await invoke<unknown>("list_work_order_subtypes");
+  return z.array(WorkOrderSubtypeOptionSchema).parse(raw) as WorkOrderSubtypeOption[];
 }
 
 export async function listWorkOrderStatuses(): Promise<WorkOrderStatusOption[]> {
@@ -354,9 +396,117 @@ export async function updateWoDraft(input: WoDraftUpdateInput): Promise<WorkOrde
 
 // â”€â”€ Planning & scheduling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+const WoShiftOptionsSchema = z.object({
+  team_id: z.number().nullable(),
+  day: z.string().nullable(),
+  options: z.array(
+    z.object({
+      class_version_id: z.number(),
+      schedule_class_id: z.number(),
+      class_label: z.string(),
+      shift_start: z.string(),
+      shift_end: z.string(),
+      break_minutes: z.number(),
+      net_hours: z.number(),
+      members: z.number(),
+      members_available: z.number(),
+      /** A night shift that began the day before and still runs at the planned start. */
+      starts_previous_day: z.boolean().default(false),
+    }),
+  ),
+  reason: z.enum(["no_team", "no_day", "no_shift"]).nullable(),
+});
+export type WoShiftOptionsResult = z.infer<typeof WoShiftOptionsSchema>;
+
+/**
+ * The shift windows the work order's assigned team — or `teamId`, the team being assigned —
+ * works at `plannedStart` (local `YYYY-MM-DDTHH:mm` as typed, or the stored instant; default: its
+ * planned start), from the members' Classes horaires. An early-morning start also lists the
+ * previous night's shift still running. Empty with a reason when there is no team, no date, or
+ * nobody works then.
+ */
+export async function listWoShiftOptions(
+  woId: number,
+  plannedStart: string | null = null,
+  teamId: number | null = null,
+): Promise<WoShiftOptionsResult> {
+  const raw = await invoke<unknown>("list_wo_shift_options", { woId, plannedStart, teamId });
+  return WoShiftOptionsSchema.parse(raw);
+}
+
 export async function planWo(input: WoPlanInput): Promise<WorkOrder> {
   try {
     const raw = await invoke<unknown>("plan_wo", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+/** Input for `set_wo_permit_requirement` (actor comes from the session). */
+export interface WoPermitRequirementInput {
+  wo_id: number;
+  expected_row_version: number;
+  requires_permit: boolean;
+}
+
+/** Statuses in which the permit / LOTO requirement can still change (backend mirror). */
+export const PERMIT_REQUIREMENT_EDITABLE_STATUSES: ReadonlySet<string> = new Set([
+  "draft",
+  "planning",
+  "ready",
+]);
+
+export interface WoPermitRuleClearInput {
+  wo_id: number;
+  expected_row_version: number;
+  /** Why the plant rule does not apply here (10 characters or more). */
+  reason: string;
+}
+
+/**
+ * Clears the permit flag a plant rule set at conversion (`ptw.issue`, a reason, before execution
+ * starts); kept on the work order and in its audit trail.
+ */
+export async function clearWoPermitRuleFlag(input: WoPermitRuleClearInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("clear_wo_permit_rule_flag", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+export async function setWoPermitRequirement(input: WoPermitRequirementInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("set_wo_permit_requirement", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+export interface WoRequiresShutdownInput {
+  woId: number;
+  requiresShutdown: boolean;
+  expectedRowVersion: number;
+}
+
+/** Statuses in which "needs shutdown" can still change (backend mirror: the WO is prepared). */
+export const SHUTDOWN_FLAG_EDITABLE_STATUSES: ReadonlySet<string> = new Set([
+  "draft",
+  "planning",
+  "ready",
+]);
+
+/** Flags (or unflags) a work order as needing the equipment stopped (`ot.edit`). */
+export async function setWoRequiresShutdown(input: WoRequiresShutdownInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("set_wo_requires_shutdown", {
+      woId: input.woId,
+      requiresShutdown: input.requiresShutdown,
+      expectedRowVersion: input.expectedRowVersion,
+    });
     return WorkOrderSchema.parse(raw) as WorkOrder;
   } catch (err) {
     rethrowIfVersionConflict(err);

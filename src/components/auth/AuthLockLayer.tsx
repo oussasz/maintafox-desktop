@@ -3,8 +3,8 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
+import { AuthAlert, AuthButton } from "@/components/auth/shell/AuthPrimitives";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
-import { Button } from "@/components/ui/button";
 import { mfAuth, mfInput } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { cn } from "@/lib/utils";
@@ -112,7 +112,10 @@ export function AuthLockLayer() {
     >
       <div className="absolute inset-0 bg-surface-0/90 backdrop-blur-sm pointer-events-auto" />
       <div
-        className={cn("relative z-[2147483001] w-full max-w-md pointer-events-auto", mfAuth.card)}
+        className={cn(
+          "mf-auth relative z-[2147483001] w-full max-w-md pointer-events-auto",
+          mfAuth.card,
+        )}
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="mb-6 flex justify-center">
@@ -121,7 +124,10 @@ export function AuthLockLayer() {
 
         <div className="mb-4 flex items-start gap-3">
           {mode === "permission" ? (
-            <ShieldAlert className="mt-0.5 h-5 w-5 text-amber-700" aria-hidden="true" />
+            <ShieldAlert
+              className="mt-0.5 h-5 w-5 text-[var(--mfa-orange-dark)]"
+              aria-hidden="true"
+            />
           ) : (
             <Lock className="mt-0.5 h-5 w-5 text-primary" aria-hidden="true" />
           )}
@@ -140,12 +146,9 @@ export function AuthLockLayer() {
         </div>
 
         {session.error ? (
-          <div
-            role="alert"
-            className="mb-4 rounded-md bg-status-danger/10 px-3 py-2 text-sm text-status-danger"
-          >
-            {session.error}
-          </div>
+          <AuthAlert tone="danger" className="mb-4">
+            <p>{session.error}</p>
+          </AuthAlert>
         ) : null}
 
         {canTryPasswordResume && preInterrupt?.username ? (
@@ -166,21 +169,19 @@ export function AuthLockLayer() {
                 required
               />
             </div>
-            <Button
+            <AuthButton
               type="submit"
-              className="w-full"
+              loading={session.isLoading}
               disabled={session.isLoading || password.trim().length === 0}
             >
               {session.isLoading ? t("login.form.submitting") : t("interceptor.actions.resume")}
-            </Button>
+            </AuthButton>
           </form>
         ) : null}
 
         <div className="mt-4 flex flex-col gap-2">
-          <Button
-            type="button"
+          <AuthButton
             variant="secondary"
-            className="w-full"
             onClick={() => {
               // Full login can recover more edge cases; route change is explicit and user-driven.
               clearLock();
@@ -188,7 +189,7 @@ export function AuthLockLayer() {
             }}
           >
             {t("interceptor.actions.openLogin")}
-          </Button>
+          </AuthButton>
 
           <div className="flex items-center justify-between gap-3 text-xs text-text-muted">
             <Link to="/" className="hover:text-text-secondary" onClick={() => clearLock()}>

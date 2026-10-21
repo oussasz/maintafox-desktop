@@ -18,17 +18,20 @@ export type ReferenceTypeId =
   | "equipment.criticality"
   | "equipment.status"
   | "di.origin"
-  | "di.symptom"
-  | "di.priority"
   | "di.impact"
   | "di.request_type"
   | "di.disposition"
+  | "di.return_reason"
+  | "di.deferral_reason"
   | "personnel.skills"
   | "org.schedule_class"
   | "work.symptom"
+  | "work.order_subtype"
   | "work.failure_mode"
   | "work.failure_cause"
   | "work.failure_effect"
+  | "work.failure_mechanism"
+  | "work.detection_method"
   | "work.delay_reason"
   | "work.part_unused_reason"
   | "inventory.supplier_status"
@@ -38,7 +41,8 @@ export type ReferenceTypeId =
   | "inventory.abc_class"
   | "inventory.xyz_class"
   | "inventory.equivalence_type"
-  | "inventory.document_link_purpose";
+  | "inventory.document_link_purpose"
+  | "measure.unit";
 
 export interface ReferenceTypeConfig {
   /** Stable form-facing type id. */
@@ -60,7 +64,7 @@ export interface ReferenceTypeConfig {
    * Optional Manager value extensions for this domain (e.g. weekly schedule pattern).
    * Drives ReferenceValueEditor columns — not combobox create flags.
    */
-  valueExtensions?: ReadonlyArray<"schedule_pattern">;
+  valueExtensions?: ReadonlyArray<"schedule_pattern" | "maintenance_nature" | "measure_unit">;
   /** Empty-state copy key suffix under reference.combobox.types.{id} */
   emptyMessageFr: string;
   emptyMessageEn: string;
@@ -123,24 +127,6 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     emptyMessageFr: "Aucune origine disponible",
     emptyMessageEn: "No origin available",
   },
-  "di.symptom": {
-    id: "di.symptom",
-    domainCode: "DI.SYMPTOM",
-    entityLabelFr: "symptôme",
-    entityLabelEn: "symptom",
-    gender: "m",
-    emptyMessageFr: "Aucun symptôme disponible",
-    emptyMessageEn: "No symptom available",
-  },
-  "di.priority": {
-    id: "di.priority",
-    domainCode: "DI.PRIORITY",
-    entityLabelFr: "priorité",
-    entityLabelEn: "priority",
-    gender: "f",
-    emptyMessageFr: "Aucune priorité disponible",
-    emptyMessageEn: "No priority available",
-  },
   "di.impact": {
     id: "di.impact",
     domainCode: "DI.IMPACT_LEVEL",
@@ -156,6 +142,8 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     entityLabelFr: "type de demande",
     entityLabelEn: "request type",
     gender: "m",
+    // Each request type may name the EN 13306 nature of the OT it becomes (semantic_tag).
+    valueExtensions: ["maintenance_nature"],
     emptyMessageFr: "Aucun type de demande disponible",
     emptyMessageEn: "No request type available",
   },
@@ -167,6 +155,24 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     gender: "f",
     emptyMessageFr: "Aucune disposition disponible",
     emptyMessageEn: "No disposition available",
+  },
+  "di.return_reason": {
+    id: "di.return_reason",
+    domainCode: "DI.RETURN_REASON",
+    entityLabelFr: "motif de retour",
+    entityLabelEn: "return reason",
+    gender: "m",
+    emptyMessageFr: "Aucun motif de retour disponible",
+    emptyMessageEn: "No return reason available",
+  },
+  "di.deferral_reason": {
+    id: "di.deferral_reason",
+    domainCode: "DI.DEFERRAL_REASON",
+    entityLabelFr: "motif de report",
+    entityLabelEn: "deferral reason",
+    gender: "m",
+    emptyMessageFr: "Aucun motif de report disponible",
+    emptyMessageEn: "No deferral reason available",
   },
   "personnel.skills": {
     id: "personnel.skills",
@@ -186,6 +192,17 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     valueExtensions: ["schedule_pattern"],
     emptyMessageFr: "Aucune classe horaire disponible",
     emptyMessageEn: "No schedule class available",
+  },
+  "work.order_subtype": {
+    id: "work.order_subtype",
+    domainCode: "WORK.ORDER_SUBTYPES",
+    entityLabelFr: "sous-type d'OT",
+    entityLabelEn: "work-order sub-type",
+    gender: "m",
+    // Each sub-type hangs under one protected EN 13306 maintenance nature.
+    parentDomainCode: "WORK.MAINTENANCE_NATURES",
+    emptyMessageFr: "Aucun sous-type pour cette nature",
+    emptyMessageEn: "No sub-type for this nature",
   },
   "work.symptom": {
     id: "work.symptom",
@@ -222,6 +239,24 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     gender: "m",
     emptyMessageFr: "Aucun effet disponible",
     emptyMessageEn: "No failure effect available",
+  },
+  "work.failure_mechanism": {
+    id: "work.failure_mechanism",
+    domainCode: "WORK.FAILURE_MECHANISMS",
+    entityLabelFr: "mécanisme de défaillance",
+    entityLabelEn: "failure mechanism",
+    gender: "m",
+    emptyMessageFr: "Aucun mécanisme disponible",
+    emptyMessageEn: "No failure mechanism available",
+  },
+  "work.detection_method": {
+    id: "work.detection_method",
+    domainCode: "WORK.DETECTION_METHODS",
+    entityLabelFr: "méthode de détection",
+    entityLabelEn: "detection method",
+    gender: "f",
+    emptyMessageFr: "Aucune méthode de détection disponible",
+    emptyMessageEn: "No detection method available",
   },
   "work.delay_reason": {
     id: "work.delay_reason",
@@ -312,6 +347,17 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     gender: "m",
     emptyMessageFr: "Aucun objet disponible",
     emptyMessageEn: "No document link purpose available",
+  },
+  "measure.unit": {
+    id: "measure.unit",
+    domainCode: "MEASURE.UNITS",
+    entityLabelFr: "unité de mesure",
+    entityLabelEn: "unit of measure",
+    gender: "f",
+    // Symbol, EN label, base standard unit and factor of a plant unit (reference::units).
+    valueExtensions: ["measure_unit"],
+    emptyMessageFr: "Aucune unité disponible",
+    emptyMessageEn: "No unit available",
   },
 };
 

@@ -6,7 +6,7 @@
  * so rendering does not depend on `convertFileSrc` / asset-protocol (WebView2 + dev server edge cases).
  */
 
-import { Camera, ChevronLeft, ChevronRight, Loader2, Trash2, Upload, X } from "lucide-react";
+import { Camera, ChevronLeft, ChevronRight, Loader2, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -14,21 +14,16 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { MediaFileStateBadge, useMediaFileStates } from "@/components/sync/MediaFileStatus";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { describeAppError } from "@/lib/app-error";
 import {
   deleteAssetPhoto,
   listAssetPhotos,
   readAssetPhotoPreview,
   uploadAssetPhoto,
 } from "@/services/asset-lifecycle-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { AssetPhoto, MediaFileState } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -65,7 +60,7 @@ function AssetPhotoImage({ photo, variant, fileState, onRetried }: AssetPhotoIma
           console.error("[AssetPhotoGallery] read_asset_photo_preview failed", {
             photoId: photo.id,
             expectedDiskPath: photo.file_path,
-            error: toErrorMessage(err),
+            error: describeAppError(err).title,
           });
         }
         if (!cancelled) setFailed(true);
@@ -119,15 +114,17 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
   const [uploading, setUploading] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   const loadPhotos = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await listAssetPhotos(assetId);
       setPhotos(data);
-    } catch {
-      setPhotos([]);
+    } catch (err) {
+      // Said in place of the grid: a failed load is never "no photo yet".
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -165,7 +162,7 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
       setPhotos((prev) => [photo, ...prev]);
       onToast?.(t("photos.uploaded"));
     } catch (err) {
-      onToast?.(toErrorMessage(err), "destructive");
+      onToast?.(describeAppError(err).title, "destructive");
     } finally {
       setUploading(false);
     }
@@ -173,19 +170,15 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
 
   // ── Delete ──────────────────────────────────────────────────────────────
 
-  const handleDelete = async (photoId: number) => {
-    setDeleting(true);
-    try {
-      await deleteAssetPhoto(photoId);
-      setPhotos((prev) => prev.filter((p) => p.id !== photoId));
-      setDeleteConfirmId(null);
-      if (lightboxIndex !== null) setLightboxIndex(null);
-      onToast?.(t("photos.deleted"));
-    } catch (err) {
-      onToast?.(toErrorMessage(err), "destructive");
-    } finally {
-      setDeleting(false);
-    }
+  /** Runs inside ConfirmDialog: a failure keeps it open (the IPC toast reports it). */
+  const confirmDelete = async () => {
+    if (deleteConfirmId === null) return;
+    const photoId = deleteConfirmId;
+    await deleteAssetPhoto(photoId);
+    setPhotos((prev) => prev.filter((p) => p.id !== photoId));
+    setDeleteConfirmId(null);
+    setLightboxIndex(null);
+    onToast?.(t("photos.deleted"));
   };
 
   // ── Lightbox keyboard nav ───────────────────────────────────────────────
@@ -197,8 +190,6 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
         setLightboxIndex((i) => (i !== null && i > 0 ? i - 1 : i));
       } else if (e.key === "ArrowRight") {
         setLightboxIndex((i) => (i !== null && i < photos.length - 1 ? i + 1 : i));
-      } else if (e.key === "Escape") {
-        setLightboxIndex(null);
       }
     };
     window.addEventListener("keydown", handler);
@@ -239,10 +230,14 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
       </CardHeader>
 
       <CardContent>
-        {loading ? (
-          <div className="flex h-32 items-center justify-center">
-            <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
-          </div>
+        {loading && photos.length === 0 ? (
+          <LoadingState className="h-32" />
+        ) : loadError != null ? (
+          <ErrorState
+            error={loadError}
+            title={t("photos.loadError")}
+            onRetry={() => void loadPhotos()}
+          />
         ) : photos.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-8 text-text-muted">
             <Camera className="h-8 w-8" />
@@ -261,6 +256,7 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
                 key={photo.id}
                 type="button"
                 className="group relative aspect-square overflow-hidden rounded-md border bg-surface-2 focus:outline-none focus:ring-2 focus:ring-ring"
+                aria-label={t("photos.open", { name: photo.caption ?? photo.file_name })}
                 onClick={() => setLightboxIndex(idx)}
               >
                 <AssetPhotoImage
@@ -275,112 +271,67 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
         )}
       </CardContent>
 
-      {/* ── Lightbox overlay ─────────────────────────────────────────── */}
-      {lightboxPhoto && (
-        <dialog
-          open
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 m-0 p-0 max-w-none max-h-none w-screen h-screen border-none"
-          onClick={() => setLightboxIndex(null)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setLightboxIndex(null);
-          }}
-          aria-label={t("photos.lightboxLabel")}
-        >
-          <div
-            className="relative max-h-[90vh] max-w-[90vw]"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={() => {}}
-            role="presentation"
-          >
-            <AssetPhotoImage
-              photo={lightboxPhoto}
-              variant="lightbox"
-              fileState={fileStates.get(lightboxPhoto.relative_path)}
-            />
-
-            {/* Navigation arrows */}
-            {lightboxIndex !== null && lightboxIndex > 0 && (
-              <button
-                type="button"
-                className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setLightboxIndex(lightboxIndex - 1);
-                }}
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </button>
-            )}
-            {lightboxIndex !== null && lightboxIndex < photos.length - 1 && (
-              <button
-                type="button"
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setLightboxIndex(lightboxIndex + 1);
-                }}
-              >
-                <ChevronRight className="h-5 w-5" />
-              </button>
-            )}
-
-            {/* Close button */}
-            <button
-              type="button"
-              className="absolute right-2 top-2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70"
-              onClick={() => setLightboxIndex(null)}
-            >
-              <X className="h-4 w-4" />
-            </button>
-
-            {/* Delete button (permission-gated) */}
-            <PermissionGate permission={P.EQ_MANAGE}>
-              <button
-                type="button"
-                className="absolute bottom-3 right-3 rounded-md bg-status-danger/90 px-3 py-1.5 text-xs text-white hover:bg-status-danger"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setDeleteConfirmId(lightboxPhoto.id);
-                }}
-              >
-                <Trash2 className="mr-1 inline-block h-3 w-3" />
-                {t("photos.delete")}
-              </button>
-            </PermissionGate>
-
-            {/* Caption / filename */}
-            <div className="absolute bottom-3 left-3 rounded-md bg-black/50 px-2 py-1 text-xs text-white">
-              {lightboxPhoto.caption ?? lightboxPhoto.file_name}
+      {/* ── Lightbox: shared Dialog (focus trap, Escape, labelled) ───────── */}
+      <Dialog open={lightboxPhoto != null} onOpenChange={(o) => !o && setLightboxIndex(null)}>
+        <DialogContent className="max-h-[94vh] max-w-[94vw] border-none bg-black/90 p-2 sm:max-w-[94vw]">
+          <DialogTitle className="sr-only">{t("photos.lightboxLabel")}</DialogTitle>
+          {lightboxPhoto ? (
+            <div className="relative flex items-center justify-center">
+              <AssetPhotoImage
+                photo={lightboxPhoto}
+                variant="lightbox"
+                fileState={fileStates.get(lightboxPhoto.relative_path)}
+              />
+              {lightboxIndex !== null && lightboxIndex > 0 ? (
+                <button
+                  type="button"
+                  aria-label={t("photos.previous")}
+                  title={t("photos.previous")}
+                  className="absolute left-2 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => setLightboxIndex(lightboxIndex - 1)}
+                >
+                  <ChevronLeft className="h-5 w-5" aria-hidden />
+                </button>
+              ) : null}
+              {lightboxIndex !== null && lightboxIndex < photos.length - 1 ? (
+                <button
+                  type="button"
+                  aria-label={t("photos.next")}
+                  title={t("photos.next")}
+                  className="absolute right-2 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => setLightboxIndex(lightboxIndex + 1)}
+                >
+                  <ChevronRight className="h-5 w-5" aria-hidden />
+                </button>
+              ) : null}
+              <PermissionGate permission={P.EQ_MANAGE}>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="absolute bottom-3 right-3 h-10 gap-1"
+                  onClick={() => setDeleteConfirmId(lightboxPhoto.id)}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden />
+                  {t("photos.delete")}
+                </Button>
+              </PermissionGate>
+              <div className="absolute bottom-3 left-3 rounded-md bg-black/60 px-2 py-1 text-xs text-white">
+                {lightboxPhoto.caption ?? lightboxPhoto.file_name}
+              </div>
             </div>
-          </div>
-        </dialog>
-      )}
-
-      {/* ── Delete confirm dialog ────────────────────────────────────── */}
-      <Dialog
-        open={deleteConfirmId !== null}
-        onOpenChange={(isOpen) => !isOpen && setDeleteConfirmId(null)}
-      >
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{t("photos.deleteConfirmTitle")}</DialogTitle>
-            <DialogDescription>{t("photos.deleteConfirmDescription")}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteConfirmId(null)} disabled={deleting}>
-              {t("decommission.cancel")}
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={deleting}
-              onClick={() => deleteConfirmId !== null && void handleDelete(deleteConfirmId)}
-            >
-              {deleting && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
-              {t("photos.delete")}
-            </Button>
-          </DialogFooter>
+          ) : null}
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={deleteConfirmId !== null}
+        onOpenChange={(o) => !o && setDeleteConfirmId(null)}
+        title={t("photos.deleteConfirmTitle")}
+        description={t("photos.deleteConfirmDescription")}
+        confirmLabel={t("photos.delete")}
+        destructive
+        onConfirm={confirmDelete}
+      />
     </Card>
   );
 }

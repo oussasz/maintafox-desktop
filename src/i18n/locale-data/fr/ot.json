@@ -1,4 +1,64 @@
 {
+  "siteScope": {
+    "hidden": {
+      "outsideScope_one": "{{count}} OT n’est pas affiché : hors de vos sites.",
+      "outsideScope_other": "{{count}} OT ne sont pas affichés : hors de vos sites.",
+      "withoutSite_one": "{{count}} OT n’est pas affiché : il n’a pas de site.",
+      "withoutSite_other": "{{count}} OT ne sont pas affichés : ils n’ont pas de site.",
+      "allWorkOrders": "Ces nombres portent sur tous les OT, quels que soient les filtres ou la recherche.",
+      "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l’usine pour les voir."
+    },
+    "noSite": {
+      "badge": "À revoir : sans site",
+      "hint": "OT enregistré sans site (son équipement n’était installé nulle part). Seuls les utilisateurs ayant un rôle valable pour toute l’usine le voient et peuvent agir dessus."
+    }
+  },
+  "permitRule": {
+    "requiredBy": "Permis exigé par la règle {{rule}} (type de permis {{permitType}}).",
+    "requiredByNoType": "Permis exigé par la règle {{rule}}.",
+    "requiredShort": "Requis (règle {{rule}})",
+    "clearHint": "Seule une personne habilitée à délivrer les permis peut lever cette exigence, avec un motif, avant le démarrage.",
+    "checkboxLocked": "Exigé par la règle {{rule}} : se lève avec « Lever l'exigence » ci-dessous.",
+    "clear": "Lever l'exigence",
+    "clearTitle": "Lever l'exigence de permis ?",
+    "clearBody": "{{code}} pourra démarrer sans permis malgré la règle {{rule}}. Le motif, la date et votre nom sont conservés sur l'OT et dans son historique.",
+    "clearConfirm": "Lever l'exigence",
+    "reason": "Motif",
+    "reasonHint": "Au moins {{min}} caractères : pourquoi la règle ne s'applique pas à ce travail.",
+    "cleared": "Exigence de la règle {{rule}} levée le {{date}} : {{reason}}"
+  },
+  "shutdownRequirement": {
+    "sectionTitle": "Arrêt de l'équipement",
+    "label": "Nécessite un arrêt",
+    "short": "Arrêt",
+    "badge": "Arrêt nécessaire",
+    "required": "Nécessaire",
+    "notRequired": "Non nécessaire",
+    "help": "Si coché, la planification vérifie l'OT contre les fenêtres d'arrêt comme un plan de MP : avertissement sans fenêtre d'arrêt, et l'engagement demande une fenêtre d'arrêt ouverte.",
+    "frozen": "Ne se modifie que pendant la préparation de l'OT (brouillon, planification ou prêt).",
+    "noPermission": "Vous n'avez pas le droit de modifier cet OT.",
+    "confirmOnTitle": "Marquer l'OT comme nécessitant un arrêt ?",
+    "confirmOnBody": "{{code}} ne pourra être engagé que dans une fenêtre d'arrêt ouverte. Le changement est enregistré dans l'historique de l'OT.",
+    "confirmOffTitle": "Retirer « Nécessite un arrêt » ?",
+    "confirmOffBody": "{{code}} ne sera plus vérifié contre les fenêtres d'arrêt. Le changement est enregistré dans l'historique de l'OT.",
+    "confirmOn": "Marquer",
+    "confirmOff": "Retirer"
+  },
+  "permitRequirement": {
+    "sectionTitle": "Sécurité",
+    "label": "Permis de travail / consignation (LOTO) requis",
+    "short": "Permis / LOTO",
+    "required": "Requis",
+    "notRequired": "Non requis",
+    "help": "Si coché, l'OT ne pourra pas démarrer tant qu'un permis de travail lié n'est pas actif (isolations posées et vérifiées).",
+    "frozen": "Figé depuis le démarrage de l'exécution.",
+    "noPermission": "Vous n'avez pas le droit de modifier cet OT.",
+    "fromSafetyDi": "Activé automatiquement : la demande d'origine signalait un risque sécurité."
+  },
+  "woPeople": {
+    "none": "Aucun membre du personnel actif n'a de compte utilisateur : reliez le personnel à un compte dans Personnel.",
+    "loadFailed": "La liste du personnel n'a pas pu être chargée."
+  },
   "page": {
     "title": "Ordres de travail",
     "titleDetail": "Détail de l'ordre de travail",
@@ -44,6 +104,17 @@
       "closedAt": "Date clôture"
     },
     "filters": {
+      "scopeNotClosed": "Pas encore clôturés",
+      "scopeOverdue": "En retard (ouverts, fin prévue dépassée)",
+      "mix": "Nature des travaux",
+      "mixValue": {
+        "planned": "Planifiés (préventif et amélioration)",
+        "reactive": "Réactifs (correctif)",
+        "emergency": "Urgents (correctif immédiat)"
+      },
+      "scope": "Périmètre",
+      "scopeOpen": "Ouverts (travail à faire)",
+      "equipment": "Équipement",
       "lifecycle": "Cycle de vie",
       "status": "Statut",
       "type": "Type",
@@ -62,15 +133,15 @@
     },
     "type": {
       "label": "Type",
-      "loading": "Chargement..."
+      "loading": "Chargement...",
+      "nature": "Nature : {{nature}}"
+    },
+    "subtype": {
+      "label": "Sous-type",
+      "none": "Aucun sous-type"
     },
     "urgency": {
-      "label": "Urgence",
-      "veryLow": "Très basse",
-      "low": "Basse",
-      "medium": "Normale",
-      "high": "Haute",
-      "critical": "Critique"
+      "label": "Urgence"
     },
     "equipment": {
       "label": "Équipement",
@@ -125,16 +196,6 @@
     "technicallyVerified": "Techniquement vérifié",
     "verified": "Vérifié"
   },
-  "type": {
-    "corrective": "Correctif",
-    "preventive": "Préventif",
-    "predictive": "Prédictif",
-    "improvement": "Amélioration",
-    "inspection": "Inspection",
-    "overhaul": "Révision générale",
-    "conditionBased": "Conditionnel",
-    "permit": "Permis de travail"
-  },
   "action": {
     "create": "Nouvel OT",
     "edit": "Modifier",
@@ -170,7 +231,7 @@
     "afternoon": "Après-midi",
     "night": "Nuit",
     "fullDay": "Journée",
-    "full_day": "Journée"
+    "full_day": "Journée complète"
   },
   "planning": {
     "timing": "Planification horaire",
@@ -181,7 +242,23 @@
     "plannedStart": "Début prévu",
     "plannedEnd": "Fin prévue",
     "selectShift": "Sélectionner le poste",
+    "shiftNone": "Aucun poste",
+    "shiftOption": "{{label}} · {{window}} · {{hours}} h · {{members}} pers.",
+    "shiftCurrentNotOffered": "{{label}} {{window}} (l'équipe ne le travaille pas ce jour-là)",
+    "shiftLegacy": "Ancien poste : {{label}}. Choisissez un poste de la classe horaire de l'équipe pour replanifier.",
+    "shiftNoTeam": "Affectez l'équipe pour choisir l'un de ses postes.",
+    "shiftNoDay": "Saisissez le début prévu pour voir les postes de l'équipe ce jour-là.",
+    "shiftNoShift": "Personne de l'équipe n'a de poste de classe horaire ce jour-là.",
+    "shiftOpenTeam": "Ouvrir l'équipe",
+    "shiftLoadFailed": "Les postes de l'équipe n'ont pas pu être chargés.",
+    "shiftForNewTeam": "Postes de l'équipe en cours d'affectation : le choix est enregistré avec l'affectation.",
+    "shiftPreviousNight": "poste de nuit commencé la veille",
+    "shiftOutsideWindow": "Le début ou la fin prévus sont en dehors du poste choisi. Vérifiez les heures, ou choisissez un autre poste.",
+    "shiftTimetableChanged": "Horaire modifié depuis la planification : planifié {{planned}}, l'horaire indique maintenant {{now}}. Vérifiez les heures.",
     "expectedDuration": "Durée estimée (heures)",
+    "plannedCrewSize": "Effectif prévu (personnes)",
+    "plannedCrewSizeHint": "Le planning réserve la durée × l'effectif sur la capacité de l'équipe.",
+    "plannedCrewSizeInvalid": "L'effectif est un nombre entier de personnes, de 1 à {{max}}.",
     "urgency": "Urgence",
     "selectUrgency": "Sélectionner l'urgence",
     "assignment": "Planning & équipe (SSOT Planning)",
@@ -233,12 +310,56 @@
     "cancelledStubHint": "Cet ordre de travail a été annulé. Les champs de planification ne sont plus modifiables. Consultez l'onglet Audit pour l'historique.",
     "readinessChecklist": "Contrôle de prêt",
     "readinessRecommended": "recommandé",
+    "readinessRule": {
+      "approval_required": "Validation de la préparation",
+      "assignment_completed": "Responsable ou équipe affectés",
+      "equipment_assigned": "Équipement identifié",
+      "material_readiness": "Pièces disponibles / réservées",
+      "permit_approved": "Permis validé",
+      "planning_completed": "Travail préparé",
+      "crew_qualified": "Équipe habilitée pour ce travail",
+      "schedule_defined": "Dates planifiées"
+    },
     "readinessBlocking": "Impossible de marquer Prêt — conditions bloquantes :",
     "readinessBlockingHint": "Corrigez les points ci-dessous, puis réessayez Marquer comme Prêt.",
     "readinessBlockingEmpty": "Le contrôle de prêt a échoué. Vérifiez la checklist du plan, puis réessayez.",
     "sessionRequired": "Session utilisateur requise.",
     "plannedDowntimeHours": "Arrêt planifié (heures)",
     "plannedDowntimeHoursPlaceholder": "Durée d'arrêt de production prévue en heures",
+    "materialReadiness": {
+      "title": "Disponibilité des pièces",
+      "ready": "Prêt",
+      "yes": "Oui",
+      "no": "Non",
+      "readyPct": "Disponible",
+      "reservedPct": "Réservé",
+      "expectedArrival": "Arrivée prévue"
+    },
+    "shortage": {
+      "title": "Manque de pièces",
+      "description": "Certaines pièces planifiées ne sont pas entièrement disponibles en stock.",
+      "createRequisition": "Créer une demande d'achat",
+      "requisitionCreated": "Demande d'achat créée",
+      "columns": {
+        "article": "Article",
+        "requested": "Demandé",
+        "available": "Disponible",
+        "shortage": "Manquant"
+      }
+    },
+    "parts": {
+      "noMatch": "Aucun article correspondant",
+      "stockLocation": "Emplacement de stock",
+      "locationPlaceholder": "Emplacement",
+      "plannedQty": "Qté prévue",
+      "unitCost": "Coût unitaire",
+      "cancelLine": "Annuler la ligne",
+      "cancelTitle": "Annuler cette ligne de pièce ?",
+      "cancelDescription": "{{part}} × {{qty}} {{unit}} sort du plan : sa réservation de stock est libérée et la ligne reste dans l’historique de l’OT avec le statut Annulée. Pour replanifier la pièce, ajoutez une nouvelle ligne.",
+      "cancelConfirm": "Annuler la ligne de pièce",
+      "cancelledStatus": "Annulée",
+      "cancelledHint": "Annulée pendant la préparation de l’OT : hors totaux, disponibilité et réservations."
+    },
     "stockReserved": "Stock réservé",
     "noStockReservation": "Pas de réservation de stock sur cette ligne.",
     "error": {
@@ -357,7 +478,8 @@
       "invalidTimes": "Date, heure de début et de fin sont obligatoires.",
       "endAfterStart": "L'heure de fin doit être après l'heure de début.",
       "breakTooLong": "La pause ne peut pas dépasser le temps travaillé.",
-      "breakNote": "Pause : {{minutes}} min"
+      "breakNote": "Pause : {{minutes}} min",
+      "overtime": "Heures supplémentaires (au taux majoré)"
     },
     "rateMissing": "Taux manquant",
     "pauseTitle": "Mettre en pause l'OT",
@@ -436,6 +558,7 @@
     },
     "parts": {
       "plannedTitle": "Planifié",
+      "cancelledTitle": "Lignes planifiées annulées",
       "actualTitle": "Réellement utilisées",
       "actualEmpty": "Aucune pièce enregistrée comme utilisée.",
       "nonePlanned": "Aucune pièce planifiée",
@@ -458,6 +581,26 @@
         "labelRequired": "Le libellé est obligatoire.",
         "qty": "Quantité utilisée",
         "save": "Ajouter",
+        "stockHint": "Choisissez l'article et l'emplacement d'où il est sorti : la quantité est réservée et sortie du stock. Utilisez « Hors stock » seulement pour un article non géré en magasin.",
+        "modeLabel": "Origine de la pièce",
+        "modeStock": "Article en stock",
+        "modeNonStock": "Hors stock",
+        "searchArticle": "Rechercher un article",
+        "searchPlaceholder": "Code ou désignation",
+        "article": "Article",
+        "articlePlaceholder": "Choisir un article",
+        "articlesLoading": "Chargement des articles…",
+        "articlesFailed": "La liste des articles n'a pas pu être chargée.",
+        "noArticleMatch": "Aucun article actif ne correspond.",
+        "location": "Sortie depuis",
+        "locationPlaceholder": "Choisir un emplacement",
+        "locationOption": "{{warehouse}} / {{location}} — disponible {{available}} {{unit}}",
+        "noStock": "Aucun stock disponible pour cet article.",
+        "nonStockHint": "Article non géré en stock : aucune sortie de magasin ne sera enregistrée.",
+        "articleRequired": "Choisissez un article.",
+        "locationRequired": "Choisissez l'emplacement de sortie.",
+        "notEnoughStock": "Quantité supérieure au disponible ({{available}} {{unit}}).",
+        "saveIssue": "Ajouter et sortir du stock",
         "error": "Impossible d'ajouter la pièce."
       }
     },
@@ -512,6 +655,9 @@
       "empty": "Aucun événement d'exécution pour le moment.",
       "partUsed": "Pièce utilisée : {{label}}",
       "partNotUsed": "Pièce marquée non utilisée : {{label}}",
+      "partCancelled": "Ligne de pièce planifiée annulée : {{label}}",
+      "partSetRequired": "Ligne de pièce rendue obligatoire : {{label}}",
+      "partSetOptional": "Ligne de pièce rendue optionnelle : {{label}}",
       "partAdded": "Pièce ajoutée en cours : {{label}}",
       "partPlanned": "Pièce planifiée : {{label}}",
       "taskAdded": "Tâche ajoutée : {{label}}",
@@ -586,6 +732,13 @@
     "fmecaOverrideSignerPasswordPlaceholder": "Confirmation du mot de passe signataire",
     "fmecaOverrideHint": "Requis uniquement si les pièces suggérées critiques FMECA n'ont pas été consommées. Le signataire doit être Superviseur/Admin, distinct du clôturant et ré-authentifié.",
     "closeWo": "Fermer l'OT",
+    "confirmVerifyTitle": "Enregistrer la vérification technique ?",
+    "confirmVerifyDescription": "{{code}} : résultat « {{result}} »{{rts}}. La vérification est enregistrée à votre nom dans le journal d'audit.",
+    "confirmVerifyReturnToService": ", équipement remis en service",
+    "confirmVerifyAction": "Enregistrer la vérification",
+    "confirmCloseTitle": "Fermer cet OT ?",
+    "confirmCloseDescription": "{{code}} sera fermé et passera en lecture seule. Seul un utilisateur autorisé à rouvrir les OT pourra le modifier ensuite. La fermeture est enregistrée à votre nom dans le journal d'audit.",
+    "confirmCloseAction": "Fermer l'OT",
     "reopenTitle": "Rouvrir l'ordre de travail",
     "reopenHint": "Rouvrir un OT completed pour poursuite d'exécution ou reprise de planification. Un motif est obligatoire.",
     "reopenTarget": "Revenir à",
@@ -599,9 +752,50 @@
     "reopenWindowPassed": "Clôturé il y a plus de {{days}} jour(s) (délai de réouverture) : créez un nouvel ordre de travail.",
     "reopenWindowMissing": "Le paramètre de délai de réouverture est absent ou invalide (Paramètres › Ordres de travail).",
     "linkedPm": "Généré par le plan préventif {{code}} — {{title}}",
+    "iso": {
+      "mechanism": "Mécanisme de défaillance (ISO 14224)",
+      "mechanismPlaceholder": "Choisir un mécanisme",
+      "detection": "Méthode de détection (ISO 14224)",
+      "detectionPlaceholder": "Comment la défaillance a été détectée"
+    },
+    "linkedPermitsLabel": "Permis de travail :",
     "linkedPermits": "Permis de travail : {{list}}"
   },
   "audit": {
+    "title": "Historique de l’ordre de travail",
+    "permitRequired": "Permis / consignation désormais exigé",
+    "permitNotRequired": "Permis / consignation plus exigé",
+    "actions": {
+      "permit_rule_flag_cleared": "Exigence de permis (règle) levée",
+      "shutdown_required_set": "OT marqué « nécessite un arrêt »",
+      "shutdown_required_cleared": "« Nécessite un arrêt » retiré",
+      "created": "Ordre de travail créé",
+      "submitted": "Soumis à la planification",
+      "planned": "Planifié",
+      "planning_approved": "Planification approuvée",
+      "marked_ready": "Déclaré prêt",
+      "returned_to_planning": "Renvoyé en planification",
+      "assigned": "Affecté",
+      "emergency_reassigned": "Réaffectation d’urgence",
+      "started": "Travaux démarrés",
+      "paused": "Mis en pause",
+      "held": "Mis en attente",
+      "resumed": "Repris",
+      "mechanically_completed": "Travaux terminés",
+      "failure_detail_saved": "Détails de défaillance enregistrés",
+      "verification_saved": "Vérification technique enregistrée",
+      "verified": "Vérifié",
+      "closed": "Clôturé",
+      "reopened": "Réouvert",
+      "cancelled": "Annulé",
+      "rca_updated": "Analyse des causes mise à jour",
+      "attachment_uploaded": "Pièce jointe ajoutée",
+      "service_cost_updated": "Coût de prestation mis à jour",
+      "permit_requirement_changed": "Exigence de permis modifiée",
+      "site_moved": "Déplacé avec son nouvel équipement vers un autre emplacement",
+      "equipment_changed": "Équipement modifié",
+      "other": "Modification enregistrée"
+    },
     "created": "Créé le",
     "updated": "Dernière mise à jour",
     "closed": "Clôturé le",
@@ -630,6 +824,10 @@
       "history": "Historique"
     },
     "fields": {
+      "subtype": "Sous-type",
+      "sourceInspectionRound": "Tournée d'inspection",
+      "sourcePmPlan": "Constat de préventif (plan)",
+      "nature": "Nature (EN 13306)",
       "number": "Numéro",
       "title": "Titre",
       "description": "Description",
@@ -661,9 +859,16 @@
     "submitForPlanning": "Soumettre pour planification",
     "markReady": "Marquer comme Prêt"
   },
-  "print": {
-    "button": "Imprimer",
-    "title": "Fiche d'impression OT"
+  "remainingTime": {
+    "label": "Temps restant estimé (heures, facultatif)",
+    "placeholder": "ex. 2,5",
+    "hint": "Sert uniquement à vérifier que les permis couvrent la fin du travail (maintenant + ce temps). Vide : la durée prévue complète de l’OT. Les dates planifiées et la durée prévue ne sont pas modifiées ; la valeur est enregistrée dans l’historique à votre nom.",
+    "invalid": "Saisissez un nombre d’heures supérieur à 0, ou laissez le champ vide."
+  },
+  "resumeDialog": {
+    "title": "Reprendre l’ordre de travail",
+    "description": "Les permis doivent couvrir le travail jusqu’à sa fin : la plus tardive entre la fin prévue et maintenant + la durée prévue, ou + le temps restant estimé saisi ci-dessous.",
+    "cancel": "Annuler"
   },
   "cost": {
     "title": "Résumé des coûts",
@@ -694,13 +899,14 @@
     "lifecycleDistribution": "Répartition par cycle de vie",
     "statusDistribution": "Répartition par statut",
     "urgencyDistribution": "Répartition par urgence",
+    "noUrgency": "Sans urgence",
     "completionTrend": "Tendance de clôture",
     "backlogByEntity": "Arriéré par entité",
     "backlogHeatmap": {
       "title": "Carte de charge du carnet",
       "subtitle": "Travail planifié par jour face à la capacité des équipes ({{weeks}} prochaines semaines).",
       "noCapacity": "Aucune règle de capacité d'équipe n'est définie (Planification) : les heures planifiées sont affichées sans contrôle de surcharge.",
-      "hours": "{{hours}} h planifiées",
+      "hours": "{{hours}} h de durée estimée",
       "capacity": "capacité {{hours}} h",
       "overloaded": "Surchargé",
       "orders_one": "{{count}} ordre",
@@ -727,6 +933,7 @@
     }
   },
   "contextMenu": {
+    "actionsFor": "Actions pour {{code}}",
     "viewDetail": "Voir détail",
     "edit": "Modifier",
     "start": "Démarrer",
@@ -795,13 +1002,8 @@
     "emptyCancelled": "Aucun ordre de travail annulé",
     "unassigned": "Non assigné",
     "loadMore": "Charger plus ({{count}} restants)",
+    "statusFromDetailHint": "Cliquez sur une carte pour ouvrir l'OT : les changements de statut se font depuis sa fiche, où chaque étape vérifie ses conditions (permis, pièces, motifs).",
     "transitionNotAllowed": "Impossible de déplacer \"{{code}}\" de \"{{from}}\" vers {{to}}. Transition non permise."
-  },
-  "shift": {
-    "morning": "Matin",
-    "afternoon": "Après-midi",
-    "night": "Nuit",
-    "full_day": "Journée complète"
   },
   "print": {
     "pageTitle": "Fiche OT",
@@ -860,7 +1062,9 @@
     "laborCost": "Main-d'œuvre",
     "partsCost": "Pièces",
     "serviceCost": "Services",
-    "totalCost": "Total"
+    "totalCost": "Total",
+    "button": "Imprimer",
+    "title": "Fiche d'impression OT"
   },
   "lifecycle": {
     "title": "État du cycle de vie PRD (déduit des faits de l'OT)",

@@ -4,7 +4,8 @@
   },
   "views": {
     "gantt": "Tableau Gantt",
-    "calendar": "Vue calendrier"
+    "calendar": "Vue calendrier",
+    "week": "Programme hebdomadaire"
   },
   "calendar": {
     "today": "Aujourd'hui",
@@ -71,16 +72,23 @@
     "risk": "Risque",
     "emptyReady": "Aucun candidat prêt.",
     "emptyBlocked": "Aucun candidat bloqué.",
-    "readyHint": "Cliquez une carte Prêt pour l'engager au planning."
+    "readyHint": "Cliquez une carte Prêt pour l'engager au planning.",
+    "blockedHint": "Ouvrez un élément bloqué pour lever ses blocages dans l'ordre de travail ou la demande.",
+    "openSource": "Ouvrir {{code}}",
+    "estimate": "{{hours}} h × {{crew}} pers.",
+    "noCrew": "{{hours}} h · effectif à saisir",
+    "notEstimated": "Non estimé",
+    "why": "Pourquoi c'est bloqué"
   },
   "blockers": {
-    "parts_missing": "Pièces",
-    "skills_missing": "Compétences",
-    "permit_missing": "Permis",
-    "window_conflict": "Fenêtre",
-    "prerequisite_blocked": "Prérequis",
-    "assignee_unavailable": "Indisponible",
-    "capacity_exceeded": "Capacité"
+    "missing_critical_part": "Pièces critiques non réservées",
+    "no_qualified_technician": "Aucun technicien qualifié",
+    "permit_not_ready": "Permis non prêt",
+    "prerequisite_incomplete": "Prérequis incomplets",
+    "locked_window": "Pas de fenêtre d'arrêt",
+    "double_booking": "Double affectation",
+    "not_estimated": "Non estimé",
+    "location_unknown": "Lieu inconnu"
   },
   "board": {
     "unassignedLane": "Équipe — pas encore affecté à une personne",
@@ -90,7 +98,11 @@
     "emptyAllCrews": "Aucun engagement usine sur cet horizon — choisissez une carte Prêt et engagez vers une équipe cible.",
     "unknownCrew": "Équipe inconnue",
     "noCrewTitle": "Sélectionnez une équipe du tableau",
-    "noCrewHint": "Utilisez le contexte planning ci-dessus pour choisir Toutes les équipes ou une équipe unique et la période Du–Au."
+    "noCrewHint": "Utilisez le contexte planning ci-dessus pour choisir Toutes les équipes ou une équipe unique et la période Du–Au.",
+    "absenceTag": {
+      "critical": "Absent — critique pour la planification",
+      "plain": "Absent"
+    }
   },
   "commitment": {
     "formTitle": "Engager au planning",
@@ -113,7 +125,7 @@
     "budgetThresholdHint": "Plafond optionnel de coût main-d'œuvre. Si l'estimation calculée le dépasse, un avertissement d'écart est enregistré.",
     "estimatedLaborCost": "Coût main-d'œuvre estimé",
     "estimatedLaborCostValue": "{{value}}",
-    "estimatedLaborCostHint": "Calculé automatiquement (taux de l'affecté × heures engagées). La valeur définitive est confirmée par le serveur à l'engagement.",
+    "estimatedLaborCostHint": "Une estimation : heures de main-d'œuvre du travail (durée × effectif) × taux de l'affecté. Le serveur la confirme à l'engagement.",
     "estimatedLaborCostNeedAssignee": "Choisissez un affecté avec une grille de taux, ou consultez la fourchette du candidat si disponible.",
     "estimatedLaborCostNeedSlot": "Saisissez le début et la fin engagés pour calculer l'estimation.",
     "estimatedLaborCostNoRate": "Pas de grille de taux pour cet affecté — estimation indisponible tant qu'un taux n'est pas configuré.",
@@ -122,6 +134,15 @@
     "matchingSkills": "{{count}} compétences correspondantes",
     "costRange": "Coût main-d'œuvre estimé : {{min}} – {{max}}",
     "capacityRemaining": "Capacité équipe ce jour : {{remaining}} h restantes sur {{available}} h.",
+    "noTeamCapacity": "Cette équipe n'a aucune heure de travail ce jour-là : aucun de ses membres n'a de classe horaire, ou elle n'a pas de membre.",
+    "setUpTeamCapacity": "Définir les classes horaires de ses membres",
+    "capacityBasis": {
+      "roster": "selon les classes horaires",
+      "rest_day": "jour de repos",
+      "holiday": "jour férié",
+      "no_schedule": "aucune classe horaire",
+      "no_members": "équipe sans membre"
+    },
     "capacityBlockedHint": "Ce créneau dépasse la capacité restante de l'équipe ({{remaining}} h). Raccourcissez la fin.",
     "capacityDayFull": "Plus de capacité équipe ce jour",
     "horizonHint": "Seules les dates de la période Du–Au du tableau sont sélectionnables. La durée est limitée par la capacité journalière restante de l'équipe.",
@@ -146,8 +167,13 @@
       "outsideHorizon": "Le début et la fin engagés doivent être dans la période Du–Au du tableau.",
       "assigneeNotOnCrew": "L'affecté doit être membre de l'équipe du tableau sélectionnée.",
       "capacityExceeded": "Ce créneau dépasse la capacité restante de l'équipe pour ce jour ({{remaining}} h restantes). Choisissez un créneau plus court ou un autre jour.",
-      "budgetInvalid": "Le seuil budgétaire doit être un nombre positif ou nul."
-    }
+      "budgetInvalid": "Le seuil budgétaire doit être un nombre positif ou nul.",
+      "capacityExceededDay": "Capacité insuffisante le {{day}} : {{share}} h nécessaires, {{remaining}} h libres."
+    },
+    "notEstimated": "Ce travail n'est pas estimé : saisissez sa durée et son effectif sur l'OT ou le PM avant de l'engager.",
+    "labourHours": "{{hours}} h de main-d'œuvre ({{duration}} h × {{crew}} pers.)",
+    "shiftTimeShort": "Chaque personne travaille {{duration}} h, mais le créneau ne contient que {{shift}} h de poste : allongez le créneau ou prévoyez des heures supplémentaires.",
+    "capacityByDay": "{{day}} : {{share}} h de ce travail, {{remaining}} h libres sur {{available}} h"
   },
   "gantt": {
     "capacityTitle": "Capacité équipe",
@@ -158,28 +184,39 @@
     "laneHeader": "Affecté",
     "overrideReasonPrompt": "Motif de dérogation double-affectation",
     "defaultReason": "Planning gelé par le planificateur.",
-    "freezeOverlayTitle": "Fenêtres verrouillées"
+    "freezeOverlayTitle": "Fenêtres verrouillées",
+    "noCapacity": "pas de capacité"
   },
   "windows": {
-    "title": "Fenêtres de production",
+    "title": "Fenêtres de planification",
     "detailTitle": "Fenêtre verrouillée",
     "detailEmpty": "Détails de la fenêtre indisponibles.",
     "type": "Type de fenêtre",
     "start": "Début",
     "end": "Fin",
     "reason": "Motif de verrouillage",
-    "add": "Ajouter une fenêtre verrouillée",
+    "add": "Ajouter la fenêtre",
     "locked": "Verrouillée",
-    "empty": "Aucune fenêtre de production.",
+    "empty": "Aucune fenêtre de planification.",
     "types": {
       "production": "Production",
       "maintenance": "Maintenance",
       "shutdown": "Arrêt",
       "freeze": "Gel"
-    }
+    },
+    "typePlaceholder": "Choisissez un type",
+    "site": "Site",
+    "plantWide": "Toute l'usine",
+    "equipment": "Équipement (facultatif)",
+    "equipmentHint": "Laissez vide pour tout le site.",
+    "lock": "Fenêtre verrouillée",
+    "lockedHint": "Aucun travail ne peut être engagé sur ce site ou cet équipement pendant la fenêtre.",
+    "openHint": "Ouverte : les travaux qui exigent l'arrêt de l'équipement peuvent y être placés (fenêtre de maintenance, arrêt programmé).",
+    "scopeReview": "Site à ressaisir",
+    "scopeReviewHint": "Cette fenêtre a été créée avant que le site soit enregistré correctement : elle s'applique à toute l'usine jusqu'à ce que son site soit ressaisi."
   },
   "breakIns": {
-    "title": "Break-ins",
+    "title": "Insertions d'urgence",
     "commitment": "Engagement",
     "selectCommitment": "Sélectionner un engagement",
     "reason": "Code motif",
@@ -192,13 +229,9 @@
     "dangerousOverrideReason": "Motif de dérogation dangereuse",
     "create": "Enregistrer le break-in",
     "empty": "Aucun break-in pour la période sélectionnée.",
-    "reasons": {
-      "emergency": "Urgence",
-      "safety": "Sécurité",
-      "production_loss": "Perte de production",
-      "regulatory": "Réglementaire",
-      "other": "Autre"
-    }
+    "acknowledgeRefusals": "Déroger à ces refus avec le motif ci-dessus",
+    "urgentHint": "Motif urgent : indiquez un approbateur ou un motif de dérogation dangereuse.",
+    "inserted": "Ajouté en semaine gelée :"
   },
   "freeze": {
     "title": "Geler la période de planning",
@@ -210,7 +243,9 @@
     "title": "Déroger au double-booking",
     "description": "Ce déplacement entre en conflit avec une affectation existante. Indiquez un motif d'audit pour continuer.",
     "reason": "Motif de dérogation",
-    "confirm": "Confirmer la dérogation"
+    "confirm": "Confirmer la dérogation",
+    "assigneeTitle": "Déroger aux contrôles de l'intervenant",
+    "assigneeDescription": "Vous dérogez à ces refus pour ce technicien. Indiquez le motif ; il est journalisé."
   },
   "inspector": {
     "title": "Détail de l'engagement",
@@ -224,7 +259,9 @@
     "nearestWindow": "Fenêtre faisable la plus proche",
     "auditTitle": "Journal des changements",
     "auditEmpty": "Aucune entrée d'audit pour cet engagement.",
-    "openOnBoard": "Ouvrir sur le tableau"
+    "openOnBoard": "Ouvrir sur le tableau",
+    "sourceWorkOrder": "Ordre de travail :",
+    "statusReason": "Motif"
   },
   "audit": {
     "actions": {
@@ -232,11 +269,196 @@
       "reschedule_commitment": "Replanifié",
       "override_double_booking": "Dérogation double-booking",
       "freeze_schedule_period": "Période gelée",
-      "create_break_in": "Break-in enregistré"
+      "create_break_in": "Break-in enregistré",
+      "release_commitment": "Créneau libéré",
+      "cancel_commitment": "Engagement annulé",
+      "close_commitment": "Clôturé (travail terminé)",
+      "break_in_insert": "Entrée en semaine gelée (break-in)"
     }
   },
   "dialogs": {
     "cancel": "Annuler",
     "close": "Fermer"
+  },
+  "deepLink": {
+    "woNotInBacklog": "Cet ordre de travail n'est pas dans le backlog de planification (pas encore prêt à planifier, déjà engagé ou hors filtre).",
+    "openWo": "Ouvrir l'ordre de travail",
+    "dismiss": "Fermer"
+  },
+  "assignee": {
+    "hoursLeft": "{{hours}} h restantes",
+    "notWorking": "ne travaille pas ({{reason}})",
+    "reasons": {
+      "working": "au travail",
+      "absent": "absent",
+      "rest_day": "repos",
+      "site_rest_day": "repos du site",
+      "holiday": "jour férié",
+      "no_schedule": "sans horaire",
+      "timetable_not_set_up": "horaire non configuré",
+      "not_employed": "hors contrat",
+      "outside_shift": "hors de son poste"
+    },
+    "issues": {
+      "PLANNING_ASSIGNEE_NOT_IN_CREW": "N'est pas membre de cette équipe sur les jours du créneau.",
+      "PLANNING_ASSIGNEE_NOT_WORKING": "Ne travaille pas pendant ce créneau.",
+      "PLANNING_ASSIGNEE_OVERLOADED": "Pas assez d'heures restantes pour ce travail sur l'un des jours.",
+      "PLANNING_DOUBLE_BOOKING": "Le technicien a déjà un autre travail sur ce créneau (double affectation)."
+    },
+    "daysLabel": "Les jours du technicien sur le créneau",
+    "unknownHours_one": "{{count}} de ses travaux a des heures inconnues (non comptées).",
+    "unknownHours_other": "{{count}} de ses travaux ont des heures inconnues (non comptées).",
+    "unreadableWorkOrders": "Dates planifiées illisibles (non comptées) : {{codes}}.",
+    "othersUnnamed_one": "+ {{count}} équipier non nommé (compté dans la charge de l'équipe).",
+    "othersUnnamed_other": "+ {{count}} équipiers non nommés (comptés dans la charge de l'équipe)."
+  },
+  "reasons": {
+    "NOT_ESTIMATED": "Non estimé : {{missing}} manquant(s).",
+    "PARTS_NOT_RESERVED": "En stock mais non réservées : {{articles}}.",
+    "SKILL_GAP": "{{person}} n'a pas une qualification exigée par ce travail : {{gaps}}.",
+    "ASSIGNMENT_REQUIRED": "Désignez un technicien qui possède les compétences requises ({{skills}}).",
+    "PERMIT_REQUIRED": "Un permis de travail est requis et n'est pas prêt.",
+    "PREREQUISITE_BLOCKED": "En attente d'un préalable (reporté, ou en attente d'un autre travail).",
+    "NO_FEASIBLE_WINDOW": "Exige l'arrêt de l'équipement : aucune fenêtre de maintenance ou d'arrêt ouverte de son site ou de son équipement sur ses échéances.",
+    "ASSIGNEE_UNAVAILABLE": "L'intervenant est absent ou pris sur d'autres travaux pendant les échéances ({{availability_conflict_count}}).",
+    "PARTS_SHORT_OPTIONAL": "Pièces optionnelles en rupture : {{articles}}. Le travail peut être engagé sans elles.",
+    "PARTS_SHORT": "Pièces en rupture de stock : {{articles}}. Commandez-les ou transférez-les avant d'engager.",
+    "PART_NOT_IN_CATALOGUE": "Pièces hors catalogue articles (stock non vérifiable) : {{articles}}.",
+    "PART_QUANTITY_MISSING": "Pièces sans quantité (stock non vérifiable) : {{articles}}.",
+    "PERMIT_TO_REQUEST": "Un permis de travail est requis et aucun n'est encore demandé.",
+    "PERMIT_IN_PREPARATION": "Le permis {{permit_code}} est en préparation ({{status}}) ; il doit être actif avant le démarrage.",
+    "PERMIT_ON_HOLD": "Le permis {{permit_code}} est suspendu ({{status}}) ; revalidez-le avant le démarrage.",
+    "PERMIT_EXPIRES_BEFORE_WORK": "Le permis {{permit_code}} expire avant la fin du travail ({{expires_at}}).",
+    "LOTO_NOT_VERIFIED": "LOTO du permis {{permit_code}} : {{verified}} points d'isolement vérifiés sur {{isolations}} ; tous doivent l'être avant le démarrage.",
+    "PERMIT_TYPE_MISSING": "Le permis {{permit_code}} renvoie à un type de permis qui n'existe plus : il ne peut pas démarrer. Corrigez son type dans le module permis.",
+    "LOCATION_UNKNOWN": "Lieu inconnu : fenêtres du site non vérifiées."
+  },
+  "reasonParts": {
+    "duration": "durée",
+    "crew_size": "effectif"
+  },
+  "reasonUi": {
+    "blocking": "Bloque l'engagement",
+    "warning": "Avertissement — contrôlé plus tard",
+    "openPermit": "Ouvrir le permis",
+    "requestPermit": "Demander un permis",
+    "openArticle": "Ouvrir l'article {{code}}",
+    "openWindows": "Fenêtres de planification"
+  },
+  "commitmentStatus": {
+    "committed": "Engagé",
+    "released": "Créneau libéré",
+    "cancelled": "Annulé",
+    "closed": "Clôturé"
+  },
+  "lifecycle": {
+    "reason": "Motif (obligatoire)",
+    "released": {
+      "action": "Libérer le créneau",
+      "hint": "Le créneau est rendu : le travail revient dans le carnet de commandes pour être replanifié.",
+      "confirm": "Libérer"
+    },
+    "cancelled": {
+      "action": "Annuler l'engagement",
+      "hint": "L'engagement est annulé et son créneau rendu. Le travail lui-même n'est pas annulé.",
+      "confirm": "Annuler l'engagement"
+    }
+  },
+  "frozenWeek": {
+    "title": "Semaine gelée : entrée par break-in",
+    "hint": "La semaine du {{week}} est gelée. Ce travail n'y entre que comme break-in enregistré, avec son motif.",
+    "selectReason": "Choisir un motif",
+    "confirm": "Engager comme break-in"
+  },
+  "weekly": {
+    "title": "Programme hebdomadaire",
+    "site": "Site de planification",
+    "noSite": "Choisir un site",
+    "noPlanningSite": "Aucun site de planification : dans l'organisation, un nœud dont le type porte des travaux (« peut porter des travaux ») définit un site.",
+    "previous": "Semaine précédente",
+    "next": "Semaine suivante",
+    "range": "Du {{from}} au {{to}}",
+    "status": {
+      "draft": "Brouillon",
+      "approved": "Approuvé",
+      "frozen": "Gelé",
+      "published": "Publié"
+    },
+    "frozenWithoutApproval": "Gelé sans approbation",
+    "frozenWithoutApprovalHint": "Cette semaine a été gelée automatiquement sans approbation. Un détenteur du droit de confirmation du planning doit l'approuver ; l'approbation a posteriori ne modifie pas la référence gelée.",
+    "approve": "Approuver",
+    "approveAfterFreeze": "Approuver a posteriori",
+    "freeze": "Geler",
+    "publish": "Publier aux équipes",
+    "requestUnfreeze": "Demander le dégel",
+    "freezeDue": "Gel automatique le {{at}}",
+    "frozenAt": "Gelé le {{at}}",
+    "frozenAutomatically": "Gelé automatiquement le {{at}}",
+    "unfreezePending": "Dégel demandé le {{at}} : {{reason}}. Il doit être décidé par un autre planificateur.",
+    "approveUnfreeze": "Approuver le dégel",
+    "rejectUnfreeze": "Refuser le dégel",
+    "unfreezeHint": "Le dégel doit être approuvé par un autre détenteur du droit de confirmation du planning (quatre yeux).",
+    "unfreezeReason": "Motif du dégel",
+    "sendUnfreezeRequest": "Envoyer la demande",
+    "crew": "Équipe",
+    "dayOff": "repos",
+    "frozenJob": "Gelé",
+    "noCrews": "Aucune équipe active rattachée à ce site.",
+    "history": "Historique de la semaine",
+    "system": "Système",
+    "events": {
+      "approved": "Approuvé",
+      "frozen": "Gelé",
+      "auto_frozen": "Gelé automatiquement",
+      "unfreeze_requested": "Dégel demandé",
+      "unfreeze_rejected": "Dégel refusé",
+      "unfrozen": "Dégelé",
+      "published": "Publié aux équipes",
+      "approved_after_freeze": "Approuvé a posteriori"
+    }
+  },
+  "crewsWithoutSite": {
+    "title": "Équipe sans site de planification",
+    "hint": "Ces équipes n'apparaissent dans aucun programme hebdomadaire : leurs travaux ne sont ni approuvés, ni gelés, ni publiés. Rattachez chaque équipe à un nœud de l'organisation situé sous un site (type « peut porter des travaux »).",
+    "fixTeams": "Corriger les équipes",
+    "fixOrg": "Ouvrir l'organisation",
+    "loadFailed": "Impossible de vérifier les équipes sans site de planification : {{error}}"
+  },
+  "feedback": {
+    "committed": "Travail engagé au planning",
+    "windowCreated": "Fenêtre de planification enregistrée",
+    "breakInRecorded": "Break-in enregistré",
+    "slotReleased": "Créneau libéré",
+    "commitmentCancelled": "Engagement annulé",
+    "periodFrozen": "Période gelée",
+    "teamsNotified": "Équipes notifiées",
+    "weekApproved": "Semaine approuvée",
+    "weekFrozen": "Semaine gelée",
+    "weekPublished": "Semaine publiée aux équipes",
+    "unfreezeRequested": "Demande de dégel envoyée",
+    "unfreezeApproved": "Dégel approuvé",
+    "unfreezeRejected": "Dégel refusé"
+  },
+  "kpis": {
+    "title": "Indicateurs du planning (référence gelée, 8 dernières semaines)",
+    "excludeUnapproved": "Exclure les semaines gelées sans approbation",
+    "loading": "Chargement",
+    "loadingHint": "{{baseline}} planifiées / {{available}} disponibles (+ {{overtime}} d'heures sup. possibles)",
+    "compliance": "Respect du planning",
+    "complianceHint": "{{done}} réalisées sur {{baseline}} planifiées · {{released}} ensuite libérés ou annulés",
+    "breakIns": "Break-ins",
+    "displaced": "Travaux déplacés",
+    "awaitingApproval": "Gelées sans approbation",
+    "notFrozen": "Semaines jamais gelées",
+    "noFrozenWeek": "Aucune semaine gelée sur la période : les indicateurs se mesurent sur la référence gelée.",
+    "week": "Semaine",
+    "baseline": "Référence",
+    "jobsHours": "{{jobs}} travaux · {{hours}}",
+    "hours": "{{hours}} h",
+    "inProgress": "en cours",
+    "notMeasured": "non mesuré",
+    "noJudgedWeek": "aucune semaine gelée terminée sur la période",
+    "reopened": "rouverte",
+    "reopenedHint": "Semaine dégelée pour modification : mesurée sur sa dernière référence gelée jusqu'au prochain gel."
   }
 }

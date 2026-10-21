@@ -1,32 +1,53 @@
+import { Lock } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
-import { Button } from "@/components/ui/button";
+import { BuiltinAdminWarning } from "@/components/auth/BuiltinAdminWarning";
+import { AuthField } from "@/components/auth/shell/AuthField";
+import { AuthAlert, AuthButton } from "@/components/auth/shell/AuthPrimitives";
+import { AuthShell } from "@/components/auth/shell/AuthShell";
 import { mfAuth } from "@/design-system/tokens";
+import { describeAppError } from "@/lib/app-error";
+import { useSessionStore } from "@/store/session-store";
 
 interface ForcePasswordChangePageProps {
   onComplete: (newPassword: string) => Promise<void>;
 }
 
+/** Minimum length checked here before the request; the server applies the full policy. */
+const MIN_LENGTH = 8;
+
+/**
+ * Mandatory password change (account flagged by an administrator, or the server answered
+ * PASSWORD_CHANGE_REQUIRED). Same auth shell as the login screen; `onComplete` and what it sends
+ * are unchanged.
+ */
 export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageProps) {
   const { t } = useTranslation("auth");
+  const sessionUserId = useSessionStore((s) => s.info?.user_id ?? null);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [fieldError, setFieldError] = useState<{ field: "new" | "confirm"; text: string } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    setFieldError(null);
 
-    if (newPassword.length < 8) {
-      setError(t("session.forcePasswordChange.newPassword") + " \u2014 min. 8");
+    if (newPassword.length < MIN_LENGTH) {
+      setFieldError({
+        field: "new",
+        text: t("session.forcePasswordChange.tooShort", { min: MIN_LENGTH }),
+      });
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setError(t("session.forcePasswordChange.confirmPassword"));
+      setFieldError({ field: "confirm", text: t("session.forcePasswordChange.mismatch") });
       return;
     }
 
@@ -34,83 +55,64 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
     try {
       await onComplete(newPassword);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("login.error.unknown"));
+      // Translated text for the failure's code; the policy details (length, history …) as the
+      // description when the server gives them.
+      const described = describeAppError(err);
+      setError(
+        [described.title || t("login.error.unknown"), described.description]
+          .filter(Boolean)
+          .join(" — "),
+      );
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className={mfAuth.shell}>
-      <div className={mfAuth.cardCompact}>
-        <div className="mb-8 flex justify-center">
-          <MaintafoxWordmark size="lg" align="center" tone="auth" />
-        </div>
+    <AuthShell width="sm">
+      <h1 className={mfAuth.title}>{t("session.forcePasswordChange.title")}</h1>
+      <p className={mfAuth.subtitle}>{t("session.forcePasswordChange.message")}</p>
+      <BuiltinAdminWarning sessionUserId={sessionUserId} className="mt-4" />
 
-        <div className="mb-6">
-          <h2 className="text-lg font-semibold text-text-primary">
-            {t("session.forcePasswordChange.title")}
-          </h2>
-          <p className="mt-1 text-sm text-text-secondary">
-            {t("session.forcePasswordChange.message")}
-          </p>
-        </div>
+      <form onSubmit={(e) => void handleSubmit(e)} className="mt-6 space-y-4">
+        <AuthField
+          id="new-password"
+          label={t("session.forcePasswordChange.newPassword")}
+          icon={<Lock />}
+          type="password"
+          autoComplete="new-password"
+          autoFocus
+          required
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+          disabled={loading}
+          hint={t("session.forcePasswordChange.hint", { min: MIN_LENGTH })}
+          error={fieldError?.field === "new" ? fieldError.text : null}
+        />
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label
-              htmlFor="new-password"
-              className="mb-1 block text-sm font-medium text-text-primary"
-            >
-              {t("session.forcePasswordChange.newPassword")}
-            </label>
-            <input
-              id="new-password"
-              type="password"
-              autoComplete="new-password"
-              autoFocus
-              required
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              className="field-input"
-              disabled={loading}
-            />
-          </div>
+        <AuthField
+          id="confirm-password"
+          label={t("session.forcePasswordChange.confirmPassword")}
+          icon={<Lock />}
+          type="password"
+          autoComplete="new-password"
+          required
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+          disabled={loading}
+          error={fieldError?.field === "confirm" ? fieldError.text : null}
+        />
 
-          <div>
-            <label
-              htmlFor="confirm-password"
-              className="mb-1 block text-sm font-medium text-text-primary"
-            >
-              {t("session.forcePasswordChange.confirmPassword")}
-            </label>
-            <input
-              id="confirm-password"
-              type="password"
-              autoComplete="new-password"
-              required
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              className="field-input"
-              disabled={loading}
-            />
-          </div>
+        {error ? (
+          <AuthAlert tone="danger" role="alert">
+            {error}
+          </AuthAlert>
+        ) : null}
 
-          {error && (
-            <div
-              role="alert"
-              className="rounded-md bg-status-danger/10 px-3 py-2 text-sm
-                         text-status-danger"
-            >
-              {error}
-            </div>
-          )}
-
-          <Button type="submit" className="w-full font-medium" disabled={loading}>
-            {loading ? t("login.form.submitting") : t("session.forcePasswordChange.submit")}
-          </Button>
-        </form>
-      </div>
-    </div>
+        <AuthButton type="submit" loading={loading} disabled={loading}>
+          {loading ? t("login.form.submitting") : t("session.forcePasswordChange.submit")}
+        </AuthButton>
+      </form>
+    </AuthShell>
   );
 }

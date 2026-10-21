@@ -1,11 +1,40 @@
 import type { Config } from "tailwindcss";
 
+/**
+ * Colours defined as CSS variables cannot take Tailwind's `/<alpha>` modifier on their own (on
+ * Tailwind 3 `bg-muted/50`, `bg-tone-danger-bg/40` … generated no CSS at all). Each variable colour
+ * becomes a function: unmodified it stays `var(--x)`; with a modifier it is mixed with transparent
+ * (`color-mix`, supported by WebView2), so the theme switch keeps working.
+ */
+type ColorFn = (opts: { opacityValue?: string }) => string;
+type ColorTree = { [key: string]: string | ColorFn | ColorTree };
+
+export function cssVarColor(value: string): ColorFn {
+  return ({ opacityValue }) => {
+    if (opacityValue === undefined || opacityValue === "1" || !/^[0-9.]+$/.test(opacityValue)) {
+      return value;
+    }
+    const pct = Math.round(Number(opacityValue) * 1000) / 10;
+    return `color-mix(in srgb, ${value} ${pct}%, transparent)`;
+  };
+}
+
+function withAlpha(tree: ColorTree): ColorTree {
+  const out: ColorTree = {};
+  for (const [key, value] of Object.entries(tree)) {
+    if (typeof value === "string") out[key] = value.startsWith("var(") ? cssVarColor(value) : value;
+    else if (typeof value === "function") out[key] = value;
+    else out[key] = withAlpha(value);
+  }
+  return out;
+}
+
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   darkMode: "class",
   theme: {
     extend: {
-      colors: {
+      colors: withAlpha({
         /* ── Shadcn/ui semantic tokens (resolve via CSS custom properties) ── */
         background: "var(--background)",
         foreground: "var(--foreground)",
@@ -34,16 +63,62 @@ export default {
         ring: "var(--ring)",
         /* ── Maintafox brand tokens ─────────────────────────────────────── */
         primary: {
-          DEFAULT: "#003d8f",
-          dark: "#002b6a",
-          light: "#4d7bc5",
-          bg: "#e8eef8",
+          DEFAULT: "#0049ac",
+          dark: "#003a8c",
+          light: "#4d7fd0",
+          bg: "#e6eefb",
           foreground: "var(--primary-foreground)",
         },
+        /** Logo orange — alerts and the single primary attention point of a screen. */
         accent: {
-          DEFAULT: "#f0a500",
-          dark: "#c47f00",
+          DEFAULT: "#f68714",
+          dark: "#e8780a",
           foreground: "var(--accent-foreground)",
+        },
+        /** Brand identity colours (sidebar, charts, print). Literal hex so opacity modifiers work;
+         keep in sync with --color-* in globals.css. Prefer semantic tokens in UI. */
+        brand: {
+          navy: "#0b1f3a",
+          primary: "#0049ac",
+          orange: "#f68714",
+        },
+        /** Status tones — see `mfTone` in src/design-system/tokens.ts. */
+        tone: {
+          neutral: {
+            bg: "var(--tone-neutral-bg)",
+            fg: "var(--tone-neutral-fg)",
+            border: "var(--tone-neutral-border)",
+          },
+          info: {
+            bg: "var(--tone-info-bg)",
+            fg: "var(--tone-info-fg)",
+            border: "var(--tone-info-border)",
+          },
+          progress: {
+            bg: "var(--tone-progress-bg)",
+            fg: "var(--tone-progress-fg)",
+            border: "var(--tone-progress-border)",
+          },
+          attention: {
+            bg: "var(--tone-attention-bg)",
+            fg: "var(--tone-attention-fg)",
+            border: "var(--tone-attention-border)",
+          },
+          warning: {
+            bg: "var(--tone-warning-bg)",
+            fg: "var(--tone-warning-fg)",
+            border: "var(--tone-warning-border)",
+          },
+          success: {
+            bg: "var(--tone-success-bg)",
+            fg: "var(--tone-success-fg)",
+            border: "var(--tone-success-border)",
+          },
+          danger: {
+            bg: "var(--tone-danger-bg)",
+            fg: "var(--tone-danger-fg)",
+            border: "var(--tone-danger-border)",
+          },
         },
         status: {
           success: "#198754",
@@ -67,7 +142,8 @@ export default {
           success: "var(--text-success)",
           warning: "var(--text-warning)",
         },
-      },
+        // Colour functions are supported by Tailwind 3 but not described by its types.
+      }) as unknown as Record<string, string>,
       fontFamily: {
         sans: [
           "Inter",

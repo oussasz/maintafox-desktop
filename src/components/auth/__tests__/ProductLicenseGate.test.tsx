@@ -1,52 +1,89 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ProductLicenseGate } from "@/components/auth/ProductLicenseGate";
 import { getAppInfo } from "@/services/app.service";
+import { forceChangePassword, getSessionInfo, login, unlockSession } from "@/services/auth-service";
 import { getEntitlementSummary } from "@/services/entitlement-service";
 import {
   applyProductLicenseReconciliation,
+  checkProductLicenseKeyEntry,
   claimProductActivation,
   getActivationBootstrapState,
   getProductActivationToken,
   getProductLicenseDiagnostics,
   getProductLicenseOnboardingState,
+  previewProductActivation,
   refreshProductActivationPolicy,
+  resetLocalTenantRuntimeData,
+  submitProductLicenseKey,
 } from "@/services/product-license-service";
+import { verifyStepUp } from "@/services/rbac-service";
+import { checkForUpdate } from "@/services/updater-service";
+import { useAppStore } from "@/store/app-store";
+import { useSessionStore } from "@/store/session-store";
+import { useUpdaterStore } from "@/stores/updater-store";
+import type { SessionInfo } from "@shared/ipc-types";
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string) => {
-      const map: Record<string, string> = {
-        "activation.title": "Product activation",
-        "activation.subtitle": "Enter the license key",
-        "activation.steps.validate": "Validate license",
-        "activation.steps.activate": "Activate device",
-        "activation.steps.finish": "Finish",
-        "activation.validate": "Validate license",
-        "activation.validating": "Validating…",
-        "activation.keyLabel": "License key",
-        "activation.keyPlaceholder": "••••-••••-••••",
-        "activation.backToLogin": "← Back to Login",
-        "activation.technicalDetails": "Technical details",
-        "activation.loading": "Loading activation state…",
-        "activation.denied.expiredTitle": "License expired",
-        "activation.denied.expiredBody": "License validity window has ended.",
-        "activation.denied.revalidate": "Revalidate now",
-        "activation.denied.revalidating": "Revalidating…",
-        "activation.diag.status": "Status",
-        "activation.diag.online": "Online",
-        "activation.diag.retryAttempt": "Retry attempt",
-        "activation.diag.nextRetry": "Next retry",
-        "activation.diag.lastReconciled": "Last reconciled",
-        "activation.diag.lastError": "Last error",
-        "activation.fields.notSpecified": "—",
-      };
-      return map[key] ?? key;
-    },
-  }),
+// One `t` for every render, as react-i18next gives: a new function per render would re-run the
+// gate's licence check effect on every render.
+vi.mock("react-i18next", () => {
+  const t = (key: string) => {
+    const map: Record<string, string> = {
+      "activation.title": "Product activation",
+      "activation.subtitle": "Enter the license key",
+      "activation.steps.validate": "Validate license",
+      "activation.steps.activate": "Activate device",
+      "activation.steps.finish": "Finish",
+      "activation.validate": "Validate license",
+      "activation.validating": "Validating…",
+      "activation.keyLabel": "License key",
+      "activation.keyPlaceholder": "••••-••••-••••",
+      "activation.backToLogin": "← Back to Login",
+      "activation.technicalDetails": "Technical details",
+      "activation.loading": "Loading activation state…",
+      "activation.denied.expiredTitle": "License expired",
+      "activation.denied.expiredBody": "License validity window has ended.",
+      "activation.denied.revalidate": "Revalidate now",
+      "activation.denied.revalidating": "Revalidating…",
+      "activation.diag.status": "Status",
+      "activation.diag.online": "Online",
+      "activation.diag.retryAttempt": "Retry attempt",
+      "activation.diag.nextRetry": "Next retry",
+      "activation.diag.lastReconciled": "Last reconciled",
+      "activation.diag.lastError": "Last error",
+      "activation.fields.notSpecified": "—",
+      "activation.activateCta": "Activate this device",
+      "stepUp.submit": "Confirm identity",
+      "stepUp.passwordLabel": "Password",
+    };
+    return map[key] ?? key;
+  };
+  const i18n = { language: "en" };
+  return { useTranslation: () => ({ t, i18n }) };
+});
+
+vi.mock("@/services/updater-service", () => ({
+  checkForUpdate: vi.fn(),
+  installPendingUpdate: vi.fn(),
+  reinstallPreviousVersion: vi.fn(),
+  getUpdateJournal: vi.fn().mockResolvedValue(null),
+  acknowledgeUpdateNotice: vi.fn(),
+}));
+
+vi.mock("@/services/rbac-service", () => ({
+  verifyStepUp: vi.fn(),
+}));
+
+vi.mock("@/services/auth-service", () => ({
+  getSessionInfo: vi.fn(),
+  login: vi.fn(),
+  logout: vi.fn(),
+  unlockSession: vi.fn(),
+  unlockSessionWithPin: vi.fn(),
+  forceChangePassword: vi.fn(),
 }));
 
 vi.mock("@/services/app.service", () => ({
@@ -58,8 +95,14 @@ vi.mock("@/services/entitlement-service", () => ({
   notifyEntitlementsUpdated: vi.fn(),
 }));
 
-vi.mock("@/services/product-license-service", () => ({
+vi.mock("@/services/product-license-service", async () => ({
   CLAIM_FALLBACK_TOKEN_ERRORS: new Set(["missing_token", "invalid_token", "token_superseded"]),
+  // The real list: which codes are a denial is the logic under test.
+  LICENCE_DENIAL_CODES: (
+    await vi.importActual<{ LICENCE_DENIAL_CODES: ReadonlySet<string> }>(
+      "@/services/product-license-service",
+    )
+  ).LICENCE_DENIAL_CODES,
   activationRequiresLocalDataReset: (bound: string | null | undefined, claim: string) =>
     !bound?.trim() || bound.trim() !== claim.trim(),
   LICENSE_RECHECK_REQUESTED_EVENT: "maintafox:license-recheck-requested",
@@ -67,6 +110,7 @@ vi.mock("@/services/product-license-service", () => ({
   PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY: "maintafox:product-license:key-cache:v1",
   PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY: "maintafox:product-license:device-fingerprint:v1",
   applyProductLicenseReconciliation: vi.fn(),
+  checkProductLicenseKeyEntry: vi.fn(),
   claimProductActivation: vi.fn(),
   previewProductActivation: vi.fn(),
   markActivationTenantInitialized: vi.fn(),
@@ -94,6 +138,43 @@ const mockedGetProductActivationToken = vi.mocked(getProductActivationToken);
 const mockedRefreshProductActivationPolicy = vi.mocked(refreshProductActivationPolicy);
 const mockedApplyProductLicenseReconciliation = vi.mocked(applyProductLicenseReconciliation);
 const mockedClaimProductActivation = vi.mocked(claimProductActivation);
+const mockedCheckProductLicenseKeyEntry = vi.mocked(checkProductLicenseKeyEntry);
+const mockedPreviewProductActivation = vi.mocked(previewProductActivation);
+const mockedResetLocalTenantRuntimeData = vi.mocked(resetLocalTenantRuntimeData);
+const mockedSubmitProductLicenseKey = vi.mocked(submitProductLicenseKey);
+const mockedVerifyStepUp = vi.mocked(verifyStepUp);
+const mockedGetSessionInfo = vi.mocked(getSessionInfo);
+const mockedLogin = vi.mocked(login);
+const mockedForceChangePassword = vi.mocked(forceChangePassword);
+const mockedUnlockSession = vi.mocked(unlockSession);
+
+const signedOutSession: SessionInfo = {
+  is_authenticated: false,
+  is_locked: false,
+  user_id: null,
+  username: null,
+  display_name: null,
+  is_admin: null,
+  force_password_change: null,
+  expires_at: null,
+  last_activity_at: null,
+  password_expires_in_days: null,
+  pin_configured: null,
+};
+/** An administrator signed in on this PC. */
+const adminSession: SessionInfo = {
+  is_authenticated: true,
+  is_locked: false,
+  user_id: 7,
+  username: "chef",
+  display_name: "Chef",
+  is_admin: true,
+  force_password_change: false,
+  expires_at: null,
+  last_activity_at: null,
+  password_expires_in_days: null,
+  pin_configured: false,
+};
 const appInfo = {
   version: "1.2.3",
   build_mode: "debug" as const,
@@ -129,6 +210,8 @@ describe("ProductLicenseGate", () => {
       feature_flag_map_json: "{}",
     });
     mockedGetProductActivationToken.mockResolvedValue(null);
+    useSessionStore.getState().resetForTests();
+    mockedGetSessionInfo.mockResolvedValue(signedOutSession);
   });
 
   afterEach(() => {
@@ -276,6 +359,75 @@ describe("ProductLicenseGate", () => {
     expect(screen.queryByText("app content")).not.toBeInTheDocument();
   });
 
+  it("offers the required update on the denied screen while the licence requires one, and only then", async () => {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    useAppStore.setState({ appStatus: "ready" });
+    vi.mocked(checkForUpdate).mockResolvedValue({
+      status: "available",
+      available: true,
+      current_version: "1.2.3",
+      version: "1.3.0",
+      notes: null,
+      pub_date: null,
+      kind: "upgrade",
+      mandatory: true,
+      mandatory_reason: "forced_update_floor",
+      mandatory_message: null,
+      notes_en: "EN",
+      notes_fr: "FR",
+      message: null,
+    } as never);
+    const forced = {
+      complete: true,
+      status: "denied_force_update_required",
+      pending_online_validation: false,
+      deny_message: "Update required.",
+      tenant_id: "ten_test",
+    };
+    mockedGetProductLicenseOnboardingState.mockResolvedValue(forced as never);
+    mockedGetProductLicenseDiagnostics.mockResolvedValue({
+      status: "denied_force_update_required",
+      pending_online_validation: false,
+      reconciliation: { retry_attempt: 0 },
+      diagnostics: [],
+      has_activation_claim: true,
+    } as never);
+
+    const { unmount } = renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    expect(await screen.findByTestId("forced-update-panel")).toBeInTheDocument();
+    // The mandatory offer can be installed from the licence screen; it cannot be postponed.
+    expect(
+      await screen.findByRole("button", { name: "updates.banner.installNow" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "updates.banner.dismiss" }),
+    ).not.toBeInTheDocument();
+    // The licence still blocks the app.
+    expect(screen.queryByText("app content")).not.toBeInTheDocument();
+    expect(screen.getByText("Update required.")).toBeInTheDocument();
+    unmount();
+
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      ...forced,
+      status: "denied_expired",
+    } as never);
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+    expect(await screen.findByText("License expired")).toBeInTheDocument();
+    expect(screen.queryByTestId("forced-update-panel")).not.toBeInTheDocument();
+    useUpdaterStore.setState({ lastCheckResult: null, forceRequired: false });
+    useAppStore.setState({ appStatus: "loading" });
+    vi.mocked(checkForUpdate).mockReset();
+  });
+
   it("does not force-reconcile when entitlement summary fails for missing session", async () => {
     mockedGetAppInfo.mockResolvedValue(appInfo);
     mockedGetProductLicenseOnboardingState.mockResolvedValue({
@@ -363,6 +515,142 @@ describe("ProductLicenseGate", () => {
     expect(mockedClaimProductActivation).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { label: "a proxy's 429", status: 429, code: undefined, expected: "http_error" },
+    {
+      label: "a 400 with an unknown code",
+      status: 400,
+      code: "invalid_body",
+      expected: "http_error",
+    },
+    {
+      label: "a 404 licence not found",
+      status: 404,
+      code: "license_not_found",
+      expected: "http_error",
+    },
+    { label: "a known denial code", status: 403, code: "license_revoked", expected: "denied" },
+  ])(
+    "records only the licence server's denial codes as a denial: $label → $expected",
+    async ({ status, code, expected }) => {
+      setUpDueActiveDevice();
+      mockedRefreshProductActivationPolicy.mockRejectedValue(
+        Object.assign(new Error("refused"), { status, ...(code ? { code } : {}) }),
+      );
+      mockedApplyProductLicenseReconciliation.mockResolvedValue({
+        complete: true,
+        status: expected === "denied" ? "denied_revoked" : "active",
+        pending_online_validation: false,
+        tenant_id: "ten_test",
+      });
+
+      renderWithRouter(
+        <ProductLicenseGate>
+          <div>app content</div>
+        </ProductLicenseGate>,
+      );
+
+      await waitFor(() => {
+        expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalled();
+      });
+      const kinds = mockedApplyProductLicenseReconciliation.mock.calls.map((c) => c[0].kind);
+      expect(kinds).toEqual([expected]);
+      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalledWith(
+        expect.objectContaining({ error_code: code ?? `http_${status}` }),
+      );
+    },
+  );
+
+  it("never records a licence change this PC refused as a network failure", async () => {
+    setUpDueActiveDevice();
+    mockedRefreshProductActivationPolicy.mockResolvedValue({
+      tenant_id: "ten_other",
+      license_id: "lic_other",
+      machine_fingerprint: "fp",
+      activation_token: "device-token",
+    } as never);
+    mockedApplyProductLicenseReconciliation.mockRejectedValue({
+      code: "ORG_VALIDATION_FAILED",
+      message: "Validation failed",
+      details: [
+        {
+          code: "LICENSE_RECONCILE_ADMIN_REQUIRED",
+          message:
+            "This licence change needs an administrator: sign in as an administrator, then retry.",
+        },
+      ],
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "success" }),
+      );
+    });
+    // Only the refused success is sent (once per check): never a "network_error", "http_error" or
+    // "denial" recorded because of it.
+    const kinds = mockedApplyProductLicenseReconciliation.mock.calls.map((c) => c[0].kind);
+    expect(kinds.every((k) => k === "success")).toBe(true);
+  });
+
+  it("tells the licence server the version this PC runs when it refreshes the policy", async () => {
+    setUpDueActiveDevice();
+    mockedRefreshProductActivationPolicy.mockRejectedValue(
+      Object.assign(new Error("Update required"), { code: "force_update_required", status: 403 }),
+    );
+    mockedApplyProductLicenseReconciliation.mockResolvedValue({
+      complete: true,
+      status: "denied_force_update_required",
+      pending_online_validation: false,
+      tenant_id: "ten_test",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalledWith(
+        "device-token",
+        appInfo.version,
+      );
+    });
+  });
+
+  it("sends no version, never the placeholder, when the running version cannot be read", async () => {
+    setUpDueActiveDevice();
+    mockedGetAppInfo.mockRejectedValue(new Error("app info unavailable"));
+    mockedRefreshProductActivationPolicy.mockRejectedValue(
+      Object.assign(new Error("Update required"), { code: "force_update_required", status: 403 }),
+    );
+    mockedApplyProductLicenseReconciliation.mockResolvedValue({
+      complete: true,
+      status: "denied_force_update_required",
+      pending_online_validation: false,
+      tenant_id: "ten_test",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalled();
+    });
+    for (const call of mockedRefreshProductActivationPolicy.mock.calls) {
+      expect(call[1]).toBeUndefined();
+    }
+  });
+
   it("re-claims with the cached key when the device token was superseded", async () => {
     setUpDueActiveDevice();
     mockedRefreshProductActivationPolicy.mockRejectedValue(
@@ -389,5 +677,362 @@ describe("ProductLicenseGate", () => {
         expect.objectContaining({ license_key: "MFX-TEST-KEY-0001" }),
       );
     });
+  });
+
+  it("stops before taking a device slot or wiping local data when this PC would refuse the licence", async () => {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      complete: false,
+      status: "pending_online_validation",
+      pending_online_validation: true,
+      tenant_id: "ten_test",
+    });
+    mockedGetProductLicenseDiagnostics.mockResolvedValue({
+      status: "pending_online_validation",
+      pending_online_validation: true,
+      reconciliation: { retry_attempt: 0 },
+      diagnostics: [],
+      has_activation_claim: false,
+    });
+    mockedPreviewProductActivation.mockResolvedValue({
+      tenant_id: "ten_other",
+      license_id: "lic_other",
+      machine_fingerprint: "fp",
+    });
+    mockedCheckProductLicenseKeyEntry.mockRejectedValue({
+      code: "ORG_VALIDATION_FAILED",
+      message: "Validation failed",
+      details: [
+        {
+          code: "LICENSE_RECONCILE_ADMIN_REQUIRED",
+          message:
+            "This licence change needs an administrator: sign in as an administrator, then retry.",
+        },
+      ],
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("License key"), {
+      target: { value: "MFX-TEST-KEY-0002" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Validate license" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Activate this device" }));
+
+    // The refusal is shown as a warning (the coded "needs an administrator"), never as a failure.
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("Activation failed")).not.toBeInTheDocument();
+    expect(mockedCheckProductLicenseKeyEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ tenant_id: "ten_other", license_id: "lic_other" }),
+    );
+    expect(mockedClaimProductActivation).not.toHaveBeenCalled();
+    expect(mockedResetLocalTenantRuntimeData).not.toHaveBeenCalled();
+    expect(mockedSubmitProductLicenseKey).not.toHaveBeenCalled();
+  });
+  /** A denied licence (expired), signed in, with a renewal waiting on the control plane. */
+  function setUpDeniedDeviceWithRenewal() {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      complete: true,
+      status: "denied_expired",
+      pending_online_validation: false,
+      deny_message: "License window ended.",
+      tenant_id: "ten_test",
+    });
+    mockedGetProductLicenseDiagnostics.mockResolvedValue({
+      status: "denied_expired",
+      pending_online_validation: false,
+      reconciliation: { retry_attempt: 1 },
+      diagnostics: [],
+      has_activation_claim: true,
+    });
+    mockedGetProductActivationToken.mockResolvedValue("device-token");
+    mockedRefreshProductActivationPolicy.mockResolvedValue({
+      tenant_id: "ten_test",
+      license_id: "lic_test",
+      machine_fingerprint: "fp",
+      activation_token: "device-token",
+      expires_at: "2028-06-30T00:00:00Z",
+    } as never);
+  }
+
+  it("lets a signed-in administrator confirm their identity on the denied screen, then applies the renewal", async () => {
+    setUpDeniedDeviceWithRenewal();
+    const stepUpRequired = { code: "STEP_UP_REQUIRED", message: "Step-up required" };
+    let verified = false;
+    mockedVerifyStepUp.mockImplementation(async () => {
+      verified = true;
+      return { success: true, expires_at: new Date(Date.now() + 5 * 60_000).toISOString() };
+    });
+    let applied = false;
+    const activeState = {
+      complete: true,
+      status: "active" as const,
+      pending_online_validation: false,
+      tenant_id: "ten_test",
+      last_reconciled_at: new Date().toISOString(),
+    };
+    mockedApplyProductLicenseReconciliation.mockImplementation(async () => {
+      if (!verified) throw stepUpRequired;
+      applied = true;
+      return activeState;
+    });
+    // What this PC reports once the renewal is stored.
+    mockedGetProductLicenseOnboardingState.mockImplementation(async () =>
+      applied
+        ? activeState
+        : {
+            complete: true,
+            status: "denied_expired",
+            pending_online_validation: false,
+            deny_message: "License window ended.",
+            tenant_id: "ten_test",
+          },
+    );
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Revalidate now" }));
+    // The refusal is shown on the denied screen, with the identity check it asks for.
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm identity" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Password"), {
+      target: { value: "not-a-real-password" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm identity" }));
+
+    // The dialog verifies and closes, then the gate applies the same change again.
+    expect(await screen.findByText("app content")).toBeInTheDocument();
+    expect(mockedVerifyStepUp).toHaveBeenCalledWith("not-a-real-password");
+    // The same renewal claim is applied again after the identity check (no new server call).
+    const successes = mockedApplyProductLicenseReconciliation.mock.calls.filter(
+      (c) => c[0].kind === "success",
+    );
+    expect(successes.length).toBeGreaterThanOrEqual(2);
+    expect(successes.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        kind: "success",
+        claim: expect.objectContaining({ expires_at: "2028-06-30T00:00:00Z" }),
+      }),
+    );
+    expect(mockedRefreshProductActivationPolicy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("License expired")).not.toBeInTheDocument();
+  });
+
+  it("shows the coded refusal on the denied screen without an identity check when nobody may administer", async () => {
+    setUpDeniedDeviceWithRenewal();
+    mockedApplyProductLicenseReconciliation.mockRejectedValue({
+      code: "ORG_VALIDATION_FAILED",
+      message: "Validation failed",
+      details: [
+        {
+          code: "LICENSE_EXTENSION_ADMIN_REQUIRED",
+          message:
+            "This licence update extends the licence terms or lifts a denial: sign in as an administrator.",
+        },
+      ],
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Revalidate now" }));
+    await waitFor(() => {
+      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalled();
+    });
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("License expired")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm identity" })).not.toBeInTheDocument();
+    const kinds = mockedApplyProductLicenseReconciliation.mock.calls.map((c) => c[0].kind);
+    expect(kinds.every((k) => k === "success")).toBe(true);
+  });
+
+  /**
+   * What this PC answers to the renewal: a session that must change its password, or that is
+   * idle-locked, counts as signed out (coded refusal, no identity check); a signed-in administrator
+   * must confirm their identity; then it is applied.
+   */
+  function renewalAnsweredAsThisPc(sessionUsable: () => boolean) {
+    const activeState = {
+      complete: true,
+      status: "active" as const,
+      pending_online_validation: false,
+      tenant_id: "ten_test",
+      last_reconciled_at: new Date().toISOString(),
+    };
+    let verified = false;
+    let applied = false;
+    mockedVerifyStepUp.mockImplementation(async () => {
+      verified = true;
+      return { success: true, expires_at: new Date(Date.now() + 5 * 60_000).toISOString() };
+    });
+    mockedApplyProductLicenseReconciliation.mockImplementation(async () => {
+      if (!sessionUsable()) {
+        throw {
+          code: "ORG_VALIDATION_FAILED",
+          message: "Validation failed",
+          details: [
+            {
+              code: "LICENSE_EXTENSION_ADMIN_REQUIRED",
+              message:
+                "This licence update extends the licence terms: sign in as an administrator.",
+            },
+          ],
+        };
+      }
+      if (!verified) throw { code: "STEP_UP_REQUIRED", message: "Step-up required" };
+      applied = true;
+      return activeState;
+    });
+    mockedGetProductLicenseOnboardingState.mockImplementation(async () =>
+      applied
+        ? activeState
+        : {
+            complete: true,
+            status: "denied_expired",
+            pending_online_validation: false,
+            deny_message: "License window ended.",
+            tenant_id: "ten_test",
+          },
+    );
+  }
+
+  async function confirmIdentityAndExpectTheRenewal() {
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm identity" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Password"), {
+      target: { value: "not-a-real-password" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm identity" }));
+    expect(await screen.findByText("app content")).toBeInTheDocument();
+    expect(mockedApplyProductLicenseReconciliation.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        kind: "success",
+        claim: expect.objectContaining({ expires_at: "2028-06-30T00:00:00Z" }),
+      }),
+    );
+  }
+
+  it("lets an administrator whose password must change sign in, change it, confirm identity and apply the renewal while denied", async () => {
+    setUpDeniedDeviceWithRenewal();
+    let passwordChanged = false;
+    renewalAnsweredAsThisPc(() => passwordChanged);
+    mockedLogin.mockResolvedValue({
+      session_info: { ...adminSession, force_password_change: true },
+    });
+    mockedForceChangePassword.mockImplementation(async () => {
+      passwordChanged = true;
+      return adminSession;
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+    expect(await screen.findByText("License expired")).toBeInTheDocument();
+
+    // Sign-in (the login screen's call): the password has expired, so it must be changed first.
+    await act(async () => {
+      await useSessionStore.getState().login({ username: "chef", password: "not-a-real-password" });
+    });
+    fireEvent.change(await screen.findByLabelText("session.forcePasswordChange.newPassword"), {
+      target: { value: "not-a-real-new-password" },
+    });
+    fireEvent.change(screen.getByLabelText("session.forcePasswordChange.confirmPassword"), {
+      target: { value: "not-a-real-new-password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "session.forcePasswordChange.submit" }));
+
+    // Back on the denied screen, the licence check ran again and asks for the identity check.
+    expect(await screen.findByText("License expired")).toBeInTheDocument();
+    expect(mockedForceChangePassword).toHaveBeenCalledWith("not-a-real-new-password");
+    await confirmIdentityAndExpectTheRenewal();
+  });
+
+  it("lets an administrator whose session was idle-locked unlock it, confirm identity and apply the renewal while denied", async () => {
+    setUpDeniedDeviceWithRenewal();
+    let locked = true;
+    renewalAnsweredAsThisPc(() => !locked);
+    // Signed in earlier; the session has since been idle-locked on this PC.
+    mockedGetSessionInfo.mockResolvedValueOnce(adminSession);
+    mockedGetSessionInfo.mockResolvedValue({
+      ...adminSession,
+      is_authenticated: false,
+      is_locked: true,
+    });
+    mockedUnlockSession.mockImplementation(async () => {
+      locked = false;
+      mockedGetSessionInfo.mockResolvedValue(adminSession);
+      return adminSession;
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+    await waitFor(() => {
+      expect(useSessionStore.getState().info?.is_authenticated).toBe(true);
+    });
+
+    // Refused as signed out: the gate reads the session again and offers the unlock screen.
+    fireEvent.click(await screen.findByRole("button", { name: "Revalidate now" }));
+    fireEvent.change(await screen.findByLabelText("session.idleLocked.unlockPrompt"), {
+      target: { value: "not-a-real-password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "session.idleLocked.unlockAction" }));
+
+    expect(await screen.findByText("License expired")).toBeInTheDocument();
+    expect(mockedUnlockSession).toHaveBeenCalledWith("not-a-real-password");
+    await confirmIdentityAndExpectTheRenewal();
+  });
+
+  it("never records licence data this PC refused as malformed as a network failure", async () => {
+    setUpDueActiveDevice();
+    // Signed in, the session still usable: it is read again once after the refusal, not in a loop.
+    mockedGetSessionInfo.mockResolvedValue(adminSession);
+    mockedRefreshProductActivationPolicy.mockResolvedValue({
+      tenant_id: "ten_test",
+      license_id: "lic_test",
+      machine_fingerprint: "fp",
+      activation_token: " ",
+    } as never);
+    mockedApplyProductLicenseReconciliation.mockRejectedValue({
+      code: "ORG_VALIDATION_FAILED",
+      message: "Validation failed",
+      details: [
+        {
+          code: "LICENSE_CLAIM_INVALID",
+          message: "The licence data received is incomplete or malformed: nothing was changed.",
+        },
+      ],
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalled();
+    });
+    expect(await screen.findByText("app content")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 150));
+    const kinds = mockedApplyProductLicenseReconciliation.mock.calls.map((c) => c[0].kind);
+    expect(kinds.every((k) => k === "success")).toBe(true);
+    expect(mockedGetSessionInfo.mock.calls.length).toBeLessThan(5);
   });
 });

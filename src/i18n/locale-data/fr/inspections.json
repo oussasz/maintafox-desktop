@@ -1,12 +1,14 @@
 {
   "page": {
     "title": "Rondes d'inspection",
-    "description": "Check-lists terrain : planifier les rondes, saisir les relevés, traiter les constats."
+    "description": "Rondes et tournées terrain : les planifier, saisir les relevés, traiter les constats."
   },
   "tabs": {
     "rounds": "Rondes",
-    "templates": "Modèles",
-    "signals": "Signaux fiabilité"
+    "templates": "Check-lists et tournées",
+    "signals": "Signaux fiabilité",
+    "anomalies": "Anomalies",
+    "schedules": "Planifications"
   },
   "status": {
     "scheduled": "Planifiée",
@@ -22,7 +24,14 @@
     "todo": "À faire",
     "toReview": "À revoir",
     "done": "Terminées",
-    "all": "Toutes"
+    "all": "Toutes",
+    "finished": "Terminées (toutes)",
+    "status": "Statut",
+    "timing": "Échéance",
+    "overdue": "En retard maintenant",
+    "period_one": "Prévues sur le dernier jour",
+    "period_other": "Prévues sur les {{count}} derniers jours",
+    "search": "Rechercher une check-list, une personne, une équipe ou une planification"
   },
   "rounds": {
     "empty": "Aucune ronde dans cette liste.",
@@ -41,7 +50,19 @@
     "openAnomalies_one": "{{count}} anomalie ouverte",
     "openAnomalies_other": "{{count}} anomalies ouvertes",
     "pendingSync_one": "{{count}} modification en attente de synchronisation",
-    "pendingSync_other": "{{count}} modifications en attente de synchronisation"
+    "pendingSync_other": "{{count}} modifications en attente de synchronisation",
+    "emptyHint": "Modifiez les filtres, planifiez une ronde ou créez une planification récurrente.",
+    "overdue": "En retard",
+    "team": "Équipe {{name}}",
+    "columns": {
+      "checklist": "Check-list",
+      "planned": "Prévue",
+      "assignee": "Affectée à",
+      "status": "Statut",
+      "progress": "Avancement",
+      "findings": "Constats",
+      "action": "Action"
+    }
   },
   "schedule": {
     "title": "Planifier une ronde",
@@ -54,7 +75,12 @@
     "assigneeSearchError": "La recherche a échoué : {{message}}",
     "clearAssignee": "Retirer",
     "submit": "Planifier",
-    "noTemplate": "Créez d'abord une check-list (onglet Modèles)."
+    "noTemplate": "Créez d'abord une check-list (onglet Modèles).",
+    "team": "Équipe",
+    "noTeam": "Aucune équipe",
+    "teamNotAllowed": "Votre rôle ne permet pas de lister les équipes ; affectez plutôt un technicien.",
+    "teamLoadError": "Les équipes n'ont pas pu être chargées.",
+    "clearAssigneeNamed": "Retirer {{name}}"
   },
   "runner": {
     "back": "Retour aux rondes",
@@ -104,7 +130,18 @@
       "not_accessible": "Inaccessible",
       "not_done": "Non réalisé"
     },
-    "anomalyOpen": "Anomalie à traiter : {{description}}"
+    "anomalyOpen": "Anomalie à traiter : {{description}}",
+    "progressOf": "{{done}} contrôles réalisés sur {{total}}",
+    "checkpoints": "Contrôles de la ronde",
+    "checkChip": "Contrôle {{index}} : {{label}} — {{state}}",
+    "answer": "Réponse",
+    "commentRequiredLabel": "Commentaire (obligatoire)",
+    "commentRequiredOutOfTolerance": "Ce relevé est hors limites : indiquez ce que vous avez constaté.",
+    "proposeDi": "Créer une demande",
+    "history": "Résultats précédents",
+    "historyNone": "Aucun résultat précédent pour ce contrôle.",
+    "trend": "Tendance des derniers relevés, de {{first}} à {{last}} {{unit}}",
+    "shortcuts": "Clavier : ← → changer de contrôle · 1–5 choisir la réponse · Entrée enregistre un relevé · Ctrl+Entrée enregistre depuis le commentaire · P ajoute une photo"
   },
   "result": {
     "pass": "Conforme",
@@ -129,6 +166,7 @@
     }
   },
   "review": {
+    "decidedLoadError": "Impossible de lire les constats déjà traités",
     "title": "Constats à traiter",
     "none": "Aucune anomalie ouverte.",
     "toDi": "Créer une demande",
@@ -143,7 +181,10 @@
     "anomalyType": {
       "threshold_breach": "Hors tolérance",
       "missing_mandatory_photo": "Photo obligatoire manquante"
-    }
+    },
+    "decided": "Constats traités",
+    "decideFirst_one": "{{count}} constat attend encore une décision.",
+    "decideFirst_other": "{{count}} constats attendent encore une décision."
   },
   "templates": {
     "empty": "Aucune check-list pour le moment.",
@@ -184,7 +225,42 @@
       "numeric": "Mesure",
       "observation": "Observation"
     },
-    "required": "Obligatoire"
+    "required": "Obligatoire",
+    "builderIntro": "Les contrôles sont réalisés dans cet ordre. Rattachez chacun à son équipement ; insérez une autre check-list pour un équipement afin de composer une tournée.",
+    "emptyHint": "Créez une check-list : ses contrôles ordonnés, chacun sur son équipement, forment la tournée de la ronde.",
+    "unpublished": "Non publiée",
+    "published": "Publiée",
+    "newVersionNamed": "Nouvelle version de {{name}}",
+    "minutes_one": "{{count}} min",
+    "minutes_other": "{{count}} min",
+    "durationInvalid": "Saisissez un nombre entier de minutes.",
+    "rowsInvalid_one": "{{count}} contrôle présente un problème. Rien n'a été enregistré.",
+    "rowsInvalid_other": "{{count}} contrôles présentent un problème. Rien n'a été enregistré.",
+    "rowLabel": "Contrôle {{index}} ({{code}})",
+    "noCode": "sans code",
+    "checkCodeRow": "Code du contrôle {{index}}",
+    "checkTypeRow": "Type de réponse du contrôle {{index}}",
+    "moveUpRow": "Monter le contrôle {{index}}",
+    "moveDownRow": "Descendre le contrôle {{index}}",
+    "removeRow": "Supprimer le contrôle {{index}}",
+    "addStop": "Insérer une check-list pour un équipement",
+    "addStopTitle": "Insérer une check-list",
+    "addStopIntro": "Copie les contrôles d'une autre check-list à la fin de celle-ci, par exemple un contrôle standard de pompe pour chaque pompe de la tournée.",
+    "addStopSource": "Check-list à insérer",
+    "addStopAsset": "Pour l'équipement",
+    "addStopAssetHint": "Facultatif. Chaque contrôle copié est rattaché à cet équipement et son code commence par le code de l'équipement.",
+    "addStopSubmit": "Insérer les contrôles",
+    "columns": {
+      "name": "Check-list",
+      "state": "État"
+    },
+    "rowIssues": {
+      "codeRequired": "Le code est obligatoire.",
+      "codeDuplicate": "Un autre contrôle utilise déjà ce code.",
+      "limitInvalid": "{{field}} n'est pas un nombre.",
+      "limitsOrder": "Un minimum est supérieur à son maximum.",
+      "warningBand": "La plage d'alerte doit contenir la plage normale."
+    }
   },
   "signals": {
     "description": "Par équipement, sur une fenêtre glissante : alertes et défauts relevés, anomalies ouvertes et couverture des check-lists.",
@@ -197,9 +273,185 @@
     "fails": "Défauts",
     "openAnomalies": "Anomalies ouvertes",
     "coverage": "Couverture",
-    "invalidWindow": "Saisissez un nombre de jours (1 ou plus)."
+    "invalidWindow": "Saisissez un nombre entier de jours (1 à {{max}}).",
+    "emptyHint": "Recalculez pour voir, par équipement, les alertes, défauts et anomalies ouvertes de la fenêtre."
   },
   "errors": {
     "load": "Chargement impossible : {{message}}"
+  },
+  "kpi": {
+    "title": "Indicateurs",
+    "loadError": "Les indicateurs n'ont pas pu être chargés",
+    "period": "Période",
+    "periodOption_one": "Dernier jour",
+    "periodOption_other": "{{count}} derniers jours",
+    "periodHint_one": "Prévues sur le dernier jour",
+    "periodHint_other": "Prévues sur les {{count}} derniers jours",
+    "nowHint": "En ce moment",
+    "due": "Rondes dues",
+    "done": "Rondes réalisées",
+    "overdue": "En retard",
+    "missed": "Manquées",
+    "compliance": "Respect du plan",
+    "complianceHint": "{{done}} sur {{due}} réalisées à temps",
+    "complianceNone": "Aucune ronde due sur la période",
+    "openAnomalies": "Anomalies ouvertes"
+  },
+  "anomalyStatus": {
+    "open": "À décider",
+    "triaged": "Suite donnée",
+    "deferred": "Reportée",
+    "resolved": "Résolue",
+    "cancelled": "Annulée"
+  },
+  "anomalies": {
+    "filterStatus": "Statut",
+    "otherType": "Constat",
+    "empty": "Aucune anomalie dans cette liste.",
+    "emptyHint": "Les anomalies apparaissent quand un relevé est hors tolérance ou qu'une photo obligatoire manque.",
+    "deferTitle": "Reporter ce constat ?",
+    "deferBody": "Le constat {{checkpoint}} est conservé, sans demande ni ordre de travail pour l'instant. Vous pourrez y donner suite plus tard depuis cette liste.",
+    "columns": {
+      "finding": "Constat",
+      "equipment": "Équipement",
+      "reading": "Relevé",
+      "round": "Ronde",
+      "status": "Statut",
+      "followUp": "Suite"
+    }
+  },
+  "followUp": {
+    "diTitle": "Créer une demande à partir du constat",
+    "woTitle": "Créer un ordre de travail à partir du constat",
+    "intro": "Le titre et la description sont rédigés à partir de la ronde ; vérifiez-les et modifiez-les avant la création.",
+    "equipment": "Équipement",
+    "noEquipment": "Aucun équipement sur ce contrôle",
+    "checkpoint": "Contrôle",
+    "reading": "Résultat",
+    "round": "Ronde",
+    "titleLabel": "Titre",
+    "titleRequired": "Indiquez un titre.",
+    "descriptionLabel": "Description",
+    "woTypePlaceholder": "Choisir un type",
+    "cancel": "Annuler",
+    "createDi": "Créer la demande",
+    "createWo": "Créer l'ordre de travail",
+    "createdDi": "Demande créée :",
+    "createdWo": "Ordre de travail créé :",
+    "blocked": {
+      "alreadyRouted": "Ce constat a déjà une demande ou un ordre de travail.",
+      "noEquipment": "Ce contrôle n'a pas d'équipement : une demande ou un ordre de travail en exige un. Ajoutez l'équipement au contrôle dans une nouvelle version de la check-list.",
+      "noLocation": "L'équipement n'a pas de lieu d'installation : une demande en exige un. Complétez d'abord la fiche équipement."
+    },
+    "title": {
+      "above": "{{label}} hors tolérance sur {{asset}} : {{value}} > {{limit}}",
+      "aboveNoAsset": "{{label}} hors tolérance : {{value}} > {{limit}}",
+      "below": "{{label}} hors tolérance sur {{asset}} : {{value}} < {{limit}}",
+      "belowNoAsset": "{{label}} hors tolérance : {{value}} < {{limit}}",
+      "photo": "{{label}} : photo obligatoire manquante sur {{asset}}",
+      "photoNoAsset": "{{label}} : photo obligatoire manquante",
+      "finding": "{{label}} sur {{asset}} : {{result}}",
+      "findingNoAsset": "{{label}} : {{result}}"
+    },
+    "description": {
+      "round": "Ronde d'inspection {{name}} ({{code}}), prévue le {{date}}.",
+      "checkpoint": "Contrôle {{code}} : {{label}}.",
+      "asset": "Équipement : {{asset}} {{name}}.",
+      "reading": "Relevé : {{value}} ({{status}}).",
+      "result": "Résultat : {{status}}.",
+      "normal": "Plage normale : {{band}}.",
+      "warning": "Plage d'alerte : {{band}}.",
+      "observation": "Observation : {{text}}",
+      "comment": "Commentaire du technicien : {{comment}}"
+    }
+  },
+  "schedules": {
+    "metersLoadError": "Impossible de lire les compteurs de cet équipement",
+    "new": "Nouvelle planification",
+    "generate": "Générer les rondes dues",
+    "generated": "Rondes générées : {{generated}} · déjà présentes : {{skipped}} · passées en manquées : {{missed}}.",
+    "issue": "Planification {{code}} :",
+    "empty": "Aucune planification récurrente pour le moment.",
+    "emptyHint": "Une planification crée les rondes d'une check-list chaque jour, semaine, mois… ou à chaque intervalle de compteur.",
+    "active": "Active",
+    "inactive": "Inactive",
+    "edit": "Modifier",
+    "editNamed": "Modifier {{name}}",
+    "everyMeter": "Tous les {{value}} {{unit}} de {{meter}}",
+    "meterNow": "actuellement {{value}} {{unit}}",
+    "from": "à partir du {{date}}",
+    "open_one": "{{count}} à faire",
+    "open_other": "{{count}} à faire",
+    "overdue_one": "{{count}} en retard",
+    "overdue_other": "{{count}} en retard",
+    "missed_one": "{{count}} manquée",
+    "missed_other": "{{count}} manquées",
+    "columns": {
+      "schedule": "Planification",
+      "route": "Check-list / tournée",
+      "trigger": "Récurrence",
+      "assignee": "Affectée à",
+      "next": "Prochaine ronde",
+      "rounds": "Rondes",
+      "active": "État"
+    },
+    "every": {
+      "label": "Tous les",
+      "hour_one": "Toutes les heures",
+      "hour_other": "Toutes les {{count}} heures",
+      "day_one": "Tous les jours",
+      "day_other": "Tous les {{count}} jours",
+      "week_one": "Toutes les semaines",
+      "week_other": "Toutes les {{count}} semaines",
+      "month_one": "Tous les mois",
+      "month_other": "Tous les {{count}} mois",
+      "year_one": "Tous les ans",
+      "year_other": "Tous les {{count}} ans"
+    },
+    "units": {
+      "hour": "Heures",
+      "day": "Jours",
+      "week": "Semaines",
+      "month": "Mois",
+      "year": "Années"
+    },
+    "newTitle": "Nouvelle planification récurrente",
+    "editTitle": "Planification {{name}}",
+    "intro": "Les rondes sont générées avec la version publiée de la check-list et affectées comme indiqué ici. Les rondes futures non commencées sont remplacées à l'enregistrement.",
+    "code": "Code",
+    "name": "Nom",
+    "route": "Check-list / tournée",
+    "routeHint": "Les contrôles de la check-list, dans leur ordre, forment la tournée parcourue sur le terrain.",
+    "trigger": "Déclenchement",
+    "triggers": {
+      "calendar": "Calendrier",
+      "meter": "Compteur"
+    },
+    "unit": "Unité",
+    "horizon": "Générer à l'avance (jours)",
+    "horizonHint": "Les rondes sont créées autant de jours à l'avance (1 à {{max}}).",
+    "anchor": "Première ronde",
+    "meterAsset": "Équipement du compteur",
+    "meter": "Compteur",
+    "meterPlaceholder": "Choisir un compteur",
+    "noMeter": "Cet équipement n'a pas de compteur actif.",
+    "meterInterval": "Tous les (unités du compteur)",
+    "meterStart": "Compter à partir du relevé",
+    "meterStartHint": "Vide : le relevé actuel au moment de l'enregistrement.",
+    "grace": "Délai accordé après l'échéance (heures)",
+    "graceHint": "Une ronde non commencée dans ce délai passe en manquée (1 à {{max}} heures).",
+    "activeLabel": "Planification active (génère des rondes)",
+    "save": "Enregistrer la planification",
+    "errors": {
+      "required": "Obligatoire.",
+      "assigneeRequired": "Affectez les rondes à un technicien ou à une équipe.",
+      "graceRange": "Saisissez un nombre entier d'heures (1 à {{hours}}).",
+      "intervalRequired": "Saisissez un nombre entier supérieur ou égal à 1.",
+      "anchorRequired": "Choisissez la date et l'heure de la première ronde.",
+      "horizonRange": "Saisissez un nombre entier de jours (1 à {{days}}).",
+      "meterRequired": "Choisissez le compteur.",
+      "meterIntervalRequired": "Saisissez un intervalle supérieur à zéro.",
+      "notNumber": "Saisissez un nombre."
+    }
   }
 }

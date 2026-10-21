@@ -1,15 +1,11 @@
+import { ArrowDown, ArrowUp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { EntityFormDialog, EntityFormFooter, EntityFormSection } from "@/components/entity-form";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { describeAppError } from "@/lib/app-error";
 import { saveAnalyticsDashboardLayout } from "@/services/analytics-dashboard-service";
 import {
   ANALYTICS_DASHBOARD_WIDGET_IDS,
@@ -96,81 +92,88 @@ export function AnalyticsCustomizeDialog(props: {
       props.onSaved(next);
       props.onOpenChange(false);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(describeAppError(e).title);
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>{t("hub.dashboards.customizeTitle")}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
-          {sorted.map((w) => (
-            <div
-              key={w.id}
-              className="flex items-center justify-between gap-2 rounded-md border border-surface-border px-3 py-2"
-            >
-              <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
-                <Checkbox
-                  checked={w.visible}
-                  onCheckedChange={(c) => {
-                    setDraft((prev) => ({
-                      ...prev,
-                      widgets: prev.widgets.map((x) =>
-                        x.id === w.id ? { ...x, visible: c === true } : x,
-                      ),
-                    }));
-                  }}
-                />
-                <span className="truncate">
-                  {t(LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id })}
-                </span>
-              </label>
-              <div className="flex shrink-0 gap-1">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      widgets: moveWidget(prev.widgets, w.id, -1),
-                    }))
-                  }
-                >
-                  ↑
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      widgets: moveWidget(prev.widgets, w.id, 1),
-                    }))
-                  }
-                >
-                  ↓
-                </Button>
-              </div>
+    <EntityFormDialog
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      title={t("hub.dashboards.customizeTitle")}
+      footer={
+        <EntityFormFooter
+          cancelLabel={t("hub.dashboards.cancel")}
+          primaryLabel={t("hub.dashboards.saveLayout")}
+          onCancel={() => props.onOpenChange(false)}
+          primaryType="button"
+          onPrimary={() => void onSave()}
+          primaryLoading={saving}
+        />
+      }
+    >
+      <EntityFormSection title={t("hub.dashboards.widgetsSection")}>
+        {sorted.map((w) => (
+          <div
+            key={w.id}
+            className="flex items-center justify-between gap-2 rounded-md border border-surface-border px-3 py-2"
+          >
+            <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+              <Checkbox
+                checked={w.visible}
+                onCheckedChange={(c) => {
+                  setDraft((prev) => ({
+                    ...prev,
+                    widgets: prev.widgets.map((x) =>
+                      x.id === w.id ? { ...x, visible: c === true } : x,
+                    ),
+                  }));
+                }}
+              />
+              <span className="truncate">
+                {t(LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id })}
+              </span>
+            </label>
+            <div className="flex shrink-0 gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-11 w-11 p-0"
+                aria-label={t("hub.customize.moveUp", {
+                  widget: t(LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id }),
+                })}
+                onClick={() =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    widgets: moveWidget(prev.widgets, w.id, -1),
+                  }))
+                }
+              >
+                <ArrowUp className="h-4 w-4" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-11 w-11 p-0"
+                aria-label={t("hub.customize.moveDown", {
+                  widget: t(LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id }),
+                })}
+                onClick={() =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    widgets: moveWidget(prev.widgets, w.id, 1),
+                  }))
+                }
+              >
+                <ArrowDown className="h-4 w-4" aria-hidden />
+              </Button>
             </div>
-          ))}
-          {error ? <p className="text-sm text-text-danger">{error}</p> : null}
-        </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-            {t("hub.dashboards.cancel")}
-          </Button>
-          <Button type="button" disabled={saving} onClick={() => void onSave()}>
-            {t("hub.dashboards.saveLayout")}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </div>
+        ))}
+        {error ? <p className="text-sm text-text-danger">{error}</p> : null}
+      </EntityFormSection>
+    </EntityFormDialog>
   );
 }

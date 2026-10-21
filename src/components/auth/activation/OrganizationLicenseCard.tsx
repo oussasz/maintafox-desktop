@@ -1,4 +1,7 @@
-import { mfCard } from "@/design-system/tokens";
+import { Building2 } from "lucide-react";
+
+import { AuthStatusChip } from "@/components/auth/shell/AuthPrimitives";
+import { i18n } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 export type OrganizationLicenseCardFields = {
@@ -13,7 +16,7 @@ export type OrganizationLicenseCardFields = {
   deviceName?: string | null;
 };
 
-type Row = { label: string; value: string };
+type Row = { label: string; value: string; mono?: boolean };
 
 type OrganizationLicenseCardProps = {
   fields: OrganizationLicenseCardFields;
@@ -37,17 +40,40 @@ function display(value: string | number | null | undefined, fallback: string): s
   return String(value);
 }
 
+/**
+ * Human-readable licence date in the active UI language ("10 Sep 2027"). Values that are not a
+ * valid date are returned unchanged so nothing the server sent is hidden.
+ */
+export function formatLicenseDate(value: string, locale: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }).format(parsed);
+  } catch {
+    return value;
+  }
+}
+
+/** Summary of the organisation and licence a device is about to be activated against. */
 export function OrganizationLicenseCard({ fields, labels }: OrganizationLicenseCardProps) {
+  const locale = i18n.language || "en";
+  const expiration = display(fields.expiresAt, labels.notSpecified);
+  const statusText = display(fields.licenseStatus, labels.notSpecified);
+  const statusOk = fields.licenseStatus?.trim().toLowerCase() === "active";
+
   const rows: Row[] = [
-    { label: labels.slug, value: display(fields.tenantSlug, labels.notSpecified) },
+    { label: labels.slug, value: display(fields.tenantSlug, labels.notSpecified), mono: true },
     { label: labels.plan, value: display(fields.licensePlan, labels.notSpecified) },
-    { label: labels.status, value: display(fields.licenseStatus, labels.notSpecified) },
     { label: labels.channel, value: display(fields.channel, labels.notSpecified) },
-    { label: labels.expiration, value: display(fields.expiresAt, labels.notSpecified) },
     {
-      label: labels.allowedDevices,
-      value: display(fields.allowedDevices, labels.notSpecified),
+      label: labels.expiration,
+      value: fields.expiresAt ? formatLicenseDate(expiration, locale) : expiration,
     },
+    { label: labels.allowedDevices, value: display(fields.allowedDevices, labels.notSpecified) },
     {
       label: labels.activatedDevices,
       value: display(fields.activatedDevices, labels.notSpecified),
@@ -56,20 +82,44 @@ export function OrganizationLicenseCard({ fields, labels }: OrganizationLicenseC
   ];
 
   return (
-    <section className={cn(mfCard.panel, "space-y-4")} aria-labelledby="activation-org-heading">
-      <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
-          {labels.companyBelongsTo}
-        </p>
-        <h2 id="activation-org-heading" className="mt-1 text-xl font-semibold text-text-primary">
-          {fields.companyName}
-        </h2>
+    <section
+      className="rounded-lg border border-surface-border bg-[var(--mfa-ice)]/70 p-4"
+      aria-labelledby="activation-org-heading"
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-[var(--mfa-blue)] ring-1 ring-surface-border"
+          aria-hidden
+        >
+          <Building2 className="h-[18px] w-[18px]" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium text-text-muted">{labels.companyBelongsTo}</p>
+          <h2
+            id="activation-org-heading"
+            className="mt-0.5 break-words text-base font-semibold leading-snug text-text-primary"
+          >
+            {fields.companyName}
+          </h2>
+        </div>
+        <AuthStatusChip tone={statusOk ? "ok" : "neutral"} className="shrink-0">
+          <span className="sr-only">{labels.status}: </span>
+          {statusText}
+        </AuthStatusChip>
       </div>
-      <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-surface-border pt-4 sm:gap-x-6">
         {rows.map((row) => (
           <div key={row.label} className="min-w-0">
             <dt className="text-xs text-text-muted">{row.label}</dt>
-            <dd className="mt-0.5 truncate text-sm font-medium text-text-primary">{row.value}</dd>
+            <dd
+              className={cn(
+                "mt-0.5 truncate text-sm font-medium text-text-primary",
+                row.mono && "font-mono text-[13px]",
+              )}
+              title={row.value}
+            >
+              {row.value}
+            </dd>
           </div>
         ))}
       </dl>

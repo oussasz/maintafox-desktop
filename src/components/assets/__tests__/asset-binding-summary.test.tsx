@@ -10,6 +10,7 @@
  */
 
 import { render, screen, waitFor, act } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import { mockInvoke } from "@/test/mocks/tauri";
@@ -54,6 +55,7 @@ function makeSummary(overrides: Partial<AssetBindingSummaryType> = {}): AssetBin
     linked_erp_mapping_count: { status: "not_implemented", count: null },
     open_di_count: { status: "available", count: 0 },
     open_wo_count: { status: "available", count: 0 },
+    open_wo_rule: "not_yet_closed",
     ...overrides,
   };
 }
@@ -79,7 +81,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
   describe("V1 — Placeholder tolerance", () => {
     it("renders all 7 domain cards when most are not_implemented", async () => {
       setupMock(makeSummary());
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
@@ -97,7 +99,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
 
     it("shows 'Not yet available' badges for WO and PM domains", async () => {
       setupMock(makeSummary());
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
@@ -121,7 +123,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
       });
 
       setupMock(allAvailable);
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
@@ -136,7 +138,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
   describe("V2 — Implemented-domain counts", () => {
     it("displays actual document link count from backend", async () => {
       setupMock(makeSummary({ linked_document_count: { status: "available", count: 7 } }));
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("7")).toBeInTheDocument();
@@ -145,7 +147,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
 
     it("displays zero count without error for available domains with 0 links", async () => {
       setupMock(makeSummary({ linked_document_count: { status: "available", count: 0 } }));
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
@@ -155,21 +157,22 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
       expect(screen.getByText("0")).toBeInTheDocument();
     });
 
-    it("handles null count on available domain gracefully (falls back to 0)", async () => {
+    it("shows an unreported count as unknown, never as 0", async () => {
       // Edge case: available status but null count
       setupMock(
         makeSummary({
           linked_document_count: { status: "available", count: null },
         }),
       );
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
       });
 
-      // The component does `entry.count ?? 0`, so should show 0
-      expect(screen.getByText("0")).toBeInTheDocument();
+      // An available domain without a count reads "—": a silent 0 would be a false figure.
+      expect(screen.getByText("—")).toBeInTheDocument();
+      expect(screen.queryByText("0")).not.toBeInTheDocument();
     });
   });
 
@@ -193,7 +196,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
         return null;
       });
 
-      const { rerender } = render(<AssetBindingSummary assetId={1} />);
+      const { rerender } = render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       // Rapidly switch to asset 2, then 3
       rerender(<AssetBindingSummary assetId={2} />);
@@ -222,7 +225,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
         return null;
       });
 
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       // Initially shows loading (no error)
       expect(screen.queryByText(/error|failed|échec/i)).not.toBeInTheDocument();
@@ -246,7 +249,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
         return null;
       });
 
-      const { rerender } = render(<AssetBindingSummary assetId={1} />);
+      const { rerender } = render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       // First load fails
       await waitFor(() => {
@@ -265,5 +268,23 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
       });
       expect(screen.queryByText("db locked")).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("AssetBindingSummary — counts open their lists", () => {
+  it("links the work-order and request counts to the lists filtered on the asset", async () => {
+    setupMock(
+      makeSummary({
+        linked_wo_count: { status: "available", count: 5 },
+        linked_di_count: { status: "available", count: 3 },
+      }),
+    );
+    render(<AssetBindingSummary assetId={7} />, { wrapper: MemoryRouter });
+    await waitFor(() => {
+      expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
+    });
+    const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain("/work-orders?equipment=7");
+    expect(hrefs).toContain("/requests?equipment=7");
   });
 });

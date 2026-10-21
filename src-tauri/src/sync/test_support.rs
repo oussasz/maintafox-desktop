@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
-use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement, Value as SqlValue};
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, Value as SqlValue};
 use sea_orm_migration::MigratorTrait;
 
 use super::domain::{
@@ -22,14 +22,22 @@ use super::queries::{apply_sync_batch, get_sync_push_payload};
 use super::registry::{self, SyncScope};
 use super::row_codec::{self, RowLocator};
 use super::row_layout::{self, Role, Target};
+use crate::db::test_db::Template;
+
+static STARTED: Template = Template::new(|db| Box::pin(prepare_started(db)));
 
 /// A database as the startup leaves it: migrations, every startup seeder, capture installed.
+/// A private in-memory copy of a database built that way once per test process (`db::test_db`).
+/// Every copy has the same replica identity (device code) and random ids: for two or more devices
+/// in one test use [`started_device_db`].
 pub(crate) async fn started_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    db.execute_unprepared("PRAGMA foreign_keys = ON")
-        .await
-        .expect("foreign keys");
-    prepare_started(db).await
+    STARTED.copy().await
+}
+
+/// Like [`started_db`], but built from scratch like a separately installed device: its own replica
+/// identity, device code and random ids. For tests that put several devices side by side.
+pub(crate) async fn started_device_db() -> DatabaseConnection {
+    STARTED.fresh().await
 }
 
 /// Like [`started_db`], but an encrypted database file opened like the app opens it
@@ -49,26 +57,26 @@ pub(crate) async fn started_file_db(path: &std::path::Path) -> DatabaseConnectio
     ] {
         db.execute_unprepared(pragma).await.expect("pragma");
     }
-    prepare_started(db).await
+    prepare_started(&db).await;
+    db
 }
 
-async fn prepare_started(db: DatabaseConnection) -> DatabaseConnection {
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("system seed");
-    crate::wo::types::ensure_required_work_order_types(&db)
+async fn prepare_started(db: &DatabaseConnection) {
+    crate::migrations::Migrator::up(db, None).await.expect("migrations");
+    crate::db::seeder::seed_system_data(db).await.expect("system seed");
+    crate::wo::types::ensure_work_order_type_catalog(db)
         .await
         .expect("work order types");
-    crate::wo::priorities::ensure_required_urgency_levels(&db)
+    crate::reference::urgency_scale::ensure_urgency_scale(db)
         .await
-        .expect("urgency levels");
-    crate::wo::statuses::ensure_required_work_order_statuses(&db)
+        .expect("urgency scale");
+    crate::wo::statuses::ensure_required_work_order_statuses(db)
         .await
         .expect("work order statuses");
-    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&db)
+    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(db)
         .await
         .expect("reference catalog");
-    super::capture::install_capture(&db).await.expect("install capture");
-    db
+    super::capture::install_capture(db).await.expect("install capture");
 }
 
 pub(crate) async fn exec(db: &impl ConnectionTrait, sql: &str, values: Vec<SqlValue>) {
@@ -273,12 +281,55 @@ impl TestServer {
 /// Literal values for columns the generic generator cannot guess (enumerations checked by code,
 /// cross-column constraints). `(entity type, column, SQL literal)`.
 const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
+    // A received audit chain stub must be well formed (`audit::chain::inbound_stub_check`): a
+    // position after 1 with its link, a stub-era hash and its content digest.
+    (
+        "audit_chain_stubs",
+        "chain_seq",
+        "(SELECT COALESCE(MAX(chain_seq), 1) + 1 FROM audit_chain_stubs)",
+    ),
+    (
+        "audit_chain_stubs",
+        "chain_prev_hash",
+        "'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'",
+    ),
+    (
+        "audit_chain_stubs",
+        "chain_hash",
+        "'L2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'",
+    ),
+    (
+        "audit_chain_stubs",
+        "content_digest",
+        "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+    ),
     // Movement types are an enumeration of the inventory commands (`inventory::ledger`).
     ("inventory_transactions", "movement_type", "'ADJUST_IN'"),
     // The next run is computed from it on every device.
     ("report_schedules", "cron_expr", "'0 0 8 * * *'"),
     // Only tenant settings are synchronised (device settings stay on the device).
     ("app_settings", "setting_scope", "'tenant'"),
+    // Per-site rules: a known rule; relaxing a site needs its audited change, so the generic
+    // row turns the rule off (the strict side), and its event carries a reason.
+    (
+        "site_settings",
+        "setting_key",
+        "'reliability.decisions.allow_self_approval'",
+    ),
+    ("site_settings", "value_json", "'false'"),
+    (
+        "site_setting_events",
+        "setting_key",
+        "'reliability.decisions.allow_self_approval'",
+    ),
+    ("site_setting_events", "old_value_json", "'true'"),
+    ("site_setting_events", "new_value_json", "'false'"),
+    (
+        "site_setting_events",
+        "reason",
+        "'Single reliability engineer on this site'",
+    ),
+    ("site_setting_events", "required_step_up", "1"),
     // Notification categories are referenced by code (seeded on every device).
     (
         "notification_preferences",
@@ -290,6 +341,128 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
         "category_code",
         "(SELECT code FROM notification_categories ORDER BY id LIMIT 1)",
     ),
+    // Labour booked to a person without a login (migration 190): personnel only.
+    ("work_order_interveners", "intervener_id", "NULL"),
+    // A received notice must name its created account as that account is
+    // (`auth::recovery_code::inbound_notice_check`; a generic row has no redemption audit record):
+    // the seeded administrator (same identity on every device), with its names, and a device code.
+    (
+        "admin_recovery_notices",
+        "created_user_id",
+        "(SELECT MIN(id) FROM user_accounts)",
+    ),
+    (
+        "admin_recovery_notices",
+        "created_username",
+        "(SELECT username FROM user_accounts WHERE id = (SELECT MIN(id) FROM user_accounts))",
+    ),
+    (
+        "admin_recovery_notices",
+        "created_display_name",
+        "(SELECT COALESCE(display_name, '') FROM user_accounts WHERE id = (SELECT MIN(id) FROM user_accounts))",
+    ),
+    ("admin_recovery_notices", "redeemed_device_code", "'7KQ2'"),
+    // Only a notice's recipient acknowledges it (`auth::recovery_code::inbound_acknowledgement_check`):
+    // the acknowledgement names the recipient of the notice just created as its parent.
+    (
+        "admin_recovery_acknowledgements",
+        "acknowledged_by_id",
+        "(SELECT recipient_user_id FROM admin_recovery_notices ORDER BY id DESC LIMIT 1)",
+    ),
+    // A requirement asks for one certification or one skill, never both.
+    ("qualification_requirements", "skill_reference_value_id", "NULL"),
+    ("qualification_requirements", "min_proficiency_level", "NULL"),
+    // An override states its reason (at least 10 characters).
+    (
+        "qualification_overrides",
+        "reason",
+        "'Supervised on site by the shift lead'",
+    ),
+    ("qualification_overrides", "role_code", "NULL"),
+    // A personnel record or a login without one, never both.
+    ("qualification_overrides", "user_id", "NULL"),
+    ("qualification_overrides", "permit_id", "NULL"),
+    // The approver of an override must hold the certification right on the receiving device
+    // (`qualification::sync_check`): generic accounts (administrators, `is_*` = 1) are not deleted.
+    ("user_accounts", "deleted_at", "NULL"),
+    // A site rule received on a deleted node is refused (`settings::site::inbound_site_setting_check`):
+    // the generic node is live, as every node of the structure in use is.
+    ("org_nodes", "deleted_at", "NULL"),
+    // A live node belongs to a structure (trigger of migration 127): the one of its node type, the
+    // last created (the node type is created just before as its parent).
+    (
+        "org_nodes",
+        "structure_model_id",
+        "(SELECT structure_model_id FROM org_node_types ORDER BY id DESC LIMIT 1)",
+    ),
+    // Site rules are received only on a node of the structure in use (`settings::site`).
+    ("org_structure_models", "status", "'active'"),
+    // A received permit is judged on its status (`permit::sync_check`): the generic permit is
+    // active (its generic times are in order: fitted, verified, activated, lock removed, expiry),
+    // so its generic isolations arrive with it as a valid group.
+    ("work_permits", "status", "'active'"),
+    // An active permit names who approved it (four-eyes, `permit::sync_check::four_eyes_check`): its
+    // author, submitter and approver are three generic accounts (one parent row per reference), so
+    // a four-eyes approval, not flagged a self-approval, approved after it was submitted.
+    ("work_permits", "self_approved", "0"),
+    ("work_permits", "submitted_at", "'2026-01-01T08:00:00Z'"),
+    ("work_permits", "approved_at", "'2026-01-01T09:00:00Z'"),
+    // The generic isolation is fitted and verified under that active permit, its lock still on: a
+    // line in use, never cancelled (a cancelled line is one never applied, on a draft or a permit
+    // waiting for review, `permit::sync_check::cancellation_check`). Its lock is not taken off: a
+    // removal is recorded by its applier (or forced, with its whole record) before it is verified
+    // (migration 249, `permit::sync_check::isolation_rule_breach`), which generic people and times
+    // cannot give.
+    ("permit_isolations", "cancelled_at", "NULL"),
+    ("permit_isolations", "cancelled_by_id", "NULL"),
+    ("permit_isolations", "removal_verified_at", "NULL"),
+    ("permit_isolations", "removal_verified_by_id", "NULL"),
+    ("permit_isolations", "removed_at", "NULL"),
+    ("permit_isolations", "removed_by_id", "NULL"),
+    ("permit_isolations", "forced_removal", "0"),
+    ("permit_isolations", "forced_authorized_by_id", "NULL"),
+    ("permit_isolations", "forced_reason", "NULL"),
+    ("permit_isolations", "forced_worker_absent", "0"),
+    ("permit_isolations", "forced_contact_attempts_json", "NULL"),
+    ("permit_isolations", "informed_by_id", "NULL"),
+    ("permit_isolations", "informed_at", "NULL"),
+    ("permit_isolations", "informed_method", "NULL"),
+    ("permit_isolations", "informed_in_app", "0"),
+    // A generic work order carries no plant-rule permit flag (that trace is written at conversion and
+    // judged on arrival, `permit::sync_check::inbound_permit_rule_check`).
+    ("work_orders", "permit_rule_code", "NULL"),
+    ("work_orders", "permit_rule_permit_type", "NULL"),
+    ("work_orders", "permit_rule_cleared_at", "NULL"),
+    // A generic record carries no assigned-site trace (written once by an administrator on a record
+    // without a site and judged on arrival, `org::site_assignment::inbound_site_assignment_check`).
+    ("work_orders", "site_assigned_by_id", "NULL"),
+    ("work_orders", "site_assigned_at", "NULL"),
+    ("work_orders", "site_assign_reason", "NULL"),
+    ("intervention_requests", "site_assigned_by_id", "NULL"),
+    ("intervention_requests", "site_assigned_at", "NULL"),
+    ("intervention_requests", "site_assign_reason", "NULL"),
+    ("planning_windows", "site_assigned_by_id", "NULL"),
+    ("planning_windows", "site_assigned_at", "NULL"),
+    ("planning_windows", "site_assign_reason", "NULL"),
+    // A calendar day, not a timestamp.
+    ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
+    // A planned crew is 1–50 people (migration 207 triggers).
+    ("work_orders", "planned_crew_size", "2"),
+    ("pm_plan_versions", "planned_crew_size", "2"),
+    ("schedule_candidates", "planned_crew_size", "2"),
+    // Timetables (migrations 192, 197): calendar days, a weekly cycle, percentages in range.
+    ("site_work_weeks", "effective_from", "'2026-12-01'"),
+    ("site_work_weeks", "weekend_days", "'5,6'"),
+    ("schedule_class_versions", "effective_from", "'2026-12-01'"),
+    ("schedule_class_versions", "cycle_length_days", "7"),
+    ("schedule_class_versions", "rotation_start_date", "NULL"),
+    ("schedule_class_versions", "utilisation_percent", "85.0"),
+    ("schedule_class_versions", "review_status", "NULL"),
+    ("team_schedule_assignments", "effective_from", "'2026-12-01'"),
+    ("team_schedule_assignments", "review_status", "NULL"),
+    ("personnel_schedule_exceptions", "valid_from", "'2026-12-01'"),
+    ("personnel_schedule_exceptions", "valid_to", "NULL"),
+    ("personnel_schedule_exceptions", "work_percent", "50.0"),
 ];
 
 #[derive(Debug, Clone)]

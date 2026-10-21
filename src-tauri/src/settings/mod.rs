@@ -4,11 +4,18 @@
 //! `settings_change_events`. All writes through this module emit an audit event.
 
 use crate::errors::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub mod branding;
+pub mod catalog;
+pub(crate) mod received_notice;
+#[cfg(test)]
+mod received_notice_tests;
+pub mod site;
+#[cfg(test)]
+mod sync_tests;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSetting {
@@ -43,9 +50,14 @@ pub struct SettingsChangeEvent {
     pub old_value_hash: Option<String>,
     pub new_value_hash: Option<String>,
     pub changed_by_id: Option<i64>,
+    /// Display name (or username) of `changed_by_id`.
+    pub changed_by_name: Option<String>,
     pub changed_at: String,
     pub required_step_up: bool,
     pub apply_result: String,
+    /// Value before / after the change (events written before migration 213 have hashes only).
+    pub old_value_json: Option<String>,
+    pub new_value_json: Option<String>,
 }
 
 /// Session policy loaded from the `policy_snapshots` table.
@@ -80,7 +92,7 @@ pub fn sha256_hex(value: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub async fn get_setting(db: &DatabaseConnection, key: &str, scope: &str) -> AppResult<Option<AppSetting>> {
+pub async fn get_setting<C: ConnectionTrait>(db: &C, key: &str, scope: &str) -> AppResult<Option<AppSetting>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -223,6 +235,21 @@ pub async fn set_setting(
     changed_by_id: Option<i32>,
     change_summary: &str,
 ) -> AppResult<()> {
+    set_setting_recorded(db, key, scope, value_json, changed_by_id, change_summary, false).await
+}
+
+/// [`set_setting`], recording whether a fresh step-up was required for the change. The lock
+/// checks (fiscal start month, tenant currency), the write and its history row are one
+/// transaction, so a posting cannot slip in between the check and the change.
+pub async fn set_setting_recorded(
+    db: &DatabaseConnection,
+    key: &str,
+    scope: &str,
+    value_json: &str,
+    changed_by_id: Option<i32>,
+    change_summary: &str,
+    required_step_up: bool,
+) -> AppResult<()> {
     if value_json.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
             "setting_value_json for '{}' must not be empty",
@@ -232,20 +259,25 @@ pub async fn set_setting(
 
     let _: serde_json::Value = serde_json::from_str(value_json)
         .map_err(|_| AppError::ValidationFailed(vec![format!("setting_value_json for '{}' is not valid JSON", key)]))?;
+    let tx = db.begin().await?;
+    // Per-key checks: the fiscal-year start month and the tenant currency (stored postings
+    // depend on them).
+    crate::finance::fiscal::guard_fiscal_start_write(&tx, key, value_json).await?;
+    crate::inventory::fx::guard_currency_write(&tx, key, value_json).await?;
 
-    let old_hash = get_setting(db, key, scope)
-        .await?
-        .map(|s| sha256_hex(&s.setting_value_json));
+    let old_value = get_setting(&tx, key, scope).await?.map(|s| s.setting_value_json);
+    let old_hash = old_value.as_deref().map(sha256_hex);
 
     let new_hash = sha256_hex(value_json);
     let now = chrono::Utc::now().to_rfc3339();
+    let (category, risk) = catalog::definition(key).map_or(("general", "low"), |d| (d.category, d.risk));
 
-    db.execute(Statement::from_sql_and_values(
+    tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO app_settings
                (setting_key, setting_scope, setting_value_json, category,
                 setting_risk, validation_status, last_modified_by_id, last_modified_at)
-           VALUES (?, ?, ?, 'general', 'low', 'valid', ?, ?)
+           VALUES (?, ?, ?, ?, ?, 'valid', ?, ?)
            ON CONFLICT(setting_key, setting_scope)
            DO UPDATE SET
                setting_value_json = excluded.setting_value_json,
@@ -255,28 +287,28 @@ pub async fn set_setting(
             key.into(),
             scope.into(),
             value_json.into(),
+            category.into(),
+            risk.into(),
             changed_by_id.map(i64::from).into(),
             now.clone().into(),
         ],
     ))
     .await?;
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT INTO settings_change_events
-               (setting_key_or_domain, change_summary, old_value_hash, new_value_hash,
-                changed_by_id, changed_at, required_step_up, apply_result)
-           VALUES (?, ?, ?, ?, ?, ?, 0, 'applied')",
-        [
-            key.into(),
-            change_summary.into(),
-            old_hash.into(),
-            new_hash.into(),
-            changed_by_id.map(i64::from).into(),
-            now.into(),
-        ],
-    ))
+    insert_change_event(
+        &tx,
+        key,
+        change_summary,
+        old_value.as_deref(),
+        Some(value_json),
+        old_hash,
+        Some(new_hash),
+        changed_by_id.map(i64::from),
+        &now,
+        required_step_up,
+    )
     .await?;
+    tx.commit().await?;
 
     tracing::info!(
         setting_key = key,
@@ -310,20 +342,18 @@ pub async fn delete_setting(
     ))
     .await?;
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT INTO settings_change_events
-               (setting_key_or_domain, change_summary, old_value_hash, new_value_hash,
-                changed_by_id, changed_at, required_step_up, apply_result)
-           VALUES (?, ?, ?, NULL, ?, ?, 0, 'applied')",
-        [
-            key.into(),
-            change_summary.into(),
-            old_hash.into(),
-            changed_by_id.map(i64::from).into(),
-            now.into(),
-        ],
-    ))
+    insert_change_event(
+        db,
+        key,
+        change_summary,
+        Some(&old_row.setting_value_json),
+        None,
+        Some(old_hash),
+        None,
+        changed_by_id.map(i64::from),
+        &now,
+        false,
+    )
     .await?;
 
     tracing::info!(
@@ -336,29 +366,123 @@ pub async fn delete_setting(
     Ok(true)
 }
 
-pub async fn list_change_events(db: &DatabaseConnection, limit: i64) -> AppResult<Vec<SettingsChangeEvent>> {
+/// Append one row to the settings change history (hashes and, from migration 213, values).
+/// Values are kept only for plant parameters (`catalog::keeps_value_history`): module and device
+/// state (licence onboarding with its activation token, bootstrap, rating scales, notification
+/// state) is recorded by hash only, because the history is synced and readable in Settings.
+pub(crate) async fn insert_change_event<C: ConnectionTrait>(
+    db: &C,
+    key_or_domain: &str,
+    change_summary: &str,
+    old_value: Option<&str>,
+    new_value: Option<&str>,
+    old_hash: Option<String>,
+    new_hash: Option<String>,
+    changed_by_id: Option<i64>,
+    changed_at: &str,
+    required_step_up: bool,
+) -> AppResult<()> {
+    let (old_value, new_value) = if catalog::keeps_value_history(key_or_domain) {
+        (old_value, new_value)
+    } else {
+        (None, None)
+    };
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r"INSERT INTO settings_change_events
+               (setting_key_or_domain, change_summary, old_value_hash, new_value_hash,
+                changed_by_id, changed_at, required_step_up, apply_result,
+                old_value_json, new_value_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'applied', ?, ?)",
+        [
+            key_or_domain.into(),
+            change_summary.into(),
+            old_hash.into(),
+            new_hash.into(),
+            changed_by_id.into(),
+            changed_at.into(),
+            i32::from(required_step_up).into(),
+            old_value.map(str::to_string).into(),
+            new_value.map(str::to_string).into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Clear the values recorded for keys whose history must stay hash-only (see
+/// [`catalog::keeps_value_history`]). Run by migration 213 and at every startup (a database that
+/// applied an earlier build of 213 may hold some); a no-op once clean. Returns the rows cleared.
+pub async fn scrub_hash_only_history<C: ConnectionTrait>(db: &C) -> AppResult<u64> {
+    let mut allowed: Vec<&str> = catalog::SETTINGS_CATALOG
+        .iter()
+        .map(|d| d.key)
+        .filter(|k| catalog::is_plant_parameter(k))
+        .collect();
+    allowed.extend_from_slice(catalog::POLICY_DOMAINS_WITH_VALUE_HISTORY);
+    let placeholders = vec!["?"; allowed.len()].join(",");
+    let sql = format!(
+        "UPDATE settings_change_events SET old_value_json = NULL, new_value_json = NULL \
+         WHERE (old_value_json IS NOT NULL OR new_value_json IS NOT NULL) \
+           AND setting_key_or_domain NOT LIKE 'rbac.%' \
+           AND setting_key_or_domain NOT IN ({placeholders})"
+    );
+    let values: Vec<sea_orm::Value> = allowed.iter().map(|k| (*k).into()).collect();
+    let result = db
+        .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// Most recent settings changes, optionally for one key or policy domain only.
+pub async fn list_change_events(
+    db: &DatabaseConnection,
+    limit: i64,
+    key_or_domain: Option<&str>,
+) -> AppResult<Vec<SettingsChangeEvent>> {
     let safe_limit = limit.clamp(1, 500);
+    let key = key_or_domain.map(str::trim).filter(|k| !k.is_empty());
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"SELECT
-                   id,
-                   setting_key_or_domain,
-                   change_summary,
-                   old_value_hash,
-                   new_value_hash,
-                   changed_by_id,
-                   COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', changed_at), changed_at) AS changed_at,
-                   required_step_up,
-                   apply_result
-               FROM settings_change_events
-               ORDER BY changed_at DESC
+                   e.id,
+                   e.setting_key_or_domain,
+                   e.change_summary,
+                   e.old_value_hash,
+                   e.new_value_hash,
+                   e.changed_by_id,
+                   COALESCE(u.display_name, u.username) AS changed_by_name,
+                   COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', e.changed_at), e.changed_at) AS changed_at,
+                   e.required_step_up,
+                   e.apply_result,
+                   e.old_value_json,
+                   e.new_value_json
+               FROM settings_change_events e
+               LEFT JOIN user_accounts u ON u.id = e.changed_by_id
+               WHERE (? IS NULL OR e.setting_key_or_domain = ?)
+               ORDER BY e.changed_at DESC, e.id DESC
                LIMIT ?",
-            [safe_limit.into()],
+            [
+                key.map(str::to_string).into(),
+                key.map(str::to_string).into(),
+                safe_limit.into(),
+            ],
         ))
         .await?;
 
-    rows.into_iter().map(map_settings_change_event).collect()
+    rows.into_iter()
+        .map(|row| {
+            let mut event = map_settings_change_event(row)?;
+            // Rows recorded by an older build (or received from one) may carry values of keys
+            // whose history must stay hash-only.
+            if !catalog::keeps_value_history(&event.setting_key_or_domain) {
+                event.old_value_json = None;
+                event.new_value_json = None;
+            }
+            Ok(event)
+        })
+        .collect()
 }
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
@@ -448,6 +572,15 @@ fn map_settings_change_event(row: QueryResult) -> AppResult<SettingsChangeEvent>
         changed_by_id: row
             .try_get::<Option<i64>>("", "changed_by_id")
             .map_err(|e| decode_err("changed_by_id", e))?,
+        changed_by_name: row
+            .try_get::<Option<String>>("", "changed_by_name")
+            .map_err(|e| decode_err("changed_by_name", e))?,
+        old_value_json: row
+            .try_get::<Option<String>>("", "old_value_json")
+            .map_err(|e| decode_err("old_value_json", e))?,
+        new_value_json: row
+            .try_get::<Option<String>>("", "new_value_json")
+            .map_err(|e| decode_err("new_value_json", e))?,
         changed_at: row
             .try_get::<String>("", "changed_at")
             .map_err(|e| decode_err("changed_at", e))?,
@@ -458,12 +591,57 @@ fn map_settings_change_event(row: QueryResult) -> AppResult<SettingsChangeEvent>
     })
 }
 
-/// Validation outcome for a policy draft rule.
+/// Validation outcome for a policy draft rule. `code` + `params` let the screen say it in the
+/// user's language (`POLICY_TEST_*`); `message` is the server's English text, kept as a fallback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyTestResult {
     pub rule_name: String,
     pub severity: String,
+    pub code: String,
+    pub params: std::collections::BTreeMap<String, String>,
     pub message: String,
+}
+
+/// Stable codes of the policy draft test results (`PolicyTestResult::code`).
+pub mod policy_test_codes {
+    /// The draft is not a valid policy document. Params: `domain`, `detail`.
+    pub const SCHEMA_INVALID: &str = "POLICY_TEST_SCHEMA_INVALID";
+    /// A value is within its range. Params: `field`, `value`, `min`, `max`.
+    pub const IN_RANGE: &str = "POLICY_TEST_IN_RANGE";
+    /// A value is outside its range. Params: `field`, `value`, `min`, `max`.
+    pub const OUT_OF_RANGE: &str = "POLICY_TEST_OUT_OF_RANGE";
+    /// The idle timeout fits in the session length. Params: `idle`, `absolute`.
+    pub const IDLE_WITHIN_ABSOLUTE: &str = "POLICY_TEST_IDLE_WITHIN_ABSOLUTE";
+    /// The idle timeout exceeds the session length. Params: `idle`, `absolute`.
+    pub const IDLE_EXCEEDS_ABSOLUTE: &str = "POLICY_TEST_IDLE_EXCEEDS_ABSOLUTE";
+    /// The backup schedule is empty. No params.
+    pub const SCHEDULE_EMPTY: &str = "POLICY_TEST_SCHEDULE_EMPTY";
+    /// The backup schedule cannot be read. Params: `schedule`, `detail`.
+    pub const SCHEDULE_INVALID: &str = "POLICY_TEST_SCHEDULE_INVALID";
+    /// The backup schedule is valid. Params: `schedule`.
+    pub const SCHEDULE_VALID: &str = "POLICY_TEST_SCHEDULE_VALID";
+    /// Whether photos are included in backups (information). Params: `value` (`true` / `false`).
+    pub const INCLUDE_PHOTOS: &str = "POLICY_TEST_INCLUDE_PHOTOS";
+    /// The password policy is edited in its own panel. No params.
+    pub const PASSWORD_ELSEWHERE: &str = "POLICY_TEST_PASSWORD_ELSEWHERE";
+    /// The policy domain is not known. Params: `domain`.
+    pub const DOMAIN_UNSUPPORTED: &str = "POLICY_TEST_DOMAIN_UNSUPPORTED";
+}
+
+fn policy_result(
+    rule_name: &str,
+    severity: &str,
+    code: &str,
+    params: &[(&str, String)],
+    message: String,
+) -> PolicyTestResult {
+    PolicyTestResult {
+        rule_name: rule_name.into(),
+        severity: severity.into(),
+        code: code.into(),
+        params: params.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect(),
+        message,
+    }
 }
 
 /// Read-only connection profile row for the Integrations tab.
@@ -594,21 +772,18 @@ pub async fn save_policy_draft(
         ))
         .await?;
 
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"INSERT INTO settings_change_events
-                   (setting_key_or_domain, change_summary, old_value_hash, new_value_hash,
-                    changed_by_id, changed_at, required_step_up, apply_result)
-               VALUES (?, ?, ?, ?, ?, ?, 0, 'applied')",
-            [
-                domain.into(),
-                format!("Policy draft updated for domain '{domain}'").into(),
-                sha256_hex(&existing.snapshot_json).into(),
-                sha256_hex(snapshot_json).into(),
-                i64::from(actor_id).into(),
-                now.into(),
-            ],
-        ))
+        insert_change_event(
+            db,
+            domain,
+            &format!("Policy draft updated for domain '{domain}'"),
+            Some(&existing.snapshot_json),
+            Some(snapshot_json),
+            Some(sha256_hex(&existing.snapshot_json)),
+            Some(sha256_hex(snapshot_json)),
+            Some(i64::from(actor_id)),
+            &now,
+            false,
+        )
         .await?;
 
         return get_draft_policy(db, domain)
@@ -626,20 +801,18 @@ pub async fn save_policy_draft(
     ))
     .await?;
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT INTO settings_change_events
-               (setting_key_or_domain, change_summary, old_value_hash, new_value_hash,
-                changed_by_id, changed_at, required_step_up, apply_result)
-           VALUES (?, ?, NULL, ?, ?, ?, 0, 'applied')",
-        [
-            domain.into(),
-            format!("Policy draft created for domain '{domain}'").into(),
-            sha256_hex(snapshot_json).into(),
-            i64::from(actor_id).into(),
-            now.into(),
-        ],
-    ))
+    insert_change_event(
+        db,
+        domain,
+        &format!("Policy draft created for domain '{domain}'"),
+        None,
+        Some(snapshot_json),
+        None,
+        Some(sha256_hex(snapshot_json)),
+        Some(i64::from(actor_id)),
+        &now,
+        false,
+    )
     .await?;
 
     get_draft_policy(db, domain)
@@ -657,15 +830,18 @@ pub async fn test_policy_draft(db: &DatabaseConnection, domain: &str) -> AppResu
 }
 
 fn validate_policy_json(domain: &str, snapshot_json: &str) -> Vec<PolicyTestResult> {
+    use policy_test_codes as c;
     let mut results = Vec::new();
 
     match domain {
         "session" => match serde_json::from_str::<SessionPolicy>(snapshot_json) {
-            Err(e) => results.push(PolicyTestResult {
-                rule_name: "schema".into(),
-                severity: "fail".into(),
-                message: format!("Session policy JSON is invalid: {e}"),
-            }),
+            Err(e) => results.push(policy_result(
+                "schema",
+                "fail",
+                c::SCHEMA_INVALID,
+                &[("domain", domain.to_string()), ("detail", e.to_string())],
+                format!("Session policy JSON is invalid: {e}"),
+            )),
             Ok(p) => {
                 results.push(range_rule("idle_timeout_minutes", p.idle_timeout_minutes, 1, 480));
                 results.push(range_rule(
@@ -675,87 +851,119 @@ fn validate_policy_json(domain: &str, snapshot_json: &str) -> Vec<PolicyTestResu
                     1440,
                 ));
                 results.push(range_rule("offline_grace_hours", p.offline_grace_hours, 0, 720));
-                results.push(range_rule("step_up_window_minutes", p.step_up_window_minutes, 1, 120));
+                results.push(range_rule("step_up_window_minutes", p.step_up_window_minutes, 1, 30));
                 results.push(range_rule("max_failed_attempts", p.max_failed_attempts, 1, 20));
                 results.push(range_rule("lockout_minutes", p.lockout_minutes, 1, 1440));
+                let params = [
+                    ("idle", p.idle_timeout_minutes.to_string()),
+                    ("absolute", p.absolute_session_minutes.to_string()),
+                ];
                 if p.idle_timeout_minutes > p.absolute_session_minutes {
-                    results.push(PolicyTestResult {
-                        rule_name: "idle_vs_absolute".into(),
-                        severity: "fail".into(),
-                        message: "Idle timeout must not exceed absolute session length".into(),
-                    });
+                    results.push(policy_result(
+                        "idle_vs_absolute",
+                        "fail",
+                        c::IDLE_EXCEEDS_ABSOLUTE,
+                        &params,
+                        "Idle timeout must not exceed absolute session length".into(),
+                    ));
                 } else {
-                    results.push(PolicyTestResult {
-                        rule_name: "idle_vs_absolute".into(),
-                        severity: "pass".into(),
-                        message: "Idle timeout is within absolute session length".into(),
-                    });
+                    results.push(policy_result(
+                        "idle_vs_absolute",
+                        "pass",
+                        c::IDLE_WITHIN_ABSOLUTE,
+                        &params,
+                        "Idle timeout is within absolute session length".into(),
+                    ));
                 }
             }
         },
         "backup" => match serde_json::from_str::<BackupPolicy>(snapshot_json) {
-            Err(e) => results.push(PolicyTestResult {
-                rule_name: "schema".into(),
-                severity: "fail".into(),
-                message: format!("Backup policy JSON is invalid: {e}"),
-            }),
+            Err(e) => results.push(policy_result(
+                "schema",
+                "fail",
+                c::SCHEMA_INVALID,
+                &[("domain", domain.to_string()), ("detail", e.to_string())],
+                format!("Backup policy JSON is invalid: {e}"),
+            )),
             Ok(p) => {
                 if p.schedule_cron.trim().is_empty() {
-                    results.push(PolicyTestResult {
-                        rule_name: "schedule_cron".into(),
-                        severity: "fail".into(),
-                        message: "Backup schedule cron must not be empty".into(),
-                    });
+                    results.push(policy_result(
+                        "schedule_cron",
+                        "fail",
+                        c::SCHEDULE_EMPTY,
+                        &[],
+                        "Backup schedule cron must not be empty".into(),
+                    ));
                 } else if let Err(e) = crate::backup::scheduler::parse_backup_schedule(&p.schedule_cron) {
-                    results.push(PolicyTestResult {
-                        rule_name: "schedule_cron".into(),
-                        severity: "fail".into(),
-                        message: e,
-                    });
+                    results.push(policy_result(
+                        "schedule_cron",
+                        "fail",
+                        c::SCHEDULE_INVALID,
+                        &[("schedule", p.schedule_cron.clone()), ("detail", e.clone())],
+                        e,
+                    ));
                 } else {
-                    results.push(PolicyTestResult {
-                        rule_name: "schedule_cron".into(),
-                        severity: "pass".into(),
-                        message: "Backup schedule cron is valid".into(),
-                    });
+                    results.push(policy_result(
+                        "schedule_cron",
+                        "pass",
+                        c::SCHEDULE_VALID,
+                        &[("schedule", p.schedule_cron.clone())],
+                        "Backup schedule cron is valid".into(),
+                    ));
                 }
                 results.push(range_rule("retention_days", p.retention_days, 1, 3650));
                 results.push(range_rule("compression_level", p.compression_level, 0, 9));
-                results.push(PolicyTestResult {
-                    rule_name: "include_photos".into(),
-                    severity: "pass".into(),
-                    message: format!("include_photos={}", p.include_photos),
-                });
+                results.push(policy_result(
+                    "include_photos",
+                    "pass",
+                    c::INCLUDE_PHOTOS,
+                    &[("value", p.include_photos.to_string())],
+                    format!("include_photos={}", p.include_photos),
+                ));
             }
         },
-        "password" => results.push(PolicyTestResult {
-            rule_name: "password_ssot".into(),
-            severity: "warn".into(),
-            message: "Password policy is managed via RBAC settings; use PasswordPolicyPanel".into(),
-        }),
-        other => results.push(PolicyTestResult {
-            rule_name: "domain".into(),
-            severity: "fail".into(),
-            message: format!("Unsupported policy domain '{other}'"),
-        }),
+        "password" => results.push(policy_result(
+            "password_ssot",
+            "warn",
+            c::PASSWORD_ELSEWHERE,
+            &[],
+            "Password policy is managed via RBAC settings; use PasswordPolicyPanel".into(),
+        )),
+        other => results.push(policy_result(
+            "domain",
+            "fail",
+            c::DOMAIN_UNSUPPORTED,
+            &[("domain", other.to_string())],
+            format!("Unsupported policy domain '{other}'"),
+        )),
     }
 
     results
 }
 
 fn range_rule(name: &str, value: u32, min: u32, max: u32) -> PolicyTestResult {
+    let params = [
+        ("field", name.to_string()),
+        ("value", value.to_string()),
+        ("min", min.to_string()),
+        ("max", max.to_string()),
+    ];
     if value < min || value > max {
-        PolicyTestResult {
-            rule_name: name.into(),
-            severity: "fail".into(),
-            message: format!("{name}={value} is outside allowed range [{min}, {max}]"),
-        }
+        policy_result(
+            name,
+            "fail",
+            policy_test_codes::OUT_OF_RANGE,
+            &params,
+            format!("{name}={value} is outside allowed range [{min}, {max}]"),
+        )
     } else {
-        PolicyTestResult {
-            rule_name: name.into(),
-            severity: "pass".into(),
-            message: format!("{name}={value} is within [{min}, {max}]"),
-        }
+        policy_result(
+            name,
+            "pass",
+            policy_test_codes::IN_RANGE,
+            &params,
+            format!("{name}={value} is within [{min}, {max}]"),
+        )
     }
 }
 
@@ -790,7 +998,8 @@ pub async fn activate_policy(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    let required_step_up = if is_security_domain(domain) { 1 } else { 0 };
+    let required_step_up = is_security_domain(domain);
+    let previous_active = get_active_policy(db, domain).await?.map(|p| p.snapshot_json);
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -808,21 +1017,18 @@ pub async fn activate_policy(
     ))
     .await?;
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT INTO settings_change_events
-               (setting_key_or_domain, change_summary, old_value_hash, new_value_hash,
-                changed_by_id, changed_at, required_step_up, apply_result)
-           VALUES (?, ?, NULL, ?, ?, ?, ?, 'applied')",
-        [
-            domain.into(),
-            format!("Policy activated for domain '{domain}' (snapshot {snapshot_id})").into(),
-            sha256_hex(&target.snapshot_json).into(),
-            i64::from(actor_id).into(),
-            now.into(),
-            required_step_up.into(),
-        ],
-    ))
+    insert_change_event(
+        db,
+        domain,
+        &format!("Policy activated for domain '{domain}' (snapshot {snapshot_id})"),
+        previous_active.as_deref(),
+        Some(&target.snapshot_json),
+        previous_active.as_deref().map(sha256_hex),
+        Some(sha256_hex(&target.snapshot_json)),
+        Some(i64::from(actor_id)),
+        &now,
+        required_step_up,
+    )
     .await?;
 
     get_active_policy(db, domain)
@@ -844,20 +1050,18 @@ pub async fn discard_policy_draft(db: &DatabaseConnection, domain: &str, actor_i
     ))
     .await?;
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT INTO settings_change_events
-               (setting_key_or_domain, change_summary, old_value_hash, new_value_hash,
-                changed_by_id, changed_at, required_step_up, apply_result)
-           VALUES (?, ?, ?, NULL, ?, ?, 0, 'applied')",
-        [
-            domain.into(),
-            format!("Policy draft discarded for domain '{domain}'").into(),
-            sha256_hex(&draft.snapshot_json).into(),
-            i64::from(actor_id).into(),
-            now.into(),
-        ],
-    ))
+    insert_change_event(
+        db,
+        domain,
+        &format!("Policy draft discarded for domain '{domain}'"),
+        Some(&draft.snapshot_json),
+        None,
+        Some(sha256_hex(&draft.snapshot_json)),
+        None,
+        Some(i64::from(actor_id)),
+        &now,
+        false,
+    )
     .await?;
 
     Ok(())
@@ -945,10 +1149,46 @@ pub async fn list_connection_profiles(db: &DatabaseConnection) -> AppResult<Vec<
 }
 
 #[cfg(test)]
+mod policy_test_code_tests {
+    use super::{policy_test_codes as c, validate_policy_json};
+
+    /// Every test result carries a code and the params its translation needs; the English
+    /// message stays as the fallback.
+    #[test]
+    fn policy_test_results_are_coded() {
+        let session = validate_policy_json(
+            "session",
+            &serde_json::to_string(&super::SessionPolicy {
+                idle_timeout_minutes: 600,
+                ..super::SessionPolicy::default()
+            })
+            .expect("json"),
+        );
+        let idle = session
+            .iter()
+            .find(|r| r.rule_name == "idle_timeout_minutes")
+            .expect("idle");
+        assert_eq!(idle.code, c::OUT_OF_RANGE);
+        assert_eq!(idle.params["field"], "idle_timeout_minutes");
+        assert_eq!(idle.params["value"], "600");
+        assert_eq!((idle.params["min"].as_str(), idle.params["max"].as_str()), ("1", "480"));
+        assert!(!idle.message.is_empty(), "the server text stays as a fallback");
+        assert!(session.iter().all(|r| r.code.starts_with("POLICY_TEST_")));
+
+        let bad = validate_policy_json("backup", "{");
+        assert_eq!(bad[0].code, c::SCHEMA_INVALID);
+        assert_eq!(bad[0].params["domain"], "backup");
+        let other = validate_policy_json("nope", "{}");
+        assert_eq!(other[0].code, c::DOMAIN_UNSUPPORTED);
+        assert_eq!(other[0].params["domain"], "nope");
+        assert_eq!(validate_policy_json("password", "{}")[0].code, c::PASSWORD_ELSEWHERE);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{DbBackend, Statement};
 
     #[test]
     fn sha256_hex_is_stable() {
@@ -960,11 +1200,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_session_policy_uses_defaults_when_missing() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         let policy = load_session_policy(&db).await;
         assert_eq!(policy, SessionPolicy::default());
@@ -972,11 +1208,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_setting_writes_setting_and_audit_event() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         set_setting(
             &db,
@@ -1016,12 +1248,131 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_setting_rejects_invalid_json() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
+    async fn change_history_keeps_values_and_filters_by_key() {
+        let db = crate::db::test_db::seeded().await;
+        set_setting(
+            &db,
+            "wo.reopen_window_days",
+            "tenant",
+            "45",
+            Some(1),
+            "Reopen window 45",
+        )
+        .await
+        .expect("set");
+        set_setting(
+            &db,
+            "backup.retention_daily",
+            "tenant",
+            "10",
+            Some(1),
+            "Keep 10 dailies",
+        )
+        .await
+        .expect("set");
 
-        crate::migrations::Migrator::up(&db, None)
+        let reopen = list_change_events(&db, 50, Some("wo.reopen_window_days"))
             .await
-            .expect("Migrations should apply");
+            .expect("history");
+        assert_eq!(reopen.len(), 1, "only the requested key");
+        assert_eq!(reopen[0].old_value_json.as_deref(), Some("30"), "shipped value before");
+        assert_eq!(reopen[0].new_value_json.as_deref(), Some("45"));
+        assert!(list_change_events(&db, 50, None).await.expect("all").len() >= 2);
+    }
+
+    #[tokio::test]
+    async fn licence_state_changes_record_no_value() {
+        let db = crate::db::test_db::seeded().await;
+        set_setting(
+            &db,
+            "product.license_onboarding",
+            "device",
+            r#"{"activation_claim":{"activation_token":"tok-123"}}"#,
+            Some(1),
+            "licence",
+        )
+        .await
+        .expect("set");
+        let stored: Option<String> = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COALESCE(old_value_json, new_value_json) AS v FROM settings_change_events \
+                 WHERE setting_key_or_domain = 'product.license_onboarding'"
+                    .to_string(),
+            ))
+            .await
+            .unwrap()
+            .expect("history row")
+            .try_get("", "v")
+            .unwrap();
+        assert_eq!(
+            stored, None,
+            "the activation token is not copied into the synced history"
+        );
+
+        // A row written by an earlier build is cleared at startup and blanked on read.
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT INTO settings_change_events \
+             (setting_key_or_domain, change_summary, changed_at, required_step_up, apply_result, new_value_json) \
+             VALUES ('product.license_onboarding', 'old build', '2026-10-16T00:00:00Z', 0, 'applied', '{\"t\":1}')"
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+        let listed = list_change_events(&db, 50, Some("product.license_onboarding"))
+            .await
+            .unwrap();
+        assert!(listed
+            .iter()
+            .all(|e| e.new_value_json.is_none() && e.old_value_json.is_none()));
+        assert_eq!(scrub_hash_only_history(&db).await.unwrap(), 1);
+        assert_eq!(scrub_hash_only_history(&db).await.unwrap(), 0, "idempotent");
+    }
+
+    #[tokio::test]
+    async fn step_up_is_recorded_when_it_was_required() {
+        let db = crate::db::test_db::seeded().await;
+        set_setting_recorded(&db, "wo.reopen_window_days", "tenant", "40", Some(1), "x", true)
+            .await
+            .unwrap();
+        let events = list_change_events(&db, 1, Some("wo.reopen_window_days")).await.unwrap();
+        assert!(events[0].required_step_up);
+    }
+
+    #[tokio::test]
+    async fn tenant_currency_locks_once_amounts_are_stored() {
+        let db = crate::db::test_db::seeded().await;
+        set_setting(&db, "locale.currency_code", "tenant", r#""EUR""#, Some(1), "EUR")
+            .await
+            .expect("free to change before any valued data");
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT INTO inventory_valuation_periods \
+             (entity_sync_id, period_code, period_start, period_end, currency_code, closed_at, created_at, updated_at) \
+             VALUES ('lock-test', '2026-01', '2026-01-01', '2026-01-31', 'EUR', '2026-02-01', '2026-02-01', '2026-02-01')"
+                .to_string(),
+        ))
+        .await
+        .expect("closed valuation period");
+
+        let err = set_setting(&db, "locale.currency_code", "tenant", r#""USD""#, Some(1), "USD")
+            .await
+            .expect_err("locked once a period is valued");
+        assert!(err.to_string().contains("GATE_FIN_CURRENCY_LOCKED"));
+        set_setting(&db, "locale.currency_code", "tenant", r#""EUR""#, Some(1), "same value")
+            .await
+            .expect("re-saving the current currency is not a change");
+        assert!(catalog::lock_reason(&db, "locale.currency_code")
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn set_setting_rejects_invalid_json() {
+        let db = crate::db::test_db::migrated().await;
 
         let err = set_setting(
             &db,
@@ -1039,10 +1390,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_default_policies_seeds_active_session_and_backup() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         ensure_default_policies(&db)
             .await
@@ -1078,10 +1426,7 @@ mod tests {
 
     #[tokio::test]
     async fn policy_draft_test_activate_discard_lifecycle() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         ensure_default_policies(&db).await.expect("seed defaults");
 

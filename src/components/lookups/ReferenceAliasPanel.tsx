@@ -18,6 +18,7 @@ import {
 } from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LoadingState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -34,14 +35,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { mfTable } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
+import { cn } from "@/lib/utils";
 import {
   createReferenceAlias,
   deleteReferenceAlias,
   listReferenceAliases,
   updateReferenceAlias,
 } from "@/services/reference-service";
-import { toErrorMessage } from "@/utils/errors";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import type { ReferenceAlias, ReferenceValue } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -101,7 +104,7 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
       const result = await listReferenceAliases(value.id);
       setAliases(result);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setLoading(false);
     }
@@ -134,7 +137,7 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
       setNewRow(null);
       await loadAliases();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }
@@ -165,7 +168,7 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
       setEditingId(null);
       await loadAliases();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }
@@ -179,7 +182,7 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
       setDeleteTarget(null);
       await loadAliases();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }
@@ -206,36 +209,37 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
               {t("alias.add")}
             </Button>
           )}
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose}>
-            <X className="h-3.5 w-3.5" />
+          <Button
+            aria-label={String(t("editor.cancel"))}
+            title={String(t("editor.cancel"))}
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9"
+            onClick={onClose}
+          >
+            <X className="h-4 w-4" aria-hidden />
           </Button>
         </div>
       </div>
 
-      {error && <p className="text-xs text-status-danger">{error}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-tone-danger-fg">
+          {error}
+        </p>
+      )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-4">
-          <div className="h-4 w-4 animate-spin rounded-full border border-surface-3 border-t-primary" />
-        </div>
+        <LoadingState className="py-4" />
       ) : aliases.length === 0 && !newRow ? (
         <p className="text-xs text-text-muted italic">{t("alias.empty")}</p>
       ) : (
         <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-surface-border">
-              <th className="px-2 py-1 text-left font-medium text-text-muted">
-                {t("alias.colAlias")}
-              </th>
-              <th className="px-2 py-1 text-left font-medium text-text-muted">
-                {t("alias.colLocale")}
-              </th>
-              <th className="px-2 py-1 text-left font-medium text-text-muted">
-                {t("alias.colType")}
-              </th>
-              <th className="px-2 py-1 text-left font-medium text-text-muted">
-                {t("alias.colPreferred")}
-              </th>
+            <tr className={cn("border-b border-surface-border", mfTable.header)}>
+              <th className="px-2 py-1 text-start">{t("alias.colAlias")}</th>
+              <th className="px-2 py-1 text-start">{t("alias.colLocale")}</th>
+              <th className="px-2 py-1 text-start">{t("alias.colType")}</th>
+              <th className="px-2 py-1 text-start">{t("alias.colPreferred")}</th>
               <th className="px-2 py-1 text-right align-middle font-medium text-text-muted">
                 {t("alias.colActions")}
               </th>
@@ -294,19 +298,23 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
                 </td>
                 <td className="px-2 py-1">
                   <Button
+                    aria-label={String(t("alias.preferred"))}
+                    title={String(t("alias.preferred"))}
                     variant="ghost"
                     size="icon"
                     className="h-5 w-5"
                     onClick={() => setNewRow({ ...newRow, is_preferred: !newRow.is_preferred })}
                   >
                     <Star
-                      className={`h-3 w-3 ${newRow.is_preferred ? "fill-yellow-400 text-yellow-500" : "text-text-muted"}`}
+                      className={`h-3 w-3 ${newRow.is_preferred ? "fill-tone-warning-fg text-tone-warning-fg" : "text-text-muted"}`}
                     />
                   </Button>
                 </td>
                 <td className="px-2 py-1 text-right align-middle">
                   <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                     <Button
+                      aria-label={String(t("editor.save"))}
+                      title={String(t("editor.save"))}
                       variant="ghost"
                       size="icon"
                       className={refTableIconButtonClass()}
@@ -316,6 +324,8 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
                       <Check className="h-3.5 w-3.5 text-status-success" />
                     </Button>
                     <Button
+                      aria-label={String(t("editor.cancel"))}
+                      title={String(t("editor.cancel"))}
                       variant="ghost"
                       size="icon"
                       className={refTableIconButtonClass()}
@@ -399,6 +409,8 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
                   <td className="px-2 py-1">
                     {isEditing ? (
                       <Button
+                        aria-label={String(t("alias.preferred"))}
+                        title={String(t("alias.preferred"))}
                         variant="ghost"
                         size="icon"
                         className="h-5 w-5"
@@ -407,17 +419,19 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
                         }
                       >
                         <Star
-                          className={`h-3 w-3 ${editRow.is_preferred ? "fill-yellow-400 text-yellow-500" : "text-text-muted"}`}
+                          className={`h-3 w-3 ${editRow.is_preferred ? "fill-tone-warning-fg text-tone-warning-fg" : "text-text-muted"}`}
                         />
                       </Button>
                     ) : a.is_preferred ? (
-                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-500" />
+                      <Star className="h-3 w-3 fill-tone-warning-fg text-tone-warning-fg" />
                     ) : null}
                   </td>
                   <td className="px-2 py-1 text-right align-middle">
                     {isEditing ? (
                       <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                         <Button
+                          aria-label={String(t("editor.save"))}
+                          title={String(t("editor.save"))}
                           variant="ghost"
                           size="icon"
                           className={refTableIconButtonClass()}
@@ -427,6 +441,8 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
                           <Check className="h-3.5 w-3.5 text-status-success" />
                         </Button>
                         <Button
+                          aria-label={String(t("editor.cancel"))}
+                          title={String(t("editor.cancel"))}
                           variant="ghost"
                           size="icon"
                           className={refTableIconButtonClass()}
@@ -440,6 +456,7 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
                         {canMutateAliases && (
                           <>
                             <Button
+                              title={String(t("editor.edit"))}
                               variant="ghost"
                               size="icon"
                               className={refTableIconButtonClass()}
@@ -449,6 +466,7 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                             <Button
+                              title={String(t("alias.delete"))}
                               variant="ghost"
                               size="icon"
                               className={refTableIconButtonClass()}

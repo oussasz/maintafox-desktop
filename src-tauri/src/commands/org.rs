@@ -437,7 +437,28 @@ pub async fn assign_org_node_responsibility(
         PermissionScope::Global
     );
 
-    let result = responsibilities::assign_responsibility(&state.db, payload, user.user_id).await?;
+    let outcome = responsibilities::assign_or_replace_responsibility(&state.db, payload, user.user_id).await?;
+
+    // A handover ends the previous assignee first; record that end as its own event.
+    if let Some(ended) = &outcome.ended {
+        audit::record_org_change(
+            &state.db,
+            OrgAuditEventInput {
+                entity_kind: "org_node_responsibility".to_string(),
+                entity_id: Some(ended.id),
+                change_type: "end_responsibility".to_string(),
+                before_json: None,
+                after_json: Some(serde_json::to_string(ended).unwrap_or_default()),
+                preview_summary_json: None,
+                changed_by_id: Some(user.user_id as i64),
+                requires_step_up: false,
+                apply_result: "applied".to_string(),
+            },
+        )
+        .await?;
+    }
+
+    let result = outcome.assignment;
 
     audit::record_org_change(
         &state.db,
@@ -819,4 +840,56 @@ pub async fn list_org_change_events(
         PermissionScope::Global
     );
     audit::list_org_change_events(&state.db, limit, entity_kind.as_deref(), entity_id).await
+}
+
+// ─── Records without a site (CMMS Advisor decision Q1, step 6) ───────────────
+
+/// How many work orders, requests and planning windows have no site (plant-wide `org.admin`).
+#[tauri::command]
+pub async fn count_records_without_site(
+    state: State<'_, AppState>,
+) -> AppResult<crate::org::site_assignment::NoSiteCounts> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ORG_ADMIN,
+        PermissionScope::Global
+    );
+    crate::org::site_assignment::count_records_without_site(&state.db).await
+}
+
+/// The records of one kind without a site, the counts of every kind and the nodes a site can be
+/// chosen from (plant-wide `org.admin`).
+#[tauri::command]
+pub async fn list_records_without_site(
+    kind: crate::org::site_assignment::NoSiteKind,
+    state: State<'_, AppState>,
+) -> AppResult<crate::org::site_assignment::RecordsWithoutSite> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ORG_ADMIN,
+        PermissionScope::Global
+    );
+    crate::org::site_assignment::list_records_without_site(&state.db, kind).await
+}
+
+/// Gives a site to records that have none (plant-wide `org.admin` + step-up; a reason; one audit
+/// entry per record; a record that has a site refuses the batch).
+#[tauri::command]
+pub async fn assign_site_to_records(
+    payload: crate::org::site_assignment::AssignSiteInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::org::site_assignment::AssignSiteResult> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ORG_ADMIN,
+        PermissionScope::Global
+    );
+    require_step_up!(state);
+    crate::org::site_assignment::assign_site(&state.db, user.user_id, payload).await
 }

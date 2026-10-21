@@ -6,8 +6,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::assets::identity::{self, CreateAssetPayload};
     use crate::assets::meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload};
@@ -19,26 +18,7 @@ mod tests {
 
     /// In-memory SQLite with all migrations + seed data.
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Publish an org model and create an active root org node.
@@ -149,6 +129,7 @@ mod tests {
                 rams_utilization_factor: Some(1.0),
                 org_node_id,
                 commissioned_at: None,
+                commercial: None,
             },
             1,
         )
@@ -172,7 +153,7 @@ mod tests {
                 name: "Run Hours".to_string(),
                 meter_code: Some("RH-001".to_string()),
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: Some(0.0),
                 expected_rate_per_day: Some(24.0),
                 rollover_value: None,
@@ -203,7 +184,7 @@ mod tests {
                 name: "Run Hours".to_string(),
                 meter_code: None,
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -222,7 +203,7 @@ mod tests {
                 name: "Odometer".to_string(),
                 meter_code: None,
                 meter_type: "DISTANCE".to_string(),
-                unit: Some("km".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "KM").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -259,7 +240,7 @@ mod tests {
                 name: "Run Hours".to_string(),
                 meter_code: None,
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -278,7 +259,11 @@ mod tests {
                 name: "Cycle Count".to_string(),
                 meter_code: None,
                 meter_type: "CYCLES".to_string(),
-                unit: Some("cycles".to_string()),
+                unit_value_id: Some(
+                    crate::reference::units::unit_id_by_code(&db, "CYCLE")
+                        .await
+                        .expect("unit"),
+                ),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -314,7 +299,7 @@ mod tests {
                 name: "Hours".to_string(),
                 meter_code: None,
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -382,7 +367,7 @@ mod tests {
                 name: "Hours".to_string(),
                 meter_code: None,
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -451,7 +436,7 @@ mod tests {
                 name: "Odometer".to_string(),
                 meter_code: None,
                 meter_type: "DISTANCE".to_string(),
-                unit: Some("km".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "KM").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: Some(9999.0),
@@ -513,7 +498,7 @@ mod tests {
                 name: "Hours".to_string(),
                 meter_code: None,
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -574,7 +559,7 @@ mod tests {
                 name: "Hours".to_string(),
                 meter_code: None,
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: Some(0.0),
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -625,7 +610,7 @@ mod tests {
                 name: "Run Hours".to_string(),
                 meter_code: None,
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -670,7 +655,7 @@ mod tests {
                 name: "Odometer".to_string(),
                 meter_code: None,
                 meter_type: "DISTANCE".to_string(),
-                unit: Some("km".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "KM").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -718,7 +703,7 @@ mod tests {
                 name: "Hours".to_string(),
                 meter_code: None,
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -795,7 +780,7 @@ mod tests {
                 name: "Bad Meter".to_string(),
                 meter_code: None,
                 meter_type: "NONEXISTENT".to_string(),
-                unit: None,
+                unit_value_id: None,
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -831,7 +816,7 @@ mod tests {
                 name: "Hours".to_string(),
                 meter_code: None,
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -882,7 +867,7 @@ mod tests {
                 name: "Hours".to_string(),
                 meter_code: None,
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,

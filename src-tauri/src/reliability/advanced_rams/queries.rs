@@ -704,6 +704,10 @@ fn map_fmeca_item(row: &sea_orm::QueryResult) -> AppResult<FmecaItem> {
         source_ishikawa_flow_node_id: row
             .try_get::<Option<String>>("", "source_ishikawa_flow_node_id")
             .map_err(|e| decode_err("source_ishikawa_flow_node_id", e))?,
+        review_required: row
+            .try_get::<i64>("", "review_required")
+            .map_err(|e| decode_err("review_required", e))?
+            != 0,
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -718,7 +722,7 @@ pub async fn list_fmeca_items(db: &DatabaseConnection, analysis_id: i64) -> AppR
             "SELECT id, entity_sync_id, analysis_id, component_id, functional_failure, failure_mode_id,
                     failure_effect, severity, occurrence, detectability, rpn, recommended_action, current_control,
                     linked_pm_plan_id, linked_work_order_id, revised_rpn,
-                    source_ram_ishikawa_diagram_id, source_ishikawa_flow_node_id,
+                    source_ram_ishikawa_diagram_id, source_ishikawa_flow_node_id, review_required,
                     row_version, updated_at
              FROM fmeca_items WHERE analysis_id = ? ORDER BY id ASC",
             [analysis_id.into()],
@@ -873,7 +877,7 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
             "SELECT id, entity_sync_id, analysis_id, component_id, functional_failure, failure_mode_id,
                     failure_effect, severity, occurrence, detectability, rpn, recommended_action, current_control,
                     linked_pm_plan_id, linked_work_order_id, revised_rpn,
-                    source_ram_ishikawa_diagram_id, source_ishikawa_flow_node_id,
+                    source_ram_ishikawa_diagram_id, source_ishikawa_flow_node_id, review_required,
                     row_version, updated_at
              FROM fmeca_items WHERE id = ?",
             [nid.into()],
@@ -1387,7 +1391,8 @@ async fn sum_spare_stock_for_work_order(db: &DatabaseConnection, wo_id: i64) -> 
             "SELECT COALESCE(SUM(sb.available_qty), 0.0) AS q
              FROM work_order_parts wop
              LEFT JOIN stock_balances sb ON sb.article_id = wop.article_id
-             WHERE wop.work_order_id = ? AND wop.article_id IS NOT NULL",
+             WHERE wop.work_order_id = ? AND wop.article_id IS NOT NULL
+               AND wop.consumption_status <> 'cancelled'",
             [wo_id.into()],
         ))
         .await?;
@@ -1399,7 +1404,8 @@ async fn work_order_has_spare_lines(db: &DatabaseConnection, wo_id: i64) -> AppR
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM work_order_parts WHERE work_order_id = ? AND article_id IS NOT NULL",
+            "SELECT COUNT(*) AS c FROM work_order_parts WHERE work_order_id = ? AND article_id IS NOT NULL \
+             AND consumption_status <> 'cancelled'",
             [wo_id.into()],
         ))
         .await?;
@@ -1420,7 +1426,7 @@ pub async fn get_fmeca_severity_occurrence_matrix(
             "SELECT fi.severity, fi.occurrence, COUNT(*) AS c
              FROM fmeca_items fi
              INNER JOIN fmeca_analyses fa ON fa.id = fi.analysis_id
-             WHERE fa.equipment_id = ?
+             WHERE fa.equipment_id = ? AND fi.review_required = 0
              GROUP BY fi.severity, fi.occurrence",
             [equipment_id.into()],
         ))
@@ -1562,6 +1568,7 @@ pub async fn list_fmeca_items_for_equipment(
          fi.revised_rpn AS revised_rpn, \
          fi.source_ram_ishikawa_diagram_id AS source_ram_ishikawa_diagram_id, \
          fi.source_ishikawa_flow_node_id AS source_ishikawa_flow_node_id, \
+         fi.review_required AS review_required, \
          fi.row_version AS row_version, fi.updated_at AS updated_at, \
          fa.title AS analysis_title, fa.equipment_id AS equipment_id \
          FROM fmeca_items fi \
@@ -1577,7 +1584,8 @@ pub async fn list_fmeca_items_for_equipment(
         sql.push_str(" AND fi.occurrence = ?");
         vals.push(ov.into());
     }
-    sql.push_str(" ORDER BY fi.rpn DESC, fi.id ASC LIMIT ?");
+    // Rows to review come after the ranked ones: their RPN was never chosen by a person.
+    sql.push_str(" ORDER BY fi.review_required ASC, fi.rpn DESC, fi.id ASC LIMIT ?");
     vals.push(lim.into());
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, vals))
@@ -1588,7 +1596,7 @@ pub async fn list_fmeca_items_for_equipment(
         .collect::<Result<Vec<_>, _>>()?;
     let rpn_critical = fmeca_rpn_critical_threshold_i64(db).await?;
     for row in &mut out {
-        if row.item.rpn <= rpn_critical {
+        if row.item.review_required || row.item.rpn <= rpn_critical {
             row.inventory_status = "not_applicable".into();
             continue;
         }

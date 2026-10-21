@@ -1,135 +1,107 @@
-import * as d3 from "d3";
-import { useEffect, useRef, useState } from "react";
+/**
+ * Open requests by status (`get_dashboard_di_status_chart` → `di::stats::open_backlog_by_status`,
+ * the DI page's open backlog: not closed, not turned into a work order). A status that has a work
+ * queue opens it, when the user may see that queue.
+ */
+import { Inbox } from "lucide-react";
+import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
 
-import {
-  CHART_PALETTE,
-  DEFAULT_MARGIN,
-  getInnerDimensions,
-  useContainerSize,
-} from "@/components/charts/chart-utils";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { diStatusLabel } from "@/components/analytics/AnalyticsDiStatusChart";
+import { useVisibleDiQueues } from "@/components/di/DiQueueBar";
+import { DI_WORKFLOW_STATUS_TONE, mfTone, toneOf } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
+import { cn } from "@/lib/utils";
 import { getDashboardDiStatusChart } from "@/services/dashboard-service";
-import type { DashboardDiStatusChart as DiStatusModel } from "@shared/ipc-types";
+import type { DiQueue, DashboardDiStatusChart as Model } from "@shared/ipc-types";
 
-const MARGIN = { ...DEFAULT_MARGIN, left: 120, bottom: 28 };
+import { HomeNote, HomePanel, HomeRecordList, HomeSection, usePanelLoad } from "./home/HomeParts";
+import { homeLinks } from "./home/home-links";
 
-export function DashboardDiStatusChart() {
+/** The work queue that lists exactly the open requests of a status (`di::queries` queues). */
+const QUEUE_OF_STATUS: Partial<Record<string, DiQueue>> = {
+  submitted: "to_screen",
+  in_review: "to_review",
+  returned_for_clarification: "awaiting_info",
+  awaiting_approval: "to_approve",
+  approved: "approved_not_converted",
+};
+
+export function DashboardDiStatusChart({ refreshSignal = 0 }: { refreshSignal?: number }) {
   const { t } = useTranslation("dashboard");
-  const navigate = useNavigate();
-  const [model, setModel] = useState<DiStatusModel | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [containerRef, { width, height: boxH }] = useContainerSize<HTMLDivElement>();
-  const xAxisRef = useRef<SVGGElement | null>(null);
-  const yAxisRef = useRef<SVGGElement | null>(null);
+  const load = useCallback(() => getDashboardDiStatusChart(), []);
+  const state = usePanelLoad<Model>(load, refreshSignal);
+  return (
+    <HomePanel
+      icon={Inbox}
+      title={t("widgets.diStatus.title")}
+      state={state}
+      testId="home-di-status"
+    >
+      {state.data ? <DiStatusBody model={state.data} /> : null}
+    </HomePanel>
+  );
+}
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    getDashboardDiStatusChart()
-      .then((r) => {
-        if (!cancelled) setModel(r);
-      })
-      .catch(() => {
-        if (!cancelled) setModel(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const chartHeight = Math.max(200, Math.min(360, (model?.segments.length ?? 1) * 28 + 80));
-  const height = Math.max(chartHeight, boxH || chartHeight);
-  const { innerWidth, innerHeight } = getInnerDimensions(width, height, MARGIN);
-
-  const segments = model?.segments ?? [];
-  const maxC = d3.max(segments, (s) => s.count) ?? 1;
-
-  const yScale = d3
-    .scaleBand()
-    .domain(segments.map((s) => s.status))
-    .range([0, innerHeight])
-    .padding(0.25);
-
-  const xScale = d3.scaleLinear().domain([0, maxC]).nice().range([0, innerWidth]);
-
-  useEffect(() => {
-    if (!xAxisRef.current || !yAxisRef.current) {
-      return;
-    }
-    d3.select(xAxisRef.current)
-      .attr("transform", `translate(0,${innerHeight})`)
-      .call(d3.axisBottom(xScale).ticks(4) as never)
-      .selectAll("text")
-      .attr("class", "fill-current text-[10px]");
-    d3.select(yAxisRef.current)
-      .call(d3.axisLeft(yScale) as never)
-      .selectAll("text")
-      .attr("class", "fill-current text-[10px]");
-  }, [xScale, yScale, innerHeight]);
-
-  if (loading) {
-    return (
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">{t("widgets.diStatus.title")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-text-muted">{t("chart.loading")}</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!model?.available) {
-    return null;
-  }
+function DiStatusBody({ model }: { model: Model }) {
+  const { t } = useTranslation("dashboard");
+  const { t: tr } = useTranslation("reports");
+  const { formatNumber, formatDecimal } = useFormatters();
+  const queues = useVisibleDiQueues();
+  if (!model.available) return <HomeNote>{t("home.noPermission")}</HomeNote>;
+  const max = Math.max(1, ...model.segments.map((s) => s.count));
+  const linked = model.segments.filter((s) => {
+    const q = QUEUE_OF_STATUS[s.status];
+    return q != null && queues.includes(q);
+  });
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-base font-medium">{t("widgets.diStatus.title")}</CardTitle>
-        <button
-          type="button"
-          className="text-xs font-medium text-primary underline-offset-2 hover:underline"
-          onClick={() => navigate("/requests")}
-        >
-          {t("widgets.diStatus.openList")}
-        </button>
-      </CardHeader>
-      <CardContent className="pb-4">
-        {segments.length === 0 ? (
-          <p className="text-sm text-text-muted">{t("widgets.diStatus.empty")}</p>
-        ) : (
-          <div ref={containerRef} className="w-full" style={{ height: chartHeight }}>
-            {width > 0 && (
-              <svg width={width} height={height} role="img" aria-label={t("widgets.diStatus.aria")}>
-                <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
-                  {segments.map((s, i) => {
-                    const y = yScale(s.status) ?? 0;
-                    const w = xScale(s.count);
-                    const h = yScale.bandwidth();
-                    const fill = CHART_PALETTE[i % CHART_PALETTE.length];
-                    return (
-                      <rect key={s.status} x={0} y={y} width={w} height={h} fill={fill} rx={2}>
-                        <title>
-                          {s.status}: {s.count}
-                        </title>
-                      </rect>
-                    );
-                  })}
-                  <g ref={xAxisRef} />
-                  <g ref={yAxisRef} />
-                </g>
-              </svg>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <HomeSection
+      title={t("widgets.diStatus.section")}
+      definitions={[{ label: t("widgets.diStatus.section"), text: t("home.def.diOpenByStatus") }]}
+      openLabel={t("home.open.requests")}
+      openTo={homeLinks.requests}
+    >
+      {model.segments.length === 0 ? (
+        <HomeNote>{t("widgets.diStatus.empty")}</HomeNote>
+      ) : (
+        <ul className="space-y-2" aria-label={t("widgets.diStatus.aria")}>
+          {model.segments.map((s) => {
+            const tone = toneOf(DI_WORKFLOW_STATUS_TONE, s.status);
+            return (
+              <li key={s.status} className="flex items-center gap-2 text-xs">
+                <span className="w-44 truncate text-text-secondary">
+                  {diStatusLabel(tr, s.status)}
+                </span>
+                <div className="h-2.5 flex-1 rounded bg-surface-2" aria-hidden>
+                  <div
+                    className={cn("h-2.5 rounded", mfTone[tone].bar)}
+                    style={{ width: `${(s.count / max) * 100}%` }}
+                  />
+                </div>
+                <span className="w-10 text-end font-mono tabular-nums text-text-primary">
+                  {formatNumber(s.count)}
+                </span>
+                <span className="w-24 text-end text-text-muted">
+                  {t("widgets.diStatus.avgAge", { days: formatDecimal(s.avg_age_days, 1) })}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {linked.length > 0 ? (
+        <HomeRecordList
+          ariaLabel={t("widgets.diStatus.queuesAria")}
+          emptyText=""
+          rows={linked.map((s) => ({
+            key: s.status,
+            primary: t("widgets.diStatus.openQueue", { status: diStatusLabel(tr, s.status) }),
+            meta: formatNumber(s.count),
+            to: homeLinks.requestQueue(QUEUE_OF_STATUS[s.status] as DiQueue),
+          }))}
+        />
+      ) : null}
+    </HomeSection>
   );
 }

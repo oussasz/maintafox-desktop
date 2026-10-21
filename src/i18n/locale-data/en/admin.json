@@ -22,6 +22,10 @@
     "audit": "Audit"
   },
   "metrics": {
+    "loadError": "The administration figures could not be loaded",
+    "rolesSplit": "{{system}} system · {{custom}} custom",
+    "unassignedHint": "Active users without a role",
+    "stale": "Last refresh failed: figures are from the previous reading.",
     "activeUsers": "Active Users",
     "roles": "Roles",
     "activeSessions": "Active Sessions",
@@ -130,6 +134,7 @@
       "resetPassword": "Reset password"
     },
     "resetPassword": {
+      "copyFailed": "Automatic copy failed: select the password and copy it with Ctrl+C.",
       "confirm": "Reset this user's password? A temporary password will be generated and shown once. They must change it on next sign-in.",
       "success": "Temporary password created",
       "failed": "Failed to reset password",
@@ -161,7 +166,7 @@
     "create.title": "New user",
     "create.description": "Create a user account, assign an initial tenant role, and set the authentication mode.",
     "create.roleLabel": "Initial role",
-    "create.roleHint": "This role is assigned at tenant scope for the active organization. It defines the user’s permissions.",
+    "create.roleHint": "This role defines the user's permissions, plant-wide or on the site chosen below.",
     "create.rolePlaceholder": "Choose a role…",
     "create.roleRequired": "Select a role for this user.",
     "create.roleSystemBadge": "system",
@@ -208,7 +213,9 @@
       "emailPlaceholder": "name@company.com",
       "success": "User updated",
       "error": "Failed to update user"
-    }
+    },
+    "create.scopeLabel": "Where this role applies",
+    "create.scopeHint": "The whole plant, or one site / node and everything below it. A user limited to a site sees and acts only on that site. Administrator roles always apply to the whole plant."
   },
   "profile": {
     "memberSince": "Member since",
@@ -244,7 +251,6 @@
     "pinMismatch": "PINs do not match.",
     "pinFormat": "PIN must be 4 to 6 digits.",
     "pinError": "PIN setup failed.",
-    "enterPasswordToClearPin": "Enter your password to remove PIN",
     "trustedDevices": "Trusted Devices",
     "viewDevices": "View / Revoke",
     "trustedDevicesTitle": "Trusted Devices",
@@ -281,7 +287,13 @@
     "recentWorkHistory": "Recent work history",
     "noHistory": "No history found.",
     "skillDeclared": "Skill declared.",
-    "skillDeclareError": "Skill declaration failed."
+    "skillDeclareError": "Skill declaration failed.",
+    "removePinTitle": "Remove the unlock PIN",
+    "removePinDescription": "Enter your account password to remove the PIN. You will then unlock the app with your password.",
+    "removePinConfirm": "Remove the PIN",
+    "removingPin": "Removing…",
+    "passwordRequired": "Enter your password.",
+    "pinRemoved": "PIN removed."
   },
   "passwordPolicy": {
     "title": "Password Policy",
@@ -305,7 +317,12 @@
     "save": "Save policy",
     "saving": "Saving...",
     "saved": "Policy saved successfully.",
-    "saveError": "Failed to save password policy."
+    "saveError": "Failed to save password policy.",
+    "minLengthHint": "At least 8 characters, at most 128.",
+    "loadError": "The password policy could not be loaded.",
+    "unreadableTitle": "Stored policy unreadable — shipped values applied",
+    "unreadableBody": "Some stored settings could not be read ({{keys}}). For each rule, the stricter of the stored and shipped values applies. Check the values below and save the policy to fix it.",
+    "unreadableFix": "Save these values"
   },
   "permissions": {
     "domains": "Domains",
@@ -345,6 +362,8 @@
       "systemPrefix": "Reserved system prefix"
     },
     "dependencies": {
+      "close": "Close dependencies",
+      "open": "Show the dependencies of {{name}}",
       "title": "Dependencies",
       "none": "No dependencies",
       "hard": "Required (hard)",
@@ -352,7 +371,8 @@
       "requires": "Requires",
       "requiredBy": "Required by",
       "suggests": "Suggests",
-      "suggestedBy": "Suggested by"
+      "suggestedBy": "Suggested by",
+      "loadError": "The dependencies of this permission could not be loaded."
     },
     "domainLabels": {
       "eq": "Equipment",
@@ -407,7 +427,8 @@
     "errors": {
       "loadFailed": "Failed to load sessions",
       "revokeFailed": "Failed to revoke session"
-    }
+    },
+    "refresh": "Refresh"
   },
   "delegation": {
     "title": "Delegation Policies",
@@ -495,7 +516,7 @@
     },
     "noGrants": "No emergency elevations.",
     "errors": {
-      "loadFailed": "Failed to load grants",
+      "loadFailed": "The emergency grants could not be loaded.",
       "grantFailed": "Failed to grant access",
       "revokeFailed": "Failed to revoke access",
       "reasonTooShort": "Reason must be at least 20 characters"
@@ -557,5 +578,225 @@
     "viewDiff": "View diff",
     "empty": "No audit events recorded.",
     "loadError": "Could not load the audit history. {{error}}"
+  },
+  "console": {
+    "never": "Never",
+    "noRole": "No role",
+    "openUser": "Open account {{name}}",
+    "searchUsers": "Search a name, username or email…",
+    "columns": {
+      "user": "User",
+      "status": "Status",
+      "roles": "Roles and scope",
+      "signIn": "Sign-in",
+      "lastLogin": "Last sign-in"
+    },
+    "filters": {
+      "status": "Status",
+      "all": "All",
+      "role": "Role",
+      "allRoles": "All roles",
+      "site": "Site / area",
+      "allSites": "All sites",
+      "signIn": "Sign-in",
+      "siteHint": "Accounts with a role limited to this site or an area below it. Plant-wide accounts are not listed here."
+    },
+    "status": {
+      "active": "Active",
+      "disabled": "Disabled",
+      "inactive": "Disabled",
+      "locked": "Locked",
+      "mustChangePassword": "Must change password"
+    },
+    "identityMode": {
+      "local": "Local password",
+      "sso": "SSO",
+      "hybrid": "Hybrid"
+    },
+    "scope": {
+      "label": "Scope",
+      "choose": "Choose a scope",
+      "plant": "Whole plant",
+      "unknown": "Unknown scope",
+      "hint": "A role limited to an org node applies to that node and everything below it."
+    },
+    "assign": {
+      "title": "Assign a role — {{username}}",
+      "description": "Choose the role, its scope and, if needed, its validity period.",
+      "role": "Role",
+      "chooseRole": "Choose a role",
+      "validFrom": "Valid from",
+      "validTo": "Valid until",
+      "validityHint": "Without dates the role stays valid until withdrawn. The end date is included.",
+      "windowInvalid": "The start date must be before the end date.",
+      "replaces": "This account already has the role \"{{role}}\" on this scope: it will be replaced.",
+      "replacesMany": "This account already has the roles {{roles}} on this scope: they will all be replaced.",
+      "confirm": "Assign"
+    },
+    "user": {
+      "tabs": {
+        "overview": "Account",
+        "roles": "Roles ({{count}})",
+        "sessions": "Sessions ({{count}})",
+        "permissions": "Permissions",
+        "history": "History"
+      },
+      "lastLogin": "Last sign-in",
+      "lastActivity": "Last activity",
+      "lockedUntil": "Locked until",
+      "edit": "Edit details",
+      "reset": "Reset password",
+      "resetTitle": "Reset the password of {{name}}?",
+      "resetBody": "A temporary password is created and shown once. The user must change it at the next sign-in; any lockout is cleared.",
+      "unlock": "Unlock",
+      "unlockTitle": "Unlock the account of {{name}}?",
+      "unlockBody": "The account was locked after failed sign-ins. Unlocking resets the counter.",
+      "disable": "Disable",
+      "disableTitle": "Disable the account of {{name}}?",
+      "disableBody": "The person can no longer sign in. The account and all its history (work orders, approvals, signatures) are kept and it can be re-enabled.",
+      "enable": "Re-enable",
+      "enableTitle": "Re-enable the account of {{name}}?",
+      "enableBody": "The person can sign in again with their current roles.",
+      "cannotDisableSelf": "You cannot disable your own account.",
+      "noDeleteHint": "Accounts are never deleted: their history must stay readable. Disable them instead.",
+      "loadError": "The account could not be loaded."
+    },
+    "roles": {
+      "scopeHint": "An account can hold one role per scope. Emergency access expires by itself.",
+      "assign": "Assign a role",
+      "revoke": "Withdraw",
+      "revokeTitle": "Withdraw the role \"{{role}}\"?",
+      "revokeBody": "The account immediately loses this role's permissions on this scope.",
+      "emergency": "Emergency",
+      "emergencyUntil": "until {{date}}",
+      "validBetween": "from {{from}} to {{to}}",
+      "validFrom": "from {{date}}",
+      "validUntil": "until {{date}}"
+    },
+    "sessions": {
+      "hint": "Sessions open on this computer.",
+      "none": "No open session.",
+      "unknownDevice": "Unregistered device",
+      "started": "opened {{date}}",
+      "lastActivity": "last activity {{date}}",
+      "current": "Your session",
+      "revoke": "Close session",
+      "revokeTitle": "Close this session?",
+      "revokeBody": "The person will have to sign in again on this device."
+    },
+    "permissions": {
+      "hint": "{{count}} effective plant-wide permissions (valid roles and running emergency access)."
+    },
+    "reason": {
+      "required": "Reason (required)",
+      "optional": "Reason (optional)",
+      "ledgerHint": "The reason is recorded in the administration log."
+    },
+    "results": {
+      "applied": "Applied",
+      "blocked": "Refused",
+      "partial": "Partial"
+    },
+    "actions": {
+      "user_created": "Account created",
+      "user_updated": "Account changed",
+      "user_deactivated": "Account disabled",
+      "user_reactivated": "Account re-enabled",
+      "role_assigned": "Role assigned",
+      "role_revoked": "Role withdrawn",
+      "session_revoked": "Session closed",
+      "emergency_grant_created": "Emergency access granted",
+      "emergency_grant_revoked": "Emergency access withdrawn",
+      "emergency_grant_expired": "Emergency access expired",
+      "account_locked": "Account locked (failed sign-ins)",
+      "account_unlocked": "Account unlocked",
+      "password_reset_by_admin": "Password reset by an administrator",
+      "role_created": "Role created",
+      "role_updated": "Role changed",
+      "role_deleted": "Role deleted",
+      "role_retired": "Role retired",
+      "role_imported": "Role imported",
+      "role_exported": "Roles exported",
+      "permission_created": "Custom permission created",
+      "permission_granted": "Permission granted",
+      "permission_revoked": "Permission withdrawn",
+      "delegation_policy_created": "Delegation created",
+      "delegation_policy_updated": "Delegation changed",
+      "delegation_policy_deleted": "Delegation deleted",
+      "admin_events_exported": "Administration log exported"
+    },
+    "audit": {
+      "all": "All",
+      "action": "Action",
+      "actor": "Done by",
+      "targetUser": "Account concerned",
+      "targetRole": "Role concerned",
+      "result": "Result",
+      "from": "From",
+      "to": "To",
+      "reset": "Clear filters",
+      "exportCsv": "Export CSV",
+      "rangeInvalid": "The start date must be before the end date.",
+      "firstN": "The {{count}} most recent events are shown; the CSV export contains every event of the filter.",
+      "count": "{{count}} event(s)",
+      "facetsLoadError": "The log filter choices could not be loaded: the filters are disabled."
+    },
+    "roleEditor": {
+      "unsavedLeaveBody": "The role \"{{name}}\" has unsaved changes (permissions or description). They are lost if you leave this tab or page.",
+      "unsavedTitle": "Discard the changes?",
+      "unsavedBody": "The role \"{{name}}\" has unsaved changes (permissions or description). They are lost if you open another role.",
+      "discardChanges": "Discard changes",
+      "new": "New",
+      "holders": "Active accounts holding this role",
+      "holdersCount_one": "{{count}} active account",
+      "holdersCount_other": "{{count}} active accounts",
+      "permissionsCount_one": "{{count}} permission",
+      "permissionsCount_other": "{{count}} permissions",
+      "compare": "Compare",
+      "clone": "Duplicate",
+      "retire": "Retire",
+      "retireBlocked": "Withdraw this role from the accounts holding it first.",
+      "retireTitle": "Retire the role \"{{name}}\"?",
+      "retireBody": "The role can no longer be assigned. Its history stays in the log.",
+      "systemReadOnly": "Role shipped with the application: its permissions cannot change. Duplicate it to adapt it.",
+      "missingDependency": "\"{{perm}}\" requires \"{{required}}\"",
+      "filterPermissions": "Filter permissions…",
+      "discard": "Discard changes",
+      "save": "Save (+{{added}} / −{{removed}})",
+      "noMatch": "No permission matches.",
+      "grantedOf": "{{granted}} / {{total}} granted",
+      "sensitive": "Sensitive",
+      "stepUp": "Re-authentication",
+      "requires": "requires {{perm}}",
+      "suggests": "suggests {{perm}}",
+      "granted": "Granted",
+      "copyName": "{{name}} (copy)",
+      "cloneTitle": "Duplicate \"{{name}}\"",
+      "cloneBody_one": "The new role takes over {{count}} permission; you can adapt it afterwards.",
+      "cloneBody_other": "The new role takes over the {{count}} permissions; you can adapt it afterwards.",
+      "compareTitle": "Compare \"{{name}}\"",
+      "compareBody": "Permission differences, module by module.",
+      "compareWith": "Compare with",
+      "chooseRole": "Choose a role",
+      "module": "Module",
+      "onlyIn": "Only in {{name}}",
+      "common": "In common",
+      "loadError": "The roles could not be loaded.",
+      "validationError": "The dependency check could not run. The server checks again when you save.",
+      "templateUnreadable": "This role template is unreadable: the role was not created. Choose another template or none."
+    },
+    "choicesLoadError": "The role and site lists could not be loaded: role and site filters and role assignment are unavailable.",
+    "usersLoadError": "The accounts could not be loaded."
+  },
+  "lockoutPolicy": {
+    "title": "Account lockout",
+    "hint": "Values the sign-in applies: failed attempts before the account locks, lock duration, progressive locks (the duration grows with each lock).",
+    "maxAttempts": "Failed attempts before lock",
+    "lockoutMinutes": "Lock duration (minutes)",
+    "progressive": "Progressive lock",
+    "save": "Save lockout",
+    "saved": "Lockout saved.",
+    "saveError": "Failed to save the lockout.",
+    "loadError": "The lockout policy could not be loaded."
   }
 }

@@ -678,6 +678,37 @@ pub(crate) fn delete_payload(layout: &EntityLayout, natural_key: Option<&Map<Str
     payload
 }
 
+/// The required (not soft) references of `payload` that are not applied here yet: their entity type
+/// and sync id. The safety re-checks (`permit::sync_check`) count a row still waiting in the inbox
+/// only when everything it refers to is here (its own parent excepted, applied with it).
+pub(crate) async fn missing_refs(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    payload: &Map<String, Value>,
+) -> AppResult<Vec<(&'static str, String)>> {
+    let mut missing = Vec::new();
+    for column in &layout.columns {
+        let Role::Ref {
+            key,
+            target,
+            soft: false,
+            ..
+        } = &column.role
+        else {
+            continue;
+        };
+        let Some(v) = payload.get(key) else {
+            continue;
+        };
+        if let Resolved::Missing { target_entity, sync_id } =
+            inbound_ref(conn, layout, column, target, v, payload).await?
+        {
+            missing.push((target_entity, sync_id));
+        }
+    }
+    Ok(missing)
+}
+
 /// Outcome of resolving an inbound reference.
 enum Resolved {
     Local(SqlValue),
@@ -766,7 +797,16 @@ async fn inbound_ref(
             )
         }
     };
-    match (cached_ref_id(conn, &sql, &key).await?, target_entity) {
+    let mut found = cached_ref_id(conn, &sql, &key).await?;
+    if found.is_none()
+        && target_table == "reference_values"
+        && crate::reference::units::is_unit_ref_column(table, &column.name)
+    {
+        // A device older than migration 201 names a unit by the sync id of the retired lookup
+        // `inventory.unit_of_measure`: the unit with that code (`reference::units`).
+        found = crate::reference::units::unit_for_legacy_sync_id(conn, &key).await?;
+    }
+    match (found, target_entity) {
         (Some(id), _) if column.is_text => Ok(Resolved::Local(id.to_string().into())),
         (Some(id), _) => Ok(Resolved::Local(id.into())),
         (None, Some(target_entity)) => Ok(Resolved::Missing {
@@ -879,7 +919,9 @@ pub(crate) async fn apply_row(
     payload_json: &str,
 ) -> AppResult<ApplyOutcome> {
     let table = layout.table();
-    let payload = parse_payload(table, payload_json)?;
+    let mut payload = parse_payload(table, payload_json)?;
+    // Unit texts of a device older than migration 201 become links to MEASURE.UNITS.
+    crate::reference::units::upgrade_legacy_unit_payload(conn, table, &mut payload).await?;
 
     let locator = if layout.natural_pk.is_some() {
         if natural_entity_sync_id(layout, &payload)? != entity_sync_id {
@@ -894,6 +936,18 @@ pub(crate) async fn apply_row(
     };
 
     if is_delete(operation) {
+        // History and audit rows are never erased by synchronisation (append-only). Media
+        // attachments are the one append-only type whose removal is replicated (its file is
+        // dropped with it, `apply_hooks::after_delete`).
+        if layout.def.conflict_policy == ConflictPolicy::AppendOnly && layout.def.entity_type != "media_attachments" {
+            return Ok(ApplyOutcome::Conflict {
+                code: "APPEND_ONLY_DELETE".into(),
+                message: format!("{table}: history rows are never deleted by synchronisation"),
+            });
+        }
+        if let Some(outcome) = crate::sync::apply_hooks::before_delete_checked(conn, layout, entity_sync_id).await? {
+            return Ok(outcome);
+        }
         let Some(locator) = locator else {
             return Ok(ApplyOutcome::Unchanged);
         };
@@ -913,6 +967,12 @@ pub(crate) async fn apply_row(
     if let Some(outcome) = crate::sync::apply_hooks::before_upsert(layout, &payload) {
         return Ok(outcome);
     }
+    if let Some(outcome) =
+        crate::sync::apply_hooks::before_upsert_checked(conn, layout, entity_sync_id, &payload).await?
+    {
+        return Ok(outcome);
+    }
+    let group = crate::sync::apply_hooks::upsert_group(conn, layout, entity_sync_id, &payload).await?;
 
     let mut assignments: Vec<(String, SqlValue)> = Vec::new();
     let mut unresolved_soft: Vec<(String, &'static str, String)> = Vec::new();
@@ -1047,6 +1107,11 @@ pub(crate) async fn apply_row(
     }
     complete_pending_refs_to(conn, layout.def.entity_type, entity_sync_id).await?;
     crate::sync::apply_hooks::after_upsert(conn, layout, &local_row, inserted).await?;
+    if let Some(group) = group {
+        if let Some(outcome) = crate::sync::apply_hooks::after_upsert_group(conn, group).await? {
+            return Ok(outcome);
+        }
+    }
     Ok(ApplyOutcome::Applied)
 }
 

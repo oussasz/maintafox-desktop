@@ -10,11 +10,14 @@ import {
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
-import { PermissionGate } from "@/components/PermissionGate";
+import { PartNecessityChoice, PartOptionalChip } from "@/components/common/PartNecessityChoice";
+import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -22,8 +25,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
 import { useSession } from "@/hooks/use-session";
+import { appErrorText, describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
+import { useReadableLists } from "@/lib/list-access";
 import {
   checkWoPartStockAvailability,
   createProcurementRequisitionFromWoPart,
@@ -36,28 +42,44 @@ import {
   addPart,
   addTask,
   addWoTool,
+  cancelPlannedPart,
   listParts,
   listTasks,
   listWoTools,
+  setPlannedPartRequired,
 } from "@/services/wo-execution-service";
-import { emergencyReassignWo, evaluateWoReadiness, planWo } from "@/services/wo-service";
+import {
+  PERMIT_REQUIREMENT_EDITABLE_STATUSES,
+  SHUTDOWN_FLAG_EDITABLE_STATUSES,
+  emergencyReassignWo,
+  evaluateWoReadiness,
+  planWo,
+  setWoPermitRequirement,
+  setWoRequiresShutdown,
+} from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
-import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   InventoryArticle,
   StockLocation,
   TeamMemberRow,
+  UrgencyCode,
   WoExecPart,
   WoExecTask,
   WoMaterialReadiness,
   WoReadinessResult,
   WoTool,
   WorkOrder,
-  WorkOrderPriorityOption,
-  WoShift,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
+
+import { WoPermitRequirementField } from "./WoPermitRequirementField";
+import { WoPermitRuleNote, permitRuleFlagActive } from "./WoPermitRuleNote";
+import { WoShiftSelect } from "./WoShiftSelect";
+import { WoShutdownRequirementField } from "./WoShutdownRequirementField";
+import { useWoAccess } from "./WoSiteScope";
+import { useWoPeopleOptions } from "./use-wo-people";
+import { useWoTypeLabels } from "./use-wo-type-labels";
+import { shiftSaveFields } from "./wo-shift-plan";
 
 export interface WoPlanningPanelHandle {
   refreshReadiness: () => Promise<WoReadinessResult | null>;
@@ -89,7 +111,37 @@ interface PartDraft {
   quantity_planned: string;
   unit_cost: string;
   reservation_id: number | null;
+  /** Required or optional; null until the planner answers (no preselected answer). */
+  is_required: boolean | null;
+  /** `pending` until the line is settled; `cancelled` keeps it for the history only. */
+  consumption_status: string;
+  /** Stock unit symbol of the article (null for a free-text line or no article chosen yet). */
+  unit_symbol: string | null;
+  /** `planned` or `execution_added`. */
+  origin: string;
+  /** A used or issued quantity is recorded on the line. */
+  has_use: boolean;
   persisted: boolean;
+}
+
+/** A saved planned line withdrawn before execution: shown muted, out of every total. */
+const PART_STATUS_CANCELLED = "cancelled";
+
+function isCancelledPart(part: PartDraft): boolean {
+  return part.consumption_status === PART_STATUS_CANCELLED;
+}
+
+/**
+ * A saved line the planner may still cancel or switch required / optional: a planned line, still
+ * pending, with no used or issued quantity (the backend checks the same, and store issues too).
+ */
+function isEditableSavedPart(part: PartDraft): boolean {
+  return (
+    part.persisted &&
+    part.consumption_status === "pending" &&
+    part.origin === "planned" &&
+    !part.has_use
+  );
 }
 
 interface SelectOption {
@@ -101,17 +153,6 @@ interface SelectOption {
 const PLANNING_EDITABLE = new Set(["planning"]);
 /** Ready allows reschedule / reassign only */
 const READY_SCHEDULE_EDITABLE = new Set(["ready"]);
-
-function planningPriorityLabel(p: WorkOrderPriorityOption, lang: string): string {
-  return lang.toLowerCase().startsWith("fr") ? p.label_fr : p.label;
-}
-
-const SHIFT_OPTIONS: Array<{ value: WoShift; label: string }> = [
-  { value: "morning", label: "morning" },
-  { value: "afternoon", label: "afternoon" },
-  { value: "night", label: "night" },
-  { value: "full_day", label: "full_day" },
-];
 
 function toDatetimeLocal(value: string | null | undefined): string {
   if (!value) return "";
@@ -131,6 +172,18 @@ function parseNumber(value: string): number | null {
   if (!value.trim()) return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Largest crew on one job (`planning::load::MAX_CREW_SIZE`; also enforced by the database). */
+const MAX_CREW_SIZE = 50;
+
+/** The crew size typed: empty (none), a whole number of people from 1 to 50, or refused. */
+function readCrewSize(value: string): { ok: true; value: number | null } | { ok: false } {
+  if (!value.trim()) return { ok: true, value: null };
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= MAX_CREW_SIZE
+    ? { ok: true, value: n }
+    : { ok: false };
 }
 
 function toTaskDraft(task: WoExecTask): TaskDraft {
@@ -156,6 +209,11 @@ function toPartDraft(part: WoExecPart): PartDraft {
     quantity_planned: String(part.quantity_planned),
     unit_cost: part.unit_cost != null ? String(part.unit_cost) : "",
     reservation_id: part.reservation_id ?? null,
+    is_required: part.is_required,
+    consumption_status: part.consumption_status ?? "pending",
+    unit_symbol: part.unit_symbol ?? null,
+    origin: part.origin ?? "planned",
+    has_use: (part.quantity_used ?? 0) > 0 || part.quantity_issued > 0,
     persisted: true,
   };
 }
@@ -168,17 +226,20 @@ function blockingMessagesFromReport(result: WoReadinessResult): string[] {
 
 export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanelProps>(
   function WoPlanningPanel({ wo, canEdit, onReadinessChange }, ref) {
-    const { t, i18n } = useTranslation("ot");
+    const { t } = useTranslation("ot");
+    // Teams come from the personnel module and parts from the inventory: lists the user may not
+    // read are not requested, and the planning form says which right is missing.
+    const lists = useReadableLists(["teams", "articles"] as const);
+    const canReadTeams = lists.teams;
+    const canReadArticles = lists.articles;
+    const { typeLabel } = useWoTypeLabels();
     const navigate = useNavigate();
-    const prioritiesCatalog = useWorkOrderPrioritiesCatalog((s) => s.priorities);
-    const loadPriorities = useWorkOrderPrioritiesCatalog((s) => s.load);
-    const activePriorities = useMemo(
-      () => prioritiesCatalog.filter((p) => p.is_active).sort((a, b) => a.level - b.level),
-      [prioritiesCatalog],
-    );
     const { info } = useSession();
     const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
-    const woItems = useWoStore((s) => s.items);
+    const people = useWoPeopleOptions();
+    // Emergency reassignment is offered from the user's rights at this work order's site.
+    const { can: canAtSite } = useWoAccess(wo);
+    const canEmergencyAssign = canAtSite(P.OT_EMERGENCY_ASSIGN);
 
     const [statusCode, setStatusCode] = useState(wo.status_code ?? "draft");
     const [rowVersion, setRowVersion] = useState(wo.row_version);
@@ -186,14 +247,31 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [plannerId, setPlannerId] = useState(wo.planner_id != null ? String(wo.planner_id) : "");
     const [plannedStart, setPlannedStart] = useState(toDatetimeLocal(wo.planned_start));
     const [plannedEnd, setPlannedEnd] = useState(toDatetimeLocal(wo.planned_end));
-    const [shift, setShift] = useState<WoShift | "">((wo.shift as WoShift | null) ?? "");
+    /** Chosen Classe horaire window (`class_version_id`; "" = no shift). */
+    const [shiftVersionId, setShiftVersionId] = useState(
+      wo.shift_class_version_id != null ? String(wo.shift_class_version_id) : "",
+    );
+    /** The planner changed the shift: only then is it sent (the stored one is kept otherwise). */
+    const [shiftTouched, setShiftTouched] = useState(false);
+    const chooseShift = useCallback((value: string) => {
+      setShiftVersionId(value);
+      setShiftTouched(true);
+    }, []);
     const [expectedHours, setExpectedHours] = useState(
       wo.expected_duration_hours != null ? String(wo.expected_duration_hours) : "",
+    );
+    const [crewSize, setCrewSize] = useState(
+      wo.planned_crew_size != null ? String(wo.planned_crew_size) : "",
     );
     const [plannedDowntimeHours, setPlannedDowntimeHours] = useState(
       wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
     );
-    const [urgencyId, setUrgencyId] = useState(wo.urgency_id != null ? String(wo.urgency_id) : "");
+    const [urgencyId, setUrgencyId] = useState<string>(wo.urgency_code ?? "");
+    const [requiresPermit, setRequiresPermit] = useState<boolean>(Boolean(wo.requires_permit));
+    const [permitBusy, setPermitBusy] = useState(false);
+    const [requiresShutdown, setRequiresShutdown] = useState<boolean>(
+      Boolean(wo.requires_shutdown),
+    );
 
     const [assignedTeamId, setAssignedTeamId] = useState(
       wo.assigned_team_id != null ? String(wo.assigned_team_id) : "",
@@ -220,6 +298,14 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [teamRosterOptions, setTeamRosterOptions] = useState<SelectOption[]>([]);
     const [noTeamLeadUser, setNoTeamLeadUser] = useState(false);
     const lastValuationKeyByPart = useRef<Record<string, string>>({});
+    /** Saved planned line waiting for the cancel confirmation. */
+    const [partToCancel, setPartToCancel] = useState<PartDraft | null>(null);
+    /** Why the backend refused the cancel: shown inside the confirmation, which stays open. */
+    const [cancelError, setCancelError] = useState<string | null>(null);
+    /** Why the backend refused a required / optional switch, shown on that line. */
+    const [necessityError, setNecessityError] = useState<{ localId: string; text: string } | null>(
+      null,
+    );
 
     // Readiness evaluation state (planning → ready)
     const [readinessReport, setReadinessReport] = useState<WoReadinessResult | null>(null);
@@ -237,14 +323,18 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       setPlannerId(wo.planner_id != null ? String(wo.planner_id) : "");
       setPlannedStart(toDatetimeLocal(wo.planned_start));
       setPlannedEnd(toDatetimeLocal(wo.planned_end));
-      setShift((wo.shift as WoShift | null) ?? "");
+      setShiftVersionId(wo.shift_class_version_id != null ? String(wo.shift_class_version_id) : "");
+      setShiftTouched(false);
       setExpectedHours(
         wo.expected_duration_hours != null ? String(wo.expected_duration_hours) : "",
       );
+      setCrewSize(wo.planned_crew_size != null ? String(wo.planned_crew_size) : "");
       setPlannedDowntimeHours(
         wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
       );
-      setUrgencyId(wo.urgency_id != null ? String(wo.urgency_id) : "");
+      setUrgencyId(wo.urgency_code ?? "");
+      setRequiresPermit(Boolean(wo.requires_permit));
+      setRequiresShutdown(Boolean(wo.requires_shutdown));
       setAssignedTeamId(wo.assigned_team_id != null ? String(wo.assigned_team_id) : "");
       setPrimaryResponsibleId(
         wo.primary_responsible_id != null ? String(wo.primary_responsible_id) : "",
@@ -256,10 +346,6 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         setPlannerId(String(info.user_id));
       }
     }, [plannerId, info?.user_id]);
-
-    useEffect(() => {
-      void loadPriorities();
-    }, [loadPriorities]);
 
     useEffect(() => {
       let cancelled = false;
@@ -282,12 +368,12 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         }
       }
 
-      void loadGroupOptions();
+      if (canReadTeams) void loadGroupOptions();
 
       return () => {
         cancelled = true;
       };
-    }, []);
+    }, [canReadTeams]);
 
     const applyTeamRoster = useCallback(async (teamId: string, autofillLead: boolean) => {
       if (!teamId) {
@@ -342,23 +428,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       const responsibleDedup = new Map<string, string>();
       const plannerDedup = new Map<string, string>();
 
-      for (const item of woItems) {
-        if (item.primary_responsible_id != null) {
-          const id = String(item.primary_responsible_id);
-          const label =
-            item.responsible_display_name?.trim() ||
-            item.responsible_username?.trim() ||
-            formatOrDash(null);
-          responsibleDedup.set(id, label);
-        }
-        if (item.planner_id != null) {
-          const id = String(item.planner_id);
-          const label =
-            item.planner_display_name?.trim() ||
-            item.planner_username?.trim() ||
-            formatOrDash(null);
-          plannerDedup.set(id, label);
-        }
+      // Personnel register (active staff with a login), not people seen on loaded OTs.
+      for (const person of people.options) {
+        responsibleDedup.set(person.value, person.label);
+        plannerDedup.set(person.value, person.label);
       }
 
       if (info?.user_id != null) {
@@ -402,7 +475,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           .sort((a, b) => a.label.localeCompare(b.label)),
       );
     }, [
-      woItems,
+      people.options,
       wo.primary_responsible_id,
       wo.responsible_username,
       wo.responsible_display_name,
@@ -432,11 +505,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           setLocationOptions([]);
         }
       }
-      void loadInventoryData();
+      if (canReadArticles) void loadInventoryData();
       return () => {
         cancelled = true;
       };
-    }, []);
+    }, [canReadArticles]);
 
     useEffect(() => {
       let cancelled = false;
@@ -470,7 +543,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     // Check material availability whenever parts change (planning status only)
     useEffect(() => {
-      const hasPersisted = parts.some((p) => p.persisted);
+      const hasPersisted = parts.some((p) => p.persisted && !isCancelledPart(p));
       if (!hasPersisted || statusCode !== "planning") {
         setMaterialReadiness(null);
         return;
@@ -533,10 +606,14 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     const assignReady = assignedTeamId.trim().length > 0 || primaryResponsibleId.trim().length > 0;
     const hasCommitment = wo.schedule_commitment_id != null;
+    /** Planned start / end that pick the team's shifts: as typed (local), or as stored. */
+    const shiftPlannedStart = hasCommitment ? wo.planned_start : plannedStart.trim() || null;
+    const shiftPlannedEnd = hasCommitment ? wo.planned_end : plannedEnd.trim() || null;
     const scheduleFrozen = Boolean(wo.schedule_frozen);
 
     const plannedCost = useMemo(() => {
       return parts.reduce((sum, part) => {
+        if (isCancelledPart(part)) return sum;
         const qty = parseNumber(part.quantity_planned) ?? 0;
         const unit = parseNumber(part.unit_cost) ?? 0;
         return sum + qty * unit;
@@ -562,7 +639,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         setReadinessReport(null);
         setReadinessBlocking([]);
         onReadinessChange?.(null);
-        setError(toErrorMessage(e));
+        setError(describeAppError(e).title);
         return null;
       }
     }, [statusCode, wo.id, onReadinessChange]);
@@ -576,6 +653,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     /** Save job-prep without status change. Dates owned by Planning when committed. */
     const handleSavePlan = useCallback(async () => {
       if (!planReady || !requireActor) return;
+      const crew = readCrewSize(crewSize);
+      if (!crew.ok) {
+        setError(t("planning.plannedCrewSizeInvalid", { max: MAX_CREW_SIZE }));
+        return;
+      }
 
       setBusy(true);
       setError(null);
@@ -595,34 +677,42 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             : plannedEnd.trim()
               ? fromDatetimeLocal(plannedEnd)
               : null,
-          shift: shift || null,
+          // The shift only when the planner changed it; the stored one is kept otherwise.
+          ...shiftSaveFields(shiftTouched, shiftVersionId, wo),
           expected_duration_hours: parseNumber(expectedHours),
+          planned_crew_size: crew.value,
+          // An emptied field removes the crew size (the job is then not estimated for planning).
+          clear_crew_size: crew.value == null && wo.planned_crew_size != null,
           planned_downtime_hours: parseNumber(plannedDowntimeHours),
-          urgency_id: parseNumber(urgencyId),
+          urgency_code: urgencyId ? (urgencyId as UrgencyCode) : null,
         });
 
         setRowVersion(next.row_version);
         setStatusCode(next.status_code ?? statusCode);
+        setShiftTouched(false);
         await refreshActiveWo();
         if ((next.status_code ?? statusCode) === "planning") {
           await loadReadiness();
         }
       } catch (e) {
-        setError(toErrorMessage(e));
+        setError(describeAppError(e).title);
       } finally {
         setBusy(false);
       }
     }, [
       planReady,
       requireActor,
-      wo.id,
+      t,
+      wo,
       rowVersion,
       plannerId,
       plannedStart,
       plannedEnd,
       hasCommitment,
-      shift,
+      shiftVersionId,
+      shiftTouched,
       expectedHours,
+      crewSize,
       plannedDowntimeHours,
       urgencyId,
       refreshActiveWo,
@@ -632,28 +722,149 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     const handleMoveToReady = handleSavePlan;
 
+    // A flag set by a plant rule is not an edit of the work order: it is cleared with the
+    // permit-issue right and a reason (WoPermitRuleNote), so the box stays locked meanwhile.
+    const ruleFlagActive = permitRuleFlagActive(wo);
+    const permitRequirementEditable =
+      canEdit &&
+      PERMIT_REQUIREMENT_EDITABLE_STATUSES.has(statusCode) &&
+      !ruleFlagActive &&
+      !busy &&
+      !permitBusy;
+    const permitRequirementReason = !canEdit
+      ? t("permitRequirement.noPermission")
+      : !PERMIT_REQUIREMENT_EDITABLE_STATUSES.has(statusCode)
+        ? t("permitRequirement.frozen")
+        : ruleFlagActive
+          ? t("permitRule.checkboxLocked", { rule: wo.permit_rule_code ?? "" })
+          : null;
+    const permitOriginHint =
+      wo.source_di_id != null && wo.requires_permit ? t("permitRequirement.fromSafetyDi") : null;
+
+    /** Saved immediately: the start gate reads it, so it must not wait for "Save plan". */
+    const handlePermitRequirementChange = useCallback(
+      async (next: boolean) => {
+        if (!permitRequirementEditable) return;
+        setPermitBusy(true);
+        try {
+          const saved = await setWoPermitRequirement({
+            wo_id: wo.id,
+            expected_row_version: rowVersion,
+            requires_permit: next,
+          });
+          setRequiresPermit(Boolean(saved.requires_permit));
+          setRowVersion(saved.row_version);
+          await refreshActiveWo();
+          if ((saved.status_code ?? statusCode) === "planning") {
+            await loadReadiness();
+          }
+        } catch {
+          // The global IPC toast reports the reason; the checkbox keeps the stored value.
+          setRequiresPermit(Boolean(wo.requires_permit));
+        } finally {
+          setPermitBusy(false);
+        }
+      },
+      [
+        permitRequirementEditable,
+        wo.id,
+        wo.requires_permit,
+        rowVersion,
+        refreshActiveWo,
+        statusCode,
+        loadReadiness,
+      ],
+    );
+
+    const permitRequirementControl = (
+      <>
+        <WoPermitRequirementField
+          checked={requiresPermit}
+          onCheckedChange={(next) => void handlePermitRequirementChange(next)}
+          disabled={!permitRequirementEditable}
+          disabledReason={permitBusy || busy ? null : permitRequirementReason}
+          originHint={permitOriginHint}
+        />
+        <WoPermitRuleNote
+          wo={wo}
+          onCleared={async (saved) => {
+            setRequiresPermit(Boolean(saved.requires_permit));
+            setRowVersion(saved.row_version);
+            await refreshActiveWo();
+          }}
+        />
+      </>
+    );
+
+    const shutdownFlagEditable =
+      canEdit && SHUTDOWN_FLAG_EDITABLE_STATUSES.has(statusCode) && !busy && !permitBusy;
+    const shutdownFlagReason = !canEdit
+      ? t("shutdownRequirement.noPermission")
+      : SHUTDOWN_FLAG_EDITABLE_STATUSES.has(statusCode)
+        ? null
+        : t("shutdownRequirement.frozen");
+
+    /** Saved at once after confirmation: planning reads it for its shutdown-window checks. */
+    const handleShutdownFlagChange = useCallback(
+      async (next: boolean) => {
+        if (!shutdownFlagEditable) return;
+        const saved = await setWoRequiresShutdown({
+          woId: wo.id,
+          requiresShutdown: next,
+          expectedRowVersion: rowVersion,
+        });
+        setRequiresShutdown(Boolean(saved.requires_shutdown));
+        setRowVersion(saved.row_version);
+        await refreshActiveWo();
+        if ((saved.status_code ?? statusCode) === "planning") {
+          await loadReadiness();
+        }
+      },
+      [shutdownFlagEditable, wo.id, rowVersion, refreshActiveWo, statusCode, loadReadiness],
+    );
+
+    const shutdownRequirementControl = (
+      <WoShutdownRequirementField
+        woCode={wo.code}
+        checked={requiresShutdown}
+        onConfirmChange={handleShutdownFlagChange}
+        disabled={!shutdownFlagEditable}
+        disabledReason={busy || permitBusy ? null : shutdownFlagReason}
+      />
+    );
+
     const handleEmergencyReassign = useCallback(
       async (reason: string) => {
         if (!assignReady || !requireActor) return;
         setEmergencyBusy(true);
         setError(null);
         try {
+          const newTeam = parseNumber(assignedTeamId);
+          // A shift chosen among the new team's (or "none") goes with the assignment. Untouched,
+          // the backend keeps it when the new team works it; otherwise this emergency
+          // reassignment clears it and the work order records that it must be chosen again.
+          const shiftForNewTeam =
+            newTeam != null && newTeam !== wo.assigned_team_id
+              ? shiftSaveFields(shiftTouched, shiftVersionId, wo)
+              : {};
           const next = await emergencyReassignWo({
             wo_id: wo.id,
             actor_id: requireActor,
             expected_row_version: rowVersion,
-            assigned_team_id: parseNumber(assignedTeamId),
+            assigned_team_id: newTeam,
             primary_responsible_id: parseNumber(primaryResponsibleId),
             override_reason: reason,
+            ...shiftForNewTeam,
           });
           setRowVersion(next.row_version);
           setStatusCode(next.status_code ?? statusCode);
+          setShiftTouched(false);
           await refreshActiveWo();
           if ((next.status_code ?? statusCode) === "planning") {
             await loadReadiness();
           }
         } catch (e) {
-          setError(toErrorMessage(e));
+          setError(describeAppError(e).title);
         } finally {
           setEmergencyBusy(false);
         }
@@ -661,9 +872,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       [
         assignReady,
         requireActor,
-        wo.id,
+        wo,
         rowVersion,
         assignedTeamId,
+        shiftVersionId,
+        shiftTouched,
         primaryResponsibleId,
         refreshActiveWo,
         statusCode,
@@ -714,7 +927,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             prev.map((task) => (task.localId === row.localId ? toTaskDraft(created) : task)),
           );
         } catch (e) {
-          setError(toErrorMessage(e));
+          setError(describeAppError(e).title);
         } finally {
           setBusy(false);
         }
@@ -734,6 +947,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           quantity_planned: "",
           unit_cost: "",
           reservation_id: null,
+          is_required: null,
+          consumption_status: "pending",
+          unit_symbol: null,
+          origin: "planned",
+          has_use: false,
           persisted: false,
         },
       ]);
@@ -746,6 +964,39 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const updatePartRow = useCallback((localId: string, patch: Partial<PartDraft>) => {
       setParts((prev) => prev.map((row) => (row.localId === localId ? { ...row, ...patch } : row)));
     }, []);
+
+    /** Runs inside ConfirmDialog: a refusal keeps it open and is shown above the parts. */
+    const confirmCancelPart = useCallback(async () => {
+      if (partToCancel?.id == null) return;
+      setCancelError(null);
+      try {
+        const cancelled = await cancelPlannedPart(partToCancel.id);
+        setParts((prev) =>
+          prev.map((p) => (p.localId === partToCancel.localId ? toPartDraft(cancelled) : p)),
+        );
+        setPartToCancel(null);
+      } catch (e) {
+        setCancelError(appErrorText(e));
+        throw e;
+      }
+    }, [partToCancel]);
+
+    const changeSavedPartNecessity = useCallback(
+      async (row: PartDraft, required: boolean) => {
+        if (row.id == null || tasksPartsDisabled || row.is_required === required) return;
+        setBusy(true);
+        setNecessityError(null);
+        try {
+          const saved = await setPlannedPartRequired(row.id, required);
+          setParts((prev) => prev.map((p) => (p.localId === row.localId ? toPartDraft(saved) : p)));
+        } catch (e) {
+          setNecessityError({ localId: row.localId, text: appErrorText(e) });
+        } finally {
+          setBusy(false);
+        }
+      },
+      [tasksPartsDisabled],
+    );
 
     const savePartRow = useCallback(
       async (row: PartDraft) => {
@@ -766,6 +1017,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           setError(t("planning.error.addPart"));
           return;
         }
+        if (row.is_required === null) {
+          setError(t("common:partNecessity.choose"));
+          return;
+        }
 
         setBusy(true);
         setError(null);
@@ -779,13 +1034,14 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             stock_location_id: row.stock_location_id,
             auto_reserve: true,
             notes: null,
+            is_required: row.is_required,
           });
 
           setParts((prev) =>
             prev.map((part) => (part.localId === row.localId ? toPartDraft(created) : part)),
           );
         } catch (e) {
-          setError(toErrorMessage(e));
+          setError(describeAppError(e).title);
         } finally {
           setBusy(false);
         }
@@ -813,7 +1069,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         setNewToolLabel("");
         setNewToolCode("");
       } catch (e) {
-        setError(toErrorMessage(e));
+        setError(describeAppError(e).title);
       } finally {
         setBusy(false);
       }
@@ -824,6 +1080,8 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       return (
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">{t("planning.draftSubmitHint")}</p>
+          {permitRequirementControl}
+          {shutdownRequirementControl}
           <div className="rounded-md border p-3 grid gap-2 text-sm sm:grid-cols-2">
             <div>
               <span className="text-muted-foreground">{t("planning.draftIdentification")}: </span>
@@ -831,7 +1089,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             </div>
             <div>
               <span className="text-muted-foreground">{t("detail.fields.type")}: </span>
-              <span className="font-medium">{wo.type_label ?? "—"}</span>
+              <span className="font-medium">{typeLabel(wo.type_code, wo.type_label) || "—"}</span>
             </div>
             <div>
               <span className="text-muted-foreground">{t("detail.fields.equipment")}: </span>
@@ -853,7 +1111,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             </div>
             <div>
               <span className="text-muted-foreground">{t("detail.fields.type")}: </span>
-              <span className="font-medium">{wo.type_label ?? "—"}</span>
+              <span className="font-medium">{typeLabel(wo.type_code, wo.type_label) || "—"}</span>
             </div>
             <div>
               <span className="text-muted-foreground">{t("detail.fields.equipment")}: </span>
@@ -867,10 +1125,20 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     return (
       <div className="space-y-6">
         {error && (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
             {error}
           </div>
         )}
+
+        <section className="space-y-2" aria-label={t("permitRequirement.sectionTitle")}>
+          <h3 className="text-sm font-semibold">{t("permitRequirement.sectionTitle")}</h3>
+          {permitRequirementControl}
+        </section>
+
+        <section className="space-y-2" aria-label={t("shutdownRequirement.sectionTitle")}>
+          <h3 className="text-sm font-semibold">{t("shutdownRequirement.sectionTitle")}</h3>
+          {shutdownRequirementControl}
+        </section>
 
         <section className="space-y-3">
           <h3 className="text-sm font-semibold">1. {t("planning.timing")}</h3>
@@ -917,25 +1185,15 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                 </div>
               </>
             ) : null}
-            <div className="space-y-1">
-              <Label>{t("planning.shift")}</Label>
-              <Select
-                value={shift}
-                onValueChange={(value) => setShift(value as WoShift)}
-                disabled={allFieldsDisabled}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("planning.selectShift")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {SHIFT_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {t(`shift.${option.label}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <WoShiftSelect
+              wo={wo}
+              plannedStart={shiftPlannedStart}
+              plannedEnd={shiftPlannedEnd}
+              teamId={parseNumber(assignedTeamId)}
+              value={shiftVersionId}
+              onChange={chooseShift}
+              disabled={allFieldsDisabled}
+            />
             <div className="space-y-1">
               <Label>{t("planning.expectedDuration")}</Label>
               <Input
@@ -946,6 +1204,18 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                 onChange={(e) => setExpectedHours(e.target.value)}
                 disabled={allFieldsDisabled}
               />
+            </div>
+            <div className="space-y-1">
+              <Label>{t("planning.plannedCrewSize")}</Label>
+              <Input
+                type="number"
+                step="1"
+                min="1"
+                value={crewSize}
+                onChange={(e) => setCrewSize(e.target.value)}
+                disabled={allFieldsDisabled}
+              />
+              <p className="text-[11px] text-text-muted">{t("planning.plannedCrewSizeHint")}</p>
             </div>
             <div className="space-y-1">
               <Label>{t("planning.plannedDowntimeHours")}</Label>
@@ -964,28 +1234,14 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
         <section className="space-y-3">
           <h3 className="text-sm font-semibold">2. {t("planning.urgency")}</h3>
-          <Select
-            {...(urgencyId ? { value: urgencyId } : {})}
-            onValueChange={setUrgencyId}
+          <UrgencySelect
+            id="wo-planning-urgency"
+            value={urgencyId || null}
+            onChange={setUrgencyId}
             disabled={allFieldsDisabled}
-          >
-            <SelectTrigger className="max-w-sm">
-              <SelectValue placeholder={t("planning.selectUrgency")} />
-            </SelectTrigger>
-            <SelectContent>
-              {activePriorities.map((p) => (
-                <SelectItem key={p.id} value={String(p.id)}>
-                  <span className="inline-flex items-center gap-2">
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: p.hex_color }}
-                    />
-                    {planningPriorityLabel(p, i18n.language)}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            placeholder={t("planning.selectUrgency")}
+            className="max-w-sm"
+          />
         </section>
 
         {(isPlanningEditable || isReadyScheduleEditable) && (
@@ -1007,9 +1263,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           <h3 className="text-sm font-semibold">3. {t("planning.assignment")}</h3>
           <p className="text-xs text-muted-foreground">{t("planning.scheduleLockedHint")}</p>
           {scheduleFrozen ? (
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              {t("planning.scheduleFrozenHint")}
-            </p>
+            <p className="text-xs text-tone-warning-fg">{t("planning.scheduleFrozenHint")}</p>
           ) : null}
 
           <div className="rounded-md border bg-muted/30 p-3 space-y-2">
@@ -1062,88 +1316,86 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             </Button>
           </div>
 
-          {(isPlanningEditable || isReadyScheduleEditable) && (
-            <PermissionGate permission={P.OT_EMERGENCY_ASSIGN}>
-              <div className="space-y-3 border-t pt-3">
-                <p className="text-xs text-muted-foreground">
-                  {t("planning.emergencyReassignHint")}
-                </p>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-1">
-                    <Label>{t("planning.assignedTeamId")}</Label>
-                    <Select
-                      value={assignedTeamId || "__none"}
-                      onValueChange={(value) => {
-                        const next = value === "__none" ? "" : value;
-                        setAssignedTeamId(next);
-                        void applyTeamRoster(next, true);
-                      }}
-                      disabled={allFieldsDisabled || scheduleFrozen || emergencyBusy}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("planning.assignedTeamId")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none">—</SelectItem>
-                        {groupOptions.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label>{t("planning.primaryResponsibleId")}</Label>
-                    <Select
-                      value={primaryResponsibleId || "__none"}
-                      onValueChange={(value) => {
-                        setPrimaryResponsibleId(value === "__none" ? "" : value);
-                        setNoTeamLeadUser(false);
-                      }}
-                      disabled={allFieldsDisabled || scheduleFrozen || emergencyBusy}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("planning.primaryResponsibleId")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none">—</SelectItem>
-                        {responsibleOptions.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+          {(isPlanningEditable || isReadyScheduleEditable) && canEmergencyAssign && (
+            <div className="space-y-3 border-t pt-3">
+              <p className="text-xs text-muted-foreground">{t("planning.emergencyReassignHint")}</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>{t("planning.assignedTeamId")}</Label>
+                  <Select
+                    value={assignedTeamId || "__none"}
+                    onValueChange={(value) => {
+                      const next = value === "__none" ? "" : value;
+                      setAssignedTeamId(next);
+                      void applyTeamRoster(next, true);
+                    }}
+                    disabled={allFieldsDisabled || scheduleFrozen || emergencyBusy}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={t("planning.assignedTeamId")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">—</SelectItem>
+                      {groupOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                {groupOptions.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{t("planning.noTeams")}</p>
-                ) : null}
-                {noTeamLeadUser ? (
-                  <p className="text-xs text-muted-foreground">{t("planning.noTeamLeadUser")}</p>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={() => setEmergencyOpen(true)}
-                  disabled={
-                    allFieldsDisabled ||
-                    scheduleFrozen ||
-                    !assignReady ||
-                    !requireActor ||
-                    emergencyBusy
-                  }
-                >
-                  {t("planning.emergencyReassign")}
-                </Button>
-                {!requireActor && (
-                  <span className="text-sm text-muted-foreground">
-                    {t("planning.sessionRequired")}
-                  </span>
-                )}
+                <div className="space-y-1">
+                  <Label>{t("planning.primaryResponsibleId")}</Label>
+                  <Select
+                    value={primaryResponsibleId || "__none"}
+                    onValueChange={(value) => {
+                      setPrimaryResponsibleId(value === "__none" ? "" : value);
+                      setNoTeamLeadUser(false);
+                    }}
+                    disabled={allFieldsDisabled || scheduleFrozen || emergencyBusy}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={t("planning.primaryResponsibleId")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">—</SelectItem>
+                      {responsibleOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            </PermissionGate>
+              {!canReadTeams ? (
+                <ListAccessNote list="teams" />
+              ) : groupOptions.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{t("planning.noTeams")}</p>
+              ) : null}
+              {noTeamLeadUser ? (
+                <p className="text-xs text-muted-foreground">{t("planning.noTeamLeadUser")}</p>
+              ) : null}
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => setEmergencyOpen(true)}
+                disabled={
+                  allFieldsDisabled ||
+                  scheduleFrozen ||
+                  !assignReady ||
+                  !requireActor ||
+                  emergencyBusy
+                }
+              >
+                {t("planning.emergencyReassign")}
+              </Button>
+              {!requireActor && (
+                <span className="text-sm text-muted-foreground">
+                  {t("planning.sessionRequired")}
+                </span>
+              )}
+            </div>
           )}
 
           <OverrideReasonDialog
@@ -1259,10 +1511,14 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           </div>
 
           <div className="space-y-2">
+            {!canReadArticles ? <ListAccessNote list="articles" /> : null}
             {parts.length === 0 && (
               <div className="text-sm text-muted-foreground">{t("planning.noPlannedParts")}</div>
             )}
             {parts.map((part) => {
+              const cancelled = isCancelledPart(part);
+              const savedPending = part.persisted && !cancelled;
+              const editableSaved = isEditableSavedPart(part);
               const filteredArticles = articleOptions
                 .filter((article) => {
                   const term = part.article_query.trim().toLowerCase();
@@ -1276,7 +1532,13 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               return (
                 <div
                   key={part.localId}
-                  className="grid gap-2 rounded-md border p-3 md:grid-cols-[2fr_2fr_120px_140px_auto_auto]"
+                  data-testid={`wo-part-line-${part.localId}`}
+                  data-status={part.consumption_status}
+                  className={
+                    cancelled
+                      ? "grid gap-2 rounded-md border border-dashed bg-muted/40 p-3 text-muted-foreground md:grid-cols-[2fr_2fr_120px_140px_auto_auto]"
+                      : "grid gap-2 rounded-md border p-3 md:grid-cols-[2fr_2fr_120px_140px_auto_auto]"
+                  }
                 >
                   <div className="relative space-y-1">
                     <Label>{t("planning.partReference")}</Label>
@@ -1306,7 +1568,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                         <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
                           {filteredArticles.length === 0 ? (
                             <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              No matching article
+                              {t("planning.parts.noMatch")}
                             </div>
                           ) : (
                             filteredArticles.map((article) => (
@@ -1321,6 +1583,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                                     article_id: article.id,
                                     article_ref: articleLabel,
                                     article_query: articleLabel,
+                                    unit_symbol: article.unit_symbol || null,
                                   });
                                   setActiveArticleField(null);
                                 }}
@@ -1333,7 +1596,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       )}
                   </div>
                   <div className="space-y-1">
-                    <Label>Stock location</Label>
+                    <Label>{t("planning.parts.stockLocation")}</Label>
                     <Select
                       value={
                         part.stock_location_id != null ? String(part.stock_location_id) : "__none"
@@ -1346,7 +1609,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       disabled={tasksPartsDisabled || part.persisted}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Location" />
+                        <SelectValue placeholder={t("planning.parts.locationPlaceholder")} />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__none">--</SelectItem>
@@ -1359,7 +1622,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                     </Select>
                   </div>
                   <div className="space-y-1">
-                    <Label>Planned qty</Label>
+                    <Label>
+                      {t("planning.parts.plannedQty")}
+                      {part.unit_symbol ? ` (${part.unit_symbol})` : ""}
+                    </Label>
                     <Input
                       type="number"
                       min="0"
@@ -1372,7 +1638,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label>Unit cost</Label>
+                    <Label>{t("planning.parts.unitCost")}</Label>
                     <Input
                       type="number"
                       min="0"
@@ -1381,14 +1647,22 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       onChange={(e) => updatePartRow(part.localId, { unit_cost: e.target.value })}
                       disabled={tasksPartsDisabled || part.persisted}
                     />
-                    {part.persisted && part.reservation_id != null ? (
+                    {savedPending && part.reservation_id != null ? (
                       <p className="text-xs text-muted-foreground">{t("planning.stockReserved")}</p>
                     ) : null}
-                    {part.persisted && part.reservation_id == null ? (
-                      <p className="text-xs text-amber-800">{t("planning.noStockReservation")}</p>
+                    {savedPending && part.reservation_id == null ? (
+                      <p className="text-xs text-tone-warning-fg">
+                        {t("planning.noStockReservation")}
+                      </p>
                     ) : null}
                   </div>
-                  <div className="flex items-end text-sm font-medium">
+                  <div
+                    className={
+                      cancelled
+                        ? "flex items-end text-sm font-medium line-through"
+                        : "flex items-end text-sm font-medium"
+                    }
+                  >
                     {(
                       (parseNumber(part.quantity_planned) ?? 0) * (parseNumber(part.unit_cost) ?? 0)
                     ).toFixed(2)}
@@ -1403,7 +1677,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                         {t("planning.savePart")}
                       </Button>
                     )}
-                    {isPlanningEditable && (
+                    {!part.persisted && isPlanningEditable && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -1412,6 +1686,55 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       >
                         {t("planning.removePart")}
                       </Button>
+                    )}
+                    {editableSaved && isPlanningEditable && canEdit && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setCancelError(null);
+                          setPartToCancel(part);
+                        }}
+                        disabled={tasksPartsDisabled}
+                      >
+                        {t("planning.parts.cancelLine")}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="space-y-1 md:col-span-6">
+                    {cancelled ? (
+                      <StatusChip
+                        tone="neutral"
+                        label={t("planning.parts.cancelledStatus")}
+                        title={t("planning.parts.cancelledHint")}
+                      />
+                    ) : editableSaved && isPlanningEditable && canEdit ? (
+                      <>
+                        <PartNecessityChoice
+                          value={part.is_required}
+                          onChange={(required) => void changeSavedPartNecessity(part, required)}
+                          disabled={tasksPartsDisabled}
+                          partLabel={part.article_query || t("planning.partReference")}
+                        />
+                        {necessityError?.localId === part.localId ? (
+                          <p role="alert" className="text-xs text-tone-danger-fg">
+                            {necessityError.text}
+                          </p>
+                        ) : null}
+                      </>
+                    ) : part.persisted ? (
+                      part.is_required === false ? (
+                        <PartOptionalChip />
+                      ) : null
+                    ) : (
+                      <PartNecessityChoice
+                        value={part.is_required}
+                        onChange={(required) =>
+                          updatePartRow(part.localId, { is_required: required })
+                        }
+                        disabled={tasksPartsDisabled}
+                        partLabel={part.article_query || t("planning.partReference")}
+                      />
                     )}
                   </div>
                 </div>
@@ -1422,6 +1745,33 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           <div className="text-right text-sm font-semibold">
             {t("planning.plannedTotalCost")}: {plannedCost.toFixed(2)}
           </div>
+          <ConfirmDialog
+            open={partToCancel !== null}
+            onOpenChange={(open) => {
+              if (!open) {
+                setPartToCancel(null);
+                setCancelError(null);
+              }
+            }}
+            title={t("planning.parts.cancelTitle")}
+            description={t("planning.parts.cancelDescription", {
+              part: partToCancel?.article_query || t("planning.partReference"),
+              qty: partToCancel?.quantity_planned ?? "",
+              unit: partToCancel?.unit_symbol ?? "",
+            })}
+            confirmLabel={t("planning.parts.cancelConfirm")}
+            destructive
+            onConfirm={confirmCancelPart}
+          >
+            {cancelError ? (
+              <p
+                role="alert"
+                className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
+              >
+                {cancelError}
+              </p>
+            ) : null}
+          </ConfirmDialog>
         </section>
 
         <section className="space-y-3">
@@ -1479,25 +1829,19 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
         {materialReadiness ? (
           <section className="space-y-2 rounded-md border p-3">
-            <h3 className="text-sm font-semibold">
-              {t("wo.materialReadiness.title", {
-                ns: "inventory",
-                defaultValue: "Material readiness",
-              })}
-            </h3>
+            <h3 className="text-sm font-semibold">{t("planning.materialReadiness.title")}</h3>
             <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
               <span>
-                {t("wo.materialReadiness.ready", { ns: "inventory", defaultValue: "Ready" })}:{" "}
+                {t("planning.materialReadiness.ready")}:{" "}
                 <span className="font-medium text-foreground">
                   {materialReadiness.is_fully_available
-                    ? t("wo.materialReadiness.yes", { ns: "inventory", defaultValue: "YES" })
-                    : t("wo.materialReadiness.no", { ns: "inventory", defaultValue: "NO" })}
+                    ? t("planning.materialReadiness.yes")
+                    : t("planning.materialReadiness.no")}
                 </span>
               </span>
               {materialReadiness.ready_pct != null ? (
                 <span>
-                  {t("wo.materialReadiness.readyPct", { ns: "inventory", defaultValue: "Ready %" })}
-                  :{" "}
+                  {t("planning.materialReadiness.readyPct")}:{" "}
                   <span className="font-medium tabular-nums text-foreground">
                     {Math.round(materialReadiness.ready_pct)}%
                   </span>
@@ -1505,11 +1849,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               ) : null}
               {materialReadiness.reserved_pct != null ? (
                 <span>
-                  {t("wo.materialReadiness.reservedPct", {
-                    ns: "inventory",
-                    defaultValue: "Reserved %",
-                  })}
-                  :{" "}
+                  {t("planning.materialReadiness.reservedPct")}:{" "}
                   <span className="font-medium tabular-nums text-foreground">
                     {Math.round(materialReadiness.reserved_pct)}%
                   </span>
@@ -1517,11 +1857,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               ) : null}
               {materialReadiness.expected_arrival ? (
                 <span>
-                  {t("wo.materialReadiness.expectedArrival", {
-                    ns: "inventory",
-                    defaultValue: "Expected arrival",
-                  })}
-                  :{" "}
+                  {t("planning.materialReadiness.expectedArrival")}:{" "}
                   <span className="font-medium text-foreground">
                     {materialReadiness.expected_arrival}
                   </span>
@@ -1535,36 +1871,31 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         {materialReadiness &&
         !materialReadiness.is_fully_available &&
         materialReadiness.shortages.length > 0 ? (
-          <section className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3">
-            <h3 className="text-sm font-semibold text-amber-800">
-              {t("wo.shortage.title", { ns: "inventory" })}
+          <section className="space-y-2 rounded-md border border-tone-warning-border bg-tone-warning-bg p-3">
+            <h3 className="text-sm font-semibold text-tone-warning-fg">
+              {t("planning.shortage.title")}
             </h3>
-            <p className="text-xs text-amber-700">
-              {t("wo.shortage.description", { ns: "inventory" })}
-            </p>
+            <p className="text-xs text-tone-warning-fg">{t("planning.shortage.description")}</p>
             <div className="space-y-1.5">
               {materialReadiness.shortages.map((shortage) => {
                 const wasCreated = shortageSuccessIds.includes(shortage.article_id);
                 return (
                   <div
                     key={shortage.article_id}
-                    className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-white p-2 text-xs"
+                    className="flex flex-wrap items-center gap-2 rounded border border-tone-warning-border bg-surface-0 p-2 text-xs"
                   >
                     <span className="font-medium">{shortage.article_code}</span>
                     <span className="text-muted-foreground">— {shortage.article_name}</span>
-                    <span className="ml-auto tabular-nums text-amber-700">
-                      {t("wo.shortage.columns.requested", { ns: "inventory" })}:{" "}
-                      {shortage.requested_qty} ·{" "}
-                      {t("wo.shortage.columns.available", { ns: "inventory" })}:{" "}
-                      {shortage.available_qty} ·{" "}
-                      <span className="font-semibold text-red-700">
-                        {t("wo.shortage.columns.shortage", { ns: "inventory" })}:{" "}
-                        {shortage.shortage_qty}
+                    <span className="ml-auto tabular-nums text-tone-warning-fg">
+                      {t("planning.shortage.columns.requested")}: {shortage.requested_qty} ·{" "}
+                      {t("planning.shortage.columns.available")}: {shortage.available_qty} ·{" "}
+                      <span className="font-semibold text-tone-danger-fg">
+                        {t("planning.shortage.columns.shortage")}: {shortage.shortage_qty}
                       </span>
                     </span>
                     {wasCreated ? (
-                      <span className="text-xs font-medium text-green-700">
-                        ✓ {t("wo.shortage.requisitionCreated", { ns: "inventory" })}
+                      <span className="text-xs font-medium text-tone-success-fg">
+                        ✓ {t("planning.shortage.requisitionCreated")}
                       </span>
                     ) : (
                       <Button
@@ -1584,7 +1915,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                               setShortageSuccessIds((prev) => [...prev, shortage.article_id]);
                             })
                             .catch((err) => {
-                              setError(toErrorMessage(err));
+                              setError(describeAppError(err).title);
                             })
                             .finally(() => {
                               setShortageReqCreating(null);
@@ -1593,7 +1924,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       >
                         {shortageReqCreating === shortage.article_id
                           ? "…"
-                          : t("wo.shortage.createRequisition", { ns: "inventory" })}
+                          : t("planning.shortage.createRequisition")}
                       </Button>
                     )}
                   </div>
@@ -1612,18 +1943,19 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                   <span
                     className={
                       check.outcome === "pass"
-                        ? "text-green-700"
+                        ? "text-tone-success-fg"
                         : check.outcome === "na"
                           ? "text-muted-foreground"
                           : check.blocking
-                            ? "text-amber-800"
+                            ? "text-tone-warning-fg"
                             : "text-muted-foreground"
                     }
                   >
                     {check.outcome === "pass" ? "✓" : check.outcome === "na" ? "—" : "✗"}
                   </span>
                   <span>
-                    {check.message?.trim() || check.code}
+                    {check.message?.trim() ||
+                      t(`planning.readinessRule.${check.code}`, { defaultValue: check.code })}
                     {!check.blocking && check.outcome === "fail" ? (
                       <span className="text-muted-foreground">
                         {" "}
@@ -1638,7 +1970,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         )}
 
         {readinessBlocking.length > 0 && statusCode === "planning" && (
-          <div className="w-full rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <div className="w-full rounded-md border border-tone-warning-border bg-tone-warning-bg px-3 py-2 text-sm text-tone-warning-fg">
             <p className="mb-1 font-medium">{t("planning.readinessBlocking")}</p>
             <ul className="list-disc list-inside space-y-0.5">
               {readinessBlocking.map((msg, i) => (

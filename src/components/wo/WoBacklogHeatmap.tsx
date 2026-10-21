@@ -7,9 +7,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useFormatters } from "@/hooks/use-formatters";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { getWoBacklogHeatmap } from "@/services/wo-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { WoBacklogHeatmap as Heatmap, WoBacklogDay } from "@shared/ipc-types";
 
 const WEEK_OPTIONS = [2, 4, 8, 12] as const;
@@ -32,7 +32,7 @@ const LEVEL_CLASS = [
   "bg-primary/15",
   "bg-primary/35",
   "bg-primary/60",
-  "bg-status-danger/70",
+  "bg-tone-danger-bg text-tone-danger-fg",
 ];
 
 export function WoBacklogHeatmap() {
@@ -47,7 +47,7 @@ export function WoBacklogHeatmap() {
       setData(await getWoBacklogHeatmap({ weeks }));
       setError(null);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     }
   }, [weeks]);
 
@@ -93,12 +93,12 @@ export function WoBacklogHeatmap() {
         {t("dashboard.backlogHeatmap.subtitle", { weeks })}
       </p>
       {error ? (
-        <p role="alert" className="text-xs text-status-danger">
+        <p role="alert" className="text-xs text-tone-danger-fg">
           {error}
         </p>
       ) : null}
       {data && !data.capacity_configured ? (
-        <p className="mb-2 text-xs text-status-warning">
+        <p className="mb-2 text-xs text-tone-warning-fg">
           {t("dashboard.backlogHeatmap.noCapacity")}
         </p>
       ) : null}
@@ -132,7 +132,7 @@ export function WoBacklogHeatmap() {
                       className={cn(
                         "flex h-10 flex-col items-center justify-center rounded text-[10px] leading-tight",
                         LEVEL_CLASS[loadLevel(d, maxHours)],
-                        d.overloaded && "ring-2 ring-status-danger",
+                        d.overloaded && "ring-2 ring-tone-danger-fg",
                       )}
                     >
                       <span className="text-text-muted">{formatDate(d.date).slice(0, 5)}</span>
@@ -157,7 +157,7 @@ export function WoBacklogHeatmap() {
             </div>
             <div className="rounded border border-surface-border p-2 text-xs">
               <p className="flex items-center gap-1 font-medium">
-                <AlertTriangle className="h-3.5 w-3.5 text-status-warning" aria-hidden />
+                <AlertTriangle className="h-3.5 w-3.5 text-tone-warning-fg" aria-hidden />
                 {t("dashboard.backlogHeatmap.overdue")}
               </p>
               <p>

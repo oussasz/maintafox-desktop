@@ -29,6 +29,8 @@ mod harness_tests;
 #[cfg(test)]
 mod history_ids_tests;
 #[cfg(test)]
+mod hook_round_trip_tests;
+#[cfg(test)]
 mod registry_tests;
 #[cfg(test)]
 mod row_sync_tests;

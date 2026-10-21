@@ -496,3 +496,49 @@ describe("personnel-store — create form state", () => {
     expect(usePersonnelStore.getState().editingPersonnel).toBeNull();
   });
 });
+
+describe("personnel-store — loadMore and raw load errors", () => {
+  it("keeps the raw list failure for the error state", async () => {
+    const failure = { code: "DATABASE_ERROR", message: "down" };
+    mockList.mockRejectedValueOnce(failure);
+    await usePersonnelStore.getState().loadPersonnel();
+    expect(usePersonnelStore.getState().loadError).toBe(failure);
+  });
+
+  it("appends the next page from the current length and skips duplicates", async () => {
+    const first = [makePersonnel(), makePersonnel({ id: 2, employee_code: "EMP-0002" })];
+    usePersonnelStore.setState({ items: first, total: 3 });
+    mockList.mockResolvedValueOnce(
+      makePage([makePersonnel({ id: 2 }), makePersonnel({ id: 3, employee_code: "EMP-0003" })], 3),
+    );
+
+    await usePersonnelStore.getState().loadMore();
+
+    expect(mockList).toHaveBeenCalledWith(expect.objectContaining({ offset: 2 }));
+    expect(usePersonnelStore.getState().items.map((p) => p.id)).toEqual([1, 2, 3]);
+    expect(usePersonnelStore.getState().loadingMore).toBe(false);
+  });
+
+  it("does nothing when everything is loaded", async () => {
+    usePersonnelStore.setState({ items: [makePersonnel()], total: 1 });
+    await usePersonnelStore.getState().loadMore();
+    expect(mockList).not.toHaveBeenCalled();
+  });
+
+  it("keeps the loaded rows and the failure when the next page fails", async () => {
+    const first = [makePersonnel()];
+    const failure = { code: "DATABASE_ERROR", message: "down" };
+    usePersonnelStore.setState({ items: first, total: 5 });
+    mockList.mockRejectedValueOnce(failure);
+    await usePersonnelStore.getState().loadMore();
+    expect(usePersonnelStore.getState().items).toBe(first);
+    expect(usePersonnelStore.getState().loadError).toBe(failure);
+  });
+
+  it("keeps the raw detail failure", async () => {
+    const failure = { code: "NOT_FOUND", message: "gone" };
+    mockGet.mockRejectedValueOnce(failure);
+    await usePersonnelStore.getState().openPersonnel(9);
+    expect(usePersonnelStore.getState().detailError).toBe(failure);
+  });
+});

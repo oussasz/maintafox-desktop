@@ -8,8 +8,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::di::queries::{create_intervention_request, DiCreateInput};
     use crate::di::review::{
@@ -22,24 +21,7 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════════
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
+        let db = crate::db::test_db::seeded().await;
 
         seed_fk_data(&db).await;
 
@@ -144,7 +126,7 @@ mod tests {
             safety_flag: false,
             environmental_flag: false,
             quality_flag: false,
-            reported_urgency: "medium".to_string(),
+            reported_urgency: "normal".to_string(),
             observed_at: None,
             source_inspection_anomaly_id: None,
             submitter_id: user_id,
@@ -309,6 +291,7 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: 2,
                 reviewer_note: "".to_string(),
+                reason_code: Some("unclear_description".into()),
             },
         )
         .await;
@@ -340,6 +323,7 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: 2,
                 reviewer_note: "   ".to_string(),
+                reason_code: Some("unclear_description".into()),
             },
         )
         .await;
@@ -364,6 +348,7 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: 2,
                 reviewer_note: "Please add sensor readings.".to_string(),
+                reason_code: Some("unclear_description".into()),
             },
         )
         .await
@@ -475,7 +460,7 @@ mod tests {
                 di_id: di.id,
                 actor_id: user_id,
                 expected_row_version: 2,
-                validated_urgency: "medium".to_string(),
+                validated_urgency: "normal".to_string(),
                 classification_code_id: Some(900001),
                 reviewer_note: None,
             },
@@ -534,7 +519,7 @@ mod tests {
                 di_id: di.id,
                 actor_id: user_id,
                 expected_row_version: 2,
-                validated_urgency: "medium".to_string(),
+                validated_urgency: "normal".to_string(),
                 classification_code_id: Some(900001),
                 reviewer_note: None,
             },
@@ -590,7 +575,7 @@ mod tests {
                 di_id: di.id,
                 actor_id: user_id,
                 expected_row_version: 2,
-                validated_urgency: "medium".to_string(),
+                validated_urgency: "normal".to_string(),
                 classification_code_id: Some(900001),
                 reviewer_note: None,
             },
@@ -686,7 +671,7 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: approved.row_version,
                 deferred_until: "2099-06-15".to_string(),
-                reason_code: "budget_constraint".to_string(),
+                reason_code: "budget".to_string(),
                 notes: Some("Deferred until budget approval Q3".to_string()),
             },
         )
@@ -931,6 +916,49 @@ mod tests {
         assert!(
             err_str.contains("version") || err_str.contains("modifié"),
             "Error must mention version conflict: got '{err_str}'"
+        );
+    }
+
+    #[tokio::test]
+    async fn review_events_carry_actor_display_name() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("UPDATE user_accounts SET display_name = 'Reviewer Name' WHERE id = {user_id};"),
+        ))
+        .await
+        .expect("set display name");
+
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
+            .await
+            .expect("create DI");
+        advance_to_in_review(&db, di.id).await;
+        return_di_for_clarification(
+            &db,
+            DiReturnInput {
+                di_id: di.id,
+                actor_id: user_id,
+                expected_row_version: 2,
+                reviewer_note: "Please add sensor readings.".to_string(),
+                reason_code: Some("unclear_description".into()),
+            },
+        )
+        .await
+        .expect("return");
+
+        let events = get_review_events(&db, di.id).await.expect("events");
+        let returned = events
+            .iter()
+            .find(|e| e.event_type == "returned_for_clarification")
+            .expect("returned event");
+        assert_eq!(returned.actor_display_name.as_deref(), Some("Reviewer Name"));
+        assert!(
+            events
+                .iter()
+                .filter(|e| e.actor_id.is_none())
+                .all(|e| e.actor_display_name.is_none()),
+            "system events have no actor name"
         );
     }
 }

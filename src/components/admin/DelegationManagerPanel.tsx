@@ -26,7 +26,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
-import { useToast } from "@/hooks/use-toast";
+import { describeAppError } from "@/lib/app-error";
 import {
   createDelegationPolicy,
   deleteDelegationPolicy,
@@ -35,6 +35,7 @@ import {
   listRoles,
   updateDelegationPolicy,
 } from "@/services/rbac-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type { DelegationPolicyView, RoleWithPermissions } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -43,7 +44,8 @@ const SCOPE_TYPES = ["tenant", "site", "department"] as const;
 export function DelegationManagerPanel() {
   const { t } = useTranslation("admin");
   const { can } = usePermissions();
-  const { toast } = useToast();
+  // The global toast host shows them (a local useToast list was never rendered here).
+  const toast = pushAppToast;
   const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [policies, setPolicies] = useState<DelegationPolicyView[]>([]);
@@ -126,7 +128,7 @@ export function DelegationManagerPanel() {
       void fetchData();
     } catch (err) {
       toast({
-        title: err instanceof Error ? err.message : t("delegation.errors.createFailed"),
+        title: describeAppError(err).title,
         variant: "destructive",
       });
     }
@@ -168,7 +170,7 @@ export function DelegationManagerPanel() {
       void fetchData();
     } catch (err) {
       toast({
-        title: err instanceof Error ? err.message : t("delegation.errors.updateFailed"),
+        title: describeAppError(err).title,
         variant: "destructive",
       });
     }
@@ -248,7 +250,10 @@ export function DelegationManagerPanel() {
         header: t("delegation.columns.stepUp", "Step-up"),
         cell: ({ row }) =>
           row.original.requires_step_up_for_publish ? (
-            <Badge variant="outline" className="border-orange-300 text-orange-600 text-[10px]">
+            <Badge
+              variant="outline"
+              className="border-tone-attention-border text-tone-attention-fg text-[10px]"
+            >
               Step-up
             </Badge>
           ) : (

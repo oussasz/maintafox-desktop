@@ -1,35 +1,39 @@
-import { ArrowRight, Eye, EyeOff, Info, Lock, ShieldAlert, ShieldCheck, User } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Info, Loader2, Lock, User, UserPlus } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { AdminRecoveryCodeDialog } from "@/components/auth/AdminRecoveryCodeDialog";
 import { ForgotPasswordDialog } from "@/components/auth/ForgotPasswordDialog";
-import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
-import { Button } from "@/components/ui/button";
+import { formatLicenseDate } from "@/components/auth/activation/OrganizationLicenseCard";
+import { AuthField } from "@/components/auth/shell/AuthField";
+import { AuthAlert, AuthButton, AuthStatusChip } from "@/components/auth/shell/AuthPrimitives";
+import { AuthShell } from "@/components/auth/shell/AuthShell";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   useProductLicenseGate,
   useProductLicenseGateReconcile,
   useProductLicenseGateRefresh,
 } from "@/contexts/product-license-gate-context";
-import { mfAlert, mfAuth, mfInput } from "@/design-system/tokens";
+import { mfAuth, mfAuthAlert } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   clearProductLicenseBrowserState,
+  getActivationBootstrapState,
   getActivationLicenseMetadata,
   getProductLicenseOnboardingState,
   POST_ACTIVATION_LOGIN_HINT_KEY,
   resetProductLicenseActivation,
   type ActivationLicenseMetadata,
 } from "@/services/product-license-service";
-import { useLocaleStore } from "@/stores/locale-store";
 
 export function LoginPage() {
   const { t } = useTranslation("auth");
   const navigate = useNavigate();
   const session = useSession();
-  const { activeLocale, supportedLocales } = useLocaleStore();
   const licenseGate = useProductLicenseGate();
   const refreshProductLicense = useProductLicenseGateRefresh();
   const reconcileProductLicense = useProductLicenseGateReconcile();
@@ -38,13 +42,24 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
+  const [recoveryCodeOpen, setRecoveryCodeOpen] = useState(false);
   const [postActivationHint, setPostActivationHint] = useState(false);
   const [showLicenseMeta, setShowLicenseMeta] = useState(false);
   const [licenseMeta, setLicenseMeta] = useState<ActivationLicenseMetadata | null>(null);
   const [activationReady, setActivationReady] = useState(false);
   const [activationCheckLoading, setActivationCheckLoading] = useState(true);
+  /**
+   * The PC is activated and has no administrator yet (`get_activation_bootstrap_state`): no named
+   * administrator was ever created here, so the first-start screen is still open. Also true on a
+   * PC whose only administrator is the built-in "admin" account with its password never changed.
+   * The backend alone decides whether the creation is allowed (`bootstrap_initial_tenant_admin`).
+   */
+  const [firstAdminPending, setFirstAdminPending] = useState(false);
   const [resettingActivation, setResettingActivation] = useState(false);
   const [resetActivationError, setResetActivationError] = useState<string | null>(null);
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
+  const [capsLockOn, setCapsLockOn] = useState(false);
+  const usernameRef = useRef<HTMLInputElement | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -63,8 +78,19 @@ export function LoginPage() {
       const s = await getProductLicenseOnboardingState();
       const ready = Boolean(s.complete && s.tenant_id && s.tenant_id.trim().length > 0);
       setActivationReady(ready);
+      let pending = false;
+      if (ready) {
+        try {
+          const bootstrap = await getActivationBootstrapState();
+          pending = Boolean(bootstrap.tenant_id?.trim()) && !bootstrap.has_tenant_admin;
+        } catch {
+          // No answer: offer nothing; the sign-in form stays available.
+        }
+      }
+      setFirstAdminPending(pending);
     } catch {
       setActivationReady(false);
+      setFirstAdminPending(false);
     } finally {
       setActivationCheckLoading(false);
     }
@@ -101,13 +127,9 @@ export function LoginPage() {
       }
       navigate("/", { replace: true });
     } catch (e) {
-      const message =
-        e instanceof Error
-          ? e.message
-          : typeof e === "object" && e !== null && "message" in e
-            ? String((e as { message: unknown }).message)
-            : t("login.resetActivation.errorFallback");
-      setResetActivationError(message);
+      setResetActivationError(
+        describeAppError(e).title || t("login.resetActivation.errorFallback"),
+      );
     } finally {
       if (mountedRef.current) {
         setResettingActivation(false);
@@ -130,248 +152,257 @@ export function LoginPage() {
   const credentialsDisabled =
     session.isLoading || activationCheckLoading || !activationReady || resettingActivation;
 
+  // Put the cursor in the username field as soon as the form becomes usable.
+  useEffect(() => {
+    if (!activationCheckLoading && activationReady) {
+      usernameRef.current?.focus();
+    }
+  }, [activationCheckLoading, activationReady]);
+
+  const licenseSummary = [
+    licenseMeta?.company_display_name ?? licenseMeta?.tenant_id ?? null,
+    licenseMeta?.license_tier ?? null,
+  ]
+    .filter((part): part is string => Boolean(part && part.trim()))
+    .join(" · ");
+
+  const licenseDetailsToggle = (
+    <button
+      type="button"
+      aria-expanded={showLicenseMeta}
+      onClick={() => setShowLicenseMeta((v) => !v)}
+      className={cn("inline-flex items-center gap-1.5 text-[13px]", mfAuth.linkPrimary)}
+    >
+      <Info className="h-3.5 w-3.5" aria-hidden />
+      {showLicenseMeta ? t("login.licenseDetails.hide") : t("login.licenseDetails.show")}
+    </button>
+  );
+
   return (
-    <div className={mfAuth.shell}>
-      <div className={mfAuth.card}>
-        {/* Logo + wordmark */}
-        <div className="mb-8">
-          <MaintafoxWordmark size="lg" tone="auth" />
+    <AuthShell width="sm">
+      <h1 className={mfAuth.title}>{t("login.welcome")}</h1>
+      <p className={mfAuth.subtitle}>{t("login.subtitle")}</p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        {licenseSummary ? (
+          <AuthStatusChip tone={activationReady ? "ok" : "neutral"}>
+            {licenseSummary}
+          </AuthStatusChip>
+        ) : null}
+        {licenseDetailsToggle}
+      </div>
+
+      {showLicenseMeta ? (
+        <dl className={cn("mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5", mfAuthAlert.info)}>
+          <dt className="font-medium">{t("login.licenseDetails.tier")}</dt>
+          <dd>{licenseMeta?.license_tier ?? t("login.licenseDetails.na")}</dd>
+          <dt className="font-medium">{t("login.licenseDetails.slotLimit")}</dt>
+          <dd>{licenseMeta?.device_limit ?? t("login.licenseDetails.na")}</dd>
+          <dt className="font-medium">{t("login.licenseDetails.expiry")}</dt>
+          <dd>
+            {licenseMeta?.expires_at
+              ? formatLicenseDate(licenseMeta.expires_at, i18n.language || "en")
+              : t("login.licenseDetails.na")}
+          </dd>
+          <dt className="font-medium">{t("login.licenseDetails.company")}</dt>
+          <dd className="min-w-0 break-words">
+            {licenseMeta?.company_display_name ??
+              licenseMeta?.tenant_id ??
+              t("login.licenseDetails.na")}
+          </dd>
+        </dl>
+      ) : null}
+
+      {activationCheckLoading ? (
+        <div className="mt-6 flex items-center gap-2 text-sm text-text-muted" role="status">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          {t("activation.loading")}
         </div>
-
-        <h2 className="text-2xl font-bold text-text-primary">{t("login.welcome")}</h2>
-        <p className="mt-1 text-sm text-text-secondary">{t("login.subtitle")}</p>
-        <button
-          type="button"
-          onClick={() => setShowLicenseMeta((v) => !v)}
-          className={cn("mt-3 inline-flex items-center gap-2", mfAuth.linkPrimary)}
-        >
-          <Info className="h-4 w-4" />
-          {showLicenseMeta ? t("login.licenseDetails.hide") : t("login.licenseDetails.show")}
-        </button>
-        {showLicenseMeta ? (
-          <div className={cn("mt-3", mfAlert.info)}>
-            <p>
-              <span className="font-medium">{t("login.licenseDetails.tier")}:</span>{" "}
-              {licenseMeta?.license_tier ?? t("login.licenseDetails.na")}
-            </p>
-            <p>
-              <span className="font-medium">{t("login.licenseDetails.slotLimit")}:</span>{" "}
-              {licenseMeta?.device_limit ?? t("login.licenseDetails.na")}
-            </p>
-            <p>
-              <span className="font-medium">{t("login.licenseDetails.expiry")}:</span>{" "}
-              {licenseMeta?.expires_at ?? t("login.licenseDetails.na")}
-            </p>
-            <p>
-              <span className="font-medium">{t("login.licenseDetails.company")}:</span>{" "}
-              {licenseMeta?.company_display_name ??
-                licenseMeta?.tenant_id ??
-                t("login.licenseDetails.na")}
-            </p>
-          </div>
-        ) : null}
-
-        {activationCheckLoading ? (
-          <div className="mt-6 flex items-center gap-2 text-sm text-text-muted">
-            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-surface-border border-t-primary" />
-            {t("activation.loading")}
-          </div>
-        ) : !activationReady ? (
-          <div role="alert" className={cn("mt-6 space-y-3", mfAlert.warning)}>
-            <p className="font-medium">{t("login.activationRequired.title")}</p>
-            <p className="mt-1">{t("login.activationRequired.message")}</p>
-            <Button
-              type="button"
-              className="w-full justify-center"
-              onClick={() => {
-                licenseGate?.setPreferLoginView(false);
-                navigate("/", { replace: true });
-              }}
-            >
-              {t("login.activationRequired.cta")}
-            </Button>
-            <button
-              type="button"
-              onClick={() => void handleResetActivation()}
-              disabled={resettingActivation}
-              className="w-full text-sm font-semibold text-primary underline-offset-2 hover:underline disabled:opacity-50"
-            >
-              {resettingActivation ? t("activation.activating") : t("activation.changeKey")}
-            </button>
-          </div>
-        ) : null}
-
-        {postActivationHint && activationReady ? (
-          <div role="status" className={cn("mt-4", mfAlert.info)}>
-            {t("login.postActivationHint")}
-          </div>
-        ) : null}
-
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="mt-8 space-y-5">
-          {/* Username */}
-          <div>
-            <label htmlFor="login-username" className={mfInput.authLabel}>
-              {t("login.form.username.label")}
-            </label>
-            <div className="relative">
-              <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-              <input
-                id="login-username"
-                type="text"
-                autoComplete="username"
-                required
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder={t("login.form.username.placeholder")}
-                className={mfInput.authField}
-                disabled={credentialsDisabled}
-              />
-            </div>
-          </div>
-
-          {/* Password */}
-          <div>
-            <label htmlFor="login-password" className={mfInput.authLabel}>
-              {t("login.form.password.label")}
-            </label>
-            <div className="relative">
-              <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-              <input
-                id="login-password"
-                type={showPassword ? "text" : "password"}
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={t("login.form.password.placeholder")}
-                className={mfInput.authFieldWithTrailing}
-                disabled={credentialsDisabled}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                aria-label={
-                  showPassword ? t("login.form.hidePassword") : t("login.form.showPassword")
-                }
-                tabIndex={-1}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted transition-colors hover:text-text-secondary"
-              >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-          </div>
-
-          {/* Error */}
-          {session.error && session.errorCode === "ACCOUNT_LOCKED" ? (
-            <div role="alert" className={cn("flex items-start gap-2", mfAlert.warning)}>
-              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{session.error}</span>
-            </div>
-          ) : session.error && tenantScopeDenied ? (
-            <div role="alert" className={mfAlert.warning}>
-              <p className="font-medium">{t("login.tenantScopeDenied.title")}</p>
-              <p className="mt-1">{session.error}</p>
-              <p className="mt-1 text-xs">{t("login.tenantScopeDenied.action")}</p>
-            </div>
-          ) : session.error && staleSessionClaims ? (
-            <div role="alert" className={mfAlert.info}>
-              <p className="font-medium">{t("login.staleSession.title")}</p>
-              <p className="mt-1">{session.error}</p>
-              <p className="mt-1 text-xs">{t("login.staleSession.action")}</p>
-              <button
-                type="button"
-                onClick={() => void handleResetActivation()}
-                disabled={resettingActivation}
-                className="mt-3 w-full rounded-lg border border-surface-border bg-surface-1 px-4 py-2 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-2 disabled:opacity-50"
-              >
-                {resettingActivation
-                  ? t("login.staleSession.resetting")
-                  : t("login.staleSession.resetCta")}
-              </button>
-            </div>
-          ) : session.error ? (
-            <div role="alert" className={mfAlert.danger}>
-              {session.error}
-            </div>
-          ) : null}
-
-          {/* Submit */}
-          <Button
-            type="submit"
-            className="w-full gap-2 py-2.5 font-semibold"
-            disabled={credentialsDisabled}
+      ) : !activationReady ? (
+        <div className="mt-6 space-y-3">
+          <AuthAlert tone="warning" title={t("login.activationRequired.title")}>
+            <p>{t("login.activationRequired.message")}</p>
+          </AuthAlert>
+          <AuthButton
+            onClick={() => {
+              licenseGate?.setPreferLoginView(false);
+              navigate("/", { replace: true });
+            }}
           >
-            {session.isLoading ? (
-              t("login.form.submitting")
-            ) : (
-              <>
-                {t("login.form.submit")}
-                <ArrowRight className="h-4 w-4" />
-              </>
-            )}
-          </Button>
+            {t("login.activationRequired.cta")}
+          </AuthButton>
+          <AuthButton
+            variant="ghost"
+            onClick={() => setConfirmResetOpen(true)}
+            disabled={resettingActivation}
+          >
+            {resettingActivation ? t("login.resetActivation.resetting") : t("activation.changeKey")}
+          </AuthButton>
+        </div>
+      ) : null}
 
-          <div className="text-center">
+      {firstAdminPending && activationReady ? (
+        <div className="mt-4 space-y-2" data-testid="login-first-admin">
+          <AuthAlert tone="info" title={t("login.firstAdmin.title")}>
+            <p>{t("login.firstAdmin.message")}</p>
+          </AuthAlert>
+          <AuthButton
+            variant="secondary"
+            onClick={() => navigate("/admin-setup")}
+            disabled={resettingActivation}
+          >
+            <UserPlus className="h-4 w-4" aria-hidden />
+            {t("login.firstAdmin.cta")}
+          </AuthButton>
+        </div>
+      ) : null}
+
+      {postActivationHint && activationReady ? (
+        <AuthAlert tone="success" className="mt-4">
+          {t("login.postActivationHint")}
+        </AuthAlert>
+      ) : null}
+
+      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        <AuthField
+          ref={usernameRef}
+          id="login-username"
+          label={t("login.form.username.label")}
+          icon={<User />}
+          type="text"
+          autoComplete="username"
+          required
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder={t("login.form.username.placeholder")}
+          disabled={credentialsDisabled}
+        />
+
+        <AuthField
+          id="login-password"
+          label={t("login.form.password.label")}
+          icon={<Lock />}
+          type={showPassword ? "text" : "password"}
+          autoComplete="current-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyUp={(e) => setCapsLockOn(e.getModifierState("CapsLock"))}
+          onBlur={() => setCapsLockOn(false)}
+          placeholder={t("login.form.password.placeholder")}
+          disabled={credentialsDisabled}
+          {...(capsLockOn ? { hint: t("login.form.capsLock") } : {})}
+          hintTone="warning"
+          trailing={
             <button
               type="button"
-              onClick={() => setForgotOpen(true)}
-              disabled={credentialsDisabled}
-              className="text-sm font-medium text-primary underline-offset-2 hover:underline disabled:opacity-50"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={
+                showPassword ? t("login.form.hidePassword") : t("login.form.showPassword")
+              }
+              aria-pressed={showPassword}
+              className="flex h-9 w-9 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-[var(--mfa-blue-tint)] hover:text-text-primary"
             >
-              {t("login.forgotPassword.link")}
+              {showPassword ? (
+                <EyeOff className="h-4 w-4" aria-hidden />
+              ) : (
+                <Eye className="h-4 w-4" aria-hidden />
+              )}
             </button>
-          </div>
-        </form>
+          }
+        />
 
-        <ForgotPasswordDialog open={forgotOpen} onOpenChange={setForgotOpen} />
+        {session.error && session.errorCode === "ACCOUNT_LOCKED" ? (
+          <AuthAlert tone="warning">{session.error}</AuthAlert>
+        ) : session.error && tenantScopeDenied ? (
+          <AuthAlert tone="warning" title={t("login.tenantScopeDenied.title")}>
+            <p>{session.error}</p>
+            <p className="text-xs text-text-secondary">{t("login.tenantScopeDenied.action")}</p>
+          </AuthAlert>
+        ) : session.error && staleSessionClaims ? (
+          <AuthAlert tone="info" title={t("login.staleSession.title")}>
+            <p>{session.error}</p>
+            <p className="text-xs text-text-secondary">{t("login.staleSession.action")}</p>
+            <AuthButton
+              variant="secondary"
+              className="mt-2"
+              onClick={() => setConfirmResetOpen(true)}
+              disabled={resettingActivation}
+            >
+              {resettingActivation
+                ? t("login.staleSession.resetting")
+                : t("login.staleSession.resetCta")}
+            </AuthButton>
+          </AuthAlert>
+        ) : session.error ? (
+          <AuthAlert tone="danger">{session.error}</AuthAlert>
+        ) : null}
 
-        <div className="mt-5 border-t border-surface-border pt-5 text-center">
-          <p className="mb-2 text-xs text-text-muted">{t("login.resetActivation.hint")}</p>
-          {resetActivationError ? (
-            <p role="alert" className={cn("mb-2 text-xs", mfAlert.danger)}>
-              {resetActivationError}
-            </p>
-          ) : null}
+        <AuthButton type="submit" loading={session.isLoading} disabled={credentialsDisabled}>
+          {session.isLoading ? (
+            t("login.form.submitting")
+          ) : (
+            <>
+              {t("login.form.submit")}
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </>
+          )}
+        </AuthButton>
+
+        <div className="text-center">
           <button
             type="button"
-            onClick={() => void handleResetActivation()}
-            disabled={resettingActivation || activationCheckLoading}
-            className="text-sm font-semibold text-primary underline-offset-2 hover:underline disabled:opacity-50"
+            onClick={() => setForgotOpen(true)}
+            disabled={credentialsDisabled}
+            className={mfAuth.linkPrimary}
           >
-            {resettingActivation
-              ? t("login.resetActivation.resetting")
-              : t("login.resetActivation.cta")}
+            {t("login.forgotPassword.link")}
           </button>
         </div>
+      </form>
 
-        {/* Security footer */}
-        <div className="mt-6 flex items-center justify-center gap-1.5 text-xs text-text-muted">
-          <ShieldCheck className="h-3.5 w-3.5" />
-          <span>{t("login.security.label")}</span>
-        </div>
-
-        {/* Locale switcher */}
-        <div className="mt-4 flex justify-center gap-2">
-          {supportedLocales.map((loc) => (
-            <button
-              key={loc}
-              onClick={() => {
-                void i18n.changeLanguage(loc);
-                useLocaleStore.setState({ activeLocale: loc });
-              }}
-              className={cn(
-                "rounded-full px-3 py-1 text-xs font-medium transition-colors",
-                loc === activeLocale
-                  ? "bg-primary text-primary-foreground"
-                  : "text-text-muted hover:bg-surface-3 hover:text-text-secondary",
-              )}
-            >
-              {loc.toUpperCase()}
-            </button>
-          ))}
-        </div>
+      <div className="mt-3 text-center">
+        <button
+          type="button"
+          onClick={() => setRecoveryCodeOpen(true)}
+          disabled={activationCheckLoading}
+          className={cn("text-xs", mfAuth.linkPrimary)}
+          data-testid="login-recovery-code-link"
+        >
+          {t("login.recoveryCode.link")}
+        </button>
       </div>
-    </div>
+
+      <ForgotPasswordDialog open={forgotOpen} onOpenChange={setForgotOpen} />
+      <AdminRecoveryCodeDialog open={recoveryCodeOpen} onOpenChange={setRecoveryCodeOpen} />
+      <ConfirmDialog
+        open={confirmResetOpen}
+        onOpenChange={setConfirmResetOpen}
+        title={t("login.resetActivation.confirmTitle")}
+        description={t("login.resetActivation.confirmBody")}
+        confirmLabel={t("login.resetActivation.confirmAction")}
+        destructive
+        onConfirm={handleResetActivation}
+      />
+
+      <div className="mt-6 border-t border-surface-border pt-5 text-center">
+        <p className="mb-2 text-xs text-text-muted">{t("login.resetActivation.hint")}</p>
+        {resetActivationError ? (
+          <AuthAlert tone="danger" className="mb-2 text-left">
+            {resetActivationError}
+          </AuthAlert>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => setConfirmResetOpen(true)}
+          disabled={resettingActivation || activationCheckLoading}
+          className={mfAuth.linkPrimary}
+        >
+          {resettingActivation
+            ? t("login.resetActivation.resetting")
+            : t("login.resetActivation.cta")}
+        </button>
+      </div>
+    </AuthShell>
   );
 }

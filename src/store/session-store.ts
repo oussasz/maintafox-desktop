@@ -190,7 +190,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       set({ info, isLoading: false, error: null, errorCode: null, hasBootstrapped: true });
     } catch (e) {
       const { message } = extractTauriError(e, "Échec du changement de mot de passe.");
+      // The server decides whether the change is still required (it may have been made on
+      // another device): take its session state, so the shell leaves the screen when it is not.
+      const fresh = await getSessionInfo().catch(() => null);
       set({
+        ...(fresh ? { info: fresh } : {}),
         isLoading: false,
         error: message,
         errorCode: null,

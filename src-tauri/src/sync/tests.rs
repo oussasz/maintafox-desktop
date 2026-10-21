@@ -1,5 +1,4 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection};
 
 use crate::sync::domain::{
     ApplySyncBatchInput, ExecuteSyncRepairInput, ReplaySyncFailuresInput, ResolveSyncConflictInput,
@@ -9,9 +8,31 @@ use crate::sync::domain::{
 use crate::sync::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    db
+    crate::db::test_db::migrated().await
+}
+
+/// A person who resolves conflicts (the choice is audited under their account).
+async fn operator(db: &DatabaseConnection, username: &str) -> i64 {
+    db.execute(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Sqlite,
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, \
+         is_admin, force_password_change, created_at, updated_at) \
+         VALUES (?, ?, ?, 'local', 1, 0, 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'), \
+         strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        [format!("user-{username}").into(), username.into(), username.into()],
+    ))
+    .await
+    .expect("insert operator");
+    db.query_one(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Sqlite,
+        "SELECT id FROM user_accounts WHERE username = ?",
+        [username.into()],
+    ))
+    .await
+    .expect("query operator")
+    .expect("operator row")
+    .try_get("", "id")
+    .expect("operator id")
 }
 
 /// Idempotency key the outbox assigned to the latest staged change of an entity.
@@ -206,7 +227,7 @@ async fn conflict_routing_creates_operator_review_records() {
 #[tokio::test]
 async fn replay_checkpoint_guard_and_resolution_enable_replay() {
     let db = setup_db().await;
-    let actor_id = 1_i64;
+    let actor_id = operator(&db, "replay-operator").await;
     queries::stage_outbox_item(
         &db,
         StageOutboxItemInput {
@@ -584,7 +605,7 @@ async fn repair_preview_execute_flow_is_scoped_audited_and_non_destructive() {
 #[tokio::test]
 async fn sync_observability_report_includes_alerts_runbooks_and_recovery_proofs() {
     let db = setup_db().await;
-    let actor_id = 11_i64;
+    let actor_id = operator(&db, "proof-operator").await;
     stage_record_class_outbox(&db, "intervention_requests", "1").await;
     queries::apply_sync_batch(
         &db,

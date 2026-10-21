@@ -11,15 +11,16 @@ export interface ReferenceTableCapabilities {
   canToggleActive: boolean;
 }
 
+/** Rendered with the design-system `ConfirmDialog` (cancel label and busy state are built in). */
 export interface ReferenceTableConfirmState {
   open: boolean;
   title: string;
   description: string;
+  /** Verb naming the action ("Deactivate value"), never "OK". */
   confirmLabel: string;
-  cancelLabel: string;
   destructive?: boolean;
-  busy?: boolean;
   hint?: string | null;
   onOpenChange: (open: boolean) => void;
-  onConfirm: () => void;
+  /** Resolve to close the dialog; reject to keep it open (the global toast reports the failure). */
+  onConfirm: () => Promise<void> | void;
 }

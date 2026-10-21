@@ -13,8 +13,8 @@ import {
   EquipmentSearchSelect,
   type EquipmentSearchOption,
 } from "@/components/assets/EquipmentSearchSelect";
+import { isRetiredStatus } from "@/components/assets/asset-tones";
 import {
-  EntityFormAttachments,
   EntityFormCollapsible,
   EntityFormDialog,
   EntityFormFieldGroup,
@@ -29,6 +29,7 @@ import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -39,9 +40,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { ListAccessNote } from "@/components/ui/list-access-note";
+import { useFormatters } from "@/hooks/use-formatters";
 import { useToast } from "@/hooks/use-toast";
+import { appErrorReason } from "@/lib/app-error";
 import { useZodForm } from "@/lib/form-helpers";
+import { useCanReadList } from "@/lib/list-access";
 import { assetEditSchema } from "@/schemas/asset-edit.schema";
 import {
   deleteAssetPhoto,
@@ -52,7 +56,7 @@ import {
 import { getEquipmentTaxonomyCatalog } from "@/services/asset-service";
 import { listOrgTree } from "@/services/org-node-service";
 import { useAssetStore } from "@/stores/asset-store";
-import { toErrorMessage } from "@/utils/errors";
+import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 import type { OrgTreeRow, UpdateAssetIdentityPayload } from "@shared/ipc-types";
 
 const FORM_ID = "asset-edit-form";
@@ -70,13 +74,24 @@ function photoDataUrl(preview: { mime_type: string; data_base64: string }): stri
 
 export function AssetEditForm() {
   const { t } = useTranslation("equipment");
+  const canReadOrg = useCanReadList("orgNodes");
   const { toast } = useToast();
   const open = useAssetStore((s) => s.showEditForm);
   const asset = useAssetStore((s) => s.editingAsset);
   const closeForm = useAssetStore((s) => s.closeEditForm);
   const submitUpdate = useAssetStore((s) => s.updateAsset);
   const saving = useAssetStore((s) => s.saving);
-  const storeError = useAssetStore((s) => s.error);
+  const { formatDate, formatDateTime } = useFormatters();
+  const { catalog: taxonomy } = useEquipmentTaxonomy();
+  /** Retired statuses are set only by Decommission (it checks open work and records why). */
+  const retiredStatusCodes = useMemo(
+    () =>
+      (taxonomy?.statuses ?? [])
+        .filter((s) => isRetiredStatus(taxonomy, s.code))
+        .map((s) => s.code),
+    [taxonomy],
+  );
+  const assetRetired = isRetiredStatus(taxonomy, asset?.status_code);
 
   const fieldError = (message: string | undefined) => translateFieldError(message, t);
 
@@ -88,6 +103,12 @@ export function AssetEditForm() {
   const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
   const [photoItems, setPhotoItems] = useState<EntityFormImageItem[]>([]);
   const [photosBusy, setPhotosBusy] = useState(false);
+  /** The photo list could not be read: shown with a retry instead of an empty gallery. */
+  const [photosError, setPhotosError] = useState<string | null>(null);
+  /** Photos the user removed in the gallery: deleted only once confirmed (deletion is immediate). */
+  const [pendingPhotoRemoval, setPendingPhotoRemoval] = useState<EntityFormImageItem[] | null>(
+    null,
+  );
 
   const form = useZodForm(assetEditSchema, {
     asset_name: asset?.asset_name ?? "",
@@ -105,7 +126,6 @@ export function AssetEditForm() {
     decommissioned_at: asset?.decommissioned_at ?? null,
     rams_schedule_reference_value_id: asset?.rams_schedule_reference_value_id ?? null,
     rams_utilization_factor: asset?.rams_utilization_factor ?? 1.0,
-    description: null,
   });
 
   const {
@@ -118,6 +138,7 @@ export function AssetEditForm() {
   } = form;
 
   const loadPhotos = useCallback(async (assetId: number) => {
+    setPhotosError(null);
     try {
       const photos = await listAssetPhotos(assetId);
       const items: EntityFormImageItem[] = await Promise.all(
@@ -138,32 +159,45 @@ export function AssetEditForm() {
         }),
       );
       setPhotoItems(items);
-    } catch {
+    } catch (err) {
       setPhotoItems([]);
+      setPhotosError(appErrorReason(err));
     }
   }, []);
 
+  // The lists are re-read when the rights or the language change; the form itself is reset only
+  // when it opens or shows another asset (below), so typed edits survive a rights reload.
   useEffect(() => {
-    if (!open || !asset) return;
-    setSubmitError(null);
+    if (!open) return;
     setOrgTreeError(null);
-    setReferenceCatalogError(null);
-    setCatalogReady(false);
+    // Without the organisation view right the list is not requested; the field says why.
+    if (!canReadOrg) return;
     void listOrgTree()
       .then(setOrgNodes)
       .catch((err) => {
         console.error("[AssetEditForm] listOrgTree failed", err);
-        setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} (${toErrorMessage(err)})`);
+        setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} ${appErrorReason(err)}`);
       });
+  }, [open, t, canReadOrg]);
+
+  useEffect(() => {
+    if (!open) return;
+    setReferenceCatalogError(null);
+    setCatalogReady(false);
     void getEquipmentTaxonomyCatalog()
       .then(() => setCatalogReady(true))
       .catch((err) => {
         console.error("[AssetEditForm] getEquipmentTaxonomyCatalog failed", err);
         setReferenceCatalogError(
-          `${t("createForm.referenceCatalogLoadFailed")} (${toErrorMessage(err)})`,
+          `${t("createForm.referenceCatalogLoadFailed")} ${appErrorReason(err)}`,
         );
         setCatalogReady(false);
       });
+  }, [open, t]);
+
+  useEffect(() => {
+    if (!open || !asset) return;
+    setSubmitError(null);
     void loadPhotos(asset.id);
 
     reset({
@@ -182,9 +216,8 @@ export function AssetEditForm() {
       decommissioned_at: asset.decommissioned_at ?? null,
       rams_schedule_reference_value_id: asset.rams_schedule_reference_value_id ?? null,
       rams_utilization_factor: asset.rams_utilization_factor ?? 1.0,
-      description: null,
     });
-  }, [open, asset, reset, t, loadPhotos]);
+  }, [open, asset, reset, loadPhotos]);
 
   const orgOptions: EquipmentSearchOption[] = useMemo(
     () =>
@@ -258,7 +291,7 @@ export function AssetEditForm() {
       await loadPhotos(asset.id);
       toast({ title: t("photos.uploaded") });
     } catch (err) {
-      toast({ title: toErrorMessage(err), variant: "destructive" });
+      toast({ title: appErrorReason(err), variant: "destructive" });
     } finally {
       setPhotosBusy(false);
     }
@@ -276,26 +309,29 @@ export function AssetEditForm() {
         setPhotoItems(next);
         return;
       }
-      void (async () => {
-        setPhotosBusy(true);
-        try {
-          for (const item of removed) {
-            const id = Number(item.id);
-            if (!Number.isFinite(id)) continue;
-            await deleteAssetPhoto(id);
-          }
-          await loadPhotos(asset.id);
-          toast({ title: t("photos.deleted") });
-        } catch (err) {
-          toast({ title: toErrorMessage(err), variant: "destructive" });
-          await loadPhotos(asset.id);
-        } finally {
-          setPhotosBusy(false);
-        }
-      })();
+      // Deleting a stored photo is immediate (not undone by Cancel): ask first.
+      setPendingPhotoRemoval(removed);
     },
-    [asset, loadPhotos, photoItems, t, toast],
+    [asset, photoItems],
   );
+
+  const deletePhotos = async (removed: EntityFormImageItem[]) => {
+    if (!asset) return;
+    setPhotosBusy(true);
+    try {
+      for (const item of removed) {
+        const id = Number(item.id);
+        if (!Number.isFinite(id)) continue;
+        await deleteAssetPhoto(id);
+      }
+      toast({ title: t("photos.deleted") });
+    } catch (err) {
+      toast({ title: appErrorReason(err), variant: "destructive" });
+    } finally {
+      await loadPhotos(asset.id);
+      setPhotosBusy(false);
+    }
+  };
 
   const onSubmit: Parameters<typeof handleSubmit>[0] = async (values) => {
     if (!asset) return;
@@ -345,8 +381,7 @@ export function AssetEditForm() {
       }
       closeForm();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setSubmitError(msg);
+      setSubmitError(appErrorReason(err));
     }
   };
 
@@ -391,7 +426,12 @@ export function AssetEditForm() {
         <form id={FORM_ID} onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
           <EntityFormSection title={t("createForm.sections.identification")}>
             <FormField name="asset_code" label={t("form.identity.code.label")}>
-              <Input id="asset_code" value={asset.asset_code} readOnly className="bg-muted" />
+              <Input
+                id="asset_code"
+                value={asset.asset_code}
+                readOnly
+                className="bg-surface-2 text-text-secondary"
+              />
             </FormField>
             <FormField
               name="asset_name"
@@ -404,9 +444,6 @@ export function AssetEditForm() {
                 placeholder={t("form.identity.name.placeholder")}
                 {...register("asset_name")}
               />
-            </FormField>
-            <FormField name="description" label={t("createForm.descriptionLabel")}>
-              <Textarea id="description" rows={3} maxLength={2000} {...register("description")} />
             </FormField>
           </EntityFormSection>
 
@@ -489,17 +526,21 @@ export function AssetEditForm() {
               error={fieldError(errors.org_node_id?.message)}
               required
             >
-              <EquipmentSearchSelect
-                id="org_node_id"
-                options={orgOptions}
-                value={watchedOrgNode ? String(watchedOrgNode) : ""}
-                onChange={(v) =>
-                  setValue("org_node_id", Number(v), { shouldValidate: true, shouldDirty: true })
-                }
-                placeholder={t("createForm.selectOrg")}
-                disabled={orgOptions.length === 0}
-                aria-invalid={!!errors.org_node_id}
-              />
+              {canReadOrg ? (
+                <EquipmentSearchSelect
+                  id="org_node_id"
+                  options={orgOptions}
+                  value={watchedOrgNode ? String(watchedOrgNode) : ""}
+                  onChange={(v) =>
+                    setValue("org_node_id", Number(v), { shouldValidate: true, shouldDirty: true })
+                  }
+                  placeholder={t("createForm.selectOrg")}
+                  disabled={orgOptions.length === 0}
+                  aria-invalid={!!errors.org_node_id}
+                />
+              ) : (
+                <ListAccessNote list="orgNodes" />
+              )}
             </FormField>
           </EntityFormSection>
 
@@ -543,15 +584,27 @@ export function AssetEditForm() {
                 }
                 placeholder={t("createForm.selectStatus")}
                 allowClear={false}
+                disabled={assetRetired}
+                excludeCodes={assetRetired ? [] : retiredStatusCodes}
                 aria-invalid={!!errors.status_code}
               />
+              <p className="mt-1 text-[11px] text-text-muted">
+                {t(assetRetired ? "editForm.retiredHint" : "editForm.retireHint")}
+              </p>
             </FormField>
             <FormField name="commissioned_at" label={t("detail.fields.commissioningDate")}>
               <Input id="commissioned_at" type="date" {...register("commissioned_at")} />
             </FormField>
-            <FormField name="decommissioned_at" label={t("detail.fields.endOfLifeDate")}>
-              <Input id="decommissioned_at" type="date" {...register("decommissioned_at")} />
-            </FormField>
+            {asset.decommissioned_at ? (
+              <FormField name="decommissioned_at" label={t("detail.fields.endOfLifeDate")}>
+                <Input
+                  id="decommissioned_at"
+                  value={formatDate(asset.decommissioned_at)}
+                  readOnly
+                  className="bg-surface-2 text-text-secondary"
+                />
+              </FormField>
+            ) : null}
           </EntityFormSection>
 
           <EntityFormSection title={t("createForm.sections.images")}>
@@ -561,16 +614,12 @@ export function AssetEditForm() {
               onPickFiles={handlePickPhotos}
               disabled={busy}
               uploading={photosBusy}
-              emptyLabel={t("editForm.imagesEmpty")}
+              emptyLabel={photosError ?? t("editForm.imagesEmpty")}
               hintLabel={t("editForm.imagesHint")}
               primaryLabel={t("createForm.images.primary")}
               removeLabel={t("createForm.images.remove")}
               addLabel={t("createForm.images.add")}
             />
-          </EntityFormSection>
-
-          <EntityFormSection title={t("createForm.sections.attachments")}>
-            <EntityFormAttachments items={[]} emptyLabel={t("createForm.attachments.empty")} />
           </EntityFormSection>
 
           <EntityFormCollapsible
@@ -609,8 +658,8 @@ export function AssetEditForm() {
             </FormField>
             <FormField
               name="rams_utilization_factor"
-              label="Utilization Factor (K_u)"
-              error={errors.rams_utilization_factor?.message}
+              label={t("rams.utilization")}
+              error={fieldError(errors.rams_utilization_factor?.message)}
             >
               <Input
                 id="rams_utilization_factor"
@@ -621,7 +670,7 @@ export function AssetEditForm() {
                 {...register("rams_utilization_factor", { valueAsNumber: true })}
               />
               <p className="mt-1 text-[11px] text-text-muted">
-                Typical value is 1.00. Lower values model intermittent utilization.
+                {t("createForm.fields.utilizationHint")}
               </p>
             </FormField>
           </EntityFormCollapsible>
@@ -629,18 +678,35 @@ export function AssetEditForm() {
           {asset.updated_at && (
             <p className="pt-1 text-xs text-text-muted">
               {t("editForm.lastModified", {
-                date: new Date(asset.updated_at).toLocaleString(),
+                date: formatDateTime(asset.updated_at),
               })}
             </p>
           )}
 
-          {(submitError || storeError) && (
-            <div className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger">
-              {submitError || storeError}
+          {submitError && (
+            <div
+              role="alert"
+              className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger"
+            >
+              {submitError}
             </div>
           )}
         </form>
       </EntityFormDialog>
+
+      <ConfirmDialog
+        open={pendingPhotoRemoval != null}
+        onOpenChange={(o) => {
+          if (!o) setPendingPhotoRemoval(null);
+        }}
+        title={t("editForm.photoDeleteTitle")}
+        description={t("editForm.photoDeleteBody", { count: pendingPhotoRemoval?.length ?? 0 })}
+        confirmLabel={t("editForm.photoDeleteConfirm")}
+        destructive
+        onConfirm={async () => {
+          if (pendingPhotoRemoval) await deletePhotos(pendingPhotoRemoval);
+        }}
+      />
 
       <Dialog open={showUnsavedPrompt} onOpenChange={setShowUnsavedPrompt}>
         <DialogContent>

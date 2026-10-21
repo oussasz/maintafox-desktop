@@ -1,20 +1,39 @@
 /**
  * LinkedEntityBadge — clickable primary badge for first-class business links
- * (DI ↔ WO today; extensible to asset, PM, inspection, …).
+ * (DI ↔ WO ↔ permit, PM plan, asset, inspection round).
  *
  * Renders nothing when code is absent. Never displays database IDs.
  */
 
-import { ClipboardList, Wrench } from "lucide-react";
+import { CalendarClock, ClipboardCheck, ClipboardList, Cog, HardHat, Wrench } from "lucide-react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { PERMIT_QUERY_SELECT } from "@/components/permits/permit-rules";
 import { Badge } from "@/components/ui/badge";
 import { formatEntityCode } from "@/lib/display";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/utils/format-date";
 
-export type LinkedEntityKind = "work_order" | "di";
+export type LinkedEntityKind =
+  | "work_order"
+  | "di"
+  | "permit"
+  | "pm_plan"
+  | "asset"
+  | "inspection_round";
+
+/** Tooltip of an inspection-round link: the round's template name and its scheduled date. */
+export function roundTitle(
+  templateName: string | null | undefined,
+  scheduledAt: string | null | undefined,
+  language: string,
+): string | null {
+  const name = (templateName ?? "").trim();
+  if (!name) return null;
+  return scheduledAt ? `${name} · ${formatDate(scheduledAt, language)}` : name;
+}
 
 export interface LinkedEntityBadgeProps {
   entity: LinkedEntityKind;
@@ -31,10 +50,18 @@ export interface LinkedEntityBadgeProps {
 const ENTITY_ICON = {
   work_order: Wrench,
   di: ClipboardList,
+  permit: HardHat,
+  pm_plan: CalendarClock,
+  asset: Cog,
+  inspection_round: ClipboardCheck,
 } as const;
 
 function deepLinkPath(entity: LinkedEntityKind, entityId: number): string {
   if (entity === "work_order") return `/work-orders?openWo=${entityId}`;
+  if (entity === "permit") return `/permits?${PERMIT_QUERY_SELECT}=${entityId}`;
+  if (entity === "pm_plan") return `/pm?planId=${entityId}`;
+  if (entity === "asset") return `/equipment?assetId=${entityId}`;
+  if (entity === "inspection_round") return `/inspections?openRound=${entityId}`;
   return `/requests?openDi=${entityId}`;
 }
 

@@ -51,6 +51,9 @@ vi.mock("@/services/activity-service", () => ({
     activityMocks.getEventChain(eventId, rootTable),
 }));
 
+const org = vi.hoisted(() => ({ listOrgTree: vi.fn() }));
+vi.mock("@/services/org-node-service", () => org);
+
 function renderPanel() {
   return render(
     <PermissionProvider>
@@ -75,26 +78,66 @@ describe("ActivityFeedPanel accessibility and saved views", () => {
     mockGetMyPermissions.mockResolvedValue([permission(P.LOG_VIEW)]);
     activityMocks.listActivityEvents.mockClear();
     activityMocks.listSavedActivityFilters.mockClear();
+    org.listOrgTree.mockReset();
+    org.listOrgTree.mockResolvedValue([
+      { node: { id: 4, code: "PL1", name: "Plant 1", depth: 0 } },
+      { node: { id: 7, code: "UT", name: "Utilities", depth: 1 } },
+    ]);
   });
 
-  it("exposes labeled filter controls and keeps selected saved view value", async () => {
+  it("offers the organisation units from the tree, not a number field", async () => {
+    mockGetMyPermissions.mockResolvedValue([permission(P.LOG_VIEW), permission(P.ORG_VIEW)]);
+    renderPanel();
+    await waitFor(() => expect(org.listOrgTree).toHaveBeenCalled());
+    const unit = await screen.findByLabelText(/filters\.orgUnit$|^Organisation unit$/);
+    fireEvent.keyDown(unit, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: /UT — Utilities/ }));
+    fireEvent.click(screen.getByRole("button", { name: /filters\.apply|Apply/ }));
+    await waitFor(() =>
+      expect(activityMocks.listActivityEvents).toHaveBeenLastCalledWith(
+        expect.objectContaining({ entity_scope_id: 7 }),
+      ),
+    );
+  });
+
+  it("names the missing right instead of a unit list without the organisation view", async () => {
+    renderPanel();
+    expect(await screen.findByTestId("list-access-orgNodes")).toBeInTheDocument();
+    expect(org.listOrgTree).not.toHaveBeenCalled();
+  });
+
+  it("exposes readable filter labels (no column names) and applies a saved view", async () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Event class filter")).toBeInTheDocument();
+      expect(screen.getByLabelText(/filters\.module|^Module$/)).toBeInTheDocument();
     });
+    expect(screen.queryByPlaceholderText("event_class")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("source_module")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/filters\.severity|Severity/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/filters\.eventClass|Event type/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/filters\.dateFrom|From/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/filters\.dateTo|To/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/feed\.autoRefresh|Refresh every/)).toBeInTheDocument();
 
-    expect(screen.getByLabelText("Event class filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Source module filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Severity filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Entity scope ID filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Correlation ID filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Date from filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Date to filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Auto-refresh activity feed")).toBeInTheDocument();
+    await waitFor(() => expect(activityMocks.listSavedActivityFilters).toHaveBeenCalled());
+    const savedViews = screen.getByLabelText(/feed\.savedViews|Saved views/);
+    fireEvent.keyDown(savedViews, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: "Critical by module" }));
 
-    const savedViewSelect = screen.getByLabelText("Saved activity views") as HTMLSelectElement;
-    fireEvent.change(savedViewSelect, { target: { value: "11" } });
-    expect(savedViewSelect.value).toBe("11");
+    // The saved filter fills the module filter with its translated label.
+    await waitFor(() =>
+      expect(screen.getByLabelText(/filters\.module|^Module$/)).toHaveTextContent(/archive/i),
+    );
+  });
+
+  it("shows a load failure with retry instead of 'no event'", async () => {
+    activityMocks.listActivityEvents.mockRejectedValueOnce({
+      code: "DATABASE_ERROR",
+      message: "down",
+    });
+    renderPanel();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText(/feed\.empty|No event for these filters/)).not.toBeInTheDocument();
   });
 });

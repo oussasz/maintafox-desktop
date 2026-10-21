@@ -1,14 +1,15 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { User } from "lucide-react";
+import { useState } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { KanbanBoard } from "@/components/kanban/KanbanBoard";
-import type { KanbanCard, KanbanColumn } from "@/components/kanban/types";
+import type { KanbanCard, KanbanColumn, KanbanMoveOutcome } from "@/components/kanban/types";
 
 const COLUMNS: KanbanColumn[] = [
-  { id: "a", label: "Column A", tone: "planning" },
-  { id: "b", label: "Column B", tone: "executing" },
+  { id: "a", label: "Column A", tone: "info" },
+  { id: "b", label: "Column B", tone: "progress" },
 ];
 
 function renderBoard(ui: React.ReactElement) {
@@ -49,9 +50,9 @@ describe("KanbanBoard", () => {
         title: "Replace bearing",
         subtitle: "Pump A",
         description: "Vibration above threshold",
-        badges: [{ label: "High", tone: "high" }],
+        badges: [{ label: "High", tone: "warning" }],
         meta: [{ label: "Ada", icon: User }],
-        accent: "high",
+        accent: "warning",
       },
     ];
     renderBoard(<KanbanBoard columns={COLUMNS} cards={cards} onCardClick={onCardClick} />);
@@ -73,7 +74,7 @@ describe("KanbanBoard", () => {
         columnId: "a",
         code: "DI-0001",
         title: "Leak",
-        badges: [{ label: "Critical", tone: "critical" }],
+        badges: [{ label: "Critical", tone: "danger" }],
       },
     ];
     const { container } = renderBoard(<KanbanBoard columns={COLUMNS} cards={cards} />);
@@ -173,9 +174,9 @@ describe("KanbanBoard", () => {
             code: "OT-1",
             title: "WO title",
             subtitle: "Pump",
-            badges: [{ label: "High", tone: "high" }],
+            badges: [{ label: "High", tone: "warning" }],
             meta: [{ label: "Ada", icon: User }],
-            accent: "high",
+            accent: "warning",
           },
         ]}
         emptyColumnLabel="—"
@@ -194,14 +195,177 @@ describe("KanbanBoard", () => {
             code: "DI-9",
             title: "DI title",
             description: "Leak description",
-            badges: [{ label: "Critical", tone: "critical" }],
+            badges: [{ label: "Critical", tone: "danger" }],
             meta: [{ label: "15 Jun", icon: User }],
-            accent: "critical",
+            accent: "danger",
           },
         ]}
         emptyColumnLabel="—"
       />,
     );
     expect(shape(diBoard.container)).toEqual(woShape);
+  });
+  it("uses the design-system tone classes shared with the list chips", () => {
+    const { container } = renderBoard(
+      <KanbanBoard
+        columns={COLUMNS}
+        cards={[
+          {
+            id: "1",
+            columnId: "a",
+            title: "Toned",
+            badges: [{ label: "Overdue", tone: "danger" }],
+            accent: "danger",
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText("Overdue").closest("span.rounded-full")?.className).toContain(
+      "bg-tone-danger-bg",
+    );
+    expect(container.querySelector(".bg-tone-danger-fg")).not.toBeNull();
+    expect(container.querySelector(".bg-tone-info-fg")).not.toBeNull();
+    // No private palette any more.
+    expect(container.innerHTML).not.toMatch(/bg-(red|amber|orange|indigo|purple|emerald|teal)-\d/);
+  });
+
+  /** Board whose adapter moves the card only when the (fake) server accepts the transition. */
+  function MovableBoard({
+    canDrop,
+    onDrop,
+  }: {
+    canDrop?: (card: KanbanCard, from: string, to: string) => boolean;
+    onDrop?: (
+      card: KanbanCard,
+      from: string,
+      to: string,
+    ) => KanbanMoveOutcome | Promise<KanbanMoveOutcome>;
+  }) {
+    const [cards, setCards] = useState<KanbanCard[]>([{ id: "1", columnId: "a", title: "Mover" }]);
+    return (
+      <KanbanBoard
+        columns={[...COLUMNS, { id: "c", label: "Column C", tone: "success" }]}
+        cards={cards}
+        enableDrag
+        {...(canDrop ? { canDrop } : {})}
+        onDrop={async (card, from, to) => {
+          const outcome = await onDrop?.(card, from, to);
+          const accepted =
+            outcome === undefined ||
+            outcome === true ||
+            (typeof outcome === "object" && outcome.ok);
+          if (accepted) {
+            setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, columnId: to } : c)));
+          }
+          return outcome;
+        }}
+        aria-label="Movable"
+      />
+    );
+  }
+
+  it("moves a focused card with Alt+Arrow and keeps focus on it once accepted", async () => {
+    const onDrop = vi.fn();
+    const { container } = renderBoard(<MovableBoard onDrop={onDrop} />);
+    const card = screen.getByRole("button", { name: "Mover" });
+    card.focus();
+    fireEvent.keyDown(card, { key: "ArrowRight", altKey: true });
+    expect(onDrop).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }), "a", "b");
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("kanban.moved"));
+    const moved = container.querySelector('[data-column-id="b"] [data-card-id="1"]');
+    expect(moved).not.toBeNull();
+    expect(document.activeElement).toBe(moved);
+  });
+
+  it("announces a refusal with its reason and does not claim the move", async () => {
+    const onDrop = vi.fn(async () => ({ ok: false, reason: "Lines missing" }));
+    const { container } = renderBoard(<MovableBoard onDrop={onDrop} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Mover" }), {
+      key: "ArrowRight",
+      altKey: true,
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain("kanban.refusedReason"),
+    );
+    expect(screen.getByRole("status").textContent).not.toContain("kanban.moved");
+    expect(container.querySelector('[data-column-id="a"] [data-card-id="1"]')).not.toBeNull();
+  });
+
+  it("announces a plain refusal (false) and a failed transition (rejected promise)", async () => {
+    const refused = vi.fn(() => false);
+    const first = renderBoard(<MovableBoard onDrop={refused} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Mover" }), {
+      key: "ArrowRight",
+      altKey: true,
+    });
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("kanban.refused"));
+    first.unmount();
+
+    const failing = vi.fn(() => Promise.reject({ code: "VALIDATION_FAILED", message: "nope" }));
+    renderBoard(<MovableBoard onDrop={failing} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Mover" }), {
+      key: "ArrowRight",
+      altKey: true,
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain("kanban.refusedReason"),
+    );
+  });
+
+  it("routes a drag and drop through the same result-aware path", async () => {
+    const onDrop = vi.fn(() => ({ ok: false }));
+    const { container } = renderBoard(<MovableBoard onDrop={onDrop} />);
+    const cardEl = screen.getByText("Mover").closest("[draggable]") as HTMLElement;
+    const colB = container.querySelector('[data-column-id="b"]') as HTMLElement;
+    fireEvent.dragStart(cardEl, { dataTransfer: { setData: vi.fn(), effectAllowed: "move" } });
+    fireEvent.drop(colB);
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("kanban.refused"));
+  });
+
+  it("skips lanes canDrop refuses and announces when no lane accepts", async () => {
+    const onDrop = vi.fn();
+    const { container } = renderBoard(
+      <MovableBoard onDrop={onDrop} canDrop={(_c, _f, to) => to === "c"} />,
+    );
+    const card = screen.getByRole("button", { name: "Mover" });
+    fireEvent.keyDown(card, { key: "ArrowRight", altKey: true });
+    expect(onDrop).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }), "a", "c");
+    await waitFor(() =>
+      expect(container.querySelector('[data-column-id="c"] [data-card-id="1"]')).not.toBeNull(),
+    );
+
+    onDrop.mockClear();
+    fireEvent.keyDown(screen.getByRole("button", { name: "Mover" }), {
+      key: "ArrowRight",
+      altKey: true,
+    });
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(screen.getByRole("status").textContent).toContain("kanban.noTarget");
+  });
+
+  it("plain arrows and Enter keep their normal meaning", () => {
+    const onDrop = vi.fn();
+    renderBoard(<MovableBoard onDrop={onDrop} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Mover" }), { key: "ArrowRight" });
+    expect(onDrop).not.toHaveBeenCalled();
+  });
+
+  it("offers a Move menu listing only the lanes that accept the card", async () => {
+    const onDrop = vi.fn();
+    renderBoard(<MovableBoard onDrop={onDrop} canDrop={(_c, _f, to) => to === "c"} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "kanban.moveCard" }), { key: "Enter" });
+    expect(await screen.findByRole("menuitem", { name: "Column C" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Column B" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Column C" }));
+    expect(onDrop).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }), "a", "c");
+  });
+
+  it("offers no move affordance when the board does not allow moving", () => {
+    renderBoard(
+      <KanbanBoard columns={COLUMNS} cards={[{ id: "1", columnId: "a", title: "Fixed" }]} />,
+    );
+    expect(screen.queryByRole("button", { name: "kanban.moveCard" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Fixed" })).not.toHaveAttribute("draggable", "true");
   });
 });

@@ -11,6 +11,7 @@
 //! seeders when `MAINTAFOX_SEED_DEMO=1` and activation is not complete.
 
 use crate::errors::{AppError, AppResult};
+use crate::reference::audience::DomainAudience;
 use crate::reference::governance::derive_category_for_persist;
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -344,9 +345,9 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Fuite d'huile visible au niveau du joint SPI côté ventilateur. Tache au sol ~30cm diamètre.",
             2,
             line_1,
-            "medium",
+            "normal",
             "technician",
-            "pending_review",
+            "in_review",
             false,
         ),
         (
@@ -356,7 +357,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             line_1,
             "high",
             "operator",
-            "screened",
+            "awaiting_approval",
             false,
         ),
         (
@@ -364,9 +365,9 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Alarme surpression répétée 3 fois ce matin. Soupape de sécurité s'est déclenchée une fois.",
             6,
             bat_a,
-            "critical",
+            "emergency",
             "operator",
-            "approved_for_planning",
+            "approved",
             true,
         ),
         (
@@ -374,7 +375,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Bruit de roulement type grincement sur moteur agitateur cuve T2. Détecté lors de la ronde hebdomadaire.",
             3,
             line_2,
-            "medium",
+            "normal",
             "inspection",
             "submitted",
             false,
@@ -386,7 +387,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             line_1,
             "high",
             "technician",
-            "pending_review",
+            "in_review",
             true,
         ),
         (
@@ -394,9 +395,9 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Le débit de la pompe doseuse oscille entre 30% et 80% de la consigne. Impact sur la qualité produit.",
             1,
             line_2,
-            "critical",
+            "emergency",
             "quality",
-            "approved_for_planning",
+            "approved",
             false,
         ),
         (
@@ -416,7 +417,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             bat_util,
             "low",
             "inspection",
-            "screened",
+            "awaiting_approval",
             false,
         ),
         (
@@ -424,7 +425,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Bruit de cavitation détecté à la mise en route. Pression d'aspiration insuffisante ?",
             10,
             bat_util,
-            "medium",
+            "normal",
             "technician",
             "submitted",
             false,
@@ -436,7 +437,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             bat_util,
             "high",
             "inspection",
-            "pending_review",
+            "in_review",
             false,
         ),
         (
@@ -444,7 +445,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Suite DI vibrations : le joint mécanique doit être remplacé lors de l'arrêt programmé.",
             0,
             line_1,
-            "medium",
+            "normal",
             "pm",
             "deferred",
             false,
@@ -517,13 +518,16 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
     let now = Utc::now().to_rfc3339();
 
     // ── Reference domains ─────────────────────────────────────────────
-    let domains: &[(&str, &str, &str, &str, bool)] = &[
+    // (code, name, structure, governance level, extendable, audience). EQUIPMENT.STATUS is a
+    // Maintafox list (its codes drive decommissioning); the rest are the company's own lists.
+    let domains: &[(&str, &str, &str, &str, bool, DomainAudience)] = &[
         (
             "EQUIPMENT.FAMILY",
             "Familles d'équipements",
             "hierarchical",
             "tenant_managed",
             true,
+            DomainAudience::Company,
         ),
         (
             "EQUIPMENT.CLASS",
@@ -531,14 +535,23 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
             "flat",
             "system_seeded",
             false,
+            DomainAudience::Company,
         ),
-        ("EQUIPMENT.STATUS", "Statuts équipement", "flat", "system_seeded", false),
+        (
+            "EQUIPMENT.STATUS",
+            "Statuts équipement",
+            "flat",
+            "system_seeded",
+            false,
+            DomainAudience::System,
+        ),
         (
             "WORK.PRIORITY",
             "Priorités ordre de travail",
             "flat",
             "protected_analytical",
             false,
+            DomainAudience::Company,
         ),
         (
             "WORK.FAILURE_MODES",
@@ -546,6 +559,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
             "hierarchical",
             "system_seeded",
             false,
+            DomainAudience::Company,
         ),
         (
             "ORG.POSITIONS",
@@ -553,14 +567,23 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
             "flat",
             "tenant_managed",
             true,
+            DomainAudience::Company,
         ),
-        ("ORG.SCHEDULE_CLASS", "Classes horaires", "flat", "tenant_managed", true),
+        (
+            "ORG.SCHEDULE_CLASS",
+            "Classes horaires",
+            "flat",
+            "tenant_managed",
+            true,
+            DomainAudience::Company,
+        ),
         (
             "PERSONNEL.SKILLS",
             "Compétences techniques",
             "hierarchical",
             "tenant_managed",
             true,
+            DomainAudience::Company,
         ),
         (
             "PERSONNEL.CERTIFICATIONS",
@@ -568,23 +591,26 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
             "flat",
             "tenant_managed",
             true,
+            DomainAudience::Company,
         ),
     ];
 
     let mut domain_ids: Vec<(i64, &str)> = Vec::new();
-    for (code, name, structure, governance, extendable) in domains {
+    for (code, name, structure, governance, extendable, audience) in domains {
         let category = derive_category_for_persist(code, governance);
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO reference_domains
-                (code, name, structure_type, governance_level, governance_category, is_extendable, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (code, name, structure_type, governance_level, governance_category, audience, is_extendable,
+                 created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (*code).into(),
                 (*name).into(),
                 (*structure).into(),
                 (*governance).into(),
                 category.as_str().into(),
+                audience.as_str().into(),
                 (*extendable as i32).into(),
                 now.clone().into(),
                 now.clone().into(),
@@ -1053,25 +1079,26 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
         .unwrap_or(1);
 
     // Pre-resolve status IDs
+    // Current lifecycle codes only (`wo::statuses`); the pre-130 codes are retired rows.
     let s_draft = status_id(db, "draft").await?;
-    let s_planned = status_id(db, "planned").await?;
-    let s_ready = status_id(db, "ready_to_schedule").await?;
-    let s_assigned = status_id(db, "assigned").await?;
+    let s_planned = status_id(db, "planning").await?;
+    let s_ready = status_id(db, "ready").await?;
+    let s_assigned = s_ready;
     let s_in_progress = status_id(db, "in_progress").await?;
-    let s_paused = status_id(db, "paused").await?;
-    let s_mech_complete = status_id(db, "mechanically_complete").await?;
-    let s_tech_verified = status_id(db, "technically_verified").await?;
+    let s_paused = status_id(db, "on_hold").await?;
+    let s_mech_complete = status_id(db, "completed").await?;
+    let s_tech_verified = s_mech_complete;
     let s_closed = status_id(db, "closed").await?;
 
     // WO definitions:
-    // (demo_key, title, description, type_id, status_id, urgency_id, eq_index, planned_start, planned_end, duration_h)
-    let wo_defs: &[(&str, &str, &str, i64, i64, i64, usize, &str, &str, f64)] = &[
+    // (demo_key, title, description, OT type code, status_id, urgency level code, eq_index, planned_start, planned_end, duration_h)
+    let wo_defs: &[(&str, &str, &str, &str, i64, &str, usize, &str, &str, f64)] = &[
         // 1. Draft — corrective
         (
             "demo_001",
             "Remplacement roulement pompe P-001",
             "Suite DI vibrations anormales. Roulement côté accouplement à remplacer. Prévoir joint mécanique en même temps.",
-            1, s_draft, 4, 0,
+            "corrective", s_draft, "high", 0,
             "2026-04-15T08:00:00Z", "2026-04-15T16:00:00Z", 8.0,
         ),
         // 2. Draft — preventive
@@ -1079,7 +1106,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_002",
             "Lubrification générale moteur MOT-001",
             "Lubrification planifiée semestrielle. Graisse EP2, points A/B/C selon fiche constructeur.",
-            2, s_draft, 2, 1,
+            "preventive", s_draft, "low", 1,
             "2026-04-20T08:00:00Z", "2026-04-20T12:00:00Z", 4.0,
         ),
         // 3. Planned
@@ -1087,7 +1114,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_003",
             "Contrôle alignement laser pompe P-002",
             "Alignement laser après intervention roulement. Tolérance constructeur ±0.05 mm.",
-            1, s_planned, 3, 2,
+            "corrective", s_planned, "normal", 2,
             "2026-04-10T07:00:00Z", "2026-04-10T11:00:00Z", 4.0,
         ),
         // 4. Ready to schedule
@@ -1095,7 +1122,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_004",
             "Remplacement courroie ventilateur VEN-001",
             "Courroie usée détectée en ronde. Remplacement préventif avant rupture.",
-            2, s_ready, 3, 3,
+            "preventive", s_ready, "normal", 3,
             "2026-04-12T08:00:00Z", "2026-04-12T10:00:00Z", 2.0,
         ),
         // 5. Assigned
@@ -1103,7 +1130,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_005",
             "Inspection visuelle réducteur RED-001",
             "Inspection visuelle et contrôle niveau huile. Signalement DI bruits anormaux.",
-            3, s_assigned, 3, 4,
+            "inspection", s_assigned, "normal", 4,
             "2026-04-08T08:00:00Z", "2026-04-08T12:00:00Z", 4.0,
         ),
         // 6. In progress
@@ -1111,7 +1138,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_006",
             "Diagnostic cavitation pompe P-003",
             "Pompe en cavitation intermittente. Diagnostic en cours : NPSH, crépine, vanne aspiration.",
-            1, s_in_progress, 4, 0,
+            "corrective", s_in_progress, "high", 0,
             "2026-04-05T06:00:00Z", "2026-04-05T18:00:00Z", 12.0,
         ),
         // 7. Paused
@@ -1119,7 +1146,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_007",
             "Remplacement joint torique vérin HYD-001",
             "En attente pièce joint torique 50x3 NBR70. Fournisseur confirmé livraison J+2.",
-            1, s_paused, 3, 5,
+            "corrective", s_paused, "normal", 5,
             "2026-04-01T08:00:00Z", "2026-04-03T16:00:00Z", 4.0,
         ),
         // 8. Mechanically complete (older status name may map differently — keep seed status ids)
@@ -1127,7 +1154,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_008",
             "Réglage fin de course vérin HYD-002",
             "Fin de course mécanique réglée. Essais à vide OK. En attente validation production.",
-            1, s_mech_complete, 2, 6,
+            "corrective", s_mech_complete, "low", 6,
             "2026-03-28T08:00:00Z", "2026-03-28T12:00:00Z", 4.0,
         ),
         // 9. Mechanically complete — partial close-out
@@ -1135,7 +1162,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_009",
             "Changement filtre hydraulique HYD-003",
             "Filtre remplacé. Analyse huile en attente retour labo.",
-            2, s_mech_complete, 2, 7,
+            "preventive", s_mech_complete, "low", 7,
             "2026-03-25T08:00:00Z", "2026-03-25T10:00:00Z", 2.0,
         ),
         // 10. Technically verified — full close-out data
@@ -1143,7 +1170,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_010",
             "Remplacement roulement moteur MOT-002",
             "Roulement NDE remplacé. Alignement vérifié. Vibrations nominales après reprise.",
-            1, s_tech_verified, 4, 1,
+            "corrective", s_tech_verified, "high", 1,
             "2026-03-20T06:00:00Z", "2026-03-20T18:00:00Z", 10.0,
         ),
         // 11. Closed — full close-out
@@ -1151,7 +1178,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_011",
             "Révision annuelle compresseur COMP-001",
             "Révision annuelle complète. Filtres, séparateur, clapets, huile. Rapport joint.",
-            2, s_closed, 2, 8,
+            "preventive", s_closed, "low", 8,
             "2026-03-10T06:00:00Z", "2026-03-12T18:00:00Z", 24.0,
         ),
         // 12. Closed — emergency
@@ -1159,12 +1186,14 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_012",
             "Dépannage bande convoyeur CONV-002",
             "Bande décentrée corrigée. Réglage tension et alignement galets effectués. Reprise production OK.",
-            5, s_closed, 4, 5,
+            "emergency", s_closed, "high", 5,
             "2026-03-28T06:00:00Z", "2026-03-28T14:00:00Z", 6.0,
         ),
     ];
 
-    for (demo_key, title, desc, type_id, sid, urgency_id, eq_idx, p_start, p_end, dur) in wo_defs {
+    for (demo_key, title, desc, type_code, sid, urgency_code, eq_idx, p_start, p_end, dur) in wo_defs {
+        let type_id = crate::wo::types::resolve_work_order_type_id_by_code(db, type_code).await?;
+        let urgency_id = crate::reference::urgency_scale::urgency_value_id(db, urgency_code).await?;
         let eq_id = if *eq_idx < eq_ids.len() {
             Some(eq_ids[*eq_idx])
         } else {
@@ -1184,7 +1213,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             [
                 crate::sync::identity::new_entity_sync_id().into(),
                 code.into(),
-                (*type_id).into(),
+                type_id.into(),
                 (*sid).into(),
                 eq_id
                     .map(sea_orm::Value::from)
@@ -1192,7 +1221,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
                 entity_id.into(),
                 admin_id.into(),
                 admin_id.into(),
-                (*urgency_id).into(),
+                urgency_id.into(),
                 (*title).into(),
                 (*desc).into(),
                 (*p_start).into(),
@@ -1284,8 +1313,8 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
                 db.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "INSERT INTO work_order_parts \
-                     (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
-                     VALUES (?, ?, ?, ?, ?, ?)",
+                     (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes, is_required) \
+                     VALUES (?, ?, ?, ?, ?, ?, 1)",
                     [
                         wo_id.into(),
                         ref_code.into(),
@@ -1356,8 +1385,8 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO work_order_parts \
-                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
-                 VALUES (?, 'GARNITURE-DN100', 1.0, 1.0, 125.00, 'Garniture PTFE vanne papillon DN100')",
+                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes, is_required) \
+                 VALUES (?, 'GARNITURE-DN100', 1.0, 1.0, 125.00, 'Garniture PTFE vanne papillon DN100', 1)",
                 [wo_id.into()],
             ))
             .await?;
@@ -1390,16 +1419,16 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO work_order_parts \
-                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
-                 VALUES (?, 'HUILE-BITZER-BSE32', 5.0, 4.5, 18.00, 'Huile synthétique Bitzer BSE32')",
+                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes, is_required) \
+                 VALUES (?, 'HUILE-BITZER-BSE32', 5.0, 4.5, 18.00, 'Huile synthétique Bitzer BSE32', 1)",
                 [wo_id.into()],
             ))
             .await?;
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO work_order_parts \
-                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
-                 VALUES (?, 'FILTRE-BITZER-362104', 1.0, 1.0, 42.00, 'Filtre huile compresseur')",
+                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes, is_required) \
+                 VALUES (?, 'FILTRE-BITZER-362104', 1.0, 1.0, 42.00, 'Filtre huile compresseur', 1)",
                 [wo_id.into()],
             ))
             .await?;
@@ -1594,4 +1623,58 @@ async fn insert_di(
     ))
     .await?;
     last_insert_id(db).await
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    async fn codes(db: &sea_orm::DatabaseConnection, sql: &str) -> Vec<String> {
+        db.query_all(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect(sql)
+            .iter()
+            .map(|r| r.try_get_by_index::<String>(0).expect("code"))
+            .collect()
+    }
+
+    /// The demo plant only uses the current status and code sets: a request or a work order seeded
+    /// with a retired code (pre-139 DI, pre-130 OT) would be invisible to every list and figure.
+    #[tokio::test]
+    async fn every_seeded_status_and_code_is_in_its_current_set() {
+        let db = crate::db::test_db::seeded().await;
+        super::seed_demo_data(&db).await.expect("demo data");
+        super::seed_demo_work_orders(&db).await.expect("demo work orders");
+
+        let di = codes(&db, "SELECT DISTINCT status FROM intervention_requests").await;
+        assert!(!di.is_empty(), "the demo seeds requests");
+        for s in &di {
+            assert!(
+                crate::di::domain::DiStatus::try_from_str(s).is_ok(),
+                "seeded DI status '{s}' is not a current status"
+            );
+        }
+        for u in codes(&db, "SELECT DISTINCT reported_urgency FROM intervention_requests").await {
+            assert!(
+                crate::reference::urgency_scale::UrgencyCode::parse(&u).is_some(),
+                "seeded DI urgency '{u}'"
+            );
+        }
+        for o in codes(&db, "SELECT DISTINCT origin_type FROM intervention_requests").await {
+            crate::di::reference_catalog::validate_di_origin_code(&db, &o)
+                .await
+                .unwrap_or_else(|e| panic!("seeded DI origin '{o}': {e}"));
+        }
+
+        // Current OT statuses are the system rows (`wo::statuses`); the retired ones are not.
+        let wo = codes(
+            &db,
+            "SELECT DISTINCT s.code FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+             WHERE s.is_system = 0",
+        )
+        .await;
+        assert!(wo.is_empty(), "seeded OT with retired statuses: {wo:?}");
+        let seeded_wo = codes(&db, "SELECT DISTINCT title FROM work_orders").await;
+        assert!(!seeded_wo.is_empty(), "the demo seeds work orders");
+    }
 }

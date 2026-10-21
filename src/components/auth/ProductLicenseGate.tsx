@@ -1,3 +1,4 @@
+import { ClipboardPaste, KeyRound, Loader2, Monitor } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -7,42 +8,85 @@ import { ActivationStatusCard } from "@/components/auth/activation/ActivationSta
 import { ActivationStepper } from "@/components/auth/activation/ActivationStepper";
 import { ActivationTechnicalDetails } from "@/components/auth/activation/ActivationTechnicalDetails";
 import { OrganizationLicenseCard } from "@/components/auth/activation/OrganizationLicenseCard";
+import { AuthField } from "@/components/auth/shell/AuthField";
+import { AuthAlert, AuthButton, AuthStatusChip } from "@/components/auth/shell/AuthPrimitives";
+import { AuthShell } from "@/components/auth/shell/AuthShell";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { ForcedUpdatePanel } from "@/components/updates/ForcedUpdatePanel";
 import { ProductLicenseGateContext } from "@/contexts/product-license-gate-context";
-import { mfAlert, mfAuth } from "@/design-system/tokens";
+import { mfAuth } from "@/design-system/tokens";
+import { useSession } from "@/hooks/use-session";
+import { useStepUp } from "@/hooks/use-step-up";
+import { appErrorText } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
+import { ForcePasswordChangePage } from "@/pages/auth/ForcePasswordChangePage";
+import { LockScreen } from "@/pages/auth/LockScreen";
 import { getAppInfo } from "@/services/app.service";
+import { unlockSessionWithPin } from "@/services/auth-service";
 import { getEntitlementSummary, notifyEntitlementsUpdated } from "@/services/entitlement-service";
 import {
-  activationRequiresLocalDataReset,
-  applyProductLicenseReconciliation,
-  assertClaimSerializableForDesktop,
   CLAIM_FALLBACK_TOKEN_ERRORS,
-  claimProductActivation,
-  getActivationBootstrapState,
-  getProductActivationToken,
-  getProductLicenseDiagnostics,
-  getProductLicenseOnboardingState,
+  LICENCE_DENIAL_CODES,
   LICENSE_RECHECK_REQUESTED_EVENT,
-  markActivationTenantInitialized,
   POST_ACTIVATION_LOGIN_HINT_KEY,
   PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY,
   PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY,
-  previewProductActivation,
-  refreshProductActivationPolicy,
-  resetLocalTenantRuntimeData,
-  submitProductLicenseKey,
-  toUserFacingActivationError,
   type ProductActivationClaim,
   type ProductActivationPreview,
   type ProductLicenseDiagnostics,
   type ProductLicenseOnboardingState,
   type UserFacingActivationError,
+  activationRequiresLocalDataReset,
+  applyProductLicenseReconciliation,
+  assertClaimSerializableForDesktop,
+  checkProductLicenseKeyEntry,
+  claimProductActivation,
+  getActivationBootstrapState,
+  getProductActivationToken,
+  getProductLicenseDiagnostics,
+  getProductLicenseOnboardingState,
+  markActivationTenantInitialized,
+  previewProductActivation,
+  refreshProductActivationPolicy,
+  resetLocalTenantRuntimeData,
+  submitProductLicenseKey,
+  toUserFacingActivationError,
 } from "@/services/product-license-service";
-import { isSessionUnavailableError } from "@/utils/errors";
+import { useSessionStore } from "@/store/session-store";
+import {
+  extractIpcValidationDetails,
+  isSessionUnavailableError,
+  isStepUpRequiredError,
+} from "@/utils/errors";
+import type { SessionInfo } from "@shared/ipc-types";
+
+/**
+ * Codes of a licence change this PC refused (key entry, its check, reconciliation): another
+ * organisation or activation, or extended licence terms, without an administrator signed in; or
+ * licence data from the server that is incomplete or malformed. None is a network failure.
+ */
+const LICENCE_CHANGE_REFUSAL_CODES = new Set([
+  "LICENSE_RECONCILE_ADMIN_REQUIRED",
+  "LICENSE_EXTENSION_ADMIN_REQUIRED",
+  "LICENSE_CLAIM_INVALID",
+]);
+
+/**
+ * This PC refused a licence change (it needs an administrator signed in, with a fresh identity
+ * check, or the licence data was malformed): the translated "what to do", or null for any other
+ * failure. Never a network failure.
+ */
+function licenceChangeRefusal(err: unknown): string | null {
+  const refused =
+    extractIpcValidationDetails(err).some((d) => LICENCE_CHANGE_REFUSAL_CODES.has(d.code ?? "")) ||
+    isStepUpRequiredError(err);
+  return refused ? appErrorText(err) : null;
+}
+
+/** The step-up dialog was closed without confirming (`useStepUp` rejects with this). */
+function isStepUpCancelled(err: unknown): boolean {
+  return err instanceof Error && err.message === "Step-up cancelled by user";
+}
 
 type ReconcileOrigin = "submit" | "scheduled" | "manual" | "policy" | "startup" | "login";
 
@@ -77,6 +121,8 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
   const [key, setKey] = useState("");
   const [deviceName, setDeviceName] = useState(defaultDeviceName);
   const [appVersion, setAppVersion] = useState("0.1.0-dev");
+  /** The version read from the running app; unset while unknown (never the placeholder above). */
+  const [runningAppVersion, setRunningAppVersion] = useState<string | undefined>(undefined);
   const [error, setError] = useState<UserFacingActivationError | null>(null);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
@@ -90,6 +136,23 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
   const [pendingPreview, setPendingPreview] = useState<ProductActivationPreview | null>(null);
   /** Claim/submit succeeded but control-plane mark-initialized still needs retry. */
   const [pendingMarkToken, setPendingMarkToken] = useState<string | null>(null);
+  /**
+   * A licence change this PC refused only for lack of a fresh identity check (`StepUpRequired`:
+   * the signed-in user may administer). Holds the same change, to apply once the identity is
+   * confirmed here: the in-app screens that ask for it cannot be reached while the licence is
+   * denied, so the gate offers it itself.
+   */
+  const [stepUpRetry, setStepUpRetry] = useState<{ run: () => Promise<void> } | null>(null);
+  const [confirmingIdentity, setConfirmingIdentity] = useState(false);
+  const { withStepUp, StepUpDialogElement } = useStepUp();
+  /**
+   * The session as the app sees it. The licence commands count a session that must change its
+   * password, or that is idle-locked, as signed out; the screens that clear those states live
+   * inside this gate's children, which a denied licence replaces. So the gate shows them itself.
+   */
+  const session = useSession();
+  /** The session state last read again after a licence refusal (see `showLicenceRefusal`). */
+  const recheckedSessionRef = useRef<SessionInfo | null>(null);
 
   const stateRef = useRef(state);
   const reconcilingRef = useRef(false);
@@ -134,6 +197,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       try {
         const info = await getAppInfo();
         setAppVersion(info.version);
+        setRunningAppVersion(info.version);
       } catch {
         // Keep default fallback.
       }
@@ -203,6 +267,31 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     [recordOutcome],
   );
 
+  /**
+   * Shows why this PC refused a licence change; when the refusal only asks for an identity check,
+   * keeps `retry` (the same change) for the "confirm identity" action. True when it was a refusal.
+   */
+  const showLicenceRefusal = useCallback((err: unknown, retry: () => Promise<void>) => {
+    const refusal = licenceChangeRefusal(err);
+    if (!refusal) return false;
+    setWarning(refusal);
+    const stepUp = isStepUpRequiredError(err);
+    setStepUpRetry(stepUp ? { run: retry } : null);
+    // Refused as signed out while a session is held here: it may have been idle-locked or be
+    // waiting for a password change since it was last read. Read it again, so the gate offers
+    // the unlock or password-change screen (then the refused change is retried).
+    // Once per session state: a session read again that is still usable (a signed-in user who
+    // may not administer) is not read again until it changes (sign-in, unlock, password change).
+    const held = useSessionStore.getState();
+    if (!stepUp && held.info?.user_id != null && held.info !== recheckedSessionRef.current) {
+      recheckedSessionRef.current = held.info;
+      void held.refresh().then(() => {
+        recheckedSessionRef.current = useSessionStore.getState().info;
+      });
+    }
+    return true;
+  }, []);
+
   const attemptReconciliation = useCallback(
     async (origin: ReconcileOrigin) => {
       if (!isOnlineRef.current) {
@@ -215,13 +304,14 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       reconcilingRef.current = true;
       setReconciling(true);
       setWarning(null);
+      setStepUpRetry(null);
+      let claim: ProductActivationClaim | null = null;
       try {
         // Prefer policy-refresh (no slot consumption) when a local activation token exists.
         const existingToken = await getProductActivationToken().catch(() => null);
-        let claim: ProductActivationClaim;
         if (existingToken) {
           try {
-            claim = await refreshProductActivationPolicy(existingToken);
+            claim = await refreshProductActivationPolicy(existingToken, runningAppVersion);
           } catch (refreshErr) {
             // Re-claim only when the token itself is unusable; a revocation or other denial must
             // surface as a denial, never be retried as a fresh claim.
@@ -260,28 +350,26 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
           setWarning(null);
         }
       } catch (err) {
+        // This PC refused to apply the claim (a licence change needs an administrator signed
+        // in): say what to do, record nothing (it is not a network or server failure). The same
+        // claim is applied again once the administrator confirms their identity.
+        const refusedClaim = claim;
+        const reapply = async () => {
+          if (refusedClaim) await recordOutcome({ kind: "success", claim: refusedClaim });
+        };
+        if (showLicenceRefusal(err, reapply)) {
+          return;
+        }
         const e = err as Error & { code?: string; status?: number };
         const code = e.code;
         const status = e.status;
         const message = e.message || "Activation reconciliation failed.";
-        const deniedCodes = new Set([
-          "activation_revoked",
-          "tenant_inactive",
-          "license_revoked",
-          "license_expired",
-          "slot_limit_reached",
-          "force_update_required",
-        ]);
-        if (deniedCodes.has(code ?? "")) {
+        // Only the licence server's denial codes are a denial (an administrator then lifts it);
+        // any other 4xx or 5xx is an HTTP error, retried, never needing an administrator.
+        if (code !== undefined && LICENCE_DENIAL_CODES.has(code)) {
           await recordOutcomeSafely({
             kind: "denied",
-            ...(code ? { error_code: code } : {}),
-            error_message: message,
-          });
-        } else if (typeof status === "number" && status >= 400 && status < 500) {
-          await recordOutcomeSafely({
-            kind: "denied",
-            error_code: code ?? "license_denied",
+            error_code: code,
             error_message: message,
           });
         } else if (typeof status === "number") {
@@ -302,7 +390,17 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
         setReconciling(false);
       }
     },
-    [appVersion, deviceFingerprint, deviceName, keyCacheStorage, recordOutcomeSafely, t],
+    [
+      appVersion,
+      deviceFingerprint,
+      deviceName,
+      keyCacheStorage,
+      recordOutcome,
+      recordOutcomeSafely,
+      runningAppVersion,
+      showLicenceRefusal,
+      t,
+    ],
   );
 
   const reconcileProductLicense = useCallback(async () => {
@@ -377,7 +475,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     }
   };
 
-  const onActivateDevice = async () => {
+  const onActivateDevice = async (): Promise<void> => {
     if (!pendingPreview) return;
     const trimmed = key.trim();
     if (trimmed.length < 8) {
@@ -390,8 +488,14 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     setError(null);
     setShowErrorDetails(false);
     setWarning(null);
+    setStepUpRetry(null);
     setPendingMarkToken(null);
-    try {
+    const preview = pendingPreview;
+    /** The activation itself; throws a refusal so the identity check can run it again. */
+    const activate = async (): Promise<void> => {
+      // Ask this PC first whether it would accept this licence: a refusal must stop before the
+      // claim takes a device slot on the server and before local data is wiped.
+      await checkProductLicenseKeyEntry(preview);
       const label = deviceName.trim() || defaultDeviceName();
       const claim = await claimProductActivation({
         license_key: trimmed,
@@ -424,7 +528,12 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
         }
       }
       await completeLocalActivation(claim, trimmed);
+    };
+    try {
+      await activate();
     } catch (err) {
+      // Run again as a whole once the identity is confirmed (this PC's check first, as here).
+      if (showLicenceRefusal(err, activate)) return;
       setError(toUserFacingActivationError(err));
     } finally {
       setSubmitting(false);
@@ -463,7 +572,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       }
       if (s.status === "denied_offline_grace_expired") return true;
       if (s.status === "active") {
-        const last = s.last_reconciled_at ? Date.parse(s.last_reconciled_at) : NaN;
+        const last = s.last_reconciled_at ? Date.parse(s.last_reconciled_at) : Number.NaN;
         if (!Number.isFinite(last)) return true;
         return Date.now() - last >= POLICY_REFRESH_INTERVAL_MS;
       }
@@ -557,6 +666,68 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     }
   }, [state?.status, t]);
 
+  /**
+   * Confirms the administrator's identity (the app's step-up dialog and service), then applies
+   * the refused change again. A further refusal is shown the same way; a cancel keeps the offer.
+   */
+  const onConfirmIdentity = async () => {
+    const pending = stepUpRetry;
+    if (!pending) return;
+    setConfirmingIdentity(true);
+    try {
+      // The change itself records the new licence state (and its entitlements), as on any path.
+      await withStepUp(pending.run);
+      setStepUpRetry(null);
+      setWarning(null);
+    } catch (err) {
+      if (!showLicenceRefusal(err, pending.run) && !isStepUpCancelled(err)) {
+        setError(toUserFacingActivationError(err));
+      }
+    } finally {
+      setConfirmingIdentity(false);
+    }
+  };
+
+  /** What the session needs before an administrator can confirm a licence change, if anything. */
+  const sessionInfo = session.info;
+  const sessionInterrupt: "password" | "locked" | null =
+    sessionInfo?.is_locked && sessionInfo.user_id !== null
+      ? "locked"
+      : sessionInfo?.is_authenticated && sessionInfo.force_password_change
+        ? "password"
+        : null;
+
+  /** After the password change or the unlock, the licence check runs again with the session. */
+  const onForcedPasswordChange = async (newPassword: string) => {
+    await session.changePassword(newPassword);
+    await attemptReconciliation("login");
+  };
+  const onUnlock = async (password: string) => {
+    await session.unlock(password);
+    await attemptReconciliation("login");
+  };
+  const onUnlockWithPin = async (pin: string) => {
+    await unlockSessionWithPin({ pin });
+    await session.refresh();
+    await attemptReconciliation("login");
+  };
+
+  const licenceRefusalBlock = warning ? (
+    <AuthAlert tone="warning">
+      <p>{warning}</p>
+      {stepUpRetry ? (
+        <AuthButton
+          className="mt-2"
+          loading={confirmingIdentity}
+          disabled={confirmingIdentity}
+          onClick={() => void onConfirmIdentity()}
+        >
+          {t("stepUp.submit")}
+        </AuthButton>
+      ) : null}
+    </AuthAlert>
+  ) : null;
+
   const gateContextValue = useMemo(
     () => ({
       refreshProductLicense: refresh,
@@ -609,268 +780,304 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       : []),
   ];
 
+  /** Fills the key field from the clipboard. Silently does nothing when access is denied. */
+  const pasteKeyFromClipboard = async () => {
+    try {
+      const text = (await navigator.clipboard.readText()).trim();
+      if (text) {
+        setKey(text);
+        setPendingPreview(null);
+      }
+    } catch {
+      // Clipboard permission denied or unavailable: the user can still type or Ctrl+V.
+    }
+  };
+
   const errorBlock =
     error != null ? (
-      <div className={cn(mfAlert.danger, "space-y-2")} role="alert">
-        <p className="font-medium">{error.title}</p>
-        <p>{error.message}</p>
-        <p className="text-xs opacity-90">
-          {t("activation.diag.referenceCode")}:{" "}
-          <span className="font-mono">{error.referenceCode}</span>
+      <AuthAlert
+        tone={error.referenceCode === "network_unreachable" ? "warning" : "danger"}
+        title={t(`activation.errors.${error.referenceCode}.title`, { defaultValue: error.title })}
+      >
+        <p>
+          {t(`activation.errors.${error.referenceCode}.message`, {
+            defaultValue: error.message,
+          })}
         </p>
-        <Button
+        <p className="text-xs text-text-secondary">
+          {t("activation.diag.referenceCode")}:{" "}
+          <span className="font-mono text-text-primary">{error.referenceCode}</span>
+        </p>
+        <button
           type="button"
-          variant="ghost"
-          className="h-auto px-0 text-xs underline"
+          aria-expanded={showErrorDetails}
+          className={cn("text-xs", mfAuth.linkPrimary)}
           onClick={() => setShowErrorDetails((v) => !v)}
         >
           {showErrorDetails
             ? t("activation.hideTechnicalDetails")
             : t("activation.showTechnicalDetails")}
-        </Button>
+        </button>
         {showErrorDetails ? (
-          <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs opacity-90">
+          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-surface-0/70 p-2 font-mono text-xs text-text-secondary">
             {error.technicalDetails}
           </pre>
         ) : null}
-      </div>
+      </AuthAlert>
     ) : null;
 
-  const activationOrOutlet = loading ? (
-    <div className={cn(mfAuth.shell, "flex-col gap-6")}>
-      <MaintafoxWordmark size="md" align="center" />
-      <p className="text-sm text-text-secondary">{t("activation.loading")}</p>
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
-    </div>
-  ) : allowLoginEscape || (complete && !denied && !needsMarkRetry) ? (
-    children
-  ) : !complete || denied || needsMarkRetry ? (
-    <div className={mfAuth.shell}>
-      <div className={cn(mfAuth.cardCompact, "max-h-[90vh] max-w-lg overflow-y-auto")}>
-        <div className={cn(mfAuth.cardBrandSeparator, "mb-5 pb-5")}>
-          <MaintafoxWordmark size="md" align="center" />
-        </div>
+  const technicalDetails = (
+    <ActivationTechnicalDetails
+      summaryLabel={t("activation.technicalDetails")}
+      rows={techRows}
+      copyLabel={t("activation.copyDetails")}
+      copiedLabel={t("activation.copied")}
+    />
+  );
 
-        {!denied ? (
-          <div className="mb-5">
-            <ActivationStepper
-              current={stepId}
+  const goToLogin = () => {
+    setPreferLoginView(true);
+    navigate("/login", { replace: true });
+  };
+
+  const stepNumber = stepId === "activate" ? 2 : 1;
+
+  const activationOrOutlet = loading ? (
+    <div className={mfAuth.shell}>
+      <MaintafoxWordmark size="md" tone="auth" align="center" />
+      <div
+        role="status"
+        className="mt-6 flex items-center gap-2 text-sm text-text-secondary"
+        aria-live="polite"
+      >
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+        {t("activation.loading")}
+      </div>
+    </div>
+  ) : allowLoginEscape ? (
+    children
+  ) : complete && !denied && !needsMarkRetry ? (
+    <>
+      {children}
+      {/* A licence update refused in the background while the app is open (renewal, upgrade):
+          offered here so it is applied before the licence locks the plant. */}
+      {stepUpRetry && warning ? (
+        <div className="fixed bottom-4 right-4 z-50 w-[min(28rem,calc(100vw-2rem))]">
+          {licenceRefusalBlock}
+        </div>
+      ) : null}
+    </>
+  ) : sessionInterrupt === "password" ? (
+    // Same screens and actions as AuthGuard, which this blocked view replaces.
+    <ForcePasswordChangePage onComplete={onForcedPasswordChange} />
+  ) : sessionInterrupt === "locked" && sessionInfo ? (
+    <LockScreen
+      displayName={sessionInfo.display_name ?? sessionInfo.username}
+      onUnlock={onUnlock}
+      onUnlockWithPin={onUnlockWithPin}
+      onLogout={() => void session.logout()}
+      pinConfigured={sessionInfo.pin_configured ?? false}
+    />
+  ) : !complete || denied || needsMarkRetry ? (
+    <AuthShell width="md">
+      {!denied ? (
+        <div className="mb-6">
+          <ActivationStepper
+            current={stepId}
+            progressLabel={t("activation.stepOf", { current: stepNumber, total: 3 })}
+            labels={{
+              validate: t("activation.steps.validate"),
+              activate: t("activation.steps.activate"),
+              finish: t("activation.steps.finish"),
+            }}
+          />
+        </div>
+      ) : null}
+
+      <h1 className={mfAuth.title}>{denied ? denyView?.title : t("activation.title")}</h1>
+      <p className={mfAuth.subtitle}>
+        {denied
+          ? (state?.deny_message ?? denyView?.body)
+          : pendingPreview
+            ? t("activation.verifiedTitle")
+            : t("activation.subtitle")}
+      </p>
+      <div className="mt-3">
+        <AuthStatusChip tone={isOnline ? "ok" : "warn"}>
+          {isOnline ? t("activation.online") : t("activation.offline")}
+        </AuthStatusChip>
+      </div>
+
+      {!denied ? (
+        pendingPreview || needsMarkRetry ? (
+          <div className="mt-6 space-y-4">
+            <ActivationStatusCard
+              items={[
+                { id: "verified", label: t("activation.status.licenseVerified"), done: true },
+                { id: "connected", label: t("activation.status.connected"), done: true },
+              ]}
+              waitingLabel={t("activation.status.waiting")}
+            />
+
+            <p className="text-sm text-text-secondary">
+              {t("activation.verifiedBody")}{" "}
+              <span className="font-semibold text-text-primary">{companyName}</span>
+            </p>
+
+            <OrganizationLicenseCard
+              fields={{
+                companyName,
+                tenantSlug: pendingPreview?.tenant_slug ?? null,
+                licensePlan:
+                  pendingPreview?.edition ??
+                  pendingPreview?.license_plan ??
+                  pendingPreview?.license_tier ??
+                  null,
+                licenseStatus: pendingPreview?.license_status ?? "active",
+                channel: pendingPreview?.update_channel ?? null,
+                expiresAt: pendingPreview?.expires_at ?? null,
+                allowedDevices: pendingPreview?.device_limit ?? null,
+                activatedDevices: pendingPreview?.activated_device_count ?? null,
+                deviceName: deviceName.trim() || defaultDeviceName(),
+              }}
               labels={{
-                validate: t("activation.steps.validate"),
-                activate: t("activation.steps.activate"),
-                finish: t("activation.steps.finish"),
+                companyBelongsTo: t("activation.companyBelongsTo"),
+                slug: t("activation.fields.slug"),
+                plan: t("activation.fields.plan"),
+                status: t("activation.fields.status"),
+                channel: t("activation.fields.channel"),
+                expiration: t("activation.fields.expiration"),
+                allowedDevices: t("activation.fields.allowedDevices"),
+                activatedDevices: t("activation.fields.activatedDevices"),
+                deviceName: t("activation.fields.deviceName"),
+                notSpecified: t("activation.fields.notSpecified"),
               }}
             />
-          </div>
-        ) : null}
 
-        <h1 className="text-lg font-semibold text-text-primary">
-          {denied ? denyView?.title : t("activation.title")}
-        </h1>
-        <p className="mt-2 text-sm text-text-secondary">
-          {denied
-            ? (state?.deny_message ?? denyView?.body)
-            : pendingPreview
-              ? t("activation.verifiedTitle")
-              : t("activation.subtitle")}
-        </p>
+            <AuthField
+              id="activation-device-name"
+              label={t("activation.deviceNameLabel")}
+              icon={<Monitor />}
+              value={deviceName}
+              onChange={(e) => setDeviceName(e.target.value)}
+              placeholder={t("activation.deviceNamePlaceholder")}
+              disabled={submitting}
+              hint={t("activation.slotNote")}
+            />
 
-        {!denied ? (
-          pendingPreview || needsMarkRetry ? (
-            <div className="mt-6 space-y-4">
-              <ActivationStatusCard
-                items={[
-                  { id: "verified", label: t("activation.status.licenseVerified"), done: true },
-                  { id: "connected", label: t("activation.status.connected"), done: true },
-                ]}
-                waitingLabel={t("activation.status.waiting")}
-              />
+            {errorBlock}
+            {licenceRefusalBlock}
 
-              <p className="text-sm text-text-secondary">
-                {t("activation.verifiedBody")}{" "}
-                <span className="font-semibold text-text-primary">{companyName}</span>
-              </p>
-              <p className="text-xs text-text-muted">{t("activation.slotNote")}</p>
-
-              <OrganizationLicenseCard
-                fields={{
-                  companyName,
-                  tenantSlug: pendingPreview?.tenant_slug ?? null,
-                  licensePlan:
-                    pendingPreview?.edition ??
-                    pendingPreview?.license_plan ??
-                    pendingPreview?.license_tier ??
-                    null,
-                  licenseStatus: pendingPreview?.license_status ?? "active",
-                  channel: pendingPreview?.update_channel ?? null,
-                  expiresAt: pendingPreview?.expires_at ?? null,
-                  allowedDevices: pendingPreview?.device_limit ?? null,
-                  activatedDevices: pendingPreview?.activated_device_count ?? null,
-                  deviceName: deviceName.trim() || defaultDeviceName(),
-                }}
-                labels={{
-                  companyBelongsTo: t("activation.companyBelongsTo"),
-                  slug: t("activation.fields.slug"),
-                  plan: t("activation.fields.plan"),
-                  status: t("activation.fields.status"),
-                  channel: t("activation.fields.channel"),
-                  expiration: t("activation.fields.expiration"),
-                  allowedDevices: t("activation.fields.allowedDevices"),
-                  activatedDevices: t("activation.fields.activatedDevices"),
-                  deviceName: t("activation.fields.deviceName"),
-                  notSpecified: t("activation.fields.notSpecified"),
-                }}
-              />
-
-              <div className="space-y-2">
-                <Label htmlFor="activation-device-name">{t("activation.deviceNameLabel")}</Label>
-                <Input
-                  id="activation-device-name"
-                  value={deviceName}
-                  onChange={(e) => setDeviceName(e.target.value)}
-                  placeholder={t("activation.deviceNamePlaceholder")}
-                  disabled={submitting}
-                />
-              </div>
-
-              {errorBlock}
-
+            <div className="flex flex-col gap-2.5">
               {pendingMarkToken ? (
-                <Button
-                  type="button"
-                  className="w-full"
+                <AuthButton
                   disabled={submitting}
+                  loading={submitting}
                   onClick={() => void onRetryMarkInitialized()}
                 >
                   {submitting ? t("activation.activating") : t("activation.retryFinalize")}
-                </Button>
+                </AuthButton>
               ) : null}
-
-              <div className="flex flex-col gap-2">
-                <Button
-                  type="button"
-                  className="w-full"
-                  disabled={submitting || pendingMarkToken != null}
-                  onClick={() => void onActivateDevice()}
-                >
-                  {submitting && !pendingMarkToken
-                    ? t("activation.activating")
-                    : t("activation.activateCta")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  disabled={submitting}
-                  onClick={() => {
-                    setPendingPreview(null);
-                    setPendingMarkToken(null);
-                    setError(null);
-                    setShowErrorDetails(false);
-                  }}
-                >
-                  {t("activation.changeKey")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="w-full"
-                  disabled={submitting}
-                  onClick={() => {
-                    setPreferLoginView(true);
-                    navigate("/login", { replace: true });
-                  }}
-                >
-                  {t("activation.backToLogin")}
-                </Button>
-              </div>
-
-              <ActivationTechnicalDetails
-                summaryLabel={t("activation.technicalDetails")}
-                rows={techRows}
-              />
-            </div>
-          ) : (
-            <form className="mt-6 space-y-4" onSubmit={onValidateKey}>
-              <div className="space-y-2">
-                <Label htmlFor="product-license-key">{t("activation.keyLabel")}</Label>
-                <Input
-                  id="product-license-key"
-                  autoComplete="off"
-                  value={key}
-                  onChange={(e) => {
-                    setKey(e.target.value);
-                    setPendingPreview(null);
-                  }}
-                  placeholder={t("activation.keyPlaceholder")}
-                  className="font-mono text-sm"
-                />
-              </div>
-              {errorBlock}
-              {warning ? <p className={cn(mfAlert.warning)}>{warning}</p> : null}
-              {state?.status === "degraded_api_unavailable" ? (
-                <p className={cn(mfAlert.warning)}>
-                  {state.degraded_reason ?? t("activation.status.waiting")}
-                </p>
-              ) : null}
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={submitting || key.trim().length < 8}
+              <AuthButton
+                variant={pendingMarkToken ? "secondary" : "primary"}
+                disabled={submitting || pendingMarkToken != null}
+                loading={submitting && !pendingMarkToken}
+                onClick={() => void onActivateDevice()}
               >
-                {submitting ? t("activation.validating") : t("activation.validate")}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full"
+                {submitting && !pendingMarkToken
+                  ? t("activation.activating")
+                  : t("activation.activateCta")}
+              </AuthButton>
+              <AuthButton
+                variant="secondary"
                 disabled={submitting}
                 onClick={() => {
-                  setPreferLoginView(true);
-                  navigate("/login", { replace: true });
+                  setPendingPreview(null);
+                  setPendingMarkToken(null);
+                  setError(null);
+                  setShowErrorDetails(false);
                 }}
               >
+                {t("activation.changeKey")}
+              </AuthButton>
+              <AuthButton variant="ghost" disabled={submitting} onClick={goToLogin}>
                 {t("activation.backToLogin")}
-              </Button>
-              <ActivationTechnicalDetails
-                summaryLabel={t("activation.technicalDetails")}
-                rows={techRows}
-              />
-            </form>
-          )
-        ) : (
-          <div className="mt-6 space-y-3">
-            {errorBlock}
-            <Button
-              type="button"
-              className="w-full"
-              variant="outline"
-              onClick={() => void attemptReconciliation("manual")}
-              disabled={!isOnline || reconciling}
-            >
-              {reconciling
-                ? t("activation.denied.revalidating")
-                : t("activation.denied.revalidate")}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="w-full"
-              onClick={() => {
-                setPreferLoginView(true);
-                navigate("/login", { replace: true });
-              }}
-            >
-              {t("activation.backToLogin")}
-            </Button>
-            <ActivationTechnicalDetails
-              summaryLabel={t("activation.technicalDetails")}
-              rows={techRows}
-            />
+              </AuthButton>
+            </div>
+
+            {technicalDetails}
           </div>
-        )}
-      </div>
-    </div>
+        ) : (
+          <form className="mt-6 space-y-4" onSubmit={onValidateKey}>
+            <AuthField
+              id="product-license-key"
+              label={t("activation.keyLabel")}
+              icon={<KeyRound />}
+              autoComplete="off"
+              spellCheck={false}
+              value={key}
+              onChange={(e) => {
+                setKey(e.target.value);
+                setPendingPreview(null);
+              }}
+              placeholder={t("activation.keyPlaceholder")}
+              hint={t("activation.keyHint")}
+              inputClassName="pr-[5.5rem] font-mono text-sm tracking-wide"
+              trailing={
+                <button
+                  type="button"
+                  onClick={() => void pasteKeyFromClipboard()}
+                  aria-label={t("activation.pasteKeyLabel")}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium text-[var(--mfa-blue)] transition-colors hover:bg-[var(--mfa-blue-tint)]"
+                >
+                  <ClipboardPaste className="h-4 w-4" aria-hidden />
+                  {t("activation.pasteKey")}
+                </button>
+              }
+            />
+            {errorBlock}
+            {licenceRefusalBlock}
+            {state?.status === "degraded_api_unavailable" ? (
+              <AuthAlert tone="warning">
+                {state.degraded_reason ?? t("activation.status.waiting")}
+              </AuthAlert>
+            ) : null}
+            <AuthButton
+              type="submit"
+              loading={submitting}
+              disabled={submitting || key.trim().length < 8}
+            >
+              {submitting ? t("activation.validating") : t("activation.validate")}
+            </AuthButton>
+            <AuthButton variant="ghost" disabled={submitting} onClick={goToLogin}>
+              {t("activation.backToLogin")}
+            </AuthButton>
+            {technicalDetails}
+          </form>
+        )
+      ) : (
+        <div className="mt-6 space-y-3">
+          {/* A forced update is the one denial this PC ends by itself: by installing the update,
+              offered here because the app it would be offered in is blocked. The licence check
+              below then lifts the denial once the installed version meets the minimum. */}
+          {state?.status === "denied_force_update_required" ? <ForcedUpdatePanel /> : null}
+          {errorBlock}
+          {licenceRefusalBlock}
+          <AuthButton
+            variant="secondary"
+            onClick={() => void attemptReconciliation("manual")}
+            disabled={!isOnline || reconciling}
+            loading={reconciling}
+          >
+            {reconciling ? t("activation.denied.revalidating") : t("activation.denied.revalidate")}
+          </AuthButton>
+          <AuthButton variant="ghost" onClick={goToLogin}>
+            {t("activation.backToLogin")}
+          </AuthButton>
+          {technicalDetails}
+        </div>
+      )}
+    </AuthShell>
   ) : (
     <>
       {children}
@@ -881,6 +1088,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
   return (
     <ProductLicenseGateContext.Provider value={gateContextValue}>
       {activationOrOutlet}
+      {StepUpDialogElement}
     </ProductLicenseGateContext.Provider>
   );
 }

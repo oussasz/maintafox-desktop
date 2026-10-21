@@ -28,7 +28,9 @@ pub struct SchedulePattern {
     pub is_active: bool,
     pub shift_pattern_code: String,
     pub is_continuous: bool,
-    pub nominal_hours_per_day: f64,
+    /// Hours a day as typed on the class, `None` when not set (never assumed). Capacity reads
+    /// the Classe horaire versions, not this figure.
+    pub nominal_hours_per_day: Option<f64>,
     pub details: Vec<ScheduleDayPattern>,
 }
 
@@ -71,17 +73,19 @@ fn parse_metadata(raw: Option<&str>, fallback_code: &str) -> ScheduleMetadata {
                 .unwrap_or_else(|| fallback_code.to_string()),
         ),
         is_continuous: Some(parsed.is_continuous.unwrap_or(false)),
-        nominal_hours_per_day: Some(parsed.nominal_hours_per_day.unwrap_or(8.0)),
+        nominal_hours_per_day: parsed.nominal_hours_per_day,
     }
 }
 
 fn serialize_metadata(meta: &ScheduleMetadata) -> String {
-    serde_json::to_string(&serde_json::json!({
+    let mut value = serde_json::json!({
         "shift_pattern_code": meta.shift_pattern_code.as_deref().unwrap_or(""),
         "is_continuous": meta.is_continuous.unwrap_or(false),
-        "nominal_hours_per_day": meta.nominal_hours_per_day.unwrap_or(8.0),
-    }))
-    .unwrap_or_else(|_| r#"{"shift_pattern_code":"","is_continuous":false,"nominal_hours_per_day":8.0}"#.into())
+    });
+    if let Some(hours) = meta.nominal_hours_per_day {
+        value["nominal_hours_per_day"] = serde_json::json!(hours);
+    }
+    value.to_string()
 }
 
 fn validate_time(raw: &str) -> AppResult<()> {
@@ -203,7 +207,7 @@ pub async fn seed_default_details_if_schedule_class(
         let meta = ScheduleMetadata {
             shift_pattern_code: Some(value.code.clone()),
             is_continuous: Some(false),
-            nominal_hours_per_day: Some(8.0),
+            nominal_hours_per_day: None,
         };
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -283,7 +287,7 @@ pub async fn get_schedule_pattern(db: &DatabaseConnection, reference_value_id: i
         is_active: value.is_active,
         shift_pattern_code: meta.shift_pattern_code.unwrap_or_else(|| value.code.clone()),
         is_continuous: meta.is_continuous.unwrap_or(false),
-        nominal_hours_per_day: meta.nominal_hours_per_day.unwrap_or(8.0),
+        nominal_hours_per_day: meta.nominal_hours_per_day,
         details,
     })
 }
@@ -296,6 +300,7 @@ pub async fn upsert_schedule_pattern(
     let value = assert_is_schedule_class_value(db, payload.reference_value_id).await?;
     let set = sets::get_reference_set(db, value.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
 
     let mut meta = parse_metadata(value.metadata_json.as_deref(), &value.code);

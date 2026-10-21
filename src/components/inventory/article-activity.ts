@@ -14,14 +14,25 @@ function hasCreatedEvent(events: InventoryStateEvent[]): boolean {
   );
 }
 
+/** Translators for the codes carried by activity rows (nothing raw reaches the screen). */
+export interface ArticleActivityLabels {
+  /** Movement reason code (inventory.movement_type lookup) → label. */
+  motif: (code: string) => string;
+  /** Reservation status code → label. */
+  reservationStatus: (code: string) => string;
+  /** Quantity → formatted number in the app locale. */
+  qty: (value: number) => string;
+}
+
 /** Compose unified Activity items from real IPC sources only. */
 export function composeArticleActivity(params: {
   article: InventoryArticle;
   stateEvents: InventoryStateEvent[];
   transactions: InventoryTransaction[];
   reservations: StockReservation[];
+  labels: ArticleActivityLabels;
 }): EntityActivityItem[] {
-  const { article, stateEvents, transactions, reservations } = params;
+  const { article, stateEvents, transactions, reservations, labels } = params;
   const items: EntityActivityItem[] = [];
 
   if (!hasCreatedEvent(stateEvents)) {
@@ -43,7 +54,7 @@ export function composeArticleActivity(params: {
       at: ev.changed_at,
       kind: isCreated ? "created" : "edited",
       typeKey: ev.reason ?? (isCreated ? "article.created" : "article.updated"),
-      title: isCreated ? article.article_code : (ev.note ?? ev.to_status),
+      title: isCreated ? article.article_code : (ev.note ?? article.article_code),
       description: isCreated ? (ev.note ?? null) : ev.note,
     });
   }
@@ -51,16 +62,15 @@ export function composeArticleActivity(params: {
   for (const tx of transactions) {
     const site = formatSiteLabel(tx.warehouse_code, tx.warehouse_name);
     const loc = formatSiteLabel(tx.location_code, tx.location_name);
-    const motifLabel = tx.reason_code;
+    const motifLabel = tx.reason_code ? labels.motif(tx.reason_code) : null;
     const detailParts = [site, loc, tx.source_ref, tx.notes].filter(Boolean);
     items.push({
       id: `tx-${tx.id}`,
       at: tx.performed_at,
       kind: "stock_movement",
+      // The movement type is the badge (typeKey); the title carries quantity and reason.
       typeKey: `movement.${tx.movement_type}`,
-      title: motifLabel
-        ? `${tx.movement_type} · ${tx.quantity} · ${motifLabel}`
-        : `${tx.movement_type} · ${tx.quantity}`,
+      title: motifLabel ? `${labels.qty(tx.quantity)} · ${motifLabel}` : labels.qty(tx.quantity),
       description: detailParts.join(" · ") || null,
     });
   }
@@ -73,9 +83,10 @@ export function composeArticleActivity(params: {
       at: res.created_at,
       kind: "reservation_created",
       typeKey: "reservation.created",
-      title: `${res.quantity_reserved}`,
-      description: [site, loc, res.source_ref, res.status].filter(Boolean).join(" · ") || null,
-      statusLabel: res.status,
+      title: labels.qty(res.quantity_reserved),
+      description:
+        [site, loc, res.work_order_code ?? res.source_ref].filter(Boolean).join(" · ") || null,
+      statusLabel: labels.reservationStatus(res.status),
     });
     if (res.released_at) {
       items.push({
@@ -83,9 +94,10 @@ export function composeArticleActivity(params: {
         at: res.released_at,
         kind: "reservation_released",
         typeKey: "reservation.released",
-        title: `${res.quantity_reserved}`,
-        description: [site, loc, res.source_ref].filter(Boolean).join(" · ") || null,
-        statusLabel: res.status,
+        title: labels.qty(res.quantity_reserved),
+        description:
+          [site, loc, res.work_order_code ?? res.source_ref].filter(Boolean).join(" · ") || null,
+        statusLabel: labels.reservationStatus(res.status),
       });
     }
   }

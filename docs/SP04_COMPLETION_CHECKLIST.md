@@ -55,11 +55,11 @@ SELECT
 
 | # | Check | Status |
 |---|-------|--------|
-| 3.1 | `login` with admin/Admin#2026! succeeds and returns SessionInfo | |
+| 3.1 | `login` with the first administrator created on the first-start screen succeeds and returns SessionInfo (release builds seed no default account; the dev-only account is described in `src-tauri/src/auth/builtin_admin.rs`) | |
 | 3.2 | `login` with wrong password returns the same opaque error string as non-existent user | |
 | 3.3 | `logout` clears the session and subsequent `get_session_info` returns unauthenticated | |
 | 3.4 | `get_session_info` returns unauthenticated when no session is active | |
-| 3.5 | Admin account has `force_password_change = 1` in the database after seed | |
+| 3.5 | A release build seeds no `admin` account; in a dev build the dev account has `force_password_change = 1` after seed | |
 
 Manual test for 3.2 — run both and confirm error messages are identical:
 ```javascript

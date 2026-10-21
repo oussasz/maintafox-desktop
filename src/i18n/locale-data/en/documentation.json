@@ -1,44 +1,30 @@
 {
   "module": {
     "title": "Document library",
-    "subtitle": "Technical manuals, SOPs, safety protocols, and compliance certificates",
-    "navAria": "Document categories"
-  },
-  "categories": {
-    "technical-manuals": {
-      "label": "Technical manuals",
-      "heading": "Technical manuals",
-      "description": "Equipment manuals, drawings, and OEM documentation."
-    },
-    "sops": {
-      "label": "SOPs",
-      "heading": "Standard operating procedures",
-      "description": "Step-by-step procedures for operations and maintenance."
-    },
-    "safety-protocols": {
-      "label": "Safety protocols",
-      "heading": "Safety protocols",
-      "description": "LOTO, confined space, hot work, and related safety documents."
-    },
-    "compliance-certificates": {
-      "label": "Compliance certificates",
-      "heading": "Compliance certificates",
-      "description": "Inspection certificates, calibrations, and regulatory records."
-    }
+    "subtitle": "Documents filed under the plant's categories (Reference data)",
+    "navAria": "Document categories",
+    "categoriesLoadError": "Could not read the document categories",
+    "noCategories": "No document category",
+    "noCategoriesHint": "Add the document categories in Reference data to organise the library."
   },
   "upload": {
-    "title": "Upload a document",
+    "title": "Add a document",
     "uploading": "Uploading…",
     "maxSize": "Maximum file size: {{mb}} MB.",
     "fields": {
       "title": "Title",
-      "titlePlaceholder": "Display name (defaults to file name)",
+      "titlePlaceholder": "Display name (suggested from the file name)",
       "equipment": "Linked equipment",
       "equipmentPlaceholder": "Select equipment",
       "noEquipment": "Not linked",
       "notes": "Notes",
-      "notesPlaceholder": "Optional description"
-    }
+      "notesPlaceholder": "Optional description",
+      "file": "File",
+      "equipmentHint": "Optional — the document also appears on the equipment record."
+    },
+    "open": "Add document",
+    "submit": "Upload",
+    "done": "Document \"{{title}}\" added"
   },
   "list": {
     "empty": "No documents in this category yet.",
@@ -51,17 +37,41 @@
     },
     "download": "Download",
     "edit": "Edit link",
-    "delete": "Delete"
+    "delete": "Delete",
+    "loading": "Loading documents…",
+    "loadError": "The documents of this category could not be loaded",
+    "emptyHint": "Add the first document of this category.",
+    "searchPlaceholder": "Search by title, file or equipment…",
+    "downloadNamed": "Download {{title}}",
+    "downloadUnavailable": "File not available on this device yet",
+    "downloadTitle": "Save \"{{title}}\"",
+    "downloaded": "Document saved",
+    "downloadFailed": "The document could not be saved",
+    "editNamed": "Edit {{title}}",
+    "deleteNamed": "Delete {{title}}",
+    "openEquipment": "Open equipment {{code}}"
   },
   "edit": {
     "title": "Edit document",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "saving": "Saving…",
+    "linkUnreadable": "The linked equipment ({{code}}) could not be read; the link is kept unless you choose another one."
   },
   "confirm": {
-    "delete": "Delete this document record? The file remains on disk for audit purposes."
+    "delete": "\"{{title}}\" will be removed from the library. The file is kept on disk for audit purposes.",
+    "deleteTitle": "Delete this document?",
+    "deleteAction": "Delete document"
   },
   "errors": {
     "fileTooLarge": "File exceeds {{mb}} MB."
+  },
+  "size": {
+    "bytes": "{{value}} B",
+    "kb": "{{value}} KB",
+    "mb": "{{value}} MB"
+  },
+  "category": {
+    "description": "Documents in the “{{name}}” category."
   }
 }

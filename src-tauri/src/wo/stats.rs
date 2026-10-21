@@ -19,6 +19,7 @@ pub struct StatusCount {
 /// Urgency distribution entry.
 #[derive(Debug, Clone, Serialize)]
 pub struct UrgencyCount {
+    /// Level code of the shared DI / OT urgency scale; empty for work orders without urgency.
     pub urgency: String,
     pub count: i64,
 }
@@ -52,14 +53,32 @@ pub struct WoStatsPayload {
     pub by_entity: Vec<EntityCount>,
 }
 
-/// Compute aggregated WO statistics for the dashboard.
+/// Compute aggregated WO statistics for the dashboard (plant-wide).
 pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> {
+    get_wo_stats_in_scope(db, &super::access::ScopeSql::everywhere()).await
+}
+
+/// [`get_wo_stats`] over the work orders of the reader's scope (rule §2.8: a site user's figures
+/// cover their sites only). Every query reads the alias `wo`; the scope predicate is its last
+/// `WHERE` condition, so its binds follow the query's own.
+pub async fn get_wo_stats_in_scope(
+    db: &DatabaseConnection,
+    scope: &super::access::ScopeSql,
+) -> AppResult<WoStatsPayload> {
+    let pred = scope.predicate.as_str();
+    let with_scope = |own: Vec<sea_orm::Value>| -> Vec<sea_orm::Value> {
+        let mut values = own;
+        values.extend(scope.binds.iter().cloned());
+        values
+    };
+
     // ── Total WO count ────────────────────────────────────────────────────
     let total = {
         let row = db
-            .query_one(Statement::from_string(
+            .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM work_orders".to_owned(),
+                format!("SELECT COUNT(*) AS cnt FROM work_orders wo WHERE ({pred})"),
+                with_scope(Vec::new()),
             ))
             .await?
             .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("stats: total count query failed")))?;
@@ -68,22 +87,25 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
     };
 
     // ── In-progress count ─────────────────────────────────────────────────
-    let in_progress = count_by_macro_state(db, &["in_progress", "on_hold"]).await?;
+    // `in_progress` and `completed` are slices of the status breakdown (being executed; finished),
+    // not an "open" figure: neither of the two open-OT rules (`wo::backlog::OPEN_STATUS_SQL`,
+    // `NOT_CLOSED_SQL`) is meant here, so their own status lists stay.
+    let in_progress = count_by_macro_state(db, &["in_progress", "on_hold"], scope).await?;
 
     // ── Completed count (completed + closed) ──
-    let completed = count_by_macro_state(db, &["completed", "closed"]).await?;
+    let completed = count_by_macro_state(db, &["completed", "closed"], scope).await?;
 
-    // ── Overdue count (planned_end < now AND status not terminal) ──────────
+    // ── Overdue count (`wo::backlog::WO_OVERDUE_SQL`: work still ahead, planned end past) ──
     let overdue = {
         let row = db
-            .query_one(Statement::from_string(
+            .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM work_orders wo \
-                 JOIN work_order_statuses s ON s.id = wo.status_id \
-                 WHERE wo.planned_end IS NOT NULL \
-                   AND wo.planned_end < strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-                   AND s.code NOT IN ('closed', 'cancelled')"
-                    .to_owned(),
+                format!(
+                    "SELECT COUNT(*) AS cnt FROM work_orders wo \
+                     JOIN work_order_statuses s ON s.id = wo.status_id WHERE {} AND ({pred})",
+                    crate::wo::backlog::WO_OVERDUE_SQL
+                ),
+                with_scope(vec![crate::analytics::as_of::instant(chrono::Utc::now()).into()]),
             ))
             .await?
             .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("stats: overdue query failed")))?;
@@ -94,13 +116,16 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
     // ── By status ─────────────────────────────────────────────────────────
     let by_status = {
         let rows = db
-            .query_all(Statement::from_string(
+            .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT s.code AS label, COUNT(*) AS cnt \
-                 FROM work_orders wo \
-                 JOIN work_order_statuses s ON s.id = wo.status_id \
-                 GROUP BY s.code ORDER BY cnt DESC"
-                    .to_owned(),
+                format!(
+                    "SELECT s.code AS label, COUNT(*) AS cnt \
+                     FROM work_orders wo \
+                     JOIN work_order_statuses s ON s.id = wo.status_id \
+                     WHERE ({pred}) \
+                     GROUP BY s.code ORDER BY cnt DESC"
+                ),
+                with_scope(Vec::new()),
             ))
             .await?;
         map_rows(&rows, |label, count| StatusCount { status: label, count })?
@@ -109,13 +134,14 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
     // ── By lifecycle state (derived) ──────────────────────────────────────
     let by_lifecycle = {
         let rows = db
-            .query_all(Statement::from_string(
+            .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 format!(
                     "SELECT {} AS label, COUNT(*) AS cnt FROM work_orders wo \
-                     JOIN work_order_statuses wos ON wos.id = wo.status_id GROUP BY label",
+                     JOIN work_order_statuses wos ON wos.id = wo.status_id WHERE ({pred}) GROUP BY label",
                     crate::wo::lifecycle::SQL_CASE
                 ),
+                with_scope(Vec::new()),
             ))
             .await?;
         let counted = map_rows(&rows, |label, count| StatusCount { status: label, count })?;
@@ -128,13 +154,16 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
     // ── By urgency ────────────────────────────────────────────────────────
     let by_urgency = {
         let rows = db
-            .query_all(Statement::from_string(
+            .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT COALESCE(u.label, 'N/A') AS label, COUNT(*) AS cnt \
-                 FROM work_orders wo \
-                 LEFT JOIN urgency_levels u ON u.id = wo.urgency_id \
-                 GROUP BY label ORDER BY cnt DESC"
-                    .to_owned(),
+                format!(
+                    "SELECT COALESCE(u.code, '') AS label, COUNT(*) AS cnt \
+                     FROM work_orders wo \
+                     LEFT JOIN reference_values u ON u.id = wo.urgency_id \
+                     WHERE ({pred}) \
+                     GROUP BY u.code ORDER BY COALESCE(MIN(u.sort_order), 99) ASC"
+                ),
+                with_scope(Vec::new()),
             ))
             .await?;
         map_rows(&rows, |label, count| UrgencyCount { urgency: label, count })?
@@ -143,14 +172,17 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
     // ── Daily completed (last 30 days) ────────────────────────────────────
     let daily_completed = {
         let rows = db
-            .query_all(Statement::from_string(
+            .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT DATE(wo.closed_at) AS label, COUNT(*) AS cnt \
-                 FROM work_orders wo \
-                 WHERE wo.closed_at IS NOT NULL \
-                   AND wo.closed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days') \
-                 GROUP BY DATE(wo.closed_at) ORDER BY label ASC"
-                    .to_owned(),
+                format!(
+                    "SELECT DATE(wo.closed_at) AS label, COUNT(*) AS cnt \
+                     FROM work_orders wo \
+                     WHERE wo.closed_at IS NOT NULL \
+                       AND wo.closed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days') \
+                       AND ({pred}) \
+                     GROUP BY DATE(wo.closed_at) ORDER BY label ASC"
+                ),
+                with_scope(Vec::new()),
             ))
             .await?;
         map_rows(&rows, |label, count| DateCount { date: label, count })?
@@ -159,14 +191,16 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
     // ── By entity ─────────────────────────────────────────────────────────
     let by_entity = {
         let rows = db
-            .query_all(Statement::from_string(
+            .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT COALESCE(n.name, 'Non assigné') AS label, COUNT(*) AS cnt \
-                 FROM work_orders wo \
-                 LEFT JOIN org_nodes n ON n.id = wo.entity_id \
-                 WHERE wo.entity_id IS NOT NULL \
-                 GROUP BY wo.entity_id ORDER BY cnt DESC"
-                    .to_owned(),
+                format!(
+                    "SELECT COALESCE(n.name, 'Non assigné') AS label, COUNT(*) AS cnt \
+                     FROM work_orders wo \
+                     LEFT JOIN org_nodes n ON n.id = wo.entity_id \
+                     WHERE wo.entity_id IS NOT NULL AND ({pred}) \
+                     GROUP BY wo.entity_id ORDER BY cnt DESC"
+                ),
+                with_scope(Vec::new()),
             ))
             .await?;
         map_rows(&rows, |label, count| EntityCount { entity: label, count })?
@@ -187,17 +221,23 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async fn count_by_macro_state(db: &DatabaseConnection, status_codes: &[&str]) -> AppResult<i64> {
+async fn count_by_macro_state(
+    db: &DatabaseConnection,
+    status_codes: &[&str],
+    scope: &super::access::ScopeSql,
+) -> AppResult<i64> {
     let placeholders: String = status_codes.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let sql = format!(
         "SELECT COUNT(*) AS cnt FROM work_orders wo \
          JOIN work_order_statuses s ON s.id = wo.status_id \
-         WHERE s.code IN ({placeholders})"
+         WHERE s.code IN ({placeholders}) AND ({})",
+        scope.predicate
     );
-    let values: Vec<sea_orm::Value> = status_codes
+    let mut values: Vec<sea_orm::Value> = status_codes
         .iter()
         .map(|c| sea_orm::Value::String(Some(Box::new(c.to_string()))))
         .collect();
+    values.extend(scope.binds.iter().cloned());
     let row = db
         .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?

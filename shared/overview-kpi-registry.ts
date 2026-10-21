@@ -16,7 +16,6 @@ export const OVERVIEW_KPI_SEMANTIC_KEYS = {
   DATA_QUALITY: "DATA_QUALITY",
   STOCK_OUT: "STOCK_OUT",
   REORDER_ALERT: "REORDER_ALERT",
-  TOTAL_COST: "TOTAL_COST",
 } as const;
 
 export type OverviewKpiSemanticKey =
@@ -115,21 +114,25 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     trendSense: "up-bad",
     valueKind: "hours",
     vizKind: "areaWave",
-    drillPath: analyticsRamsPath("mttr"),
+    drillPath: "/analytics/dashboards",
     labelKey: "overviewKpi.mttr",
     contextKey: "overviewKpi.contextFleet",
     unitKey: "overviewKpi.unit.hours",
   },
   {
+    // SMRP PM compliance (%): occurrences done within their tolerance window ÷ occurrences due
+    // whose outcome is known, last 30 days — `pm::compliance`, the same figure as the PM page and
+    // the Analytics SMRP tile. Higher is better.
     semanticKey: OVERVIEW_KPI_SEMANTIC_KEYS.PM_COMPLIANCE,
     catalogId: ANALYTICS_HUB_KPI_CATALOG_IDS.PM_ADHERENCE,
     permission: P.PM_VIEW,
     trendSense: "up-good",
-    valueKind: "count",
-    vizKind: "alert",
+    valueKind: "percent",
+    vizKind: "gauge",
     drillPath: "/pm",
     labelKey: "overviewKpi.pmCompliance",
-    contextKey: "overviewKpi.contextPmPipeline",
+    contextKey: "overviewKpi.contextPmCompliance",
+    unitKey: "overviewKpi.unit.percent",
   },
   {
     semanticKey: OVERVIEW_KPI_SEMANTIC_KEYS.PM_DUE_TODAY,
@@ -161,7 +164,7 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     trendSense: "up-good",
     valueKind: "percent",
     vizKind: "areaWave",
-    drillPath: analyticsRamsPath("availability"),
+    drillPath: "/analytics/dashboards",
     labelKey: "overviewKpi.availability",
     contextKey: "overviewKpi.contextFleet",
     unitKey: "overviewKpi.unit.percent",
@@ -173,7 +176,7 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     trendSense: "up-good",
     valueKind: "hours",
     vizKind: "areaWave",
-    drillPath: analyticsRamsPath("mtbf"),
+    drillPath: "/analytics/dashboards",
     labelKey: "overviewKpi.mtbf",
     contextKey: "overviewKpi.contextFleet",
     unitKey: "overviewKpi.unit.hours",
@@ -208,7 +211,7 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     trendSense: "up-bad",
     valueKind: "count",
     vizKind: "alert",
-    drillPath: "/inventory/stock",
+    drillPath: "/inventory",
     labelKey: "overviewKpi.stockOut",
     contextKey: "overviewKpi.contextInventory",
   },
@@ -219,20 +222,9 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     trendSense: "up-bad",
     valueKind: "count",
     vizKind: "alert",
-    drillPath: "/inventory/procurement",
+    drillPath: "/inventory",
     labelKey: "overviewKpi.reorderAlert",
     contextKey: "overviewKpi.contextInventory",
-  },
-  {
-    semanticKey: OVERVIEW_KPI_SEMANTIC_KEYS.TOTAL_COST,
-    catalogId: ANALYTICS_HUB_KPI_CATALOG_IDS.MAINTENANCE_COST,
-    permission: P.FIN_VIEW,
-    trendSense: "up-bad",
-    valueKind: "currency",
-    vizKind: "waterfall",
-    drillPath: "/analytics/dashboards",
-    labelKey: "overviewKpi.totalCost",
-    contextKey: "overviewKpi.contextCost",
   },
 ];
 

@@ -14,7 +14,9 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PartOptionalChip } from "@/components/common/PartNecessityChoice";
 import { WoPermitGateCard } from "@/components/permits/WoPermitGateCard";
+import { QualificationCheckNotice } from "@/components/personnel/qualification/QualificationCheckNotice";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Timeline } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
@@ -52,10 +54,19 @@ import {
   listInventoryReservations,
   releaseInventoryReservation,
 } from "@/services/inventory-service";
+import {
+  type PersonQualificationCheck,
+  checkPersonForWorkOrder,
+} from "@/services/qualification-gate-service";
 import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
 import {
-  addLabor,
-  addPart,
+  type TaskResultCode,
+  type WoDowntimeSegment,
+  type WoExecutionEvent,
+  type WoIntervener,
+  type WoPlanAdherence,
+  type WoTool,
+  addPersonnelLabor,
   addWoTool,
   closeDowntime,
   completeTask,
@@ -73,14 +84,8 @@ import {
   openDowntime,
   recordPartUsage,
   unconfirmNoParts,
-  type TaskResultCode,
-  type WoDowntimeSegment,
-  type WoExecutionEvent,
-  type WoIntervener,
-  type WoPlanAdherence,
-  type WoTool,
 } from "@/services/wo-execution-service";
-import { holdWo, pauseWo, resumeWo, startWo } from "@/services/wo-service";
+import { holdWo, pauseWo, startWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import { formatDateTime } from "@/utils/format-date";
 import type {
@@ -91,10 +96,13 @@ import type {
   WorkOrder,
 } from "@shared/ipc-types";
 
+import { WoAddExecutionPartDialog } from "./WoAddExecutionPartDialog";
+import { mergeLaborPeople, useWoLaborPeople } from "./use-wo-labor-people";
+import { woActionFailureText } from "./wo-action-error";
+
 export interface WoExecutionControlsHandle {
   openHoldForm: () => void;
   start: () => Promise<void>;
-  resume: () => Promise<void>;
 }
 
 interface WoExecutionControlsProps {
@@ -169,8 +177,8 @@ function LaborMetricRow({
             variance == null
               ? "font-medium tabular-nums"
               : variance > 0
-                ? "font-medium tabular-nums text-amber-700"
-                : "font-medium tabular-nums text-green-700"
+                ? "font-medium tabular-nums text-tone-warning-fg"
+                : "font-medium tabular-nums text-tone-success-fg"
           }
         >
           {variance == null
@@ -185,8 +193,8 @@ function LaborMetricRow({
             efficiency == null
               ? "font-medium tabular-nums"
               : efficiency >= 100
-                ? "font-medium tabular-nums text-green-700"
-                : "font-medium tabular-nums text-amber-700"
+                ? "font-medium tabular-nums text-tone-success-fg"
+                : "font-medium tabular-nums text-tone-warning-fg"
           }
         >
           {efficiency != null ? `${efficiency} %` : "—"}
@@ -233,7 +241,6 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
     const { formatCurrency } = useFormatters();
     const { info } = useSession();
     const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
-    const woItems = useWoStore((s) => s.items);
 
     const durationLabels = useMemo(
       () => ({
@@ -282,9 +289,6 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     // Add part dialog (during execution)
     const [showAddPartDialog, setShowAddPartDialog] = useState(false);
-    const [addPartRef, setAddPartRef] = useState("");
-    const [addPartQty, setAddPartQty] = useState("1");
-    const [addPartDialogError, setAddPartDialogError] = useState<string | null>(null);
 
     // Add tool dialog
     const [showAddToolDialog, setShowAddToolDialog] = useState(false);
@@ -303,38 +307,42 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     // ── Intervener options ──────────────────────────────────────────────────
 
+    // Personnel register: everyone active, with or without a login (contractor technicians);
+    // people already booked stay selectable.
+    const people = useWoLaborPeople();
     const intervenerOptions = useMemo(() => {
-      const dedup = new Map<string, string>();
-      for (const item of woItems) {
-        if (item.primary_responsible_id != null) {
-          dedup.set(
-            String(item.primary_responsible_id),
-            item.responsible_display_name?.trim() ||
-              item.responsible_username?.trim() ||
-              formatOrDash(null),
-          );
-        }
-        if (item.planner_id != null) {
-          dedup.set(
-            String(item.planner_id),
-            item.planner_display_name?.trim() ||
-              item.planner_username?.trim() ||
-              formatOrDash(null),
-          );
-        }
+      const booked = laborEntries
+        .filter(
+          (entry) =>
+            entry.personnel_id != null && formatPersonLabel(entry.intervener_display_name) !== "—",
+        )
+        .map((entry) => ({
+          value: String(entry.personnel_id),
+          label: formatPersonLabel(entry.intervener_display_name),
+        }));
+      return mergeLaborPeople(people.options, booked);
+    }, [people.options, laborEntries]);
+
+    // Does the chosen person hold what this OT requires? (refused at booking otherwise)
+    const [laborOvertime, setLaborOvertime] = useState(false);
+    const [laborCheck, setLaborCheck] = useState<PersonQualificationCheck | null>(null);
+    useEffect(() => {
+      if (!showLaborDialog || !laborTechId) {
+        setLaborCheck(null);
+        return;
       }
-      for (const entry of laborEntries) {
-        if (entry.intervener_id != null) {
-          dedup.set(
-            String(entry.intervener_id),
-            formatPersonLabel(entry.intervener_display_name) !== "—"
-              ? formatPersonLabel(entry.intervener_display_name)
-              : String(entry.intervener_id),
-          );
-        }
-      }
-      return Array.from(dedup.entries()).map(([value, label]) => ({ value, label }));
-    }, [woItems, laborEntries]);
+      let cancelled = false;
+      checkPersonForWorkOrder(Number(laborTechId), wo.id)
+        .then((check) => {
+          if (!cancelled) setLaborCheck(check);
+        })
+        .catch(() => {
+          if (!cancelled) setLaborCheck(null);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [showLaborDialog, laborTechId, wo.id]);
 
     // ── Load data ──────────────────────────────────────────────────────────
 
@@ -371,8 +379,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setExecutionEvents(eventRows);
         setPlanAdherence(adherenceRow);
       } catch (e) {
-        setError(t("execution.error.loadData"));
-        console.error("loadData", e);
+        setError(woActionFailureText(t("execution.error.loadData"), e));
       }
     }, [wo.id, t]);
 
@@ -413,27 +420,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         });
         await handleRefreshState(next);
       } catch (e) {
-        setError(t("execution.error.startWo"));
-        console.error("handleStart", e);
-      } finally {
-        setBusy(false);
-      }
-    }, [actorId, wo.id, rowVersion, handleRefreshState, t]);
-
-    const handleResume = useCallback(async () => {
-      if (!actorId) return;
-      setBusy(true);
-      setError(null);
-      try {
-        const next = await resumeWo({
-          wo_id: wo.id,
-          actor_id: actorId,
-          expected_row_version: rowVersion,
-        });
-        await handleRefreshState(next);
-      } catch (e) {
-        setError(t("execution.error.resumeWo"));
-        console.error("handleResume", e);
+        setError(woActionFailureText(t("execution.error.startWo"), e));
       } finally {
         setBusy(false);
       }
@@ -451,14 +438,13 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       () => ({
         openHoldForm: () => openDelayForm("hold"),
         start: handleStart,
-        resume: handleResume,
       }),
-      [openDelayForm, handleStart, handleResume],
+      [openDelayForm, handleStart],
     );
 
     const submitDelayAction = useCallback(async () => {
       if (!actorId || !delayIntent) return;
-      const reasonId = delayReasonId ? Number(delayReasonId) : NaN;
+      const reasonId = delayReasonId ? Number(delayReasonId) : Number.NaN;
       if (!Number.isFinite(reasonId) || reasonId <= 0) {
         setDelayError(t("execution.delayReasonRequired"));
         return;
@@ -477,8 +463,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setDelayIntent(null);
         await handleRefreshState(next);
       } catch (e) {
-        setError(t("execution.error.submitDelay"));
-        console.error("submitDelayAction", e);
+        setError(woActionFailureText(t("execution.error.submitDelay"), e));
       } finally {
         setBusy(false);
       }
@@ -512,6 +497,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       setLaborEnd("10:00");
       setLaborBreakMin("");
       setLaborNotes("");
+      setLaborOvertime(false);
       setLaborFormError(null);
       setShowLaborDialog(true);
     }, [intervenerOptions]);
@@ -551,9 +537,10 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       setLaborFormError(null);
       setError(null);
       try {
-        await addLabor({
+        await addPersonnelLabor({
           wo_id: wo.id,
-          intervener_id: intervenerId,
+          personnel_id: intervenerId,
+          is_overtime: laborOvertime,
           started_at: started,
           ended_at: ended,
           hours_worked: hoursWorked,
@@ -562,8 +549,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setShowLaborDialog(false);
         await loadData();
       } catch (e) {
-        setLaborFormError(t("execution.error.addManualLabor"));
-        console.error("submitLaborDialog", e);
+        setLaborFormError(woActionFailureText(t("execution.error.addManualLabor"), e));
       } finally {
         setBusy(false);
       }
@@ -575,6 +561,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       laborEnd,
       laborBreakMin,
       laborNotes,
+      laborOvertime,
       wo.id,
       loadData,
       t,
@@ -586,7 +573,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       async (partId: number, fallbackQty?: number) => {
         const raw = partUsage[partId];
         const value =
-          raw != null && raw !== "" ? Number(raw) : fallbackQty != null ? fallbackQty : NaN;
+          raw != null && raw !== "" ? Number(raw) : fallbackQty != null ? fallbackQty : Number.NaN;
         if (!Number.isFinite(value) || value <= 0) {
           setError(t("execution.error.invalidQuantity"));
           return;
@@ -597,8 +584,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           await recordPartUsage(partId, value);
           await loadData();
         } catch (e) {
-          setError(t("execution.error.recordPart"));
-          console.error("handleRecordPartUsage", e);
+          setError(woActionFailureText(t("execution.error.recordPart"), e));
         } finally {
           setBusy(false);
         }
@@ -613,8 +599,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         await confirmNoParts(wo.id);
         await Promise.all([loadData(), refreshActiveWo()]);
       } catch (e) {
-        setError(t("execution.error.confirmNoParts"));
-        console.error("handleNoParts", e);
+        setError(woActionFailureText(t("execution.error.confirmNoParts"), e));
       } finally {
         setBusy(false);
       }
@@ -627,45 +612,11 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         await unconfirmNoParts(wo.id);
         await Promise.all([loadData(), refreshActiveWo()]);
       } catch (e) {
-        setError(t("execution.error.unconfirmNoParts"));
-        console.error("handleUndoNoParts", e);
+        setError(woActionFailureText(t("execution.error.unconfirmNoParts"), e));
       } finally {
         setBusy(false);
       }
     }, [wo.id, loadData, refreshActiveWo, t]);
-
-    const submitAddPart = useCallback(async () => {
-      const label = addPartRef.trim();
-      const qty = Number(addPartQty);
-      if (!label) {
-        setAddPartDialogError(t("execution.parts.add.labelRequired"));
-        return;
-      }
-      if (!Number.isFinite(qty) || qty <= 0) {
-        setAddPartDialogError(t("execution.error.invalidQuantity"));
-        return;
-      }
-      setBusy(true);
-      setAddPartDialogError(null);
-      setError(null);
-      try {
-        await addPart({
-          wo_id: wo.id,
-          article_ref: label,
-          quantity_planned: qty,
-          auto_reserve: false,
-        });
-        setShowAddPartDialog(false);
-        setAddPartRef("");
-        setAddPartQty("1");
-        await loadData();
-      } catch (e) {
-        setAddPartDialogError(t("execution.parts.add.error"));
-        console.error("submitAddPart", e);
-      } finally {
-        setBusy(false);
-      }
-    }, [addPartRef, addPartQty, wo.id, loadData, t]);
 
     const openNotUsedDialog = useCallback((partId: number) => {
       setNotUsedPartId(partId);
@@ -685,7 +636,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     const submitNotUsed = useCallback(async () => {
       if (notUsedPartId == null) return;
-      const reasonId = notUsedReasonId ? Number(notUsedReasonId) : NaN;
+      const reasonId = notUsedReasonId ? Number(notUsedReasonId) : Number.NaN;
       if (!Number.isFinite(reasonId) || reasonId <= 0) {
         setNotUsedError(t("execution.notUsed.reasonRequired"));
         return;
@@ -709,8 +660,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setNotUsedPartId(null);
         await loadData();
       } catch (e) {
-        setNotUsedError(t("execution.error.markNotUsed"));
-        console.error("submitNotUsed", e);
+        setNotUsedError(woActionFailureText(t("execution.error.markNotUsed"), e));
       } finally {
         setBusy(false);
       }
@@ -736,8 +686,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           await completeTask(task.id, actorId, resultCode);
           await loadData();
         } catch (e) {
-          setError(t("execution.error.completeTask"));
-          console.error("handleCompleteTask", e);
+          setError(woActionFailureText(t("execution.error.completeTask"), e));
         } finally {
           setBusy(false);
         }
@@ -763,8 +712,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setDowntimeClassification("");
         await loadData();
       } catch (e) {
-        setError(t("execution.error.openDowntime"));
-        console.error("handleOpenDowntime", e);
+        setError(woActionFailureText(t("execution.error.openDowntime"), e));
       } finally {
         setBusy(false);
       }
@@ -778,8 +726,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           await closeDowntime(segmentId, nowIso());
           await loadData();
         } catch (e) {
-          setError(t("execution.error.closeDowntime"));
-          console.error("handleCloseDowntime", e);
+          setError(woActionFailureText(t("execution.error.closeDowntime"), e));
         } finally {
           setBusy(false);
         }
@@ -795,8 +742,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           await releaseInventoryReservation({ reservation_id: reservationId });
           await loadData();
         } catch (e) {
-          setError(t("execution.error.releaseReservation"));
-          console.error("handleReleaseReservation", e);
+          setError(woActionFailureText(t("execution.error.releaseReservation"), e));
         } finally {
           setBusy(false);
         }
@@ -825,8 +771,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setAddToolCode("");
         await loadData();
       } catch (e) {
-        setAddToolDialogError(t("execution.tools.addError"));
-        console.error("submitAddTool", e);
+        setAddToolDialogError(woActionFailureText(t("execution.tools.addError"), e));
       } finally {
         setBusy(false);
       }
@@ -837,10 +782,10 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setBusy(true);
         setError(null);
         try {
-          await markWoToolUsed({ tool_id: toolId, usage_status: "used" });
+          await markWoToolUsed(toolId);
           await loadData();
-        } catch {
-          setError(t("execution.tools.updateError"));
+        } catch (e) {
+          setError(woActionFailureText(t("execution.tools.updateError"), e));
         } finally {
           setBusy(false);
         }
@@ -853,10 +798,10 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setBusy(true);
         setError(null);
         try {
-          await markWoToolNotUsed({ tool_id: toolId, usage_status: "not_used" });
+          await markWoToolNotUsed(toolId);
           await loadData();
-        } catch {
-          setError(t("execution.tools.updateError"));
+        } catch (e) {
+          setError(woActionFailureText(t("execution.tools.updateError"), e));
         } finally {
           setBusy(false);
         }
@@ -891,9 +836,19 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       [laborEntries],
     );
 
-    const plannedParts = useMemo(
-      () => parts.filter((p) => !p.origin || p.origin === "planned"),
+    /** Lines cancelled while the work order was prepared: history only, out of every count. */
+    const activeParts = useMemo(
+      () => parts.filter((p) => p.consumption_status !== "cancelled"),
       [parts],
+    );
+    const cancelledParts = useMemo(
+      () => parts.filter((p) => p.consumption_status === "cancelled"),
+      [parts],
+    );
+
+    const plannedParts = useMemo(
+      () => activeParts.filter((p) => !p.origin || p.origin === "planned"),
+      [activeParts],
     );
 
     const actuallyUsedParts = useMemo(
@@ -927,7 +882,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
     return (
       <div className="space-y-8">
         {error && (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
             {error}
           </div>
         )}
@@ -937,12 +892,16 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         )}
 
         {wo.requires_permit && !["closed", "cancelled"].includes(statusCode) ? (
-          <WoPermitGateCard workOrderId={wo.id} refreshKey={rowVersion} />
+          <WoPermitGateCard
+            workOrderId={wo.id}
+            workOrderSiteId={wo.entity_id}
+            refreshKey={rowVersion}
+          />
         ) : null}
 
         {/* Delay form (pause / hold) */}
         {delayIntent && (
-          <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50/40 p-3">
+          <div className="space-y-3 rounded-md border border-tone-warning-border bg-tone-warning-bg p-3">
             <h3 className="text-sm font-semibold">
               {delayIntent === "pause" ? t("execution.pauseTitle") : t("execution.holdTitle")}
             </h3>
@@ -968,7 +927,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                 />
               </div>
             </div>
-            {delayError && <div className="text-sm text-red-700">{delayError}</div>}
+            {delayError && <div className="text-sm text-tone-danger-fg">{delayError}</div>}
             <div className="flex items-center gap-2">
               <Button onClick={() => void submitDelayAction()} disabled={busy || !actorId}>
                 {t("execution.submit")}
@@ -1128,6 +1087,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                           {formatOrDash(part.article_ref ?? part.article_label)}
                         </span>
                         <OriginBadge origin={part.origin} t={t} />
+                        {part.is_required === false ? <PartOptionalChip className="ml-1" /> : null}
                         {isNotUsed && part.not_used_reason_label && (
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             {t("execution.notUsed.reason")}: {part.not_used_reason_label}
@@ -1137,6 +1097,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                       </div>
                       <div className="text-muted-foreground tabular-nums">
                         ×{part.quantity_planned}
+                        {part.unit_symbol ? ` ${part.unit_symbol}` : ""}
                       </div>
                       {isUsed || isNotUsed ? (
                         <div className="flex items-center gap-1">
@@ -1196,6 +1157,25 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
             )}
           </div>
 
+          {cancelledParts.length > 0 && (
+            <ul className="space-y-1" aria-label={t("execution.parts.cancelledTitle")}>
+              {cancelledParts.map((part) => (
+                <li
+                  key={part.id}
+                  className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/40 px-3 py-1.5 text-sm text-muted-foreground"
+                >
+                  <span className="flex-1 line-through">
+                    {formatOrDash(part.article_ref ?? part.article_label)} ×{part.quantity_planned}
+                    {part.unit_symbol ? ` ${part.unit_symbol}` : ""}
+                  </span>
+                  <Badge variant="outline" className="text-[10px]">
+                    {t("planning.parts.cancelledStatus")}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          )}
+
           {/* Actually used pane */}
           <div className="space-y-2 pt-1">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1207,12 +1187,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                   size="sm"
                   variant="outline"
                   className="h-7 text-xs"
-                  onClick={() => {
-                    setAddPartDialogError(null);
-                    setAddPartRef("");
-                    setAddPartQty("1");
-                    setShowAddPartDialog(true);
-                  }}
+                  onClick={() => setShowAddPartDialog(true)}
                   disabled={controlsDisabled}
                 >
                   {t("execution.parts.add.cta")}
@@ -1234,7 +1209,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
             {wo.parts_actuals_confirmed &&
             plannedParts.length === 0 &&
             actuallyUsedParts.length === 0 ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-green-200 bg-green-50/50 px-4 py-3 text-sm text-green-800">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-tone-success-border bg-tone-success-bg px-4 py-3 text-sm text-tone-success-fg">
                 <span className="font-medium">{t("execution.parts.noneConfirmed")}</span>
                 <Button
                   size="sm"
@@ -1262,6 +1237,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                     </span>
                     <span className="text-muted-foreground tabular-nums">
                       {t("execution.parts.usedQtyLabel", { qty: part.quantity_used ?? 0 })}
+                      {part.unit_symbol ? ` ${part.unit_symbol}` : ""}
                     </span>
                     <OriginBadge origin={part.origin} t={t} />
                   </div>
@@ -1684,7 +1660,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
             </li>
             <li>
               {t("execution.sectionParts")}:{" "}
-              {parts.filter((p) => (p.quantity_used ?? 0) > 0).length}/{parts.length}
+              {activeParts.filter((p) => (p.quantity_used ?? 0) > 0).length}/{activeParts.length}
             </li>
             <li>
               {t("execution.sectionTasks")}:{" "}
@@ -1727,7 +1703,31 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                     ))}
                   </SelectContent>
                 </Select>
+                {people.failed ? (
+                  <p className="text-xs text-text-muted">{t("woPeople.loadFailed")}</p>
+                ) : !people.loading && people.options.length === 0 ? (
+                  <p className="text-xs text-text-muted">{t("woPeople.none")}</p>
+                ) : null}
               </div>
+              {laborCheck &&
+              (laborCheck.gaps.length > 0 ||
+                laborCheck.warnings.length > 0 ||
+                laborCheck.override_info != null) ? (
+                <QualificationCheckNotice
+                  check={laborCheck}
+                  overrideContext={{ context_kind: "work_order", work_order_id: wo.id }}
+                  onOverridden={setLaborCheck}
+                />
+              ) : null}
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={laborOvertime}
+                  onChange={(e) => setLaborOvertime(e.target.checked)}
+                />
+                {t("execution.laborDialog.overtime")}
+              </label>
               <div className="space-y-1">
                 <Label>{t("execution.laborDialog.date")}</Label>
                 <Input
@@ -1781,13 +1781,16 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                     : "—"}
                 </span>
               </p>
-              {laborFormError && <p className="text-sm text-red-700">{laborFormError}</p>}
+              {laborFormError && <p className="text-sm text-tone-danger-fg">{laborFormError}</p>}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowLaborDialog(false)}>
                 {t("execution.cancel")}
               </Button>
-              <Button onClick={() => void submitLaborDialog()} disabled={busy || !actorId}>
+              <Button
+                onClick={() => void submitLaborDialog()}
+                disabled={busy || !actorId || (laborCheck != null && !laborCheck.qualified)}
+              >
                 {t("execution.laborDialog.save")}
               </Button>
             </DialogFooter>
@@ -1832,7 +1835,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                   placeholder={t("execution.addContext")}
                 />
               </div>
-              {notUsedError && <p className="text-sm text-red-700">{notUsedError}</p>}
+              {notUsedError && <p className="text-sm text-tone-danger-fg">{notUsedError}</p>}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setNotUsedPartId(null)}>
@@ -1845,44 +1848,13 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           </DialogContent>
         </Dialog>
 
-        {/* Add part during execution */}
-        <Dialog open={showAddPartDialog} onOpenChange={setShowAddPartDialog}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle>{t("execution.parts.add.title")}</DialogTitle>
-              <DialogDescription>{t("execution.parts.add.hint")}</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label>{t("execution.parts.add.label")}</Label>
-                <Input
-                  value={addPartRef}
-                  onChange={(e) => setAddPartRef(e.target.value)}
-                  placeholder={t("execution.parts.add.labelPlaceholder")}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>{t("execution.parts.add.qty")}</Label>
-                <Input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={addPartQty}
-                  onChange={(e) => setAddPartQty(e.target.value)}
-                />
-              </div>
-              {addPartDialogError && <p className="text-sm text-red-700">{addPartDialogError}</p>}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowAddPartDialog(false)}>
-                {t("execution.cancel")}
-              </Button>
-              <Button onClick={() => void submitAddPart()} disabled={busy}>
-                {t("execution.parts.add.save")}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        {/* Add part during execution (stock article or explicit non-stock item) */}
+        <WoAddExecutionPartDialog
+          woId={wo.id}
+          open={showAddPartDialog}
+          onOpenChange={setShowAddPartDialog}
+          onAdded={loadData}
+        />
 
         {/* Add tool dialog */}
         <Dialog open={showAddToolDialog} onOpenChange={setShowAddToolDialog}>
@@ -1907,7 +1879,9 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                   placeholder={t("execution.tools.codePlaceholder")}
                 />
               </div>
-              {addToolDialogError && <p className="text-sm text-red-700">{addToolDialogError}</p>}
+              {addToolDialogError && (
+                <p className="text-sm text-tone-danger-fg">{addToolDialogError}</p>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowAddToolDialog(false)}>

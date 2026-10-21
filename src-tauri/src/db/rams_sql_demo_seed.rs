@@ -315,7 +315,7 @@ async fn sql_ensure_anchor_work_order(db: &DatabaseConnection, equipment_id: i64
     let actor_id = resolve_actor_id(db).await?;
     let closed_status_id = resolve_wo_status_id(db, "closed").await?;
     let corrective_type_id = resolve_wo_type_id(db, "corrective").await?;
-    let urgency_id = resolve_urgency_id(db, 3).await?;
+    let urgency_id = crate::reference::urgency_scale::urgency_value_id(db, "normal").await?;
 
     let title = format!("{DEMO_WO_TITLE_PREFIX}{equipment_id}");
     let anchor_closed_at = (Utc::now() - Duration::days(330)).to_rfc3339();
@@ -547,27 +547,7 @@ async fn resolve_wo_status_id(db: &DatabaseConnection, code: &str) -> AppResult<
 }
 
 async fn resolve_wo_type_id(db: &DatabaseConnection, code: &str) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM work_order_types WHERE code = ? LIMIT 1",
-            [code.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec![format!("WO type '{code}' missing")]))?;
-    row.try_get("", "id").map_err(decode)
-}
-
-async fn resolve_urgency_id(db: &DatabaseConnection, level: i64) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM urgency_levels WHERE level = ? LIMIT 1",
-            [level.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec![format!("urgency level {level} missing")]))?;
-    row.try_get("", "id").map_err(decode)
+    crate::wo::types::resolve_work_order_type_id_by_code(db, code).await
 }
 
 async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {

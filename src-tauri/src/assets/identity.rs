@@ -15,13 +15,20 @@
 //!   family_code          → equipment.equipment_family_ref_id → EQUIPMENT.FAMILY
 //!   subfamily_code       → equipment.equipment_subfamily_ref_id → EQUIPMENT.SUBFAMILY
 //!   criticality_code     → COALESCE(reference EQUIPMENT.CRITICALITY, lookup_values via legacy FK)
+//!   criticality_to_review→ only the legacy FK gives the criticality (`CRITICALITY_TO_REVIEW_SQL`)
 //!   status_code          → COALESCE(reference EQUIPMENT.STATUS, equipment.lifecycle_status)
 //!   org_node_id          → equipment.installed_at_node_id
 //!   commissioned_at      → equipment.commissioning_date
 //!   decommissioned_at    → equipment.decommissioned_at (added in migration 010)
 //!   maintainable_boundary→ equipment.maintainable_boundary (added in migration 010)
+//!   purchase_date        → equipment.purchase_date        (migration 005, commercial data)
+//!   warranty_expiry_date → equipment.warranty_expiry_date (migration 005)
+//!   replacement_value    → equipment.replacement_value    (migration 005, tenant currency)
+//!   cost_center_code     → equipment.cost_center_code     (migration 005, `cost_centers.code`)
+//!   notes                → equipment.notes                (migration 005)
+//!   org_cost_center_code → nearest org node (self or ancestor) carrying `cost_center_code`
 
-use crate::errors::{AppError, AppResult};
+use crate::errors::{issue_params, org_validation_failed, AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -44,6 +51,10 @@ pub struct Asset {
     pub subfamily_name: Option<String>,
     pub criticality_value_id: Option<i64>,
     pub criticality_code: Option<String>,
+    /// The criticality comes only from the legacy criticality list (no `EQUIPMENT.CRITICALITY`
+    /// value yet): it is read through that link and should be set by a planner.
+    #[serde(default)]
+    pub criticality_to_review: bool,
     pub status_code: String,
     pub manufacturer: Option<String>,
     pub model: Option<String>,
@@ -56,11 +67,37 @@ pub struct Asset {
     pub org_node_name: Option<String>,
     pub commissioned_at: Option<String>,
     pub decommissioned_at: Option<String>,
+    pub purchase_date: Option<String>,
+    pub warranty_expiry_date: Option<String>,
+    pub replacement_value: Option<f64>,
+    /// Cost centre set on the asset itself (overrides the location's).
+    pub cost_center_code: Option<String>,
+    /// Cost centre of the installation location (nearest org node carrying one).
+    pub org_cost_center_code: Option<String>,
+    pub notes: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
     pub row_version: i64,
 }
+
+/// Commercial and warranty data of an asset (SAP PM "general data" / Maximo "purchase" tab).
+/// Every field is replaced as given: `None` clears it.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct AssetCommercialInput {
+    /// `YYYY-MM-DD`.
+    pub purchase_date: Option<String>,
+    /// `YYYY-MM-DD`; not before the purchase date.
+    pub warranty_expiry_date: Option<String>,
+    /// Replacement value in the tenant currency; zero or positive.
+    pub replacement_value: Option<f64>,
+    /// Code of an active `cost_centers` row.
+    pub cost_center_code: Option<String>,
+    pub notes: Option<String>,
+}
+
+/// Longest free-text note kept on an asset.
+pub const ASSET_NOTES_MAX_CHARS: usize = 4000;
 
 /// Payload for creating an asset. Codes are resolved to FKs during validation.
 #[derive(Debug, Deserialize)]
@@ -80,6 +117,9 @@ pub struct CreateAssetPayload {
     pub rams_utilization_factor: Option<f64>,
     pub org_node_id: i64,
     pub commissioned_at: Option<String>,
+    /// Optional commercial / warranty data saved with the asset.
+    #[serde(default)]
+    pub commercial: Option<AssetCommercialInput>,
 }
 
 /// Payload for updating asset identity fields. Only provided fields are changed.
@@ -131,6 +171,7 @@ pub(crate) const ASSET_SELECT: &str = r"
     rs_sub.label       AS subfamily_name,
     e.criticality_value_id,
     COALESCE(rs_crit.code, lv.code) AS criticality_code,
+    (e.equipment_criticality_ref_id IS NULL AND e.criticality_value_id IS NOT NULL) AS criticality_to_review,
     COALESCE(rs_stat.code, e.lifecycle_status) AS status_code,
     e.manufacturer,
     e.model,
@@ -143,6 +184,16 @@ pub(crate) const ASSET_SELECT: &str = r"
     n.name             AS org_node_name,
     e.commissioning_date AS commissioned_at,
     e.decommissioned_at,
+    e.purchase_date,
+    e.warranty_expiry_date,
+    e.replacement_value,
+    e.cost_center_code,
+    (SELECT a.cost_center_code FROM org_nodes a
+      WHERE n.ancestor_path LIKE a.ancestor_path || '%'
+        AND a.deleted_at IS NULL
+        AND TRIM(COALESCE(a.cost_center_code, '')) <> ''
+      ORDER BY a.depth DESC LIMIT 1) AS org_cost_center_code,
+    e.notes,
     e.created_at,
     e.updated_at,
     e.deleted_at,
@@ -202,6 +253,9 @@ pub(crate) fn map_asset(row: &QueryResult) -> AppResult<Asset> {
         criticality_code: row
             .try_get::<Option<String>>("", "criticality_code")
             .map_err(|e| decode_err("criticality_code", e))?,
+        criticality_to_review: row
+            .try_get::<bool>("", "criticality_to_review")
+            .map_err(|e| decode_err("criticality_to_review", e))?,
         status_code: row
             .try_get::<String>("", "status_code")
             .map_err(|e| decode_err("status_code", e))?,
@@ -239,6 +293,24 @@ pub(crate) fn map_asset(row: &QueryResult) -> AppResult<Asset> {
         decommissioned_at: row
             .try_get::<Option<String>>("", "decommissioned_at")
             .map_err(|e| decode_err("decommissioned_at", e))?,
+        purchase_date: row
+            .try_get::<Option<String>>("", "purchase_date")
+            .map_err(|e| decode_err("purchase_date", e))?,
+        warranty_expiry_date: row
+            .try_get::<Option<String>>("", "warranty_expiry_date")
+            .map_err(|e| decode_err("warranty_expiry_date", e))?,
+        replacement_value: row
+            .try_get::<Option<f64>>("", "replacement_value")
+            .map_err(|e| decode_err("replacement_value", e))?,
+        cost_center_code: row
+            .try_get::<Option<String>>("", "cost_center_code")
+            .map_err(|e| decode_err("cost_center_code", e))?,
+        org_cost_center_code: row
+            .try_get::<Option<String>>("", "org_cost_center_code")
+            .map_err(|e| decode_err("org_cost_center_code", e))?,
+        notes: row
+            .try_get::<Option<String>>("", "notes")
+            .map_err(|e| decode_err("notes", e))?,
         created_at: row
             .try_get::<String>("", "created_at")
             .map_err(|e| decode_err("created_at", e))?,
@@ -651,6 +723,102 @@ pub(crate) async fn assert_asset_code_unique(
     Ok(())
 }
 
+/// Commercial data checked and normalised, ready to be written.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct ValidatedCommercial {
+    pub purchase_date: Option<String>,
+    pub warranty_expiry_date: Option<String>,
+    pub replacement_value: Option<f64>,
+    pub cost_center_code: Option<String>,
+    pub notes: Option<String>,
+}
+
+fn non_blank(v: Option<&str>) -> Option<String> {
+    v.map(str::trim).filter(|s| !s.is_empty()).map(ToString::to_string)
+}
+
+fn parse_calendar_date(field: &str, raw: Option<&str>) -> AppResult<Option<chrono::NaiveDate>> {
+    let Some(text) = non_blank(raw) else {
+        return Ok(None);
+    };
+    chrono::NaiveDate::parse_from_str(&text, "%Y-%m-%d")
+        .map(Some)
+        .map_err(|_| {
+            org_validation_failed(
+                "ASSET_DATE_INVALID",
+                format!("{field} must be a calendar date (YYYY-MM-DD)."),
+                issue_params(&[("field", field.to_string()), ("value", text.clone())]),
+            )
+        })
+}
+
+/// Checks commercial data: calendar dates, warranty not ending before purchase, a finite
+/// non-negative replacement value, an active cost centre, and the note length.
+pub(crate) async fn validate_commercial(
+    db: &impl ConnectionTrait,
+    input: &AssetCommercialInput,
+) -> AppResult<ValidatedCommercial> {
+    let purchase = parse_calendar_date("purchase_date", input.purchase_date.as_deref())?;
+    let warranty = parse_calendar_date("warranty_expiry_date", input.warranty_expiry_date.as_deref())?;
+    if let (Some(p), Some(w)) = (purchase, warranty) {
+        if w < p {
+            return Err(org_validation_failed(
+                "ASSET_WARRANTY_BEFORE_PURCHASE",
+                "The warranty cannot end before the purchase date.",
+                issue_params(&[("purchase", p.to_string()), ("warranty", w.to_string())]),
+            ));
+        }
+    }
+    if let Some(value) = input.replacement_value {
+        if !value.is_finite() || value < 0.0 {
+            return Err(org_validation_failed(
+                "ASSET_REPLACEMENT_VALUE_INVALID",
+                "The replacement value must be zero or a positive amount.",
+                issue_params(&[("value", value.to_string())]),
+            ));
+        }
+    }
+    let mut cost_center_code = None;
+    if let Some(code) = non_blank(input.cost_center_code.as_deref()) {
+        let found = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT code FROM cost_centers WHERE UPPER(code) = UPPER(?) AND is_active = 1",
+                [code.clone().into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                org_validation_failed(
+                    "ASSET_COST_CENTER_UNKNOWN",
+                    format!("Cost centre '{code}' does not exist or is inactive."),
+                    issue_params(&[("code", code.clone())]),
+                )
+            })?;
+        cost_center_code = Some(
+            found
+                .try_get::<String>("", "code")
+                .map_err(|e| decode_err("cost_centers.code", e))?,
+        );
+    }
+    let notes = non_blank(input.notes.as_deref());
+    if let Some(ref n) = notes {
+        if n.chars().count() > ASSET_NOTES_MAX_CHARS {
+            return Err(org_validation_failed(
+                "ASSET_NOTES_TOO_LONG",
+                format!("Notes are limited to {ASSET_NOTES_MAX_CHARS} characters."),
+                issue_params(&[("max", ASSET_NOTES_MAX_CHARS.to_string())]),
+            ));
+        }
+    }
+    Ok(ValidatedCommercial {
+        purchase_date: purchase.map(|d| d.to_string()),
+        warranty_expiry_date: warranty.map(|d| d.to_string()),
+        replacement_value: input.replacement_value,
+        cost_center_code,
+        notes,
+    })
+}
+
 // ─── Service functions ────────────────────────────────────────────────────────
 
 /// List assets with optional filters. Returns resolved codes via JOINs.
@@ -785,6 +953,10 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     // ── Status validation (normalized string + reference FK) ──────────────
     let status_code = normalize_status_code_for_reference(&payload.status_code)?;
     validate_status_code(&txn, &status_code).await?;
+    // A new asset is never created retired: retirement is recorded by Déclasser.
+    if is_retired_status_code(&txn, &status_code).await? {
+        return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]));
+    }
     let status_ref_id = resolve_status_ref_id(&txn, &status_code).await?;
 
     // ── Decommission date guard ──────────────────────────────────────────
@@ -792,6 +964,11 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
         Some(Utc::now().to_rfc3339())
     } else {
         None
+    };
+
+    let commercial = match payload.commercial {
+        Some(ref input) => validate_commercial(&txn, input).await?,
+        None => ValidatedCommercial::default(),
     };
 
     // ── Maintainable boundary guard ──────────────────────────────────────
@@ -812,8 +989,9 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
            installed_at_node_id, manufacturer, model, serial_number,
            maintainable_boundary, rams_schedule_reference_value_id, rams_utilization_factor,
            commissioning_date, decommissioned_at,
+           purchase_date, warranty_expiry_date, replacement_value, cost_center_code, notes,
            created_at, updated_at, row_version)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             entity_sync_id.clone().into(),
             asset_code.into(),
@@ -835,6 +1013,11 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
             rams_utilization_factor.into(),
             payload.commissioned_at.into(),
             decommissioned_at.into(),
+            commercial.purchase_date.into(),
+            commercial.warranty_expiry_date.into(),
+            commercial.replacement_value.into(),
+            commercial.cost_center_code.into(),
+            commercial.notes.into(),
             now.clone().into(),
             now.into(),
         ],
@@ -870,6 +1053,27 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     Ok(asset)
 }
 
+/// Refusal code: an asset is retired only through Déclasser (`decommission_asset`).
+pub const RETIRE_THROUGH_DECOMMISSION: &str = "ASSET_RETIRE_THROUGH_DECOMMISSION";
+/// Refusal code: a retired asset returns to service only through a recommission lifecycle event
+/// (`RECOMMISSIONED`, which records who and why and clears the end-of-life date).
+pub const RECOMMISSION_REQUIRED: &str = "ASSET_RECOMMISSION_REQUIRED";
+
+/// Whether `code` is a retired status (tag `retired` in the published `EQUIPMENT.STATUS` list).
+pub(crate) async fn is_retired_status_code<C: ConnectionTrait>(db: &C, code: &str) -> AppResult<bool> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT 1 AS hit WHERE ? IN ({})",
+                crate::assets::taxonomy_reference::RETIRED_STATUS_CODES_SQL
+            ),
+            [code.into()],
+        ))
+        .await?
+        .is_some())
+}
+
 /// Update the identity fields of an existing asset.
 ///
 /// Uses optimistic concurrency control via `expected_row_version`.
@@ -887,7 +1091,8 @@ pub async fn update_asset_identity(
     let current = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT e.row_version, e.lifecycle_status, e.asset_id_code, ec.code AS class_code \
+            "SELECT e.row_version, e.lifecycle_status, e.asset_id_code, ec.code AS class_code, \
+                    e.decommissioned_at \
              FROM equipment e \
              LEFT JOIN equipment_classes ec ON ec.id = e.class_id \
              WHERE e.id = ? AND e.deleted_at IS NULL",
@@ -910,6 +1115,41 @@ pub async fn update_asset_identity(
             "Conflit de version : version attendue {expected_row_version}, \
              version actuelle {current_version}. L'enregistrement a été modifié."
         )]));
+    }
+
+    // Retiring an asset (a retired status, or its end-of-life date) is done by Déclasser, which
+    // checks open work and records the reason; the identity form keeps what is stored.
+    let current_status: String = current
+        .try_get("", "lifecycle_status")
+        .map_err(|e| decode_err("lifecycle_status", e))?;
+    let current_decommissioned_at: Option<String> = current
+        .try_get("", "decommissioned_at")
+        .map_err(|e| decode_err("decommissioned_at", e))?;
+    if let Some(ref raw_status) = payload.status_code {
+        let normalized = normalize_status_code_for_reference(raw_status)?;
+        if normalized != current_status && is_retired_status_code(&txn, &normalized).await? {
+            return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]));
+        }
+        if normalized != current_status && is_retired_status_code(&txn, &current_status).await? {
+            return Err(AppError::ValidationFailed(vec![RECOMMISSION_REQUIRED.into()]));
+        }
+    }
+    if let Some(ref decom_at) = payload.decommissioned_at {
+        // Compared by calendar day: a different format of the same date is no change.
+        let day = |v: Option<&str>| {
+            v.map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.get(..10).unwrap_or(s).to_string())
+        };
+        match (day(current_decommissioned_at.as_deref()), day(decom_at.as_deref())) {
+            (None, Some(_)) => return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()])),
+            // Clearing the end-of-life date is a return to service.
+            (Some(_), None) => return Err(AppError::ValidationFailed(vec![RECOMMISSION_REQUIRED.into()])),
+            (Some(a), Some(b)) if a != b => {
+                return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]))
+            }
+            _ => {}
+        }
     }
 
     // ── Build dynamic SET clause ─────────────────────────────────────────
@@ -1026,15 +1266,6 @@ pub async fn update_asset_identity(
         binds.push(normalized.clone().into());
         sets.push("equipment_status_ref_id = ?".to_string());
         binds.push(status_ref.into());
-
-        // Auto-set decommissioned_at if transitioning to DECOMMISSIONED
-        if normalized == "DECOMMISSIONED" {
-            let has_explicit_decom = matches!(payload.decommissioned_at, Some(Some(_)));
-            if !has_explicit_decom {
-                sets.push("decommissioned_at = ?".to_string());
-                binds.push(Utc::now().to_rfc3339().into());
-            }
-        }
     }
 
     if let Some(ref mfg) = payload.manufacturer {
@@ -1072,10 +1303,8 @@ pub async fn update_asset_identity(
         sets.push("commissioning_date = ?".to_string());
         binds.push(com_at.clone().into());
     }
-    if let Some(ref decom_at) = payload.decommissioned_at {
-        sets.push("decommissioned_at = ?".to_string());
-        binds.push(decom_at.clone().into());
-    }
+    // The end-of-life date is written only by Déclasser and recommission (checked above: an
+    // identity edit can only send it back unchanged), so it is never rewritten here.
 
     if sets.is_empty() {
         return Err(AppError::ValidationFailed(vec!["Aucun champ à mettre à jour.".into()]));
@@ -1122,6 +1351,71 @@ pub async fn update_asset_identity(
     txn.commit().await?;
 
     tracing::info!(asset_id, "asset identity updated");
+    Ok(asset)
+}
+
+/// Replaces the commercial and warranty data of an asset (optimistic concurrency on `row_version`).
+pub async fn update_asset_commercial(
+    db: &DatabaseConnection,
+    asset_id: i64,
+    input: AssetCommercialInput,
+    expected_row_version: i64,
+) -> AppResult<Asset> {
+    let txn = db.begin().await?;
+    let commercial = validate_commercial(&txn, &input).await?;
+    let result = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET purchase_date = ?, warranty_expiry_date = ?, replacement_value = ?, \
+             cost_center_code = ?, notes = ?, updated_at = ?, row_version = row_version + 1 \
+             WHERE id = ? AND row_version = ? AND deleted_at IS NULL",
+            [
+                commercial.purchase_date.into(),
+                commercial.warranty_expiry_date.into(),
+                commercial.replacement_value.into(),
+                commercial.cost_center_code.into(),
+                commercial.notes.into(),
+                Utc::now().to_rfc3339().into(),
+                asset_id.into(),
+                expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        let exists = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT row_version FROM equipment WHERE id = ? AND deleted_at IS NULL",
+                [asset_id.into()],
+            ))
+            .await?;
+        return Err(match exists {
+            None => AppError::NotFound {
+                entity: "equipment".into(),
+                id: asset_id.to_string(),
+            },
+            Some(_) => org_validation_failed(
+                "ASSET_STALE_VERSION",
+                "This asset was changed by someone else. Reload it and try again.",
+                issue_params(&[]),
+            ),
+        });
+    }
+    let sql = format!("SELECT {ASSET_SELECT} {ASSET_FROM} WHERE e.id = ?");
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            [asset_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "equipment".into(),
+            id: asset_id.to_string(),
+        })?;
+    let asset = map_asset(&row)?;
+    txn.commit().await?;
+    tracing::info!(asset_id, "asset commercial data updated");
     Ok(asset)
 }
 

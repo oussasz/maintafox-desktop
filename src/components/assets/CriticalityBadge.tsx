@@ -1,57 +1,38 @@
 /**
  * CriticalityBadge.tsx
  *
- * Standardized badge for asset criticality grades A–D.
- * Used in AssetResultTable, AssetDetailPanel, and AssetTreeNavigator.
+ * Criticality level as a design-system chip (list, detail, tree, pickers). Tone from the level's
+ * rank in EQUIPMENT.CRITICALITY (first = most critical); label translated for the Maintafox
+ * levels, else the reference label.
  */
 
 import { useTranslation } from "react-i18next";
 
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
-
-type CriticalityGrade = "A" | "B" | "C" | "D";
+import { criticalityLabelKey, criticalityTone } from "@/components/assets/asset-tones";
+import { StatusChip } from "@/components/ui/status-chip";
+import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 
 interface CriticalityBadgeProps {
-  criticality: CriticalityGrade | string | null;
+  criticality: string | null;
+  /** Level code only (dense tables); the full label stays in the tooltip. */
   compact?: boolean;
-}
-
-const GRADE_STYLES: Record<CriticalityGrade, string> = {
-  A: "bg-red-500 text-white hover:bg-red-500/90",
-  B: "bg-orange-400 text-white hover:bg-orange-400/90",
-  C: "bg-blue-400 text-white hover:bg-blue-400/90",
-  D: "bg-gray-300 text-gray-800 hover:bg-gray-300/90",
-};
-
-const GRADE_LABELS: Record<CriticalityGrade, string> = {
-  A: "criticality.critical",
-  B: "criticality.important",
-  C: "criticality.standard",
-  D: "criticality.low",
-};
-
-function isGrade(value: string): value is CriticalityGrade {
-  return value === "A" || value === "B" || value === "C" || value === "D";
 }
 
 export function CriticalityBadge({ criticality, compact }: CriticalityBadgeProps) {
   const { t } = useTranslation("equipment");
-
-  if (!criticality || !isGrade(criticality)) {
-    return (
-      <Badge variant="secondary" className="text-xs">
-        —
-      </Badge>
-    );
+  const { catalog } = useEquipmentTaxonomy();
+  const code = criticality?.trim();
+  if (!code) {
+    return <span className="text-xs text-text-muted">{t("criticality.notRated")}</span>;
   }
-
-  const style = GRADE_STYLES[criticality];
-  const label = t(GRADE_LABELS[criticality] as never);
-
+  const key = criticalityLabelKey(code);
+  const option = catalog?.criticalities.find((c) => c.code.toUpperCase() === code.toUpperCase());
+  const label = key ? t(key as never) : (option?.label ?? code);
   return (
-    <Badge className={cn("text-xs border-0", style)}>
-      {compact ? criticality : `${criticality} — ${label}`}
-    </Badge>
+    <StatusChip
+      label={compact ? code : `${code} — ${label}`}
+      title={`${t("detail.fields.criticality")} ${code} — ${label}`}
+      tone={criticalityTone(catalog, code)}
+    />
   );
 }

@@ -1,3 +1,5 @@
+import { DI_STATUS_TONE, toneChipMap } from "@/design-system/tone";
+
 export type DiStatusKey =
   | "new"
   | "pendingReview"
@@ -9,15 +11,7 @@ export type DiStatusKey =
   | "closed"
   | "cancelled";
 
-export const DI_STATUS_STYLE: Record<string, string> = {
-  submitted: "bg-blue-100 text-blue-800",
-  in_review: "bg-sky-100 text-sky-800",
-  returned_for_clarification: "bg-orange-100 text-orange-800",
-  awaiting_approval: "bg-indigo-100 text-indigo-800",
-  approved: "bg-green-100 text-green-800",
-  deferred: "bg-gray-100 text-gray-600",
-  closed: "bg-slate-100 text-slate-700",
-};
+export const DI_STATUS_STYLE: Record<string, string> = toneChipMap(DI_STATUS_TONE);
 
 export const TERMINAL_DI_STATES = new Set(["closed"]);
 

@@ -30,7 +30,7 @@ export function WoCompletionGatesChecklist({
         {visible.map((gate) => (
           <li key={gate.code} className="flex items-start gap-2 text-sm">
             {gate.passed ? (
-              <Check className="mt-0.5 h-4 w-4 shrink-0 text-green-700" aria-hidden />
+              <Check className="mt-0.5 h-4 w-4 shrink-0 text-tone-success-fg" aria-hidden />
             ) : (
               <X className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
             )}

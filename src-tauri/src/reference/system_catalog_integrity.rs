@@ -9,6 +9,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::assets::taxonomy_reference;
 use crate::errors::AppResult;
+use crate::reference::audience::DomainAudience;
 use crate::reference::governance::derive_category_for_persist;
 
 const SYSTEM_META: &str = r#"{"origin":"system"}"#;
@@ -22,24 +23,68 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     ensure_work_delay_reasons_reference_catalog(db).await?;
     ensure_work_part_unused_reason_reference_catalog(db).await?;
     ensure_org_schedule_class_reference_catalog(db).await?;
+    // WO close-out coding (symptoms, causes, effects, mechanisms, detection methods).
+    crate::wo::closeout_reference_catalog::ensure_closeout_reference_catalogs(db).await?;
+    // Shared DI / OT urgency scale and the OT types with their maintenance nature.
+    crate::reference::urgency_scale::ensure_urgency_scale(db).await?;
+    // FMECA rating grids (severity, occurrence, detection, criticality zones).
+    crate::reliability::study::scales::ensure_fmeca_rating_scales(db).await?;
+    crate::wo::types::ensure_work_order_type_catalog(db).await?;
+    // OT types without a maintenance nature (a plant's own type, also received by sync) are
+    // flagged "to review"; nothing else about them is changed.
+    crate::wo::types::flag_types_without_nature(db).await?;
+    // Units of measure (COMPANY list) and their physical dimensions (SYSTEM list).
+    crate::reference::units::ensure_unit_catalog(db).await?;
+    // Finance cost categories and variance reasons.
+    crate::finance::reference_catalog::ensure_finance_reference_catalogs(db).await?;
+    // Certification / authorisation types and skills in the tenant's language.
+    crate::qualification::catalog::ensure_qualification_catalog(db).await?;
+    // Planning window types (production, maintenance, shutdown, freeze).
+    crate::planning::windows::ensure_window_type_catalog(db).await?;
+    // LOTO energy types (SYSTEM) and isolation methods (COMPANY); isolations that arrived without
+    // links (replayed history) are linked from their typed texts.
+    crate::permit::energy_reference::ensure_permit_energy_catalogs(db).await?;
+    crate::permit::energy_reference::map_isolation_texts(db).await?;
+    // PM deferral / miss reasons (COMPANY) and finding severities (SYSTEM).
+    crate::pm::reason_catalog::ensure_pm_reason_catalogs(db).await?;
+    // Which work needs a permit at request conversion (COMPANY list, shipped empty).
+    crate::permit::requirement_rules::ensure_permit_requirement_rules(db).await?;
+    // Permit hand-over roles (COMPANY list, three starter roles to review since migration 239); free
+    // texts stored or received by sync from a PC that has not run migration 235 are adopted with
+    // their exact text, flagged "à revoir" (the catch-all; a received log adopts its own roles).
+    crate::permit::handover_roles::adopt_stored_roles(db).await?;
+    // Personnel lists: employment statuses (SYSTEM), employment types, absence types (with their
+    // behaviour tag) and position categories (COMPANY); document categories (COMPANY).
+    crate::personnel::reference_lists::ensure_personnel_reference_lists(db).await?;
+    crate::library_documents::ensure_document_categories(db).await?;
+    // Values stored before the lists existed or received by sync from an older device: adopted
+    // with their exact code, flagged "à revoir" (absence types keep their former behaviour).
+    crate::personnel::reference_lists::adopt_stored_personnel_values(db).await?;
+    crate::library_documents::adopt_stored_document_categories(db).await?;
+    // FMECA placeholder rows (former root-cause promotion) that arrived by sync from a device that
+    // had not run migration 221 yet are flagged "to review" (exact signature only).
+    crate::reliability::study::fmeca::flag_placeholder_rows(db).await?;
+    // Break-in reasons (COMPANY list: each plant extends it).
+    crate::planning::break_in_reasons::ensure_break_in_reason_catalog(db).await?;
     Ok(())
 }
 
-async fn ensure_domain(
-    db: &DatabaseConnection,
+pub(crate) async fn ensure_domain(
+    db: &impl ConnectionTrait,
     code: &str,
     name: &str,
     structure_type: &str,
     governance_level: &str,
     is_extendable: i64,
+    audience: DomainAudience,
 ) -> AppResult<()> {
     let category = derive_category_for_persist(code, governance_level);
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO reference_domains \
-         (code, name, structure_type, governance_level, governance_category, \
+         (code, name, structure_type, governance_level, governance_category, audience, \
           is_extendable, validation_rules_json, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, NULL, \
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, \
                  strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
         [
             code.into(),
@@ -47,21 +92,27 @@ async fn ensure_domain(
             structure_type.into(),
             governance_level.into(),
             category.as_str().into(),
+            audience.as_str().into(),
             is_extendable.into(),
         ],
     ))
     .await?;
-    // Keep category aligned for rows created before governance_category existed.
+    // Keep category and audience aligned (rows created before these columns existed, or changed by
+    // a replica): both are decided by the product, not by the plant.
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE reference_domains SET governance_category = ? WHERE UPPER(TRIM(code)) = ?",
-        [category.as_str().into(), code.to_ascii_uppercase().into()],
+        "UPDATE reference_domains SET governance_category = ?, audience = ? WHERE UPPER(TRIM(code)) = ?",
+        [
+            category.as_str().into(),
+            audience.as_str().into(),
+            code.to_ascii_uppercase().into(),
+        ],
     ))
     .await?;
     Ok(())
 }
 
-async fn ensure_published_set(db: &DatabaseConnection, domain_code: &str) -> AppResult<()> {
+pub(crate) async fn ensure_published_set(db: &impl ConnectionTrait, domain_code: &str) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO reference_sets \
@@ -112,7 +163,7 @@ fn seeded_value_sync_id(domain_code: &str, value_code: &str) -> String {
 ///
 /// Existing rows are left untouched (same `(set_id, code)`), and so is a seeded row that already
 /// lives in an older set of the domain (same `entity_sync_id`).
-async fn insert_seed_values(db: &DatabaseConnection, domain_code: &str, rows: &[SeedValue]) -> AppResult<()> {
+async fn insert_seed_values(db: &impl ConnectionTrait, domain_code: &str, rows: &[SeedValue]) -> AppResult<()> {
     for row in rows {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -130,7 +181,8 @@ async fn insert_seed_values(db: &DatabaseConnection, domain_code: &str, rows: &[
                 row.description.into(),
                 row.sort_order.into(),
                 row.color_hex.into(),
-                row.semantic_tag.into(),
+                // An empty tag is no tag (request types without an OT nature).
+                Some(row.semantic_tag).filter(|t| !t.is_empty()).map(str::to_string).into(),
                 row.metadata_json.into(),
                 domain_code.into(),
             ],
@@ -139,29 +191,6 @@ async fn insert_seed_values(db: &DatabaseConnection, domain_code: &str, rows: &[
     }
     Ok(())
 }
-
-const DI_SYMPTOMS: &[SeedValue] = &[
-    SeedValue {
-        description: Some("Niveau vibratoire anormal détecté."),
-        ..seed("vibration", "Vibration anormale", 1, "di_symptom")
-    },
-    SeedValue {
-        description: Some("Présence de fuite (huile, eau, air, etc.)."),
-        ..seed("leakage", "Fuite", 2, "di_symptom")
-    },
-    SeedValue {
-        description: Some("Montée en température anormale."),
-        ..seed("overheating", "Surchauffe", 3, "di_symptom")
-    },
-    SeedValue {
-        description: Some("Bruit ou cliquetis inhabituel."),
-        ..seed("noise", "Bruit anormal", 4, "di_symptom")
-    },
-    SeedValue {
-        description: Some("Dégradation notable des performances."),
-        ..seed("performance_drop", "Perte de performance", 5, "di_symptom")
-    },
-];
 
 const DI_ORIGINS: &[SeedValue] = &[
     seed("operator", "Opérateur", 1, "di_origin"),
@@ -175,25 +204,6 @@ const DI_ORIGINS: &[SeedValue] = &[
     seed("external", "Externe", 9, "di_origin"),
 ];
 
-const DI_PRIORITIES: &[SeedValue] = &[
-    SeedValue {
-        color_hex: Some("#198754"),
-        ..seed("low", "Basse", 1, "di_priority")
-    },
-    SeedValue {
-        color_hex: Some("#0dcaf0"),
-        ..seed("medium", "Normale", 2, "di_priority")
-    },
-    SeedValue {
-        color_hex: Some("#ffc107"),
-        ..seed("high", "Haute", 3, "di_priority")
-    },
-    SeedValue {
-        color_hex: Some("#dc3545"),
-        ..seed("critical", "Critique", 4, "di_priority")
-    },
-];
-
 const DI_IMPACT_LEVELS: &[SeedValue] = &[
     seed("unknown", "Inconnu", 1, "di_impact_level"),
     seed("none", "Aucun", 2, "di_impact_level"),
@@ -202,45 +212,55 @@ const DI_IMPACT_LEVELS: &[SeedValue] = &[
     seed("critical", "Critique", 5, "di_impact_level"),
 ];
 
+/// Request types (COMPANY list, extended by the plant through draft → publish). The semantic tag
+/// of a shipped type names the EN 13306 nature of the OT the request becomes
+/// (`wo::types::DI_REQUEST_TYPE_NATURES`); a type without a nature tag becomes corrective work.
 const DI_REQUEST_TYPES: &[SeedValue] = &[
     SeedValue {
         description: Some("Intervention corrective / réparation."),
-        ..seed("repair", "Réparation", 1, "di_request_type")
+        ..seed("repair", "Réparation", 1, "")
     },
     SeedValue {
         description: Some("Maintenance préventive planifiée."),
-        ..seed("preventive", "Préventif", 2, "di_request_type")
+        ..seed("preventive", "Préventif", 2, "preventive_predetermined")
     },
     SeedValue {
         description: Some("Contrôle / inspection."),
-        ..seed("inspection", "Inspection", 3, "di_request_type")
+        ..seed("inspection", "Inspection", 3, "preventive_condition_based")
     },
     SeedValue {
         description: Some("Mise en place / installation."),
-        ..seed("installation", "Installation", 4, "di_request_type")
+        ..seed("installation", "Installation", 4, "improvement")
     },
     SeedValue {
         description: Some("Étalonnage / calibrage."),
-        ..seed("calibration", "Calibrage", 5, "di_request_type")
+        ..seed("calibration", "Calibrage", 5, "preventive_predetermined")
     },
     SeedValue {
         description: Some("Amélioration / modification."),
-        ..seed("improvement", "Amélioration", 6, "di_request_type")
+        ..seed("improvement", "Amélioration", 6, "improvement")
     },
     SeedValue {
         description: Some("Information seule — observation."),
-        ..seed("observation", "Observation", 7, "di_request_type")
+        ..seed("observation", "Observation", 7, "")
     },
     SeedValue {
         description: Some("Autre type de demande."),
-        ..seed("other", "Autre", 8, "di_request_type")
+        ..seed("other", "Autre", 8, "")
     },
 ];
 
 async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
-    ensure_domain(db, "DI.SYMPTOM", "Symptômes DI", "flat", "tenant_managed", 1).await?;
-    ensure_domain(db, "DI.ORIGIN", "Origines DI", "flat", "tenant_managed", 1).await?;
-    ensure_domain(db, "DI.PRIORITY", "Priorités DI", "flat", "protected_analytical", 0).await?;
+    ensure_domain(
+        db,
+        "DI.ORIGIN",
+        "Origines DI",
+        "flat",
+        "tenant_managed",
+        1,
+        DomainAudience::Company,
+    )
+    .await?;
     ensure_domain(
         db,
         "DI.IMPACT_LEVEL",
@@ -248,6 +268,7 @@ async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
         "flat",
         "protected_analytical",
         0,
+        DomainAudience::Company,
     )
     .await?;
     ensure_domain(
@@ -256,26 +277,104 @@ async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
         "Types de demande DI",
         "flat",
         "protected_analytical",
-        0,
+        1,
+        DomainAudience::Company,
     )
     .await?;
 
-    for code in [
-        "DI.SYMPTOM",
-        "DI.ORIGIN",
-        "DI.PRIORITY",
-        "DI.IMPACT_LEVEL",
-        "DI.REQUEST_TYPE",
-    ] {
+    // Symptoms: shared ISO 14224 list `WORK.SYMPTOMS` (migration 199). Urgency: shared scale
+    // `WORK.URGENCY` (migration 198, `reference::urgency_scale`).
+    for code in ["DI.ORIGIN", "DI.IMPACT_LEVEL", "DI.REQUEST_TYPE"] {
         ensure_published_set(db, code).await?;
     }
 
-    insert_seed_values(db, "DI.SYMPTOM", DI_SYMPTOMS).await?;
     insert_seed_values(db, "DI.ORIGIN", DI_ORIGINS).await?;
-    insert_seed_values(db, "DI.PRIORITY", DI_PRIORITIES).await?;
     insert_seed_values(db, "DI.IMPACT_LEVEL", DI_IMPACT_LEVELS).await?;
     insert_seed_values(db, "DI.REQUEST_TYPE", DI_REQUEST_TYPES).await?;
 
+    ensure_di_decision_reason_catalogs(db).await?;
+    Ok(())
+}
+
+/// Reasons a reviewer gives when sending a request back to its requester for information
+/// (COMPANY list: each plant words its own questions; the starter set covers the usual gaps).
+const DI_RETURN_REASONS: &[SeedValue] = &[
+    SeedValue {
+        description: Some("La description ne permet pas de comprendre le problème."),
+        ..seed("unclear_description", "Description imprécise", 1, "di_return_reason")
+    },
+    SeedValue {
+        description: Some("L'équipement ou l'emplacement indiqué n'est pas le bon ou manque."),
+        ..seed(
+            "asset_or_location",
+            "Équipement / emplacement à préciser",
+            2,
+            "di_return_reason",
+        )
+    },
+    SeedValue {
+        description: Some("Une photo ou un document est nécessaire pour juger la demande."),
+        ..seed(
+            "missing_evidence",
+            "Photo / pièce jointe manquante",
+            3,
+            "di_return_reason",
+        )
+    },
+    SeedValue {
+        description: Some("L'urgence ou l'impact déclaré doit être justifié."),
+        ..seed(
+            "urgency_to_justify",
+            "Urgence / impact à justifier",
+            4,
+            "di_return_reason",
+        )
+    },
+    SeedValue {
+        description: Some("Autre question au demandeur (précisée dans la note)."),
+        ..seed("other", "Autre (voir note)", 5, "di_return_reason")
+    },
+];
+
+/// Reasons a request is deferred to a later date (COMPANY list).
+const DI_DEFERRAL_REASONS: &[SeedValue] = &[
+    seed("planned_shutdown", "Arrêt planifié", 1, "di_deferral_reason"),
+    seed("awaiting_parts", "Attente de pièces", 2, "di_deferral_reason"),
+    seed(
+        "awaiting_contractor",
+        "Attente d'un sous-traitant",
+        3,
+        "di_deferral_reason",
+    ),
+    seed(
+        "production_constraint",
+        "Contrainte de production",
+        4,
+        "di_deferral_reason",
+    ),
+    seed("budget", "Budget", 5, "di_deferral_reason"),
+    seed("other", "Autre (voir note)", 6, "di_deferral_reason"),
+];
+
+/// Reason lists of the request review decisions (return for information, deferral). Run by the
+/// integrity pass and by migration 217 for existing databases.
+pub(crate) async fn ensure_di_decision_reason_catalogs(db: &impl ConnectionTrait) -> AppResult<()> {
+    for (code, name, rows) in [
+        (
+            crate::di::reference_catalog::DOMAIN_RETURN_REASON,
+            "Motifs de retour DI (demande d'information)",
+            DI_RETURN_REASONS,
+        ),
+        (
+            crate::di::reference_catalog::DOMAIN_DEFERRAL_REASON,
+            "Motifs de report DI",
+            DI_DEFERRAL_REASONS,
+        ),
+    ] {
+        ensure_domain(db, code, name, "flat", "tenant_managed", 1, DomainAudience::Company).await?;
+        ensure_published_set(db, code).await?;
+        insert_seed_values(db, code, rows).await?;
+    }
     Ok(())
 }
 
@@ -314,6 +413,7 @@ async fn ensure_personnel_skills_reference_catalog(db: &DatabaseConnection) -> A
         "hierarchical",
         "tenant_managed",
         1,
+        DomainAudience::Company,
     )
     .await?;
     ensure_published_set(db, "PERSONNEL.SKILLS").await?;
@@ -362,6 +462,7 @@ async fn ensure_work_failure_modes_reference_catalog(db: &DatabaseConnection) ->
         "hierarchical",
         "system_seeded",
         0,
+        DomainAudience::Company,
     )
     .await?;
     ensure_published_set(db, "WORK.FAILURE_MODES").await?;
@@ -445,7 +546,16 @@ const WORK_DELAY_REASONS: &[SeedValue] = &[
 ];
 
 async fn ensure_work_delay_reasons_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
-    ensure_domain(db, "WORK.DELAY_REASONS", "Delay reasons", "flat", "tenant_managed", 1).await?;
+    ensure_domain(
+        db,
+        "WORK.DELAY_REASONS",
+        "Delay reasons",
+        "flat",
+        "tenant_managed",
+        1,
+        DomainAudience::Company,
+    )
+    .await?;
     ensure_published_set(db, "WORK.DELAY_REASONS").await?;
     insert_seed_values(db, "WORK.DELAY_REASONS", WORK_DELAY_REASONS).await?;
     Ok(())
@@ -467,6 +577,7 @@ async fn ensure_work_part_unused_reason_reference_catalog(db: &DatabaseConnectio
         "flat",
         "tenant_managed",
         1,
+        DomainAudience::Company,
     )
     .await?;
     ensure_published_set(db, "WORK.PART_UNUSED_REASON").await?;
@@ -475,7 +586,7 @@ async fn ensure_work_part_unused_reason_reference_catalog(db: &DatabaseConnectio
 }
 
 const ORG_SCHEDULE_CLASSES: &[SeedValue] = &[SeedValue {
-    metadata_json: Some(r#"{"shift_pattern_code":"DAY_SHIFT","is_continuous":false,"nominal_hours_per_day":8.0}"#),
+    metadata_json: Some(r#"{"shift_pattern_code":"DAY_SHIFT","is_continuous":false}"#),
     ..seed("DAY_SHIFT", "Journée normale", 1, "schedule_class")
 }];
 
@@ -487,6 +598,7 @@ async fn ensure_org_schedule_class_reference_catalog(db: &DatabaseConnection) ->
         "flat",
         "tenant_managed",
         1,
+        DomainAudience::Company,
     )
     .await?;
     ensure_published_set(db, "ORG.SCHEDULE_CLASS").await?;

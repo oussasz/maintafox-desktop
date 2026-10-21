@@ -1,6 +1,7 @@
 /**
  * Tenant display currency — ISO 4217 codes.
- * SSOT for runtime display: `app_settings.locale.currency_code` via locale-store.
+ * SSOT for runtime display: `app_settings.locale.currency_code` via locale-store; the currencies
+ * themselves are the list Données de référence › Devises (`listReferenceCurrencies`).
  * Do not hardcode EUR/USD/DZD in UI modules; use `useFormatters().formatCurrency`.
  */
 
@@ -9,22 +10,6 @@ export const FALLBACK_CURRENCY_CODE = "DZD";
 
 /** Setting key in `app_settings` (tenant scope). */
 export const LOCALE_CURRENCY_SETTING_KEY = "locale.currency_code";
-
-/** Common ISO 4217 codes offered in Settings → Localization. */
-export const CURRENCY_CODE_OPTIONS = [
-  "DZD",
-  "MAD",
-  "TND",
-  "EUR",
-  "USD",
-  "GBP",
-  "CHF",
-  "CAD",
-  "SAR",
-  "AED",
-] as const;
-
-export type SupportedCurrencyCode = (typeof CURRENCY_CODE_OPTIONS)[number];
 
 export function isIso4217CurrencyCode(code: string): boolean {
   return /^[A-Z]{3}$/.test(code.trim());

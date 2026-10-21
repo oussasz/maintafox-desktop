@@ -1,18 +1,14 @@
 /**
  * PublishReadinessPanel.tsx
  *
- * Banner at the top of ReferenceValueEditor for draft sets. Shows
- * publish-readiness validation (blockers + warnings), impact preview,
- * and the publish action button with step-up awareness.
- *
- * Phase 2 – Sub-phase 03 – File 04 – Sprint S4 (GAP REF-04).
+ * Banner at the top of ReferenceValueEditor for a candidate version (draft or validated) of a
+ * controlled catalogue. Shows what still blocks publication, the impact on records, and runs the
+ * governed publish: validate the draft (validation engine) → impact preview → publish.
  */
 
 import {
   AlertTriangle,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
   ClipboardCheck,
   Eye,
   Send,
@@ -22,8 +18,9 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -32,258 +29,285 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { StatusChip } from "@/components/ui/status-chip";
+import { mfTone } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
+import { cn } from "@/lib/utils";
 import { useReferenceGovernanceStore } from "@/stores/reference-governance-store";
-import { useReferenceManagerStore } from "@/stores/reference-manager-store";
-import type { ReferencePublishIssue } from "@shared/ipc-types";
+import type {
+  ReferenceImpactSummary,
+  ReferencePublishIssue,
+  ReferencePublishResult,
+} from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-// ── Component ─────────────────────────────────────────────────────────────────
+/**
+ * Readiness checks the publish action itself takes care of: a draft is validated again by the
+ * action (so an older validation report does not count), and the impact preview is computed when
+ * the confirmation opens. A failed validation is reported with each problem by the action.
+ */
+const CHECKS_SATISFIED_BY_ACTION: Record<string, ReadonlySet<string>> = {
+  draft: new Set([
+    "set_status",
+    "validation_report_missing",
+    "validation_blockers",
+    "validation_failed",
+    "impact_preview_required",
+  ]),
+  validated: new Set(["impact_preview_required"]),
+};
+
+/** Issues that still need the user, for a candidate in `setStatus`. */
+export function outstandingPublishIssues(
+  issues: readonly ReferencePublishIssue[],
+  setStatus: string,
+): ReferencePublishIssue[] {
+  const satisfied = CHECKS_SATISFIED_BY_ACTION[setStatus] ?? new Set<string>();
+  return issues.filter((i) => !satisfied.has(i.check));
+}
 
 interface PublishReadinessPanelProps {
   setId: number;
+  /** `draft` or `validated`. */
+  setStatus: string;
   isProtected: boolean;
+  /** Called with the publish result once the version is live. */
+  onPublished: (result: ReferencePublishResult) => void;
 }
 
-export function PublishReadinessPanel({ setId, isProtected }: PublishReadinessPanelProps) {
+export function PublishReadinessPanel({
+  setId,
+  setStatus,
+  isProtected,
+  onPublished,
+}: PublishReadinessPanelProps) {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
   const mayPublish = can(P.REF_PUBLISH);
 
   const readiness = useReferenceGovernanceStore((s) => s.readiness);
   const readinessLoading = useReferenceGovernanceStore((s) => s.readinessLoading);
+  const readinessError = useReferenceGovernanceStore((s) => s.readinessError);
   const impactSummary = useReferenceGovernanceStore((s) => s.impactSummary);
   const impactLoading = useReferenceGovernanceStore((s) => s.impactLoading);
   const loadReadiness = useReferenceGovernanceStore((s) => s.loadReadiness);
   const loadImpact = useReferenceGovernanceStore((s) => s.loadImpact);
-  const publish = useReferenceGovernanceStore((s) => s.publish);
-  const loadSetsForDomain = useReferenceManagerStore((s) => s.loadSetsForDomain);
+  const validateAndPublish = useReferenceGovernanceStore((s) => s.validateAndPublish);
 
-  const [expanded, setExpanded] = useState(true);
   const [impactOpen, setImpactOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  // Load readiness on mount
   useEffect(() => {
     void loadReadiness(setId);
-  }, [setId, loadReadiness]);
+  }, [setId, setStatus, loadReadiness]);
 
-  const blockers =
-    readiness?.issues.filter((i: ReferencePublishIssue) => i.severity === "error") ?? [];
-  const warnings =
-    readiness?.issues.filter((i: ReferencePublishIssue) => i.severity === "warning") ?? [];
-  const isReady = readiness?.is_ready === true && blockers.length === 0;
-  const canPublish = mayPublish && isReady;
+  const currentReadiness = readiness?.set_id === setId ? readiness : null;
+  const outstanding = currentReadiness
+    ? outstandingPublishIssues(currentReadiness.issues, setStatus)
+    : [];
+  const blockers = outstanding.filter((i) => i.severity === "blocker");
+  const warnings = outstanding.filter((i) => i.severity !== "blocker");
+  const ready = currentReadiness != null && blockers.length === 0;
+  const currentImpact = impactSummary?.set_id === setId ? impactSummary : null;
 
-  const handlePublish = useCallback(async () => {
-    setConfirmOpen(false);
-    await publish(setId);
-    // Reload sets to reflect new published status
-    if (readiness?.domain_id) {
-      void loadSetsForDomain(readiness.domain_id);
-    }
-  }, [publish, setId, readiness?.domain_id, loadSetsForDomain]);
+  const issueText = (issue: ReferencePublishIssue) =>
+    t(`publish.check.${issue.check}`, { defaultValue: issue.message });
 
-  const handlePreviewImpact = useCallback(() => {
+  const openImpact = useCallback(() => {
     void loadImpact(setId);
     setImpactOpen(true);
   }, [loadImpact, setId]);
 
+  const openConfirm = useCallback(() => {
+    void loadImpact(setId);
+    setConfirmOpen(true);
+  }, [loadImpact, setId]);
+
+  const runPublish = useCallback(async () => {
+    const result = await validateAndPublish(setId, setStatus);
+    onPublished(result);
+  }, [validateAndPublish, setId, setStatus, onPublished]);
+
+  const publishLabel =
+    setStatus === "draft" ? t("publish.validateAndPublish") : t("publish.publishSet");
+
   return (
     <>
-      <div className="border-b border-surface-border bg-surface-0">
-        {/* Header */}
-        <button
-          type="button"
-          className="flex w-full items-center justify-between px-4 py-2.5 hover:bg-surface-1 transition-colors"
-          onClick={() => setExpanded(!expanded)}
-        >
-          <div className="flex items-center gap-2">
-            <ClipboardCheck className="h-4 w-4 text-text-muted" />
-            <span className="text-sm font-medium text-text-primary">{t("publish.title")}</span>
-            {readinessLoading ? (
-              <div className="h-3.5 w-3.5 animate-spin rounded-full border border-surface-3 border-t-primary" />
-            ) : isReady ? (
-              <Badge variant="default" className="text-[10px] bg-green-500">
-                {t("publish.ready")}
-              </Badge>
-            ) : (
-              <Badge variant="destructive" className="text-[10px]">
-                {t("publish.notReady", { count: blockers.length })}
-              </Badge>
-            )}
+      <section
+        aria-label={t("publish.title")}
+        className="border-b border-surface-border bg-surface-0 px-4 py-3"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <ClipboardCheck className="h-4 w-4 shrink-0 text-text-muted" aria-hidden />
+            <h2 className="text-sm font-medium text-text-primary">{t("publish.title")}</h2>
+            {readinessLoading && !currentReadiness ? null : ready ? (
+              <StatusChip label={t("publish.ready")} tone="success" icon={CheckCircle2} />
+            ) : currentReadiness ? (
+              <StatusChip
+                label={t("publish.notReady", { count: blockers.length })}
+                tone="danger"
+                icon={XCircle}
+              />
+            ) : null}
           </div>
-          {expanded ? (
-            <ChevronUp className="h-4 w-4 text-text-muted" />
-          ) : (
-            <ChevronDown className="h-4 w-4 text-text-muted" />
-          )}
-        </button>
-
-        {/* Expanded content */}
-        {expanded && (
-          <div className="px-4 pb-3 space-y-3">
-            {/* Blockers */}
-            {blockers.length > 0 && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-status-danger">{t("publish.blockers")}</p>
-                {blockers.map((issue) => (
-                  <div
-                    key={issue.message}
-                    className="flex items-start gap-1.5 text-xs text-status-danger"
-                  >
-                    <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                    <span>{issue.message}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Warnings */}
-            {warnings.length > 0 && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-status-warning">{t("publish.warnings")}</p>
-                {warnings.map((issue) => (
-                  <div
-                    key={issue.message}
-                    className="flex items-start gap-1.5 text-xs text-status-warning"
-                  >
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                    <span>{issue.message}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* All clear */}
-            {blockers.length === 0 && warnings.length === 0 && readiness && (
-              <div className="flex items-center gap-1.5 text-xs text-status-success">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                <span>{t("publish.allClear")}</span>
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="flex items-center gap-2 pt-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 gap-1.5"
+              onClick={openImpact}
+              disabled={impactLoading}
+            >
+              <Eye className="h-4 w-4" aria-hidden />
+              {t("publish.previewImpact")}
+            </Button>
+            {mayPublish ? (
               <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 h-7 text-xs"
-                onClick={handlePreviewImpact}
-                disabled={impactLoading}
+                type="button"
+                className="h-11 gap-1.5"
+                onClick={openConfirm}
+                disabled={!ready || readinessLoading}
               >
-                <Eye className="h-3 w-3" />
-                {t("publish.previewImpact")}
+                {isProtected ? <Shield className="h-4 w-4" aria-hidden /> : null}
+                <Send className="h-4 w-4" aria-hidden />
+                {publishLabel}
               </Button>
-              {mayPublish ? (
-                <Button
-                  variant="default"
-                  size="sm"
-                  className="gap-1.5 h-7 text-xs"
-                  onClick={() => setConfirmOpen(true)}
-                  disabled={!canPublish || readinessLoading}
-                >
-                  {isProtected && <Shield className="h-3 w-3" />}
-                  <Send className="h-3 w-3" />
-                  {t("publish.publishSet")}
-                </Button>
-              ) : null}
-            </div>
+            ) : null}
           </div>
-        )}
-      </div>
+        </div>
 
-      {/* ── Impact preview dialog ───────────────────────────────────────── */}
+        <p className="mt-1 text-xs text-text-muted">
+          {setStatus === "draft" ? t("publish.draftHint") : t("publish.validatedHint")}
+        </p>
+        {!mayPublish ? (
+          <p className="mt-1 text-xs text-text-secondary">{t("publish.noPublishPermission")}</p>
+        ) : null}
+        {!readinessLoading && currentReadiness == null && readinessError?.setId === setId ? (
+          <ErrorState
+            className="mt-2 py-4"
+            error={readinessError.error}
+            onRetry={() => void loadReadiness(setId)}
+          />
+        ) : null}
+
+        {blockers.length > 0 ? (
+          <ul className="mt-2 space-y-1" aria-label={t("publish.blockers")}>
+            {blockers.map((issue) => (
+              <li
+                key={issue.check}
+                className={cn("flex items-start gap-1.5 text-xs", mfTone.danger.text)}
+              >
+                <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span>{issueText(issue)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {warnings.length > 0 ? (
+          <ul className="mt-2 space-y-1" aria-label={t("publish.warnings")}>
+            {warnings.map((issue) => (
+              <li
+                key={issue.check}
+                className={cn("flex items-start gap-1.5 text-xs", mfTone.warning.text)}
+              >
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span>{issueText(issue)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+
+      {/* Impact preview (read-only) */}
       <Dialog open={impactOpen} onOpenChange={setImpactOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{t("publish.impactTitle")}</DialogTitle>
             <DialogDescription>{t("publish.impactDescription")}</DialogDescription>
           </DialogHeader>
-          {impactLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
-            </div>
-          ) : impactSummary ? (
-            <div className="space-y-3">
-              <p className="text-sm">
-                {t("publish.totalAffected", { count: impactSummary.total_affected })}
-              </p>
-              {impactSummary.removed_codes.length > 0 ? (
-                <p className="text-xs text-text-secondary">
-                  {t("publish.removedCodes", { codes: impactSummary.removed_codes.join(", ") })}
-                </p>
-              ) : null}
-              {impactSummary.deactivated_codes.length > 0 ? (
-                <p className="text-xs text-text-secondary">
-                  {t("publish.deactivatedCodes", {
-                    codes: impactSummary.deactivated_codes.join(", "),
-                  })}
-                </p>
-              ) : null}
-              {impactSummary.dimensions.map((dim) => (
-                <div key={dim.module} className="border-b border-surface-border pb-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-text-secondary">
-                      {t(`publish.module.${dim.module}`, { defaultValue: dim.module })}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Badge
-                        variant={dim.affected_count > 0 ? "default" : "secondary"}
-                        className="text-[10px]"
-                      >
-                        {t(`publish.impactStatus.${dim.status}`, { defaultValue: dim.status })}
-                      </Badge>
-                      <span className="font-mono text-xs">{dim.affected_count}</span>
-                    </div>
-                  </div>
-                  {dim.tables.length > 0 ? (
-                    <ul className="mt-1 space-y-0.5 text-xs text-text-muted">
-                      {dim.tables.map((tb) => (
-                        <li key={`${tb.table}.${tb.column}`} className="font-mono">
-                          {t("publish.impactTable", {
-                            table: tb.table,
-                            column: tb.column,
-                            count: tb.count,
-                          })}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-text-muted">{t("publish.noImpactData")}</p>
-          )}
+          <ImpactSummaryView summary={currentImpact} loading={impactLoading} />
           <DialogFooter>
-            <Button variant="outline" onClick={() => setImpactOpen(false)}>
+            <Button variant="outline" className="h-11" onClick={() => setImpactOpen(false)}>
               {t("publish.close")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ── Publish confirmation dialog ─────────────────────────────────── */}
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("publish.confirmTitle")}</DialogTitle>
-            <DialogDescription>
-              {isProtected ? t("publish.confirmProtected") : t("publish.confirmDescription")}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmOpen(false)}>
-              {t("publish.cancel")}
-            </Button>
-            <Button onClick={() => void handlePublish()} disabled={readinessLoading}>
-              {isProtected && <Shield className="mr-1.5 h-3.5 w-3.5" />}
-              {t("publish.confirm")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Publish confirmation with the impact of this version */}
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={t("publish.confirmTitle")}
+        description={isProtected ? t("publish.confirmProtected") : t("publish.confirmDescription")}
+        confirmLabel={publishLabel}
+        confirmDisabled={impactLoading || currentImpact == null}
+        onConfirm={runPublish}
+      >
+        <ImpactSummaryView summary={currentImpact} loading={impactLoading} />
+      </ConfirmDialog>
     </>
+  );
+}
+
+function ImpactSummaryView({
+  summary,
+  loading,
+}: {
+  summary: ReferenceImpactSummary | null;
+  loading: boolean;
+}) {
+  const { t } = useTranslation("reference");
+  if (loading) return <LoadingState label={t("publish.impactLoading")} className="py-6" />;
+  if (!summary) return <p className="text-sm text-text-muted">{t("publish.noImpactData")}</p>;
+
+  const affected = summary.dimensions.filter((d) => d.affected_count > 0);
+  const unverified = summary.dimensions.filter((d) => d.status === "unavailable");
+  return (
+    <div className="space-y-3 text-sm">
+      <p>
+        {summary.total_affected > 0
+          ? t("publish.totalAffected", { count: summary.total_affected })
+          : t("publish.noRecordAffected")}
+      </p>
+      {summary.removed_codes.length > 0 ? (
+        <p className="text-xs text-text-secondary">
+          {t("publish.removedCodes", { codes: summary.removed_codes.join(", ") })}
+        </p>
+      ) : null}
+      {summary.deactivated_codes.length > 0 ? (
+        <p className="text-xs text-text-secondary">
+          {t("publish.deactivatedCodes", { codes: summary.deactivated_codes.join(", ") })}
+        </p>
+      ) : null}
+      {affected.length > 0 ? (
+        <ul className="space-y-1">
+          {affected.map((dim) => (
+            <li
+              key={dim.module}
+              className="flex items-center justify-between border-b border-surface-border pb-1"
+            >
+              <span className="text-text-secondary">
+                {t(`publish.module.${dim.module}`, { defaultValue: t("publish.module.other") })}
+              </span>
+              <span className="font-mono tabular-nums">{dim.affected_count}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {unverified.length > 0 ? (
+        <p className="text-xs text-text-muted">
+          {t("publish.unverifiedModules", {
+            modules: unverified
+              .map((d) =>
+                t(`publish.module.${d.module}`, { defaultValue: t("publish.module.other") }),
+              )
+              .join(", "),
+          })}
+        </p>
+      ) : null}
+      <p className="text-xs text-text-muted">{t("publish.remapHint")}</p>
+    </div>
   );
 }

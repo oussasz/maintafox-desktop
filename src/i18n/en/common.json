@@ -1,4 +1,43 @@
 {
+  "toast": {
+    "dismiss": "Dismiss the message"
+  },
+  "partNecessity": {
+    "legend": "Part required or optional",
+    "legendFor": "{{part}}: required or optional",
+    "required": "Required",
+    "optional": "Optional",
+    "choose": "Say whether the part is required or optional.",
+    "requiredHint": "When short, it blocks committing the work.",
+    "optionalHint": "When short, it only warns: the work can be committed without it."
+  },
+  "listValue": {
+    "review": "To review",
+    "reviewHint": "Legacy value, or a value missing from the plant's list: check it in Reference data."
+  },
+  "woOpenRule": {
+    "figure": "Work orders — {{rule}}",
+    "open_work_to_do": "Open (work to do)",
+    "not_yet_closed": "Not yet closed",
+    "hint": {
+      "open_work_to_do": "Work orders from draft to on hold: the work is still to do.",
+      "not_yet_closed": "Every work order except closed or cancelled ones, including finished work awaiting close-out."
+    }
+  },
+  "listAccess": {
+    "permitTypes": "Reading the permit types requires the permit view right.",
+    "documentCategories": "Reading the document categories requires the documentation view right.",
+    "people": "Reading people requires the personnel view right.",
+    "teams": "Reading teams requires the personnel view right.",
+    "companies": "Reading contractor companies requires the personnel view right.",
+    "assets": "Reading assets requires the equipment view right.",
+    "articles": "Reading stock articles requires the inventory view right.",
+    "warehouses": "Reading stores requires the inventory view right.",
+    "costCentres": "Reading cost centres requires the finance view right.",
+    "orgNodes": "Reading the organisation (sites, areas) requires the organisation view right.",
+    "users": "Reading user accounts requires the user administration right.",
+    "woTypes": "Reading work-order types requires the work-order view, work-order creation or reference data view right."
+  },
   "app": {
     "name": "Maintafox",
     "tagline": "Industrial Maintenance Management",
@@ -111,7 +150,7 @@
     "dangerousAction": "This is a sensitive action and requires confirmation. Continue?"
   },
   "pagination": {
-    "showing": "Showing {{from}}\u2013{{to}} of {{total}}",
+    "showing": "Showing {{from}}–{{to}} of {{total}}",
     "firstPage": "First page",
     "lastPage": "Last page",
     "nextPage": "Next page",
@@ -137,6 +176,10 @@
     "noMoreOptions": "No more options"
   },
   "assetPicker": {
+    "searchFailed": "The search failed:",
+    "retry": "Retry",
+    "legacyLabel": "Label to reprint: this label is in a former format that cannot identify the equipment safely. Type the asset code printed on the label, then reprint the label from the asset record.",
+    "more": "{{shown}} of {{total}} shown: refine the search",
     "searchPlaceholder": "Search assets by code, name, serial, QR…",
     "recent": "Recently used",
     "frequent": "Frequently used",
@@ -148,7 +191,26 @@
     "clear": "Clear selection"
   },
   "kanban": {
-    "emptyColumn": "—"
+    "emptyColumn": "—",
+    "boardLabel": "Board",
+    "showMore": "Show {{count}} more",
+    "move": "Move",
+    "moveTo": "Move to…",
+    "moveCard": "Move {{card}} to another column",
+    "moveHint": "Press Alt+Left arrow or Alt+Right arrow to move this card to the neighbouring column, or use the Move button.",
+    "moved": "{{card}} moved to “{{column}}”.",
+    "noTarget": "No other column accepts {{card}} in that direction.",
+    "refused": "{{card}} was not moved: the change was refused.",
+    "refusedReason": "{{card}} was not moved: {{reason}}"
+  },
+  "timeline": {
+    "label": "History",
+    "today": "Today",
+    "empty": "No events",
+    "details": "Details",
+    "olderHidden": "Only the latest {{count}} events are shown.",
+    "loadOlder": "Show older events",
+    "loadingOlder": "Loading…"
   },
   "resourceTimeline": {
     "loading": "Loading timeline…",
@@ -161,10 +223,18 @@
   "linkedEntity": {
     "work_order": "{{code}}",
     "di": "{{code}}",
+    "permit": "{{code}}",
+    "pm_plan": "{{code}}",
     "open": {
       "work_order": "Open work order {{code}}",
-      "di": "Open request {{code}}"
-    }
+      "di": "Open request {{code}}",
+      "permit": "Open permit {{code}}",
+      "pm_plan": "Open preventive maintenance plan {{code}}",
+      "asset": "Open asset {{code}}",
+      "inspection_round": "Open inspection round {{code}}"
+    },
+    "asset": "{{code}}",
+    "inspection_round": "Round {{code}}"
   },
   "time": {
     "just_now": "Just now",
@@ -187,5 +257,48 @@
       "printStartedTitle": "Print started",
       "printStartedDescription": "The label was sent to the printer."
     }
+  },
+  "ds": {
+    "state": {
+      "loading": "Loading…",
+      "loadErrorTitle": "This content could not be loaded",
+      "retry": "Try again",
+      "technicalDetails": "Technical details",
+      "truncated": "Showing {{shown}} of {{total}}.",
+      "choose": "Choose…",
+      "loadMore": "Load more"
+    },
+    "view": {
+      "label": "Display",
+      "list": "List",
+      "kanban": "Board",
+      "calendar": "Calendar",
+      "dashboard": "Dashboard"
+    },
+    "toolbar": {
+      "showFilters": "Show filters",
+      "hideFilters": "Hide filters",
+      "refresh": "Refresh",
+      "refreshing": "Refreshing…"
+    },
+    "confirm": {
+      "title": "Please confirm",
+      "cancel": "Cancel"
+    },
+    "kpi": {
+      "open": "Open the list"
+    },
+    "chart": {
+      "bar": "Bar chart",
+      "line": "Line chart"
+    }
+  },
+  "urgency": {
+    "placeholder": "Choose an urgency level",
+    "loading": "Loading the scale…",
+    "loadError": "The urgency scale could not be loaded.",
+    "none": "No urgency",
+    "targetsShort": "Response ≤ {{response}} h · completion ≤ {{completion}} h",
+    "targetsTooltip": "Target times: response ≤ {{response}} h, completion ≤ {{completion}} h"
   }
 }

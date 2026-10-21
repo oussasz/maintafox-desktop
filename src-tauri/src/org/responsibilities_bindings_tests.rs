@@ -7,8 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::org::entity_bindings::{self, UpsertOrgEntityBindingPayload};
     use crate::org::node_types::{self, CreateNodeTypePayload};
@@ -18,26 +17,7 @@ mod tests {
     use crate::org::structure_model::{self, CreateStructureModelPayload};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Helper: create a published model with root + child types and one root node.
@@ -150,6 +130,7 @@ mod tests {
                 team_id: None,
                 valid_from: None,
                 valid_to: None,
+                replace_active: false,
             },
             1,
         )
@@ -166,6 +147,7 @@ mod tests {
                 team_id: None,
                 valid_from: None,
                 valid_to: None,
+                replace_active: false,
             },
             1,
         )
@@ -193,6 +175,7 @@ mod tests {
                 team_id: None,
                 valid_from: None,
                 valid_to: None,
+                replace_active: false,
             },
             1,
         )
@@ -219,6 +202,7 @@ mod tests {
                 team_id: Some(1),
                 valid_from: None,
                 valid_to: None,
+                replace_active: false,
             },
             1,
         )
@@ -246,6 +230,7 @@ mod tests {
                 team_id: None,
                 valid_from: None,
                 valid_to: None,
+                replace_active: false,
             },
             1,
         )
@@ -424,6 +409,7 @@ mod tests {
                 team_id: None,
                 valid_from: None,
                 valid_to: None,
+                replace_active: false,
             },
             1,
         )
@@ -465,6 +451,7 @@ mod tests {
                 team_id: None,
                 valid_from: None,
                 valid_to: None,
+                replace_active: false,
             },
             1,
         )
@@ -514,5 +501,124 @@ mod tests {
             .await
             .expect("list active");
         assert!(active.is_empty());
+    }
+
+    // ── Handover (replace_active) — what the designer's "Reassign" confirm calls ──
+
+    fn person_payload(node_id: i64, person_id: i64, replace_active: bool) -> AssignResponsibilityPayload {
+        AssignResponsibilityPayload {
+            node_id,
+            responsibility_type: "MAINTENANCE_OWNER".to_string(),
+            person_id: Some(person_id),
+            team_id: None,
+            valid_from: None,
+            valid_to: None,
+            replace_active,
+        }
+    }
+
+    fn first_issue_code(err: crate::errors::AppError) -> String {
+        match err {
+            crate::errors::AppError::OrgValidationFailed(issues) => {
+                issues.first().map(|i| i.code.clone()).unwrap_or_default()
+            }
+            other => panic!("expected an org validation error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handover_replaces_active_assignee_in_one_step() {
+        let db = setup().await;
+        let (node_id, _, _, _) = setup_with_root_node(&db).await;
+
+        let first = responsibilities::assign_responsibility(&db, person_payload(node_id, 1, false), 1)
+            .await
+            .expect("first assignment");
+
+        // Preview of the reassignment (as the designer drawer requests it) has no blocker.
+        let preview = crate::org::impact_preview::dispatch_preview(
+            &db,
+            crate::org::impact_preview::PreviewOrgChangePayload {
+                action: "ReassignResponsibility".to_string(),
+                node_id,
+                new_parent_id: None,
+                responsibility_type: Some("MAINTENANCE_OWNER".to_string()),
+                replacement_person_id: Some(2),
+                replacement_team_id: None,
+            },
+        )
+        .await
+        .expect("reassign preview");
+        assert!(preview.blockers.is_empty(), "blockers: {:?}", preview.blockers);
+        assert!(preview.warnings.is_empty(), "warnings: {:?}", preview.warnings);
+
+        let outcome = responsibilities::assign_or_replace_responsibility(&db, person_payload(node_id, 2, true), 1)
+            .await
+            .expect("handover must succeed");
+
+        let ended = outcome.ended.expect("previous assignee must be ended");
+        assert_eq!(ended.id, first.id);
+        assert!(ended.valid_to.is_some(), "ended assignment carries valid_to");
+        assert_eq!(outcome.assignment.person_id, Some(2));
+        assert!(outcome.assignment.valid_to.is_none());
+        assert_eq!(
+            outcome.assignment.valid_from, ended.valid_to,
+            "the new assignment starts when the previous one ends"
+        );
+
+        let active = responsibilities::list_node_responsibilities(&db, node_id, false)
+            .await
+            .expect("list active");
+        assert_eq!(active.len(), 1, "exactly one active assignee after handover");
+        assert_eq!(active[0].person_id, Some(2));
+    }
+
+    #[tokio::test]
+    async fn handover_to_current_assignee_is_rejected() {
+        let db = setup().await;
+        let (node_id, _, _, _) = setup_with_root_node(&db).await;
+
+        responsibilities::assign_responsibility(&db, person_payload(node_id, 1, false), 1)
+            .await
+            .expect("first assignment");
+
+        let preview = crate::org::impact_preview::preview_responsibility_reassignment(
+            &db,
+            node_id,
+            "MAINTENANCE_OWNER",
+            Some(1),
+            None,
+        )
+        .await
+        .expect("preview");
+        assert!(
+            preview.blockers.iter().any(|b| b.code == "ORG_PREVIEW_SAME_ASSIGNEE"),
+            "blockers: {:?}",
+            preview.blockers
+        );
+
+        let err = responsibilities::assign_or_replace_responsibility(&db, person_payload(node_id, 1, true), 1)
+            .await
+            .expect_err("same assignee must be rejected");
+        assert_eq!(first_issue_code(err), "ORG_ASSIGNEE_UNCHANGED");
+
+        let active = responsibilities::list_node_responsibilities(&db, node_id, false)
+            .await
+            .expect("list active");
+        assert_eq!(active.len(), 1, "the rejected handover changed nothing");
+    }
+
+    #[tokio::test]
+    async fn assignment_without_replace_still_rejects_overlap() {
+        let db = setup().await;
+        let (node_id, _, _, _) = setup_with_root_node(&db).await;
+
+        responsibilities::assign_responsibility(&db, person_payload(node_id, 1, false), 1)
+            .await
+            .expect("first assignment");
+        let err = responsibilities::assign_responsibility(&db, person_payload(node_id, 2, false), 1)
+            .await
+            .expect_err("overlap without replace_active");
+        assert_eq!(first_issue_code(err), "ORG_ASSIGNMENT_EXISTS");
     }
 }

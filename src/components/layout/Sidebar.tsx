@@ -22,6 +22,17 @@ export interface NavItem {
    * route permission and document OR cases at the call site.
    */
   requiredPermission?: PermissionName;
+  /**
+   * Alternative permissions that also open the route (route uses `anyOf`). The item is shown
+   * when the user holds `requiredPermission` or any of these.
+   */
+  alsoVisibleWith?: PermissionName[];
+}
+
+/** Same rule as the route guard: the primary permission or any alternative opens the item. */
+export function canSeeNavItem(item: NavItem, can: (p: PermissionName) => boolean): boolean {
+  if (!item.requiredPermission) return true;
+  return can(item.requiredPermission) || (item.alsoVisibleWith ?? []).some((p) => can(p));
 }
 
 interface SidebarProps {
@@ -39,7 +50,7 @@ export function Sidebar({ items }: SidebarProps) {
   const visibleItems = items.filter(
     (item) =>
       item.isGroupHeader ||
-      ((!item.requiredPermission || can(item.requiredPermission)) &&
+      (canSeeNavItem(item, can) &&
         isModuleCapabilityAllowed(capabilityMap, item.requiredPermission)),
   );
 
@@ -102,7 +113,7 @@ export function Sidebar({ items }: SidebarProps) {
                     "text-sm transition-colors duration-fast",
                     "hover:bg-surface-3",
                     isActive
-                      ? "bg-primary-bg/10 text-primary-light font-medium"
+                      ? "bg-primary-bg text-primary font-medium dark:bg-primary/20 dark:text-primary-light"
                       : "text-text-secondary",
                     collapsed && "justify-center",
                   )}

@@ -16,6 +16,9 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 // ── T1 — Login success creates a valid session ─────────────────────────
 
+// The dev account and its password exist only in builds with `debug_assertions`
+// (`auth::builtin_admin::DEV_ADMIN_PASSWORD`): `cargo test --release` compiles without this test.
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn t1_login_success_creates_session() {
     let db = common::create_test_db().await;
@@ -27,7 +30,8 @@ async fn t1_login_success_creates_session() {
             .expect("T1 FAIL: admin user not seeded");
 
     let stored_hash = pw_hash.expect("T1 FAIL: admin has no password_hash");
-    let ok = password::verify_password("Admin#2026!", &stored_hash).expect("T1 FAIL: verify_password returned Err");
+    let ok = password::verify_password(maintafox_lib::auth::builtin_admin::DEV_ADMIN_PASSWORD, &stored_hash)
+        .expect("T1 FAIL: verify_password returned Err");
     assert!(ok, "T1 FAIL: correct password did not verify");
 
     let mut mgr = SessionManager::new();

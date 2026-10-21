@@ -3,20 +3,24 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DataTable } from "@/components/data/DataTable";
-import { Badge } from "@/components/ui/badge";
-import { formatDate } from "@/utils/format-date";
-import type { PmPlan } from "@shared/ipc-types";
+import { StatusChip } from "@/components/ui/status-chip";
+import { PM_PLAN_LIFECYCLE_TONE, toneOf } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
+import type { PmPlanRow } from "@/services/pm-service";
+
+import { PmAssetCell } from "./pm-cells";
 
 interface PmPlansViewProps {
-  plans: PmPlan[];
+  plans: PmPlanRow[];
   loading: boolean;
   onOpenPlan: (planId: number) => void;
 }
 
 export function PmPlansView({ plans, loading, onOpenPlan }: PmPlansViewProps) {
-  const { t, i18n } = useTranslation("pm");
+  const { t } = useTranslation("pm");
+  const { formatDate } = useFormatters();
 
-  const columns: ColumnDef<PmPlan>[] = useMemo(
+  const columns: ColumnDef<PmPlanRow>[] = useMemo(
     () => [
       {
         accessorKey: "code",
@@ -27,8 +31,26 @@ export function PmPlansView({ plans, loading, onOpenPlan }: PmPlansViewProps) {
         accessorKey: "title",
         header: t("table.title"),
         cell: ({ row }) => (
-          <span className="max-w-[240px] truncate block text-sm">{row.original.title}</span>
+          <span className="block max-w-[240px] truncate text-sm">{row.original.title}</span>
         ),
+      },
+      {
+        id: "asset",
+        accessorFn: (p) => p.asset_code ?? "",
+        header: t("table.asset"),
+        cell: ({ row }) =>
+          row.original.asset_scope_type === "equipment" ? (
+            <PmAssetCell code={row.original.asset_code} name={row.original.asset_name} />
+          ) : (
+            <span className="text-xs text-text-muted">
+              {t("labels.scopeOf", {
+                scope: t(`scope.${row.original.asset_scope_type}`, {
+                  defaultValue: row.original.asset_scope_type,
+                }),
+                value: row.original.asset_scope_label ?? t("labels.none"),
+              })}
+            </span>
+          ),
       },
       {
         accessorKey: "strategy_type",
@@ -42,26 +64,31 @@ export function PmPlansView({ plans, loading, onOpenPlan }: PmPlansViewProps) {
         accessorKey: "lifecycle_status",
         header: t("table.lifecycle"),
         cell: ({ row }) => (
-          <Badge variant="secondary">
-            {t(`lifecycle.${row.original.lifecycle_status}`, {
+          <StatusChip
+            label={t(`lifecycle.${row.original.lifecycle_status}`, {
               defaultValue: row.original.lifecycle_status,
             })}
-          </Badge>
+            tone={toneOf(PM_PLAN_LIFECYCLE_TONE, row.original.lifecycle_status)}
+            dot
+          />
         ),
       },
       {
         id: "crew",
+        accessorFn: (p) => p.assigned_team_label || p.assigned_team_name || "",
         header: t("table.crew"),
         cell: ({ row }) =>
           row.original.assigned_team_label || row.original.assigned_team_name || t("labels.none"),
       },
       {
         id: "criticality",
+        accessorFn: (p) => p.criticality_label ?? "",
         header: t("table.criticality"),
         cell: ({ row }) => row.original.criticality_label || t("labels.none"),
       },
       {
         id: "active",
+        accessorFn: (p) => p.is_active,
         header: t("fields.isActive"),
         cell: ({ row }) =>
           row.original.is_active === 1 ? t("labels.active") : t("labels.inactive"),
@@ -69,10 +96,10 @@ export function PmPlansView({ plans, loading, onOpenPlan }: PmPlansViewProps) {
       {
         accessorKey: "updated_at",
         header: t("table.updated"),
-        cell: ({ row }) => formatDate(row.original.updated_at, i18n.language),
+        cell: ({ row }) => formatDate(row.original.updated_at),
       },
     ],
-    [t, i18n.language],
+    [t, formatDate],
   );
 
   return (
@@ -84,7 +111,7 @@ export function PmPlansView({ plans, loading, onOpenPlan }: PmPlansViewProps) {
         onRowClick={(row) => onOpenPlan(row.id)}
       />
       {!loading && plans.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">{t("empty.noPlansMatch")}</p>
+        <p className="py-6 text-center text-sm text-text-muted">{t("empty.noPlansMatch")}</p>
       ) : null}
     </div>
   );

@@ -10,6 +10,23 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::wo::workflow::{assert_action_allowed, guard_wo_transition, WoAction, WoStatus};
 
+/// Fixed shift codes of work orders planned before migration 202 (`WoShift` in the UI). They stay
+/// readable on those work orders; a plan now takes a shift of the team's Classe horaire
+/// (`wo::shifts`).
+pub const LEGACY_WO_SHIFTS: [&str; 4] = ["morning", "afternoon", "night", "full_day"];
+
+/// Refuses any text shift on a new plan (empty = no shift): the old fixed codes matched no
+/// timetable, and free text broke every list containing the work order. The shift is chosen among
+/// the team's Classe horaire windows instead (`shift_class_version_id`).
+pub fn validate_wo_shift(shift: Option<&str>) -> AppResult<()> {
+    match shift.map(str::trim) {
+        None | Some("") => Ok(()),
+        Some(s) => Err(AppError::ValidationFailed(vec![format!(
+            "GATE_WO_SHIFT_INVALID: shift '{s}' is no longer accepted; choose a shift of the team's Classe horaire"
+        )])),
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // WoMacroState — dashboard / filter grouping
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -91,7 +108,15 @@ pub struct WorkOrder {
     // Timing
     pub planned_start: Option<String>,
     pub planned_end: Option<String>,
+    /// Old fixed shift code (`morning` … `full_day`), kept readable on work orders planned before
+    /// migration 202; new plans use the team's Classe horaire below.
     pub shift: Option<String>,
+    /// Classe horaire version the work order is planned on, and the shift window it was planned
+    /// with (`HH:MM`, kept even if the timetable changes later).
+    pub shift_class_version_id: Option<i64>,
+    pub shift_class_label: Option<String>,
+    pub shift_start: Option<String>,
+    pub shift_end: Option<String>,
     pub scheduled_at: Option<String>,
     pub actual_start: Option<String>,
     pub actual_end: Option<String>,
@@ -101,11 +126,17 @@ pub struct WorkOrder {
     pub cancelled_at: Option<String>,
     // Duration accumulators
     pub expected_duration_hours: Option<f64>,
+    /// People the job takes (planned on the OT); planning books duration × crew size.
+    pub planned_crew_size: Option<i64>,
     pub actual_duration_hours: Option<f64>,
     pub active_labor_hours: Option<f64>,
     pub total_waiting_hours: Option<f64>,
     pub downtime_hours: Option<f64>,
     pub planned_downtime_hours: Option<f64>,
+    /// The job needs the equipment stopped: planning checks it against shutdown windows (same rule
+    /// as a PM plan's `requires_shutdown`).
+    #[serde(default)]
+    pub requires_shutdown: bool,
     // Cost accumulators
     pub labor_cost: Option<f64>,
     pub parts_cost: Option<f64>,
@@ -126,6 +157,19 @@ pub struct WorkOrder {
     pub reopen_count: i64,
     pub last_closed_at: Option<String>,
     pub requires_permit: bool,
+    /// The plant rule (`PERMIT.REQUIREMENT_RULES`) that flagged this work order "permit required"
+    /// when it was converted from a request, and the permit type it calls for (migration 233).
+    #[serde(default)]
+    pub permit_rule_code: Option<String>,
+    #[serde(default)]
+    pub permit_rule_permit_type: Option<String>,
+    /// Who cleared that flag (permit-issue right, reason, audited), when and why.
+    #[serde(default)]
+    pub permit_rule_cleared_by_id: Option<i64>,
+    #[serde(default)]
+    pub permit_rule_cleared_at: Option<String>,
+    #[serde(default)]
+    pub permit_rule_clear_reason: Option<String>,
     pub entity_sync_id: Option<String>,
     pub closeout_validation_profile_id: Option<i64>,
     pub closeout_validation_passed: bool,
@@ -148,8 +192,24 @@ pub struct WorkOrder {
     pub type_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub type_label: Option<String>,
+    /// The plant's sub-type (`WORK.ORDER_SUBTYPES`), under the nature of the OT type.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub urgency_level: Option<i64>,
+    pub subtype_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtype_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtype_label: Option<String>,
+    /// EN 13306 maintenance nature of the OT type (`wo::types::MaintenanceNature` code).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nature_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nature_label: Option<String>,
+    /// Level of the shared DI / OT urgency scale (`emergency` … `low`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub urgency_code: Option<String>,
+    /// 1 = most urgent … 5 = least urgent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub urgency_rank: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub urgency_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -182,6 +242,26 @@ pub struct WorkOrder {
     pub schedule_commitment_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule_frozen: Option<bool>,
+    /// Inspection round of the finding the OT comes from (directly, or through its request).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_inspection_round_id: Option<i64>,
+    /// Code and name of the round's inspection template (a round has no code of its own).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_inspection_round_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_inspection_round_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_inspection_round_scheduled_at: Option<String>,
+    /// PM plan / occurrence whose finding raised this OT (`pm_findings.follow_up_work_order_id`):
+    /// a failure found by preventive maintenance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_pm_plan_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_pm_plan_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_pm_plan_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_pm_occurrence_id: Option<i64>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -224,7 +304,12 @@ pub struct WoCreateInput {
     pub source_rca_cause_text: Option<String>,
     pub entity_id: Option<i64>,
     pub planner_id: Option<i64>,
-    pub urgency_id: Option<i64>,
+    /// Level of the shared urgency scale (`emergency`, `urgent`, `high`, `normal`, `low`).
+    #[serde(default)]
+    pub urgency_code: Option<String>,
+    /// The plant's sub-type (`WORK.ORDER_SUBTYPES` code); must belong to the type's nature.
+    #[serde(default)]
+    pub subtype_code: Option<String>,
     pub title: String,
     pub description: Option<String>,
     pub notes: Option<String>,
@@ -252,7 +337,13 @@ pub struct WoDraftUpdateInput {
     pub shift: Option<String>,
     pub expected_duration_hours: Option<f64>,
     pub notes: Option<String>,
-    pub urgency_id: Option<i64>,
+    /// Level of the shared urgency scale.
+    #[serde(default)]
+    pub urgency_code: Option<String>,
+    /// The plant's sub-type; an empty string removes it. When the type changes without a
+    /// sub-type, the sub-type is removed (it belonged to the former type's nature).
+    #[serde(default)]
+    pub subtype_code: Option<String>,
     pub requires_permit: Option<bool>,
 }
 
@@ -346,6 +437,18 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         shift: row
             .try_get::<Option<String>>("", "shift")
             .map_err(|e| decode_err("shift", e))?,
+        shift_class_version_id: row
+            .try_get::<Option<i64>>("", "shift_class_version_id")
+            .map_err(|e| decode_err("shift_class_version_id", e))?,
+        shift_class_label: row
+            .try_get::<Option<String>>("", "shift_class_label")
+            .map_err(|e| decode_err("shift_class_label", e))?,
+        shift_start: row
+            .try_get::<Option<String>>("", "shift_start")
+            .map_err(|e| decode_err("shift_start", e))?,
+        shift_end: row
+            .try_get::<Option<String>>("", "shift_end")
+            .map_err(|e| decode_err("shift_end", e))?,
         scheduled_at: row
             .try_get::<Option<String>>("", "scheduled_at")
             .map_err(|e| decode_err("scheduled_at", e))?,
@@ -370,6 +473,9 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         expected_duration_hours: row
             .try_get::<Option<f64>>("", "expected_duration_hours")
             .map_err(|e| decode_err("expected_duration_hours", e))?,
+        planned_crew_size: row
+            .try_get::<Option<i64>>("", "planned_crew_size")
+            .map_err(|e| decode_err("planned_crew_size", e))?,
         actual_duration_hours: row
             .try_get::<Option<f64>>("", "actual_duration_hours")
             .map_err(|e| decode_err("actual_duration_hours", e))?,
@@ -383,6 +489,10 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .try_get::<Option<f64>>("", "downtime_hours")
             .map_err(|e| decode_err("downtime_hours", e))?,
         planned_downtime_hours: row.try_get::<Option<f64>>("", "planned_downtime_hours").unwrap_or(None),
+        requires_shutdown: row
+            .try_get::<i64>("", "requires_shutdown")
+            .map_err(|e| decode_err("requires_shutdown", e))?
+            == 1,
         labor_cost: row
             .try_get::<Option<f64>>("", "labor_cost")
             .map_err(|e| decode_err("labor_cost", e))?,
@@ -433,6 +543,21 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .try_get::<i64>("", "requires_permit")
             .map_err(|e| decode_err("requires_permit", e))?
             != 0,
+        permit_rule_code: row
+            .try_get::<Option<String>>("", "permit_rule_code")
+            .map_err(|e| decode_err("permit_rule_code", e))?,
+        permit_rule_permit_type: row
+            .try_get::<Option<String>>("", "permit_rule_permit_type")
+            .map_err(|e| decode_err("permit_rule_permit_type", e))?,
+        permit_rule_cleared_by_id: row
+            .try_get::<Option<i64>>("", "permit_rule_cleared_by_id")
+            .map_err(|e| decode_err("permit_rule_cleared_by_id", e))?,
+        permit_rule_cleared_at: row
+            .try_get::<Option<String>>("", "permit_rule_cleared_at")
+            .map_err(|e| decode_err("permit_rule_cleared_at", e))?,
+        permit_rule_clear_reason: row
+            .try_get::<Option<String>>("", "permit_rule_clear_reason")
+            .map_err(|e| decode_err("permit_rule_clear_reason", e))?,
         entity_sync_id: row
             .try_get::<Option<String>>("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
@@ -468,7 +593,13 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         status_color: row.try_get::<Option<String>>("", "status_color").unwrap_or(None),
         type_code: row.try_get::<Option<String>>("", "type_code").unwrap_or(None),
         type_label: row.try_get::<Option<String>>("", "type_label").unwrap_or(None),
-        urgency_level: row.try_get::<Option<i64>>("", "urgency_level").unwrap_or(None),
+        subtype_id: row.try_get::<Option<i64>>("", "subtype_id").unwrap_or(None),
+        subtype_code: row.try_get::<Option<String>>("", "subtype_code").unwrap_or(None),
+        subtype_label: row.try_get::<Option<String>>("", "subtype_label").unwrap_or(None),
+        nature_code: row.try_get::<Option<String>>("", "nature_code").unwrap_or(None),
+        nature_label: row.try_get::<Option<String>>("", "nature_label").unwrap_or(None),
+        urgency_code: row.try_get::<Option<String>>("", "urgency_code").unwrap_or(None),
+        urgency_rank: row.try_get::<Option<i64>>("", "urgency_rank").unwrap_or(None),
         urgency_label: row.try_get::<Option<String>>("", "urgency_label").unwrap_or(None),
         urgency_color: row.try_get::<Option<String>>("", "urgency_color").unwrap_or(None),
         asset_code: row.try_get::<Option<String>>("", "asset_code").unwrap_or(None),
@@ -496,6 +627,26 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .flatten()
             .map(|v| v != 0)
             .or_else(|| row.try_get::<i64>("", "schedule_frozen").ok().map(|v| v != 0)),
+        source_inspection_round_id: row
+            .try_get::<Option<i64>>("", "source_inspection_round_id")
+            .unwrap_or(None),
+        source_inspection_round_code: row
+            .try_get::<Option<String>>("", "source_inspection_round_code")
+            .unwrap_or(None),
+        source_inspection_round_title: row
+            .try_get::<Option<String>>("", "source_inspection_round_title")
+            .unwrap_or(None),
+        source_inspection_round_scheduled_at: row
+            .try_get::<Option<String>>("", "source_inspection_round_scheduled_at")
+            .unwrap_or(None),
+        source_pm_plan_id: row.try_get::<Option<i64>>("", "source_pm_plan_id").unwrap_or(None),
+        source_pm_plan_code: row.try_get::<Option<String>>("", "source_pm_plan_code").unwrap_or(None),
+        source_pm_plan_title: row
+            .try_get::<Option<String>>("", "source_pm_plan_title")
+            .unwrap_or(None),
+        source_pm_occurrence_id: row
+            .try_get::<Option<i64>>("", "source_pm_occurrence_id")
+            .unwrap_or(None),
     })
 }
 
@@ -551,6 +702,18 @@ pub async fn generate_wo_code(db: &impl ConnectionTrait) -> AppResult<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn text_shifts_are_refused_on_new_plans() {
+        use super::{validate_wo_shift, LEGACY_WO_SHIFTS};
+        for ok in [None, Some(""), Some("  ")] {
+            assert!(validate_wo_shift(ok).is_ok(), "{ok:?} means no shift");
+        }
+        for legacy in LEGACY_WO_SHIFTS.iter().copied().chain(["jour"]) {
+            let err = validate_wo_shift(Some(legacy)).expect_err("old codes and free text are refused");
+            assert!(format!("{err:?}").contains("GATE_WO_SHIFT_INVALID"), "{legacy}");
+        }
+    }
+
     use super::*;
 
     // ── Status string round-trip ──────────────────────────────────────────

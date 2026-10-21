@@ -162,8 +162,24 @@ pub async fn validate_reference_set(
     // ── Check 3: hierarchy cycles ─────────────────────────────────────────
     check_hierarchy_cycles(&all_values, &mut issues);
 
-    // ── Check 4: orphan parent references ─────────────────────────────────
-    check_orphan_parents(&all_values, &mut issues);
+    // ── Check 4: orphan parent references (a parent in an allowed parent domain is not one) ──
+    let mut cross_parents: HashSet<i64> = HashSet::new();
+    let in_set: HashSet<i64> = all_values.iter().map(|v| v.id).collect();
+    for pid in all_values.iter().filter_map(|v| v.parent_id) {
+        if !in_set.contains(&pid) && values::is_allowed_cross_domain_parent(db, &domain.code, pid).await? {
+            cross_parents.insert(pid);
+        }
+    }
+    check_orphan_parents(&all_values, &cross_parents, &mut issues);
+
+    // ── Check 4b: required parent domain (OT sub-type → maintenance nature) ──
+    check_required_parents(db, &domain, &all_values, &mut issues).await?;
+
+    // ── Check 4c: nature tag of request types (EN 13306 nature or empty) ───
+    check_nature_tags(db, &domain, &all_values, &mut issues).await?;
+    check_unit_dimensions(db, &domain, &all_values, &mut issues).await?;
+    check_permit_rules(db, &domain, &all_values, &mut issues).await?;
+    check_work_order_type_natures(&domain.code, &all_values, &mut issues);
 
     // ── Check 5: invalid color format ─────────────────────────────────────
     check_invalid_colors(&all_values, &mut issues);
@@ -342,12 +358,16 @@ fn check_hierarchy_cycles(vals: &[values::ReferenceValue], issues: &mut Vec<Refe
 /// Check 4: orphan parent references.
 ///
 /// A value has parent_id set, but the parent does not exist in this set.
-fn check_orphan_parents(vals: &[values::ReferenceValue], issues: &mut Vec<ReferenceValidationIssue>) {
+fn check_orphan_parents(
+    vals: &[values::ReferenceValue],
+    cross_parents: &HashSet<i64>,
+    issues: &mut Vec<ReferenceValidationIssue>,
+) {
     let id_set: HashSet<i64> = vals.iter().map(|v| v.id).collect();
 
     for v in vals {
         if let Some(pid) = v.parent_id {
-            if !id_set.contains(&pid) {
+            if !id_set.contains(&pid) && !cross_parents.contains(&pid) {
                 issues.push(ReferenceValidationIssue {
                     check: "orphan_parent".into(),
                     message: format!(
@@ -359,6 +379,196 @@ fn check_orphan_parents(vals: &[values::ReferenceValue], issues: &mut Vec<Refere
                     value_code: Some(v.code.clone()),
                 });
             }
+        }
+    }
+}
+
+/// Check 4b: every value of a domain with a required parent domain hangs under a value of that
+/// domain (an OT sub-type under one EN 13306 maintenance nature).
+async fn check_required_parents(
+    db: &DatabaseConnection,
+    domain: &crate::reference::domains::ReferenceDomain,
+    vals: &[values::ReferenceValue],
+    issues: &mut Vec<ReferenceValidationIssue>,
+) -> AppResult<()> {
+    let Some(required) = values::required_parent_domain(&domain.code) else {
+        return Ok(());
+    };
+    for v in vals {
+        let parent_domain = match v.parent_id {
+            Some(pid) => values::domain_code_of_value(db, pid).await?,
+            None => None,
+        };
+        if parent_domain.as_deref().map(|d| d.eq_ignore_ascii_case(required)) != Some(true) {
+            issues.push(ReferenceValidationIssue {
+                check: "parent_required".into(),
+                message: format!(
+                    "La valeur '{}' doit etre rattachee a une valeur de '{required}'.",
+                    v.code
+                ),
+                severity: IssueSeverity::Blocking,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Check 4d: units of `MEASURE.UNITS`. A standard unit names one of the physical dimensions; a
+/// plant unit names an active standard unit of the same dimension as its base and a positive
+/// factor (blocking). A unit migration 201 created to review, still without base or factor, is a
+/// warning: its links were carried over and nothing about it is assumed.
+async fn check_unit_dimensions(
+    db: &DatabaseConnection,
+    domain: &crate::reference::domains::ReferenceDomain,
+    vals: &[values::ReferenceValue],
+    issues: &mut Vec<ReferenceValidationIssue>,
+) -> AppResult<()> {
+    use crate::reference::units;
+    if !units::is_units_domain(&domain.code) {
+        return Ok(());
+    }
+    for v in vals {
+        let meta: serde_json::Value = v
+            .metadata_json
+            .as_deref()
+            .and_then(|m| serde_json::from_str(m).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let standard = meta.get("origin").and_then(serde_json::Value::as_str) == Some("system");
+        let to_review = meta.get("review_required").and_then(serde_json::Value::as_bool) == Some(true);
+        let result = if standard {
+            match units::checked_dimension_tag(db, v.semantic_tag.as_deref()).await {
+                Ok(Some(_)) => Ok(()),
+                Ok(None) => Err(AppError::ValidationFailed(vec![format!(
+                    "{}: l'unité standard n'a pas de grandeur physique.",
+                    units::GATE_UNIT_DIMENSION_INVALID
+                )])),
+                Err(e) => Err(e),
+            }
+        } else if to_review && v.parent_id.is_none() && meta.get("base_factor").is_none() {
+            issues.push(ReferenceValidationIssue {
+                check: "unit_to_review".into(),
+                message: format!(
+                    "L'unité '{}' est à revoir : indiquez son unité standard de base et le facteur. \
+                     Aucune conversion ne l'utilisera avant.",
+                    v.code
+                ),
+                severity: IssueSeverity::Warning,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            });
+            Ok(())
+        } else {
+            units::checked_plant_unit(
+                db,
+                v.set_id,
+                &v.code,
+                v.parent_id,
+                v.semantic_tag.as_deref(),
+                v.metadata_json.as_deref(),
+            )
+            .await
+            .map(|_| ())
+        };
+        match result {
+            Ok(()) => {}
+            Err(AppError::ValidationFailed(errs)) => issues.push(ReferenceValidationIssue {
+                check: "invalid_unit".into(),
+                message: format!("L'unité '{}' : {}", v.code, errs.join(" ")),
+                severity: IssueSeverity::Blocking,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            }),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// Check 4c: the nature tag of a nature-tagged domain (request types) is empty or one of the
+/// EN 13306 maintenance natures.
+async fn check_nature_tags(
+    db: &DatabaseConnection,
+    domain: &crate::reference::domains::ReferenceDomain,
+    vals: &[values::ReferenceValue],
+    issues: &mut Vec<ReferenceValidationIssue>,
+) -> AppResult<()> {
+    if !values::is_nature_tagged_domain(&domain.code) {
+        return Ok(());
+    }
+    for v in vals {
+        if let Err(AppError::ValidationFailed(errs)) =
+            values::checked_semantic_tag(db, &domain.code, v.semantic_tag.as_deref()).await
+        {
+            issues.push(ReferenceValidationIssue {
+                check: "invalid_nature_tag".into(),
+                message: format!("La valeur '{}' : {}", v.code, errs.join(" ")),
+                severity: IssueSeverity::Blocking,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Check 4e: permit rules (`PERMIT.REQUIREMENT_RULES`) name what they match (an equipment class
+/// and / or a work type of the published lists) and an existing permit type. An active rule that
+/// does not read blocks publishing (a rule cannot be guessed at conversion).
+async fn check_permit_rules(
+    db: &DatabaseConnection,
+    domain: &crate::reference::domains::ReferenceDomain,
+    vals: &[values::ReferenceValue],
+    issues: &mut Vec<ReferenceValidationIssue>,
+) -> AppResult<()> {
+    if !crate::permit::requirement_rules::is_rules_domain(&domain.code) {
+        return Ok(());
+    }
+    for v in vals.iter().filter(|v| v.is_active) {
+        if let Some(problem) = crate::permit::requirement_rules::rule_problem(db, v.metadata_json.as_deref()).await? {
+            issues.push(ReferenceValidationIssue {
+                check: "invalid_permit_rule".into(),
+                message: format!("Permit rule '{}': {problem}.", v.code),
+                severity: IssueSeverity::Blocking,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Check 4f: every active OT type (`WORK.ORDER_TYPES`) carries a maintenance nature: a type
+/// without one would count in no work mix (planned / reactive / emergency).
+fn check_work_order_type_natures(
+    domain_code: &str,
+    vals: &[values::ReferenceValue],
+    issues: &mut Vec<ReferenceValidationIssue>,
+) {
+    if !domain_code
+        .trim()
+        .eq_ignore_ascii_case(crate::wo::types::WORK_ORDER_TYPES_DOMAIN)
+    {
+        return;
+    }
+    for v in vals.iter().filter(|v| v.is_active) {
+        let known = v
+            .semantic_tag
+            .as_deref()
+            .and_then(crate::wo::types::MaintenanceNature::parse)
+            .is_some();
+        if !known {
+            issues.push(ReferenceValidationIssue {
+                check: "work_order_type_without_nature".into(),
+                message: format!(
+                    "OT type '{}' has no maintenance nature: it would count in no work mix.",
+                    v.code
+                ),
+                severity: IssueSeverity::Blocking,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            });
         }
     }
 }
@@ -485,5 +695,39 @@ async fn check_protected_deactivations_without_migration(
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod work_order_type_nature_tests {
+    use super::{check_work_order_type_natures, IssueSeverity};
+
+    fn value(code: &str, tag: Option<&str>, active: bool) -> crate::reference::values::ReferenceValue {
+        serde_json::from_value(serde_json::json!({
+            "id": 1, "set_id": 1, "parent_id": null, "code": code, "label": code, "description": null,
+            "sort_order": 1, "color_hex": null, "icon_name": null, "semantic_tag": tag,
+            "external_code": null, "is_active": active, "metadata_json": null
+        }))
+        .expect("value")
+    }
+
+    /// An active OT type without a known nature blocks publishing; an inactive one does not.
+    #[test]
+    fn an_active_type_without_nature_blocks_publishing() {
+        let vals = [
+            value("corrective", Some("corrective_deferred"), true),
+            value("PLANT_OWN", None, true),
+            value("ODD", Some("not_a_nature"), true),
+            value("OLD", None, false),
+        ];
+        let mut issues = Vec::new();
+        check_work_order_type_natures("WORK.ORDER_TYPES", &vals, &mut issues);
+        let codes: Vec<_> = issues.iter().filter_map(|i| i.value_code.clone()).collect();
+        assert_eq!(codes, ["PLANT_OWN", "ODD"]);
+        assert!(issues.iter().all(|i| i.severity == IssueSeverity::Blocking));
+
+        let mut other = Vec::new();
+        check_work_order_type_natures("DI.REQUEST_TYPE", &vals, &mut other);
+        assert!(other.is_empty(), "other lists are not concerned");
     }
 }

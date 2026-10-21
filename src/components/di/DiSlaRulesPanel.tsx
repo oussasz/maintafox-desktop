@@ -11,7 +11,7 @@ import { Save } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Badge } from "@/components/ui/badge";
+import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,17 +22,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { describeAppError } from "@/lib/app-error";
 import { listSlaRules, updateSlaRule } from "@/services/di-conversion-service";
 import type { DiSlaRule, SlaRuleUpdateInput } from "@shared/ipc-types";
-
-// ── Urgency badge styles ────────────────────────────────────────────────────
-
-const URGENCY_BADGE: Record<string, string> = {
-  low: "bg-green-100 text-green-800",
-  medium: "bg-yellow-100 text-yellow-800",
-  high: "bg-orange-100 text-orange-800",
-  critical: "bg-red-100 text-red-700",
-};
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -57,6 +49,7 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
   const { t } = useTranslation("di");
 
   const [rules, setRules] = useState<DiSlaRule[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<number, RuleDraft>>({});
   const [loading, setLoading] = useState(false);
   const [savingId, setSavingId] = useState<number | null>(null);
@@ -121,10 +114,11 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
             ? { asset_criticality_class: rule.asset_criticality_class }
             : {}),
         };
+        setSaveError(null);
         await updateSlaRule(input);
         await loadRules();
-      } catch {
-        // silently handle
+      } catch (err) {
+        setSaveError(describeAppError(err).title);
       } finally {
         setSavingId(null);
       }
@@ -141,7 +135,13 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
         <DialogHeader>
           <DialogTitle>{t("sla.title")}</DialogTitle>
           <p className="text-sm text-text-muted">{t("sla.description")}</p>
+          <p className="text-xs text-text-muted">{t("sla.scaleHint")}</p>
         </DialogHeader>
+        {saveError ? (
+          <p className="text-sm text-tone-danger-fg" role="alert">
+            {saveError}
+          </p>
+        ) : null}
 
         <div className="flex-1 overflow-auto min-h-0">
           {loading ? (
@@ -169,12 +169,7 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
                     <tr key={rule.id} className="border-b last:border-0">
                       <td className="px-3 py-2 font-medium">{rule.name}</td>
                       <td className="px-3 py-2">
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] border-0 ${URGENCY_BADGE[rule.urgency_level] ?? ""}`}
-                        >
-                          {t(`priority.${rule.urgency_level}` as never)}
-                        </Badge>
+                        <UrgencyBadge code={rule.urgency_level} />
                       </td>
                       <td className="px-3 py-2">
                         <Input

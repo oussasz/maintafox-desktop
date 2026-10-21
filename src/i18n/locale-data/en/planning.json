@@ -4,7 +4,8 @@
   },
   "views": {
     "gantt": "Gantt board",
-    "calendar": "Calendar view"
+    "calendar": "Calendar view",
+    "week": "Weekly schedule"
   },
   "calendar": {
     "today": "Today",
@@ -71,16 +72,23 @@
     "risk": "Risk",
     "emptyReady": "No ready candidates.",
     "emptyBlocked": "No blocked candidates.",
-    "readyHint": "Click a Ready card to commit it to the schedule."
+    "readyHint": "Click a Ready card to commit it to the schedule.",
+    "blockedHint": "Open a blocked item to clear its blockers in the work order or request.",
+    "openSource": "Open {{code}}",
+    "estimate": "{{hours}} h × {{crew}} people",
+    "noCrew": "{{hours}} h · crew size missing",
+    "notEstimated": "Not estimated",
+    "why": "Why it is blocked"
   },
   "blockers": {
-    "parts_missing": "Parts",
-    "skills_missing": "Skills",
-    "permit_missing": "Permits",
-    "window_conflict": "Window",
-    "prerequisite_blocked": "Prerequisites",
-    "assignee_unavailable": "Unavailable",
-    "capacity_exceeded": "Capacity"
+    "missing_critical_part": "Critical parts not reserved",
+    "no_qualified_technician": "No qualified technician",
+    "permit_not_ready": "Permit not ready",
+    "prerequisite_incomplete": "Prerequisites incomplete",
+    "locked_window": "No shutdown window",
+    "double_booking": "Double booking",
+    "not_estimated": "Not estimated",
+    "location_unknown": "Location unknown"
   },
   "board": {
     "unassignedLane": "Team — not yet assigned to a person",
@@ -90,7 +98,11 @@
     "emptyAllCrews": "No plant commitments in this horizon — pick a Ready card and commit to a target crew.",
     "unknownCrew": "Unknown crew",
     "noCrewTitle": "Select a board crew",
-    "noCrewHint": "Use Planning context above to choose All crews or a single crew and the From–To period."
+    "noCrewHint": "Use Planning context above to choose All crews or a single crew and the From–To period.",
+    "absenceTag": {
+      "critical": "Absent — critical for planning",
+      "plain": "Absent"
+    }
   },
   "commitment": {
     "formTitle": "Commit to schedule",
@@ -113,7 +125,7 @@
     "budgetThresholdHint": "Optional ceiling for labor cost. If the calculated estimate exceeds it, a variance warning is recorded.",
     "estimatedLaborCost": "Estimated labor cost",
     "estimatedLaborCostValue": "{{value}}",
-    "estimatedLaborCostHint": "Calculated automatically from assignee rate × committed hours. Final value is confirmed by the server on commit.",
+    "estimatedLaborCostHint": "An estimate: the job's labour hours (duration × crew size) × the assignee's rate. The server confirms it on commit.",
     "estimatedLaborCostNeedAssignee": "Select an assignee with a rate card, or see the candidate cost range when available.",
     "estimatedLaborCostNeedSlot": "Enter committed start and end to calculate the estimate.",
     "estimatedLaborCostNoRate": "No rate card for this assignee — estimate unavailable until a rate is configured.",
@@ -122,6 +134,15 @@
     "matchingSkills": "{{count}} matching skills",
     "costRange": "Estimated labor cost: {{min}} – {{max}}",
     "capacityRemaining": "Crew capacity this day: {{remaining}} h remaining of {{available}} h.",
+    "noTeamCapacity": "This team has no working hours that day: none of its members has a Classe horaire (timetable), or it has no members.",
+    "setUpTeamCapacity": "Set up its members' Classes horaires",
+    "capacityBasis": {
+      "roster": "from the Classes horaires",
+      "rest_day": "rest day",
+      "holiday": "holiday",
+      "no_schedule": "no Classe horaire",
+      "no_members": "no team members"
+    },
     "capacityBlockedHint": "This slot is longer than remaining crew capacity ({{remaining}} h). Shorten the end time.",
     "capacityDayFull": "No remaining crew capacity on this day",
     "horizonHint": "Only dates inside the board From–To period can be selected. Slot length is limited by remaining daily crew capacity.",
@@ -146,8 +167,13 @@
       "outsideHorizon": "Committed start and end must fall inside the board From–To period.",
       "assigneeNotOnCrew": "Assignee must be a member of the selected board crew.",
       "capacityExceeded": "This slot exceeds remaining crew capacity for that day ({{remaining}} h left). Choose a shorter slot or another day.",
-      "budgetInvalid": "Budget threshold must be a non-negative number."
-    }
+      "budgetInvalid": "Budget threshold must be a non-negative number.",
+      "capacityExceededDay": "Not enough capacity on {{day}}: {{share}} h needed, {{remaining}} h free."
+    },
+    "notEstimated": "This work is not estimated: enter its duration and crew size on the work order or the PM before committing it.",
+    "labourHours": "{{hours}} h of labour ({{duration}} h × {{crew}} people)",
+    "shiftTimeShort": "Each person works {{duration}} h, but the slot holds only {{shift}} h of shift time: extend the slot or plan overtime.",
+    "capacityByDay": "{{day}}: {{share}} h of this job, {{remaining}} h free of {{available}} h"
   },
   "gantt": {
     "capacityTitle": "Team capacity",
@@ -158,25 +184,36 @@
     "laneHeader": "Assignee",
     "overrideReasonPrompt": "Double-booking override reason",
     "defaultReason": "Schedule frozen by planner.",
-    "freezeOverlayTitle": "Locked windows"
+    "freezeOverlayTitle": "Locked windows",
+    "noCapacity": "no capacity"
   },
   "windows": {
-    "title": "Production windows",
+    "title": "Planning windows",
     "detailTitle": "Locked window",
     "detailEmpty": "Window details are unavailable.",
     "type": "Window type",
     "start": "Start",
     "end": "End",
     "reason": "Lock reason",
-    "add": "Add locked window",
+    "add": "Add window",
     "locked": "Locked",
-    "empty": "No production windows yet.",
+    "empty": "No planning windows yet.",
     "types": {
       "production": "Production",
       "maintenance": "Maintenance",
       "shutdown": "Shutdown",
       "freeze": "Freeze"
-    }
+    },
+    "typePlaceholder": "Choose a type",
+    "site": "Site",
+    "plantWide": "Whole plant",
+    "equipment": "Equipment (optional)",
+    "equipmentHint": "Leave empty for the whole site.",
+    "lock": "Locked window",
+    "lockedHint": "No work can be committed on this site or equipment during the window.",
+    "openHint": "Open: work that needs the equipment stopped can be placed here (maintenance window, planned shutdown).",
+    "scopeReview": "Site to re-enter",
+    "scopeReviewHint": "This window was created before sites were recorded correctly: it applies to the whole plant until its site is re-entered."
   },
   "breakIns": {
     "title": "Break-ins",
@@ -192,13 +229,9 @@
     "dangerousOverrideReason": "Dangerous override reason",
     "create": "Register break-in",
     "empty": "No break-ins for selected period.",
-    "reasons": {
-      "emergency": "Emergency",
-      "safety": "Safety",
-      "production_loss": "Production loss",
-      "regulatory": "Regulatory",
-      "other": "Other"
-    }
+    "acknowledgeRefusals": "Override these refusals with the reason above",
+    "urgentHint": "Urgent reason: name an approver or give a dangerous-override reason.",
+    "inserted": "Added to a frozen week:"
   },
   "freeze": {
     "title": "Freeze schedule period",
@@ -210,7 +243,9 @@
     "title": "Override double-booking",
     "description": "This move conflicts with an existing assignment. Provide an audit reason to continue.",
     "reason": "Override reason",
-    "confirm": "Confirm override"
+    "confirm": "Confirm override",
+    "assigneeTitle": "Override the assignee checks",
+    "assigneeDescription": "You are overriding these refusals for this technician. Give the reason; it is logged."
   },
   "inspector": {
     "title": "Commitment detail",
@@ -224,7 +259,9 @@
     "nearestWindow": "Nearest feasible window",
     "auditTitle": "Schedule change log",
     "auditEmpty": "No audit entries for this commitment.",
-    "openOnBoard": "Open on board"
+    "openOnBoard": "Open on board",
+    "sourceWorkOrder": "Work order:",
+    "statusReason": "Reason"
   },
   "audit": {
     "actions": {
@@ -232,11 +269,196 @@
       "reschedule_commitment": "Rescheduled",
       "override_double_booking": "Double-booking override",
       "freeze_schedule_period": "Period frozen",
-      "create_break_in": "Break-in registered"
+      "create_break_in": "Break-in registered",
+      "release_commitment": "Slot released",
+      "cancel_commitment": "Commitment cancelled",
+      "close_commitment": "Closed (work finished)",
+      "break_in_insert": "Entered a frozen week (break-in)"
     }
   },
   "dialogs": {
     "cancel": "Cancel",
     "close": "Close"
+  },
+  "deepLink": {
+    "woNotInBacklog": "This work order is not in the planning backlog (not ready to plan yet, already committed or filtered out).",
+    "openWo": "Open the work order",
+    "dismiss": "Dismiss"
+  },
+  "assignee": {
+    "hoursLeft": "{{hours}} h left",
+    "notWorking": "not working ({{reason}})",
+    "reasons": {
+      "working": "working",
+      "absent": "absent",
+      "rest_day": "rest day",
+      "site_rest_day": "site rest day",
+      "holiday": "holiday",
+      "no_schedule": "no timetable",
+      "timetable_not_set_up": "timetable not set up",
+      "not_employed": "not employed",
+      "outside_shift": "outside their shift"
+    },
+    "issues": {
+      "PLANNING_ASSIGNEE_NOT_IN_CREW": "Not a member of this crew on the slot's days.",
+      "PLANNING_ASSIGNEE_NOT_WORKING": "Does not work during this slot.",
+      "PLANNING_ASSIGNEE_OVERLOADED": "Not enough hours left for this job on one of the days.",
+      "PLANNING_DOUBLE_BOOKING": "The technician already holds another job at this time (double booking)."
+    },
+    "daysLabel": "The technician's days over the slot",
+    "unknownHours_one": "{{count}} of their jobs has unknown hours (not counted).",
+    "unknownHours_other": "{{count}} of their jobs have unknown hours (not counted).",
+    "unreadableWorkOrders": "Planned dates that cannot be read (not counted): {{codes}}.",
+    "othersUnnamed_one": "+ {{count}} other crew member not named (counted in the crew's load).",
+    "othersUnnamed_other": "+ {{count}} other crew members not named (counted in the crew's load)."
+  },
+  "reasons": {
+    "NOT_ESTIMATED": "Not estimated: {{missing}} missing.",
+    "PARTS_NOT_RESERVED": "In stock but not reserved: {{articles}}.",
+    "SKILL_GAP": "{{person}} lacks a qualification this job asks for: {{gaps}}.",
+    "ASSIGNMENT_REQUIRED": "Name a technician holding the required skills ({{skills}}).",
+    "PERMIT_REQUIRED": "A work permit is required and not ready.",
+    "PREREQUISITE_BLOCKED": "Waiting for a prerequisite (deferred, or waiting on another job).",
+    "NO_FEASIBLE_WINDOW": "Needs the equipment stopped: no open maintenance or shutdown window of its site or equipment over its due dates.",
+    "ASSIGNEE_UNAVAILABLE": "The assignee is absent or booked on other work over the due dates ({{availability_conflict_count}}).",
+    "PARTS_SHORT_OPTIONAL": "Optional parts short in stock: {{articles}}. The job can be committed without them.",
+    "PARTS_SHORT": "Parts short in stock: {{articles}}. Order or transfer them before committing.",
+    "PART_NOT_IN_CATALOGUE": "Parts not in the article catalogue (stock cannot be checked): {{articles}}.",
+    "PART_QUANTITY_MISSING": "Parts without a quantity (stock cannot be checked): {{articles}}.",
+    "PERMIT_TO_REQUEST": "A work permit is required and none is requested yet.",
+    "PERMIT_IN_PREPARATION": "Permit {{permit_code}} is being prepared ({{status}}); it must be active before the work starts.",
+    "PERMIT_ON_HOLD": "Permit {{permit_code}} is suspended ({{status}}); revalidate it before the work starts.",
+    "PERMIT_EXPIRES_BEFORE_WORK": "Permit {{permit_code}} expires before the end of the work ({{expires_at}}).",
+    "LOTO_NOT_VERIFIED": "LOTO on permit {{permit_code}}: {{verified}} of {{isolations}} isolation points verified; all must be before the work starts.",
+    "PERMIT_TYPE_MISSING": "Permit {{permit_code}} refers to a permit type that no longer exists: it cannot start. Fix its type in the permits module.",
+    "LOCATION_UNKNOWN": "Location unknown: site windows not checked."
+  },
+  "reasonParts": {
+    "duration": "duration",
+    "crew_size": "crew size"
+  },
+  "reasonUi": {
+    "blocking": "Blocks the commitment",
+    "warning": "Warning — enforced later",
+    "openPermit": "Open permit",
+    "requestPermit": "Request a permit",
+    "openArticle": "Open article {{code}}",
+    "openWindows": "Planning windows"
+  },
+  "commitmentStatus": {
+    "committed": "Committed",
+    "released": "Slot released",
+    "cancelled": "Cancelled",
+    "closed": "Closed"
+  },
+  "lifecycle": {
+    "reason": "Reason (required)",
+    "released": {
+      "action": "Release slot",
+      "hint": "The slot is given back: the job returns to the backlog to be scheduled again.",
+      "confirm": "Release"
+    },
+    "cancelled": {
+      "action": "Cancel commitment",
+      "hint": "The commitment is cancelled and its slot given back. The work itself is not cancelled.",
+      "confirm": "Cancel commitment"
+    }
+  },
+  "frozenWeek": {
+    "title": "Frozen week: enter as a break-in",
+    "hint": "The week of {{week}} is frozen. This job enters it only as a recorded break-in, with its reason.",
+    "selectReason": "Choose a reason",
+    "confirm": "Commit as break-in"
+  },
+  "weekly": {
+    "title": "Weekly schedule",
+    "site": "Planning site",
+    "noSite": "Choose a site",
+    "noPlanningSite": "No planning site: in the organisation, a node whose type can own work defines a site.",
+    "previous": "Previous week",
+    "next": "Next week",
+    "range": "{{from}} to {{to}}",
+    "status": {
+      "draft": "Draft",
+      "approved": "Approved",
+      "frozen": "Frozen",
+      "published": "Published"
+    },
+    "frozenWithoutApproval": "Frozen without approval",
+    "frozenWithoutApprovalHint": "This week was frozen automatically without approval. A holder of the planning confirm right must approve it; approving after the fact does not change the frozen baseline.",
+    "approve": "Approve",
+    "approveAfterFreeze": "Approve after the fact",
+    "freeze": "Freeze",
+    "publish": "Publish to crews",
+    "requestUnfreeze": "Request unfreeze",
+    "freezeDue": "Freezes automatically on {{at}}",
+    "frozenAt": "Frozen on {{at}}",
+    "frozenAutomatically": "Frozen automatically on {{at}}",
+    "unfreezePending": "Unfreeze requested on {{at}}: {{reason}}. Another planner must decide it.",
+    "approveUnfreeze": "Approve unfreeze",
+    "rejectUnfreeze": "Reject unfreeze",
+    "unfreezeHint": "Another holder of the planning confirm right must approve the unfreeze (four-eyes).",
+    "unfreezeReason": "Reason for unfreezing",
+    "sendUnfreezeRequest": "Send request",
+    "crew": "Crew",
+    "dayOff": "rest day",
+    "frozenJob": "Frozen",
+    "noCrews": "No active crew belongs to this site.",
+    "history": "Week history",
+    "system": "System",
+    "events": {
+      "approved": "Approved",
+      "frozen": "Frozen",
+      "auto_frozen": "Frozen automatically",
+      "unfreeze_requested": "Unfreeze requested",
+      "unfreeze_rejected": "Unfreeze rejected",
+      "unfrozen": "Unfrozen",
+      "published": "Published to crews",
+      "approved_after_freeze": "Approved after the fact"
+    }
+  },
+  "crewsWithoutSite": {
+    "title": "Crew without a planning site",
+    "hint": "These crews appear on no weekly schedule: their work is never approved, frozen or published. Attach each crew to an organisation node under a site (a node type that can own work).",
+    "fixTeams": "Fix the crews",
+    "fixOrg": "Open the organisation",
+    "loadFailed": "Could not check for crews without a planning site: {{error}}"
+  },
+  "feedback": {
+    "committed": "Work committed to the schedule",
+    "windowCreated": "Planning window saved",
+    "breakInRecorded": "Break-in recorded",
+    "slotReleased": "Slot released",
+    "commitmentCancelled": "Commitment cancelled",
+    "periodFrozen": "Period frozen",
+    "teamsNotified": "Crews notified",
+    "weekApproved": "Week approved",
+    "weekFrozen": "Week frozen",
+    "weekPublished": "Week published to crews",
+    "unfreezeRequested": "Unfreeze request sent",
+    "unfreezeApproved": "Unfreeze approved",
+    "unfreezeRejected": "Unfreeze rejected"
+  },
+  "kpis": {
+    "title": "Planning KPIs (frozen baseline, last 8 weeks)",
+    "excludeUnapproved": "Leave out weeks frozen without approval",
+    "loading": "Loading",
+    "loadingHint": "{{baseline}} planned / {{available}} available (+ {{overtime}} overtime possible)",
+    "compliance": "Schedule compliance",
+    "complianceHint": "{{done}} done of {{baseline}} planned · {{released}} later released or cancelled",
+    "breakIns": "Break-ins",
+    "displaced": "Displaced jobs",
+    "awaitingApproval": "Frozen without approval",
+    "notFrozen": "Weeks never frozen",
+    "noFrozenWeek": "No frozen week in the period: the KPIs are measured on the frozen baseline.",
+    "week": "Week",
+    "baseline": "Baseline",
+    "jobsHours": "{{jobs}} jobs · {{hours}}",
+    "hours": "{{hours}} h",
+    "inProgress": "in progress",
+    "notMeasured": "not measured",
+    "noJudgedWeek": "no frozen week ended in the period",
+    "reopened": "reopened",
+    "reopenedHint": "Week unfrozen for editing: measured on its last frozen baseline until it is frozen again."
   }
 }

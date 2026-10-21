@@ -4,12 +4,18 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  PermitForcedRemovalInput,
   PermitHandoverLogInput,
+  PermitHandoverReceiverPage,
+  PermitHandoverRoleOption,
   PermitIsolationActionInput,
+  PermitIsolationCancelInput,
   PermitIsolationUpsertInput,
   PermitSuspendInput,
   PermitTypeUpsertInput,
+  PermitWorkerInformedInput,
   WorkPermitCreateInput,
+  WorkPermitHiddenCounts,
   WorkPermitListFilter,
   WorkPermitStatusInput,
   WorkPermitUpdateInput,
@@ -27,6 +33,9 @@ const PermitTypeSchema = z.object({
   max_duration_hours: z.number().nullable(),
   mandatory_ppe_ids_json: z.string(),
   mandatory_control_rules_json: z.string(),
+  requires_energy_isolation: z.boolean(),
+  /** Three-person lock-removal chain: the isolation's verifier may not confirm the removal. */
+  requires_three_person_removal: z.boolean(),
   row_version: z.number(),
 });
 
@@ -51,6 +60,24 @@ const WorkPermitSchema = z.object({
   asset_code: z.string().nullable(),
   asset_label: z.string().nullable(),
   linked_work_order_code: z.string().nullable(),
+  permit_type_requires_energy_isolation: z.boolean(),
+  /** The permit's type asks for a third person to confirm lock removal. */
+  permit_type_requires_three_person_removal: z.boolean(),
+  /**
+   * Four-eyes: who wrote, submitted and approved the permit (null: not recorded, e.g. before the
+   * app recorded it — nobody is invented). The submission is cleared when the permit returns to
+   * draft.
+   */
+  created_by_id: z.number().nullable(),
+  created_by_name: z.string().nullable(),
+  submitted_by_id: z.number().nullable(),
+  submitted_by_name: z.string().nullable(),
+  submitted_at: z.string().nullable(),
+  approved_by_id: z.number().nullable(),
+  approved_by_name: z.string().nullable(),
+  approved_at: z.string().nullable(),
+  /** Approved without a verified second person, on a site that opted out of four-eyes. */
+  self_approved: z.boolean(),
 });
 
 const PermitSuspensionSchema = z.object({
@@ -74,9 +101,30 @@ const PermitHandoverLogSchema = z.object({
   permit_id: z.number(),
   handed_from_role: z.string(),
   handed_to_role: z.string(),
+  /** Labels of the roles in the plant's list (any published version, deactivated roles included);
+   * null when the stored code is in no version of the list. */
+  handed_from_label: z.string().nullable(),
+  handed_to_label: z.string().nullable(),
   confirmation_note: z.string(),
   signed_at: z.string(),
+  /** Who recorded it (null on hand-overs recorded before the signer was kept). */
+  signed_by_id: z.number().nullable(),
+  signed_by_name: z.string().nullable(),
+  received_by_id: z.number().nullable(),
+  received_by_name: z.string().nullable(),
   row_version: z.number(),
+});
+
+const PermitHandoverRoleOptionSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  review_required: z.boolean(),
+});
+
+const PermitHandoverReceiverPageSchema = z.object({
+  items: z.array(z.object({ id: z.number(), display_name: z.string() })),
+  total: z.number(),
+  empty_reason: z.string().nullable(),
 });
 
 const PermitIsolationSchema = z.object({
@@ -84,8 +132,16 @@ const PermitIsolationSchema = z.object({
   entity_sync_id: z.string(),
   permit_id: z.number(),
   isolation_point: z.string(),
+  /** Text typed before the lists existed (history, "original entry"); empty otherwise. */
   energy_type: z.string(),
   isolation_method: z.string(),
+  energy_type_id: z.number().nullable(),
+  energy_type_code: z.string().nullable(),
+  energy_type_label: z.string().nullable(),
+  isolation_method_id: z.number().nullable(),
+  isolation_method_label: z.string().nullable(),
+  /** A typed text could not be mapped onto the lists: someone must choose. */
+  mapping_review_required: z.boolean(),
   lock_number: z.string().nullable(),
   applied_by_id: z.number().nullable(),
   verified_by_id: z.number().nullable(),
@@ -97,6 +153,41 @@ const PermitIsolationSchema = z.object({
   applied_by_name: z.string().nullable(),
   verified_by_name: z.string().nullable(),
   removal_verified_by_name: z.string().nullable(),
+  /** A planned line cancelled (never applied): kept as history, never a lock to fit. */
+  cancelled_at: z.string().nullable(),
+  cancelled_by_id: z.number().nullable(),
+  cancelled_by_name: z.string().nullable(),
+  /**
+   * Who took the lock off and when: its applier ("J'ai retiré mon cadenas"), or the person named by
+   * a forced removal. Its removal is verified only after, by someone else.
+   */
+  removed_by_id: z.number().nullable(),
+  removed_by_name: z.string().nullable(),
+  removed_at: z.string().nullable(),
+  /** The applier was absent: taken off on the authority of a ptw.close holder (step-up). */
+  forced_removal: z.boolean(),
+  forced_authorized_by_id: z.number().nullable(),
+  forced_authorized_by_name: z.string().nullable(),
+  forced_reason: z.string().nullable(),
+  forced_worker_absent: z.boolean(),
+  forced_contact_attempts: z.array(
+    z.object({ at: z.string(), method: z.string(), result: z.string() }),
+  ),
+  /** The worker was told: by their own acknowledgement in the app, or by a ptw.close holder. */
+  informed_by_id: z.number().nullable(),
+  informed_by_name: z.string().nullable(),
+  informed_at: z.string().nullable(),
+  informed_method: z.string().nullable(),
+  informed_in_app: z.boolean(),
+});
+
+/** A forced removal whose worker was not told yet (review list, blocking screen at sign-in). */
+const ForcedRemovalItemSchema = z.object({
+  isolation: PermitIsolationSchema,
+  permit_id: z.number(),
+  permit_code: z.string(),
+  permit_status: z.string(),
+  equipment_label: z.string().nullable(),
 });
 
 const LotoCardViewSchema = z.object({
@@ -108,6 +199,11 @@ const LotoCardViewSchema = z.object({
   lock_number: z.string().nullable(),
   verifier_signature: z.string().nullable(),
   expires_at: z.string().nullable(),
+  /** Taken off by a forced removal (applier absent): printed "Retrait forcé". */
+  forced_removal: z.boolean(),
+  forced_authorized_by: z.string().nullable(),
+  forced_removed_at: z.string().nullable(),
+  forced_reason: z.string().nullable(),
 });
 
 const LotoCardPrintJobSchema = z.object({
@@ -126,12 +222,36 @@ const PermitComplianceKpi30dSchema = z.object({
   rate: z.number().nullable(),
 });
 
+const IsolationOptionSchema = z.object({
+  id: z.number(),
+  code: z.string(),
+  label: z.string(),
+  label_en: z.string().nullable(),
+  review_required: z.boolean(),
+});
+
+const IsolationOptionsSchema = z.object({
+  energy_types: z.array(IsolationOptionSchema),
+  isolation_methods: z.array(IsolationOptionSchema),
+});
+
+/** A permit list limited to the user's sites, with the counts of what it leaves out. */
+const WorkPermitListPageSchema = z.object({
+  items: z.array(WorkPermitSchema),
+  hidden_outside_scope: z.number(),
+  hidden_without_site: z.number(),
+});
+
 export type PermitTypeRecord = z.infer<typeof PermitTypeSchema>;
+export type WorkPermitListPage = WorkPermitHiddenCounts & { items: WorkPermitRecord[] };
+export type IsolationOption = z.infer<typeof IsolationOptionSchema>;
+export type IsolationOptions = z.infer<typeof IsolationOptionsSchema>;
 export type WorkPermitRecord = z.infer<typeof WorkPermitSchema>;
 export type PermitSuspensionRecord = z.infer<typeof PermitSuspensionSchema>;
 export type PermitHandoverLogRecord = z.infer<typeof PermitHandoverLogSchema>;
 export type PermitIsolationRecord = z.infer<typeof PermitIsolationSchema>;
 export type LotoCardViewRecord = z.infer<typeof LotoCardViewSchema>;
+export type ForcedRemovalItem = z.infer<typeof ForcedRemovalItemSchema>;
 export type LotoCardPrintJobRecord = z.infer<typeof LotoCardPrintJobSchema>;
 export type PermitComplianceKpi30dRecord = z.infer<typeof PermitComplianceKpi30dSchema>;
 
@@ -140,9 +260,10 @@ export async function listPermitTypes(): Promise<PermitTypeRecord[]> {
   return z.array(PermitTypeSchema).parse(raw);
 }
 
-export async function listWorkPermits(filter: WorkPermitListFilter): Promise<WorkPermitRecord[]> {
+/** Permits of the user's sites (ptw.view), with how many are left out and why. */
+export async function listWorkPermits(filter: WorkPermitListFilter): Promise<WorkPermitListPage> {
   const raw = await invoke<unknown>("list_work_permits", { filter });
-  return z.array(WorkPermitSchema).parse(raw);
+  return WorkPermitListPageSchema.parse(raw);
 }
 
 export async function listPermitSuspensions(permitId: number): Promise<PermitSuspensionRecord[]> {
@@ -158,6 +279,12 @@ export async function listPermitHandoverLogs(permitId: number): Promise<PermitHa
 export async function listPermitIsolations(permitId: number): Promise<PermitIsolationRecord[]> {
   const raw = await invoke<unknown>("list_permit_isolations", { permitId });
   return z.array(PermitIsolationSchema).parse(raw);
+}
+
+/** Choices of the isolation form: energy types (SYSTEM list) and the plant's isolation methods. */
+export async function listPermitIsolationOptions(): Promise<IsolationOptions> {
+  const raw = await invoke<unknown>("list_permit_isolation_options");
+  return IsolationOptionsSchema.parse(raw);
 }
 
 export async function getLotoCardView(
@@ -176,9 +303,10 @@ export async function recordLotoCardPrint(input: {
   return LotoCardPrintJobSchema.parse(raw);
 }
 
-export async function listOpenPermitsReport(): Promise<WorkPermitRecord[]> {
+/** Open, not expired permits of the user's sites, with how many are left out and why. */
+export async function listOpenPermitsReport(): Promise<WorkPermitListPage> {
   const raw = await invoke<unknown>("list_open_permits_report");
-  return z.array(WorkPermitSchema).parse(raw);
+  return WorkPermitListPageSchema.parse(raw);
 }
 
 export async function permitComplianceKpi30d(): Promise<PermitComplianceKpi30dRecord> {
@@ -202,7 +330,7 @@ export const TERMINAL_PERMIT_STATUSES: ReadonlySet<string> = new Set([
 
 /** Returns the permit the WO gate evaluates (active first, then newest open). */
 export async function getPermitForWorkOrder(workOrderId: number): Promise<WorkPermitRecord | null> {
-  const rows = await listWorkPermits({ linked_work_order_id: workOrderId, limit: 50 });
+  const { items: rows } = await listWorkPermits({ linked_work_order_id: workOrderId, limit: 50 });
   const rank = (p: WorkPermitRecord): number =>
     p.status === "active" ? 0 : TERMINAL_PERMIT_STATUSES.has(p.status) ? 2 : 1;
   return [...rows].sort((a, b) => rank(a) - rank(b) || b.id - a.id)[0] ?? null;
@@ -218,6 +346,7 @@ export async function createWorkPermit(input: WorkPermitCreateInput): Promise<Wo
   return WorkPermitSchema.parse(raw);
 }
 
+/** Edits a permit; refusals of an equipment or work-order change are coded (see `WorkPermitUpdateInput`). */
 export async function updateWorkPermit(input: WorkPermitUpdateInput): Promise<WorkPermitRecord> {
   const raw = await invoke<unknown>("update_work_permit", { input });
   return WorkPermitSchema.parse(raw);
@@ -234,6 +363,32 @@ export async function suspendWorkPermit(
   const raw = await invoke<unknown>("suspend_work_permit", { input });
   const [permit, suspension] = z.tuple([WorkPermitSchema, PermitSuspensionSchema]).parse(raw);
   return { permit, suspension };
+}
+
+/**
+ * Who may receive the hand-over of a permit: active accounts holding the permit close right at the
+ * permit's site, by name, never the signed-in person (ptw.close at that site). One page with the
+ * total of matches, so a cut list is never shown as complete.
+ */
+export async function listPermitHandoverReceivers(
+  permitId: number,
+  search: string | null,
+  limit?: number,
+  offset?: number,
+): Promise<PermitHandoverReceiverPage> {
+  const raw = await invoke<unknown>("list_permit_handover_receivers", {
+    permitId,
+    search: search && search.trim() ? search.trim() : null,
+    limit: limit ?? null,
+    offset: offset ?? null,
+  });
+  return PermitHandoverReceiverPageSchema.parse(raw);
+}
+
+/** The plant's hand-over roles (Données de référence › PERMIT.HANDOVER_ROLES). */
+export async function listPermitHandoverRoles(): Promise<PermitHandoverRoleOption[]> {
+  const raw = await invoke<unknown>("list_permit_handover_roles");
+  return z.array(PermitHandoverRoleOptionSchema).parse(raw);
 }
 
 export async function appendPermitHandoverLog(
@@ -262,6 +417,89 @@ export async function verifyPermitIsolation(
 ): Promise<PermitIsolationRecord> {
   const raw = await invoke<unknown>("verify_permit_isolation", { input });
   return PermitIsolationSchema.parse(raw);
+}
+
+/**
+ * Cancels a planned isolation line never applied (permit draft or waiting for review; ptw.issue at
+ * the permit's site). The line is kept as cancelled; a permit waiting for review goes back to
+ * draft, so the permit is returned with the line.
+ */
+export async function cancelPermitIsolation(
+  input: PermitIsolationCancelInput,
+): Promise<{ permit: WorkPermitRecord; isolation: PermitIsolationRecord }> {
+  const raw = await invoke<unknown>("cancel_permit_isolation", { input });
+  const [permit, isolation] = z.tuple([WorkPermitSchema, PermitIsolationSchema]).parse(raw);
+  return { permit, isolation };
+}
+
+/** "J'ai retiré mon cadenas": the lock's applier records that they took it off (ptw.issue). */
+export async function recordPermitIsolationRemoved(
+  input: PermitIsolationActionInput,
+): Promise<PermitIsolationRecord> {
+  const raw = await invoke<unknown>("record_permit_isolation_removed", { input });
+  return PermitIsolationSchema.parse(raw);
+}
+
+/** Forced removal (applier absent): ptw.close at the permit's site and a step-up. */
+export async function forcePermitIsolationRemoval(
+  input: PermitForcedRemovalInput,
+): Promise<PermitIsolationRecord> {
+  const raw = await invoke<unknown>("force_permit_isolation_removal", { input });
+  return PermitIsolationSchema.parse(raw);
+}
+
+/** A ptw.close holder records that the worker of a forced removal was told. */
+export async function recordPermitWorkerInformed(
+  input: PermitWorkerInformedInput,
+): Promise<PermitIsolationRecord> {
+  const raw = await invoke<unknown>("record_permit_worker_informed", { input });
+  return PermitIsolationSchema.parse(raw);
+}
+
+/** The signed-in worker's forced lock removals not acknowledged yet (blocking screen at sign-in). */
+export async function listMyForcedLockRemovals(): Promise<ForcedRemovalItem[]> {
+  const raw = await invoke<unknown>("list_my_forced_lock_removals");
+  return z.array(ForcedRemovalItemSchema).parse(raw);
+}
+
+/** The signed-in worker acknowledges the forced removal of their lock (recorded as told, in-app). */
+export async function acknowledgeForcedLockRemoval(
+  isolationId: number,
+): Promise<PermitIsolationRecord> {
+  const raw = await invoke<unknown>("acknowledge_forced_lock_removal", { isolationId });
+  return PermitIsolationSchema.parse(raw);
+}
+
+/** Review list: forced removals whose worker was not told yet, at the user's ptw.close sites. */
+export async function listOpenForcedLockRemovals(): Promise<ForcedRemovalItem[]> {
+  const raw = await invoke<unknown>("list_open_forced_lock_removals");
+  return z.array(ForcedRemovalItemSchema).parse(raw);
+}
+
+/**
+ * Who may be named to take off a lock in a forced removal: active accounts other than the
+ * signed-in person and the lock's applier, by name, one page with the total (ptw.close at the
+ * permit's site).
+ */
+export async function listPermitLockRemovers(
+  isolationId: number,
+  search: string | null,
+  limit?: number,
+  offset?: number,
+): Promise<PermitHandoverReceiverPage> {
+  const raw = await invoke<unknown>("list_permit_lock_removers", {
+    isolationId,
+    search: search && search.trim() ? search.trim() : null,
+    limit: limit ?? null,
+    offset: offset ?? null,
+  });
+  return PermitHandoverReceiverPageSchema.parse(raw);
+}
+
+/** The plant's contact methods (Données de référence › PERMIT.CONTACT_METHODS). */
+export async function listPermitContactMethods(): Promise<PermitHandoverRoleOption[]> {
+  const raw = await invoke<unknown>("list_permit_contact_methods");
+  return z.array(PermitHandoverRoleOptionSchema).parse(raw);
 }
 
 export async function verifyPermitIsolationRemoval(

@@ -304,7 +304,7 @@ export function PlanningCalendarView({
                   className={`min-h-[80px] bg-surface-0 p-1 ${!isCurrentMonth ? "opacity-40" : ""}`}
                 >
                   <span
-                    className={`text-[10px] font-medium ${isToday ? "rounded-full bg-brand-primary px-1.5 py-0.5 text-white" : "text-text-muted"}`}
+                    className={`text-[10px] font-medium ${isToday ? "rounded-full bg-primary px-1.5 py-0.5 text-primary-foreground" : "text-text-muted"}`}
                   >
                     {day.getDate()}
                   </span>

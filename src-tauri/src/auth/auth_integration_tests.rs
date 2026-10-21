@@ -14,24 +14,7 @@ mod tests {
 
     /// Helper: create an in-memory DB with all migrations + seeder applied.
     async fn setup_db() -> sea_orm::DatabaseConnection {
-        let db = sea_orm::Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite");
-
-        use sea_orm::{ConnectionTrait, DbBackend, Statement};
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("enable FK");
-
-        use sea_orm_migration::MigratorTrait;
-        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-
-        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn admin_user_id(db: &sea_orm::DatabaseConnection) -> i32 {
@@ -81,6 +64,9 @@ mod tests {
 
     // ── V1 — Login with correct credentials succeeds. ───────────────────
 
+    // The dev account and its password exist only in builds with `debug_assertions`
+    // (`auth::builtin_admin::DEV_ADMIN_PASSWORD`): `cargo test --release` compiles without this test.
+    #[cfg(debug_assertions)]
     #[tokio::test]
     async fn v1_login_with_correct_credentials_succeeds() {
         let db = setup_db().await;
@@ -99,8 +85,8 @@ mod tests {
             "V1 FAIL: hash does not start with $argon2id$"
         );
 
-        let password_ok =
-            password::verify_password("Admin#2026!", &stored_hash).expect("V1 FAIL: verify_password returned Err");
+        let password_ok = password::verify_password(crate::auth::builtin_admin::DEV_ADMIN_PASSWORD, &stored_hash)
+            .expect("V1 FAIL: verify_password returned Err");
         assert!(password_ok, "V1 FAIL: correct password did not verify");
 
         // 3. Create session

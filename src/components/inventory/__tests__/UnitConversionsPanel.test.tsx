@@ -1,5 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { InventoryArticle, ReferenceValue } from "@shared/ipc-types";
 
 import { UnitConversionsPanel, parseFactor } from "../UnitConversionsPanel";
 
@@ -23,16 +25,32 @@ vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({ can: () => perms.allowed, isLoading: false }),
 }));
 
-const unit = (id: number, code: string) => ({
+/** A unit of MEASURE.UNITS as the reference service returns it. */
+const unit = (id: number, code: string, meta: Record<string, unknown>): ReferenceValue => ({
   id,
+  set_id: 1,
+  parent_id: null,
   code,
   label: code,
-  fr_label: null,
-  en_label: null,
-  color: null,
-  is_active: 1,
+  description: null,
+  sort_order: id,
+  color_hex: null,
+  icon_name: null,
+  semantic_tag: "count",
+  external_code: null,
+  is_active: true,
+  metadata_json: JSON.stringify(meta),
 });
-const units = [unit(1, "U"), unit(6, "BOX")];
+const units = [
+  unit(1, "U", { origin: "system", symbol: "u", label_en: "Unit" }),
+  unit(6, "BOX", { origin: "system", symbol: "BOX", label_en: "Box" }),
+  { ...unit(8, "SAC", { symbol: "sac", label_en: "Bag", base_factor: 25 }), parent_id: 1 },
+];
+const article = {
+  id: 4,
+  article_code: "CIM-25",
+  article_name: "Ciment",
+} as unknown as InventoryArticle;
 const conversion = {
   id: 9,
   entity_sync_id: "s",
@@ -102,6 +120,10 @@ describe("UnitConversionsPanel", () => {
     );
 
     fireEvent.click(screen.getByText("unitConversions.deactivate"));
+    // Asks first, then deactivates.
+    expect(svc.deactivateUnitConversion).not.toHaveBeenCalled();
+    const confirm = await screen.findByRole("dialog");
+    fireEvent.click(within(confirm).getByRole("button", { name: "unitConversions.deactivate" }));
     await waitFor(() => expect(svc.deactivateUnitConversion).toHaveBeenCalledWith(9, 3));
   });
 
@@ -116,7 +138,7 @@ describe("UnitConversionsPanel", () => {
     fireEvent.change(s.from, { target: { value: "1" } });
     fireEvent.change(s.to, { target: { value: "6" } });
     fireEvent.click(screen.getByText("unitConversions.convert"));
-    expect((await screen.findByTestId("conversion-result")).textContent).toContain('"quantity":2');
+    expect((await screen.findByTestId("conversion-result")).textContent).toContain('"quantity":"2');
     expect(svc.convertUnitQuantity).toHaveBeenCalledWith(1, 1, 6, null);
     fireEvent.click(screen.getByText("unitConversions.convert"));
     expect((await screen.findByRole("alert")).textContent).toContain("No conversion");
@@ -129,5 +151,33 @@ describe("UnitConversionsPanel", () => {
     expect(await screen.findByText("1 BOX = 12 U")).toBeTruthy();
     expect(screen.queryByText("unitConversions.add")).toBeNull();
     expect(screen.queryByText("unitConversions.deactivate")).toBeNull();
+  });
+
+  it("keeps the general factor of a plant unit on the unit and allows an article's own", async () => {
+    svc.listUnitConversions.mockResolvedValue([]);
+    svc.createUnitConversion.mockResolvedValue(conversion);
+    render(<UnitConversionsPanel unitOptions={units} articles={[article]} />);
+    expect(await screen.findByText("unitConversions.empty")).toBeTruthy();
+    // The options show the governed label (English here) and symbol.
+    expect(screen.getAllByRole("option", { name: "Bag (sac)" }).length).toBeGreaterThan(0);
+    const s = selects();
+    fireEvent.change(s.from, { target: { value: "8" } });
+    fireEvent.change(s.to, { target: { value: "1" } });
+    fireEvent.change(nth(screen.getAllByRole("textbox"), 0), { target: { value: "20" } });
+    expect(screen.getByText("unitConversions.plantUnitGeneral")).toBeTruthy();
+    expect((screen.getByText("unitConversions.add") as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(s.article, { target: { value: "4" } });
+    expect(screen.queryByText("unitConversions.plantUnitGeneral")).toBeNull();
+    fireEvent.click(screen.getByText("unitConversions.add"));
+    await waitFor(() =>
+      expect(svc.createUnitConversion).toHaveBeenCalledWith({
+        from_unit_value_id: 8,
+        to_unit_value_id: 1,
+        article_id: 4,
+        factor: 20,
+        notes: null,
+      }),
+    );
   });
 });

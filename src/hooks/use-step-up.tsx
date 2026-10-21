@@ -3,6 +3,14 @@ import { type ReactElement, useCallback, useRef, useState } from "react";
 import { StepUpDialog } from "@/components/auth/StepUpDialog";
 import { isStepUpRequiredError } from "@/utils/errors";
 
+/** Message of the error `withStepUp` rejects with when the user closes the step-up dialog. */
+export const STEP_UP_CANCELLED_MESSAGE = "Step-up cancelled by user";
+
+/** The user closed the step-up dialog (nothing was sent): no refusal to show. */
+export function isStepUpCancelled(err: unknown): boolean {
+  return err instanceof Error && err.message === STEP_UP_CANCELLED_MESSAGE;
+}
+
 interface UseStepUpReturn {
   /** Wraps an async action that may need step-up. Shows dialog if backend returns StepUpRequired. */
   withStepUp: <T>(action: () => Promise<T>) => Promise<T>;
@@ -62,7 +70,7 @@ export function useStepUp(): UseStepUpReturn {
     const pending = pendingRef.current;
     if (!pending) return;
     pendingRef.current = null;
-    pending.reject(new Error("Step-up cancelled by user"));
+    pending.reject(new Error(STEP_UP_CANCELLED_MESSAGE));
   }, []);
 
   const StepUpDialogElement = (

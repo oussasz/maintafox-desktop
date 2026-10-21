@@ -3,9 +3,16 @@ import { Clock, ShieldAlert, ShieldX } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  PLANT_SCOPE,
+  ScopeNodeSelect,
+  scopeChoiceToInput,
+  type ScopeChoice,
+} from "@/components/admin/ScopeNodeSelect";
 import { DataTable } from "@/components/data/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -26,18 +33,23 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
-import { useToast } from "@/hooks/use-toast";
+import { describeAppError } from "@/lib/app-error";
 import {
   grantEmergencyElevation,
   listEmergencyGrants,
-  listRoles,
+  listAssignableRoles,
+  listAssignableScopeNodes,
   listUsers,
   revokeEmergencyElevation,
 } from "@/services/rbac-service";
-import type { EmergencyGrantView, RoleWithPermissions, UserWithRoles } from "@shared/ipc-types";
+import { pushAppToast } from "@/store/app-toast-store";
+import type {
+  AssignableRoleSummary,
+  AssignableScopeNode,
+  EmergencyGrantView,
+  UserWithRoles,
+} from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
-
-const SCOPE_TYPES = ["global", "site", "department"] as const;
 
 // ── Countdown component ──────────────────────────────────────────────────
 
@@ -97,20 +109,23 @@ function Countdown({
 export function EmergencyElevationPanel() {
   const { t } = useTranslation("admin");
   const { can } = usePermissions();
-  const { toast } = useToast();
+  // The global toast host shows them (a local useToast list was never rendered here).
+  const toast = pushAppToast;
   const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [grants, setGrants] = useState<EmergencyGrantView[]>([]);
   const [users, setUsers] = useState<UserWithRoles[]>([]);
-  const [roles, setRoles] = useState<RoleWithPermissions[]>([]);
+  const [roles, setRoles] = useState<AssignableRoleSummary[]>([]);
+  const [nodes, setNodes] = useState<AssignableScopeNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   // Grant dialog state
   const [showGrant, setShowGrant] = useState(false);
   const [grantUserId, setGrantUserId] = useState("");
   const [grantRoleId, setGrantRoleId] = useState("");
-  const [grantScopeType, setGrantScopeType] = useState("global");
-  const [grantScopeRef, setGrantScopeRef] = useState("");
+  const [grantScope, setGrantScope] = useState<ScopeChoice>(PLANT_SCOPE);
+  const [revokeReason, setRevokeReason] = useState("");
   const [grantReason, setGrantReason] = useState("");
   const [grantMinutes, setGrantMinutes] = useState("60");
 
@@ -118,24 +133,26 @@ export function EmergencyElevationPanel() {
   const [revokeTarget, setRevokeTarget] = useState<EmergencyGrantView | null>(null);
 
   const fetchData = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
-      const [grantsData, usersData, rolesData] = await Promise.all([
+      const [grantsData, usersData, rolesData, nodesData] = await Promise.all([
         listEmergencyGrants(),
-        listUsers({}),
-        listRoles(),
+        listUsers({ status: "active" }),
+        listAssignableRoles(),
+        listAssignableScopeNodes(),
       ]);
       setGrants(grantsData);
       setUsers(usersData);
       setRoles(rolesData);
-    } catch {
-      toast({
-        title: t("emergency.errors.loadFailed", "Failed to load grants"),
-        variant: "destructive",
-      });
+      setNodes(nodesData);
+    } catch (err) {
+      // Shown in place of the table (never an empty list of grants).
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
-  }, [t, toast]);
+  }, []);
 
   useEffect(() => {
     void fetchData();
@@ -150,11 +167,13 @@ export function EmergencyElevationPanel() {
 
   // ── Grant ───────────────────────────────────────────────────────────────
 
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+
   const resetGrantForm = useCallback(() => {
     setGrantUserId("");
     setGrantRoleId("");
-    setGrantScopeType("global");
-    setGrantScopeRef("");
+    setGrantScope(PLANT_SCOPE);
     setGrantReason("");
     setGrantMinutes("60");
   }, []);
@@ -163,6 +182,10 @@ export function EmergencyElevationPanel() {
     const minutes = Number(grantMinutes);
     if (minutes < 1 || minutes > 480) return;
     if (grantReason.length < 20) return;
+    // One grant at a time: a double click must not create two elevations.
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
 
     const now = new Date();
     now.setMinutes(now.getMinutes() + minutes);
@@ -173,8 +196,7 @@ export function EmergencyElevationPanel() {
         grantEmergencyElevation({
           user_id: Number(grantUserId),
           role_id: Number(grantRoleId),
-          scope_type: grantScopeType,
-          scope_reference: grantScopeType !== "global" && grantScopeRef ? grantScopeRef : null,
+          ...scopeChoiceToInput(grantScope),
           reason: grantReason,
           expires_at: expiresAt,
         }),
@@ -185,15 +207,17 @@ export function EmergencyElevationPanel() {
       void fetchData();
     } catch (err) {
       toast({
-        title: err instanceof Error ? err.message : t("emergency.errors.grantFailed"),
+        title: describeAppError(err).title,
         variant: "destructive",
       });
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   }, [
     grantUserId,
     grantRoleId,
-    grantScopeType,
-    grantScopeRef,
+    grantScope,
     grantReason,
     grantMinutes,
     fetchData,
@@ -204,6 +228,7 @@ export function EmergencyElevationPanel() {
   ]);
 
   const canGrant =
+    !busy &&
     grantUserId &&
     grantRoleId &&
     grantReason.length >= 20 &&
@@ -213,10 +238,15 @@ export function EmergencyElevationPanel() {
   // ── Revoke ──────────────────────────────────────────────────────────────
 
   const handleRevoke = useCallback(async () => {
-    if (!revokeTarget) return;
+    if (!revokeTarget || busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
     try {
       await withStepUp(() =>
-        revokeEmergencyElevation({ assignment_id: revokeTarget.assignment_id }),
+        revokeEmergencyElevation({
+          assignment_id: revokeTarget.assignment_id,
+          reason: revokeReason.trim() || null,
+        }),
       );
       toast({
         title: t("emergency.revokedSuccess", "Emergency access revoked"),
@@ -224,13 +254,17 @@ export function EmergencyElevationPanel() {
       });
       setRevokeTarget(null);
       void fetchData();
-    } catch {
+    } catch (err) {
       toast({
         title: t("emergency.errors.revokeFailed", "Failed to revoke access"),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
-  }, [revokeTarget, fetchData, t, toast, withStepUp]);
+  }, [revokeTarget, revokeReason, fetchData, t, toast, withStepUp]);
 
   // ── Table columns ───────────────────────────────────────────────────────
 
@@ -248,14 +282,15 @@ export function EmergencyElevationPanel() {
       {
         id: "scope",
         header: t("emergency.columns.scope", "Scope"),
-        cell: ({ row }) => (
-          <span>
-            {row.original.scope_type}
-            {row.original.scope_reference && (
-              <span className="ml-1 text-text-muted">({row.original.scope_reference})</span>
-            )}
-          </span>
-        ),
+        cell: ({ row }) => {
+          if (row.original.scope_type === "tenant") return <span>{t("console.scope.plant")}</span>;
+          const node = nodes.find((n) => String(n.id) === row.original.scope_reference);
+          return (
+            <span>
+              {node?.name ?? `${row.original.scope_type} #${row.original.scope_reference ?? "?"}`}
+            </span>
+          );
+        },
       },
       {
         accessorKey: "emergency_reason",
@@ -283,7 +318,7 @@ export function EmergencyElevationPanel() {
           if (!row.original.emergency_expires_at) return "—";
           return (
             <div className="flex items-center gap-1.5">
-              <Clock className="h-3 w-3 text-orange-500" />
+              <Clock className="h-3 w-3 text-tone-attention-fg" />
               <Countdown
                 expiresAt={row.original.emergency_expires_at}
                 t={t}
@@ -307,7 +342,7 @@ export function EmergencyElevationPanel() {
               {t("emergency.badges.expired", "Expired")}
             </Badge>
           ) : (
-            <Badge variant="default" className="bg-orange-500 text-[10px]">
+            <Badge variant="default" className="bg-tone-attention-fg text-[10px]">
               {t("emergency.badges.active", "Active")}
             </Badge>
           ),
@@ -322,7 +357,10 @@ export function EmergencyElevationPanel() {
               variant="ghost"
               size="sm"
               className="text-destructive hover:text-destructive"
-              onClick={() => setRevokeTarget(row.original)}
+              onClick={() => {
+                setRevokeReason("");
+                setRevokeTarget(row.original);
+              }}
             >
               <ShieldX className="mr-1 h-3.5 w-3.5" />
               {t("emergency.revoke", "Revoke")}
@@ -331,7 +369,7 @@ export function EmergencyElevationPanel() {
         },
       },
     ],
-    [t, can, handleCountdownExpired],
+    [t, can, handleCountdownExpired, nodes],
   );
 
   // Separate active and expired for visual grouping
@@ -350,6 +388,7 @@ export function EmergencyElevationPanel() {
         {can(P.ADM_USERS) && (
           <Button
             size="sm"
+            disabled={loading || loadError != null}
             onClick={() => {
               resetGrantForm();
               setShowGrant(true);
@@ -362,13 +401,22 @@ export function EmergencyElevationPanel() {
       </div>
 
       {/* Table */}
-      <DataTable<EmergencyGrantView, unknown>
-        columns={columns}
-        data={sortedGrants}
-        isLoading={loading}
-        skeletonRows={4}
-        pageSize={20}
-      />
+      {loadError != null ? (
+        <ErrorState
+          error={loadError}
+          title={t("emergency.errors.loadFailed")}
+          onRetry={() => void fetchData()}
+          retrying={loading}
+        />
+      ) : (
+        <DataTable<EmergencyGrantView, unknown>
+          columns={columns}
+          data={sortedGrants}
+          isLoading={loading}
+          skeletonRows={4}
+          pageSize={20}
+        />
+      )}
 
       {/* ── Grant Dialog ─────────────────────────────────────────────────── */}
       <Dialog open={showGrant} onOpenChange={(v) => !v && setShowGrant(false)}>
@@ -416,28 +464,15 @@ export function EmergencyElevationPanel() {
             </div>
 
             {/* Scope */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>{t("emergency.fields.scopeType", "Scope Type")}</Label>
-                <Select value={grantScopeType} onValueChange={setGrantScopeType}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SCOPE_TYPES.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {s}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {grantScopeType !== "global" && (
-                <div className="space-y-1.5">
-                  <Label>{t("emergency.fields.scopeReference", "Scope Reference")}</Label>
-                  <Input value={grantScopeRef} onChange={(e) => setGrantScopeRef(e.target.value)} />
-                </div>
-              )}
+            <div className="space-y-1.5">
+              <Label htmlFor="emergency-scope">{t("console.scope.label")}</Label>
+              <ScopeNodeSelect
+                id="emergency-scope"
+                nodes={nodes}
+                value={grantScope}
+                onChange={setGrantScope}
+              />
+              <p className="text-xs text-text-muted">{t("console.scope.hint")}</p>
             </div>
 
             {/* Reason */}
@@ -494,11 +529,21 @@ export function EmergencyElevationPanel() {
           <p className="text-sm text-text-secondary">
             {revokeTarget?.username} — {revokeTarget?.role_name}
           </p>
+          <div className="space-y-1.5">
+            <Label htmlFor="emergency-revoke-reason">{t("console.reason.optional")}</Label>
+            <Textarea
+              id="emergency-revoke-reason"
+              value={revokeReason}
+              onChange={(e) => setRevokeReason(e.target.value)}
+              rows={2}
+              maxLength={1000}
+            />
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRevokeTarget(null)}>
               {t("common.cancel", "Cancel")}
             </Button>
-            <Button variant="destructive" onClick={() => void handleRevoke()}>
+            <Button variant="destructive" disabled={busy} onClick={() => void handleRevoke()}>
               {t("emergency.revoke", "Revoke")}
             </Button>
           </DialogFooter>

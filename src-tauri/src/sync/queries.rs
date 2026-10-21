@@ -1788,12 +1788,33 @@ pub async fn list_sync_conflicts(
     rows.into_iter().map(|row| to_sync_conflict(&row)).collect()
 }
 
+/// Action code of the audit event written for every choice made on a sync conflict. The event
+/// stays on this PC, as the conflict itself (`sync_conflicts` is local-only): `sync::row_spec`
+/// keeps it out of the audit rows that travel.
+pub const CONFLICT_RESOLVED_ACTION: &str = "sync.conflict_resolved";
+
+/// Resolves a sync conflict with the person's choice. Every choice needs a reason of at least
+/// [`crate::settings::catalog::MIN_REASON_CHARS`] characters (trimmed, counted in characters),
+/// stored on the conflict and written with the choice to the audit trail
+/// ([`CONFLICT_RESOLVED_ACTION`]) in the same transaction.
 pub async fn resolve_sync_conflict(
     db: &DatabaseConnection,
     user_id: i64,
     input: ResolveSyncConflictInput,
 ) -> AppResult<SyncConflictRecord> {
     let mut errors = Vec::new();
+    let min_reason = crate::settings::catalog::MIN_REASON_CHARS;
+    let reason = input
+        .resolution_note
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| r.chars().count() >= min_reason)
+        .map(str::to_string);
+    if reason.is_none() {
+        errors.push(format!(
+            "Give the reason for this choice (at least {min_reason} characters)."
+        ));
+    }
     if input.conflict_id <= 0 {
         errors.push("conflict_id must be > 0.".to_string());
     }
@@ -1811,6 +1832,7 @@ pub async fn resolve_sync_conflict(
     }
     let next_status = map_resolution_to_status(&input.action)
         .ok_or_else(|| AppError::SyncError("Invalid conflict action mapping.".to_string()))?;
+    let reason = reason.unwrap_or_default();
 
     let tx = db.begin().await?;
     let sql = format!("SELECT {CONFLICT_COLUMNS} FROM sync_conflicts WHERE id = ?");
@@ -1849,10 +1871,23 @@ pub async fn resolve_sync_conflict(
         "renumber_local" => renumbered = crate::sync::code_clash::renumber_local_record(&tx, &conflict).await?,
         _ => {}
     }
+    // Applying the choice drains the capture journal, which may already have closed this conflict
+    // (a stage failure that now stages): the person's choice still wins and keeps its author.
+    let version_now: i64 = tx
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT row_version FROM sync_conflicts WHERE id = ?",
+            [input.conflict_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::SyncError("Sync conflict disappeared while it was resolved.".to_string()))?
+        .try_get("", "row_version")
+        .map_err(|e| decode_err("row_version", e))?;
 
-    tx.execute(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        "UPDATE sync_conflicts
+    let updated = tx
+        .execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "UPDATE sync_conflicts
          SET status = ?,
              resolution_action = ?,
              resolution_note = ?,
@@ -1863,16 +1898,47 @@ pub async fn resolve_sync_conflict(
              row_version = row_version + 1,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ? AND row_version = ?",
-        [
-            next_status.to_string().into(),
-            input.action.clone().into(),
-            input.resolution_note.clone().into(),
-            user_id.into(),
-            next_status.to_string().into(),
-            input.conflict_id.into(),
-            input.expected_row_version.into(),
-        ],
-    ))
+            [
+                next_status.to_string().into(),
+                input.action.clone().into(),
+                reason.clone().into(),
+                user_id.into(),
+                next_status.to_string().into(),
+                input.conflict_id.into(),
+                version_now.into(),
+            ],
+        ))
+        .await?;
+    if updated.rows_affected() != 1 {
+        return Err(AppError::SyncError(format!(
+            "Sync conflict {} could not be updated.",
+            input.conflict_id
+        )));
+    }
+    // Who chose what, on which record and why: written with the choice, or neither is kept.
+    crate::audit::writer::write_audit_event_in(
+        &tx,
+        crate::audit::writer::AuditEventInput {
+            action_code: CONFLICT_RESOLVED_ACTION.to_string(),
+            target_type: Some("sync_conflict".to_string()),
+            target_id: Some(input.conflict_id.to_string()),
+            actor_id: Some(user_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "operations".to_string(),
+            details_json: Some(serde_json::json!({
+                "conflict_type": conflict.conflict_type,
+                "entity_type": conflict.entity_type,
+                "entity_sync_id": conflict.entity_sync_id,
+                "action": input.action,
+                "status_before": conflict.status,
+                "status_after": next_status,
+                "reason": reason,
+            })),
+        },
+    )
     .await?;
     tx.commit().await?;
 

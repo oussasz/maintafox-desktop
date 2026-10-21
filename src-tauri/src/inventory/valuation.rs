@@ -185,3 +185,109 @@ pub fn weighted_moving_average(old_on_hand: f64, old_avg: Option<f64>, qty_in: f
     }
     (oa * oavg + qty_in * unit_in) / (oa + qty_in)
 }
+
+/// Cost provenance of a costed stock movement (`inventory_transactions.cost_source_type`).
+pub const COST_SOURCE_MANUAL_ENTRY: &str = "MANUAL_ENTRY";
+pub const COST_SOURCE_PO_RECEIPT: &str = "PO_RECEIPT";
+pub const COST_SOURCE_MOVING_AVG: &str = "MOVING_AVG";
+
+/// Rejects a negative or non-finite unit cost.
+pub fn validate_unit_cost(unit_cost: f64) -> AppResult<()> {
+    if !unit_cost.is_finite() || unit_cost < 0.0 {
+        return Err(AppError::ValidationFailed(vec![
+            "unit_cost must be a number greater than or equal to 0.".to_string(),
+        ]));
+    }
+    Ok(())
+}
+
+/// Current weighted-average unit cost of an article at one location (None when never costed).
+pub async fn location_average_cost<C: ConnectionTrait>(
+    db: &C,
+    article_id: i64,
+    location_id: i64,
+) -> AppResult<Option<f64>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT moving_avg_unit_cost FROM stock_balances WHERE article_id = ? AND location_id = ?",
+            [article_id.into(), location_id.into()],
+        ))
+        .await?;
+    Ok(row
+        .and_then(|r| r.try_get::<Option<f64>>("", "moving_avg_unit_cost").ok())
+        .flatten())
+}
+
+/// Writes the cost of one movement on its ledger row (`inventory_transactions` is synced, so the
+/// cost travels with the movement; `stock_balances` averages are a local projection).
+pub async fn stamp_movement_cost<C: ConnectionTrait>(
+    db: &C,
+    transaction_id: i64,
+    quantity: f64,
+    unit_cost: f64,
+    cost_source_type: &str,
+    cost_source_ref: Option<&str>,
+) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inventory_transactions
+         SET unit_cost = ?, extended_cost = ?, cost_source_type = ?, cost_source_ref = ?,
+             cost_effective_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), is_provisional = 0
+         WHERE id = ?",
+        [
+            unit_cost.into(),
+            (unit_cost * quantity.abs()).into(),
+            cost_source_type.to_string().into(),
+            cost_source_ref.map(str::to_string).into(),
+            transaction_id.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Inbound movement at a known unit cost: recompute the location's weighted average from the
+/// on-hand **before** the movement, store it on the balance row (which must already exist) and
+/// stamp the movement. Returns the new average.
+#[allow(clippy::too_many_arguments)]
+pub async fn apply_inbound_cost<C: ConnectionTrait>(
+    db: &C,
+    article_id: i64,
+    location_id: i64,
+    prior_on_hand: f64,
+    qty_in: f64,
+    unit_cost: f64,
+    transaction_id: i64,
+    cost_source_type: &str,
+    cost_source_ref: Option<&str>,
+) -> AppResult<f64> {
+    validate_unit_cost(unit_cost)?;
+    let prior_avg = location_average_cost(db, article_id, location_id).await?;
+    let new_avg = weighted_moving_average(prior_on_hand, prior_avg, qty_in, unit_cost);
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE stock_balances SET moving_avg_unit_cost = ? WHERE article_id = ? AND location_id = ?",
+        [new_avg.into(), article_id.into(), location_id.into()],
+    ))
+    .await?;
+    stamp_movement_cost(db, transaction_id, qty_in, unit_cost, cost_source_type, cost_source_ref).await?;
+    Ok(new_avg)
+}
+
+/// Movement valued at the location's current average (outbound, or inbound without its own cost);
+/// the average itself does not change. Leaves the movement uncosted when the location has never
+/// been costed.
+pub async fn stamp_at_average<C: ConnectionTrait>(
+    db: &C,
+    article_id: i64,
+    location_id: i64,
+    quantity: f64,
+    transaction_id: i64,
+) -> AppResult<Option<f64>> {
+    let avg = location_average_cost(db, article_id, location_id).await?;
+    if let Some(avg) = avg {
+        stamp_movement_cost(db, transaction_id, quantity, avg, COST_SOURCE_MOVING_AVG, None).await?;
+    }
+    Ok(avg)
+}

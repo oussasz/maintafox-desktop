@@ -31,6 +31,7 @@ function makeResult(overrides: Partial<AssetSearchResult> = {}): AssetSearchResu
     subfamily_code: null,
     subfamily_name: null,
     criticality_code: "HIGH",
+    criticality_to_review: false,
     status_code: "ACTIVE_IN_SERVICE",
     org_node_id: 1,
     org_node_name: "Usine Principale",
@@ -69,6 +70,10 @@ const vlv001 = makeResult({
   row_version: 1,
 });
 
+function page(items: AssetSearchResult[], total = items.length) {
+  return { items, total };
+}
+
 function resetStore() {
   useAssetSearchStore.setState({
     filters: {
@@ -81,8 +86,10 @@ function resetStore() {
       limit: 100,
     },
     results: [],
+    total: 0,
     selectedResultId: null,
     loading: false,
+    loadingMore: false,
     error: null,
     expandedIds: new Set(),
   });
@@ -99,12 +106,13 @@ describe("V1 — Code-priority search", () => {
   it("searching exact asset code returns target row first", async () => {
     // Backend contract: exact code match is ranked first (ORDER BY CASE 0)
     // Mock returns exact-match row first, then partial-match rows.
-    mockInvoke.mockResolvedValueOnce([pmp001, pmp002, vlv001]);
+    mockInvoke.mockResolvedValueOnce(page([pmp001, pmp002, vlv001]));
 
     await useAssetSearchStore.getState().updateFilters({ query: "PMP-001" });
 
-    expect(mockInvoke).toHaveBeenCalledWith("search_assets", {
-      filters: {
+    expect(mockInvoke).toHaveBeenCalledWith("search_assets_page", {
+      filters: expect.objectContaining({
+        offset: 0,
         query: "PMP-001",
         class_codes: null,
         family_codes: null,
@@ -112,7 +120,7 @@ describe("V1 — Code-priority search", () => {
         org_node_ids: null,
         include_decommissioned: false,
         limit: 100,
-      },
+      }),
     });
 
     const state = useAssetSearchStore.getState();
@@ -124,12 +132,12 @@ describe("V1 — Code-priority search", () => {
   });
 
   it("query filter is passed through to IPC invoke", async () => {
-    mockInvoke.mockResolvedValueOnce([pmp001]);
+    mockInvoke.mockResolvedValueOnce(page([pmp001]));
 
     await useAssetSearchStore.getState().updateFilters({ query: "PMP-001" });
 
     const callArgs = mockInvoke.mock.calls[0];
-    expect(callArgs?.[0]).toBe("search_assets");
+    expect(callArgs?.[0]).toBe("search_assets_page");
     expect((callArgs?.[1] as { filters: { query: string } }).filters.query).toBe("PMP-001");
   });
 });
@@ -144,15 +152,16 @@ describe("V2 — Multi-filter search", () => {
 
   it("class + status filters are forwarded to IPC command", async () => {
     // Only PUMP + ACTIVE → only pmp001 returned
-    mockInvoke.mockResolvedValueOnce([pmp001]);
+    mockInvoke.mockResolvedValueOnce(page([pmp001]));
 
     await useAssetSearchStore.getState().updateFilters({
       class_codes: ["PUMP"],
       status_codes: ["ACTIVE_IN_SERVICE"],
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("search_assets", {
-      filters: {
+    expect(mockInvoke).toHaveBeenCalledWith("search_assets_page", {
+      filters: expect.objectContaining({
+        offset: 0,
         query: null,
         class_codes: ["PUMP"],
         status_codes: ["ACTIVE_IN_SERVICE"],
@@ -160,7 +169,7 @@ describe("V2 — Multi-filter search", () => {
         org_node_ids: null,
         include_decommissioned: false,
         limit: 100,
-      },
+      }),
     });
 
     const state = useAssetSearchStore.getState();
@@ -171,7 +180,7 @@ describe("V2 — Multi-filter search", () => {
   });
 
   it("combining query + class + status constrains results", async () => {
-    mockInvoke.mockResolvedValueOnce([pmp001]);
+    mockInvoke.mockResolvedValueOnce(page([pmp001]));
 
     await useAssetSearchStore.getState().updateFilters({
       query: "PMP",
@@ -179,8 +188,9 @@ describe("V2 — Multi-filter search", () => {
       status_codes: ["ACTIVE_IN_SERVICE"],
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("search_assets", {
-      filters: {
+    expect(mockInvoke).toHaveBeenCalledWith("search_assets_page", {
+      filters: expect.objectContaining({
+        offset: 0,
         query: "PMP",
         class_codes: ["PUMP"],
         status_codes: ["ACTIVE_IN_SERVICE"],
@@ -188,7 +198,7 @@ describe("V2 — Multi-filter search", () => {
         org_node_ids: null,
         include_decommissioned: false,
         limit: 100,
-      },
+      }),
     });
 
     const { results } = useAssetSearchStore.getState();
@@ -198,14 +208,14 @@ describe("V2 — Multi-filter search", () => {
 
   it("clearFilters resets to defaults and re-searches", async () => {
     // First: apply filters
-    mockInvoke.mockResolvedValueOnce([pmp001]);
+    mockInvoke.mockResolvedValueOnce(page([pmp001]));
     await useAssetSearchStore.getState().updateFilters({
       class_codes: ["PUMP"],
       status_codes: ["ACTIVE_IN_SERVICE"],
     });
 
     // Then: clear
-    mockInvoke.mockResolvedValueOnce([pmp001, pmp002, vlv001]);
+    mockInvoke.mockResolvedValueOnce(page([pmp001, pmp002, vlv001]));
     await useAssetSearchStore.getState().clearFilters();
 
     const state = useAssetSearchStore.getState();
@@ -227,7 +237,7 @@ describe("V3 — Empty-state behavior", () => {
   });
 
   it("nonsense query returns empty results without error", async () => {
-    mockInvoke.mockResolvedValueOnce([]);
+    mockInvoke.mockResolvedValueOnce(page([]));
 
     await useAssetSearchStore.getState().updateFilters({ query: "ZZZXXX_NONEXISTENT_999" });
 
@@ -238,7 +248,7 @@ describe("V3 — Empty-state behavior", () => {
   });
 
   it("empty array propagates through Zod validation", async () => {
-    mockInvoke.mockResolvedValueOnce([]);
+    mockInvoke.mockResolvedValueOnce(page([]));
 
     await useAssetSearchStore.getState().runSearch();
 
@@ -249,7 +259,7 @@ describe("V3 — Empty-state behavior", () => {
 
   it("backend error sets error state and clears results", async () => {
     // First: load some results
-    mockInvoke.mockResolvedValueOnce([pmp001, pmp002]);
+    mockInvoke.mockResolvedValueOnce(page([pmp001, pmp002]));
     await useAssetSearchStore.getState().runSearch();
     expect(useAssetSearchStore.getState().results).toHaveLength(2);
 
@@ -259,7 +269,8 @@ describe("V3 — Empty-state behavior", () => {
 
     const state = useAssetSearchStore.getState();
     expect(state.results).toEqual([]);
-    expect(state.error).toBe("Database connection lost");
+    expect(state.error).toBeInstanceOf(Error);
+    expect(state.total).toBe(0);
     expect(state.loading).toBe(false);
   });
 
@@ -289,7 +300,7 @@ describe("Tree expand state", () => {
   });
 
   it("toggleExpanded / expandAll / collapseAll", async () => {
-    mockInvoke.mockResolvedValueOnce([parent, child]);
+    mockInvoke.mockResolvedValueOnce(page([parent, child]));
     await useAssetSearchStore.getState().runSearch();
 
     useAssetSearchStore.getState().toggleExpanded(10);
@@ -303,9 +314,42 @@ describe("Tree expand state", () => {
   });
 
   it("auto-expands ancestors when query is active", async () => {
-    mockInvoke.mockResolvedValueOnce([parent, child]);
+    mockInvoke.mockResolvedValueOnce(page([parent, child]));
     await useAssetSearchStore.getState().updateFilters({ query: "REG" });
 
     expect(useAssetSearchStore.getState().expandedIds.has(10)).toBe(true);
+  });
+});
+
+// ── Paging ────────────────────────────────────────────────────────────────────
+
+describe("Paging", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    resetStore();
+  });
+
+  it("keeps the backend total and appends the next page at the right offset", async () => {
+    mockInvoke.mockResolvedValueOnce(page([pmp001, pmp002], 3));
+    await useAssetSearchStore.getState().runSearch();
+    expect(useAssetSearchStore.getState().total).toBe(3);
+    expect(useAssetSearchStore.getState().results).toHaveLength(2);
+
+    mockInvoke.mockResolvedValueOnce(page([vlv001], 3));
+    await useAssetSearchStore.getState().loadMore();
+
+    expect(mockInvoke).toHaveBeenLastCalledWith("search_assets_page", {
+      filters: expect.objectContaining({ offset: 2, limit: 100 }),
+    });
+    const state = useAssetSearchStore.getState();
+    expect(state.results.map((r) => r.asset_code)).toEqual(["PMP-001", "PMP-002", "VLV-001"]);
+    expect(state.loadingMore).toBe(false);
+  });
+
+  it("does not request another page once everything is loaded", async () => {
+    mockInvoke.mockResolvedValueOnce(page([pmp001], 1));
+    await useAssetSearchStore.getState().runSearch();
+    await useAssetSearchStore.getState().loadMore();
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 });

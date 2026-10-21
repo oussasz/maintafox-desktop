@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { PermissionGate } from "@/components/PermissionGate";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -31,12 +32,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { describeAppError } from "@/lib/app-error";
+import { importProblemText } from "@/lib/import-problem-text";
 import {
   applyPersonnelImportBatch,
   createPersonnelImportBatch,
   getPersonnelImportPreview,
 } from "@/services/personnel-service";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   PersonnelImportApplyResult,
   PersonnelImportBatchSummary,
@@ -62,6 +64,7 @@ function sourceKindFromName(fileName: string): "csv" | "xlsx" {
 
 export function PersonnelImportWizard() {
   const { t } = useTranslation("personnel");
+  const tText = t as unknown as (key: string, options?: Record<string, unknown>) => string;
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<ImportMode>("create_and_update");
@@ -108,7 +111,7 @@ export function PersonnelImportWizard() {
         const loadedPreview = await getPersonnelImportPreview(created.id);
         setPreview(loadedPreview);
       } catch (err) {
-        setError(toErrorMessage(err));
+        setError(describeAppError(err).title);
       } finally {
         setLoading(false);
       }
@@ -136,13 +139,14 @@ export function PersonnelImportWizard() {
       setPreview(refreshed);
       setBatch(result.batch);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setApplying(false);
     }
   }, [batch]);
 
   const canApply = useMemo(() => batch?.status === "validated", [batch?.status]);
+  const [confirmApplyOpen, setConfirmApplyOpen] = useState(false);
 
   return (
     <PermissionGate permission={P.PER_MANAGE}>
@@ -206,7 +210,11 @@ export function PersonnelImportWizard() {
               </div>
             ) : null}
 
-            {error ? <div className="text-sm text-destructive">{error}</div> : null}
+            {error ? (
+              <p role="alert" className="text-sm text-tone-danger-fg">
+                {error}
+              </p>
+            ) : null}
 
             {preview ? (
               <div className="h-[320px] overflow-auto rounded-md border">
@@ -226,17 +234,47 @@ export function PersonnelImportWizard() {
                       <TableRow key={row.id}>
                         <TableCell>{row.row_no}</TableCell>
                         <TableCell className="font-mono text-xs">
-                          {row.employee_code ?? "-"}
+                          {row.employee_code ?? "—"}
                         </TableCell>
                         <TableCell className="font-mono text-xs">
-                          {row.hr_external_id ?? "-"}
+                          {row.hr_external_id ?? "—"}
                         </TableCell>
-                        <TableCell>{row.validation_status}</TableCell>
-                        <TableCell>{row.proposed_action ?? "-"}</TableCell>
+                        <TableCell>
+                          {t(`import.rowStatus.${row.validation_status}`, {
+                            defaultValue: row.validation_status,
+                          })}
+                        </TableCell>
+                        <TableCell>
+                          {row.proposed_action
+                            ? t(`import.rowAction.${row.proposed_action}`, {
+                                defaultValue: row.proposed_action,
+                              })
+                            : "—"}
+                        </TableCell>
                         <TableCell className="max-w-[350px]">
                           {row.messages.map((msg, idx) => (
-                            <div key={`${row.id}-${idx}`} className="text-xs text-muted-foreground">
-                              [{msg.category}] {msg.message}
+                            <div
+                              key={`${row.id}-${idx}`}
+                              className="text-xs text-text-secondary"
+                              data-testid="import-message"
+                            >
+                              {/* Translated reason and detail; a problem without a code this
+                                  version can say keeps the server's sentence under Detail. */}
+                              <span className="font-medium">
+                                {t(`import.category.${msg.category.replace(/\./g, "_")}`, {
+                                  defaultValue: t("import.category.other"),
+                                })}
+                              </span>
+                              {importProblemText(msg, tText) ? (
+                                <span className="block">{importProblemText(msg, tText)}</span>
+                              ) : (
+                                <details className="text-text-muted">
+                                  <summary className="cursor-pointer select-none">
+                                    {t("import.messageDetail")}
+                                  </summary>
+                                  {msg.message}
+                                </details>
+                              )}
                             </div>
                           ))}
                         </TableCell>
@@ -269,13 +307,28 @@ export function PersonnelImportWizard() {
             <Button variant="outline" onClick={() => setOpen(false)}>
               {t("import.action.close")}
             </Button>
-            <Button onClick={() => void applyImport()} disabled={!canApply || applying}>
+            <Button onClick={() => setConfirmApplyOpen(true)} disabled={!canApply || applying}>
               {applying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {t("import.action.apply")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ConfirmDialog
+        open={confirmApplyOpen}
+        onOpenChange={setConfirmApplyOpen}
+        title={t("import.confirmApply.title")}
+        description={t("import.confirmApply.body", {
+          valid: batch?.valid_rows ?? 0,
+          warning: batch?.warning_rows ?? 0,
+          error: batch?.error_rows ?? 0,
+        })}
+        confirmLabel={t("import.action.apply")}
+        onConfirm={() => {
+          setConfirmApplyOpen(false);
+          void applyImport();
+        }}
+      />
     </PermissionGate>
   );
 }

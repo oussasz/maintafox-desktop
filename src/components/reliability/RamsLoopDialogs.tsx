@@ -22,6 +22,8 @@ import {
   SelectValue,
   Textarea,
 } from "@/components/ui";
+import { woTypeLabel } from "@/components/wo/use-wo-type-labels";
+import { describeAppError } from "@/lib/app-error";
 import { listPmPlans } from "@/services/pm-service";
 import {
   applyRcmDecisionLogic,
@@ -33,7 +35,6 @@ import {
   previewRcmRecommendation,
 } from "@/services/reliability-service";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   FmecaCriticalityEvidence,
   RamsActionSourceType,
@@ -123,7 +124,7 @@ function SourceActions({
   allowPm: boolean;
   onDone: (message: string) => void;
 }) {
-  const { t } = useTranslation("reliability");
+  const { t, i18n } = useTranslation("reliability");
   const [plans, setPlans] = useState<{ id: number; label: string }[]>([]);
   const [planId, setPlanId] = useState("");
   const [note, setNote] = useState("");
@@ -137,7 +138,7 @@ function SourceActions({
     void loadWoTypes();
     listPmPlans({})
       .then((ps) => setPlans(ps.map((p) => ({ id: p.id, label: `${p.code} — ${p.title}` }))))
-      .catch((err: unknown) => setError(toErrorMessage(err)));
+      .catch((err: unknown) => setError(describeAppError(err).title));
   }, [loadWoTypes]);
   const active = useMemo(() => woTypes.filter((w) => w.is_active), [woTypes]);
 
@@ -147,7 +148,7 @@ function SourceActions({
     try {
       onDone(await fn());
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setBusy(false);
     }
@@ -207,7 +208,7 @@ function SourceActions({
             <SelectContent>
               {active.map((w) => (
                 <SelectItem key={w.code} value={w.code}>
-                  {w.label}
+                  {woTypeLabel(w, i18n.language)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -274,7 +275,7 @@ export function RcmDecisionDialog({
     }
   };
   useEffect(() => {
-    reload().catch((err: unknown) => setError(toErrorMessage(err)));
+    reload().catch((err: unknown) => setError(describeAppError(err).title));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studyId, decisionId]);
 
@@ -284,7 +285,7 @@ export function RcmDecisionDialog({
     if (betaInvalid) return;
     previewRcmRecommendation({ ...answers, weibull_beta: beta })
       .then(setPreview)
-      .catch((err: unknown) => setError(toErrorMessage(err)));
+      .catch((err: unknown) => setError(describeAppError(err).title));
   }, [answers, beta, betaInvalid]);
 
   const retained = tactic || preview?.recommended_tactic || "";
@@ -304,7 +305,7 @@ export function RcmDecisionDialog({
       setLogic(out);
       onSaved();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     }
   };
 
@@ -452,7 +453,7 @@ export function FmecaActionsDialog({
         if (e.mode_ratio != null) setAlpha(String(e.mode_ratio));
         if (e.failure_rate_per_hour != null) setLambda(String(e.failure_rate_per_hour));
       })
-      .catch((err: unknown) => setError(toErrorMessage(err)));
+      .catch((err: unknown) => setError(describeAppError(err).title));
   }, [itemId]);
 
   const num = (s: string) => (s.trim() === "" ? null : Number(s.replace(",", ".")));
@@ -484,11 +485,14 @@ export function FmecaActionsDialog({
         t("rcmLoop.cm", {
           cm: c.criticality_number.toPrecision(3),
           cr: c.analysis_criticality.toPrecision(3),
-        }),
+        }) +
+          (c.analysis_rows_to_review > 0
+            ? ` · ${t("rams.fmeca.rowsToReview", { count: c.analysis_rows_to_review })}`
+            : ""),
       );
       onSaved();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     }
   };
 

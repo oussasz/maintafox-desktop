@@ -5,7 +5,94 @@
     "family": "Family",
     "status": "Status",
     "statusActive": "Active",
-    "statusInactive": "Inactive"
+    "statusInactive": "Inactive",
+    "stock": "Stock",
+    "stockBelowReorder": "At or below reorder point",
+    "stockOut": "Nothing available",
+    "stockNegative": "Negative stock"
+  },
+  "negativeStock": {
+    "title": "Stock to reconcile",
+    "description": "Movements received from another PC are applied as received. A location left below zero stays here until a stock count is recorded there or a later entry brings it back to zero or more: a goods receipt, a transfer in, a return against its issue or repair, or an entry with its reason.",
+    "showClosed": "Show reconciled items",
+    "noneOpen": "No location below zero.",
+    "openList": "Locations below zero to reconcile",
+    "closedList": "Reconciled locations",
+    "flag": "Negative — to reconcile",
+    "balance": "On hand {{onHand}}, reserved {{reserved}}, available {{available}}",
+    "openedAt": "Found below zero on {{date}} (last exit: {{movement}})",
+    "recordCount": "Record a count",
+    "overReservedTitle": "Reservations above stock (warning)",
+    "overReservedLine": "{{article}} at {{location}}: {{reserved}} reserved for {{onHand}} on hand",
+    "closure": {
+      "count": "Reconciled by a count on {{date}}",
+      "adjustment": "Reconciled by an adjustment with its reason on {{date}} ({{movement}})",
+      "receipt": "Regularised by receipt on {{date}} ({{movement}})",
+      "return": "Regularised by return on {{date}} ({{movement}})",
+      "prior_entry": "Regularised by an earlier entry on {{date}} ({{movement}}): entered on a PC that did not yet see the negative stock, no reason asked",
+      "other": "Back to zero or more on {{date}} without a stock entry on record"
+    },
+    "loadError": "The stock to reconcile could not be loaded",
+    "loading": "Loading the stock to reconcile…",
+    "dialog": {
+      "title": "Record a stock count",
+      "description": "{{article}} at {{location}} stands at {{onHand}} on this PC. Count what is physically there: the stock becomes the counted quantity and the item closes. The count is posted like any count and audited.",
+      "counted": "Quantity counted",
+      "varianceReason": "Variance reason",
+      "varianceReasonPlaceholder": "Choose a reason",
+      "reason": "Reason",
+      "reasonPlaceholder": "At least {{count}} characters: what was found and why",
+      "confirm": "Record the count"
+    },
+    "doubleCount": {
+      "flag": "Double count — to verify",
+      "list": "Locations counted twice",
+      "explain": "Counted on two PCs, neither knowing the other: each corrected the stock, so it may be corrected twice (now {{onHand}} on hand). Check the stock and record a new count.",
+      "countLine": "{{who}} on PC {{device}}, {{date}}, by {{path}}: counted {{counted}} (correction {{variance}})",
+      "unknownUser": "Unknown user",
+      "closedByReversal": "closed by the reversal of count {{session}} ({{who}}, {{date}})",
+      "path": {
+        "reconciliation": "stock-to-reconcile list",
+        "count_session": "count session {{session}}"
+      }
+    },
+    "label": "Negative stock",
+    "hint": "To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",
+    "hintTotal": "Total over all stores is negative. To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls)."
+  },
+  "transfer": {
+    "action": "Transfer",
+    "noneAvailable": "No available stock to transfer",
+    "actionHint": "Transfer this stock to another store",
+    "title": "Transfer stock to another store",
+    "description": "Moves available stock from this store to another one. Reserved stock stays where it is.",
+    "cancel": "Cancel",
+    "submit": "Transfer",
+    "sections": {
+      "source": "Article and source store",
+      "move": "Transfer"
+    },
+    "from": "Source store",
+    "to": "Destination store",
+    "toPlaceholder": "Choose the destination store",
+    "noDestination": "No other active store is available.",
+    "storesFailed": "The store list could not be loaded.",
+    "availableLine": "Available: {{available}} {{unit}} ({{onHand}} in stock, of which {{reserved}} reserved and not transferable)",
+    "lot": "Lot or serial number",
+    "lotFefo": "Automatic: the lot that expires first (FEFO)",
+    "quantity": "Quantity ({{unit}})",
+    "quantityMax": "Maximum transferable: {{max}} {{unit}}",
+    "wholeUnitsHint": "This article is serial-tracked: the quantity is transferred in whole units.",
+    "reason": "Reason",
+    "confirm": "Transfer {{qty}} {{unit}} of {{article}} from store {{from}} to {{to}}?",
+    "done": "Transfer done: {{qty}} {{unit}} of {{article}} to {{to}}",
+    "errors": {
+      "toRequired": "Choose the destination store.",
+      "quantityInvalid": "Enter a quantity greater than 0.",
+      "quantityAbove": "The quantity exceeds the available stock ({{max}} {{unit}}).",
+      "wholeUnits": "Enter a whole number of units.",
+      "reasonShort": "The reason must be at least {{min}} characters."
+    }
   },
   "adjustStock": {
     "title": "Adjust the stock",
@@ -17,7 +104,10 @@
       "type": "Type",
       "quantity": "Quantity",
       "motif": "Reason",
-      "comment": "Comment"
+      "comment": "Comment",
+      "workOrder": "Work order",
+      "unitCost": "Unit cost ({{currency}}, optional)",
+      "unitCostRequired": "Unit cost ({{currency}})"
     },
     "types": {
       "entry": "Entry",
@@ -42,7 +132,59 @@
       "after": "After adjustment"
     },
     "errors": {
-      "articleNotFound": "Article not found."
+      "articleNotFound": "Article not found.",
+      "loadFailed": "The movement form could not be loaded"
+    },
+    "workOrder": {
+      "searchPlaceholder": "Search a work order by number or title",
+      "hint": "Exits to and returns from a work order must name the work order.",
+      "selected": "Work order {{code}} selected",
+      "listLabel": "Open work orders",
+      "loading": "Loading work orders…",
+      "empty": "No open work order matches.",
+      "loadError": "Work orders could not be loaded"
+    },
+    "blockers": {
+      "location": "Choose the warehouse and the location.",
+      "quantity": "Enter a quantity different from zero.",
+      "positive": "Entries and exits take a positive quantity.",
+      "motif": "Choose the reason of the movement.",
+      "workOrder": "Choose the work order the parts go to or come back from.",
+      "unitCost": "Enter the unit cost (zero or more)."
+    },
+    "cost": {
+      "entryHint": "Updates the weighted-average cost of this location (currently {{average}}). Empty: valued at the current average.",
+      "entryHintNoAverage": "This location has no cost yet: the unit cost entered becomes its average cost.",
+      "valuedAtAverage": "Valued at the average cost {{average}} ({{value}}).",
+      "notValued": "This location has no cost yet: the movement is not valued."
+    },
+    "lots": {
+      "title": "Lot",
+      "serialTitle": "Serial number",
+      "choice": "Lot / serial",
+      "newLot": "New lot",
+      "newSerial": "New serial number",
+      "fefo": "Automatic — first expiring first",
+      "lotNumber": "Lot number",
+      "serialNumber": "Serial number",
+      "expiry": "Expiry date",
+      "expiryOptional": "Expiry date (optional)",
+      "blockers": {
+        "serialQty": "A serial number stands for one unit: enter serialised items one at a time.",
+        "serial": "Enter the serial number.",
+        "lot": "Enter the lot number.",
+        "expiry": "Enter the expiry date of the lot."
+      }
+    },
+    "postingDate": {
+      "label": "Movement date",
+      "hint": "Today unless the movement happened earlier. Dates inside a closed valuation period are refused.",
+      "blocker": "Enter the movement date.",
+      "future": "The movement date cannot be in the future."
+    },
+    "negativeLocation": {
+      "hint": "This location is below zero on this PC: an entry here reconciles it. Give the reason in the comment (at least {{count}} characters); it is audited.",
+      "blocker": "Give the reason of the entry in the comment (at least {{count}} characters): the location is below zero."
     }
   },
   "detail": {
@@ -64,7 +206,9 @@
       "reserved": "Reserved",
       "available": "Available",
       "locations": "Locations",
-      "movements30d": "Movements (30d)"
+      "movements30d": "Movements (30d)",
+      "avgCost": "Avg unit cost",
+      "stockValue": "Stock value"
     },
     "sections": {
       "classification": "Classification",
@@ -111,17 +255,97 @@
       "periodAll": "All periods",
       "kinds": {
         "created": "Created",
-        "edited": "Edited"
+        "edited": "Edited",
+        "stock_movement": "Stock movement",
+        "reservation_created": "Reservation",
+        "reservation_released": "Reservation released"
+      },
+      "period30d": "Last 30 days",
+      "period90d": "Last 90 days",
+      "types": {
+        "other": "Event",
+        "article": {
+          "created": "Article created",
+          "updated": "Article updated"
+        },
+        "reservation": {
+          "created": "Reserved",
+          "released": "Released"
+        },
+        "movement": {
+          "ADJUST_IN": "Stock entry",
+          "ADJUST_OUT": "Stock exit",
+          "ISSUE": "Issue to work order",
+          "RETURN": "Return to stock",
+          "TRANSFER_IN": "Transfer in",
+          "TRANSFER_OUT": "Transfer out",
+          "RESERVE": "Reservation",
+          "RELEASE": "Reservation released",
+          "GR_ACCEPT": "Goods receipt",
+          "PO_GR": "Goods receipt (PO)",
+          "COUNT_ADJUST": "Count adjustment",
+          "COUNT_REVERSAL": "Count reversal",
+          "REPAIRABLE_RELEASE": "Released for repair",
+          "REPAIRABLE_RETURN": "Returned from repair",
+          "REPAIRABLE_CANCEL_RESTORE": "Repair cancelled (restocked)",
+          "REPAIRABLE_SCRAP_WRITEOFF": "Scrapped after repair"
+        },
+        "field": {
+          "article_code": "Code changed",
+          "article_name": "Name changed",
+          "family": "Family changed",
+          "unit": "Unit changed",
+          "criticality": "Criticality changed",
+          "stocking_type": "Stocking type changed",
+          "tax_category": "Tax category changed",
+          "procurement_category": "Procurement category changed",
+          "preferred_warehouse": "Preferred warehouse changed",
+          "preferred_location": "Preferred location changed",
+          "min_stock": "Min stock changed",
+          "max_stock": "Max stock changed",
+          "reorder_point": "Reorder point changed",
+          "safety_stock": "Safety stock changed",
+          "is_active": "Activation changed"
+        }
       }
     },
     "stockPositions": {
-      "empty": "No stock positions."
+      "empty": "No stock positions.",
+      "notValued": "not valued"
     },
     "reservations": {
-      "empty": "No reservations."
+      "empty": "No reservations.",
+      "reservedQty": "{{reserved}} reserved · {{issued}} issued",
+      "sources": {
+        "WO": "Work order",
+        "work_order": "Work order",
+        "WORK_ORDER": "Work order",
+        "WORK_ORDER_PART": "Work order part",
+        "REPAIRABLE_ORDER": "Repairable order",
+        "OTHER": "Other demand"
+      }
+    },
+    "noSelection": "Select an article to see its stock, movements and suppliers.",
+    "inactiveHint": "This article is deactivated.",
+    "suppliersLoadError": "Suppliers could not be loaded",
+    "deactivate": {
+      "title": "Deactivate this article?",
+      "description": "Article {{code}} will be hidden from active operations (requisitions, issues, counts). Its history is kept.",
+      "confirm": "Deactivate article"
+    },
+    "reservationStatuses": {
+      "active": "Reserved",
+      "partial": "Partly issued",
+      "consumed": "Issued",
+      "released": "Released"
     }
   },
   "procurement": {
+    "filters": {
+      "open": "Open (as counted on the tile)",
+      "late": "Late (expected delivery passed)"
+    },
+    "boardMoveHint": "Drag a card to the next column (or use Move, or Alt+arrow keys) to submit or approve it. Rejecting, cancelling and closing are done from the record, which asks for the reason or a confirmation.",
     "dashboard": {
       "title": "Procurement overview",
       "openRequisitions": "Open requisitions",
@@ -133,7 +357,11 @@
       "stockouts": "Low stock",
       "criticalStockouts": "Critical low stock",
       "activeSuppliers": "Active suppliers",
-      "repairablesInRepair": "Repairables in repair"
+      "repairablesInRepair": "Repairables in repair",
+      "receivingTodayHint_one": "{{count}} delivery expected today",
+      "receivingTodayHint_other": "{{count}} deliveries expected today",
+      "stockoutsHint": "Articles at or below their reorder point",
+      "criticalStockoutsHint": "Critical spares at or below their reorder point"
     },
     "alerts": {
       "title": "Alerts",
@@ -141,7 +369,14 @@
         "CRITICAL_STOCK": "Critical stock",
         "LATE_PO": "Late PO",
         "SUPPLIER_DELAY": "Supplier risk",
-        "REPAIRABLE_OVERDUE": "Repair overdue"
+        "REPAIRABLE_OVERDUE": "Repair overdue",
+        "other": "Alert"
+      },
+      "messages": {
+        "CRITICAL_STOCK": "{{code}} {{name}} — store {{warehouse}}: {{available}} available, threshold {{threshold}}",
+        "LATE_PO": "{{code}} — expected {{date}}",
+        "REPAIRABLE_OVERDUE": "{{code}} ({{article}}) — past its {{days}}-day repair lead time",
+        "SUPPLIER_DELAY": "{{code}} {{name}} — delivery record at risk"
       }
     },
     "recommendations": {
@@ -158,7 +393,15 @@
       "surplusFrom": "Surplus from",
       "transferHint": "Prefer internal transfer",
       "createRequisition": "Create requisition",
-      "creating": "Creating…"
+      "creating": "Creating…",
+      "loadError": "The replenishment recommendations could not be loaded",
+      "showAll": "Show all {{count}}",
+      "showFewer": "Show fewer",
+      "trigger": {
+        "reorder_point": "At or below the reorder point in {{warehouse}}",
+        "min_stock": "Below the minimum stock in {{warehouse}}",
+        "other": "Replenishment needed in {{warehouse}}"
+      }
     },
     "statuses": {
       "DRAFT": "Draft",
@@ -168,7 +411,8 @@
       "RECEIVED_CLOSED": "Received & closed",
       "CLOSED": "Closed",
       "CANCELLED": "Cancelled",
-      "REJECTED": "Rejected"
+      "REJECTED": "Rejected",
+      "RECEIVED": "Received"
     },
     "repairableStatuses": {
       "REQUESTED": "Requested",
@@ -195,7 +439,8 @@
         "status": "Status",
         "source": "Source",
         "updated": "Updated",
-        "actions": "Actions"
+        "actions": "Actions",
+        "requestedBy": "Requested by"
       },
       "filters": {
         "status": "Status"
@@ -207,7 +452,9 @@
         "reject": "Reject",
         "cancel": "Cancel",
         "close": "Close",
-        "menu": "Row actions"
+        "menu": "Row actions",
+        "createPo": "Create purchase order",
+        "editLines": "Edit lines"
       },
       "reject": {
         "title": "Reject requisition",
@@ -220,6 +467,40 @@
         "title": "Approval history",
         "empty": "No transitions recorded yet.",
         "loading": "Loading history…"
+      },
+      "title": "Purchase requisitions",
+      "boardLabel": "Requisitions board",
+      "detailTitle": "Purchase requisition",
+      "noSelection": "No requisition selected.",
+      "fields": {
+        "source": "Reason",
+        "sourceRef": "Reference",
+        "requestedBy": "Requested by",
+        "createdAt": "Created",
+        "updatedAt": "Updated"
+      },
+      "lines": {
+        "title": "Lines",
+        "empty": "No lines.",
+        "estimate": "est. {{cost}} · {{total}}",
+        "noEstimate": "no estimate"
+      },
+      "hints": {
+        "DRAFT": "Draft: submit it so it can be approved.",
+        "SUBMITTED": "Submitted: waiting for approval or rejection.",
+        "APPROVED": "Approved: create the purchase order.",
+        "PARTIALLY_RECEIVED": "Partly received: close it once nothing more is expected.",
+        "terminal": "No submission or approval is possible at this status."
+      },
+      "confirmCancel": {
+        "title": "Cancel this requisition?",
+        "description": "Requisition {{number}} will be cancelled. This cannot be undone.",
+        "confirm": "Cancel requisition"
+      },
+      "confirmClose": {
+        "title": "Close this requisition?",
+        "description": "Requisition {{number}} will be closed; nothing more will be ordered on it.",
+        "confirm": "Close requisition"
       }
     },
     "purchaseOrders": {
@@ -233,7 +514,9 @@
         "status": "Status",
         "supplier": "Supplier",
         "updated": "Updated",
-        "actions": "Actions"
+        "actions": "Actions",
+        "orderedBy": "Ordered by",
+        "expectedDelivery": "Expected delivery"
       },
       "filters": {
         "status": "Status",
@@ -246,6 +529,14 @@
         "receive": "Receive goods",
         "cancel": "Cancel",
         "menu": "Row actions"
+      },
+      "title": "Purchase orders",
+      "boardLabel": "Purchase orders board",
+      "noSupplier": "No supplier",
+      "confirmCancel": {
+        "title": "Cancel this purchase order?",
+        "description": "Purchase order {{number}} will be cancelled. This cannot be undone.",
+        "confirm": "Cancel purchase order"
       }
     },
     "repairables": {
@@ -387,7 +678,9 @@
         "status": "Status",
         "paymentTerms": "Payment terms",
         "leadTime": "Default lead time (days)",
-        "active": "Active"
+        "active": "Active",
+        "currency": "Invoicing currency",
+        "currencyHint": "ISO code (e.g. EUR). Leave empty when the supplier invoices in {{currency}}."
       },
       "status": {
         "PREFERRED": "Preferred",
@@ -455,6 +748,8 @@
         }
       },
       "contacts": {
+        "deleteTitle": "Delete this contact?",
+        "deleteDescription": "{{name}} will be removed from the supplier's contacts. This cannot be undone.",
         "title": "Contacts",
         "add": "Add contact",
         "edit": "Edit contact",
@@ -488,8 +783,10 @@
         }
       },
       "comparison": {
+        "hint": "Relative to the other suppliers of this article: price, lead time and risk weigh equally (5 stars = best of the candidates, not an absolute score).",
+        "basis": "Rank price {{price}} · lead time {{lead}} · risk {{risk}}",
+        "unknown": "unknown",
         "title": "Supplier comparison",
-        "hint": "Composite rating combines price, lead time and supplier risk.",
         "ratingValue": "{{stars}} out of {{max}}",
         "columns": {
           "supplier": "Supplier",
@@ -510,7 +807,9 @@
           "minQty": "Min qty",
           "validFrom": "Valid from",
           "validTo": "Valid to"
-        }
+        },
+        "minQtyValue": "min {{qty}}",
+        "validFromValue": "from {{date}}"
       },
       "documents": {
         "title": "Documents",
@@ -522,7 +821,17 @@
           "primary": "Primary",
           "validFrom": "Valid from",
           "validTo": "Valid to"
-        }
+        },
+        "refPlaceholder": "File name or link",
+        "selectPurpose": "Select a purpose",
+        "purposesUnavailable": "Document purposes could not be loaded from reference data."
+      },
+      "deactivate": "Deactivate",
+      "detailLoadError": "Supplier details could not be loaded",
+      "confirmDeactivate": {
+        "title": "Deactivate this supplier?",
+        "description": "{{name}} will no longer be proposed for purchase orders and repairs.",
+        "confirm": "Deactivate supplier"
       }
     },
     "requisition": {
@@ -532,6 +841,16 @@
         "HIGH": "High",
         "NORMAL": "Normal",
         "LOW": "Low"
+      },
+      "sources": {
+        "MANUAL": "Manual request",
+        "REORDER": "Stock replenishment",
+        "WORK_ORDER": "Work order",
+        "WORK_ORDER_PART": "Work order part",
+        "REPAIRABLE": "Repairable",
+        "STOCK_COUNT": "Stock count",
+        "PM": "Preventive maintenance",
+        "RESERVATION": "Reservation"
       }
     },
     "receive": {
@@ -549,7 +868,8 @@
         "receivedQty": "Received",
         "rejectedQty": "Rejected",
         "accepted": "Accepted",
-        "rejectionReason": "Rejection reason"
+        "rejectionReason": "Rejection reason",
+        "unit": "Receipt unit"
       },
       "selectLocation": "Select location",
       "cancel": "Cancel",
@@ -558,14 +878,51 @@
         "noLines": "Enter a received quantity on at least one line.",
         "location": "Select a receipt location for every line with a received quantity.",
         "overRemaining": "Received quantity cannot exceed the remaining quantity.",
-        "rejectedExceeds": "Rejected quantity cannot exceed the received quantity."
+        "rejectedExceeds": "Rejected quantity cannot exceed the received quantity.",
+        "postingDate": "Enter the receipt date.",
+        "futureDate": "The receipt date cannot be in the future.",
+        "rate": "Enter an exchange rate greater than 0.",
+        "rateMissing": "Enter the {{currency}} exchange rate: none is stored for this date.",
+        "unitFactor": "{{article}}: the receipt unit does not convert to the stock unit (no conversion, other dimension or unit to review)."
       },
       "fulfillmentAction": "Fulfillment action",
       "fulfillmentValues": {
         "STOCK_ONLY": "Stock only",
         "RESERVE_FOR_DEMAND": "Reserve for demand",
         "ISSUE_TO_DEMAND": "Issue to demand"
-      }
+      },
+      "postError": "The receipt could not be posted",
+      "postingDate": "Receipt date",
+      "postingDateHint": "Back-dated receipts are refused inside a closed valuation period.",
+      "rate": {
+        "readFailed": "The stored exchange rate could not be read: enter the rate of the receipt date.",
+        "label": "Exchange rate: 1 {{from}} = ? {{to}}",
+        "stored": "Leave empty to use the stored rate {{rate}} (valid from {{date}}).",
+        "none": "No stored rate on this date: enter the rate of the day."
+      },
+      "stockCost": "Stock cost: {{cost}} per unit",
+      "lots": {
+        "title": "Lots received",
+        "serialTitle": "Serial numbers received",
+        "lotNumber": "Lot number",
+        "serialNumber": "Serial number",
+        "expiry": "Expiry date",
+        "expiryOptional": "Expiry date (optional)",
+        "quantity": "Quantity",
+        "remove": "Remove lot {{n}}",
+        "add": "Add a lot",
+        "addSerial": "Add a serial number",
+        "sum": "{{sum}} of {{accepted}} accepted",
+        "errors": {
+          "missing": "{{article}}: enter the lot or serial number of every accepted unit.",
+          "expiry": "{{article}}: enter the expiry date of every lot.",
+          "serialQty": "{{article}}: one serial number stands for exactly one unit.",
+          "sum": "{{article}}: the lots must add up to the accepted quantity."
+        }
+      },
+      "unitRefused": "This unit does not convert to the article's stock unit.",
+      "inStockUnit": "In the stock unit: {{received}} {{unit}} received, {{rejected}} {{unit}} of them rejected.",
+      "converting": "Converting to the stock unit…"
     },
     "poWorkspace": {
       "title": "Purchase order",
@@ -593,7 +950,9 @@
         "updatedAt": "Updated",
         "orderedAt": "Ordered",
         "approvedAt": "Approved",
-        "expectedDelivery": "Expected delivery"
+        "expectedDelivery": "Expected delivery",
+        "orderedBy": "Ordered by",
+        "currency": "Currency"
       },
       "lines": {
         "empty": "No lines on this purchase order.",
@@ -649,6 +1008,14 @@
         "supplierSig": "Supplier",
         "signature": "Signature",
         "date": "Date"
+      },
+      "currencyForeign": "{{code}} (converted into {{tenant}} at receipt)",
+      "price": {
+        "label": "Agreed unit price for {{article}} ({{currency}})",
+        "save": "Save price",
+        "hint": "Prices can be changed while the order is a draft. Leave empty to clear.",
+        "invalid": "Enter a price of 0 or more.",
+        "error": "The price could not be saved"
       }
     },
     "repairableDetail": {
@@ -725,6 +1092,74 @@
       "requisitions": "Requisitions",
       "purchaseOrders": "Purchase orders",
       "repairables": "Repairables"
+    },
+    "loadError": "Purchasing data could not be loaded",
+    "sectionsLabel": "Purchasing sections",
+    "requisitionForm": {
+      "title": "New purchase requisition",
+      "article": "Article",
+      "selectArticle": "Select an article",
+      "stockHint": "Available {{available}} {{unit}} · reorder point {{reorderPoint}}",
+      "location": "Delivery location",
+      "noLocation": "No preferred location",
+      "quantity": "Requested quantity",
+      "source": "Reason for the request",
+      "sourceHint": "Requisitions for a work order are raised from the work order so they stay linked to it.",
+      "sourceRef": "Reference (optional)",
+      "reason": "Comment",
+      "submit": "Create requisition",
+      "blockers": {
+        "article": "Choose the article to purchase.",
+        "quantity": "Enter a quantity greater than zero.",
+        "cost": "Estimated costs must be 0 or more."
+      },
+      "lineLabel": "Line {{n}}",
+      "addLine": "Add a line",
+      "removeLine": "Remove line {{n}}",
+      "estimatedCost": "Estimated unit cost ({{currency}})",
+      "estimatedCostHint": "Estimated costs give the requisition amount that approval limits are checked against. The article's average cost is proposed when it has one.",
+      "lineTotal": "Line: {{total}}",
+      "total": "Estimated total: {{total}}",
+      "totalIncomplete": "Estimated total: {{total}} (some lines have no estimate)",
+      "editTitle": "Edit the lines of {{number}}",
+      "saveLines": "Save lines"
+    },
+    "poForm": {
+      "requisition": "Approved requisition",
+      "selectRequisition": "Select a requisition",
+      "noApproved": "No approved requisition: approve a requisition first.",
+      "supplier": "Supplier",
+      "supplierHint": "Blocked suppliers are not offered.",
+      "submit": "Create purchase order",
+      "currency": "Order currency",
+      "currencyTenant": "{{code}} (company currency)",
+      "currencyHint": "Prices on the order are in this currency. Each receipt converts them into the company currency at the rate of the day."
+    },
+    "lifecycle": {
+      "title": "Latest lifecycle events",
+      "hint": "Last 20 status changes of requisitions, purchase orders and repairables.",
+      "to": "to",
+      "columns": {
+        "entity": "Record",
+        "transition": "Status change",
+        "reason": "Reason",
+        "changedAt": "Changed"
+      },
+      "entities": {
+        "requisition": "Requisition",
+        "purchase_order": "Purchase order",
+        "repairable_order": "Repairable order",
+        "goods_receipt": "Goods receipt",
+        "article": "Article"
+      },
+      "filters": {
+        "article": "Article",
+        "allArticles": "All articles",
+        "warehouse": "Warehouse",
+        "allWarehouses": "All warehouses",
+        "from": "From",
+        "to": "To"
+      }
     }
   },
   "stockImpact": {
@@ -746,7 +1181,8 @@
       "PHOTO": "Photo",
       "OTHER": "Other",
       "CONTRACT": "Contract",
-      "DATASHEET": "Datasheet"
+      "DATASHEET": "Datasheet",
+      "MANUAL": "Manual"
     }
   },
   "article": {
@@ -787,7 +1223,10 @@
       "isCriticalSpare": "Critical spare",
       "requiresExpiration": "Requires expiration tracking",
       "shelfLifeDays": "Shelf life (days)",
-      "requiresBatchTracking": "Requires batch tracking"
+      "requiresBatchTracking": "Requires batch tracking",
+      "barcode": "Barcode",
+      "barcodeHint": "Printed on the item or bin label; scanned at the issue desk.",
+      "requiresSerialTracking": "Serial number per unit"
     },
     "actions": {
       "calculateAbc": "Calculate ABC",
@@ -809,6 +1248,14 @@
         "type": "Equivalence type",
         "bidirectional": "Bidirectional",
         "notes": "Notes"
+      },
+      "remove": "Remove",
+      "selectType": "Select a type",
+      "typesUnavailable": "Equivalence types could not be loaded from reference data.",
+      "confirmRemove": {
+        "title": "Remove this equivalent?",
+        "description": "Article {{code}} will no longer be proposed as an equivalent.",
+        "confirm": "Remove equivalent"
       }
     },
     "purchaseHistory": {
@@ -845,6 +1292,55 @@
     },
     "sourcing": {
       "note": "Preferred suppliers are managed via the Suppliers directory by linking articles to supplier sources."
+    },
+    "form": {
+      "createTitle": "New article",
+      "createDescription": "Define catalog data and replenishment parameters. The reorder point triggers replenishment alerts; maximum stock is optional.",
+      "editTitle": "Edit article",
+      "editDescription": "Update catalog data and replenishment parameters.",
+      "code": "Article code",
+      "codePlaceholder": "e.g. BRG-6205",
+      "name": "Designation",
+      "namePlaceholder": "e.g. Deep groove ball bearing 6205",
+      "unit": "Unit of measure",
+      "selectUnit": "Select a unit",
+      "noFamily": "No family",
+      "noCriticality": "No criticality",
+      "selectStockingType": "Select a stocking type",
+      "selectTaxCategory": "Select a tax category",
+      "procurementCategory": "Procurement category (optional)",
+      "noProcurementCategory": "No procurement category",
+      "preferredWarehouse": "Preferred warehouse (optional)",
+      "noPreferredWarehouse": "No preferred warehouse",
+      "preferredLocation": "Preferred location (optional)",
+      "noPreferredLocation": "No preferred location",
+      "chooseWarehouseFirst": "Choose a warehouse first.",
+      "maxStock": "Maximum stock (optional)",
+      "maxStockPlaceholder": "Empty when not defined",
+      "noPolicy": "No policy"
+    },
+    "replenishmentPolicies": {
+      "EOQ": "Economic order quantity",
+      "MIN_MAX": "Min / max",
+      "PERIODIC": "Periodic review",
+      "KANBAN": "Kanban",
+      "ON_DEMAND": "On demand"
+    },
+    "validation": {
+      "codeAndName": "Enter the article code and designation.",
+      "requiredLists": "Choose the unit, stocking type and tax category.",
+      "reorderBelowMin": "The reorder point cannot be below the minimum stock.",
+      "maxBelowThresholds": "The maximum stock cannot be below the minimum stock or the reorder point.",
+      "locationOutsideWarehouse": "The preferred location must belong to the preferred warehouse.",
+      "negative": "Stock thresholds cannot be negative."
+    },
+    "classification": {
+      "hint": "Recalculates the class of every article from the last 12 months of movements.",
+      "abcDone_one": "ABC class recalculated for {{count}} article",
+      "abcDone_other": "ABC class recalculated for {{count}} articles",
+      "xyzDone_one": "XYZ class recalculated for {{count}} article",
+      "xyzDone_other": "XYZ class recalculated for {{count}} articles",
+      "noMovement": "No movement in the last 12 months: no class was changed."
     }
   },
   "wo": {
@@ -887,12 +1383,24 @@
     "actions": {
       "saveWarehouse": "Save warehouse",
       "addLocation": "Add location",
-      "saveLocation": "Save location"
+      "saveLocation": "Save location",
+      "createWarehouse": "Create warehouse",
+      "editLocation": "Edit location",
+      "editLocationNamed": "Edit location {{code}}"
+    },
+    "placeholders": {
+      "warehouseCode": "e.g. MAG-01",
+      "warehouseName": "e.g. Main store",
+      "locationCode": "e.g. A-01-02",
+      "locationName": "e.g. Aisle A, rack 1, shelf 2"
     }
   },
   "unitConversions": {
+    "loadError": "The unit conversions could not be loaded",
+    "deactivateTitle": "Deactivate this conversion?",
+    "deactivateDescription": "{{rule}} will no longer be used to convert quantities. Records already converted keep their values.",
     "tab": "Units & conversions",
-    "help": "1 unit on the left = factor × unit on the right. The reverse direction is derived; a conversion for one article takes precedence over the general one.",
+    "help": "1 unit on the left = factor × unit on the right; the inverse is derived. Order applied: the article's own conversion, then the general factor of a plant unit (set on the unit in Reference data, e.g. 1 bag = 25 kg), then a general conversion between standard units.",
     "from": "From unit",
     "to": "To unit",
     "factor": "Factor",
@@ -907,10 +1415,412 @@
     "path": {
       "identity": "same unit",
       "direct": "direct conversion",
-      "inverse": "reverse of a conversion"
+      "inverse": "reverse of a conversion",
+      "unit_factor": "unit factor"
     },
     "rule": "Conversion",
     "empty": "No conversion defined yet.",
-    "deactivate": "Deactivate"
+    "deactivate": "Deactivate",
+    "plantUnitGeneral": "The general factor of a plant unit is set on the unit, in Reference data. Here, choose an article for a conversion of its own."
+  },
+  "page": {
+    "tabGroups": {
+      "daily": "Daily",
+      "setup": "Periodic and setup"
+    },
+    "stockValueTotal": "Stock value: {{value}}",
+    "stockValueUnavailable": "Stock value unavailable",
+    "stockValueSomeUnvalued": "part of the stock has no cost",
+    "title": "Inventory & procurement",
+    "tabs": {
+      "master": "Articles",
+      "topology": "Warehouses & locations",
+      "procurement": "Purchasing & repairables",
+      "controls": "Counts & controls",
+      "issueDesk": "Issue desk",
+      "valuation": "Valuation",
+      "rules": "Rates & approvals"
+    },
+    "actions": {
+      "createArticle": "Create article",
+      "newRequisition": "New requisition"
+    },
+    "viewList": "List view",
+    "viewKanban": "Board view",
+    "loadError": "The article list could not be loaded",
+    "lookupsLoadError": "Units, criticalities and categories could not be loaded",
+    "stockValue": "Stock value: {{value}}",
+    "unvaluedArticles_one": "{{count}} article has stock without a cost",
+    "unvaluedArticles_other": "{{count}} articles have stock without a cost"
+  },
+  "list": {
+    "columns": {
+      "code": "Code",
+      "name": "Article",
+      "family": "Family",
+      "onHand": "On hand",
+      "reserved": "Reserved",
+      "available": "Available",
+      "reorderPoint": "Reorder point",
+      "status": "Status",
+      "avgCost": "Avg unit cost",
+      "stockValue": "Stock value"
+    },
+    "belowReorder": "Reorder",
+    "belowReorderHint": "Available stock is at or below the reorder point ({{reorderPoint}})",
+    "unvaluedHint": "{{qty}} {{unit}} in stock have no cost yet and are not included in the value"
+  },
+  "controls": {
+    "setInSettings": "Settings › Inventory",
+    "loadError": "Count and reconciliation data could not be loaded",
+    "sessionStatuses": {
+      "draft": "Draft",
+      "counting": "Counting",
+      "submitted": "Submitted",
+      "approved": "Approved",
+      "posted": "Posted",
+      "reversed": "Reversed",
+      "cancelled": "Cancelled"
+    },
+    "sessions": {
+      "criticalFromSettings": "A new session's critical variance is the plant's value; each session keeps the one it was opened with:",
+      "criticalThresholdOfSession": "This session's critical variance: {{value}}",
+      "title": "Cycle counts",
+      "hint": "Count a warehouse or one location, review the variances, then post them to stock.",
+      "warehouse": "Warehouse",
+      "selectWarehouse": "Select a warehouse",
+      "scopeLocation": "Location (optional)",
+      "allLocations": "All locations of the warehouse",
+      "create": "Create count session",
+      "session": "Count session",
+      "selectSession": "Select a count session",
+      "startCounting": "Start counting",
+      "submit": "Submit count",
+      "approve": "Approve count",
+      "post": "Post variances to stock",
+      "summary": "{{warehouse}} · created {{created}}.",
+      "next": {
+        "draft": "Next: start counting.",
+        "counting": "Next: record the counted quantities, then submit.",
+        "submitted": "Next: approve the critical variances, then approve the count.",
+        "approved": "Next: post the variances to stock.",
+        "posted": "Variances are posted. A posting can be reversed with a reason."
+      }
+    },
+    "lines": {
+      "title": "Counted lines",
+      "hint": "Record counted quantities; critical variances need a reviewer's approval before posting.",
+      "pendingCount_one": "{{count}} critical variance waits for approval.",
+      "pendingCount_other": "{{count}} critical variances wait for approval.",
+      "article": "Article",
+      "location": "Location",
+      "countedQty": "Counted quantity",
+      "varianceReason": "Variance reason",
+      "noVarianceReason": "No reason",
+      "record": "Record count",
+      "blockers": {
+        "article": "Choose the counted article.",
+        "location": "Choose the counted location."
+      },
+      "columns": {
+        "article": "Article",
+        "location": "Location",
+        "systemQty": "System qty",
+        "countedQty": "Counted qty",
+        "variance": "Variance",
+        "critical": "Criticality",
+        "review": "Review"
+      },
+      "critical": "Critical",
+      "normal": "Normal",
+      "approve": "Approve variance",
+      "approvedBy": "Approved by {{name}} on {{date}}",
+      "unknownReviewer": "unknown user",
+      "noApprovalNeeded": "No approval needed",
+      "pendingApproval": "Waiting for approval"
+    },
+    "approval": {
+      "title": "Approve the variance",
+      "description": "{{article}} at {{location}}: system {{system}}, counted {{counted}}, variance {{variance}}.",
+      "evidence": "Reviewer evidence",
+      "evidencePlaceholder": "What was checked (recount, document, photo…)",
+      "confirm": "Approve variance"
+    },
+    "reversal": {
+      "reason": "Reversal reason",
+      "placeholder": "Mandatory, at least {{count}} characters",
+      "action": "Reverse posting",
+      "confirmTitle": "Reverse this count posting?",
+      "confirmDescription": "Every variance posted by count {{code}} will be reversed in stock."
+    },
+    "reconciliation": {
+      "breakFromSettings": "The gap that makes a break is the plant's value:",
+      "title": "Stock reconciliation",
+      "hint": "Compares stock balances with the movement ledger and lists the drifts.",
+      "run": "Run reconciliation",
+      "run_label": "Reconciliation run",
+      "selectRun": "Select a run",
+      "runOption_one": "{{code}} · {{date}} · {{count}} drift",
+      "runOption_other": "{{code}} · {{date}} · {{count}} drifts"
+    },
+    "findings": {
+      "columns": {
+        "article": "Article",
+        "warehouse": "Warehouse",
+        "location": "Location",
+        "balance": "Balance",
+        "ledger": "Ledger",
+        "drift": "Drift",
+        "severity": "Severity"
+      },
+      "break": "Break",
+      "info": "Information"
+    },
+    "trace": {
+      "title": "Count movements",
+      "hint": "Last {{count}} stock movements posted or reversed by counts.",
+      "columns": {
+        "when": "Date",
+        "movement": "Movement",
+        "article": "Article",
+        "location": "Location",
+        "quantity": "Quantity",
+        "sourceRef": "Reference",
+        "reason": "Reason",
+        "notes": "Notes"
+      }
+    }
+  },
+  "issueDesk": {
+    "title": "Issue desk",
+    "description": "Scan or type a part, choose the work order and issue it. The issue posts the same stock movement as part usage on the work order: the reservation is consumed and the parts are valued at the average cost.",
+    "formLabel": "Issue to a work order",
+    "scan": {
+      "label": "Scan or type an article",
+      "placeholder": "Barcode, article code, lot or serial number",
+      "hint": "A barcode scanner types the code and presses Enter.",
+      "submit": "Find",
+      "notFound": "Nothing found for this code",
+      "matched": {
+        "barcode": "Found by barcode",
+        "article_code": "Found by article code",
+        "lot": "Found by lot / serial number"
+      }
+    },
+    "article": {
+      "clear": "Change article"
+    },
+    "workOrder": {
+      "label": "Work order"
+    },
+    "reservation": {
+      "label": "Planned parts (reservation)",
+      "none": "Direct issue (no reservation)",
+      "option": "{{qty}} {{unit}} reserved — {{location}}"
+    },
+    "location": {
+      "label": "Store location",
+      "placeholder": "Choose the location",
+      "available": "{{qty}} {{unit}} available",
+      "empty": "No stock of this article is available in any location."
+    },
+    "lot": {
+      "label": "Lot / serial number",
+      "auto": "Automatic — first expiring first ({{lot}})",
+      "autoNone": "Automatic — first expiring first",
+      "option": "{{lot}} · {{qty}} {{unit}}",
+      "expires": "expires {{date}}",
+      "expired": "expired",
+      "hint": "Automatic issues from the lot that expires first and skips expired lots."
+    },
+    "quantity": {
+      "label": "Quantity",
+      "unit": "Issue unit",
+      "inStock": "= {{qty}} {{unit}} in the stock unit"
+    },
+    "submit": "Issue to work order",
+    "submitting": "Issuing…",
+    "error": "The parts could not be issued",
+    "blockers": {
+      "article": "Scan or type the article.",
+      "workOrder": "Choose the work order the parts go to.",
+      "location": "Choose the location the parts leave from.",
+      "quantity": "Enter a quantity greater than 0.",
+      "tooMuch": "Only {{qty}} {{unit}} can be issued from here.",
+      "unitRefused": "This unit does not convert to the article's stock unit (no conversion, other dimension or unit to review).",
+      "converting": "Converting to the stock unit…"
+    },
+    "outcome": {
+      "title": "{{code}} issued to {{wo}}",
+      "line": "{{qty}} {{unit}}{{lot}} at {{cost}} each",
+      "unvalued": "not valued (no cost yet)",
+      "total": "Total cost: {{total}}",
+      "toast": "{{qty}} {{unit}} of {{code}} issued to {{wo}}"
+    },
+    "expiring": {
+      "title": "Lots expiring within {{days}} days",
+      "window": "Window",
+      "windowOption_one": "{{count}} day",
+      "windowOption_other": "{{count}} days",
+      "empty": "No lot in stock expires within {{days}} days.",
+      "loadError": "Expiring lots could not be loaded",
+      "today": "Expires today",
+      "daysLeft_one": "{{count}} day left",
+      "daysLeft_other": "{{count}} days left",
+      "expired_one": "Expired {{count}} day ago",
+      "expired_other": "Expired {{count}} days ago",
+      "columns": {
+        "article": "Article",
+        "lot": "Lot / serial",
+        "location": "Location",
+        "quantity": "Quantity",
+        "expiry": "Expiry"
+      }
+    }
+  },
+  "valuation": {
+    "unvaluedPresent": "Stock without cost",
+    "unvaluedNone": "None",
+    "unvaluedByArticle": "Quantities without cost are detailed per article (\"By article\" view): they cannot be added across different units.",
+    "title": "Stock valuation",
+    "description": "Stock value in {{currency}} at weighted-average cost, by article, warehouse or family, at a date.",
+    "groupBy": {
+      "label": "Group by",
+      "article": "Article",
+      "warehouse": "Warehouse",
+      "family": "Family"
+    },
+    "asAt": {
+      "label": "As at"
+    },
+    "loadError": "The valuation could not be calculated",
+    "total": "Total value",
+    "unvaluedKpi": "Quantity without cost",
+    "unvaluedHint": "Stock that has never been costed is not in the value.",
+    "basis": "Basis",
+    "frozenValue": "Closed period {{code}}",
+    "frozenHint": "Figures frozen when the period was closed.",
+    "liveValue": "Stock ledger",
+    "liveHint": "Figures replayed from the stock movements up to the date.",
+    "empty": "No stock at this date.",
+    "noFamily": "Without family",
+    "columns": {
+      "code": "Code",
+      "name": "Name",
+      "articles": "Articles",
+      "quantity": "Quantity",
+      "value": "Value",
+      "unvalued": "Without cost"
+    },
+    "periods": {
+      "title": "Closed periods",
+      "description": "A closed period keeps the valuation it had at its last day. Movements dated inside it are refused.",
+      "close": "Close a period",
+      "empty": "No period has been closed yet.",
+      "loadError": "Closed periods could not be loaded",
+      "range": "{{start}} – {{end}}",
+      "columns": {
+        "code": "Period",
+        "dates": "Dates",
+        "value": "Frozen value",
+        "closedBy": "Closed by",
+        "closedAt": "Closed on",
+        "notes": "Notes"
+      }
+    },
+    "close": {
+      "title": "Close a valuation period",
+      "description": "Closing freezes the stock valuation at the last day of the period. Afterwards, any movement dated in the period is refused. This cannot be undone.",
+      "start": "First day",
+      "end": "Last day",
+      "notes": "Notes",
+      "confirm": "Close period",
+      "error": "The period could not be closed",
+      "done": "Period {{code}} closed at {{value}}.",
+      "blockers": {
+        "dates": "Enter the first and the last day.",
+        "order": "The last day must be on or after the first day.",
+        "future": "Only a period that has ended can be closed."
+      }
+    }
+  },
+  "rules": {
+    "fx": {
+      "title": "Exchange rates",
+      "description": "Supplier prices in another currency are converted into {{currency}} when goods are received: the receipt uses the rate entered on it, otherwise the latest rate below valid on the receipt date.",
+      "add": "Add a rate",
+      "empty": "No rate stored. A receipt in a foreign currency then needs its rate entered on the receipt.",
+      "loadError": "Exchange rates could not be loaded",
+      "saved": "Exchange rate saved.",
+      "pair": "1 {{from}} = {{rate}} {{to}}",
+      "active": "In use",
+      "retired": "Retired",
+      "deactivate": "Retire",
+      "columns": {
+        "pair": "Rate",
+        "validFrom": "Valid from",
+        "source": "Source",
+        "createdBy": "Entered by",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "form": {
+        "description": "The rate converts 1 unit of the supplier currency into {{currency}}.",
+        "from": "Supplier currency (ISO code)",
+        "rate": "Value in {{currency}}",
+        "validFrom": "Valid from",
+        "source": "Source (bank, contract…)",
+        "submit": "Save rate",
+        "error": "The rate could not be saved",
+        "blockers": {
+          "currency": "Enter a 3-letter currency code other than {{currency}}.",
+          "rate": "Enter a rate greater than 0.",
+          "date": "Enter the date the rate applies from."
+        }
+      },
+      "deactivateConfirm": {
+        "title": "Retire this rate?",
+        "description": "Receipts will no longer use 1 {{from}} = {{rate}} {{to}} (valid from {{date}}). Receipts already posted keep the rate they were posted with."
+      }
+    },
+    "limits": {
+      "title": "Approval limits",
+      "description": "Highest amount (in {{currency}}) each role may approve. While no limit is set for a document type, any user with the purchasing permission may approve it. Once one is set, only roles with a limit may approve, up to that limit.",
+      "sod": "Whatever the limits, the person who created a requisition or a purchase order can never approve it.",
+      "loadError": "Approval limits could not be loaded",
+      "rolesUnavailable": "The role list needs role administration rights; only roles that already have a limit are shown.",
+      "empty": "No role to show.",
+      "saved": "Approval limit saved.",
+      "unlimited": "Unlimited",
+      "notAllowed": "Not allowed",
+      "noRule": "No limit set",
+      "edit": "Edit",
+      "editFor": "Edit the {{doc}} limit of {{role}}",
+      "docTypes": {
+        "REQUISITION": "Requisitions",
+        "PURCHASE_ORDER": "Purchase orders"
+      },
+      "columns": {
+        "role": "Role"
+      },
+      "form": {
+        "title": "{{doc}} — {{role}}",
+        "description": "Amounts are in the company currency; purchase orders in another currency are converted at the stored rate of the day.",
+        "maxAmount": "Maximum amount ({{currency}})",
+        "maxHint": "Leave empty for no ceiling.",
+        "active": "Limit in force",
+        "submit": "Save limit",
+        "error": "The limit could not be saved",
+        "blocker": "Enter an amount of 0 or more, or leave it empty."
+      }
+    }
+  },
+  "errors": {
+    "NEGATIVE_STOCK_REASON_SHORT": "Give the reason of the count (at least {{min}} characters).",
+    "NEGATIVE_STOCK_COUNT_INVALID": "The counted quantity must be zero or more.",
+    "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choose the variance reason of the count.",
+    "NEGATIVE_STOCK_NOT_OPEN": "This location's stock is no longer below zero: nothing to reconcile. Refresh the list.",
+    "NEGATIVE_STOCK_ENTRY_REASON_SHORT": "This location is below zero: an entry here reconciles it and needs a reason in the comment (at least {{min}} characters).",
+    "COUNT_SESSION_STALE_SNAPSHOT": "A count was posted for this article and location since this session was opened: cancel this session and count again in a new session."
   }
 }

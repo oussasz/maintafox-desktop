@@ -17,7 +17,7 @@ mod tests {
     use std::collections::HashSet;
 
     use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+
     use uuid::Uuid;
 
     use crate::auth::{password, password_policy, pin, session_manager};
@@ -29,21 +29,7 @@ mod tests {
 
     /// Spin up a fresh in-memory SQLite with all migrations + system seed data.
     async fn setup_db() -> DatabaseConnection {
-        let db = sea_orm::Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("enable FK");
-
-        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Create a test user and return their `user_accounts.id`.
@@ -497,18 +483,33 @@ mod tests {
     async fn test_rbac_08_step_up_required_permission_check() {
         let db = setup_db().await;
 
-        // ot.close: dangerous + requires_step_up
-        let close_row = db
+        // ot.reopen: dangerous + requires_step_up
+        let reopen_row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT requires_step_up FROM permissions WHERE name = ?",
+                [crate::rbac::permissions::OT_REOPEN.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("ot.reopen exists");
+        let reopen_step_up: i32 = reopen_row.try_get("", "requires_step_up").unwrap();
+        assert_eq!(reopen_step_up, 1, "ot.reopen should require step-up");
+
+        // ot.close: dangerous, but confirmed in a dialog (owner decision 2026-10-14), no step-up
+        let close_row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT requires_step_up, is_dangerous FROM permissions WHERE name = ?",
                 [crate::rbac::permissions::OT_CLOSE.into()],
             ))
             .await
             .expect("query")
             .expect("ot.close exists");
         let close_step_up: i32 = close_row.try_get("", "requires_step_up").unwrap();
-        assert_eq!(close_step_up, 1, "ot.close should require step-up");
+        let close_dangerous: i32 = close_row.try_get("", "is_dangerous").unwrap();
+        assert_eq!(close_step_up, 0, "ot.close is confirmed in a dialog, not by step-up");
+        assert_eq!(close_dangerous, 1, "ot.close stays a dangerous permission");
 
         // ot.view: not dangerous
         let view_row = db
@@ -1085,9 +1086,10 @@ mod tests {
             .await
             .expect_err("third wrong pin should disable pin mode");
         assert!(
-            third.to_string().contains("PIN désactivé"),
-            "third attempt should disable pin mode: {third}"
+            matches!(third, crate::errors::AppError::PinDisabled),
+            "third attempt should disable pin mode with its own code: {third}"
         );
+        assert_eq!(serde_json::to_value(&third).expect("ipc json")["code"], "PIN_DISABLED");
 
         // Password unlock remains available after PIN disable.
         let user_row = session_manager::find_active_user(&db, "t19_user")

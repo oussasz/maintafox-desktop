@@ -2,8 +2,7 @@
 //! exercised through the Phase 2.4 capture: business writes are captured by the table triggers and
 //! drained into the outbox.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
 
 use super::capture::drain_capture_journal;
 use super::domain::{
@@ -14,8 +13,7 @@ use super::materialize::materialize_inbox_batch;
 use super::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
+    let db = crate::db::test_db::migrated().await;
     super::capture::install_capture(&db).await.expect("install capture");
     db
 }
@@ -399,14 +397,15 @@ async fn concurrent_team_edit(db: &DatabaseConnection) -> super::domain::SyncCon
 async fn take_theirs_applies_the_server_version() {
     let db = setup_db().await;
     let conflict = concurrent_team_edit(&db).await;
+    let user = resolver(&db).await;
     let resolved = queries::resolve_sync_conflict(
         &db,
-        1,
+        user,
         ResolveSyncConflictInput {
             conflict_id: conflict.id,
             expected_row_version: conflict.row_version,
             action: "accept_remote".into(),
-            resolution_note: None,
+            resolution_note: Some("Remote name confirmed by the team lead".into()),
         },
     )
     .await
@@ -430,18 +429,178 @@ async fn take_theirs_applies_the_server_version() {
     assert_eq!(inbox, "applied");
 }
 
+/// The person who resolves conflicts in these tests (written without capture: not sent).
+async fn resolver(db: &DatabaseConnection) -> i64 {
+    exec(
+        db,
+        "INSERT OR IGNORE INTO sync_capture_suppression (id) VALUES (1)",
+        vec![],
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, \
+         is_admin, force_password_change, created_at, updated_at) \
+         VALUES ('user-resolver', 'resolver', 'Resolver', 'local', 1, 0, 0, \
+         strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        vec![],
+    )
+    .await;
+    exec(db, "DELETE FROM sync_capture_suppression", vec![]).await;
+    scalar_i64(db, "SELECT id FROM user_accounts WHERE username = 'resolver'", vec![]).await
+}
+
+fn resolve_input(
+    conflict: &super::domain::SyncConflictRecord,
+    action: &str,
+    note: Option<&str>,
+) -> ResolveSyncConflictInput {
+    ResolveSyncConflictInput {
+        conflict_id: conflict.id,
+        expected_row_version: conflict.row_version,
+        action: action.into(),
+        resolution_note: note.map(str::to_string),
+    }
+}
+
+#[tokio::test]
+async fn a_conflict_choice_without_a_reason_is_refused() {
+    let db = setup_db().await;
+    let conflict = concurrent_team_edit(&db).await;
+    let user = resolver(&db).await;
+    // No reason, blanks only, and 9 characters once trimmed (the minimum is MIN_REASON_CHARS = 10).
+    for note in [None, Some("   \n\t "), Some("  123456789  ")] {
+        let err = queries::resolve_sync_conflict(&db, user, resolve_input(&conflict, "accept_remote", note))
+            .await
+            .expect_err("refused without a reason");
+        assert!(
+            matches!(&err, crate::errors::AppError::ValidationFailed(m) if m.iter().any(|m| m.contains("at least 10 characters"))),
+            "{note:?}: {err:?}"
+        );
+    }
+    let still_open = queries::list_sync_conflicts(&db, SyncConflictFilter::default())
+        .await
+        .expect("list")
+        .into_iter()
+        .find(|c| c.id == conflict.id)
+        .expect("conflict");
+    assert_eq!(
+        (still_open.status.as_str(), still_open.row_version),
+        ("new", conflict.row_version)
+    );
+    let name = scalar_string(&db, "SELECT name FROM teams WHERE entity_sync_id = 'team-conc'", vec![]).await;
+    assert_eq!(name, "Local name", "nothing applied");
+    let audits = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM audit_events WHERE action_code = 'sync.conflict_resolved'",
+        vec![],
+    )
+    .await;
+    assert_eq!(audits, 0);
+}
+
+#[tokio::test]
+async fn a_conflict_choice_is_audited_with_its_reason_and_stays_on_this_pc() {
+    let db = setup_db().await;
+    let conflict = concurrent_team_edit(&db).await;
+    let user = resolver(&db).await;
+    // Exactly the minimum once trimmed.
+    let resolved = queries::resolve_sync_conflict(
+        &db,
+        user,
+        resolve_input(&conflict, "accept_remote", Some("  0123456789 \n")),
+    )
+    .await
+    .expect("take theirs with a reason");
+    assert_eq!(resolved.status, "resolved_remote");
+    assert_eq!(
+        resolved.resolution_note.as_deref(),
+        Some("0123456789"),
+        "stored trimmed"
+    );
+
+    let row = db
+        .query_one(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT action_code, target_type, target_id, actor_id, result, details_json FROM audit_events \
+             WHERE action_code = 'sync.conflict_resolved'"
+                .to_string(),
+        ))
+        .await
+        .expect("query")
+        .expect("one audit event per choice");
+    let get = |c: &str| row.try_get::<Option<String>>("", c).expect(c);
+    assert_eq!(get("target_type").as_deref(), Some("sync_conflict"));
+    assert_eq!(get("target_id"), Some(conflict.id.to_string()));
+    assert_eq!(get("result").as_deref(), Some("success"));
+    assert_eq!(row.try_get::<Option<i64>>("", "actor_id").expect("actor"), Some(user));
+    let details: serde_json::Value = serde_json::from_str(&get("details_json").expect("details")).expect("json");
+    assert_eq!(
+        details,
+        serde_json::json!({
+            "conflict_type": "CONCURRENT_EDIT",
+            "entity_type": "teams",
+            "entity_sync_id": "team-conc",
+            "action": "accept_remote",
+            "status_before": "new",
+            "status_after": "resolved_remote",
+            "reason": "0123456789",
+        })
+    );
+    // Kept on this PC with the conflict: chained in its local form, never staged, no stage error.
+    let local_form = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM audit_events WHERE action_code = 'sync.conflict_resolved' AND chain_hash LIKE 'L%:%'",
+        vec![],
+    )
+    .await;
+    assert_eq!(local_form, 1);
+    let report = drain_capture_journal(&db).await.expect("drain");
+    assert_eq!(report.failed, 0, "{report:?}");
+    let staged = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM sync_outbox WHERE entity_type = 'audit_events'",
+        vec![],
+    )
+    .await;
+    assert_eq!(staged, 0, "the conflict's audit event is not sent");
+    assert!(
+        crate::audit::chain::verify_audit_chain(&db)
+            .await
+            .expect("verify")
+            .intact
+    );
+
+    // A second choice on the same (now closed) conflict is refused and writes nothing more.
+    let again = queries::resolve_sync_conflict(
+        &db,
+        user,
+        resolve_input(&resolved, "dismiss", Some("Dismissed after review")),
+    )
+    .await;
+    assert!(again.is_err());
+    let audits = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM audit_events WHERE action_code = 'sync.conflict_resolved'",
+        vec![],
+    )
+    .await;
+    assert_eq!(audits, 1);
+}
+
 #[tokio::test]
 async fn keep_mine_restages_the_local_row_on_the_server_version() {
     let db = setup_db().await;
     let conflict = concurrent_team_edit(&db).await;
+    let user = resolver(&db).await;
     let resolved = queries::resolve_sync_conflict(
         &db,
-        1,
+        user,
         ResolveSyncConflictInput {
             conflict_id: conflict.id,
             expected_row_version: conflict.row_version,
             action: "accept_local".into(),
-            resolution_note: None,
+            resolution_note: Some("Local name is the one in use on site".into()),
         },
     )
     .await

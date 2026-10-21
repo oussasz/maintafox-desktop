@@ -1,6 +1,8 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { Printer } from "lucide-react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import {
   Badge,
   Button,
@@ -12,23 +14,36 @@ import {
   DialogTitle,
   FormField,
   Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Textarea,
 } from "@/components/ui";
-import { usePermissions } from "@/hooks/use-permissions";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState } from "@/components/ui/data-state";
+import { StatusChip } from "@/components/ui/status-chip";
+import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useSession } from "@/hooks/use-session";
+import { appErrorReason } from "@/lib/app-error";
 import {
+  type IsolationOption,
+  type IsolationOptions,
   type LotoCardViewRecord,
   type PermitHandoverLogRecord,
   type PermitIsolationRecord,
   type PermitSuspensionRecord,
   type WorkPermitRecord,
-  appendPermitHandoverLog,
   applyPermitIsolation,
+  cancelPermitIsolation,
   getLotoCardView,
   listPermitHandoverLogs,
+  listPermitIsolationOptions,
   listPermitIsolations,
   listPermitSuspensions,
   recordLotoCardPrint,
+  recordPermitIsolationRemoved,
   setWorkPermitStatus,
   suspendWorkPermit,
   updateWorkPermit,
@@ -36,24 +51,32 @@ import {
   verifyPermitIsolation,
   verifyPermitIsolationRemoval,
 } from "@/services/permit-service";
-import { toErrorMessage } from "@/utils/errors";
 import { formatDateTime } from "@/utils/format-date";
 import type { WorkPermitStatus } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { ForcedRemovalDialog } from "./ForcedRemovalDialog";
+import { PermitHandoverForm } from "./PermitHandoverForm";
+import { PermitNoSiteBadge, usePermitAccess } from "./PermitSiteScope";
+import { WorkerInformedDialog } from "./WorkerInformedDialog";
+import { printLotoCard } from "./loto-card-print";
 import {
+  APPROVED_ON_STATUSES,
   ISOLATION_REMOVAL_STATUSES,
   ISOLATION_SETUP_STATUSES,
   PERMIT_EDITABLE_STATUSES,
   activationBlocker,
   canCancel,
+  canCancelIsolation,
   closeBlocker,
   formatAssetLabel,
   isolationState,
   localInputToIso,
   nextTransitions,
+  optionLabel,
   toLocalInputValue,
 } from "./permit-rules";
+import { usePermitTypeName } from "./permit-type-name";
 
 interface PermitDetailPanelProps {
   permit: WorkPermitRecord;
@@ -61,14 +84,18 @@ interface PermitDetailPanelProps {
   onChanged: (permit: WorkPermitRecord) => void;
 }
 
+/** Energy type and method are ids of the governed lists (`permit::energy_reference`). */
 const EMPTY_ISOLATION = { point: "", energy: "", method: "", lock: "" };
 
 export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps) {
   const { t, i18n } = useTranslation("permits");
-  const { can } = usePermissions();
+  const typeName = usePermitTypeName();
   const { info: session } = useSession();
-  const canIssue = can(P.PTW_ISSUE);
-  const canClose = can(P.PTW_CLOSE);
+  // Every action is checked at the permit's site, as the backend does; no button while the rights
+  // at that site load (an explicit gate, as the work-order gate card and the create dialog have).
+  const access = usePermitAccess(permit);
+  const canIssue = !access.loading && access.can(P.PTW_ISSUE);
+  const canClose = !access.loading && access.can(P.PTW_CLOSE);
   const me = session?.user_id ?? null;
 
   const [isolations, setIsolations] = useState<PermitIsolationRecord[]>([]);
@@ -77,19 +104,37 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [cardView, setCardView] = useState<LotoCardViewRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Isolations / suspensions / hand-overs could not be read: never shown as "none". */
+  const [childrenError, setChildrenError] = useState<unknown>(null);
+  const [childrenLoading, setChildrenLoading] = useState(true);
+  const [options, setOptions] = useState<IsolationOptions | null>(null);
+  const [optionsError, setOptionsError] = useState<unknown>(null);
+  const [optionsReload, setOptionsReload] = useState(0);
 
   const [isoDraft, setIsoDraft] = useState(EMPTY_ISOLATION);
   const [isoSubmitted, setIsoSubmitted] = useState(false);
-  const [handover, setHandover] = useState({ from: "", to: "", note: "" });
-  const [handoverSubmitted, setHandoverSubmitted] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [suspendDraft, setSuspendDraft] = useState({ reason: "", conditions: "" });
   const [cancelOpen, setCancelOpen] = useState(false);
+  /** The planned isolation line whose cancellation is being confirmed. */
+  const [cancelLine, setCancelLine] = useState<PermitIsolationRecord | null>(null);
+  /** The isolation whose lock removal waits for the confirmation dialog. */
+  const [removalConfirm, setRemovalConfirm] = useState<PermitIsolationRecord | null>(null);
+  /** The applier's own lock whose taking off waits for the confirmation dialog. */
+  const [takeOffConfirm, setTakeOffConfirm] = useState<PermitIsolationRecord | null>(null);
+  /** The isolation whose forced removal (applier absent) is being recorded. */
+  const [forcedFor, setForcedFor] = useState<PermitIsolationRecord | null>(null);
+  /** The forced removal whose worker is being recorded as told. */
+  const [informFor, setInformFor] = useState<PermitIsolationRecord | null>(null);
   const [editingExpiry, setEditingExpiry] = useState<string | null>(null);
 
   const fmt = (v: string | null) => (v ? formatDateTime(v, i18n.language) : t("detail.none"));
+  /** Who did a step and when (four-eyes record); a person no longer readable is named as such. */
+  const byAt = (name: string | null, at: string | null) =>
+    t("detail.byAt", { name: name ?? t("detail.unknownPerson"), date: fmt(at) });
 
   const loadChildren = useCallback(async () => {
+    setChildrenLoading(true);
     try {
       const [iso, susp, hand] = await Promise.all([
         listPermitIsolations(permit.id),
@@ -99,13 +144,53 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       setIsolations(iso);
       setSuspensions(susp);
       setHandovers(hand);
+      setChildrenError(null);
     } catch (e) {
-      setError(toErrorMessage(e));
+      setChildrenError(e);
+    } finally {
+      setChildrenLoading(false);
     }
   }, [permit.id]);
 
+  // Choices of the isolation form (energy types, the plant's methods), read with the permit right.
+  useEffect(() => {
+    let cancelled = false;
+    setOptionsError(null);
+    listPermitIsolationOptions()
+      .then((o) => {
+        if (!cancelled) setOptions(o);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setOptionsError(e);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [optionsReload]);
+
+  const optionById = useMemo(() => {
+    const map = new Map<number, IsolationOption>();
+    for (const o of [...(options?.energy_types ?? []), ...(options?.isolation_methods ?? [])]) {
+      map.set(o.id, o);
+    }
+    return map;
+  }, [options]);
+
+  const lang = i18n.resolvedLanguage || i18n.language;
+  const energyLabel = (iso: PermitIsolationRecord) =>
+    iso.energy_type_id != null
+      ? optionLabel(optionById.get(iso.energy_type_id), lang) ||
+        (iso.energy_type_label ?? t("isolation.notSet"))
+      : t("isolation.notSet");
+  const methodLabel = (iso: PermitIsolationRecord) =>
+    iso.isolation_method_id != null
+      ? optionLabel(optionById.get(iso.isolation_method_id), lang) ||
+        (iso.isolation_method_label ?? t("isolation.notSet"))
+      : t("isolation.notSet");
+
   useEffect(() => {
     setError(null);
+    setChildrenError(null);
     setCardView(null);
     setEditingExpiry(null);
     void loadChildren();
@@ -121,7 +206,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       await loadChildren();
       return true;
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(appErrorReason(e));
       return false;
     } finally {
       setBusy(false);
@@ -134,6 +219,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     );
 
   const blockerFor = (to: WorkPermitStatus): string | null => {
+    // Without the isolations the safety gates cannot be explained: no lifecycle step offered.
+    if (childrenError != null || childrenLoading) return "gate.isolationsUnavailable";
     if (to === "active") return activationBlocker(permit, isolations);
     if (to === "closed") return closeBlocker(isolations);
     if (to === "handed_back" && handovers.length === 0) return "gate.handoverRequired";
@@ -148,38 +235,20 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const handleAddIsolation = async (e: FormEvent) => {
     e.preventDefault();
     setIsoSubmitted(true);
-    if (!isoDraft.point.trim() || !isoDraft.energy.trim() || !isoDraft.method.trim()) return;
+    if (!isoDraft.point.trim() || !isoDraft.energy || !isoDraft.method) return;
     const ok = await run(async () => {
       await upsertPermitIsolation({
         id: null,
         permit_id: permit.id,
         isolation_point: isoDraft.point,
-        energy_type: isoDraft.energy,
-        isolation_method: isoDraft.method,
+        energy_type_id: Number(isoDraft.energy),
+        isolation_method_id: Number(isoDraft.method),
         lock_number: isoDraft.lock || null,
       });
     });
     if (ok) {
       setIsoDraft(EMPTY_ISOLATION);
       setIsoSubmitted(false);
-    }
-  };
-
-  const handleHandover = async (e: FormEvent) => {
-    e.preventDefault();
-    setHandoverSubmitted(true);
-    if (!handover.from.trim() || !handover.to.trim()) return;
-    const ok = await run(async () => {
-      await appendPermitHandoverLog({
-        permit_id: permit.id,
-        handed_from_role: handover.from,
-        handed_to_role: handover.to,
-        confirmation_note: handover.note,
-      });
-    });
-    if (ok) {
-      setHandover({ from: "", to: "", note: "" });
-      setHandoverSubmitted(false);
     }
   };
 
@@ -220,14 +289,16 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     try {
       setCardView(await getLotoCardView(permit.id, iso.id));
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(appErrorReason(e));
     }
   };
 
   const setupOpen = ISOLATION_SETUP_STATUSES.has(permit.status);
   const removalOpen = ISOLATION_REMOVAL_STATUSES.has(permit.status);
   const transitions = nextTransitions(permit.status);
-  const blockers = transitions.map((tr) => blockerFor(tr.to)).filter((b): b is string => b != null);
+  const blockers = [
+    ...new Set(transitions.map((tr) => blockerFor(tr.to)).filter((b): b is string => b != null)),
+  ];
 
   return (
     <section
@@ -236,16 +307,33 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
-          <h2 className="text-base font-semibold text-text-primary">
-            {t("detail.title", { code: permit.code })}
-          </h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold text-text-primary">
+              {t("detail.title", { code: permit.code })}
+            </h2>
+            <PermitNoSiteBadge permit={permit} />
+          </div>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-sm">
             <dt className="text-text-muted">{t("detail.type")}</dt>
-            <dd>{permit.permit_type_name ?? t("detail.none")}</dd>
+            <dd>
+              {permit.permit_type_name == null
+                ? t("detail.none")
+                : typeName(permit.permit_type_code, permit.permit_type_name)}
+            </dd>
             <dt className="text-text-muted">{t("detail.asset")}</dt>
             <dd>{formatAssetLabel(permit) ?? t("detail.none")}</dd>
             <dt className="text-text-muted">{t("detail.workOrder")}</dt>
-            <dd>{permit.linked_work_order_code ?? t("detail.none")}</dd>
+            <dd>
+              {permit.linked_work_order_code ? (
+                <LinkedEntityBadge
+                  entity="work_order"
+                  code={permit.linked_work_order_code}
+                  entityId={permit.linked_work_order_id}
+                />
+              ) : (
+                t("detail.none")
+              )}
+            </dd>
             <dt className="text-text-muted">{t("detail.requestedAt")}</dt>
             <dd>{fmt(permit.requested_at)}</dd>
             <dt className="text-text-muted">{t("detail.activatedAt")}</dt>
@@ -301,11 +389,52 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                 <dd>{fmt(permit.handed_back_at)}</dd>
               </>
             ) : null}
+            {permit.created_by_id != null ? (
+              <>
+                <dt className="text-text-muted">{t("detail.createdBy")}</dt>
+                {/* The permit is written when it is requested (`requested_at`, set at creation). */}
+                <dd>{byAt(permit.created_by_name, permit.requested_at)}</dd>
+              </>
+            ) : null}
+            {permit.submitted_at != null ? (
+              <>
+                <dt className="text-text-muted">{t("detail.submittedBy")}</dt>
+                <dd>{byAt(permit.submitted_by_name, permit.submitted_at)}</dd>
+              </>
+            ) : null}
+            {permit.approved_at != null ? (
+              <>
+                <dt className="text-text-muted">{t("detail.approvedBy")}</dt>
+                <dd className="flex flex-wrap items-center gap-2" data-testid="permit-approver">
+                  {byAt(permit.approved_by_name, permit.approved_at)}
+                  {permit.self_approved ? (
+                    <>
+                      <StatusChip label={t("detail.selfApproved")} tone="warning" />
+                      <span className="basis-full text-xs text-text-muted">
+                        {t("detail.selfApprovedHint")}
+                      </span>
+                    </>
+                  ) : null}
+                </dd>
+              </>
+            ) : APPROVED_ON_STATUSES.has(permit.status) ? (
+              <>
+                <dt className="text-text-muted">{t("detail.approvedBy")}</dt>
+                <dd className="text-text-muted" data-testid="permit-approver">
+                  {t("detail.approverNotRecorded")}
+                  <span className="block text-xs">{t("detail.approverNotRecordedHint")}</span>
+                </dd>
+              </>
+            ) : null}
           </dl>
         </div>
-        <Badge variant="outline" data-testid="permit-status">
-          {t(`status.${permit.status}`)}
-        </Badge>
+        <span data-testid="permit-status">
+          <StatusChip
+            size="md"
+            label={t(`status.${permit.status}`, { defaultValue: t("status.unknown") })}
+            tone={toneOf(PERMIT_STATUS_TONE, permit.status)}
+          />
+        </span>
       </header>
 
       <div className="space-y-2">
@@ -348,7 +477,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           ) : null}
         </div>
         {blockers.map((b) => (
-          <p key={b} className="text-xs text-status-warning">
+          <p key={b} className="text-xs text-tone-warning-fg">
             {t(b)}
           </p>
         ))}
@@ -357,7 +486,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       {error ? (
         <p
           role="alert"
-          className="rounded-md border border-status-danger/40 px-3 py-2 text-sm text-status-danger"
+          className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
         >
           {error}
         </p>
@@ -366,24 +495,76 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       <section className="space-y-2">
         <h3 className="text-sm font-medium text-text-primary">{t("isolation.title")}</h3>
         <p className="text-xs text-text-muted">{t("isolation.twoPersonHint")}</p>
-        {isolations.length === 0 ? (
+        {childrenError != null ? (
+          <ErrorState
+            error={childrenError}
+            title={t("isolation.loadError")}
+            onRetry={() => void loadChildren()}
+            retrying={childrenLoading}
+          />
+        ) : childrenLoading && isolations.length === 0 ? (
+          <p className="text-sm text-text-muted" aria-busy="true">
+            {t("isolation.loading")}
+          </p>
+        ) : isolations.length === 0 ? (
           <p className="text-sm text-text-muted">{t("isolation.empty")}</p>
         ) : (
           <ul className="space-y-2">
             {isolations.map((iso) => {
               const state = isolationState(iso);
               const appliedByMe = me != null && iso.applied_by_id === me;
+              // Three-person chain of the permit's type: the isolation's verifier may not confirm
+              // its removal either (the server refuses it too: PERMIT_THREE_PERSON_REMOVAL).
+              const chainApplies =
+                permit.permit_type_requires_three_person_removal &&
+                (state === "verified" || state === "takenOff") &&
+                removalOpen;
+              const verifiedByMe = me != null && iso.verified_by_id === me;
+              // The person who took the lock off does not verify its removal (the server refuses
+              // it too: PERMIT_REMOVAL_VERIFIER_IS_REMOVER).
+              const removedByMe = me != null && iso.removed_by_id === me;
+              const removalBlockedForMe =
+                appliedByMe || removedByMe || (chainApplies && verifiedByMe);
+              const removalBlockedReason = appliedByMe
+                ? t("isolation.selfBlocked")
+                : removedByMe
+                  ? t("isolation.removerBlocked")
+                  : chainApplies && verifiedByMe
+                    ? t("isolation.threePersonSelf")
+                    : undefined;
+              // A fitted lock not taken off yet: its applier says "J'ai retiré mon cadenas"; when
+              // they are absent, a close-right holder records a forced removal.
+              const lockOn = removalOpen && (state === "applied" || state === "verified");
+              const informOpen = iso.forced_removal && iso.informed_at == null;
               return (
                 <li
                   key={iso.id}
                   data-testid="permit-isolation"
-                  className="space-y-1 rounded-md border border-surface-border p-2 text-sm"
+                  data-cancelled={state === "cancelled" ? "true" : undefined}
+                  className={`space-y-1 rounded-md border border-surface-border p-2 text-sm${
+                    state === "cancelled" ? " bg-surface-0 opacity-60" : ""
+                  }`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-text-primary">{iso.isolation_point}</span>
-                    <span className="text-text-muted">
-                      {iso.energy_type} · {iso.isolation_method}
+                    <span
+                      className={
+                        state === "cancelled"
+                          ? "font-medium text-text-muted line-through"
+                          : "font-medium text-text-primary"
+                      }
+                    >
+                      {iso.isolation_point}
                     </span>
+                    <span className="text-text-muted">
+                      {energyLabel(iso)} · {methodLabel(iso)}
+                    </span>
+                    {iso.mapping_review_required && state !== "cancelled" ? (
+                      <StatusChip
+                        label={t("isolation.toReview")}
+                        tone="attention"
+                        title={t("isolation.toReviewHint")}
+                      />
+                    ) : null}
                     {iso.lock_number ? (
                       <span className="font-mono text-xs text-text-muted">
                         {t("card.lock")} {iso.lock_number}
@@ -393,6 +574,15 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                       {t(`isolation.state.${state}`)}
                     </Badge>
                   </div>
+                  {iso.energy_type.trim() || iso.isolation_method.trim() ? (
+                    <p className="text-xs text-text-muted" data-testid="isolation-original-entry">
+                      {t("isolation.originalEntry", {
+                        text: [iso.energy_type.trim(), iso.isolation_method.trim()]
+                          .filter(Boolean)
+                          .join(" · "),
+                      })}
+                    </p>
+                  ) : null}
                   <div className="flex flex-wrap gap-x-4 text-xs text-text-muted">
                     {iso.applied_by_name ? (
                       <span>{t("isolation.appliedBy", { name: iso.applied_by_name })}</span>
@@ -405,7 +595,67 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         {t("isolation.removalVerifiedBy", { name: iso.removal_verified_by_name })}
                       </span>
                     ) : null}
+                    {iso.removed_at ? (
+                      <span data-testid="isolation-removed-by">
+                        {t("isolation.removedBy", {
+                          name: iso.removed_by_name ?? t("isolation.personUnknown"),
+                          date: fmt(iso.removed_at),
+                        })}
+                      </span>
+                    ) : null}
+                    {iso.cancelled_at ? (
+                      <span data-testid="isolation-cancelled-by">
+                        {iso.cancelled_by_name
+                          ? t("isolation.cancelledBy", {
+                              name: iso.cancelled_by_name,
+                              date: fmt(iso.cancelled_at),
+                            })
+                          : t("isolation.cancelledAt", { date: fmt(iso.cancelled_at) })}
+                      </span>
+                    ) : null}
                   </div>
+                  {iso.forced_removal ? (
+                    <div
+                      className="space-y-1 rounded-md border border-tone-warning-border bg-tone-warning-bg p-2 text-xs"
+                      data-testid="isolation-forced-removal"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusChip label={t("forced.chip")} tone="warning" />
+                        <span>
+                          {t("forced.summary", {
+                            authoriser:
+                              iso.forced_authorized_by_name ?? t("isolation.personUnknown"),
+                            date: fmt(iso.removed_at),
+                          })}
+                        </span>
+                      </div>
+                      <p>{t("forced.reasonShown", { reason: iso.forced_reason ?? "" })}</p>
+                      {iso.forced_contact_attempts.length > 0 ? (
+                        <ul className="list-disc pl-4" aria-label={t("forced.attempts")}>
+                          {iso.forced_contact_attempts.map((a, i) => (
+                            <li key={i}>
+                              {t("forced.attemptShown", {
+                                date: fmt(a.at),
+                                method: a.method,
+                                result: a.result,
+                              })}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      <p data-testid="isolation-worker-informed">
+                        {iso.informed_at == null
+                          ? t("informed.pending")
+                          : iso.informed_in_app
+                            ? t("informed.doneInApp", { date: fmt(iso.informed_at) })
+                            : t("informed.done", {
+                                name: iso.informed_by_name ?? t("isolation.personUnknown"),
+                                date: fmt(iso.informed_at),
+                                method: iso.informed_method ?? "",
+                              })}
+                      </p>
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap items-center gap-2">
                     {state === "pending" && setupOpen && canIssue ? (
                       <Button
@@ -428,26 +678,89 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         {t("isolation.verify")}
                       </Button>
                     ) : null}
-                    {state === "verified" && removalOpen && canClose ? (
+                    {lockOn && appliedByMe && canIssue ? (
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={busy || appliedByMe}
-                        title={appliedByMe ? t("isolation.selfBlocked") : undefined}
-                        onClick={() => void isolationAction(iso, verifyPermitIsolationRemoval)}
+                        disabled={busy}
+                        onClick={() => setTakeOffConfirm(iso)}
+                      >
+                        {t("isolation.takeOff")}
+                      </Button>
+                    ) : null}
+                    {lockOn && !appliedByMe && canClose ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setForcedFor(iso)}
+                      >
+                        {t("forced.action")}
+                      </Button>
+                    ) : null}
+                    {state === "takenOff" && iso.verified_at != null && removalOpen && canClose ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy || removalBlockedForMe}
+                        title={removalBlockedReason}
+                        onClick={() => setRemovalConfirm(iso)}
                       >
                         {t("isolation.verifyRemoval")}
                       </Button>
                     ) : null}
-                    {state === "verified" || state === "removed" ? (
+                    {informOpen && canClose && !appliedByMe ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setInformFor(iso)}
+                      >
+                        {t("informed.action")}
+                      </Button>
+                    ) : null}
+                    {state === "verified" || state === "takenOff" || state === "removed" ? (
                       <Button size="sm" variant="ghost" onClick={() => void showCard(iso)}>
                         {t("card.show")}
+                      </Button>
+                    ) : null}
+                    {canIssue && canCancelIsolation(permit.status, iso) ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy}
+                        title={t("isolation.cancelHint")}
+                        onClick={() => setCancelLine(iso)}
+                      >
+                        {t("isolation.cancel")}
                       </Button>
                     ) : null}
                     {appliedByMe && (state === "applied" || state === "verified") ? (
                       <span className="text-xs text-text-muted">{t("isolation.selfBlocked")}</span>
                     ) : null}
+                    {lockOn && state === "verified" && !appliedByMe ? (
+                      <span
+                        className="text-xs text-text-muted"
+                        data-testid="isolation-awaiting-take-off"
+                      >
+                        {t("isolation.awaitingTakeOff", {
+                          name: iso.applied_by_name ?? t("isolation.personUnknown"),
+                        })}
+                      </span>
+                    ) : null}
                   </div>
+                  {chainApplies ? (
+                    <p
+                      className="text-xs text-tone-warning-fg"
+                      data-testid="isolation-three-person"
+                    >
+                      {verifiedByMe
+                        ? t("isolation.threePersonSelf")
+                        : iso.verified_by_name
+                          ? t("isolation.threePersonNotice", { name: iso.verified_by_name })
+                          : t("isolation.threePersonNoticeUnknown")}
+                    </p>
+                  ) : null}
                 </li>
               );
             })}
@@ -480,14 +793,32 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             <div>
               {t("card.expiry")}: {fmt(cardView.expires_at)}
             </div>
+            {cardView.forced_removal ? (
+              <div
+                className="font-sans font-semibold text-tone-warning-fg"
+                data-testid="card-forced"
+              >
+                {t("card.forcedLine", {
+                  authoriser: cardView.forced_authorized_by ?? t("isolation.personUnknown"),
+                  date: fmt(cardView.forced_removed_at),
+                  reason: cardView.forced_reason ?? "",
+                })}
+              </div>
+            ) : null}
             {canIssue ? (
               <Button
                 size="sm"
                 variant="outline"
-                className="mt-2"
+                className="mt-2 h-11 gap-1.5 font-sans"
                 disabled={busy}
                 onClick={() =>
                   void run(async () => {
+                    // Print first; the audit entry records a print that actually happened.
+                    await printLotoCard(
+                      cardView,
+                      (key) => t(key),
+                      i18n.resolvedLanguage || i18n.language,
+                    );
                     await recordLotoCardPrint({
                       permit_id: permit.id,
                       isolation_id: cardView.isolation_id,
@@ -495,7 +826,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                   })
                 }
               >
-                {t("card.recordPrint")}
+                <Printer className="h-4 w-4" aria-hidden />
+                {t("card.print")}
               </Button>
             ) : null}
           </div>
@@ -522,25 +854,47 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
               name="iso-energy"
               label={t("isolation.energy")}
               required
-              error={isoSubmitted && !isoDraft.energy.trim() ? t("errors.required") : undefined}
+              error={isoSubmitted && !isoDraft.energy ? t("errors.required") : undefined}
             >
-              <Input
-                id="iso-energy"
+              <Select
                 value={isoDraft.energy}
-                onChange={(e) => setIsoDraft((d) => ({ ...d, energy: e.target.value }))}
-              />
+                onValueChange={(v) => setIsoDraft((d) => ({ ...d, energy: v }))}
+                disabled={options == null}
+              >
+                <SelectTrigger id="iso-energy" aria-label={t("isolation.energy")}>
+                  <SelectValue placeholder={t("isolation.energyPlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(options?.energy_types ?? []).map((o) => (
+                    <SelectItem key={o.id} value={String(o.id)}>
+                      {optionLabel(o, lang)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </FormField>
             <FormField
               name="iso-method"
               label={t("isolation.method")}
               required
-              error={isoSubmitted && !isoDraft.method.trim() ? t("errors.required") : undefined}
+              error={isoSubmitted && !isoDraft.method ? t("errors.required") : undefined}
             >
-              <Input
-                id="iso-method"
+              <Select
                 value={isoDraft.method}
-                onChange={(e) => setIsoDraft((d) => ({ ...d, method: e.target.value }))}
-              />
+                onValueChange={(v) => setIsoDraft((d) => ({ ...d, method: v }))}
+                disabled={options == null}
+              >
+                <SelectTrigger id="iso-method" aria-label={t("isolation.method")}>
+                  <SelectValue placeholder={t("isolation.methodPlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(options?.isolation_methods ?? []).map((o) => (
+                    <SelectItem key={o.id} value={String(o.id)}>
+                      {optionLabel(o, lang)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </FormField>
             <FormField name="iso-lock" label={t("isolation.lock")}>
               <Input
@@ -549,8 +903,27 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                 onChange={(e) => setIsoDraft((d) => ({ ...d, lock: e.target.value }))}
               />
             </FormField>
-            <div className="sm:col-span-4">
-              <Button type="submit" size="sm" disabled={busy}>
+            <div className="space-y-2 sm:col-span-4">
+              {optionsError != null ? (
+                <div
+                  role="alert"
+                  className="flex flex-wrap items-center gap-2 text-xs text-tone-danger-fg"
+                >
+                  <span>
+                    {t("isolation.optionsError")} {appErrorReason(optionsError)}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setOptionsReload((n) => n + 1)}
+                  >
+                    {t("actions.retry")}
+                  </Button>
+                </div>
+              ) : null}
+              <p className="text-xs text-text-muted">{t("isolation.listsHint")}</p>
+              <Button type="submit" size="sm" disabled={busy || options == null}>
                 {t("isolation.add")}
               </Button>
             </div>
@@ -599,60 +972,39 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           {handovers.length === 0 ? (
             <p className="text-sm text-text-muted">{t("handover.empty")}</p>
           ) : (
-            <ul className="space-y-2 text-sm">
+            <ol className="space-y-2 text-sm">
               {handovers.map((h) => (
-                <li key={h.id} className="rounded border border-surface-border/60 p-2">
-                  <div className="text-text-primary">
-                    {h.handed_from_role} → {h.handed_to_role}
+                <li key={h.id} className="rounded-md border border-surface-border bg-surface-1 p-2">
+                  <div className="flex flex-wrap items-center gap-1.5 text-text-primary">
+                    <span className="font-medium">{h.handed_from_label ?? h.handed_from_role}</span>
+                    <span aria-hidden className="text-text-muted">
+                      →
+                    </span>
+                    <span className="sr-only">{t("handover.handedTo")}</span>
+                    <span className="font-medium">{h.handed_to_label ?? h.handed_to_role}</span>
+                    <time className="ms-auto text-xs text-text-muted" dateTime={h.signed_at}>
+                      {fmt(h.signed_at)}
+                    </time>
                   </div>
                   {h.confirmation_note ? (
-                    <div className="text-xs text-text-muted">{h.confirmation_note}</div>
+                    <p className="mt-1 text-xs text-text-secondary">{h.confirmation_note}</p>
                   ) : null}
-                  <div className="text-xs text-text-muted">{fmt(h.signed_at)}</div>
+                  <p className="mt-1 text-xs text-text-muted">
+                    {h.signed_by_name
+                      ? t("handover.signedBy", { name: h.signed_by_name })
+                      : t("handover.signerNotRecorded")}
+                    {h.received_by_name
+                      ? ` · ${t("handover.receivedBy", { name: h.received_by_name })}`
+                      : ""}
+                  </p>
                 </li>
               ))}
-            </ul>
+            </ol>
           )}
           {permit.status === "closed" && canClose ? (
-            <form className="space-y-2" onSubmit={(e) => void handleHandover(e)}>
-              <FormField
-                name="handover-from"
-                label={t("handover.from")}
-                required
-                error={
-                  handoverSubmitted && !handover.from.trim() ? t("errors.required") : undefined
-                }
-              >
-                <Input
-                  id="handover-from"
-                  value={handover.from}
-                  onChange={(e) => setHandover((h) => ({ ...h, from: e.target.value }))}
-                />
-              </FormField>
-              <FormField
-                name="handover-to"
-                label={t("handover.to")}
-                required
-                error={handoverSubmitted && !handover.to.trim() ? t("errors.required") : undefined}
-              >
-                <Input
-                  id="handover-to"
-                  value={handover.to}
-                  onChange={(e) => setHandover((h) => ({ ...h, to: e.target.value }))}
-                />
-              </FormField>
-              <FormField name="handover-note" label={t("handover.note")}>
-                <Textarea
-                  id="handover-note"
-                  rows={2}
-                  value={handover.note}
-                  onChange={(e) => setHandover((h) => ({ ...h, note: e.target.value }))}
-                />
-              </FormField>
-              <Button type="submit" size="sm" disabled={busy}>
-                {t("handover.submit")}
-              </Button>
-            </form>
+            <PermitHandoverForm permitId={permit.id} onRecorded={() => void loadChildren()} />
+          ) : canClose ? (
+            <p className="text-xs text-text-muted">{t("handover.onlyWhenClosed")}</p>
           ) : null}
         </section>
       </div>
@@ -692,30 +1044,110 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         </DialogContent>
       </Dialog>
 
-      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("transition.cancel")}</DialogTitle>
-            <DialogDescription>{t("transition.confirmCancel")}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCancelOpen(false)}>
-              {t("actions.close")}
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={() =>
-                void transition("cancelled").then((ok) => {
-                  if (ok) setCancelOpen(false);
-                })
-              }
-            >
-              {t("transition.cancel")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={takeOffConfirm != null}
+        onOpenChange={(open) => {
+          if (!open) setTakeOffConfirm(null);
+        }}
+        title={t("isolation.takeOffConfirmTitle")}
+        description={t("isolation.takeOffConfirmDescription", {
+          point: takeOffConfirm?.isolation_point ?? "",
+        })}
+        confirmLabel={t("isolation.takeOff")}
+        onConfirm={async () => {
+          const iso = takeOffConfirm;
+          if (!iso) return;
+          // A refusal is shown on the permit (translated); the dialog closes so it is visible.
+          await isolationAction(iso, recordPermitIsolationRemoved);
+        }}
+      />
+
+      <ConfirmDialog
+        open={removalConfirm != null}
+        onOpenChange={(open) => {
+          if (!open) setRemovalConfirm(null);
+        }}
+        title={t("isolation.removalConfirmTitle")}
+        description={t("isolation.removalConfirmDescription", {
+          point: removalConfirm?.isolation_point ?? "",
+          applier: removalConfirm?.applied_by_name ?? t("isolation.personUnknown"),
+          verifier: removalConfirm?.verified_by_name ?? t("isolation.personUnknown"),
+        })}
+        confirmLabel={t("isolation.verifyRemoval")}
+        onConfirm={async () => {
+          const iso = removalConfirm;
+          if (!iso) return;
+          // A refusal is shown on the permit (translated); the dialog closes so it is visible.
+          await isolationAction(iso, verifyPermitIsolationRemoval);
+        }}
+      />
+
+      <ForcedRemovalDialog
+        isolation={forcedFor}
+        onOpenChange={(open) => {
+          if (!open) setForcedFor(null);
+        }}
+        onRecorded={() => void loadChildren()}
+      />
+      <WorkerInformedDialog
+        isolation={informFor}
+        onOpenChange={(open) => {
+          if (!open) setInformFor(null);
+        }}
+        onRecorded={() => void loadChildren()}
+      />
+
+      <ConfirmDialog
+        open={cancelOpen}
+        onOpenChange={setCancelOpen}
+        title={t("transition.cancel")}
+        description={t("transition.confirmCancel")}
+        confirmLabel={t("transition.cancel")}
+        destructive
+        onConfirm={async () => {
+          const ok = await transition("cancelled");
+          // Keep the dialog open on failure (the message is shown on the permit).
+          if (!ok) throw new Error("cancel refused");
+        }}
+      />
+      <ConfirmDialog
+        open={cancelLine != null}
+        onOpenChange={(open) => {
+          if (!open) setCancelLine(null);
+        }}
+        title={t("isolation.cancelTitle")}
+        description={
+          cancelLine
+            ? t("isolation.cancelConfirm", {
+                point: cancelLine.isolation_point,
+                energy: energyLabel(cancelLine),
+                method: methodLabel(cancelLine),
+              })
+            : ""
+        }
+        confirmLabel={t("isolation.cancel")}
+        dismissLabel={t("isolation.cancelKeep")}
+        destructive
+        onConfirm={async () => {
+          const line = cancelLine;
+          if (!line) return;
+          const ok = await run(async () => {
+            const res = await cancelPermitIsolation({
+              isolation_id: line.id,
+              expected_row_version: line.row_version,
+            });
+            return res.permit;
+          });
+          // Keep the dialog open on failure (the message is shown on the permit).
+          if (!ok) throw new Error("isolation cancel refused");
+        }}
+      >
+        {permit.status === "pending_review" ? (
+          <p className="text-sm text-tone-warning-fg" data-testid="isolation-cancel-reset-notice">
+            {t("isolation.cancelResetNotice")}
+          </p>
+        ) : null}
+      </ConfirmDialog>
     </section>
   );
 }

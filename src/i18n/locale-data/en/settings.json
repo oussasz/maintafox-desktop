@@ -18,7 +18,8 @@
     "backup": "Backup",
     "reliability": "Reliability",
     "documents": "Documents & Branding",
-    "work_orders": "Work orders"
+    "work_orders": "Work orders",
+    "inventory": "Inventory"
   },
   "table": {
     "key": "Key",
@@ -71,9 +72,14 @@
     "diagnostics.log_retention_days": "Log Retention (days)",
     "ram.fmeca_rpn_critical_threshold": "FMECA RPN critical threshold",
     "documents.default_header": "Default document header",
-    "wo.reopen_window_days": "Reopen window after closure (days)"
+    "wo.reopen_window_days": "Reopen window after closure (days)",
+    "inventory.count_critical_variance": "Critical variance of a stock count",
+    "inventory.reconciliation_drift_break": "Stock reconciliation break gap",
+    "locale.fiscal_year_start_month": "Fiscal year starts in"
   },
   "documentHeader": {
+    "removeLogoConfirmTitle": "Remove the logo?",
+    "removeLogoConfirmBody": "The logo no longer appears in the header of printed documents (work orders, purchase orders…). You can upload another one.",
     "title": "Documents & Branding",
     "description": "Configure the default letterhead injected at the top of printed work orders, intervention requests, and purchase orders.",
     "logoLabel": "Company logo",
@@ -114,12 +120,28 @@
     "summary": "Summary",
     "changedAt": "Date",
     "changedBy": "By",
-    "stepUp": "Step-up"
+    "stepUp": "Step-up",
+    "loadError": "The change log could not be loaded."
   },
   "sidebar": {
     "search": "Search categories…"
   },
   "policy": {
+    "test": {
+      "POLICY_TEST_SCHEMA_INVALID": "The draft is not a readable “{{domain}}” policy: {{detail}}",
+      "POLICY_TEST_IN_RANGE": "{{field}}: {{value}} is within range ({{min}} to {{max}}).",
+      "POLICY_TEST_OUT_OF_RANGE": "{{field}}: {{value}} is out of range ({{min}} to {{max}}).",
+      "POLICY_TEST_IDLE_WITHIN_ABSOLUTE": "The idle timeout ({{idle}} min) fits in the session length ({{absolute}} min).",
+      "POLICY_TEST_IDLE_EXCEEDS_ABSOLUTE": "The idle timeout ({{idle}} min) exceeds the session length ({{absolute}} min).",
+      "POLICY_TEST_SCHEDULE_EMPTY": "The backup schedule is empty.",
+      "POLICY_TEST_SCHEDULE_INVALID": "The schedule “{{schedule}}” cannot be read: {{detail}}",
+      "POLICY_TEST_SCHEDULE_VALID": "The schedule “{{schedule}}” is valid.",
+      "POLICY_TEST_INCLUDE_PHOTOS": "Photos included in backups: {{value}}.",
+      "POLICY_TEST_PASSWORD_ELSEWHERE": "The password policy is set in its own panel.",
+      "POLICY_TEST_DOMAIN_UNSUPPORTED": "Unknown policy domain: {{domain}}.",
+      "yes": "yes",
+      "no": "no"
+    },
     "governedTitle": "Governed Setting",
     "governedDescription": "This setting uses the Draft → Test → Activate workflow.",
     "active": "Active",
@@ -169,7 +191,9 @@
       "retention_days": "Retention (days)",
       "include_photos": "Include Photos",
       "compression_level": "Compression Level"
-    }
+    },
+    "loadError": "The policy could not be loaded.",
+    "unreadable": "The stored policy is unreadable: it cannot be edited here. Contact support."
   },
   "permissionDenied": "You do not have permission to access settings",
   "options": {
@@ -190,18 +214,6 @@
       "monday": "Monday",
       "sunday": "Sunday"
     },
-    "currency": {
-      "DZD": "Algerian Dinar (DZD)",
-      "MAD": "Moroccan Dirham (MAD)",
-      "TND": "Tunisian Dinar (TND)",
-      "EUR": "Euro (EUR)",
-      "USD": "US Dollar (USD)",
-      "GBP": "British Pound (GBP)",
-      "CHF": "Swiss Franc (CHF)",
-      "CAD": "Canadian Dollar (CAD)",
-      "SAR": "Saudi Riyal (SAR)",
-      "AED": "UAE Dirham (AED)"
-    },
     "colorMode": {
       "light": "Light",
       "dark": "Dark"
@@ -220,6 +232,20 @@
     "channel": {
       "stable": "Stable",
       "beta": "Beta"
+    },
+    "month": {
+      "1": "January",
+      "2": "February",
+      "3": "March",
+      "4": "April",
+      "5": "May",
+      "6": "June",
+      "7": "July",
+      "8": "August",
+      "9": "September",
+      "10": "October",
+      "11": "November",
+      "12": "December"
     }
   },
   "tabs": {
@@ -231,7 +257,7 @@
     "integrations": "System & Sync",
     "profileHint": "Account details, password, PIN, trusted devices, and session history.",
     "notificationsHint": "Inbox, acknowledgements, snoozes, and per-category preferences.",
-    "generalHint": "Language, appearance, and system preferences.",
+    "generalHint": "Language, currency and fiscal year, work orders, reliability, printed document header. Each setting shows its shipped value, who may change it and its history.",
     "securityHint": "Password policy, session policy, activity feed, and audit log.",
     "integrationsHint": "Sync status, license, connections, and diagnostics."
   },
@@ -265,7 +291,7 @@
     },
     "resetTitle": "Factory reset",
     "resetDescription": "Erases all data on this device and restarts into first-time setup. A final backup is saved to the backups folder first. Data not yet synchronized to the server exists only in that backup.",
-    "resetPhraseLabel": "Confirmation phrase",
+    "resetPhraseLabel": "Type “ERASE ALL DATA” (or “EFFACER TOUTES LES DONNÉES”) to confirm",
     "resetPhrasePlaceholder": "Type the confirmation phrase",
     "resetAction": "Erase all data and restart",
     "resetError": "Factory reset failed",
@@ -311,5 +337,217 @@
     "copied": "Key copied to clipboard",
     "copyError": "Copy failed",
     "revealError": "Could not display the recovery key"
+  },
+  "catalog": {
+    "shipped": "Shipped value",
+    "changed": "Changed",
+    "lastChange": "Changed by {{who}} on {{when}}",
+    "restoreShipped": "Restore the shipped value",
+    "restoredSummary": "Setting '{{key}}' restored to its shipped value",
+    "showHistory": "Change history",
+    "hideHistory": "Hide history",
+    "system": "System",
+    "whoMayChange": "Can be changed by the roles: {{roles}} (permission adm.settings)",
+    "nobodyMayChange": "No active role holds the adm.settings permission.",
+    "outOfRange": "Value out of range ({{min}} to {{max}}).",
+    "locked": {
+      "locale.fiscal_year_start_month": "Locked: budget actuals, closed periods or postings are already stored by fiscal period. Changing the start month would move the whole past.",
+      "locale.currency_code": "Locked: stock, receipts or postings are already valued in this currency. Changing it would relabel every stored amount."
+    },
+    "help": {
+      "locale.primary_language": "Default interface language for every user.",
+      "locale.fallback_language": "Language used when a text is missing in the primary language.",
+      "locale.currency_code": "Currency in which stock, purchases and costs are valued (ISO 4217 code).",
+      "locale.fiscal_year_start_month": "First month of the fiscal year: budget periods, postings, period close.",
+      "wo.reopen_window_days": "Days after closure during which a closed work order can be reopened (0 = never).",
+      "inventory.count_critical_variance": "A counted line whose variance reaches this quantity (in the article's unit) is critical and needs approval. Each count session keeps the value it was opened with.",
+      "inventory.reconciliation_drift_break": "A gap between the movement ledger and the stock balance that reaches this quantity (in the article's unit) is a break. Must be above zero.",
+      "ram.fmeca_rpn_critical_threshold": "From this risk priority number (S × O × D) an FMECA failure mode is critical.",
+      "backup.retention_daily": "Number of daily scheduled backups kept (at least one).",
+      "backup.retention_weekly": "Number of weekly backups kept in addition.",
+      "backup.retention_monthly": "Number of monthly backups kept in addition."
+    },
+    "units": {
+      "wo.reopen_window_days_one": "{{count}} day",
+      "wo.reopen_window_days_other": "{{count}} days",
+      "inventory.count_critical_variance": "{{value, number(maximumFractionDigits: 6)}} (article's unit)",
+      "inventory.reconciliation_drift_break": "{{value, number(maximumFractionDigits: 6)}} (article's unit)",
+      "ram.fmeca_rpn_critical_threshold": "{{count}}",
+      "backup.retention_daily_one": "{{count}} backup",
+      "backup.retention_daily_other": "{{count}} backups",
+      "backup.retention_weekly_one": "{{count}} week",
+      "backup.retention_weekly_other": "{{count}} weeks",
+      "backup.retention_monthly_one": "{{count}} month",
+      "backup.retention_monthly_other": "{{count}} months"
+    },
+    "currencyLoadError": "The currency list (Reference data › Currencies) could not be loaded: the currency cannot be changed.",
+    "currencyLoading": "Loading currencies…",
+    "historyLoadError": "The history of this setting could not be loaded.",
+    "highRisk": {
+      "title": "Change \"{{setting}}\"?",
+      "body": "From {{from}} to {{to}}. This change is recorded with your name, the time and your reason, and asks you to confirm your identity.",
+      "confirm": "Change the setting",
+      "reason": "Reason for the change",
+      "reasonHint": "At least {{min}} characters; kept in the setting history."
+    }
+  },
+  "license": {
+    "title": "Licence",
+    "loadError": "The licence state could not be loaded",
+    "entitlement": "Licence",
+    "activation": "Activation",
+    "trust": "This device",
+    "policySyncPending": "Policy synchronisation pending",
+    "edition": "Edition {{edition}}",
+    "pendingWrites": "Changes waiting to be sent:",
+    "lastAction": "Last administrator action:",
+    "traces_one": "{{count}} recent licence event (technical details)",
+    "traces_other": "{{count}} recent licence events (technical details)",
+    "reason": "Reason",
+    "reasonHint": "At least {{min}} characters. Kept in the licence audit trail.",
+    "states": {
+      "active": "active",
+      "suspended": "suspended",
+      "revoked": "revoked",
+      "trusted": "trusted",
+      "untrusted": "not trusted",
+      "verified": "verified",
+      "soft_accepted": "accepted",
+      "not_activated": "not activated",
+      "pending_online_validation": "awaiting online validation",
+      "degraded_api_unavailable": "degraded (server unreachable)",
+      "denied_revoked": "refused (revoked)",
+      "denied_expired": "refused (expired)",
+      "denied_slot_limit": "refused (device limit reached)",
+      "denied_force_update_required": "refused (update required)",
+      "denied_invalid": "refused (invalid)",
+      "denied_offline_grace_expired": "refused (offline period exceeded)",
+      "other": "other state"
+    },
+    "advice": {
+      "policySync": "Policy synchronisation is pending: refresh the policy before making changes.",
+      "revoked": "The licence is revoked. Ask your administrator to reactivate it, then refresh the policy.",
+      "suspended": "The licence is suspended: the application is read-only until it is reactivated.",
+      "activationDenied": "Product activation was refused. Activate again or contact support.",
+      "activationDegraded": "Activation is degraded: the licence server cannot be reached. Refresh when online.",
+      "activationPending": "Product activation is awaiting online validation.",
+      "machinePendingRevocation": "This device's activation will be revoked at the next connection.",
+      "machineRevoked": "This device's activation is revoked. Ask your administrator to re-activate it.",
+      "untrusted": "This device is not trusted yet. Complete the online first start on a trusted device.",
+      "healthy": "The licence is in order: every operation is allowed.",
+      "activationIncomplete": "Activation is not complete. Finish activating the product."
+    },
+    "actions": {
+      "other": "other action",
+      "suspend": {
+        "label": "Suspend the licence",
+        "confirmTitle": "Suspend the licence?",
+        "confirmBody": "Every user of this site switches to read-only until the licence is reactivated. Changes not yet sent stay on this device.",
+        "confirm": "Suspend the licence"
+      },
+      "revoke": {
+        "label": "Revoke the licence",
+        "confirmTitle": "Revoke the licence?",
+        "confirmBody": "The licence stops being valid for this site. Only a reactivation by an administrator restores it.",
+        "confirm": "Revoke the licence"
+      },
+      "reactivate": {
+        "label": "Reactivate the licence",
+        "confirmTitle": "Reactivate the licence?",
+        "confirmBody": "Users get back the operations their licence allows.",
+        "confirm": "Reactivate the licence"
+      },
+      "compromise": {
+        "label": "Declare the signing key compromised",
+        "confirmTitle": "Declare the signing key compromised?",
+        "confirmBody": "The key that signed the current licence is marked compromised and the licence is revoked at once. Use it only if the key leaked.",
+        "confirm": "Declare compromised",
+        "noEnvelope": "No signed licence is active: there is no signing key to declare compromised."
+      }
+    }
+  },
+  "appearance": {
+    "title": "Appearance",
+    "intro": "Colour mode of the application on this PC. The choice is saved on this PC, for the current Windows user; it is not shared with other PCs or between Maintafox accounts on this PC.",
+    "legend": "Colour mode",
+    "light": "Light",
+    "lightHint": "Light background, recommended in a well-lit workshop.",
+    "dark": "Dark",
+    "darkHint": "Dark background, less glare in a control room or at night.",
+    "system": "System",
+    "systemHint": "Follows the Windows setting and changes with it.",
+    "current": "Currently shown: {{mode}}",
+    "currentLight": "light",
+    "currentDark": "dark",
+    "storedLocally": "Saved on this PC",
+    "authNote": "The sign-in, lock and activation screens always stay light."
+  },
+  "siteRules": {
+    "title": "Rules per site",
+    "hint": "A planning site may relax a rule for itself only. A site without a rule keeps the strict default. Each change asks for a reason and your identity, and is kept in the history.",
+    "loadError": "The sites could not be loaded",
+    "noSites": "No planning site",
+    "noSitesHint": "A site is an organisation node whose type can own work (Organisation).",
+    "site": "Site",
+    "pickSite": "Choose a site",
+    "on": "On",
+    "off": "Off",
+    "unset": "not set",
+    "notSet": "Not set at this site: {{value}} (default).",
+    "lastChange": "Last change by {{who}}, {{when}}",
+    "unknownUser": "Unknown user",
+    "history": "History",
+    "historyError": "The history could not be loaded",
+    "noHistory": "No change at this site.",
+    "selfApproval": {
+      "label": "Allow self-approval of reliability decisions and work permits",
+      "help": "Off (recommended): a second person approves every reliability decision and every work permit of this site (four-eyes: not the person who wrote or submitted the permit). Turn on only for a site where one person both prepares and approves; such approvals are marked \"self-approval (site without four-eyes)\" on the permit and \"Self-approved\" on the decision.",
+      "active": "Four-eyes lifted at this site"
+    },
+    "confirmTitle": "Change the rule for {{site}}?",
+    "confirmOnBody": "The person who proposes a reliability decision, or writes or submits a work permit, at {{site}} will be able to approve it. Other sites keep four-eyes.",
+    "confirmOffBody": "Reliability decisions and work permits at {{site}} will again need a second person to approve them.",
+    "confirm": "Change the rule",
+    "reason": "Reason for the change",
+    "reasonHint": "At least {{min}} characters; kept in the history with your name and the time.",
+    "saved": "Site rule changed",
+    "unreadable": "The stored rule cannot be read: {{value}} (default) applies until it is set again."
+  },
+  "errors": {
+    "SETTING_REASON_REQUIRED": "Give the reason for this change (at least 10 characters): it is kept in the history.",
+    "SITE_SETTING_STALE": "Someone changed this site's rule meanwhile. Reload and try again.",
+    "SITE_SETTING_NOT_A_SITE": "This organisation node is not a planning site (its type cannot own work).",
+    "SITE_SETTING_UNKNOWN": "Unknown site rule.",
+    "FIRST_ADMIN_ALREADY_EXISTS": "An administrator already exists for this organisation: sign in with that account.",
+    "LICENSE_RECONCILE_ADMIN_REQUIRED": "This licence change needs an administrator: sign in as an administrator; the licence screen then asks you to confirm your identity and applies the change.",
+    "LICENSE_EXTENSION_ADMIN_REQUIRED": "This licence update extends the licence terms or lifts a denial (expiry, devices, edition, entitlements): sign in as an administrator; the licence screen then asks you to confirm your identity and applies the update.",
+    "LICENSE_CLAIM_INVALID": "The licence data received is incomplete or malformed (organisation, licence, machine or activation token): nothing was changed.",
+    "LICENSE_FIRST_ADMIN_RETRY": "The first administrator could not be saved because another one is being created at the same time: wait a moment, then retry.",
+    "LICENSE_RESET_BUILTIN_ADMIN_PENDING": "This PC holds a licence and is still reached through its built-in administrator account: create the first administrator, then sign in with that account to reset local data.",
+    "LAST_ADMINISTRATOR_REQUIRED": "This change would leave the plant without an active administrator: create or enable a second administrator first.",
+    "ADMIN_RECOVERY_CODE_MALFORMED": "This is not a valid recovery code: copy the whole code, starting with MFXREC1.",
+    "ADMIN_RECOVERY_CODE_NON_CANONICAL": "This recovery code has been altered: ask the vendor for a new one.",
+    "ADMIN_RECOVERY_CODE_WRONG_ISSUER": "This recovery code was not issued by the Maintafox vendor.",
+    "ADMIN_RECOVERY_CODE_UNTRUSTED_KEY": "This recovery code is signed with a key this PC does not trust: ask the vendor for a new one.",
+    "ADMIN_RECOVERY_CODE_COMPROMISED_KEY": "This recovery code is signed with a key that has been withdrawn: ask the vendor for a new one.",
+    "ADMIN_RECOVERY_CODE_INVALID_SIGNATURE": "This recovery code's signature is not valid: copy it again exactly, or ask the vendor for a new one.",
+    "ADMIN_RECOVERY_CODE_WRONG_VERSION": "This recovery code is of a version this application does not know: update the application or ask the vendor.",
+    "ADMIN_RECOVERY_CODE_WRONG_PURPOSE": "This code is not an administrator recovery code.",
+    "ADMIN_RECOVERY_CODE_WRONG_ALGORITHM": "This recovery code uses a signature this application does not accept.",
+    "ADMIN_RECOVERY_NOT_ACTIVATED": "This PC holds no licence activation: activate it before using a recovery code.",
+    "ADMIN_RECOVERY_CODE_WRONG_TENANT": "This recovery code was issued for another organisation.",
+    "ADMIN_RECOVERY_CODE_WRONG_MACHINE": "This recovery code was issued for another PC.",
+    "ADMIN_RECOVERY_CODE_WRONG_LICENSE": "This recovery code was issued for another licence.",
+    "ADMIN_RECOVERY_CODE_INVALID_WINDOW": "This recovery code's validity period is not one the vendor issues (24 hours at most, ending after it starts): ask the vendor for a new one.",
+    "ADMIN_RECOVERY_CODE_EXPIRED": "This recovery code has expired: ask the vendor for a new one.",
+    "ADMIN_RECOVERY_CODE_ISSUED_IN_FUTURE": "This recovery code is dated in the future: check this PC's date and time.",
+    "ADMIN_RECOVERY_CODE_ALREADY_USED": "This recovery code has already been used: ask the vendor for a new one.",
+    "ADMIN_RECOVERY_USERNAME_INVALID": "The username must be 3 to 64 characters: letters, digits and . _ - @ only.",
+    "ADMIN_RECOVERY_USERNAME_TAKEN": "This username already exists on this PC: choose a new one. A recovery code never takes over an existing account.",
+    "ADMIN_RECOVERY_NAME_INVISIBLE_CHARACTERS": "The name and the username must not contain invisible or control characters (for example a text-direction mark or a zero-width space): type them again.",
+    "ADMIN_RECOVERY_DISPLAY_NAME_REQUIRED": "Give the new administrator's full name (1 to 120 characters).",
+    "ADMIN_RECOVERY_PASSWORD_MISMATCH": "The two passwords do not match.",
+    "ADMIN_RECOVERY_RETRY": "The administrator could not be saved because the database is busy: wait a moment, then retry.",
+    "ADMIN_RECOVERY_NOTICE_NOT_FOUND": "This notice is not addressed to you or has already been acknowledged."
   }
 }

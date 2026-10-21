@@ -8,8 +8,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { describeAppError } from "@/lib/app-error";
 import { type AuditChainReport, verifyAuditChain } from "@/services/activity-service";
-import { toErrorMessage } from "@/utils/errors";
 
 export function AuditChainCheck() {
   const { t } = useTranslation("activity");
@@ -24,7 +24,7 @@ export function AuditChainCheck() {
       setReport(await verifyAuditChain());
     } catch (e) {
       setReport(null);
-      setError(toErrorMessage(e));
+      setError(describeAppError(e).title);
     } finally {
       setRunning(false);
     }
@@ -45,7 +45,7 @@ export function AuditChainCheck() {
       ) : null}
       {report ? (
         <div className="mt-2 space-y-1" data-testid="audit-chain-report">
-          <p className={report.intact ? "text-emerald-600" : "font-medium text-destructive"}>
+          <p className={report.intact ? "text-tone-success-fg" : "font-medium text-tone-danger-fg"}>
             {report.intact ? (
               <ShieldCheck className="mr-1 inline h-3 w-3" />
             ) : (
@@ -61,11 +61,21 @@ export function AuditChainCheck() {
                 })}
                 {" — "}
                 {t("chain.events", { count: c.events })}
+                {c.kept_positions > 0 ? ` — ${t("chain.kept", { count: c.kept_positions })}` : ""}
+                {c.kept_before_stubs > 0
+                  ? ` — ${t("chain.keptBeforeStubs", { count: c.kept_before_stubs })}`
+                  : ""}
                 {c.first_problem
-                  ? ` — ${t(`chain.problem.${c.first_problem.kind}`, {
-                      seq: c.first_problem.chain_seq,
-                      id: c.first_problem.audit_event_id,
-                    })}`
+                  ? ` — ${
+                      c.first_problem.audit_event_id === null
+                        ? t(`chain.problemKept.${c.first_problem.kind}`, {
+                            seq: c.first_problem.chain_seq,
+                          })
+                        : t(`chain.problem.${c.first_problem.kind}`, {
+                            seq: c.first_problem.chain_seq,
+                            id: c.first_problem.audit_event_id,
+                          })
+                    }`
                   : ""}
               </li>
             ))}

@@ -88,35 +88,31 @@ pub struct ReferencePublishResult {
     pub readiness: ReferencePublishReadiness,
 }
 
-// ─── Impact preview cache key ─────────────────────────────────────────────────
+// ─── Impact preview marker ────────────────────────────────────────────────────
 
-/// In-memory flag tracking whether impact preview was computed for a set.
-/// In a production system this would be persisted; for now the publish engine
-/// accepts the preview result directly as proof of completion.
-static IMPACT_CACHE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<i64>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
-
-/// Mark impact preview as computed for a set.
-fn mark_impact_computed(set_id: i64) {
-    if let Ok(mut cache) = IMPACT_CACHE.lock() {
-        cache.insert(set_id);
-    }
+/// Records on the set row that the impact preview ran (`reference_sets.impact_previewed_at`,
+/// migration 196). Triggers on `reference_values` clear it whenever a value of the set changes, so
+/// the marker always refers to the values being published. Device-local in sync.
+async fn mark_impact_computed(db: &DatabaseConnection, set_id: i64, at: &str) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reference_sets SET impact_previewed_at = ? WHERE id = ?",
+        [at.into(), set_id.into()],
+    ))
+    .await?;
+    Ok(())
 }
 
-/// Check if impact preview was computed for a set.
-fn is_impact_computed(set_id: i64) -> bool {
-    IMPACT_CACHE
-        .lock()
-        .map(|cache| cache.contains(&set_id))
-        .unwrap_or(false)
-}
-
-/// Clear impact cache (useful for tests).
-#[cfg(test)]
-pub fn clear_impact_cache() {
-    if let Ok(mut cache) = IMPACT_CACHE.lock() {
-        cache.clear();
-    }
+/// Whether the impact preview ran for the current values of the set.
+async fn is_impact_computed(db: &DatabaseConnection, set_id: i64) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM reference_sets WHERE id = ? AND impact_previewed_at IS NOT NULL",
+            [set_id.into()],
+        ))
+        .await?;
+    Ok(row.is_some())
 }
 
 // ─── Module dimension constants ───────────────────────────────────────────────
@@ -190,7 +186,7 @@ pub async fn compute_publish_readiness(db: &DatabaseConnection, set_id: i64) -> 
     }
 
     // ── Check 4: protected domain → impact preview required ───────────────
-    let impact_preview_available = is_impact_computed(set_id);
+    let impact_preview_available = is_impact_computed(db, set_id).await?;
     let impact_preview_required = is_protected;
 
     if is_protected && !impact_preview_available {
@@ -276,7 +272,7 @@ pub async fn preview_publish_impact(db: &DatabaseConnection, set_id: i64) -> App
     let now = Utc::now().to_rfc3339();
 
     // Mark preview as computed so readiness check passes.
-    mark_impact_computed(set_id);
+    mark_impact_computed(db, set_id, &now).await?;
 
     Ok(ReferenceImpactSummary {
         set_id,
@@ -301,6 +297,7 @@ pub async fn publish_reference_set(
 ) -> AppResult<ReferencePublishResult> {
     let set_probe = sets::get_reference_set(db, set_id).await?;
     let domain_probe = domains::get_reference_domain(db, set_probe.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain_probe)?;
     crate::reference::governance::assert_allows_publish(&domain_probe)?;
 
     // Run full readiness assessment.
@@ -344,6 +341,25 @@ pub async fn publish_reference_set(
     ))
     .await?;
 
+    // Records saved against an earlier version now point at the same code in this version.
+    remap_usage_to_published_set(&txn, set.domain_id, set_id).await?;
+
+    // A newly published electrical habilitation can be required and recorded at once (same
+    // transaction: the list and its certification types are published together).
+    if domain_probe
+        .code
+        .eq_ignore_ascii_case(crate::qualification::catalog::HABILITATIONS_DOMAIN)
+    {
+        let french = !crate::qualification::gate::tenant_writes_english(&txn).await?;
+        crate::qualification::catalog::ensure_habilitation_certification_types(&txn, french).await?;
+    }
+
+    // The currency list is mirrored into the operational copy stock costs link to (same codes,
+    // ids unchanged), in the same transaction.
+    if crate::reference::currencies::is_currency_domain(&domain_probe.code) {
+        crate::reference::currencies::mirror_into_lookup(&txn).await?;
+    }
+
     txn.commit().await?;
 
     let published_set = sets::get_reference_set(db, set_id).await?;
@@ -357,16 +373,134 @@ pub async fn publish_reference_set(
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-/// Count deactivated values in a set that have no migration map entry.
+/// Re-points every record that uses a value of an earlier version of the domain to the value with
+/// the same code in the newly published set, and returns the number of rows changed.
+///
+/// A draft copies the published values under new ids (`sets::create_draft_set`), so without this
+/// step records would keep pointing at the superseded version once the draft is published: forms
+/// that list the published catalog would no longer find their value, and children in another
+/// domain (equipment families under a class) would hang off a retired parent.
+///
+/// Covered: every foreign key to `reference_values(id)` of the schema outside the catalog tables
+/// (found with `pragma_foreign_key_list`, as the impact preview does), and cross-domain parents in
+/// the live sets of other domains. Codes absent from the new set keep their old target (the impact
+/// preview lists them as removed). A row whose new target would break a uniqueness rule of its
+/// table keeps its old target (`UPDATE OR IGNORE`). Each update goes through the sync capture
+/// triggers like any other edit.
+pub(crate) async fn remap_usage_to_published_set(
+    conn: &impl ConnectionTrait,
+    domain_id: i64,
+    published_set_id: i64,
+) -> AppResult<i64> {
+    // Old value ids of the domain that have a same-code value in the new set.
+    const OLD_IDS: &str = "SELECT ov.id FROM reference_values ov \
+         JOIN reference_sets os ON os.id = ov.set_id \
+         JOIN reference_values nv ON nv.set_id = ? AND nv.code = ov.code \
+         WHERE os.domain_id = ? AND os.id <> ? AND os.status IN ('published', 'superseded')";
+
+    let mut changed: i64 = 0;
+    for (table, column) in super::impact::referencing_columns(conn, "reference_values").await? {
+        let t = quote_ident(&table);
+        let c = quote_ident(&column);
+        let result = conn
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                format!(
+                    "UPDATE OR IGNORE {t} SET {c} = ( \
+                         SELECT nv.id FROM reference_values ov \
+                         JOIN reference_values nv ON nv.set_id = ? AND nv.code = ov.code \
+                         WHERE ov.id = {t}.{c}) \
+                     WHERE {c} IN ({OLD_IDS})"
+                ),
+                [
+                    published_set_id.into(),
+                    published_set_id.into(),
+                    domain_id.into(),
+                    published_set_id.into(),
+                ],
+            ))
+            .await?;
+        changed += result.rows_affected() as i64;
+    }
+
+    // Children kept in other domains (EQUIPMENT.FAMILY under EQUIPMENT.CLASS, …).
+    let result = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE reference_values SET parent_id = ( \
+                     SELECT nv.id FROM reference_values ov \
+                     JOIN reference_values nv ON nv.set_id = ? AND nv.code = ov.code \
+                     WHERE ov.id = reference_values.parent_id) \
+                 WHERE set_id IN ( \
+                     SELECT id FROM reference_sets \
+                     WHERE domain_id <> ? AND status IN ('draft', 'validated', 'published')) \
+                   AND parent_id IN ({OLD_IDS})"
+            ),
+            [
+                published_set_id.into(),
+                domain_id.into(),
+                published_set_id.into(),
+                domain_id.into(),
+                published_set_id.into(),
+            ],
+        ))
+        .await?;
+    changed += result.rows_affected() as i64;
+
+    // Units of measure inside the checkpoint packages of published checklists (JSON, not a
+    // foreign key): moved to the units of the new version too (`reference::units`).
+    let domain_code: Option<String> = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code FROM reference_domains WHERE id = ?",
+            [domain_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "code"))
+        .transpose()?;
+    if domain_code.is_some_and(|c| crate::reference::units::is_units_domain(&c)) {
+        let rows = conn
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT ov.id AS old_id, nv.id AS new_id FROM reference_values ov                    JOIN reference_sets os ON os.id = ov.set_id                    JOIN reference_values nv ON nv.set_id = ? AND nv.code = ov.code                   WHERE os.domain_id = ? AND os.id <> ? AND os.status IN ('published', 'superseded')",
+                [published_set_id.into(), domain_id.into(), published_set_id.into()],
+            ))
+            .await?;
+        let pairs = rows
+            .iter()
+            .map(|r| Ok((r.try_get::<i64>("", "old_id")?, r.try_get::<i64>("", "new_id")?)))
+            .collect::<Result<Vec<(i64, i64)>, sea_orm::DbErr>>()?;
+        changed += crate::reference::units::remap_package_unit_ids(conn, &pairs).await? as i64;
+    }
+
+    Ok(changed)
+}
+
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Count values the candidate deactivates that have no migration map entry.
+///
+/// A value already inactive in the published set is carried over by the draft copy; it is not a
+/// new deactivation and needs no migration map.
 async fn count_unresolved_deactivations(db: &impl ConnectionTrait, set_id: i64) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COUNT(*) AS cnt FROM reference_values rv \
+             JOIN reference_sets cs ON cs.id = rv.set_id \
              WHERE rv.set_id = ? AND rv.is_active = 0 \
                AND NOT EXISTS ( \
                    SELECT 1 FROM reference_value_migrations \
                    WHERE from_value_id = rv.id \
+               ) \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM reference_values pv \
+                   JOIN reference_sets ps ON ps.id = pv.set_id \
+                   WHERE ps.domain_id = cs.domain_id AND ps.status = 'published' \
+                     AND ps.id <> cs.id AND pv.code = rv.code AND pv.is_active = 0 \
                )",
             [set_id.into()],
         ))

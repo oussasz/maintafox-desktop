@@ -5,11 +5,13 @@
  * Governed lifecycle: explicit “published (read-only)” vs “draft (editing)” modes.
  */
 
-import { AlertTriangle, Building2, Network, RefreshCw, Settings2 } from "lucide-react";
+import { Building2, MapPinOff, Network, Settings2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { DraftStatusBanner } from "@/components/org/DraftStatusBanner";
 import { ImpactPreviewDrawer } from "@/components/org/ImpactPreviewDrawer";
 import { NodeTypeManagerPanel } from "@/components/org/NodeTypeManagerPanel";
@@ -19,16 +21,29 @@ import { OrgExportMenu } from "@/components/org/OrgExportMenu";
 import { OrgNodeCreateDialog } from "@/components/org/OrgNodeCreateDialog";
 import { OrgRelationshipRulesPanel } from "@/components/org/OrgRelationshipRulesPanel";
 import { OrganizationTreePanel } from "@/components/org/OrganizationTreePanel";
+import { RecordsWithoutSitePanel } from "@/components/org/RecordsWithoutSitePanel";
 import { Button } from "@/components/ui/button";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { mfLayout } from "@/design-system/tokens";
+import { useAccessAt } from "@/hooks/use-access-at";
+import { useFormatters } from "@/hooks/use-formatters";
+import { countRecordsWithoutSite, noSiteToReview } from "@/services/site-assignment-service";
 import { isOrgStructureDesignMode, useOrgDesignerStore } from "@/stores/org-designer-store";
 import { useOrgGovernanceStore } from "@/stores/org-governance-store";
 import { P } from "@shared/rbac/permissions.generated";
 
 export function OrganizationDesignerPage() {
   const { t } = useTranslation("org");
+  const { formatNumber } = useFormatters();
   const [typesPanelOpen, setTypesPanelOpen] = useState(false);
   const [rulesPanelOpen, setRulesPanelOpen] = useState(false);
+  const [noSitePanelOpen, setNoSitePanelOpen] = useState(false);
+  /** Records "to review: no site"; null until counted. */
+  const [noSiteCount, setNoSiteCount] = useState<number | null>(null);
+  // Giving a site to old records is a plant-wide tool: `org.admin` for the whole plant (the
+  // rights at no node are the plant-wide ones), as the backend checks.
+  const plantWide = useAccessAt(0);
+  const canAssignSites = plantWide.can(P.ORG_ADMIN);
   const snapshot = useOrgDesignerStore((s) => s.snapshot);
   const loading = useOrgDesignerStore((s) => s.loading);
   const error = useOrgDesignerStore((s) => s.error);
@@ -39,6 +54,22 @@ export function OrganizationDesignerPage() {
   useEffect(() => {
     void loadSnapshot();
   }, [loadSnapshot]);
+
+  useEffect(() => {
+    if (!canAssignSites) return;
+    let cancelled = false;
+    void countRecordsWithoutSite()
+      .then((counts) => {
+        if (!cancelled) setNoSiteCount(noSiteToReview(counts));
+      })
+      .catch(() => {
+        // The failure is already shown as a notification; the button stays without a count.
+        if (!cancelled) setNoSiteCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canAssignSites]);
 
   const nodeTypes = useMemo(() => {
     if (!snapshot) return [];
@@ -91,89 +122,96 @@ export function OrganizationDesignerPage() {
     }
   }, [loadSnapshot, loadPublishValidation]);
 
-  // Loading state
-  if (loading && !snapshot) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
-      </div>
-    );
-  }
+  const headerActions = (
+    <>
+      <PermissionGate permission={P.ORG_ADMIN}>
+        <Button
+          variant="outline"
+          onClick={() => canOpenTypeManager && setTypesPanelOpen(true)}
+          disabled={!canOpenTypeManager}
+          title={
+            !hasDraftModel
+              ? t("designer.manageTypesNoDraftHint")
+              : !isDesign
+                ? t("designer.manageTypesReadOnlyHint")
+                : undefined
+          }
+          className="h-11 gap-1.5"
+        >
+          <Settings2 className="h-4 w-4" aria-hidden />
+          {t("designer.manageTypes")}
+        </Button>
+      </PermissionGate>
+      <PermissionGate permission={P.ORG_ADMIN}>
+        <Button
+          variant="outline"
+          onClick={() => canOpenTypeManager && setRulesPanelOpen(true)}
+          disabled={!canOpenTypeManager}
+          title={
+            !hasDraftModel
+              ? t("designer.manageHierarchyRulesNoDraftHint")
+              : !isDesign
+                ? t("designer.manageHierarchyRulesReadOnlyHint")
+                : undefined
+          }
+          className="h-11 gap-1.5"
+        >
+          <Network className="h-4 w-4" aria-hidden />
+          {t("designer.manageHierarchyRules")}
+        </Button>
+      </PermissionGate>
+      {canAssignSites ? (
+        <Button
+          variant="outline"
+          onClick={() => setNoSitePanelOpen(true)}
+          title={t("noSite.openHint")}
+          className="h-11 gap-1.5"
+        >
+          <MapPinOff className="h-4 w-4" aria-hidden />
+          {noSiteCount != null ? t("noSite.openCount", { count: noSiteCount }) : t("noSite.open")}
+        </Button>
+      ) : null}
+      <OrgExportMenu treeContainerId="org-tree-container" />
+      <RefreshButton onRefresh={() => void loadSnapshot()} loading={loading} />
+    </>
+  );
 
-  // Error state
-  if (error && !snapshot) {
+  // First load / failed first load: the page has nothing else to show yet.
+  if (!snapshot) {
     return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="text-center space-y-3">
-          <AlertTriangle className="h-8 w-8 mx-auto text-status-danger" />
-          <p className="text-sm text-status-danger">{error}</p>
-          <Button variant="outline" size="sm" onClick={() => void loadSnapshot()}>
-            {t("designer.retry")}
-          </Button>
-        </div>
-      </div>
+      <ModulePageShell
+        icon={Building2}
+        title={t("designer.title")}
+        actions={<RefreshButton onRefresh={() => void loadSnapshot()} loading={loading} />}
+      >
+        {error != null && !loading ? (
+          <ErrorState error={error} onRetry={() => void loadSnapshot()} />
+        ) : (
+          <LoadingState label={t("designer.loading")} />
+        )}
+      </ModulePageShell>
     );
   }
 
   return (
-    <div className={mfLayout.moduleRoot}>
-      <div className={mfLayout.moduleHeader}>
-        <div className={mfLayout.moduleTitleRow}>
-          <Building2 className={mfLayout.moduleHeaderIcon} />
-          <h1 className={mfLayout.moduleTitle}>{t("designer.title")}</h1>
+    <ModulePageShell
+      icon={Building2}
+      title={t("designer.title")}
+      count={snapshot.nodes.length}
+      actions={headerActions}
+      bodyClassName={null}
+    >
+      {error != null && !loading ? (
+        // A failed refresh keeps the last tree on screen but says so, with a retry.
+        <div className="mx-6 mt-3 shrink-0">
+          <ErrorState
+            error={error}
+            title={t("designer.refreshFailed")}
+            onRetry={() => void loadSnapshot()}
+            className="py-4"
+          />
         </div>
-        <div className={mfLayout.moduleHeaderActions}>
-          <PermissionGate permission={P.ORG_ADMIN}>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => canOpenTypeManager && setTypesPanelOpen(true)}
-              disabled={!canOpenTypeManager}
-              title={
-                !hasDraftModel
-                  ? t("designer.manageTypesNoDraftHint")
-                  : !isDesign
-                    ? t("designer.manageTypesReadOnlyHint")
-                    : undefined
-              }
-              className="gap-1.5"
-            >
-              <Settings2 className="h-3.5 w-3.5" />
-              {t("designer.manageTypes")}
-            </Button>
-          </PermissionGate>
-          <PermissionGate permission={P.ORG_ADMIN}>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => canOpenTypeManager && setRulesPanelOpen(true)}
-              disabled={!canOpenTypeManager}
-              title={
-                !hasDraftModel
-                  ? t("designer.manageHierarchyRulesNoDraftHint")
-                  : !isDesign
-                    ? t("designer.manageHierarchyRulesReadOnlyHint")
-                    : undefined
-              }
-              className="gap-1.5"
-            >
-              <Network className="h-3.5 w-3.5" />
-              {t("designer.manageHierarchyRules")}
-            </Button>
-          </PermissionGate>
-          <OrgExportMenu treeContainerId="org-tree-container" />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void loadSnapshot()}
-            disabled={loading}
-            className="gap-1.5"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            {t("designer.refresh")}
-          </Button>
-        </div>
-      </div>
+      ) : null}
 
       <OrgDesignerLifecycleBar />
 
@@ -195,19 +233,22 @@ export function OrganizationDesignerPage() {
                 <div className="flex justify-between">
                   <span>{t("designer.totalNodes")}</span>
                   <span className="text-text-primary font-medium">
-                    {snapshot?.nodes.length ?? 0}
+                    {formatNumber(snapshot.nodes.length)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span>{t("designer.nodeTypesCount")}</span>
-                  <span className="text-text-primary font-medium">{nodeTypes.length}</span>
+                  <span className="text-text-primary font-medium">
+                    {formatNumber(nodeTypes.length)}
+                  </span>
                 </div>
               </div>
             </div>
           </aside>
 
-          <main
+          <section
             id="org-tree-container"
+            aria-label={t("designer.treeLabel")}
             className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
           >
             <OrganizationTreePanel
@@ -223,7 +264,7 @@ export function OrganizationDesignerPage() {
                 setCreateNodeOpen(true);
               }}
             />
-          </main>
+          </section>
 
           <OrgDesignerPropertyPanel readOnly={!isDesign} />
         </div>
@@ -256,6 +297,14 @@ export function OrganizationDesignerPage() {
       />
 
       <ImpactPreviewDrawer />
-    </div>
+
+      {canAssignSites ? (
+        <RecordsWithoutSitePanel
+          open={noSitePanelOpen}
+          onOpenChange={setNoSitePanelOpen}
+          onChanged={(counts) => setNoSiteCount(noSiteToReview(counts))}
+        />
+      ) : null}
+    </ModulePageShell>
   );
 }

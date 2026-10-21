@@ -278,6 +278,20 @@ pub async fn create_custom_permission(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to read back created permission")))?;
 
+    let created_name: String = row.try_get("", "name")?;
+    crate::commands::admin_governance::write_admin_event(
+        &state.db,
+        i64::from(user.user_id),
+        &crate::commands::admin_governance::AdminEventRecord {
+            action: "permission_created",
+            summary: Some(format!("Custom permission '{created_name}' created")),
+            step_up_used: true,
+            ..Default::default()
+        },
+        crate::commands::admin_governance::APPLY_RESULT_APPLIED,
+    )
+    .await?;
+
     Ok(PermissionWithSystem {
         id: row.try_get("", "id")?,
         name: row.try_get("", "name")?,
@@ -357,5 +371,104 @@ pub async fn validate_role_permissions(
         warn_deps,
         unknown_permissions,
         is_valid,
+    })
+}
+
+/// Users currently holding a role (valid, non-emergency or unexpired emergency assignments).
+#[derive(Debug, Serialize)]
+pub struct RoleHolderCount {
+    pub role_id: i64,
+    pub active_users: i64,
+}
+
+/// Everything the role editor needs, readable with `adm.roles` alone: the permission catalog
+/// (with descriptions and danger flags), the declared dependencies between permissions, and
+/// how many active users hold each role.
+#[derive(Debug, Serialize)]
+pub struct RoleEditorCatalog {
+    pub permissions: Vec<PermissionWithSystem>,
+    pub dependencies: Vec<PermissionDependencyRow>,
+    pub role_holders: Vec<RoleHolderCount>,
+}
+
+#[tauri::command]
+pub async fn get_role_editor_catalog(state: State<'_, AppState>) -> AppResult<RoleEditorCatalog> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
+    role_editor_catalog(&state.db).await
+}
+
+pub(crate) async fn role_editor_catalog(db: &sea_orm::DatabaseConnection) -> AppResult<RoleEditorCatalog> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id, name, description, category, is_dangerous, requires_step_up, is_system \
+             FROM permissions ORDER BY category, name"
+                .to_string(),
+        ))
+        .await?;
+    let mut permissions = Vec::with_capacity(rows.len());
+    for r in &rows {
+        permissions.push(PermissionWithSystem {
+            id: r.try_get("", "id")?,
+            name: r.try_get("", "name")?,
+            description: r.try_get::<Option<String>>("", "description")?,
+            category: r.try_get("", "category")?,
+            is_dangerous: r.try_get::<i32>("", "is_dangerous")? != 0,
+            requires_step_up: r.try_get::<i32>("", "requires_step_up")? != 0,
+            is_system: r.try_get::<i32>("", "is_system")? != 0,
+        });
+    }
+
+    let dep_rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id, permission_name, required_permission_name, dependency_type \
+             FROM permission_dependencies ORDER BY permission_name, required_permission_name"
+                .to_string(),
+        ))
+        .await?;
+    let mut dependencies = Vec::with_capacity(dep_rows.len());
+    for r in &dep_rows {
+        dependencies.push(PermissionDependencyRow {
+            id: r.try_get("", "id")?,
+            permission_name: r.try_get("", "permission_name")?,
+            required_permission_name: r.try_get("", "required_permission_name")?,
+            dependency_type: r.try_get("", "dependency_type")?,
+        });
+    }
+
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let holder_rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT usa.role_id, COUNT(DISTINCT usa.user_id) AS cnt \
+             FROM user_scope_assignments usa \
+             INNER JOIN user_accounts ua ON ua.id = usa.user_id AND ua.is_active = 1 AND ua.deleted_at IS NULL \
+             WHERE usa.deleted_at IS NULL \
+               AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
+               AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
+               AND (usa.is_emergency = 0 OR usa.emergency_expires_at > ?) \
+             GROUP BY usa.role_id",
+            [now.clone().into(), now.clone().into(), now.into()],
+        ))
+        .await?;
+    let mut role_holders = Vec::with_capacity(holder_rows.len());
+    for r in &holder_rows {
+        role_holders.push(RoleHolderCount {
+            role_id: r.try_get("", "role_id")?,
+            active_users: r.try_get("", "cnt")?,
+        });
+    }
+
+    Ok(RoleEditorCatalog {
+        permissions,
+        dependencies,
+        role_holders,
     })
 }

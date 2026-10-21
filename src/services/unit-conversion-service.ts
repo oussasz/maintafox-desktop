@@ -84,3 +84,31 @@ export async function convertUnitQuantity(
   });
   return ConvertedQuantitySchema.parse(raw);
 }
+
+const StockQuantitySchema = z.object({
+  stock_quantity: z.number(),
+  stock_unit_value_id: z.number(),
+  entered_unit_value_id: z.number().nullable(),
+  entered_quantity: z.number(),
+  factor: z.number(),
+  path: z.string(),
+});
+export type StockQuantity = z.infer<typeof StockQuantitySchema>;
+
+/**
+ * The stock quantity a quantity entered in another unit stands for (receipt and issue screens),
+ * with the same rule and rounding as the posting: the article's own conversion, then the plant
+ * unit's factor, then a general conversion between standard units.
+ */
+export async function previewInventoryStockQuantity(
+  articleId: number,
+  enteredUnitValueId: number | null,
+  quantity: number,
+): Promise<StockQuantity> {
+  const raw = await invoke<unknown>("preview_inventory_stock_quantity", {
+    articleId,
+    enteredUnitValueId,
+    quantity,
+  });
+  return StockQuantitySchema.parse(raw);
+}

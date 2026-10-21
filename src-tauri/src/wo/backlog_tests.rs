@@ -1,22 +1,13 @@
 //! Backlog heatmap: planned load vs capacity rules, unscheduled / overdue buckets, blocked work.
 
 use chrono::{Duration, Utc};
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::wo::backlog::{get_wo_backlog_heatmap, WoBacklogHeatmapInput};
 use crate::wo::domain::WoCreateInput;
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    db.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "PRAGMA foreign_keys = ON;".to_string(),
-    ))
-    .await
-    .expect("pragma");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+    let db = crate::db::test_db::seeded().await;
     for sql in [
         "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
          VALUES (1, 'bl-model', 1, 'active', datetime('now'), datetime('now'))",
@@ -82,7 +73,8 @@ async fn wo(
             source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: title.into(),
             description: None,
             notes: None,
@@ -141,7 +133,7 @@ async fn heatmap_compares_planned_load_with_capacity_and_lists_backlog() {
     .await
     .expect("delay");
 
-    // Without capacity rules nothing is called overloaded.
+    // Without any crew nothing is called overloaded.
     let no_cap = get_wo_backlog_heatmap(
         &db,
         WoBacklogHeatmapInput {
@@ -162,6 +154,45 @@ async fn heatmap_compares_planned_load_with_capacity_and_lists_backlog() {
     ))
     .await
     .expect("crew");
+    // A crew without anybody on a Classe horaire: capacity unknown, nothing called overloaded.
+    let unscheduled = get_wo_backlog_heatmap(
+        &db,
+        WoBacklogHeatmapInput {
+            start_date: None,
+            weeks: 1,
+        },
+    )
+    .await
+    .expect("heatmap");
+    assert!(!unscheduled.capacity_configured);
+    assert!(unscheduled
+        .days
+        .iter()
+        .all(|d| !d.overloaded && d.capacity_hours.is_none()));
+    // Capacity comes from the crew's Classes horaires: one member on a continuous 7 h shift, plus
+    // the planner's overtime ceiling of 1 h (the rule's typed hours do not count).
+    for sql in [
+        "INSERT INTO reference_values (entity_sync_id, set_id, code, label, sort_order, is_active) \
+         SELECT 'bl-class', rs.id, 'BL-7H', 'Backlog 7 h', 99, 1 FROM reference_sets rs \
+         JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(rd.code) = 'ORG.SCHEDULE_CLASS' AND rs.status = 'published' ORDER BY rs.version_no DESC LIMIT 1",
+        "INSERT INTO schedule_class_versions (entity_sync_id, reference_value_id, effective_from, cycle_length_days, \
+         rotation_start_date, days_json, is_continuous, utilisation_percent, created_at, updated_at) \
+         SELECT 'bl-version', rv.id, '2000-01-01', 7, NULL, \
+         (SELECT json_group_array(json_object('cycle_day', n, 'shift_start', '08:00', 'shift_end', '15:00', \
+                 'break_minutes', 0, 'is_rest_day', json('false'))) \
+            FROM (SELECT 1 AS n UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 \
+                  UNION SELECT 7)), 1, 100.0, datetime('now'), datetime('now') \
+         FROM reference_values rv WHERE rv.entity_sync_id = 'bl-class'",
+        "INSERT INTO personnel (employee_code, full_name, availability_status, primary_team_id, \
+         home_schedule_reference_value_id) \
+         SELECT 'BL-1', 'Backlog technician', 'available', t.id, rv.id FROM teams t, reference_values rv \
+         WHERE t.code = 'CREW-BL' AND rv.entity_sync_id = 'bl-class'",
+    ] {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect("crew timetable");
+    }
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO capacity_rules (team_id, effective_start, available_hours_per_day, max_overtime_hours_per_day) \

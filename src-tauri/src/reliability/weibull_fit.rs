@@ -181,6 +181,13 @@ fn inv2x2(m: [[f64; 2]; 2]) -> Option<[[f64; 2]; 2]> {
     Some([[m[1][1] / det, -m[0][1] / det], [-m[1][0] / det, m[0][0] / det]])
 }
 
+/// Asymptotic covariance matrix of `(β, η)`: the inverse observed information (Fisher matrix).
+/// `None` when the information is not positive definite at `(β, η)`.
+#[must_use]
+pub fn covariance(obs: &[WeibullObservation], beta: f64, eta: f64) -> Option<[[f64; 2]; 2]> {
+    inv2x2(observed_information(obs, beta, eta))
+}
+
 /// Standard errors `(se_β, se_η)` from the inverse observed information.
 #[must_use]
 pub fn standard_errors(obs: &[WeibullObservation], beta: f64, eta: f64) -> Option<(f64, f64)> {

@@ -3,7 +3,8 @@
 //! The generic materializer writes the replicated columns. Some tables also feed data that each
 //! device derives for itself; those derivations run here, in the same transaction as the apply:
 //! - `inventory_transactions`: a received movement changes `stock_balances` of its location
-//!   (`inventory::ledger`);
+//!   (`inventory::ledger`), never refused; a location left below zero gets its one review item
+//!   "négatif — à rapprocher", closed again by a count or a later entry (`inventory::negative_stock`);
 //! - `org_nodes`: `ancestor_path` / `depth` (paths of local ids) are recomputed for the node and
 //!   its subtree;
 //! - `user_dismissals`: `scope_key` (`<issue_code>:<local equipment id>`) is rebuilt;
@@ -11,8 +12,61 @@
 //! - `work_order_delay_segments`: before the apply, `hold_kind` must be `pause` or `prerequisite`
 //!   (anything else is refused as a conflict) and present (a row from an older app version without
 //!   it is deferred, never written with a guessed kind: it decides the PRD lifecycle state);
+//! - `work_order_parts`: a line received as cancelled is refused as a conflict when it carries a
+//!   used or issued quantity, or when this device's copy of it has recorded use (used / issued
+//!   quantity, or stock issued from the store against its reservation): only a line with no
+//!   recorded use is cancelled (`wo::parts::inbound_part_line_check`, `before_upsert_checked`);
+//! - `app_settings`: a tenant setting whose change is locked here (fiscal start month, currency
+//!   once postings exist) is refused as a conflict (`before_upsert_checked`);
+//! - `reliability_study_decisions`: an approval by the decision's own proposer is refused as a
+//!   conflict unless the decision's site opted out of four-eyes; a study, equipment or site not
+//!   applied yet makes it wait (`reliability::study::decisions::inbound_self_approval_check`);
+//! - `site_settings` / `site_setting_events`: a per-site rule relaxing a site is applied only with
+//!   its audited change (step-up, reason, settings right), waiting for that event while it is in
+//!   the inbox, a conflict otherwise; unknown rules and unreadable values are conflicts; a rule
+//!   held on here moved by an organisation publish to the node replacing its deleted node is
+//!   applied, moved anywhere else it is a conflict
+//!   (`settings::site::inbound_site_setting_check`, `inbound_site_setting_event_check`);
+//! - `weekly_schedules`: a received week that would go backwards in its lifecycle here (frozen
+//!   back to draft, a later baseline back to an earlier one) is refused as a conflict
+//!   (`planning::weekly_schedule::inbound_lifecycle_conflict`, `before_upsert_checked`);
+//! - `work_permits` / `permit_isolations` / `work_orders`: the permit and LOTO rules (activation,
+//!   close, hand-back, suspension, two-person verification, the work-order start gate) are checked
+//!   again on the received state; a failed rule is a conflict, a permit type or status not applied
+//!   yet makes the row wait (`permit::sync_check`);
+//!   A work order whose permit flag set by a plant rule is cleared names who cleared it (holding the
+//!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`);
+//! - `permit_types`: a change of the three-person lock-removal setting, or a switch-off of the
+//!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
+//!   here), when and why; the shipped LOTO type's isolation rule is never switched off
+//!   (`inbound_permit_type_check`);
+//! - `site_settings` (the four-eyes opt-out) / `permit_types` (the three-person setting): a change
+//!   accepted by those checks is announced to the settings administrators in the same transaction
+//!   (`settings::received_notice`);
+//! - `permit_handover_logs`: a hand-over received by the person who signed it is refused as a
+//!   conflict (`permit::sync_check::inbound_handover_check`); one without a signer is accepted;
+//! - `permit_handover_logs`: after the apply, the log's "from" / "to" role that is not in the
+//!   plant's list (free text from a PC that has not upgraded) is added to it flagged "à revoir"
+//!   (`permit::handover_roles::adopt_received_roles`; only that log's two roles);
+//! - `qualification_overrides`: reason, subject, context, no self-override and the approver's
+//!   certification right (`qualification::sync_check`);
 //! - `media_attachments`: the file is queued for download from object storage
 //!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download.
+//! - `user_accounts`: the built-in "admin" account received with its password never changed is
+//!   disabled on arrival when this PC has another administrator or did not have the account
+//!   (`auth::builtin_admin::after_inbound_user_account`).
+//! - `user_accounts` / `user_scope_assignments` / `roles`: a received change or delete that would
+//!   leave this PC without an active administrator is refused as a conflict
+//!   (`auth::last_admin::inbound_change_check`, `before_upsert_checked`, `before_delete_checked`).
+//! - `admin_recovery_notices` / `admin_recovery_acknowledgements`: a notice or acknowledgement
+//!   already here is never changed, and an acknowledgement made by anyone but the notice's
+//!   recipient is refused as a conflict (`auth::recovery_code::inbound_notice_check`,
+//!   `inbound_acknowledgement_check`); both are append-only, so a received delete is a conflict.
+//! - `work_orders` / `intervention_requests` / `planning_windows`: a site given to a record without
+//!   one (CMMS Advisor decision Q1) is accepted only when it names who gave it (holding the
+//!   organisation administration right plant-wide here), when and why, and the record still has no
+//!   site here; the trace is never rewritten; a work order or request given a site without that
+//!   trace is a conflict (`org::site_assignment::inbound_site_assignment_check`).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -42,6 +96,276 @@ pub(crate) fn before_upsert(
     }
 }
 
+/// Conflict code of an audit chain stub refused on arrival (`audit::chain::inbound_stub_check`).
+pub(crate) const AUDIT_STUB_REFUSED: &str = "AUDIT_STUB_REFUSED";
+
+/// Checks of an inbound row that need the local database; `Some` stops the apply with that
+/// outcome (recorded like every other sync conflict, for a person to decide).
+/// - `app_settings`: the fiscal-year start month and the tenant currency cannot change once this
+///   device stores postings that depend on them (`finance::fiscal`, `inventory::fx`). A change
+///   made on a device where they were still free is refused here, as it is in Settings.
+/// - `weekly_schedules`: a week never moves backwards in its lifecycle by synchronisation.
+/// - `audit_chain_stubs`: never this PC's own chain, never malformed (`audit::chain`).
+pub(crate) async fn before_upsert_checked(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
+    use crate::sync::materialize::ApplyOutcome;
+    if layout.def.entity_type == "audit_chain_stubs" {
+        return Ok(crate::audit::chain::inbound_stub_check(conn, payload)
+            .await?
+            .map(|message| ApplyOutcome::Conflict {
+                code: AUDIT_STUB_REFUSED.into(),
+                message,
+            }));
+    }
+    // `user_accounts` / `user_scope_assignments` / `roles`: a change that would leave this PC
+    // without an active administrator is a conflict (`auth::last_admin`).
+    if let Some(outcome) = crate::auth::last_admin::inbound_change_check(
+        conn,
+        layout,
+        entity_sync_id,
+        crate::auth::last_admin::InboundChange::Upsert(&serde_json::Value::Object(payload.clone()).to_string()),
+    )
+    .await?
+    {
+        return Ok(Some(outcome));
+    }
+    if layout.def.entity_type == "reliability_study_decisions" {
+        use crate::reliability::study::decisions::{inbound_self_approval_check, InboundDecisionVerdict};
+        return Ok(inbound_self_approval_check(conn, entity_sync_id, payload)
+            .await?
+            .map(|verdict| match verdict {
+                InboundDecisionVerdict::Defer(message) => ApplyOutcome::Deferred {
+                    code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+                    message,
+                },
+                InboundDecisionVerdict::Conflict(message) => ApplyOutcome::Conflict {
+                    code: "DECISION_SELF_APPROVAL".into(),
+                    message,
+                },
+            }));
+    }
+    let safety_check = match layout.def.entity_type {
+        "site_settings" => {
+            Some(crate::settings::site::inbound_site_setting_check(conn, entity_sync_id, payload).await?)
+        }
+        // The notice of a safety rule changed on another PC cannot be muted or re-routed by sync.
+        "notification_rules"
+        | "notification_categories"
+        | "notification_events"
+        | "notifications"
+        | "notification_acknowledgements"
+        | "notification_preferences" => Some(
+            crate::settings::received_notice::inbound_local_only_check(
+                conn,
+                layout.def.entity_type,
+                entity_sync_id,
+                Some(payload),
+            )
+            .await?,
+        ),
+        "site_setting_events" => Some(crate::settings::site::inbound_site_setting_event_check(payload).await?),
+        "permit_types" => {
+            Some(crate::permit::sync_check::inbound_permit_type_check(conn, entity_sync_id, payload).await?)
+        }
+        "work_permits" => Some(crate::permit::sync_check::inbound_permit_check(conn, entity_sync_id, payload).await?),
+        "permit_isolations" => {
+            Some(crate::permit::sync_check::inbound_isolation_check(conn, entity_sync_id, payload).await?)
+        }
+        "permit_handover_logs" => {
+            Some(crate::permit::sync_check::inbound_handover_check(conn, entity_sync_id, payload).await?)
+        }
+        "work_orders" => Some(
+            match crate::permit::sync_check::inbound_permit_rule_check(conn, entity_sync_id, payload).await? {
+                Some(verdict) => Some(verdict),
+                None => {
+                    let permit_gate =
+                        crate::permit::sync_check::inbound_work_order_check(conn, entity_sync_id, payload).await?;
+                    match permit_gate {
+                        Some(verdict) => Some(verdict),
+                        None => {
+                            crate::org::site_assignment::inbound_site_assignment_check(
+                                conn,
+                                crate::org::site_assignment::NoSiteKind::WorkOrder,
+                                entity_sync_id,
+                                payload,
+                            )
+                            .await?
+                        }
+                    }
+                }
+            },
+        ),
+        "intervention_requests" => Some(
+            crate::org::site_assignment::inbound_site_assignment_check(
+                conn,
+                crate::org::site_assignment::NoSiteKind::Request,
+                entity_sync_id,
+                payload,
+            )
+            .await?,
+        ),
+        "planning_windows" => Some(
+            crate::org::site_assignment::inbound_site_assignment_check(
+                conn,
+                crate::org::site_assignment::NoSiteKind::PlanningWindow,
+                entity_sync_id,
+                payload,
+            )
+            .await?,
+        ),
+        "qualification_overrides" => {
+            Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)
+        }
+        "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
+        crate::auth::recovery_code::NOTICE_ENTITY => {
+            Some(crate::auth::recovery_code::inbound_notice_check(conn, entity_sync_id, payload).await?)
+        }
+        crate::auth::recovery_code::ACK_ENTITY => {
+            Some(crate::auth::recovery_code::inbound_acknowledgement_check(conn, entity_sync_id, payload).await?)
+        }
+        _ => None,
+    };
+    if let Some(verdict) = safety_check {
+        use crate::settings::site::InboundVerdict;
+        // A site's four-eyes opt-out or a permit type's three-person setting changed on another PC
+        // and accepted here: the settings administrators are told, in this apply's transaction (a
+        // row then refused or left waiting rolls it back; `settings::received_notice`).
+        if verdict.is_none() {
+            crate::settings::received_notice::notify_received_rule_change(
+                conn,
+                layout.def.entity_type,
+                entity_sync_id,
+                payload,
+            )
+            .await?;
+        }
+        return Ok(verdict.map(|v| match v {
+            InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
+                code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+                message,
+            },
+            InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
+                code: code.into(),
+                message,
+            },
+        }));
+    }
+    if layout.def.entity_type == "weekly_schedules" {
+        return Ok(
+            crate::planning::weekly_schedule::inbound_lifecycle_conflict(conn, entity_sync_id, payload)
+                .await?
+                .map(|message| ApplyOutcome::Conflict {
+                    code: "WEEK_LIFECYCLE_BACKWARDS".into(),
+                    message,
+                }),
+        );
+    }
+    if layout.def.entity_type != "app_settings" {
+        return Ok(None);
+    }
+    let text = |k: &str| payload.get(k).and_then(serde_json::Value::as_str);
+    let (Some(key), Some(value)) = (text("setting_key"), text("setting_value_json")) else {
+        return Ok(None);
+    };
+    if text("setting_scope") != Some("tenant") {
+        return Ok(None);
+    }
+    let guard = async {
+        crate::finance::fiscal::guard_fiscal_start_write(conn, key, value).await?;
+        crate::inventory::fx::guard_currency_write(conn, key, value).await
+    };
+    match guard.await {
+        Ok(()) => Ok(None),
+        Err(AppError::ValidationFailed(messages)) => Ok(Some(ApplyOutcome::Conflict {
+            code: "SETTING_LOCKED".into(),
+            message: format!("{key}: {}", messages.join("; ")),
+        })),
+        Err(other) => Err(other),
+    }
+}
+
+/// Rows waiting in the inbox that a received permit or work-order start was judged on
+/// (`permit::sync_check`): applied right after it, in its transaction (`after_upsert_group`).
+pub(crate) async fn upsert_group(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<crate::permit::sync_check::Group>> {
+    match layout.def.entity_type {
+        "work_permits" => crate::permit::sync_check::permit_group(conn, entity_sync_id, payload).await,
+        "work_orders" => crate::permit::sync_check::work_order_group(conn, entity_sync_id, payload).await,
+        _ => Ok(None),
+    }
+}
+
+/// Applies a group (`upsert_group`) after its row was written; `Some` (a conflict) makes the caller
+/// roll the whole transaction back: nothing of the group is kept.
+pub(crate) async fn after_upsert_group(
+    conn: &impl ConnectionTrait,
+    group: crate::permit::sync_check::Group,
+) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
+    crate::permit::sync_check::apply_group(conn, group).await
+}
+
+/// Checks of an inbound delete before it is applied; `Some` stops it with that outcome. A permit
+/// past draft with its isolations and suspensions, a permit type and a qualification requirement
+/// are never deleted on this device: such a delete received by sync is a conflict
+/// (`permit::sync_check::inbound_delete_check`).
+pub(crate) async fn before_delete_checked(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
+    use crate::sync::materialize::ApplyOutcome;
+    // A delete that would leave this PC without an active administrator (`auth::last_admin`).
+    if let Some(outcome) = crate::auth::last_admin::inbound_change_check(
+        conn,
+        layout,
+        entity_sync_id,
+        crate::auth::last_admin::InboundChange::Delete,
+    )
+    .await?
+    {
+        return Ok(Some(outcome));
+    }
+    let verdict = match layout.def.entity_type {
+        "work_permits" | "permit_isolations" | "permit_suspensions" | "permit_types" | "qualification_requirements" => {
+            crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?
+        }
+        // Rows of the safety rule notice are local to each PC: never deleted by sync.
+        "notification_rules"
+        | "notification_categories"
+        | "notification_events"
+        | "notifications"
+        | "notification_acknowledgements"
+        | "notification_preferences" => {
+            crate::settings::received_notice::inbound_local_only_check(
+                conn,
+                layout.def.entity_type,
+                entity_sync_id,
+                None,
+            )
+            .await?
+        }
+        _ => None,
+    };
+    Ok(verdict.map(|v| match v {
+        crate::settings::site::InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
+            code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+            message,
+        },
+        crate::settings::site::InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
+            code: code.into(),
+            message,
+        },
+    }))
+}
+
 fn hook_err(table: &str, e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("{table} apply hook: {e}"))
 }
@@ -66,6 +390,15 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "node not found after apply"))?;
             recompute_org_paths(conn, id).await
         }
+        // A free-text hand-over role from a PC that has not upgraded joins the plant's list now,
+        // flagged "à revoir" (`permit::handover_roles`), not only at the next start of this PC:
+        // this log's two roles only.
+        "permit_handover_logs" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "hand-over log not found after apply"))?;
+            crate::permit::handover_roles::adopt_received_roles(conn, id).await
+        }
         "user_dismissals" => {
             let id = located_row_id(conn, layout, row)
                 .await?
@@ -89,6 +422,18 @@ pub(crate) async fn after_upsert(
                 .await?
                 .ok_or_else(|| hook_err(layout.table(), "media row not found after insert"))?;
             queue_received_media(conn, id).await
+        }
+        "user_accounts" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "account not found after apply"))?;
+            crate::auth::builtin_admin::after_inbound_user_account(
+                conn,
+                id,
+                inserted,
+                crate::auth::builtin_admin::BuildProfile::current(),
+            )
+            .await
         }
         _ => Ok(()),
     }
@@ -183,15 +528,19 @@ async fn apply_movement_to_balance(conn: &impl ConnectionTrait, movement_id: i64
     let quantity: f64 = row
         .try_get("", "quantity")
         .map_err(|e| hook_err("inventory_transactions", e))?;
+    let (article_id, location_id) = (get_i64("article_id")?, get_i64("location_id")?);
     crate::inventory::ledger::apply_received_movement(
         conn,
-        get_i64("article_id")?,
+        article_id,
         get_i64("warehouse_id")?,
-        get_i64("location_id")?,
+        location_id,
         &movement_type,
         quantity,
     )
-    .await
+    .await?;
+    // Applied as received (a physical fact); a location left below zero is to reconcile, one
+    // item per article and location (`inventory::negative_stock`).
+    crate::inventory::negative_stock::reconcile_pair_in(conn, article_id, location_id).await
 }
 
 /// `ancestor_path` (root `/{id}/`, child `{parent path}{id}/`) and `depth` for a node and every

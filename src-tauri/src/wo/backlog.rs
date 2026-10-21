@@ -4,9 +4,10 @@
 //!
 //! - Planned load of a day: open work orders whose `planned_start` falls on that day, summed on
 //!   `expected_duration_hours`. Orders without an estimate are counted separately (never as 0 h).
-//! - Capacity of a day: for every crew with a capacity rule in force that day, available +
-//!   overtime hours (`capacity_rules`). Without any rule the capacity is unknown (`None`) and
-//!   no day is called overloaded.
+//! - Capacity of a day: for every active crew, the hours its members' Classes horaires give for
+//!   work orders that day plus the planner's overtime ceiling (`personnel::capacity`, the same
+//!   figure planning books against). Without any crew working to a schedule in the period the
+//!   capacity is unknown (`None`) and no day is called overloaded.
 //! - Blocked work: orders on hold, grouped by the semantic tag of their open delay reason.
 
 use std::collections::BTreeMap;
@@ -17,8 +18,54 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
 
-/// Statuses whose work is still ahead (not finished, not abandoned).
-const OPEN_STATUS_SQL: &str = "('draft', 'planning', 'ready', 'in_progress', 'on_hold')";
+// ── The two "open work order" rules (owner decision: keep both, name them) ──────────────────
+//
+// - "Open (work to do)" ([`RULE_OPEN_WORK_TO_DO`]): status in [`OPEN_STATUS_SQL`] — draft to on
+//   hold, the work still ahead. Home, backlog, OT lists, asset figures, workload.
+// - "Not yet closed" ([`RULE_NOT_YET_CLOSED`]): status not in [`CLOSED_STATUS_SQL`] — also counts
+//   the completed OTs waiting for close-out. Reports and the analytics as-of counts.
+//
+// Every SQL predicate on an OT's open state uses one of the two lists (`{alias}.code IN
+// {OPEN_STATUS_SQL}` / `{alias}.code NOT IN {CLOSED_STATUS_SQL}`); none is written by hand.
+
+/// [`OPEN_STATUS_SQL`] as a literal, for `concat!` in `const` SQL.
+#[macro_export]
+macro_rules! wo_open_statuses_sql {
+    () => {
+        "('draft', 'planning', 'ready', 'in_progress', 'on_hold')"
+    };
+}
+
+/// [`CLOSED_STATUS_SQL`] as a literal, for `concat!` in `const` SQL.
+#[macro_export]
+macro_rules! wo_closed_statuses_sql {
+    () => {
+        "('closed', 'cancelled')"
+    };
+}
+
+/// Statuses whose work is still ahead (not finished, not abandoned): "Open (work to do)".
+pub const OPEN_STATUS_SQL: &str = wo_open_statuses_sql!();
+
+/// Statuses that end an OT (closed or cancelled). Not in this list = "Not yet closed".
+pub const CLOSED_STATUS_SQL: &str = wo_closed_statuses_sql!();
+
+/// SQL predicate (status alias `s`): the OT is not yet closed ([`CLOSED_STATUS_SQL`]).
+pub const NOT_CLOSED_SQL: &str = concat!("(s.code NOT IN ", wo_closed_statuses_sql!(), ")");
+
+/// Rule code of a figure counting "Open (work to do)" OTs ([`OPEN_STATUS_SQL`]).
+pub const RULE_OPEN_WORK_TO_DO: &str = "open_work_to_do";
+/// Rule code of a figure counting "Not yet closed" OTs ([`NOT_CLOSED_SQL`]).
+pub const RULE_NOT_YET_CLOSED: &str = "not_yet_closed";
+
+/// SQL predicate (aliases `wo` and its status `s`, one bind: now, RFC 3339): an OT whose work is
+/// still ahead ([`OPEN_STATUS_SQL`]) and whose planned end is past — the one "overdue" rule (OT
+/// dashboard, home page, `analytics::as_of::wo_overdue_at` at now), so overdue is part of open.
+pub const WO_OVERDUE_SQL: &str = concat!(
+    "(s.code IN ",
+    wo_open_statuses_sql!(),
+    " AND wo.planned_end IS NOT NULL AND datetime(wo.planned_end) < datetime(?))"
+);
 pub const MAX_WEEKS: i64 = 12;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -100,70 +147,70 @@ async fn bucket(
     })
 }
 
-/// Capacity of each day: per crew, the latest rule in force that day.
-async fn capacity_by_day(db: &impl ConnectionTrait, days: &[NaiveDate]) -> AppResult<Option<BTreeMap<String, f64>>> {
-    let rules = db
-        .query_all(Statement::from_string(
+/// Capacity of each day: the sum over the active crews of their capacity (`personnel::capacity`).
+/// `teams_scope` limits the crews to the reader's sites (on `teams.primary_node_id`): a site user
+/// compares their sites' planned load with their sites' crews, never with the whole plant's.
+async fn capacity_by_day(
+    db: &impl ConnectionTrait,
+    days: &[NaiveDate],
+    teams_scope: &super::access::ScopeSql,
+) -> AppResult<Option<BTreeMap<String, f64>>> {
+    let (Some(first), Some(last)) = (days.iter().min(), days.iter().max()) else {
+        return Ok(None);
+    };
+    let teams: Vec<i64> = db
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT team_id, effective_start, effective_end, available_hours_per_day, max_overtime_hours_per_day \
-             FROM capacity_rules ORDER BY team_id, effective_start"
-                .to_string(),
+            format!(
+                "SELECT id FROM teams WHERE status = 'active' AND deleted_at IS NULL AND ({}) ORDER BY id",
+                teams_scope.predicate
+            ),
+            teams_scope.binds.clone(),
         ))
-        .await?;
-    if rules.is_empty() {
+        .await?
+        .iter()
+        .map(|r| r.try_get::<i64>("", "id").map_err(|e| decode_err("id", e)))
+        .collect::<AppResult<_>>()?;
+    if teams.is_empty() {
         return Ok(None);
     }
-    struct Rule {
-        team: i64,
-        start: String,
-        end: Option<String>,
-        hours: f64,
-    }
-    let mut parsed = Vec::with_capacity(rules.len());
-    for r in &rules {
-        let available: f64 = r
-            .try_get("", "available_hours_per_day")
-            .map_err(|e| decode_err("available_hours_per_day", e))?;
-        let overtime: f64 = r
-            .try_get("", "max_overtime_hours_per_day")
-            .map_err(|e| decode_err("max_overtime_hours_per_day", e))?;
-        parsed.push(Rule {
-            team: r.try_get("", "team_id").map_err(|e| decode_err("team_id", e))?,
-            start: r
-                .try_get::<String>("", "effective_start")
-                .map_err(|e| decode_err("effective_start", e))?,
-            end: r
-                .try_get("", "effective_end")
-                .map_err(|e| decode_err("effective_end", e))?,
-            hours: available + overtime,
-        });
-    }
-    let mut out = BTreeMap::new();
-    for d in days {
-        let day = d.format("%Y-%m-%d").to_string();
-        let mut per_team: BTreeMap<i64, (&str, f64)> = BTreeMap::new();
-        for rule in &parsed {
-            let starts = rule.start.get(..10).unwrap_or(&rule.start) <= day.as_str();
-            let not_ended = rule
-                .end
-                .as_deref()
-                .is_none_or(|e| e.get(..10).unwrap_or(e) >= day.as_str());
-            if starts && not_ended {
-                let entry = per_team.entry(rule.team).or_insert((rule.start.as_str(), rule.hours));
-                if rule.start.as_str() >= entry.0 {
-                    *entry = (rule.start.as_str(), rule.hours);
-                }
+    let mut out: BTreeMap<String, f64> = days.iter().map(|d| (d.format("%Y-%m-%d").to_string(), 0.0)).collect();
+    // Without any crew working to a schedule in the period, capacity is unknown: no day is called
+    // overloaded (an upgraded database whose people have no Classe horaire yet).
+    let mut any_schedule = false;
+    for team in teams {
+        for day in crate::personnel::capacity::team_capacity_span(db, team, *first, *last).await? {
+            any_schedule |= day.basis == "roster";
+            if let Some(total) = out.get_mut(&day.day) {
+                *total += day.available_hours + day.rule_overtime_hours.unwrap_or(0.0);
             }
         }
-        out.insert(day, per_team.values().map(|(_, h)| h).sum());
     }
-    Ok(Some(out))
+    Ok(any_schedule.then_some(out))
 }
 
 pub async fn get_wo_backlog_heatmap(
     db: &impl ConnectionTrait,
     input: WoBacklogHeatmapInput,
 ) -> AppResult<WoBacklogHeatmap> {
+    get_wo_backlog_heatmap_in_scope(db, input, &crate::auth::scope::AccessScope::Everywhere).await
+}
+
+/// [`get_wo_backlog_heatmap`] over the reader's scope (where they hold `ot.view`): the work
+/// orders of their sites (`wo.entity_id`) and the crews of their sites (`teams.primary_node_id`).
+/// Plant-wide: every work order and every crew, as before.
+pub async fn get_wo_backlog_heatmap_in_scope(
+    db: &impl ConnectionTrait,
+    input: WoBacklogHeatmapInput,
+    scope: &crate::auth::scope::AccessScope,
+) -> AppResult<WoBacklogHeatmap> {
+    let wo_scope = super::access::ScopeSql::of(scope);
+    let teams_scope = super::access::ScopeSql::on(scope, "teams.primary_node_id");
+    let with_scope = |own: Vec<sea_orm::Value>| -> Vec<sea_orm::Value> {
+        let mut values = own;
+        values.extend(wo_scope.binds.iter().cloned());
+        values
+    };
     if !(1..=MAX_WEEKS).contains(&input.weeks) {
         return Err(AppError::ValidationFailed(vec![format!(
             "weeks must be between 1 and {MAX_WEEKS}."
@@ -187,12 +234,14 @@ pub async fn get_wo_backlog_heatmap(
                  FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
                  WHERE s.code IN {OPEN_STATUS_SQL} AND wo.planned_start IS NOT NULL \
                    AND date(wo.planned_start) >= ? AND date(wo.planned_start) < ? \
-                 GROUP BY date(wo.planned_start)"
+                   AND ({scope_pred}) \
+                 GROUP BY date(wo.planned_start)",
+                scope_pred = wo_scope.predicate
             ),
-            [
+            with_scope(vec![
                 start.format("%Y-%m-%d").to_string().into(),
                 end.format("%Y-%m-%d").to_string().into(),
-            ],
+            ]),
         ))
         .await?;
     let mut by_day: BTreeMap<String, (i64, f64, i64)> = BTreeMap::new();
@@ -203,7 +252,7 @@ pub async fn get_wo_backlog_heatmap(
         let u: Option<i64> = r.try_get("", "u").map_err(|e| decode_err("u", e))?;
         by_day.insert(d, (n, h, u.unwrap_or(0)));
     }
-    let capacity = capacity_by_day(db, &days).await?;
+    let capacity = capacity_by_day(db, &days, &teams_scope).await?;
     let out_days = days
         .iter()
         .map(|d| {
@@ -222,32 +271,43 @@ pub async fn get_wo_backlog_heatmap(
         .collect();
 
     let now = Utc::now().to_rfc3339();
+    // The scope predicate closes each bucket's WHERE: its binds follow the bucket's own.
     let unscheduled = bucket(
         db,
-        "wo.planned_start IS NULL AND s.code IN ('draft', 'planning', 'ready')",
-        vec![],
+        &format!(
+            "wo.planned_start IS NULL AND s.code IN ('draft', 'planning', 'ready') AND ({})",
+            wo_scope.predicate
+        ),
+        with_scope(vec![]),
     )
     .await?;
     let overdue = bucket(
         db,
-        "wo.planned_end IS NOT NULL AND wo.planned_end < ?",
-        vec![now.clone().into()],
+        &format!(
+            "wo.planned_end IS NOT NULL AND wo.planned_end < ? AND ({})",
+            wo_scope.predicate
+        ),
+        with_scope(vec![now.clone().into()]),
     )
     .await?;
 
+    // The `now` bind (SELECT) comes before the scope's (WHERE).
     let blocked_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COALESCE(rv.semantic_tag, 'unknown') AS category, COUNT(DISTINCT wo.id) AS n, \
-             COALESCE(SUM((julianday(?) - julianday(ds.started_at)) * 24.0), 0.0) AS h \
-             FROM work_orders wo \
-             JOIN work_order_statuses s ON s.id = wo.status_id \
-             LEFT JOIN work_order_delay_segments ds ON ds.work_order_id = wo.id AND ds.ended_at IS NULL \
-             LEFT JOIN reference_values rv ON rv.id = ds.delay_reason_id \
-             WHERE s.code = 'on_hold' \
-             GROUP BY COALESCE(rv.semantic_tag, 'unknown') \
-             ORDER BY n DESC, category",
-            [now.into()],
+            format!(
+                "SELECT COALESCE(rv.semantic_tag, 'unknown') AS category, COUNT(DISTINCT wo.id) AS n, \
+                 COALESCE(SUM((julianday(?) - julianday(ds.started_at)) * 24.0), 0.0) AS h \
+                 FROM work_orders wo \
+                 JOIN work_order_statuses s ON s.id = wo.status_id \
+                 LEFT JOIN work_order_delay_segments ds ON ds.work_order_id = wo.id AND ds.ended_at IS NULL \
+                 LEFT JOIN reference_values rv ON rv.id = ds.delay_reason_id \
+                 WHERE s.code = 'on_hold' AND ({}) \
+                 GROUP BY COALESCE(rv.semantic_tag, 'unknown') \
+                 ORDER BY n DESC, category",
+                wo_scope.predicate
+            ),
+            with_scope(vec![now.into()]),
         ))
         .await?;
     let mut blocked = Vec::with_capacity(blocked_rows.len());

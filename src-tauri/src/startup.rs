@@ -27,6 +27,16 @@ pub enum StartupEvent {
     DatabaseKeyRequired {
         reason: String,
     },
+    /// The installed update could not update the database: the pre-update backup is staged and
+    /// the UI offers to reinstall `from_version` (master plan Phase 5.5).
+    UpdateRollbackRequired {
+        from_version: String,
+        to_version: String,
+        reason: String,
+        /// Set when the pre-update backup could not be verified (missing, no checksum, changed):
+        /// nothing was restored and no reinstall is offered.
+        backup_refusal: Option<String>,
+    },
 }
 
 // ── Pure helpers (unit-testable without Tauri runtime) ──────────────────────
@@ -108,6 +118,19 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Phase 1: database integrity and connection
     info!("startup: initialising database");
     let db_path = resolve_db_path(&app)?;
+    // A restore staged for a rollback whose installer never ran is cancelled first: only a restore
+    // the update journal justifies (or one an administrator staged) is ever applied.
+    match crate::updater::reconcile_staged_restore_at_startup(&app, std::path::Path::new(&db_path)) {
+        Ok(true) => warn!("startup: the rollback was not installed; its staged restore was cancelled"),
+        Ok(false) => {}
+        Err(e) => {
+            let reason = format!("The staged restore was not applied: the update journal could not be checked: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    }
     // A restore staged by `restore_from_backup` is swapped in before the database is opened.
     let restored = match crate::backup::restore::apply_pending_restore(std::path::Path::new(&db_path)) {
         Ok(restored) => restored,
@@ -142,6 +165,33 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         }
     }
 
+    // Phase 1b: the journal of an in-app update (master plan Phase 5.5).
+    let (update_journal, update_action) = match crate::updater::startup_action(&app) {
+        Ok(found) => found,
+        Err(e) => {
+            warn!("startup: update journal could not be read, update outcome unknown: {e}");
+            (None, crate::updater::journal::StartupAction::Nothing)
+        }
+    };
+    if update_action == crate::updater::journal::StartupAction::RecoveryPending {
+        // This version failed to update the database before: the database (the staged pre-update
+        // backup, swapped in above) is left untouched until the previous version is reinstalled.
+        if let Some(j) = &update_journal {
+            warn!(from = %j.from_version, to = %j.to_version, "startup: update recovery pending");
+            emit_event(
+                &app,
+                StartupEvent::UpdateRollbackRequired {
+                    from_version: j.from_version.clone(),
+                    to_version: j.to_version.clone(),
+                    reason: j.failure.clone().unwrap_or_default(),
+                    backup_refusal: j.backup_refusal.clone(),
+                },
+            );
+        }
+        window.show().ok();
+        return Ok(());
+    }
+
     // Phase 2: schema migrations
     info!("startup: running migrations");
     let app_state = app.state::<crate::state::AppState>();
@@ -165,12 +215,44 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         Err(e) => {
             let reason = format!("Migration failed: {e}");
             error!("{reason}");
-            emit_event(&app, StartupEvent::Failed { reason });
+            // Right after an in-app update: put the pre-update backup back and offer the previous
+            // version (forward-only migrations; the older version cannot open a half-migrated file).
+            let after_update = update_journal.clone().filter(|j| {
+                update_action == crate::updater::journal::StartupAction::VerifyNewVersion
+                    && j.kind == crate::updater::journal::UpdateKind::Upgrade
+            });
+            if let Some(journal) = after_update {
+                match crate::updater::on_migration_failed(&app, &app_state.db, journal, &reason).await {
+                    Ok(view) => emit_event(
+                        &app,
+                        StartupEvent::UpdateRollbackRequired {
+                            from_version: view.from_version,
+                            to_version: view.to_version,
+                            reason,
+                            backup_refusal: view.backup_refusal,
+                        },
+                    ),
+                    Err(restore_error) => {
+                        let reason = format!(
+                            "{reason}. The backup taken before the update could not be prepared: {restore_error}"
+                        );
+                        error!("{reason}");
+                        emit_event(&app, StartupEvent::Failed { reason });
+                    }
+                }
+            } else {
+                emit_event(&app, StartupEvent::Failed { reason });
+            }
             window.show().ok();
             return Err(e);
         }
     }
+    if let Err(e) = crate::updater::on_migrations_succeeded(&app, update_journal, &update_action) {
+        warn!("startup: update journal could not be closed: {e}");
+    }
 
+    // Back on the previous version after a failed update: its database is the pre-update backup.
+    let restored = restored || update_action == crate::updater::journal::StartupAction::ReturnedToPrevious;
     if restored {
         // The restored database resumes sync from a full snapshot (`forget_server_position`).
         if let Err(e) = crate::sync::transport::store::forget_server_position(&app_state.db).await {
@@ -189,19 +271,15 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         warn!("startup: system seed returned error (non-fatal): {e}");
     }
 
-    // Phase 3a: enforce mandatory WO type contract to prevent cross-environment drift.
-    info!("startup: enforcing work_order_types integrity");
-    if let Err(e) = crate::wo::types::ensure_required_work_order_types(&app_state.db).await {
-        let reason = format!("Work order type integrity check failed: {e}");
-        error!("{reason}");
-        emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
-        window.show().ok();
-        return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
-    }
-
-    info!("startup: enforcing urgency_levels (work order priorities) integrity");
-    if let Err(e) = crate::wo::priorities::ensure_required_urgency_levels(&app_state.db).await {
-        let reason = format!("Urgency levels integrity check failed: {e}");
+    // Phase 3a: the work-order types with their maintenance natures and the shared DI / OT
+    // urgency scale are SYSTEM reference lists the workflow rules depend on.
+    info!("startup: enforcing work-order types / natures and urgency scale integrity");
+    let catalogs = async {
+        crate::wo::types::ensure_work_order_type_catalog(&app_state.db).await?;
+        crate::reference::urgency_scale::ensure_urgency_scale(&app_state.db).await
+    };
+    if let Err(e) = catalogs.await {
+        let reason = format!("Work order type / urgency scale integrity check failed: {e}");
         error!("{reason}");
         emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
         window.show().ok();
@@ -228,6 +306,13 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
     }
 
+    // Certification expiry alerts: notify the managers of people whose habilitations have run
+    // out or fall inside their renewal notice (deduplicated per week). Never blocks startup.
+    match crate::qualification::expiry_alerts::scan_due_certification_alerts(&app_state.db).await {
+        Ok(created) => info!("startup: certification expiry scan raised {} alert(s)", created.len()),
+        Err(e) => tracing::warn!(error = %e, "startup: certification expiry scan failed"),
+    }
+
     // Phase 3b: tenant bootstrap from activation claim.
     // Clean-by-default policy:
     // - always ensure a single root organization from activated tenant name
@@ -242,9 +327,17 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         warn!("startup: org structure_model_id invariant violated after heal (non-fatal): {e}");
     }
 
-    // Phase 3c removed: RAMS demo seed is DEMO-ONLY and must never run in the
-    // production app flow (startup, equipment create, login, onboarding, migrations).
-    // Explicit developer entry points only:
+    // Phase 3c: developer demo plant (debug builds only, opt-in with MAINTAFOX_SEED_DEMO=1).
+    // Never part of the production flow: release builds do not compile it.
+    // Each seeder no-ops once a product licence is activated (tenant data isolation).
+    #[cfg(debug_assertions)]
+    if std::env::var("MAINTAFOX_SEED_DEMO").as_deref() == Ok("1") {
+        seed_developer_demo_plant(&app_state.db).await;
+    }
+
+    // RAMS demo seed is DEMO-ONLY and must never run in the production app flow
+    // (startup, equipment create, login, onboarding, migrations).
+    // Explicit developer entry points only (plus the debug-only opt-in above):
     //   - seed_rams_sql_demo_data
     //   - seed_rams_presentation_data
 
@@ -278,6 +371,17 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
             window.show().ok();
             return Err(e);
         }
+    }
+
+    // Phase 4a': lists replaced by shared lists (DI.PRIORITY, DI.SYMPTOM, the stock unit lookup
+    // inventory.unit_of_measure → MEASURE.UNITS). Migrations retire them
+    // with capture suspended; if a replayed sync history brings one back, it is merged / deleted
+    // here with capture on, so the change reaches the other devices. A link that cannot be moved
+    // keeps the list in place (nothing is lost) and is logged.
+    match crate::reference::retirement::retire_superseded_domains(&app_state.db).await {
+        Ok(retired) if !retired.is_empty() => info!(?retired, "startup: retired superseded reference lists"),
+        Ok(_) => {}
+        Err(e) => warn!("startup: retiring superseded reference lists failed (non-fatal): {e}"),
     }
 
     // Phase 4b: sync worker (protocol v2), background task `sync`. Closing the main window only
@@ -348,6 +452,23 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     }
 
     {
+        let planning_db = app_state.db.clone();
+        let planning_sync = app_state.sync_worker.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::planning::scheduler::start_planning_scheduler(planning_db, planning_sync).await;
+        });
+        info!("startup: planning scheduler started (finished commitments, weekly auto-freeze)");
+    }
+
+    {
+        let inspection_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::inspection::scheduler::start_inspection_round_scheduler(inspection_db).await;
+        });
+        info!("startup: inspection round scheduler started");
+    }
+
+    {
         let backup_db = app_state.db.clone();
         let backup_dir = crate::commands::backup::app_backup_dir(&app)?;
         tauri::async_runtime::spawn(async move {
@@ -375,6 +496,39 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("{e}")))?;
 
     Ok(())
+}
+
+/// Developer demo plant: org tree, equipment, reference data, requests, work orders, test
+/// users and RAMS failure history. Debug builds only; every seeder is idempotent and no-ops on
+/// an activated (tenant) database. Failures are logged and never stop the startup.
+#[cfg(debug_assertions)]
+async fn seed_developer_demo_plant(db: &sea_orm::DatabaseConnection) {
+    use crate::db::demo_seeder;
+    info!("startup: seeding developer demo plant (MAINTAFOX_SEED_DEMO=1)");
+    if let Err(e) = demo_seeder::seed_demo_data(db).await {
+        warn!("startup: demo seed returned error (non-fatal): {e}");
+    }
+    if let Err(e) = demo_seeder::seed_reference_demo_data(db).await {
+        warn!("startup: reference demo seed returned error (non-fatal): {e}");
+    }
+    if let Err(e) = demo_seeder::seed_test_viewer_user(db).await {
+        warn!("startup: viewer user seed returned error (non-fatal): {e}");
+    }
+    if let Err(e) = demo_seeder::seed_technicien_user(db).await {
+        warn!("startup: technician user seed returned error (non-fatal): {e}");
+    }
+    if let Err(e) = demo_seeder::seed_demo_work_orders(db).await {
+        warn!("startup: work order demo seed returned error (non-fatal): {e}");
+    }
+    match crate::commands::product_license::is_product_activation_complete(db).await {
+        Ok(false) => {
+            if let Err(e) = crate::db::rams_presentation_seed::run_explicit_rams_demo_seed(db).await {
+                warn!("startup: RAMS demo seed returned error (non-fatal): {e}");
+            }
+        }
+        Ok(true) => info!("startup: RAMS demo seed skipped (licence activated)"),
+        Err(e) => warn!("startup: licence state unreadable, RAMS demo seed skipped: {e}"),
+    }
 }
 
 /// Resolve the database file path inside the Tauri app data directory.

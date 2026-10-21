@@ -1,4 +1,64 @@
 {
+  "siteScope": {
+    "hidden": {
+      "outsideScope_one": "{{count}} work order is not shown: outside your sites.",
+      "outsideScope_other": "{{count}} work orders are not shown: outside your sites.",
+      "withoutSite_one": "{{count}} work order is not shown: it has no site.",
+      "withoutSite_other": "{{count}} work orders are not shown: they have no site.",
+      "allWorkOrders": "These counts cover all work orders, whatever the filters or search.",
+      "askPlantWide": "Ask a user with a plant-wide role to see them."
+    },
+    "noSite": {
+      "badge": "To review: no site",
+      "hint": "Recorded without a site (its equipment was not installed anywhere). Only users with a plant-wide role see this work order and can act on it."
+    }
+  },
+  "permitRule": {
+    "requiredBy": "Permit required by rule {{rule}} (permit type {{permitType}}).",
+    "requiredByNoType": "Permit required by rule {{rule}}.",
+    "requiredShort": "Required (rule {{rule}})",
+    "clearHint": "Only a person allowed to issue permits can clear this requirement, with a reason, before the work starts.",
+    "checkboxLocked": "Required by rule {{rule}}: cleared with “Clear the requirement” below.",
+    "clear": "Clear the requirement",
+    "clearTitle": "Clear the permit requirement?",
+    "clearBody": "{{code}} will be able to start without a permit despite the rule {{rule}}. The reason, date and your name are kept on the work order and in its history.",
+    "clearConfirm": "Clear the requirement",
+    "reason": "Reason",
+    "reasonHint": "At least {{min}} characters: why the rule does not apply to this job.",
+    "cleared": "Requirement of rule {{rule}} cleared on {{date}}: {{reason}}"
+  },
+  "shutdownRequirement": {
+    "sectionTitle": "Equipment shutdown",
+    "label": "Needs shutdown",
+    "short": "Shutdown",
+    "badge": "Needs shutdown",
+    "required": "Needed",
+    "notRequired": "Not needed",
+    "help": "When ticked, planning checks the work order against shutdown windows like a PM plan: a warning without a shutdown window, and committing needs an open shutdown window.",
+    "frozen": "Can only be changed while the work order is being prepared (draft, planning or ready).",
+    "noPermission": "You may not edit this work order.",
+    "confirmOnTitle": "Flag the work order as needing a shutdown?",
+    "confirmOnBody": "{{code}} can then only be committed in an open shutdown window. The change is kept in the work order's history.",
+    "confirmOffTitle": "Remove “Needs shutdown”?",
+    "confirmOffBody": "{{code}} will no longer be checked against shutdown windows. The change is kept in the work order's history.",
+    "confirmOn": "Flag",
+    "confirmOff": "Remove"
+  },
+  "permitRequirement": {
+    "sectionTitle": "Safety",
+    "label": "Work permit / lockout (LOTO) required",
+    "short": "Permit / LOTO",
+    "required": "Required",
+    "notRequired": "Not required",
+    "help": "When checked, the work order cannot start until a linked work permit is active (isolations applied and verified).",
+    "frozen": "Locked since execution started.",
+    "noPermission": "You are not allowed to edit this work order.",
+    "fromSafetyDi": "Set automatically: the originating request reported a safety risk."
+  },
+  "woPeople": {
+    "none": "No active staff member has a user account: link personnel to an account in Personnel.",
+    "loadFailed": "The staff list could not be loaded."
+  },
   "page": {
     "title": "Work Orders",
     "titleDetail": "Work order detail",
@@ -44,6 +104,17 @@
       "closedAt": "Closed on"
     },
     "filters": {
+      "scopeNotClosed": "Not yet closed",
+      "scopeOverdue": "Overdue (open, planned end passed)",
+      "mix": "Work mix",
+      "mixValue": {
+        "planned": "Planned (preventive and improvement)",
+        "reactive": "Reactive (corrective)",
+        "emergency": "Emergency (immediate corrective)"
+      },
+      "scope": "Scope",
+      "scopeOpen": "Open (work to do)",
+      "equipment": "Equipment",
       "lifecycle": "Lifecycle",
       "status": "Status",
       "type": "Type",
@@ -62,15 +133,15 @@
     },
     "type": {
       "label": "Type",
-      "loading": "Loading..."
+      "loading": "Loading...",
+      "nature": "Nature: {{nature}}"
+    },
+    "subtype": {
+      "label": "Sub-type",
+      "none": "No sub-type"
     },
     "urgency": {
-      "label": "Urgency",
-      "veryLow": "Very low",
-      "low": "Low",
-      "medium": "Medium",
-      "high": "High",
-      "critical": "Critical"
+      "label": "Urgency"
     },
     "equipment": {
       "label": "Equipment",
@@ -125,16 +196,6 @@
     "technicallyVerified": "Technically verified",
     "verified": "Verified"
   },
-  "type": {
-    "corrective": "Corrective",
-    "preventive": "Preventive",
-    "predictive": "Predictive",
-    "improvement": "Improvement",
-    "inspection": "Inspection",
-    "overhaul": "Overhaul",
-    "conditionBased": "Condition-based",
-    "permit": "Work permit"
-  },
   "action": {
     "create": "New WO",
     "edit": "Edit",
@@ -181,7 +242,23 @@
     "plannedStart": "Planned start",
     "plannedEnd": "Planned end",
     "selectShift": "Select shift",
+    "shiftNone": "No shift",
+    "shiftOption": "{{label}} · {{window}} · {{hours}} h · {{members}} pers.",
+    "shiftCurrentNotOffered": "{{label}} {{window}} (the team does not work it on this day)",
+    "shiftLegacy": "Old shift: {{label}}. Choose a shift of the team's Classe horaire to re-plan.",
+    "shiftNoTeam": "Assign the team to choose one of its shifts.",
+    "shiftNoDay": "Enter the planned start to see the team's shifts that day.",
+    "shiftNoShift": "Nobody of the team has a Classe horaire shift on this day.",
+    "shiftOpenTeam": "Open the team",
+    "shiftLoadFailed": "The team's shifts could not be loaded.",
+    "shiftForNewTeam": "Shifts of the team being assigned: the choice is saved with the assignment.",
+    "shiftPreviousNight": "night shift started the day before",
+    "shiftOutsideWindow": "The planned start or end is outside the chosen shift. Check the hours, or choose another shift.",
+    "shiftTimetableChanged": "Timetable changed since planning: planned {{planned}}, the timetable now says {{now}}. Check the hours.",
     "expectedDuration": "Expected duration (hours)",
+    "plannedCrewSize": "Crew size (people)",
+    "plannedCrewSizeHint": "Planning books the duration × the crew size against the team's capacity.",
+    "plannedCrewSizeInvalid": "The crew size is a whole number of people from 1 to {{max}}.",
     "urgency": "Urgency",
     "selectUrgency": "Select urgency",
     "assignment": "Schedule & crew (Planning SSOT)",
@@ -233,12 +310,56 @@
     "cancelledStubHint": "This work order was cancelled. Planning fields are no longer editable. See the Audit tab for history.",
     "readinessChecklist": "Readiness checklist",
     "readinessRecommended": "recommended",
+    "readinessRule": {
+      "approval_required": "Planning approval",
+      "assignment_completed": "Responsible or team assigned",
+      "equipment_assigned": "Equipment identified",
+      "material_readiness": "Parts available / reserved",
+      "permit_approved": "Permit approved",
+      "planning_completed": "Job planned",
+      "crew_qualified": "Crew holds the required qualifications",
+      "schedule_defined": "Dates scheduled"
+    },
     "readinessBlocking": "Cannot mark ready — blocking conditions:",
     "readinessBlockingHint": "Resolve the items below, then try Mark as Ready again.",
     "readinessBlockingEmpty": "Readiness checks failed. Review the plan checklist and try again.",
     "sessionRequired": "Session user required to submit.",
     "plannedDowntimeHours": "Planned downtime (hours)",
     "plannedDowntimeHoursPlaceholder": "Expected production downtime in hours",
+    "materialReadiness": {
+      "title": "Material readiness",
+      "ready": "Ready",
+      "yes": "Yes",
+      "no": "No",
+      "readyPct": "Available",
+      "reservedPct": "Reserved",
+      "expectedArrival": "Expected arrival"
+    },
+    "shortage": {
+      "title": "Parts shortage",
+      "description": "Some planned parts are not fully available in stock.",
+      "createRequisition": "Create purchase requisition",
+      "requisitionCreated": "Purchase requisition created",
+      "columns": {
+        "article": "Article",
+        "requested": "Requested",
+        "available": "Available",
+        "shortage": "Shortage"
+      }
+    },
+    "parts": {
+      "noMatch": "No matching article",
+      "stockLocation": "Stock location",
+      "locationPlaceholder": "Location",
+      "plannedQty": "Planned qty",
+      "unitCost": "Unit cost",
+      "cancelLine": "Cancel line",
+      "cancelTitle": "Cancel this part line?",
+      "cancelDescription": "{{part}} × {{qty}} {{unit}} leaves the plan: its stock reservation is released and the line stays in the work-order history as cancelled. To plan the part again, add a new line.",
+      "cancelConfirm": "Cancel part line",
+      "cancelledStatus": "Cancelled",
+      "cancelledHint": "Cancelled while the work order was prepared: out of the totals, availability and reservations."
+    },
     "stockReserved": "Stock reserved",
     "noStockReservation": "No stock reservation on this line.",
     "error": {
@@ -357,7 +478,8 @@
       "invalidTimes": "Date, start, and end time are required.",
       "endAfterStart": "End time must be after start time.",
       "breakTooLong": "Break cannot exceed worked time.",
-      "breakNote": "Break: {{minutes}} min"
+      "breakNote": "Break: {{minutes}} min",
+      "overtime": "Overtime (paid at the overtime rate)"
     },
     "rateMissing": "Rate missing",
     "pauseTitle": "Pause work order",
@@ -436,6 +558,7 @@
     },
     "parts": {
       "plannedTitle": "Planned",
+      "cancelledTitle": "Cancelled planned lines",
       "actualTitle": "Actually used",
       "actualEmpty": "No parts recorded as used yet.",
       "nonePlanned": "No planned parts",
@@ -458,6 +581,26 @@
         "labelRequired": "Part label is required.",
         "qty": "Quantity used",
         "save": "Add part",
+        "stockHint": "Choose the article and the location it was taken from: the quantity is reserved and issued from stock. Use “Non-stock” only for an item the store does not manage.",
+        "modeLabel": "Part origin",
+        "modeStock": "Stock article",
+        "modeNonStock": "Non-stock",
+        "searchArticle": "Search an article",
+        "searchPlaceholder": "Code or description",
+        "article": "Article",
+        "articlePlaceholder": "Choose an article",
+        "articlesLoading": "Loading articles…",
+        "articlesFailed": "The article list could not be loaded.",
+        "noArticleMatch": "No active article matches.",
+        "location": "Issued from",
+        "locationPlaceholder": "Choose a location",
+        "locationOption": "{{warehouse}} / {{location}} — {{available}} {{unit}} available",
+        "noStock": "No stock available for this article.",
+        "nonStockHint": "Item not managed in stock: no store issue will be recorded.",
+        "articleRequired": "Choose an article.",
+        "locationRequired": "Choose the issuing location.",
+        "notEnoughStock": "Quantity is above the available stock ({{available}} {{unit}}).",
+        "saveIssue": "Add and issue from stock",
         "error": "Unable to add part."
       }
     },
@@ -512,6 +655,9 @@
       "empty": "No execution events yet.",
       "partUsed": "Part used: {{label}}",
       "partNotUsed": "Part marked unused: {{label}}",
+      "partCancelled": "Planned part line cancelled: {{label}}",
+      "partSetRequired": "Part line set to required: {{label}}",
+      "partSetOptional": "Part line set to optional: {{label}}",
       "partAdded": "Part added during execution: {{label}}",
       "partPlanned": "Part planned: {{label}}",
       "taskAdded": "Task added: {{label}}",
@@ -586,6 +732,13 @@
     "fmecaOverrideSignerPasswordPlaceholder": "Signer password confirmation",
     "fmecaOverrideHint": "Required only when critical FMECA suggested parts were not consumed. Signer must be Supervisor/Admin, different from closer, and re-authenticated.",
     "closeWo": "Close WO",
+    "confirmVerifyTitle": "Record the technical verification?",
+    "confirmVerifyDescription": "{{code}}: result \"{{result}}\"{{rts}}. The verification is recorded in your name in the audit trail.",
+    "confirmVerifyReturnToService": ", equipment returned to service",
+    "confirmVerifyAction": "Record verification",
+    "confirmCloseTitle": "Close this work order?",
+    "confirmCloseDescription": "{{code}} will be closed and become read-only. Only a user allowed to reopen work orders can change it afterwards. The close is recorded in your name in the audit trail.",
+    "confirmCloseAction": "Close work order",
     "reopenTitle": "Reopen work order",
     "reopenHint": "Reopen a completed WO for further execution or planning rework. A reason is required.",
     "reopenTarget": "Return to",
@@ -599,9 +752,50 @@
     "reopenWindowPassed": "Closed more than {{days}} day(s) ago (reopen window): create a new work order instead.",
     "reopenWindowMissing": "The reopen window setting is missing or invalid (Settings › Work orders).",
     "linkedPm": "Generated by preventive plan {{code}} — {{title}}",
+    "iso": {
+      "mechanism": "Failure mechanism (ISO 14224)",
+      "mechanismPlaceholder": "Choose a mechanism",
+      "detection": "Detection method (ISO 14224)",
+      "detectionPlaceholder": "How the failure was detected"
+    },
+    "linkedPermitsLabel": "Work permits:",
     "linkedPermits": "Work permits: {{list}}"
   },
   "audit": {
+    "title": "Work order history",
+    "permitRequired": "Permit / lockout now required",
+    "permitNotRequired": "Permit / lockout no longer required",
+    "actions": {
+      "permit_rule_flag_cleared": "Permit requirement (rule) cleared",
+      "shutdown_required_set": "Flagged as needing a shutdown",
+      "shutdown_required_cleared": "“Needs shutdown” removed",
+      "created": "Work order created",
+      "submitted": "Submitted to planning",
+      "planned": "Planned",
+      "planning_approved": "Planning approved",
+      "marked_ready": "Marked ready",
+      "returned_to_planning": "Returned to planning",
+      "assigned": "Assigned",
+      "emergency_reassigned": "Emergency reassignment",
+      "started": "Work started",
+      "paused": "Paused",
+      "held": "Put on hold",
+      "resumed": "Resumed",
+      "mechanically_completed": "Work completed",
+      "failure_detail_saved": "Failure details recorded",
+      "verification_saved": "Technical verification recorded",
+      "verified": "Verified",
+      "closed": "Closed",
+      "reopened": "Reopened",
+      "cancelled": "Cancelled",
+      "rca_updated": "Root cause analysis updated",
+      "attachment_uploaded": "Attachment added",
+      "service_cost_updated": "Service cost updated",
+      "permit_requirement_changed": "Permit requirement changed",
+      "site_moved": "Moved with its new equipment to another location",
+      "equipment_changed": "Equipment changed",
+      "other": "Change recorded"
+    },
     "created": "Created",
     "updated": "Last updated",
     "closed": "Closed",
@@ -630,6 +824,10 @@
       "history": "History"
     },
     "fields": {
+      "subtype": "Sub-type",
+      "sourceInspectionRound": "Inspection round",
+      "sourcePmPlan": "Found by PM (plan)",
+      "nature": "Nature (EN 13306)",
       "number": "Number",
       "title": "Title",
       "description": "Description",
@@ -661,9 +859,16 @@
     "submitForPlanning": "Submit for Planning",
     "markReady": "Mark Ready"
   },
-  "print": {
-    "button": "Print",
-    "title": "WO Print Sheet"
+  "remainingTime": {
+    "label": "Estimated remaining time (hours, optional)",
+    "placeholder": "e.g. 2.5",
+    "hint": "Used only to check that the permits cover the rest of the work (now + this time). Empty: the work order's full expected duration. The planned dates and the expected duration are not changed; the value is recorded in the history in your name.",
+    "invalid": "Enter a number of hours greater than 0, or leave the field empty."
+  },
+  "resumeDialog": {
+    "title": "Resume the work order",
+    "description": "The permits must cover the work until its end: the later of the planned end and now + the expected duration, or + the estimated remaining time you enter below.",
+    "cancel": "Cancel"
   },
   "cost": {
     "title": "Cost Summary",
@@ -694,13 +899,14 @@
     "lifecycleDistribution": "Lifecycle Distribution",
     "statusDistribution": "Status Distribution",
     "urgencyDistribution": "Urgency Breakdown",
+    "noUrgency": "No urgency",
     "completionTrend": "Completion Trend",
     "backlogByEntity": "Backlog by Entity",
     "backlogHeatmap": {
       "title": "Backlog heatmap",
       "subtitle": "Planned work per day against crew capacity (next {{weeks}} weeks).",
       "noCapacity": "No crew capacity rule is configured (Planning): planned hours are shown without an overload check.",
-      "hours": "{{hours}} h planned",
+      "hours": "{{hours}} h of estimated duration",
       "capacity": "capacity {{hours}} h",
       "overloaded": "Overloaded",
       "orders_one": "{{count}} order",
@@ -727,6 +933,7 @@
     }
   },
   "contextMenu": {
+    "actionsFor": "Actions for {{code}}",
     "viewDetail": "View detail",
     "edit": "Edit",
     "start": "Start",
@@ -795,13 +1002,8 @@
     "emptyCancelled": "No cancelled work orders",
     "unassigned": "Unassigned",
     "loadMore": "Load more ({{count}} remaining)",
+    "statusFromDetailHint": "Click a card to open the work order: status changes are made from its detail, where each step checks its conditions (permit, parts, reasons).",
     "transitionNotAllowed": "Cannot move \"{{code}}\" from \"{{from}}\" to {{to}}. Transition not allowed."
-  },
-  "shift": {
-    "morning": "Morning",
-    "afternoon": "Afternoon",
-    "night": "Night",
-    "full_day": "Full day"
   },
   "print": {
     "pageTitle": "WO Sheet",
@@ -860,7 +1062,9 @@
     "laborCost": "Labor",
     "partsCost": "Parts",
     "serviceCost": "Services",
-    "totalCost": "Total"
+    "totalCost": "Total",
+    "button": "Print",
+    "title": "WO Print Sheet"
   },
   "lifecycle": {
     "title": "PRD lifecycle state (derived from the work order's facts)",

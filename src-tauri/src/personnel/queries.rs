@@ -6,14 +6,13 @@ use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
 use super::domain::{
-    AuthorizationType, AvailabilityStatus, CompanyListFilter, EmploymentOrigin, EmploymentStatus, EmploymentType,
-    ExternalCompany, ExternalCompanyContact, Personnel, PersonnelAuthorization, PersonnelAvailabilityBlock,
-    PersonnelCertDraft, PersonnelCreateInput, PersonnelDetailPayload, PersonnelListFilter, PersonnelListPage,
-    PersonnelRateCard, PersonnelSkillDraft, PersonnelSkillReferenceValue, PersonnelTeamAssignment,
-    PersonnelUpdateInput, PersonnelWorkHistoryEntry, PersonnelWorkloadSummary, Position, PositionCategory,
-    PositionChangeEvent, PositionDetailPayload, PositionListFilter, PositionRequirementProfileInput,
-    PositionRequirementSeed, PositionUpsertInput, ScheduleClass, ScheduleClassWithDetails, ScheduleDetail,
-    SuccessionRiskRow,
+    AuthorizationType, AvailabilityStatus, CompanyListFilter, EmploymentOrigin, ExternalCompany,
+    ExternalCompanyContact, Personnel, PersonnelAuthorization, PersonnelAvailabilityBlock, PersonnelCertDraft,
+    PersonnelCreateInput, PersonnelDetailPayload, PersonnelListFilter, PersonnelListPage, PersonnelRateCard,
+    PersonnelSkillDraft, PersonnelSkillReferenceValue, PersonnelTeamAssignment, PersonnelUpdateInput,
+    PersonnelWorkHistoryEntry, PersonnelWorkloadSummary, Position, PositionChangeEvent, PositionDetailPayload,
+    PositionListFilter, PositionRequirementProfileInput, PositionRequirementSeed, PositionUpsertInput, ScheduleClass,
+    ScheduleClassWithDetails, ScheduleDetail, SuccessionRiskRow,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -559,11 +558,13 @@ pub async fn create_personnel(
     input: PersonnelCreateInput,
     actor_id: i64,
 ) -> AppResult<Personnel> {
-    EmploymentType::try_from(input.employment_type.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    // Employment type and status: values of their reference lists (`personnel::reference_lists`).
+    let employment_type = super::reference_lists::checked_employment_type(db, &input.employment_type).await?;
     EmploymentOrigin::try_from(input.employment_origin.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let emp_status = input.employment_status.as_deref().unwrap_or("active");
-    EmploymentStatus::try_from(emp_status).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    let emp_status =
+        super::reference_lists::checked_employment_status(db, input.employment_status.as_deref().unwrap_or("active"))
+            .await?;
 
     if input.employment_origin == "external" && input.external_company_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
@@ -643,9 +644,9 @@ pub async fn create_personnel(
             entity_sync_id.into(),
             code.clone().into(),
             input.full_name.clone().into(),
-            input.employment_type.clone().into(),
+            employment_type.into(),
             input.employment_origin.clone().into(),
-            emp_status.to_string().into(),
+            emp_status.clone().into(),
             (if blocked_override { 1_i64 } else { 0_i64 }).into(),
             input.position_id.into(),
             input.primary_entity_id.into(),
@@ -754,28 +755,68 @@ pub async fn update_personnel(
     }
 
     // Validate enums
-    if let Some(ref t) = input.employment_type {
-        EmploymentType::try_from(t.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    }
+    // Only a change is checked against the list: a record whose stored value was retired or
+    // flagged stays editable while the field is left as it is.
+    let employment_type = match input.employment_type.as_deref() {
+        Some(t) if t == current.employment_type => None,
+        Some(t) => Some(super::reference_lists::checked_employment_type(db, t).await?),
+        None => None,
+    };
     if let Some(ref o) = input.employment_origin {
         EmploymentOrigin::try_from(o.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     }
-    if let Some(ref s) = input.employment_status {
-        EmploymentStatus::try_from(s.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    }
+    let employment_status = match input.employment_status.as_deref() {
+        Some(s) if s == current.employment_status => None,
+        Some(s) => Some(super::reference_lists::checked_employment_status(db, s).await?),
+        None => None,
+    };
     if let Some(ref s) = input.availability_status {
         AvailabilityStatus::try_from(s.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     }
 
-    // Contract date validation
-    let eff_start = input
-        .contract_start_date
+    // Optional texts: `null` or an empty text clears the field (`PersonnelUpdateInput`).
+    let text = |v: &Option<Option<String>>| -> Option<Option<String>> {
+        v.as_ref().map(|inner| {
+            inner
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+        })
+    };
+    let hire_date = text(&input.hire_date);
+    let termination_date = text(&input.termination_date);
+    let email = text(&input.email);
+    let phone = text(&input.phone);
+    let contract_number = text(&input.contract_number);
+    let contract_start_date = text(&input.contract_start_date);
+    let contract_end_date = text(&input.contract_end_date);
+    let notes = text(&input.notes);
+
+    // An external person keeps a contractor company: it cannot be cleared.
+    let eff_origin = input
+        .employment_origin
         .as_deref()
-        .or(current.contract_start_date.as_deref());
-    let eff_end = input
-        .contract_end_date
-        .as_deref()
-        .or(current.contract_end_date.as_deref());
+        .unwrap_or(current.employment_origin.as_str());
+    let eff_company = match input.external_company_id {
+        Some(v) => v,
+        None => current.external_company_id,
+    };
+    if eff_origin == "external" && eff_company.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "external_company_id est requis pour un collaborateur externe.".into(),
+        ]));
+    }
+
+    // Contract date validation (on the values after the update, cleared ones included)
+    let eff_start = match &contract_start_date {
+        Some(v) => v.as_deref(),
+        None => current.contract_start_date.as_deref(),
+    };
+    let eff_end = match &contract_end_date {
+        Some(v) => v.as_deref(),
+        None => current.contract_end_date.as_deref(),
+    };
     if let (Some(start), Some(end)) = (eff_start, eff_end) {
         if start > end {
             return Err(AppError::ValidationFailed(vec![
@@ -785,7 +826,7 @@ pub async fn update_personnel(
     }
 
     // Supervisor cycle check
-    if let Some(sup_id) = input.supervisor_id {
+    if let Some(Some(sup_id)) = input.supervisor_id {
         assert_no_supervisor_cycle(db, input.id, sup_id).await?;
     }
 
@@ -798,7 +839,10 @@ pub async fn update_personnel(
     let new_position_id = input.position_id.or(current.position_id);
     let new_entity_id = input.primary_entity_id.or(current.primary_entity_id);
     let new_team_id = input.primary_team_id.or(current.primary_team_id);
-    let new_supervisor_id = input.supervisor_id.or(current.supervisor_id);
+    let new_supervisor_id = match input.supervisor_id {
+        Some(v) => v,
+        None => current.supervisor_id,
+    };
     let new_schedule_id = input
         .home_schedule_reference_value_id
         .or(current.home_schedule_reference_value_id);
@@ -810,7 +854,7 @@ pub async fn update_personnel(
         || input
             .primary_team_id
             .is_some_and(|v| Some(v) != current.primary_team_id)
-        || input.supervisor_id.is_some_and(|v| Some(v) != current.supervisor_id)
+        || input.supervisor_id.is_some_and(|v| v != current.supervisor_id)
         || input
             .home_schedule_reference_value_id
             .is_some_and(|v| Some(v) != current.home_schedule_reference_value_id);
@@ -822,7 +866,7 @@ pub async fn update_personnel(
         sets.push("full_name = ?".into());
         values.push(n.clone().into());
     }
-    if let Some(ref e) = input.employment_type {
+    if let Some(ref e) = employment_type {
         sets.push("employment_type = ?".into());
         values.push(e.clone().into());
     }
@@ -830,7 +874,7 @@ pub async fn update_personnel(
         sets.push("employment_origin = ?".into());
         values.push(o.clone().into());
     }
-    if let Some(ref s) = input.employment_status {
+    if let Some(ref s) = employment_status {
         sets.push("employment_status = ?".into());
         values.push(s.clone().into());
     }
@@ -862,41 +906,25 @@ pub async fn update_personnel(
         sets.push("availability_status = ?".into());
         values.push(s.clone().into());
     }
-    if let Some(ref h) = input.hire_date {
-        sets.push("hire_date = ?".into());
-        values.push(h.clone().into());
-    }
-    if let Some(ref t) = input.termination_date {
-        sets.push("termination_date = ?".into());
-        values.push(t.clone().into());
-    }
-    if let Some(ref e) = input.email {
-        sets.push("email = ?".into());
-        values.push(e.clone().into());
-    }
-    if let Some(ref p) = input.phone {
-        sets.push("phone = ?".into());
-        values.push(p.clone().into());
+    // Optional fields: present = set to the value, or cleared (NULL) when `null` / empty.
+    for (column, value) in [
+        ("hire_date", hire_date),
+        ("termination_date", termination_date),
+        ("email", email),
+        ("phone", phone),
+        ("contract_number", contract_number),
+        ("contract_start_date", contract_start_date),
+        ("contract_end_date", contract_end_date),
+        ("notes", notes),
+    ] {
+        if let Some(v) = value {
+            sets.push(format!("{column} = ?"));
+            values.push(v.into());
+        }
     }
     if let Some(v) = input.external_company_id {
         sets.push("external_company_id = ?".into());
         values.push(v.into());
-    }
-    if let Some(ref c) = input.contract_number {
-        sets.push("contract_number = ?".into());
-        values.push(c.clone().into());
-    }
-    if let Some(ref c) = input.contract_start_date {
-        sets.push("contract_start_date = ?".into());
-        values.push(c.clone().into());
-    }
-    if let Some(ref c) = input.contract_end_date {
-        sets.push("contract_end_date = ?".into());
-        values.push(c.clone().into());
-    }
-    if let Some(ref n) = input.notes {
-        sets.push("notes = ?".into());
-        values.push(n.clone().into());
     }
     // employee_code handled separately below
 
@@ -1001,9 +1029,14 @@ pub async fn deactivate_personnel(
     expected_row_version: i64,
     actor_id: i64,
 ) -> AppResult<Personnel> {
-    let blockers = collect_deactivation_blockers(db, id).await?;
-    if !blockers.is_empty() {
-        return Err(AppError::ValidationFailed(vec![blockers]));
+    let open_work = collect_deactivation_blockers(db, id).await?;
+    if !open_work.is_empty() {
+        let list = open_work.join(", ");
+        return Err(crate::errors::org_validation_failed(
+            "PERSONNEL_DEACTIVATION_OPEN_WORK",
+            format!("This person is on open work orders ({list}): reassign them before deactivating."),
+            std::collections::HashMap::from([("work_orders".to_string(), list)]),
+        ));
     }
 
     let today = Utc::now().format("%Y-%m-%d").to_string();
@@ -1041,44 +1074,41 @@ pub async fn deactivate_personnel(
     })
 }
 
-/// WO assignments via `user_accounts.personnel_id` (WO stores user ids, not personnel ids).
-async fn collect_deactivation_blockers(db: &DatabaseConnection, personnel_id: i64) -> AppResult<String> {
-    let mut parts: Vec<String> = Vec::new();
+/// A work order the person `?` is on: responsible (through their login), or labour booked for
+/// them — directly (`personnel_id`, people without a login) or through their login. Binds the
+/// personnel id three times. One rule for the person's workload, the deactivation check and the
+/// availability state (`personnel::availability`).
+pub(crate) const PERSON_ON_WO: &str = "( \
+    wo.primary_responsible_id IN (SELECT ua.id FROM user_accounts ua WHERE ua.personnel_id = ?) \
+    OR EXISTS ( \
+        SELECT 1 FROM work_order_interveners woi \
+        LEFT JOIN user_accounts uai ON uai.id = woi.intervener_id \
+        WHERE woi.work_order_id = wo.id AND (woi.personnel_id = ? OR uai.personnel_id = ?) \
+    ) \
+)";
 
+/// Codes of the open work orders the person is on (responsible or labour): deactivation is refused
+/// while there is one (`PERSONNEL_DEACTIVATION_OPEN_WORK`, translated on screen).
+async fn collect_deactivation_blockers(db: &DatabaseConnection, personnel_id: i64) -> AppResult<Vec<String>> {
     let wo_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT DISTINCT wo.id, wo.code \
-             FROM user_accounts ua \
-             JOIN work_orders wo ON ( \
-                wo.primary_responsible_id = ua.id \
-                OR EXISTS ( \
-                    SELECT 1 FROM work_order_interveners woi \
-                    WHERE woi.work_order_id = wo.id AND woi.intervener_id = ua.id \
-                ) \
-             ) \
-             JOIN work_order_statuses wos ON wos.id = wo.status_id \
-             WHERE ua.personnel_id = ? \
-               AND wos.code NOT IN ('closed', 'cancelled')",
-            [personnel_id.into()],
+            format!(
+                "SELECT DISTINCT wo.id, wo.code \
+                 FROM work_orders wo \
+                 JOIN work_order_statuses wos ON wos.id = wo.status_id \
+                 WHERE {PERSON_ON_WO} \
+                   AND wos.code NOT IN {closed}",
+                closed = crate::wo::backlog::CLOSED_STATUS_SQL
+            ),
+            [personnel_id.into(), personnel_id.into(), personnel_id.into()],
         ))
         .await?;
 
-    if !wo_rows.is_empty() {
-        let codes: Vec<String> = wo_rows
-            .iter()
-            .filter_map(|r| r.try_get::<String>("", "code").ok())
-            .collect();
-        parts.push(format!("Ordres de travail actifs : {}.", codes.join(", ")));
-    }
-
-    // Work permit schema (6.23) not yet in local DB — no SQL guard here.
-
-    if parts.is_empty() {
-        Ok(String::new())
-    } else {
-        Ok(format!("Désactivation impossible : {}", parts.join(" ")))
-    }
+    Ok(wo_rows
+        .iter()
+        .filter_map(|r| r.try_get::<String>("", "code").ok())
+        .collect())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1155,7 +1185,25 @@ pub async fn upsert_position(
     input: PositionUpsertInput,
     actor_id: Option<i64>,
 ) -> AppResult<Position> {
-    PositionCategory::try_from(input.category.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    // Only a change is checked against the list: an existing position keeps a retired or flagged
+    // category while it is left as it is.
+    let stored_category: Option<String> = match input.id {
+        Some(id) => db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT category FROM positions WHERE id = ?",
+                [id.into()],
+            ))
+            .await?
+            .map(|r| r.try_get::<String>("", "category"))
+            .transpose()?,
+        None => None,
+    };
+    let category = if stored_category.as_deref() == Some(input.category.as_str()) {
+        input.category.clone()
+    } else {
+        super::reference_lists::checked_position_category(db, &input.category).await?
+    };
 
     if input.code.trim().is_empty() || input.name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -1203,7 +1251,7 @@ pub async fn upsert_position(
             [
                 input.code.clone().into(),
                 input.name.clone().into(),
-                input.category.clone().into(),
+                category.clone().into(),
                 (if input.is_active.unwrap_or(true) { 1_i64 } else { 0_i64 }).into(),
                 now.clone().into(),
                 id.into(),
@@ -1234,7 +1282,7 @@ pub async fn upsert_position(
             [
                 input.code.clone().into(),
                 input.name.clone().into(),
-                input.category.clone().into(),
+                category.clone().into(),
                 now.clone().into(),
                 now.clone().into(),
             ],
@@ -1607,7 +1655,7 @@ fn map_schedule_class_row(row: &sea_orm::QueryResult) -> AppResult<ScheduleClass
     })
 }
 
-fn parse_schedule_class_metadata(raw: Option<&str>, fallback_code: &str) -> (String, i64, f64) {
+fn parse_schedule_class_metadata(raw: Option<&str>, fallback_code: &str) -> (String, i64, Option<f64>) {
     #[derive(serde::Deserialize)]
     struct Meta {
         #[serde(default)]
@@ -1628,7 +1676,7 @@ fn parse_schedule_class_metadata(raw: Option<&str>, fallback_code: &str) -> (Str
             .filter(|c| !c.trim().is_empty())
             .unwrap_or_else(|| fallback_code.to_string()),
         i64::from(parsed.is_continuous.unwrap_or(false)),
-        parsed.nominal_hours_per_day.unwrap_or(8.0),
+        parsed.nominal_hours_per_day,
     )
 }
 
@@ -1722,6 +1770,30 @@ pub async fn get_active_rate_card(
 /// Regular labor rate from the active rate card (effective_from ≤ today), if any.
 pub async fn resolve_active_labor_rate(db: &impl ConnectionTrait, personnel_id: i64) -> AppResult<Option<f64>> {
     Ok(get_active_rate_card(db, personnel_id).await?.map(|c| c.labor_rate))
+}
+
+/// Labour and overtime rates of the rate card valid on `day` (`YYYY-MM-DD`): the latest card
+/// effective on or before that day. Labour booked for a past day is priced at that day's card.
+pub async fn resolve_rate_pair_on(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+    day: &str,
+) -> AppResult<Option<(f64, f64)>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT labor_rate, overtime_rate FROM personnel_rate_cards WHERE personnel_id = ? AND date(effective_from) <= date(?) ORDER BY effective_from DESC, id DESC LIMIT 1",
+            [personnel_id.into(), day.into()],
+        ))
+        .await?;
+    row.map(|r| -> AppResult<(f64, f64)> {
+        Ok((
+            r.try_get("", "labor_rate").map_err(|e| map_err("labor_rate", e))?,
+            r.try_get("", "overtime_rate")
+                .map_err(|e| map_err("overtime_rate", e))?,
+        ))
+    })
+    .transpose()
 }
 
 /// Active labor + overtime rates for cost range estimates.
@@ -1964,6 +2036,84 @@ pub async fn create_external_company(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("external company insert")))?;
 
+    map_external_company_row(&row)
+}
+
+/// Contractor company edit: contract dates, onboarding and insurance status (an expired
+/// insurance or a suspended contractor is visible on the company and its people).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ExternalCompanyUpdateInput {
+    pub id: i64,
+    pub name: String,
+    pub service_domain: Option<String>,
+    pub contract_start: Option<String>,
+    pub contract_end: Option<String>,
+    pub onboarding_status: String,
+    pub insurance_status: String,
+    pub notes: Option<String>,
+    pub is_active: bool,
+}
+
+pub async fn update_external_company(
+    db: &DatabaseConnection,
+    input: ExternalCompanyUpdateInput,
+) -> AppResult<ExternalCompany> {
+    let issue = |code: &str, message: &str| {
+        crate::errors::org_validation_failed(code, message, std::collections::HashMap::new())
+    };
+    let name = input.name.trim().to_string();
+    if name.is_empty() {
+        return Err(issue("COMPANY_NAME_REQUIRED", "The company name is required."));
+    }
+    super::domain::OnboardingStatus::try_from(input.onboarding_status.as_str())
+        .map_err(|_| issue("COMPANY_STATUS_UNKNOWN", "Unknown onboarding status."))?;
+    super::domain::InsuranceStatus::try_from(input.insurance_status.as_str())
+        .map_err(|_| issue("COMPANY_STATUS_UNKNOWN", "Unknown insurance status."))?;
+    let clean = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let (start, end) = (clean(input.contract_start), clean(input.contract_end));
+    if let (Some(s), Some(e)) = (&start, &end) {
+        if e < s {
+            return Err(issue("COMPANY_CONTRACT_DATES", "The contract end is before its start."));
+        }
+    }
+    let res = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE external_companies SET name = ?, service_domain = ?, contract_start = ?, contract_end = ?, \
+             onboarding_status = ?, insurance_status = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?",
+            [
+                name.into(),
+                clean(input.service_domain).into(),
+                start.into(),
+                end.into(),
+                input.onboarding_status.into(),
+                input.insurance_status.into(),
+                clean(input.notes).into(),
+                i64::from(input.is_active).into(),
+                Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string().into(),
+                input.id.into(),
+            ],
+        ))
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound {
+            entity: "ExternalCompany".into(),
+            id: input.id.to_string(),
+        });
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, name, service_domain, contract_start, contract_end, onboarding_status, insurance_status, \
+                    notes, is_active, created_at, updated_at \
+             FROM external_companies WHERE id = ?",
+            [input.id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "ExternalCompany".into(),
+            id: input.id.to_string(),
+        })?;
     map_external_company_row(&row)
 }
 
@@ -2253,6 +2403,8 @@ pub async fn list_personnel_availability_blocks(
             created_by_label: row.try_get("", "created_by_label").unwrap_or(None),
             created_at: row.try_get("", "created_at").unwrap_or_default(),
             reason_masked: false,
+            type_masked: false,
+            critical_for_planning: false,
         })
         .collect())
 }
@@ -2266,27 +2418,23 @@ pub async fn list_personnel_work_history(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT * FROM (
+            format!(
+                "SELECT * FROM (
                 SELECT
                     'wo' AS source_module,
                     wo.id AS record_id,
                     wo.code AS record_code,
                     CASE
-                        WHEN wo.primary_responsible_id = ua.id THEN 'primary_responsible'
+                        WHEN wo.primary_responsible_id IN
+                            (SELECT u.id FROM user_accounts u WHERE u.personnel_id = ?) THEN 'primary_responsible'
                         ELSE 'intervener'
                     END AS role_code,
                     wos.code AS status_code,
                     wo.title AS title,
                     COALESCE(wo.actual_end, wo.updated_at, wo.created_at) AS happened_at
-                FROM user_accounts ua
-                JOIN work_orders wo ON (
-                    wo.primary_responsible_id = ua.id OR EXISTS (
-                        SELECT 1 FROM work_order_interveners woi
-                        WHERE woi.work_order_id = wo.id AND woi.intervener_id = ua.id
-                    )
-                )
+                FROM work_orders wo
                 LEFT JOIN work_order_statuses wos ON wos.id = wo.status_id
-                WHERE ua.personnel_id = ?
+                WHERE {PERSON_ON_WO}
 
                 UNION ALL
 
@@ -2309,8 +2457,16 @@ pub async fn list_personnel_work_history(
                 WHERE ua2.personnel_id = ?
             ) h
             ORDER BY h.happened_at DESC
-            LIMIT ?",
-            [personnel_id.into(), personnel_id.into(), row_limit.into()],
+            LIMIT ?"
+            ),
+            [
+                personnel_id.into(),
+                personnel_id.into(),
+                personnel_id.into(),
+                personnel_id.into(),
+                personnel_id.into(),
+                row_limit.into(),
+            ],
         ))
         .await?;
 
@@ -2335,39 +2491,28 @@ pub async fn get_personnel_workload_summary(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT
+            format!(
+                "SELECT
                 COALESCE((
                     SELECT COUNT(DISTINCT wo.id)
-                    FROM user_accounts ua
-                    JOIN work_orders wo ON (
-                        wo.primary_responsible_id = ua.id OR EXISTS (
-                            SELECT 1 FROM work_order_interveners woi
-                            WHERE woi.work_order_id = wo.id AND woi.intervener_id = ua.id
-                        )
-                    )
+                    FROM work_orders wo
                     JOIN work_order_statuses wos ON wos.id = wo.status_id
-                    WHERE ua.personnel_id = ?
-                      AND wos.code NOT IN ('closed', 'cancelled')
+                    WHERE {PERSON_ON_WO}
+                      AND wos.code NOT IN {closed}
                 ), 0) AS open_work_orders,
                 COALESCE((
                     SELECT COUNT(DISTINCT wo.id)
-                    FROM user_accounts ua
-                    JOIN work_orders wo ON (
-                        wo.primary_responsible_id = ua.id OR EXISTS (
-                            SELECT 1 FROM work_order_interveners woi
-                            WHERE woi.work_order_id = wo.id AND woi.intervener_id = ua.id
-                        )
-                    )
+                    FROM work_orders wo
                     JOIN work_order_statuses wos ON wos.id = wo.status_id
-                    WHERE ua.personnel_id = ?
-                      AND wos.code IN ('in_progress', 'assigned', 'planned', 'ready_to_schedule')
+                    WHERE {PERSON_ON_WO}
+                      AND wos.code IN {open}
                 ), 0) AS in_progress_work_orders,
                 COALESCE((
-                    SELECT COUNT(DISTINCT di.id)
+                    SELECT COUNT(DISTINCT ir.id)
                     FROM user_accounts ua2
-                    JOIN intervention_requests di ON (di.submitter_id = ua2.id OR di.reviewer_id = ua2.id)
+                    JOIN intervention_requests ir ON (ir.submitter_id = ua2.id OR ir.reviewer_id = ua2.id)
                     WHERE ua2.personnel_id = ?
-                      AND di.status IN ('submitted', 'in_review', 'awaiting_approval', 'approved', 'deferred', 'returned_for_clarification')
+                      AND {di_open}
                 ), 0) AS pending_interventions,
                 COALESCE((
                     SELECT COUNT(*)
@@ -2376,7 +2521,15 @@ pub async fn get_personnel_workload_summary(
                     WHERE ua3.personnel_id = ?
                       AND date(di2.created_at) >= date('now', '-30 day')
                 ), 0) AS interventions_last_30d",
+                closed = crate::wo::backlog::CLOSED_STATUS_SQL,
+                open = crate::wo::backlog::OPEN_STATUS_SQL,
+                di_open = crate::di::stats::OPEN_SQL,
+            ),
             [
+                personnel_id.into(),
+                personnel_id.into(),
+                personnel_id.into(),
+                personnel_id.into(),
                 personnel_id.into(),
                 personnel_id.into(),
                 personnel_id.into(),
@@ -2387,10 +2540,12 @@ pub async fn get_personnel_workload_summary(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("workload summary query failed")))?;
 
     Ok(PersonnelWorkloadSummary {
-        open_work_orders: row.try_get("", "open_work_orders").unwrap_or_default(),
-        in_progress_work_orders: row.try_get("", "in_progress_work_orders").unwrap_or_default(),
-        pending_interventions: row.try_get("", "pending_interventions").unwrap_or_default(),
-        interventions_last_30d: row.try_get("", "interventions_last_30d").unwrap_or_default(),
+        open_work_orders_rule: crate::wo::backlog::RULE_NOT_YET_CLOSED.to_string(),
+        in_progress_work_orders_rule: crate::wo::backlog::RULE_OPEN_WORK_TO_DO.to_string(),
+        open_work_orders: row.try_get("", "open_work_orders")?,
+        in_progress_work_orders: row.try_get("", "in_progress_work_orders")?,
+        pending_interventions: row.try_get("", "pending_interventions")?,
+        interventions_last_30d: row.try_get("", "interventions_last_30d")?,
     })
 }
 

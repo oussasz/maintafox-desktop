@@ -1,31 +1,33 @@
 {
   "page": {
-    "title": "Maintenance preventive",
+    "title": "Maintenance préventive",
     "filters": "Filtres",
-    "searchPlaceholder": "Rechercher par code ou titre du plan",
-    "dueSearchPlaceholder": "Rechercher les echeances par plan ou OT",
+    "searchPlaceholder": "Rechercher par code, titre du plan ou équipement",
+    "dueSearchPlaceholder": "Rechercher les échéances par plan, équipement ou OT",
     "plansView": "Plans",
-    "dueView": "File d'echeance",
+    "dueView": "File d'échéances",
     "planCount": "{{count}} plans",
-    "dueCount": "{{count}} echeances",
-    "calendarCount": "{{count}} datees"
+    "dueCount": "{{count}} échéances",
+    "calendarCount": "{{count}} datées",
+    "loadFailed": "La maintenance préventive n'a pas pu être chargée",
+    "detailLoadFailed": "Le détail de ce plan n'a pas pu être chargé"
   },
   "actions": {
     "refresh": "Actualiser",
-    "refreshForecast": "Rafraichir la prevision",
+    "refreshForecast": "Rafraîchir la prévision",
     "newPlan": "Nouveau plan",
     "editPlan": "Modifier le plan",
     "newVersion": "Nouvelle version",
     "editVersion": "Modifier",
     "publish": "Publier",
-    "transition": "Mettre a jour le statut",
+    "transition": "Mettre à jour le statut",
     "transitionOccurrence": "Changer le statut",
-    "logExecution": "Saisir l'execution",
+    "logExecution": "Saisir l'exécution",
     "viewFindings": "Voir les constats",
-    "createFollowUpDi": "Creer DI de suivi",
-    "createFollowUpWo": "Creer OT de suivi",
+    "createFollowUpDi": "Créer une demande d'intervention (DI) de suivi",
+    "createFollowUpWo": "Créer un OT de suivi",
     "cancel": "Annuler",
-    "create": "Creer",
+    "create": "Créer",
     "save": "Enregistrer",
     "close": "Fermer",
     "openPlan": "Ouvrir le plan",
@@ -35,19 +37,27 @@
     "delete": "Supprimer",
     "deletePlan": "Supprimer le plan",
     "deleteVersion": "Supprimer la version",
-    "confirmDelete": "Supprimer definitivement",
-    "runForecast": "Lancer la prevision"
+    "confirmDelete": "Supprimer définitivement",
+    "runForecast": "Lancer la prévision",
+    "retry": "Réessayer",
+    "removePart": "Retirer {{code}}",
+    "revisePlan": "Réviser le plan",
+    "recordReading": "Saisir un relevé compteur"
   },
   "views": {
     "plans": "Plans",
-    "due": "File d'echeance",
+    "due": "File d'échéances",
     "calendar": "Calendrier"
   },
   "calendar": {
     "today": "Aujourd'hui",
+    "previous": "Période précédente",
+    "next": "Période suivante",
     "loading": "Chargement…",
-    "empty": "Aucune occurrence echeance ce jour.",
+    "empty": "Aucune occurrence à échéance ce jour.",
     "more": "+{{count}} de plus",
+    "moreAria": "Afficher les {{count}} occurrences du {{date}}",
+    "dayListTitle": "Occurrences à échéance le {{date}}",
     "mode": {
       "month": "Mois",
       "week": "Semaine",
@@ -56,108 +66,155 @@
     "legend": {
       "overdue": "En retard",
       "today": "Aujourd'hui",
-      "pipeline": "A venir",
-      "completed": "Terminee"
+      "pipeline": "À venir",
+      "completed": "Terminée"
     }
   },
   "fields": {
     "code": "Code",
     "title": "Titre",
     "description": "Description",
-    "strategy": "Strategie",
-    "scopeType": "Type de portee",
-    "asset": "Actif",
-    "crew": "Equipe",
-    "criticality": "Criticite",
+    "strategy": "Stratégie",
+    "scopeType": "Type de portée",
+    "asset": "Équipement",
+    "currentAsset": "Équipement actuel : {{asset}}",
+    "currentAssetHint": "Choisissez un autre équipement uniquement pour le changer.",
+    "crew": "Équipe",
+    "criticality": "Criticité",
     "lifecycle": "Cycle de vie",
-    "requiresShutdown": "Arret requis",
+    "requiresShutdown": "Arrêt requis",
     "requiresPermit": "Permis requis",
     "isActive": "Actif",
-    "reasonCode": "Code raison",
-    "reason": "Raison",
+    "reasonCode": "Motif",
+    "reason": "Motif",
     "effectiveFrom": "Prise d'effet",
     "effectiveTo": "Fin d'effet",
-    "intervalUnit": "Unite d'intervalle",
+    "intervalUnit": "Unité d'intervalle",
     "intervalValue": "Valeur d'intervalle",
-    "meterSource": "Source compteur",
-    "eventCode": "Code evenement",
+    "meterSource": "Type de compteur",
+    "meter": "Compteur de l'équipement",
+    "meterInterval": "Tous les ({{unit}})",
+    "meterIntervalNoUnit": "Tous les (unités du compteur)",
+    "startReading": "Relevé au dernier entretien ({{unit}})",
+    "startReadingNoUnit": "Relevé au dernier entretien",
+    "eventCode": "Code événement",
     "conditionCode": "Code condition",
-    "eventCodesOptional": "Codes evenement (optionnel)",
-    "conditionCodesOptional": "Codes condition (optionnel)",
+    "eventCodesOptional": "Codes événement (facultatif)",
+    "conditionCodesOptional": "Codes condition (facultatif)",
+    "codesPlaceholder": "Codes séparés par des virgules",
     "horizonDays": "Horizon (jours)",
-    "forecastScope": "Portee",
-    "forecastAllPlans": "Tous les plans eligibles",
-    "forecastSelectedPlan": "Plan selectionne uniquement",
-    "taskPackage": "Gamme (une etape par ligne)",
-    "requiredParts": "Pieces requises (codes, separes par des virgules)",
-    "requiredSkills": "Competences requises (codes, separes par des virgules)",
-    "requiredTools": "Outils requis (codes, separes par des virgules)",
-    "estimatedDurationHours": "Duree estimee (h)",
-    "estimatedLaborCost": "Cout main-d'oeuvre estime",
-    "estimatedPartsCost": "Cout pieces estime",
-    "estimatedServiceCost": "Cout service estime",
-    "changeReason": "Motif de changement",
-    "executionResult": "Resultat d'execution",
+    "forecastScope": "Portée",
+    "forecastAllPlans": "Tous les plans éligibles",
+    "forecastSelectedPlan": "Plan sélectionné uniquement",
+    "taskPackage": "Gamme (une étape par ligne)",
+    "requiredParts": "Pièces requises",
+    "requiredSkills": "Compétences requises",
+    "requiredTools": "Outillage requis (séparé par des virgules)",
+    "estimatedDurationHours": "Durée estimée (h)",
+    "plannedCrewSize": "Effectif prévu (personnes)",
+    "plannedCrewSizeHint": "Reporté sur l'OT généré par ce PM ; le planning réserve durée × effectif.",
+    "plannedCrewSizeInvalid": "L'effectif est un nombre entier de personnes, de 1 à {{max}}.",
+    "estimatedLaborCost": "Coût main-d'œuvre estimé",
+    "estimatedPartsCost": "Coût pièces estimé",
+    "estimatedServiceCost": "Coût prestations estimé",
+    "changeReason": "Motif de la modification",
+    "executionResult": "Résultat d'exécution",
     "findingType": "Type de constat",
-    "severity": "Severite",
+    "severity": "Gravité",
     "findingDescription": "Description du constat",
-    "dueWindow": "Fenetre d'echeance",
+    "dueWindow": "Fenêtre d'échéance",
     "status": "Statut",
-    "note": "Note"
+    "note": "Note",
+    "meterType": "Type de compteur (sur chaque équipement)",
+    "meterLifetime": "Cumul : {{value}} {{unit}}",
+    "meterLastReading": "Dernier relevé : {{value}} {{unit}} ({{at}})",
+    "available": "{{value}} {{unit}} disponible(s)",
+    "quantity": "Quantité",
+    "quantityOf": "Quantité de {{code}}",
+    "addPart": "Ajouter un article",
+    "articleSearchPlaceholder": "Code ou nom d'article (2 caractères ou plus)",
+    "whicheverFirst": "Ou au compteur, au premier des deux atteint",
+    "readingValue": "Relevé ({{unit}})",
+    "readingValueNoUnit": "Relevé",
+    "readingAt": "Relevé le",
+    "readingKind": "Ce relevé est"
   },
   "sections": {
     "overview": "Vue d'ensemble",
     "versions": "Versions",
     "occurrences": "Occurrences",
-    "executions": "Executions",
+    "executions": "Exécutions",
     "governance": "Gouvernance",
     "findings": "Constats",
-    "recurringFindings": "Constats recurrents (90 j)",
-    "readiness": "Readiness planification",
-    "kpis": "KPI de gouvernance",
-    "archive": "Plans retires"
+    "recurringFindings": "Constats récurrents ({{days}} jours)",
+    "readiness": "Préparation à la planification",
+    "kpis": "Indicateurs de gouvernance",
+    "archive": "Plans retirés",
+    "focusedOccurrence": "Occurrence de la notification"
   },
   "strategy": {
     "fixed": "Calendrier fixe",
-    "floating": "Calendrier flottant",
-    "meter": "Compteur / metre",
-    "event": "Base evenement",
-    "condition": "Base condition"
+    "floating": "Calendrier glissant",
+    "meter": "Compteur",
+    "event": "Sur événement",
+    "condition": "Conditionnelle"
   },
   "lifecycle": {
     "draft": "Brouillon",
-    "proposed": "Propose",
-    "approved": "Approuve",
+    "proposed": "Proposé",
+    "approved": "Approuvé",
     "active": "Actif",
     "suspended": "Suspendu",
-    "retired": "Retire"
+    "retired": "Retiré"
+  },
+  "versionStatus": {
+    "draft": "Brouillon",
+    "published": "Publiée",
+    "superseded": "Remplacée"
   },
   "occurrenceStatus": {
-    "forecasted": "Prevu",
-    "generated": "Genere",
-    "ready_for_scheduling": "Pret a planifier",
-    "scheduled": "Planifie",
+    "forecasted": "Prévue",
+    "generated": "Générée",
+    "ready_for_scheduling": "Prête à planifier",
+    "scheduled": "Planifiée",
     "in_progress": "En cours",
-    "completed": "Termine",
-    "deferred": "Reporte",
-    "missed": "Manque",
-    "cancelled": "Annule"
+    "completed": "Terminée",
+    "deferred": "Reportée",
+    "missed": "Manquée",
+    "cancelled": "Annulée"
   },
   "executionResult": {
-    "completed_no_findings": "Termine — sans constat",
-    "completed_with_findings": "Termine — avec constats",
-    "deferred": "Reporte",
-    "missed": "Manque",
-    "cancelled": "Annule"
+    "completed_no_findings": "Terminée — sans constat",
+    "completed_with_findings": "Terminée — avec constats",
+    "deferred": "Reportée",
+    "missed": "Manquée",
+    "cancelled": "Annulée"
+  },
+  "findingType": {
+    "WO_FAILURE": "Défaillance saisie sur l'OT",
+    "WO_TASK_NOK": "Étape de gamme non conforme"
+  },
+  "severity": {
+    "low": "Faible",
+    "medium": "Moyenne",
+    "high": "Élevée",
+    "critical": "Critique"
+  },
+  "blocker": {
+    "missing_parts": "Pièces non réservées",
+    "missing_qualification": "Technicien qualifié non affecté",
+    "permit_not_ready": "Permis non prêt",
+    "locked_window": "Fenêtre d'arrêt non réservée",
+    "prerequisite_incomplete": "Prérequis non rempli"
   },
   "scope": {
-    "equipment": "Equipement",
+    "equipment": "Équipement",
     "family": "Famille",
     "location": "Emplacement",
-    "criticality_group": "Groupe de criticite"
+    "criticality_group": "Groupe de criticité"
   },
   "dueWindow": {
-    "all": "Tous",
+    "all": "Toutes",
     "overdue": "En retard",
     "today": "Aujourd'hui",
     "next7": "7 prochains jours"
@@ -165,160 +222,269 @@
   "labels": {
     "active": "Actif",
     "inactive": "Inactif",
-    "loading": "Chargement...",
+    "loading": "Chargement…",
     "none": "—",
     "yes": "Oui",
     "no": "Non",
-    "noResults": "Aucun element",
-    "blockers": "{{count}} bloqueurs"
+    "noResults": "Aucun élément",
+    "blockers": "{{count}} blocages",
+    "ready": "Prête",
+    "overdue": "En retard",
+    "dueAtReading": "À {{value}} au compteur",
+    "lastSeenOn": "Dernière fois le {{date}}",
+    "followUps": "Suites",
+    "window": "Fenêtre {{from}} – {{to}}",
+    "meterWindow": "Fenêtre compteur {{from}} – {{to}}",
+    "scopeOf": "{{scope}} : {{value}}"
   },
   "reasons": {
-    "capacity_constraint": "Contrainte de capacite",
-    "asset_unavailable": "Actif indisponible",
-    "material_missing": "Materiel manquant",
-    "weather_constraint": "Contrainte meteo",
-    "safety_constraint": "Contrainte securite",
+    "capacity_constraint": "Manque de capacité",
+    "asset_unavailable": "Équipement indisponible",
+    "material_missing": "Matériel manquant",
+    "weather_constraint": "Conditions météo",
+    "safety_constraint": "Contrainte de sécurité",
     "other": "Autre"
   },
   "options": {
     "intervalUnit": {
-      "day": "Journalier",
-      "week": "Hebdomadaire",
-      "month": "Mensuel",
-      "year": "Annuel"
+      "day": "Jours",
+      "week": "Semaines",
+      "month": "Mois",
+      "year": "Années"
     },
     "meterSource": {
-      "odometer": "Odometre",
+      "odometer": "Odomètre",
       "operating_hours": "Heures de fonctionnement"
     }
   },
   "metrics": {
     "overdue": "En retard",
-    "dueToday": "Echeance aujourd'hui",
-    "next7d": "Echeance 7 j",
-    "ready": "Pret a planifier"
+    "dueToday": "Échéance aujourd'hui",
+    "next7d": "Échéance sous 7 jours",
+    "ready": "Prêtes à planifier",
+    "unit": "occurrences",
+    "overdueHint": "Ouvertes, échéance dépassée",
+    "dueTodayHint": "Ouvertes, échéance aujourd'hui",
+    "next7dHint": "Ouvertes, échéance sous 7 jours",
+    "readyHint": "En attente de planification",
+    "compliance": "Conformité PM",
+    "complianceHint": "{{onTime}} à l'heure sur {{due}} dues",
+    "complianceDefinition": "Travaux faits dans leur fenêtre ÷ PM dues",
+    "compliancePeriod": "Période de conformité",
+    "lastDays_one": "{{count}} dernier jour",
+    "lastDays_other": "{{count}} derniers jours"
+  },
+  "kpi": {
+    "compliance": "Conformité PM",
+    "overdueRisk": "Risque de retard",
+    "firstPass": "Terminées sans constat",
+    "followUpRatio": "Constats avec suite",
+    "failuresFoundByPm": "Défaillances détectées par le préventif",
+    "failuresFoundByPmHint": "OT correctifs ouverts sur constat",
+    "effortVariance": "Écart d'effort",
+    "effortVarianceValue": "{{hours}} h ({{pct}})",
+    "effortVarianceHours": "{{hours}} h",
+    "sample": "{{numerator}} / {{denominator}}",
+    "sampleSize": "{{count}} exécutions",
+    "period": "{{from}} – {{to}}"
   },
   "table": {
     "code": "Code",
     "title": "Titre",
-    "strategy": "Strategie",
+    "asset": "Équipement",
+    "strategy": "Stratégie",
     "status": "Statut",
     "lifecycle": "Cycle de vie",
-    "crew": "Equipe",
-    "criticality": "Criticite",
-    "updated": "Mis a jour",
+    "crew": "Équipe",
+    "criticality": "Criticité",
+    "updated": "Mis à jour",
     "version": "Version",
-    "window": "Fenetre d'effet",
-    "due": "Echeance",
+    "window": "Période d'effet",
+    "due": "Échéance",
+    "executedAt": "Exécutée le",
     "basis": "Base",
     "workOrder": "Ordre de travail",
     "plan": "Plan",
-    "result": "Resultat",
-    "actualDuration": "Duree reelle (h)",
+    "result": "Résultat",
+    "notes": "Notes",
+    "actualDuration": "Durée réelle (h)",
     "findingType": "Type de constat",
     "count": "Nombre",
-    "lastSeen": "Derniere vue",
+    "lastSeen": "Dernière occurrence",
     "actions": "Actions",
-    "readiness": "Readiness"
+    "readiness": "Préparation",
+    "timing": "Délai"
   },
   "dialogs": {
     "newPlan": {
-      "title": "Creer un plan PM",
-      "description": "Definir une strategie PM gouvernee. Publiez une version apres approbation pour generer les echeances."
+      "title": "Créer un plan PM",
+      "description": "Définir une stratégie préventive gouvernée. Publiez une version après approbation pour générer les échéances."
     },
     "editPlan": {
       "title": "Modifier le plan PM",
-      "description": "Mettre a jour les metadonnees. Un changement de strategie necessite une nouvelle version."
+      "description": "Mettre à jour les informations du plan. Un changement de déclenchement nécessite une nouvelle version."
     },
     "newVersion": {
-      "title": "Creer une version PM",
-      "description": "Rediger les regles de declenchement et les estimations avant publication."
+      "title": "Créer une version PM",
+      "description": "Rédiger les règles de déclenchement et les estimations avant publication."
     },
     "editVersion": {
       "title": "Modifier la version PM",
       "description": "Seules les versions brouillon sont modifiables."
     },
     "refreshForecast": {
-      "title": "Rafraichir la prevision",
-      "description": "Evaluer les strategies publiees actives et creer les occurrences. Les codes evenement/condition sont optionnels."
+      "title": "Rafraîchir la prévision",
+      "description": "Évaluer les stratégies publiées actives et créer les occurrences à échéance. Les codes événement et condition ne servent qu'à ces stratégies.",
+      "eligiblePlans_one": "{{count}} plan éligible",
+      "eligiblePlans_other": "{{count}} plans éligibles"
     },
     "transitionOccurrence": {
-      "title": "Mettre a jour le statut d'occurrence",
-      "description": "Faire avancer cette occurrence dans le pipeline operationnel."
+      "title": "Mettre à jour le statut de l'occurrence",
+      "description": "Faire avancer cette occurrence dans le circuit opérationnel."
     },
     "execution": {
-      "title": "Saisir l'execution PM",
-      "description": "Capturer le resultat, les constats et le routage de suivi."
+      "title": "Saisir l'exécution PM",
+      "description": "Enregistrer le résultat, les constats et leurs suites."
     },
     "deletePlan": {
       "title": "Supprimer le plan PM",
-      "description": "Supprimer le plan {{code}} ? Autorise uniquement pour les brouillons sans versions."
+      "description": "Supprimer le plan {{code}} ? Possible uniquement pour un plan brouillon sans version."
     },
     "deleteVersion": {
       "title": "Supprimer la version PM",
-      "description": "Supprimer la version v{{version}} ? Autorise uniquement pour les brouillons sans occurrences."
+      "description": "Supprimer la version v{{version}} ? Possible uniquement pour une version brouillon sans occurrence."
+    },
+    "meterReading": {
+      "title": "Saisir un relevé compteur",
+      "description": "Les plans à l'usage comptent sur la valeur cumulée du compteur, qu'un retour à zéro ou un remplacement du compteur ne remet pas à zéro."
     }
   },
   "guidance": {
     "activationTitle": "Comment activer ce plan",
-    "activationPath": "Ordre du cycle : brouillon → propose → approuve → actif. Publiez une version en approuve/actif/suspendu. Puis utilisez Rafraichir la prevision.",
+    "activationPath": "Ordre du cycle de vie : brouillon → proposé → approuvé → actif. Publiez une version quand le plan est approuvé, actif ou suspendu, puis rafraîchissez la prévision pour créer les échéances.",
     "currentStatus": "Statut actuel : {{status}}",
-    "alreadyOperational": "Ce plan est deja operationnel ou retire."
+    "alreadyOperational": "Ce plan est déjà opérationnel ou retiré.",
+    "woCloseOutcome": "À la clôture de l'OT lié, l'occurrence est terminée avec son résultat : les défaillances et les étapes de gamme non conformes deviennent des constats."
   },
   "empty": {
-    "noPlans": "Aucun plan PM. Creez un plan pour commencer.",
+    "noPlans": "Aucun plan PM. Créez un plan pour commencer.",
     "noPlansMatch": "Aucun plan ne correspond aux filtres.",
-    "noDue": "Aucune echeance active dans cette vue.",
+    "noDue": "Aucune échéance active dans cette vue.",
     "noVersions": "Aucune version.",
     "noOccurrences": "Aucune occurrence pour ce plan.",
-    "noExecutions": "Aucune execution enregistree.",
-    "noArchive": "Aucun plan retire.",
-    "noReadiness": "Aucun candidat readiness pour ce plan.",
-    "noKpis": "Aucune donnee KPI de gouvernance."
+    "noExecutions": "Aucune exécution enregistrée.",
+    "noFindings": "Aucun constat pour cette exécution.",
+    "noArchive": "Aucun plan retiré.",
+    "noReadiness": "Aucune occurrence à préparer pour ce plan.",
+    "noKpis": "Aucune donnée d'indicateur.",
+    "noParts": "Aucune pièce requise.",
+    "noSkills": "Aucune compétence au catalogue."
   },
   "hints": {
-    "publishBlockedByLifecycle": "Pour publier, passez le plan en approuve, actif ou suspendu.",
-    "publishDraftOnly": "La publication est reservee aux versions brouillon.",
-    "editVersionDraftOnly": "La modification est reservee aux versions brouillon.",
-    "deletePlanDraftOnly": "La suppression est reservee aux plans brouillon.",
-    "deleteVersionDraftOnly": "La suppression est reservee aux versions brouillon.",
-    "generationNeedLifecycle": "La prevision exige un cycle actif/suspendu et le drapeau actif.",
-    "generationNeedVersion": "Publiez au moins une version avant de rafraichir la prevision.",
-    "generationReady": "Pret a rafraichir la prevision.",
-    "readyCreatesWo": "Passer en pret a planifier peut creer un OT preventif lie."
+    "partNecessityMissing": "Indiquez pour chaque pièce si elle est obligatoire ou optionnelle : {{codes}}.",
+    "publishBlockedByLifecycle": "Pour publier, passez le plan en approuvé, actif ou suspendu.",
+    "publishDraftOnly": "La publication est réservée aux versions brouillon.",
+    "editVersionDraftOnly": "La modification est réservée aux versions brouillon.",
+    "deletePlanDraftOnly": "La suppression est réservée aux plans brouillon.",
+    "deleteVersionDraftOnly": "La suppression est réservée aux versions brouillon.",
+    "generationNeedLifecycle": "La prévision exige un plan actif ou suspendu, marqué actif.",
+    "generationNeedVersion": "Publiez au moins une version avant de rafraîchir la prévision.",
+    "generationReady": "Prêt à rafraîchir la prévision.",
+    "readyCreatesWo": "Passer en « prête à planifier » crée l'OT préventif avec les tâches, l'outillage, les pièces, la durée et l'exigence de permis de la version.",
+    "meterNeedsAsset": "Un plan sur compteur compte sur le compteur d'un équipement : définissez d'abord la portée du plan sur un équipement.",
+    "noMeters": "Cet équipement n'a aucun compteur actif. Ajoutez-en un sur l'équipement pour planifier à l'usage.",
+    "findingTypeFromCatalog": "Les types proviennent du catalogue des symptômes des demandes.",
+    "meterTypePerAsset": "Chaque équipement du plan compte sur son propre compteur de ce type (compteur principal d'abord).",
+    "startReadingOptional": "Laissez vide pour compter à partir du relevé à la prise d'effet de la version.",
+    "partNoQuantity": "Sans quantité : listée sur l'OT, non planifiée.",
+    "partsReserved": "Les pièces avec quantité sont planifiées sur l'OT et réservées là où le stock les couvre.",
+    "unknownSkills": "Compétences absentes du catalogue : {{codes}}",
+    "scopeAssets_one": "{{count}} équipement couvert : {{list}}",
+    "scopeAssets_other": "{{count}} équipements couverts : {{list}}",
+    "scopeNoAssets": "Aucun équipement en service n'est encore couvert.",
+    "fanOut": "Une occurrence par équipement en service, chacune avec son échéance et son compteur.",
+    "reviseFromFinding": "Créer une version brouillon de ce plan avec ce constat comme motif de modification.",
+    "reviseRetired": "Un plan retiré ne peut pas être révisé."
   },
   "messages": {
-    "generationStarted": "Rafraichissement de la prevision…",
-    "generationCreated": "Prevision rafraichie : {{count}} nouvelle(s) occurrence(s).",
-    "generationNoNew": "Prevision rafraichie : aucune nouvelle occurrence.",
-    "planDeleted": "Plan {{code}} supprime.",
-    "versionDeleted": "Version v{{version}} supprimee.",
-    "lifecycleUpdated": "Statut du plan mis a jour.",
-    "occurrenceUpdated": "Statut de l'occurrence mis a jour.",
-    "executionLogged": "Execution enregistree."
+    "generationStarted": "Rafraîchissement de la prévision…",
+    "generationCreated": "Prévision rafraîchie : {{count}} nouvelle(s) occurrence(s).",
+    "generationNoNew": "Prévision rafraîchie : aucune nouvelle occurrence.",
+    "planDeleted": "Plan {{code}} supprimé.",
+    "versionDeleted": "Version v{{version}} supprimée.",
+    "lifecycleUpdated": "Statut du plan mis à jour.",
+    "occurrenceUpdated": "Statut de l'occurrence mis à jour.",
+    "executionLogged": "Exécution enregistrée.",
+    "versionPublished": "Version v{{version}} publiée.",
+    "revisionCreated": "Version brouillon v{{version}} créée à partir du constat.",
+    "readingRecorded": "Relevé enregistré ; la prévision de l'équipement a été mise à jour."
   },
   "archive": {
-    "title": "Plans retires",
-    "count": "{{count}} retires",
-    "loadError": "Echec du chargement des plans retires."
+    "title": "Plans retirés",
+    "count": "{{count}} retirés",
+    "loadError": "Échec du chargement des plans retirés."
   },
   "autopilot": {
-    "autoOn": "Auto active",
-    "autoOff": "Auto inactive",
-    "lastRun": "Derniere execution",
+    "runTime": "Heure de génération quotidienne",
+    "runTimeHint": "Les échéances sont générées chaque jour à cette heure (heure de l'appareil).",
+    "everyDayAt": "Chaque jour à {{time}}",
+    "customSchedule": "Planification personnalisée",
+    "customScheduleKept": "Cette planification n'est pas quotidienne ; elle est conservée telle quelle.",
+    "technicalSchedule": "Expression technique",
+    "switchToDaily": "Passer à une génération quotidienne",
+    "autoOn": "Génération auto activée",
+    "autoOff": "Génération auto désactivée",
+    "lastRun": "Dernière exécution",
     "neverRun": "Jamais",
-    "counts": "{{generated}} generee(s) · {{skipped}} ignoree(s)",
-    "settings": "Reglages auto-pilot",
-    "enabled": "Generation automatique",
+    "counts": "{{generated}} générée(s) · {{skipped}} ignorée(s)",
+    "settings": "Réglages de la génération automatique",
+    "enabled": "Génération automatique",
     "schedule": "Planification",
-    "cronMidnight": "Tous les jours a minuit",
-    "cronMorning": "Tous les jours a 06:00",
-    "cronCustom": "Cron personnalise",
+    "cronMidnight": "Tous les jours à minuit",
+    "cronMorning": "Tous les jours à 06:00",
+    "cronCustom": "Planification personnalisée (cron)",
+    "cronCustomHint": "Six champs : seconde minute heure jour mois jour-de-semaine.",
     "horizonDays": "Horizon (jours)"
   },
   "errors": {
-    "assetRequired": "Selectionnez un actif lorsque la portee est equipement.",
-    "eventCodeRequired": "Le code evenement est requis pour les strategies evenement.",
-    "conditionCodeRequired": "Le code condition est requis pour les strategies condition."
+    "listLoad": "La liste de choix n'a pas pu être chargée.",
+    "articleSearchFailed": "La recherche d'articles a échoué (ce n'est pas une absence de résultat).",
+    "optionsLoad": "Les motifs et gravités n’ont pas pu être chargés.",
+    "assetRequired": "Sélectionnez un équipement lorsque la portée est « équipement ».",
+    "eventCodeRequired": "Le code événement est requis pour une stratégie sur événement.",
+    "conditionCodeRequired": "Le code condition est requis pour une stratégie conditionnelle.",
+    "reasonRequired": "Sélectionnez un motif.",
+    "findingRequired": "Indiquez le type de constat et sa description.",
+    "meterRequired": "Choisissez le compteur de l'équipement.",
+    "startReadingRequired": "Indiquez le relevé du compteur au dernier entretien.",
+    "responseUnreadable": "L'application n'a pas pu lire la réponse du serveur.",
+    "meterTypeRequired": "Choisissez le type de compteur suivi sur chaque équipement.",
+    "scopeRequired": "Choisissez ce que couvre le plan.",
+    "readingRequired": "Saisissez un relevé positif ou nul pour un compteur.",
+    "readingLower": "Le relevé est inférieur au précédent : indiquez s'il s'agit d'un retour à zéro du compteur ou d'un remplacement du compteur."
+  },
+  "tolerance": {
+    "title": "Fenêtre de tolérance",
+    "hint": "Le travail fait dans la fenêtre est à l'heure ; avant, il est en avance ; après, en retard (conformité PM).",
+    "unit": "Unité",
+    "none": "Aucune (au plus tard le jour d'échéance)",
+    "days": "Jours",
+    "percent": "% de l'intervalle",
+    "early": "Avance admise",
+    "late": "Retard admis"
+  },
+  "timing": {
+    "on_time": "À l'heure",
+    "early": "En avance",
+    "late": "En retard"
+  },
+  "readingKind": {
+    "normal": "Un relevé normal",
+    "normalHint": "Même compteur, valeur supérieure ou égale au dernier relevé.",
+    "rollover": "Un retour à zéro",
+    "rolloverHint": "Le compteur a dépassé sa valeur maximale ({{max}}) et est reparti de zéro.",
+    "rolloverUnavailable": "Aucune valeur maximale n'est définie sur ce compteur.",
+    "replacement": "Un remplacement du compteur",
+    "replacementHint": "Un nouveau compteur a été posé ; saisissez le relevé du nouveau compteur."
   }
 }

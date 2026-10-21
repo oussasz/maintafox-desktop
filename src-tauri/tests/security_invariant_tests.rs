@@ -7,7 +7,8 @@
 use maintafox_lib::auth::device::MAX_OFFLINE_GRACE_HOURS;
 use maintafox_lib::auth::password::hash_password;
 use maintafox_lib::auth::session_manager::{
-    SessionManager, IDLE_LOCK_MINUTES, SESSION_DURATION_HOURS, STEP_UP_DURATION_SECS,
+    SessionManager, SessionTimeouts, IDLE_LOCK_MINUTES, SESSION_DURATION_HOURS, STEP_UP_WINDOW_MAX_MINUTES,
+    STEP_UP_WINDOW_MINUTES, STEP_UP_WINDOW_MIN_MINUTES,
 };
 
 // ── SEC-1 — Session duration constant pinned to 8 hours ────────────────
@@ -64,12 +65,22 @@ fn sec3_argon2id_parameters_match_owasp() {
 
 // ── SEC-4 — Step-up re-auth window pinned to 120 seconds ───────────────
 
+// Owner decision 2026-10-14 (security review): the step-up window follows the Security
+// policy, default 15 min, bounded to 1-30 min whatever the stored setting says.
 #[test]
-fn sec4_step_up_window_is_120_seconds() {
+fn sec4_step_up_window_is_policy_driven_and_bounded() {
     assert_eq!(
-        STEP_UP_DURATION_SECS, 120,
-        "SEC-4 FAIL: Step-up duration must be 120s — change requires security review"
+        STEP_UP_WINDOW_MINUTES, 15,
+        "SEC-4 FAIL: default step-up window must be 15 min — change requires security review"
     );
+    assert_eq!(
+        (STEP_UP_WINDOW_MIN_MINUTES, STEP_UP_WINDOW_MAX_MINUTES),
+        (1, 30),
+        "SEC-4 FAIL: step-up window bounds must be 1-30 min — change requires security review"
+    );
+    assert_eq!(SessionTimeouts::from_policy(30, 480, 0).step_up_minutes, 1);
+    assert_eq!(SessionTimeouts::from_policy(30, 480, 600).step_up_minutes, 30);
+    assert_eq!(SessionTimeouts::default().step_up_minutes, 15);
 }
 
 // ── SEC-5 — Offline grace maximum pinned to 168 hours (7 days) ─────────

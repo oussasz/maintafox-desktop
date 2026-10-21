@@ -240,7 +240,6 @@ export function buildRoleDefaultOverviewKpis(opts: {
   canOt: boolean;
   canPm: boolean;
   canInv: boolean;
-  canFin: boolean;
   canRam: boolean;
   canRep: boolean;
   isSupervisorHeavy: boolean;
@@ -253,14 +252,8 @@ export function buildRoleDefaultOverviewKpis(opts: {
 
   if (isReliabilityHeavy) {
     ids = [K.MTBF, K.AVAILABILITY, K.DATA_QUALITY];
-    if (opts.canFin) {
-      ids.splice(2, 0, K.TOTAL_COST);
-    }
   } else if (isStorekeeperHeavy) {
     ids = [K.STOCK_OUT, K.REORDER_ALERT, K.OT_IN_PROGRESS];
-    if (opts.canFin) {
-      ids.push(K.TOTAL_COST);
-    }
   } else if (opts.isSupervisorHeavy) {
     ids = [K.DI_OPEN, K.OT_OVERDUE, K.PM_COMPLIANCE, K.AVAILABILITY];
   } else {
@@ -278,7 +271,6 @@ export function buildRoleDefaultOverviewKpis(opts: {
     [K.DATA_QUALITY]: P.REP_VIEW,
     [K.STOCK_OUT]: P.INV_VIEW,
     [K.REORDER_ALERT]: P.INV_VIEW,
-    [K.TOTAL_COST]: P.FIN_VIEW,
   };
 
   const filtered = ids.filter((id) => {
@@ -293,8 +285,6 @@ export function buildRoleDefaultOverviewKpis(opts: {
         return opts.canPm;
       case P.INV_VIEW:
         return opts.canInv;
-      case P.FIN_VIEW:
-        return opts.canFin;
       case P.REP_VIEW:
         return opts.canRep;
       default:

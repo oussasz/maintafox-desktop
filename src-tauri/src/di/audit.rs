@@ -111,23 +111,32 @@ pub async fn record_di_change_event(db: &DatabaseConnection, input: DiAuditInput
 // B) list_di_change_events — per-DI timeline query
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Return audit events for a single DI, ordered chronologically (oldest first).
+/// Largest page of the per-DI history.
+pub const DI_CHANGE_EVENTS_MAX_LIMIT: i64 = 500;
+
+/// Return the `limit` MOST RECENT audit events of a single DI, ordered chronologically
+/// (oldest first). Capping keeps the latest events: the screen offers "show older" when the
+/// page is full, instead of silently hiding what happened last.
 pub async fn list_di_change_events(
     db: &DatabaseConnection,
     di_id: i64,
     limit: i64,
 ) -> crate::errors::AppResult<Vec<DiChangeEvent>> {
+    let limit = limit.clamp(1, DI_CHANGE_EVENTS_MAX_LIMIT);
     let rows = DiChangeEvent::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r"SELECT e.id, e.di_id, e.action, e.actor_id,
-                 COALESCE(ua.display_name, ua.username) AS actor_display_name,
-                 e.acted_at, e.summary, e.details_json,
-                 e.requires_step_up, e.apply_result
-            FROM di_change_events e
-            LEFT JOIN user_accounts ua ON ua.id = e.actor_id
-           WHERE e.di_id = ?
-           ORDER BY e.acted_at ASC, e.id ASC
-           LIMIT ?",
+        r"SELECT * FROM (
+            SELECT e.id, e.di_id, e.action, e.actor_id,
+                   COALESCE(ua.display_name, ua.username) AS actor_display_name,
+                   e.acted_at, e.summary, e.details_json,
+                   e.requires_step_up, e.apply_result
+              FROM di_change_events e
+              LEFT JOIN user_accounts ua ON ua.id = e.actor_id
+             WHERE e.di_id = ?
+             ORDER BY e.acted_at DESC, e.id DESC
+             LIMIT ?
+          ) latest
+          ORDER BY latest.acted_at ASC, latest.id ASC",
         [di_id.into(), limit.into()],
     ))
     .all(db)
@@ -141,10 +150,13 @@ pub async fn list_di_change_events(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Return audit events across all DIs with optional filters.
-/// Used by di.admin users in the global audit log view.
+/// Used by di.admin users in the global audit log view, limited to the requests of the reader's
+/// scope (`di::access::ScopeSql` on the event's request; an event without a request, or whose
+/// request is gone, has no site: plant-wide readers only).
 pub async fn list_all_change_events(
     db: &DatabaseConnection,
     filter: DiAuditFilter,
+    scope: &super::access::ScopeSql,
 ) -> crate::errors::AppResult<Vec<DiChangeEvent>> {
     let limit = filter.limit.unwrap_or(50).min(500);
     let offset = filter.offset.unwrap_or(0);
@@ -170,11 +182,11 @@ pub async fn list_all_change_events(
         values.push(date_to.clone().into());
     }
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
+    // Last condition: its binds follow the filters' and precede LIMIT / OFFSET.
+    conditions.push(format!("({})", scope.predicate));
+    values.extend(scope.binds.iter().cloned());
+
+    let where_clause = format!("WHERE {}", conditions.join(" AND "));
 
     values.push(limit.into());
     values.push(offset.into());
@@ -186,6 +198,7 @@ pub async fn list_all_change_events(
                  e.requires_step_up, e.apply_result
             FROM di_change_events e
             LEFT JOIN user_accounts ua ON ua.id = e.actor_id
+            LEFT JOIN intervention_requests ir ON ir.id = e.di_id
            {where_clause}
            ORDER BY e.acted_at DESC, e.id DESC
            LIMIT ? OFFSET ?"

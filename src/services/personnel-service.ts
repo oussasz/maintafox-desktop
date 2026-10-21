@@ -28,6 +28,8 @@ import type {
   PersonnelRateCard,
   PersonnelSkillReferenceValue,
   PersonnelTeamAssignment,
+  PersonnelReferenceOptions,
+  PersonnelStatusReview,
   PersonnelUpdateInput,
   PersonnelWorkHistoryEntry,
   PersonnelWorkloadSummary,
@@ -241,7 +243,8 @@ export const TeamCapacitySummaryRowSchema = z.object({
 export const PersonnelAvailabilityBlockSchema = z.object({
   id: z.number(),
   personnel_id: z.number(),
-  block_type: z.string(),
+  /** Absent when the type is withheld (`type_masked`). */
+  block_type: z.string().optional(),
   start_at: z.string(),
   end_at: z.string(),
   reason_note: z.string().nullable(),
@@ -251,6 +254,8 @@ export const PersonnelAvailabilityBlockSchema = z.object({
   created_at: z.string(),
   /** `reason_note` withheld (no per.sensitiveview, not own record). */
   reason_masked: z.boolean().optional().default(false),
+  type_masked: z.boolean(),
+  critical_for_planning: z.boolean(),
 });
 
 /** Backend ValidationFailed payload fragment for soft overlap confirm. */
@@ -288,7 +293,9 @@ export const PersonnelWorkHistoryEntrySchema = z.object({
 
 export const PersonnelWorkloadSummarySchema = z.object({
   open_work_orders: z.number(),
+  open_work_orders_rule: z.string(),
   in_progress_work_orders: z.number(),
+  in_progress_work_orders_rule: z.string(),
   pending_interventions: z.number(),
   interventions_last_30d: z.number(),
 });
@@ -313,6 +320,9 @@ export const PersonnelSkillReferenceValueSchema = z.object({
 export const PersonnelImportMessageSchema = z.object({
   category: z.string(),
   severity: z.string(),
+  // Rows checked before the codes existed have none: the server's sentence is shown.
+  code: z.string().default(""),
+  params: z.record(z.string(), z.string()).default({}),
   message: z.string(),
 });
 
@@ -436,6 +446,7 @@ export const PersonnelAvailabilityStateSchema = z.object({
   status: z.string(),
   blocked_override: z.boolean(),
   reasons: z.array(z.string()),
+  open_work_order_count: z.number().nullable(),
   as_of: z.string(),
 });
 
@@ -989,4 +1000,46 @@ export async function exportWorkforceReportCsv(
 ): Promise<string> {
   const csvPayload = await invokeParsed("export_workforce_report_csv", { reportKind }, z.string());
   return csvPayload;
+}
+
+// ── Personnel lists (Données de référence) ──────────────────────────────────
+
+const PersonnelOptionSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  label_en: z.string().nullable(),
+  tag: z.string().nullable(),
+  review_required: z.boolean(),
+});
+
+const PersonnelReferenceOptionsSchema = z.object({
+  employment_statuses: z.array(PersonnelOptionSchema),
+  employment_types: z.array(PersonnelOptionSchema),
+  absence_types: z.array(PersonnelOptionSchema),
+  position_categories: z.array(PersonnelOptionSchema),
+});
+
+/** Employment statuses / types, absence types and position categories of the plant. */
+export async function listPersonnelReferenceOptions(): Promise<PersonnelReferenceOptions> {
+  return invokeParsed(
+    "list_personnel_reference_options",
+    undefined,
+    PersonnelReferenceOptionsSchema,
+  ) as Promise<PersonnelReferenceOptions>;
+}
+
+const PersonnelStatusReviewSchema = z.object({
+  personnel_id: z.number(),
+  employee_code: z.string(),
+  full_name: z.string(),
+  stored_status: z.string(),
+});
+
+/** People whose stored employment status is not a value of the plant's list. */
+export async function listPersonnelStatusReview(): Promise<PersonnelStatusReview[]> {
+  return invokeParsed(
+    "list_personnel_status_review",
+    undefined,
+    z.array(PersonnelStatusReviewSchema),
+  ) as Promise<PersonnelStatusReview[]>;
 }

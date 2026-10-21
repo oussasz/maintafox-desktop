@@ -65,7 +65,6 @@ pub mod overview {
     pub const DATA_QUALITY: &str = "DATA_QUALITY";
     pub const STOCK_OUT: &str = "STOCK_OUT";
     pub const REORDER_ALERT: &str = "REORDER_ALERT";
-    pub const TOTAL_COST: &str = "TOTAL_COST";
 }
 
 /// Semantic keys for Equipment registry strip.

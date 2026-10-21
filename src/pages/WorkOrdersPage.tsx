@@ -11,11 +11,9 @@ import {
   BarChart3,
   CalendarDays,
   Columns3,
-  Filter,
   List,
   MoreHorizontal,
   Plus,
-  RefreshCw,
   Shield,
   Wrench,
 } from "lucide-react";
@@ -24,11 +22,20 @@ import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
-import { Badge } from "@/components/ui/badge";
+import {
+  FilterToggleButton,
+  RefreshButton,
+  type ViewOption,
+  ViewToggle,
+} from "@/components/layout/ModuleHeaderControls";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { Button } from "@/components/ui/button";
+import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
+import { StatusChip } from "@/components/ui/status-chip";
 import { WoArchivePanel } from "@/components/wo/WoArchivePanel";
 import { WoCalendarView } from "@/components/wo/WoCalendarView";
 import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
@@ -40,27 +47,64 @@ import { WoFormDialog } from "@/components/wo/WoFormDialog";
 import { WoIntegrityWorkbench } from "@/components/wo/WoIntegrityWorkbench";
 import { WoKanbanView } from "@/components/wo/WoKanbanView";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
+import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
+import { WoHiddenNotice, WoNoSiteBadge } from "@/components/wo/WoSiteScope";
+import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { mfLayout } from "@/design-system/tokens";
+import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
+import {
+  LIST_PARAM,
+  type ListScope,
+  type WorkMix,
+  idParam,
+  mixParam,
+  natureInMix,
+  scopeParam,
+  textParam,
+  withoutParams,
+} from "@/lib/list-links";
+import { getAssetByIdSilent } from "@/services/asset-service";
 import { useWoStore } from "@/stores/wo-store";
-import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
-import { toErrorMessage } from "@/utils/errors";
 import { formatDate } from "@/utils/format-date";
-import { isWoLifecycleState, WO_LIFECYCLE_STATES } from "@/utils/wo-lifecycle";
-import { STATUS_STYLE, statusToI18nKey } from "@/utils/wo-status";
-import type { WorkOrder } from "@shared/ipc-types";
+import { WO_LIFECYCLE_STATES, isWoLifecycleState } from "@/utils/wo-lifecycle";
+import { statusToI18nKey } from "@/utils/wo-status";
+import type { UrgencyCode, WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 type WoViewMode = "list" | "kanban" | "calendar" | "dashboard" | "integrity";
+
+/** Current lifecycle status codes offered as filters (legacy aliases are display-only). */
+const WO_FILTER_STATUSES = [
+  "draft",
+  "planning",
+  "ready",
+  "in_progress",
+  "on_hold",
+  "completed",
+  "closed",
+  "cancelled",
+] as const;
+
+/** "Open" work orders of the dashboards: every lifecycle state except closed and cancelled. */
 
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function WorkOrdersPage() {
   const { t, i18n } = useTranslation("ot");
   const items = useWoStore((s) => s.items);
+  const listFilter = useWoStore((s) => s.filter);
   const total = useWoStore((s) => s.total);
+  const hiddenOutsideScope = useWoStore((s) => s.hiddenOutsideScope);
+  const hiddenWithoutSite = useWoStore((s) => s.hiddenWithoutSite);
   const loading = useWoStore((s) => s.loading);
+  const loadingMore = useWoStore((s) => s.loadingMore);
+  const listError = useWoStore((s) => s.listError);
   const loadWos = useWoStore((s) => s.loadWos);
+  const loadMoreWos = useWoStore((s) => s.loadMoreWos);
+  const { can } = usePermissions();
   const openWo = useWoStore((s) => s.openWo);
   const activeWo = useWoStore((s) => s.activeWo);
   const detailLoading = useWoStore((s) => s.detailLoading);
@@ -77,8 +121,8 @@ export function WorkOrdersPage() {
   const [cancelTarget, setCancelTarget] = useState<WorkOrder | null>(null);
   const woTypes = useWorkOrderTypesCatalog((s) => s.types);
   const loadWoTypes = useWorkOrderTypesCatalog((s) => s.load);
-  const woPriorities = useWorkOrderPrioritiesCatalog((s) => s.priorities);
-  const loadWoPriorities = useWorkOrderPrioritiesCatalog((s) => s.load);
+  const { levels: urgencyLevels, labelOf: urgencyLabelOf } = useUrgencyScale();
+  const { typeLabel } = useWoTypeLabels();
 
   // ── Search / filters (SmartFilterBar) ─────────────────────────────────
 
@@ -103,7 +147,7 @@ export function WorkOrdersPage() {
 
   const STATUS_OPTIONS = useMemo(
     () =>
-      Object.keys(STATUS_STYLE).map((code) => ({
+      WO_FILTER_STATUSES.map((code) => ({
         value: code,
         label: t(`status.${statusToI18nKey(code)}`),
       })),
@@ -116,22 +160,18 @@ export function WorkOrdersPage() {
         .filter((type) => type.is_active)
         .map((type) => ({
           value: type.code,
-          label: t(`type.${type.code === "condition_based" ? "conditionBased" : type.code}`, {
-            defaultValue: type.label,
-          }),
+          label: typeLabel(type.code, type.label),
         })),
-    [woTypes, t],
+    [woTypes, typeLabel],
   );
 
   const PRIORITY_OPTIONS = useMemo(
     () =>
-      woPriorities
-        .filter((p) => p.is_active)
-        .map((p) => ({
-          value: String(p.level),
-          label: i18n.language.toLowerCase().startsWith("fr") ? p.label_fr : p.label,
-        })),
-    [woPriorities, i18n.language],
+      urgencyLevels.map((level) => ({
+        value: level.code,
+        label: urgencyLabelOf(level.code),
+      })),
+    [urgencyLevels, urgencyLabelOf],
   );
 
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -139,6 +179,14 @@ export function WorkOrdersPage() {
   const [printError, setPrintError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
+  /** From a dashboard link: open work orders only (shown as a chip, clearable). */
+  const [scopeFilter, setScopeFilter] = useState<ListScope | null>(null);
+  /** From a work-mix link (SMRP / home): every type of that nature group (chip, clearable). */
+  const [mixFilter, setMixFilter] = useState<WorkMix | null>(null);
+  /** From an equipment link: one asset (chip shows its code). */
+  const [equipmentFilter, setEquipmentFilter] = useState<{ id: number; label: string } | null>(
+    null,
+  );
 
   const onSearchChange = useCallback(
     (val: string) => {
@@ -183,7 +231,7 @@ export function WorkOrdersPage() {
   const handlePriorityFilter = useCallback(
     (val: string | null) => {
       setPriorityFilter(val);
-      setFilter({ urgency_level: val ? Number(val) : null });
+      setFilter({ urgency_code: val ? (val as UrgencyCode) : null });
       void loadWos();
     },
     [setFilter, loadWos],
@@ -195,15 +243,118 @@ export function WorkOrdersPage() {
     setLifecycleFilter(null);
     setTypeFilter(null);
     setPriorityFilter(null);
+    setScopeFilter(null);
+    setEquipmentFilter(null);
+    setMixFilter(null);
     setFilter({
       search: null,
       status_codes: null,
       lifecycle_states: null,
       type_codes: null,
-      urgency_level: null,
+      urgency_code: null,
+      equipment_id: null,
+      open_only: null,
+      not_closed_only: null,
+      overdue_only: null,
     });
     void loadWos();
   }, [setFilter, loadWos]);
+
+  const handleScopeFilter = useCallback(
+    (val: string | null) => {
+      const scope = scopeParam(val);
+      setScopeFilter(scope);
+      setFilter({
+        open_only: scope === "open" || null,
+        not_closed_only: scope === "not_closed" || null,
+        overdue_only: scope === "overdue" || null,
+      });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
+
+  const handleMixFilter = useCallback(
+    (val: string | null) => {
+      if (val) return; // only clearing is offered: the mix comes from the link
+      setMixFilter(null);
+      setFilter({ type_codes: null });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
+
+  const handleEquipmentFilter = useCallback(
+    (val: string | null) => {
+      if (val) return; // only clearing is offered: the asset comes from the link
+      setEquipmentFilter(null);
+      setFilter({ equipment_id: null });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
+
+  // A link may carry list filters (?scope=open, ?status=, ?urgency=, ?equipment=): they become the
+  // page's filters — visible as chips the user can clear — then leave the address, so the chips
+  // are the only source of truth. Without such a link the page keeps its filters as before.
+  useEffect(() => {
+    const scope = scopeParam(searchParams.get(LIST_PARAM.scope));
+    const status = textParam(searchParams.get(LIST_PARAM.status));
+    const urgency = textParam(searchParams.get(LIST_PARAM.urgency));
+    const equipmentId = idParam(searchParams.get(LIST_PARAM.equipment));
+    const type = textParam(searchParams.get(LIST_PARAM.type));
+    const mix = mixParam(searchParams.get(LIST_PARAM.mix));
+    if (!scope && !status && !urgency && equipmentId == null && !type && !mix) return;
+    // The mix is resolved through the type catalogue: wait for it before applying the link.
+    if (mix && woTypes.length === 0) return;
+    const mixCodes = mix
+      ? woTypes.filter((wt) => natureInMix(wt.nature, mix)).map((wt) => wt.code)
+      : null;
+    setSearchInput("");
+    setStatusFilter(status);
+    setLifecycleFilter(null);
+    setTypeFilter(mix ? null : type);
+    setMixFilter(mix);
+    setPriorityFilter(urgency);
+    setScopeFilter(scope);
+    setEquipmentFilter(equipmentId != null ? { id: equipmentId, label: `#${equipmentId}` } : null);
+    setFilter({
+      search: null,
+      status_codes: status ? [status] : null,
+      lifecycle_states: null,
+      // The list applies the same rule as the count the link came from.
+      open_only: scope === "open" || null,
+      not_closed_only: scope === "not_closed" || null,
+      overdue_only: scope === "overdue" || null,
+      // A mix with no matching type matches no work order (never "all types").
+      type_codes: mixCodes ? (mixCodes.length > 0 ? mixCodes : ["__none__"]) : type ? [type] : null,
+      urgency_code: urgency ? (urgency as UrgencyCode) : null,
+      equipment_id: equipmentId,
+    });
+    void loadWos();
+    if (equipmentId != null) {
+      void getAssetByIdSilent(equipmentId).then((asset) => {
+        if (asset) {
+          setEquipmentFilter({
+            id: equipmentId,
+            label: `${asset.asset_code} — ${asset.asset_name}`,
+          });
+        }
+      });
+    }
+    setSearchParams(
+      withoutParams(
+        searchParams,
+        LIST_PARAM.scope,
+        LIST_PARAM.status,
+        LIST_PARAM.urgency,
+        LIST_PARAM.equipment,
+        LIST_PARAM.type,
+        LIST_PARAM.mix,
+      ),
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams, setFilter, loadWos, woTypes]);
 
   const filterDefs = useMemo<SmartFilterDef[]>(
     () => [
@@ -239,6 +390,52 @@ export function WorkOrdersPage() {
         value: priorityFilter,
         onChange: handlePriorityFilter,
       },
+      ...(scopeFilter
+        ? [
+            {
+              id: "scope",
+              kind: "select" as const,
+              label: t("list.filters.scope"),
+              options: [
+                {
+                  value: scopeFilter,
+                  label:
+                    scopeFilter === "overdue"
+                      ? t("list.filters.scopeOverdue")
+                      : scopeFilter === "not_closed"
+                        ? t("list.filters.scopeNotClosed")
+                        : t("list.filters.scopeOpen"),
+                },
+              ],
+              value: scopeFilter,
+              onChange: handleScopeFilter,
+            },
+          ]
+        : []),
+      ...(mixFilter
+        ? [
+            {
+              id: "mix",
+              kind: "select" as const,
+              label: t("list.filters.mix"),
+              options: [{ value: mixFilter, label: t(`list.filters.mixValue.${mixFilter}`) }],
+              value: mixFilter,
+              onChange: handleMixFilter,
+            },
+          ]
+        : []),
+      ...(equipmentFilter
+        ? [
+            {
+              id: "equipment",
+              kind: "select" as const,
+              label: t("list.filters.equipment"),
+              options: [{ value: String(equipmentFilter.id), label: equipmentFilter.label }],
+              value: String(equipmentFilter.id),
+              onChange: handleEquipmentFilter,
+            },
+          ]
+        : []),
     ],
     [
       t,
@@ -254,22 +451,35 @@ export function WorkOrdersPage() {
       handleLifecycleFilter,
       handleTypeFilter,
       handlePriorityFilter,
+      scopeFilter,
+      equipmentFilter,
+      mixFilter,
+      handleScopeFilter,
+      handleEquipmentFilter,
+      handleMixFilter,
     ],
   );
 
   // ── Load on mount ─────────────────────────────────────────────────────
 
   useEffect(() => {
+    // A link carrying list filters loads the list itself (with those filters), once.
+    const p = new URLSearchParams(window.location.search);
+    const linked = [
+      LIST_PARAM.scope,
+      LIST_PARAM.status,
+      LIST_PARAM.urgency,
+      LIST_PARAM.equipment,
+      LIST_PARAM.type,
+      LIST_PARAM.mix,
+    ];
+    if (linked.some((k) => p.has(k))) return;
     void loadWos();
   }, [loadWos]);
 
   useEffect(() => {
     void loadWoTypes();
   }, [loadWoTypes]);
-
-  useEffect(() => {
-    void loadWoPriorities();
-  }, [loadWoPriorities]);
 
   const switchView = useCallback((v: WoViewMode) => {
     setView(v);
@@ -297,11 +507,16 @@ export function WorkOrdersPage() {
         accessorKey: "title",
         header: t("list.columns.title"),
         cell: ({ row }) => (
-          <span className="max-w-[200px] truncate block">{row.original.title}</span>
+          <div className="flex flex-col items-start gap-0.5">
+            <span className="max-w-[200px] truncate block">{row.original.title}</span>
+            {row.original.requires_shutdown ? <WoShutdownBadge /> : null}
+            <WoNoSiteBadge wo={row.original} />
+          </div>
         ),
       },
       {
-        accessorKey: "equipment_name",
+        id: "equipment",
+        accessorFn: (wo) => wo.asset_label ?? "",
         header: t("list.columns.equipment"),
         cell: ({ row }) => (
           <span className="text-xs text-text-muted">{row.original.asset_label ?? "—"}</span>
@@ -310,22 +525,26 @@ export function WorkOrdersPage() {
       {
         accessorKey: "type_label",
         header: t("list.columns.type"),
-        cell: ({ row }) => <span className="text-xs">{row.original.type_label ?? "—"}</span>,
+        cell: ({ row }) => (
+          <span className="text-xs">
+            {typeLabel(row.original.type_code, row.original.type_label) || "—"}
+          </span>
+        ),
       },
       {
-        accessorKey: "status",
+        id: "status",
+        accessorFn: (wo) => wo.status_code ?? "draft",
         header: t("list.columns.status"),
         cell: ({ row }) => {
           const s = row.original.status_code ?? "draft";
           const lc = row.original.lifecycle_state;
           return (
             <div className="flex flex-col items-start gap-0.5">
-              <Badge
-                variant="outline"
-                className={`text-[10px] border-0 ${STATUS_STYLE[s] ?? "bg-gray-100 text-gray-600"}`}
-              >
-                {t(`status.${statusToI18nKey(s)}`)}
-              </Badge>
+              <StatusChip
+                label={t(`status.${statusToI18nKey(s)}`)}
+                tone={toneOf(WO_STATUS_TONE, s)}
+                dot
+              />
               {isWoLifecycleState(lc) ? (
                 <span className="text-[10px] text-text-muted">{t(`lifecycle.${lc}`)}</span>
               ) : null}
@@ -334,11 +553,12 @@ export function WorkOrdersPage() {
         },
       },
       {
-        accessorKey: "assigned_to_name",
+        id: "responsible",
+        accessorFn: (wo) => wo.responsible_display_name ?? wo.responsible_username ?? "",
         header: t("list.columns.assignedTo"),
         cell: ({ row }) => (
           <span className="text-xs text-text-muted">
-            {row.original.responsible_username ?? "—"}
+            {row.original.responsible_display_name ?? row.original.responsible_username ?? "—"}
           </span>
         ),
       },
@@ -362,19 +582,21 @@ export function WorkOrdersPage() {
                 wo={wo}
                 onViewDetail={(item) => void openWo(item.id)}
                 onEdit={(item) => openCreateForm(item)}
-                onStart={(item) => void openWo(item.id)}
-                onComplete={(item) => void openWo(item.id)}
                 onPrint={(item) => {
                   setPrintError(null);
                   printWoFiche(item, t, i18n.resolvedLanguage || i18n.language || "fr").catch(
-                    (err: unknown) => setPrintError(toErrorMessage(err)),
+                    (err: unknown) => setPrintError(describeAppError(err).title),
                   );
                 }}
                 onCancel={(item) => setCancelTarget(item)}
               >
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
-                  <MoreHorizontal className="h-4 w-4" />
-                  <span className="sr-only">{t("contextMenu.viewDetail")}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-10 w-10 p-0"
+                  aria-label={t("contextMenu.actionsFor", { code: wo.code })}
+                >
+                  <MoreHorizontal className="h-4 w-4" aria-hidden />
                 </Button>
               </WoContextMenu>
             </div>
@@ -382,153 +604,133 @@ export function WorkOrdersPage() {
         },
       },
     ],
-    [t, i18n.language, i18n.resolvedLanguage, openWo, openCreateForm],
+    [t, i18n.language, i18n.resolvedLanguage, openWo, openCreateForm, typeLabel],
   );
 
-  return (
-    <div className={mfLayout.moduleRoot}>
-      {printError ? (
-        <p
-          role="alert"
-          className="mx-4 mt-2 rounded-md bg-status-danger/10 px-3 py-2 text-sm text-status-danger"
-        >
-          {t("print.failed", { message: printError })}
-        </p>
-      ) : null}
-      {/* ── Page header ──────────────────────────────────────────────── */}
-      <div className={mfLayout.moduleHeader}>
-        <div className={mfLayout.moduleTitleRow}>
-          <Wrench className={mfLayout.moduleHeaderIcon} />
-          <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
-          <Badge variant="secondary" className="text-xs">
-            {total}
-          </Badge>
-        </div>
+  const viewOptions = useMemo<ViewOption<WoViewMode>[]>(
+    () => [
+      { value: "list", label: t("page.viewList"), icon: List },
+      { value: "kanban", label: t("page.viewKanban"), icon: Columns3 },
+      { value: "calendar", label: t("page.viewCalendar"), icon: CalendarDays },
+      { value: "dashboard", label: t("page.viewDashboard"), icon: BarChart3 },
+      {
+        value: "integrity",
+        label: t("page.viewIntegrity"),
+        icon: Shield,
+        hidden: !can(P.INTEGRITY_REPAIR),
+      },
+    ],
+    [t, can],
+  );
 
-        <div className={mfLayout.moduleHeaderActions}>
-          {/* New WO button */}
+  // A view hidden by permissions (e.g. remembered from another account) falls back to the list.
+  const activeView: WoViewMode =
+    viewOptions.find((o) => o.value === view && !o.hidden)?.value ?? "list";
+
+  const activeFilterCount = [statusFilter, lifecycleFilter, typeFilter, priorityFilter].filter(
+    Boolean,
+  ).length;
+
+  const showListError = listError != null && items.length === 0;
+  const recordView = activeView === "list" || activeView === "kanban" || activeView === "calendar";
+
+  return (
+    <ModulePageShell
+      icon={Wrench}
+      title={t("page.title")}
+      count={total}
+      bodyClassName={null}
+      actions={
+        <>
           <PermissionGate permission={P.OT_CREATE}>
-            <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
-              <Plus className="h-3.5 w-3.5" />
+            <Button onClick={() => openCreateForm()} className={mfLayout.primaryAction}>
+              <Plus className="h-4 w-4" aria-hidden />
               {t("action.create")}
             </Button>
           </PermissionGate>
-
-          {/* View toggle */}
-          <div className={mfLayout.viewToggleGroup}>
-            <Button
-              variant={view === "list" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("list")}
-              title={t("page.viewList")}
+          <ViewToggle value={activeView} options={viewOptions} onChange={switchView} />
+          <FilterToggleButton
+            open={showFilters}
+            onToggle={toggleFilters}
+            activeCount={activeFilterCount}
+          />
+          <RefreshButton onRefresh={() => void loadWos()} loading={loading} />
+        </>
+      }
+      filterBar={
+        <>
+          {printError ? (
+            <p
+              role="alert"
+              className="mx-6 mt-2 rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
             >
-              <List className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "kanban" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("kanban")}
-              title={t("page.viewKanban")}
-            >
-              <Columns3 className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "calendar" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("calendar")}
-              title={t("page.viewCalendar")}
-            >
-              <CalendarDays className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "dashboard" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("dashboard")}
-              title={t("page.viewDashboard")}
-            >
-              <BarChart3 className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "integrity" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("integrity")}
-              title={t("page.viewIntegrity")}
-            >
-              <Shield className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={toggleFilters}
-            title={t("page.filterSettings")}
-            className="gap-1.5"
-          >
-            <Filter className="h-3.5 w-3.5" />
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void loadWos()}
-            disabled={loading}
-            className="gap-1.5"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-          </Button>
+              {t("print.failed", { message: printError })}
+            </p>
+          ) : null}
+          {showFilters && (
+            <SmartFilterBar
+              searchPlaceholder={t("search.placeholder")}
+              searchValue={searchInput}
+              onSearchInputChange={setSearchInput}
+              onSearchChange={onSearchChange}
+              filters={filterDefs}
+              resultCount={total}
+              onReset={resetFilters}
+            />
+          )}
+          {/* Requests awaiting conversion (ot.edit permission) */}
+          <PermissionGate permission={P.OT_EDIT}>
+            <WoDiManagementPanel />
+          </PermissionGate>
+        </>
+      }
+    >
+      {recordView && showListError ? (
+        <div className="p-4">
+          <ErrorState error={listError} onRetry={() => void loadWos()} retrying={loading} />
         </div>
-      </div>
-
-      {/* ── Filters ──────────────────────────────────────────────────── */}
-      {showFilters && (
-        <SmartFilterBar
-          searchPlaceholder={t("search.placeholder")}
-          searchValue={searchInput}
-          onSearchInputChange={setSearchInput}
-          onSearchChange={onSearchChange}
-          filters={filterDefs}
-          resultCount={total}
-          onReset={resetFilters}
+      ) : null}
+      {recordView && !showListError ? (
+        <WoHiddenNotice
+          outsideScope={hiddenOutsideScope}
+          withoutSite={hiddenWithoutSite}
+          className="mx-4 mt-3"
+        />
+      ) : null}
+      {recordView && !showListError && items.length < total ? (
+        <div className="px-4 pt-3">
+          <TruncationNotice
+            shown={items.length}
+            total={total}
+            onLoadMore={() => void loadMoreWos()}
+            loadingMore={loadingMore}
+          />
+        </div>
+      ) : null}
+      {activeView === "integrity" && <WoIntegrityWorkbench />}
+      {activeView === "list" && !showListError && (
+        <div className="p-4">
+          <DataTable
+            columns={columns}
+            data={items}
+            pageSize={20}
+            isLoading={loading}
+            skeletonRows={8}
+            onRowClick={(row) => void openWo(row.id)}
+          />
+        </div>
+      )}
+      {activeView === "kanban" && !showListError && (
+        <WoKanbanView
+          filter={listFilter}
+          reloadSignal={items}
+          onCardClick={(wo) => void openWo(wo.id)}
         />
       )}
-
-      {/* ── DI management panel (ot.edit permission) ─────────────────── */}
-      <PermissionGate permission={P.OT_EDIT}>
-        <WoDiManagementPanel />
-      </PermissionGate>
-
-      {/* ── Main workspace ───────────────────────────────────────────── */}
-      <div className={mfLayout.moduleWorkspace}>
-        <div className={mfLayout.moduleWorkspaceInner}>
-          {view === "integrity" && <WoIntegrityWorkbench />}
-          {view === "list" && (
-            <div className="p-4">
-              <DataTable
-                columns={columns}
-                data={items}
-                searchable
-                pageSize={20}
-                isLoading={loading}
-                skeletonRows={8}
-                onRowClick={(row) => void openWo(row.id)}
-              />
-            </div>
-          )}
-          {view === "kanban" && (
-            <WoKanbanView items={items} onCardClick={(wo) => void openWo(wo.id)} />
-          )}
-          {view === "calendar" && (
-            <WoCalendarView items={items} onSelect={(wo) => void openWo(wo.id)} />
-          )}
-          {view === "dashboard" && <WoDashboardView />}
-        </div>
-      </div>
+      {activeView === "calendar" && !showListError && (
+        <WoCalendarView items={items} onSelect={(wo) => void openWo(wo.id)} />
+      )}
+      {activeView === "dashboard" && <WoDashboardView />}
 
       {/* ── Archive panel ────────────────────────────────────────── */}
       <WoArchivePanel onRowClick={(wo) => void openWo(wo.id)} />
@@ -551,6 +753,6 @@ export function WorkOrdersPage() {
           if (!open) setCancelTarget(null);
         }}
       />
-    </div>
+    </ModulePageShell>
   );
 }

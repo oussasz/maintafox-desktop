@@ -114,8 +114,8 @@ export function StepUpDialog({
       >
         <DialogHeader>
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100">
-              <Lock className="h-5 w-5 text-amber-700" />
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-tone-warning-bg">
+              <Lock className="h-5 w-5 text-tone-warning-fg" aria-hidden />
             </div>
             <div>
               <DialogTitle className="text-base">{title ?? t("stepUp.title")}</DialogTitle>
@@ -147,13 +147,13 @@ export function StepUpDialog({
           {error && (
             <div
               role="alert"
-              className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
             >
               {error}
             </div>
           )}
 
-          <p className="text-xs text-muted-foreground">{t("stepUp.windowNote")}</p>
+          <p className="text-xs text-text-muted">{t("stepUp.windowNote")}</p>
 
           <DialogFooter>
             <Button type="button" variant="outline" size="sm" onClick={onCancel}>

@@ -94,7 +94,7 @@ describe("RetentionPolicyPanel staged retention edits", () => {
       expect(archiveMocks.listRetentionPolicies).toHaveBeenCalled();
     });
 
-    const retentionInput = screen.getByRole("spinbutton") as HTMLInputElement;
+    const retentionInput = (await screen.findByRole("spinbutton")) as HTMLInputElement;
     fireEvent.change(retentionInput, { target: { value: "15" } });
     expect(archiveMocks.updateRetentionPolicy).not.toHaveBeenCalled();
 

@@ -5,10 +5,10 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel, formatOrDash } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import { projectInventoryStockImpact } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { StockImpactProjection } from "@shared/ipc-types";
 
 export interface StockImpactPreviewProps {
@@ -55,7 +55,7 @@ export function StockImpactPreview({
       .catch((err) => {
         if (!cancelled) {
           setProjection(null);
-          setError(toErrorMessage(err));
+          setError(describeAppError(err).title);
         }
       })
       .finally(() => {
@@ -71,7 +71,7 @@ export function StockImpactPreview({
   return (
     <div
       className={cn(
-        "rounded-md border border-surface-border bg-surface-muted/30 p-3 text-sm",
+        "rounded-md border border-surface-border bg-surface-2/30 p-3 text-sm",
         className,
       )}
     >

@@ -25,7 +25,6 @@ const FAILURE_MODES_DOMAIN_CODE: &str = "WORK.FAILURE_MODES";
 const SYNTHETIC_FAILURE_HIERARCHY_ID: i64 = 1;
 
 const WO_FAILURE_SOURCE: &str = "work_order";
-const INGEST_WO_TYPE_CODES: &[&str] = &["corrective", "emergency"];
 
 const EXPOSURE_TYPES: &[&str] = &["hours", "cycles", "output_distance", "production_output"];
 const RUNTIME_SOURCE_TYPES: &[&str] = &["meter_reading", "iot_counter", "manual", "calendar_operating_schedule"];
@@ -598,6 +597,9 @@ fn map_failure_event(row: &sea_orm::QueryResult) -> AppResult<FailureEvent> {
         failure_mode_id: row
             .try_get::<Option<i64>>("", "failure_mode_id")
             .map_err(|e| decode_err("failure_mode_id", e))?,
+        symptom_id: row
+            .try_get::<Option<i64>>("", "symptom_id")
+            .map_err(|e| decode_err("symptom_id", e))?,
         failure_cause_id: row
             .try_get::<Option<i64>>("", "failure_cause_id")
             .map_err(|e| decode_err("failure_cause_id", e))?,
@@ -768,7 +770,7 @@ pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureE
             "SELECT id, entity_sync_id, source_type, source_id, equipment_id, component_id,
                     detected_at, failed_at, restored_at,
                     downtime_duration_hours, active_repair_hours, waiting_hours,
-                    is_planned, failure_class_id, failure_mode_id, failure_cause_id, failure_effect_id, failure_mechanism_id,
+                    is_planned, failure_class_id, failure_mode_id, failure_cause_id, failure_effect_id, failure_mechanism_id, symptom_id,
                     cause_not_determined, production_impact_level, safety_impact_level,
                     recorded_by_id, verification_status, eligible_flags_json,
                     row_version, created_at, updated_at
@@ -826,7 +828,7 @@ pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureE
             "SELECT id, entity_sync_id, source_type, source_id, equipment_id, component_id,
                     detected_at, failed_at, restored_at,
                     downtime_duration_hours, active_repair_hours, waiting_hours,
-                    is_planned, failure_class_id, failure_mode_id, failure_cause_id, failure_effect_id, failure_mechanism_id,
+                    is_planned, failure_class_id, failure_mode_id, failure_cause_id, failure_effect_id, failure_mechanism_id, symptom_id,
                     cause_not_determined, production_impact_level, safety_impact_level,
                     recorded_by_id, verification_status, eligible_flags_json,
                     row_version, created_at, updated_at
@@ -876,9 +878,9 @@ pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
     let wo_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wo.equipment_id, wo.closed_at, wo.actual_start, wo.created_at, wot.code AS type_code \
+            "SELECT wo.equipment_id, wo.closed_at, wo.actual_start, wo.created_at, wot.semantic_tag AS nature_code \
              FROM work_orders wo \
-             INNER JOIN work_order_types wot ON wot.id = wo.type_id \
+             LEFT JOIN reference_values wot ON wot.id = wo.type_id \
              WHERE wo.id = ?",
             [wo_id.into()],
         ))
@@ -888,10 +890,15 @@ pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
             id: wo_id.to_string(),
         })?;
 
-    let type_code: String = wo_row
-        .try_get("", "type_code")
-        .map_err(|e| decode_err("type_code", e))?;
-    if !INGEST_WO_TYPE_CODES.contains(&type_code.as_str()) {
+    // Only corrective work (EN 13306 nature of the OT type) is a failure event.
+    let nature_code: Option<String> = wo_row
+        .try_get("", "nature_code")
+        .map_err(|e| decode_err("nature_code", e))?;
+    if !nature_code
+        .as_deref()
+        .and_then(crate::wo::types::MaintenanceNature::parse)
+        .is_some_and(|n| n.is_corrective())
+    {
         return Ok(None);
     }
 
@@ -917,22 +924,26 @@ pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
     let fd_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT failure_mode_id, failure_cause_id, failure_effect_id, cause_not_determined \
+            "SELECT symptom_id, failure_mode_id, failure_cause_id, failure_effect_id, cause_not_determined \
              FROM work_order_failure_details WHERE work_order_id = ? ORDER BY id DESC LIMIT 1",
             [wo_id.into()],
         ))
         .await?;
 
-    let (failure_mode_id, failure_cause_id, failure_effect_id, cause_not_determined_i) = if let Some(r) = fd_row {
-        (
-            r.try_get::<Option<i64>>("", "failure_mode_id").ok().flatten(),
-            r.try_get::<Option<i64>>("", "failure_cause_id").ok().flatten(),
-            r.try_get::<Option<i64>>("", "failure_effect_id").ok().flatten(),
-            r.try_get::<i64>("", "cause_not_determined").unwrap_or(0),
-        )
-    } else {
-        (None, None, None, 0)
-    };
+    // The observed symptom (shared ISO 14224 list, carried from the request through the close-out)
+    // is recorded on the failure event with the failure mode, cause and effect.
+    let (symptom_id, failure_mode_id, failure_cause_id, failure_effect_id, cause_not_determined_i) =
+        if let Some(r) = fd_row {
+            (
+                r.try_get::<Option<i64>>("", "symptom_id").ok().flatten(),
+                r.try_get::<Option<i64>>("", "failure_mode_id").ok().flatten(),
+                r.try_get::<Option<i64>>("", "failure_cause_id").ok().flatten(),
+                r.try_get::<Option<i64>>("", "failure_effect_id").ok().flatten(),
+                r.try_get::<i64>("", "cause_not_determined").unwrap_or(0),
+            )
+        } else {
+            (None, None, None, None, 0)
+        };
 
     let cause_nd = cause_not_determined_i != 0;
 
@@ -1013,6 +1024,7 @@ pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
                 downtime_duration_hours, active_repair_hours, waiting_hours,
                 is_planned,
                 failure_class_id, failure_mode_id, failure_cause_id, failure_effect_id, failure_mechanism_id,
+                symptom_id,
                 cause_not_determined, production_impact_level, safety_impact_level,
                 recorded_by_id, verification_status, eligible_flags_json,
                 row_version, created_at, updated_at
@@ -1022,6 +1034,7 @@ pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
                 ?, ?, ?,
                 ?,
                 NULL, ?, ?, ?, NULL,
+                ?,
                 ?, NULL, NULL,
                 ?, ?, ?,
                 1, ?, ?
@@ -1041,6 +1054,7 @@ pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
                 opt_i64(failure_mode_id),
                 opt_i64(failure_cause_id),
                 opt_i64(failure_effect_id),
+                opt_i64(symptom_id),
                 bool_to_i64(cause_nd).into(),
                 actor_id.into(),
                 verification_status.into(),
@@ -1060,7 +1074,7 @@ pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
             "SELECT id, entity_sync_id, source_type, source_id, equipment_id, component_id,
                     detected_at, failed_at, restored_at,
                     downtime_duration_hours, active_repair_hours, waiting_hours,
-                    is_planned, failure_class_id, failure_mode_id, failure_cause_id, failure_effect_id, failure_mechanism_id,
+                    is_planned, failure_class_id, failure_mode_id, failure_cause_id, failure_effect_id, failure_mechanism_id, symptom_id,
                     cause_not_determined, production_impact_level, safety_impact_level,
                     recorded_by_id, verification_status, eligible_flags_json,
                     row_version, created_at, updated_at
@@ -1079,7 +1093,7 @@ pub async fn list_failure_events(db: &DatabaseConnection, filter: FailureEventsF
         "SELECT id, entity_sync_id, source_type, source_id, equipment_id, component_id,
                 detected_at, failed_at, restored_at,
                 downtime_duration_hours, active_repair_hours, waiting_hours,
-                is_planned, failure_class_id, failure_mode_id, failure_cause_id, failure_effect_id, failure_mechanism_id,
+                is_planned, failure_class_id, failure_mode_id, failure_cause_id, failure_effect_id, failure_mechanism_id, symptom_id,
                 cause_not_determined, production_impact_level, safety_impact_level,
                 recorded_by_id, verification_status, eligible_flags_json,
                 row_version, created_at, updated_at
@@ -1910,15 +1924,16 @@ pub async fn list_wos_missing_failure_mode(
     limit: Option<i64>,
 ) -> AppResult<Vec<WoMissingFailureModeRow>> {
     let lim = limit.unwrap_or(200).clamp(1, 500);
-    let mut sql = String::from(
+    let mut sql = format!(
         "SELECT wo.id AS work_order_id, wo.equipment_id, wo.closed_at, wot.code AS type_code
          FROM work_orders wo
          INNER JOIN work_order_failure_details wfd ON wfd.work_order_id = wo.id
-         INNER JOIN work_order_types wot ON wot.id = wo.type_id
+         INNER JOIN reference_values wot ON wot.id = wo.type_id
          WHERE wo.closed_at IS NOT NULL
            AND wo.equipment_id IS NOT NULL
            AND wfd.failure_mode_id IS NULL
-           AND wot.code IN ('corrective', 'emergency')",
+           AND {}",
+        crate::wo::types::tag_is_nature_sql("wot.semantic_tag", &crate::wo::types::MaintenanceNature::CORRECTIVE)
     );
     let mut vals: Vec<sea_orm::Value> = Vec::new();
     if let Some(eid) = equipment_id {

@@ -5,6 +5,8 @@ import { useTranslation } from "react-i18next";
 import { DocumentHeaderEditor } from "@/components/editor/DocumentHeaderEditor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { describeAppError } from "@/lib/app-error";
 import {
   isDocumentHeaderHtmlEmpty,
   sanitizeDocumentHeaderHtml,
@@ -39,6 +41,7 @@ export function DocumentHeaderSettingsPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [logoBusy, setLogoBusy] = useState(false);
+  const [confirmClearLogo, setConfirmClearLogo] = useState(false);
   const [value, setValue] = useState<DocumentHeaderSettingValue>({ ...EMPTY_DOCUMENT_HEADER });
   const [draftHtml, setDraftHtml] = useState("");
   const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
@@ -103,7 +106,7 @@ export function DocumentHeaderSettingsPanel({
       console.error("[DocumentHeaderSettingsPanel] logo upload failed:", err);
       onToast({
         title: t("documentHeader.logoUploadError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {
@@ -121,7 +124,7 @@ export function DocumentHeaderSettingsPanel({
       console.error("[DocumentHeaderSettingsPanel] logo clear failed:", err);
       onToast({
         title: t("documentHeader.logoClearError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {
@@ -153,7 +156,7 @@ export function DocumentHeaderSettingsPanel({
       console.error("[DocumentHeaderSettingsPanel] save failed:", err);
       onToast({
         title: t("documentHeader.saveError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {
@@ -220,7 +223,7 @@ export function DocumentHeaderSettingsPanel({
                     size="sm"
                     variant="ghost"
                     disabled={logoBusy || saving}
-                    onClick={() => void handleClearLogo()}
+                    onClick={() => setConfirmClearLogo(true)}
                   >
                     {t("documentHeader.removeLogo")}
                   </Button>
@@ -275,6 +278,17 @@ export function DocumentHeaderSettingsPanel({
           </>
         )}
       </CardContent>
+      <ConfirmDialog
+        open={confirmClearLogo}
+        onOpenChange={setConfirmClearLogo}
+        title={t("documentHeader.removeLogoConfirmTitle")}
+        description={t("documentHeader.removeLogoConfirmBody")}
+        confirmLabel={t("documentHeader.removeLogo")}
+        destructive
+        onConfirm={async () => {
+          await handleClearLogo();
+        }}
+      />
     </Card>
   );
 }

@@ -130,6 +130,15 @@ pub enum AppError {
     #[error("Session locked: {0}")]
     SessionLocked(String),
 
+    /// PIN unlock is disabled for this session (too many wrong PINs): unlock with the password.
+    /// Who may unlock is unchanged; the code lets the lock screen switch to password mode.
+    #[error("PIN désactivé, utilisez le mot de passe.")]
+    PinDisabled,
+
+    /// The account must change its password before any other command (server-enforced).
+    #[error("{0}")]
+    PasswordChangeRequired(String),
+
     /// Encrypted database cannot be opened: key missing from the OS credential store or wrong.
     /// The UI offers recovery-key entry (`DATABASE_KEY_UNAVAILABLE`).
     #[error("Database key unavailable: {0}")]
@@ -180,6 +189,8 @@ impl Serialize for AppError {
             Self::DatabaseKeyUnavailable(_) => "DATABASE_KEY_UNAVAILABLE",
             Self::AccountLocked { .. } => "ACCOUNT_LOCKED",
             Self::SessionLocked(_) => "SESSION_LOCKED",
+            Self::PinDisabled => "PIN_DISABLED",
+            Self::PasswordChangeRequired(_) => "PASSWORD_CHANGE_REQUIRED",
             Self::Internal(_) => "INTERNAL_ERROR",
         };
         state.serialize_field("code", code)?;

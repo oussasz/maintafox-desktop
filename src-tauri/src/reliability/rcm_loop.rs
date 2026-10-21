@@ -372,10 +372,21 @@ pub async fn apply_rcm_decision_logic(
 
 pub const SOURCE_FMECA_ITEM: &str = "fmeca_item";
 pub const SOURCE_RCM_DECISION: &str = "rcm_decision";
+/// A decision of a reliability study (`reliability_study_decisions`).
+pub const SOURCE_RELIABILITY_DECISION: &str = "reliability_study_decision";
+
+/// Table that keeps the link back to the PM version / work order created from a source.
+fn source_table(source_type: &str) -> &'static str {
+    match source_type {
+        SOURCE_FMECA_ITEM => "fmeca_items",
+        SOURCE_RELIABILITY_DECISION => "reliability_study_decisions",
+        _ => "rcm_decisions",
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PmRevisionFromSourceInput {
-    /// `fmeca_item` or `rcm_decision`.
+    /// `fmeca_item`, `rcm_decision` or `reliability_study_decision`.
     pub source_type: String,
     pub source_id: i64,
     pub pm_plan_id: i64,
@@ -406,18 +417,23 @@ struct SourceContext {
 async fn load_source(db: &impl ConnectionTrait, source_type: &str, source_id: i64) -> AppResult<SourceContext> {
     let (sql, label_col) = match source_type {
         SOURCE_FMECA_ITEM => (
-            "SELECT a.equipment_id, i.functional_failure AS label, NULL AS tactic FROM fmeca_items i \
-             JOIN fmeca_analyses a ON a.id = i.analysis_id WHERE i.id = ?",
+            "SELECT a.equipment_id, i.functional_failure AS label, NULL AS tactic, i.review_required \
+             FROM fmeca_items i JOIN fmeca_analyses a ON a.id = i.analysis_id WHERE i.id = ?",
             "functional_failure",
         ),
         SOURCE_RCM_DECISION => (
-            "SELECT s.equipment_id, d.functional_failure AS label, d.selected_tactic AS tactic FROM rcm_decisions d \
+            "SELECT s.equipment_id, d.functional_failure AS label, d.selected_tactic AS tactic, 0 AS review_required FROM rcm_decisions d \
              JOIN rcm_studies s ON s.id = d.study_id WHERE d.id = ?",
             "functional_failure",
         ),
+        // The decision acts on one equipment of its study (set when the decision is recorded).
+        SOURCE_RELIABILITY_DECISION => (
+            "SELECT d.equipment_id, d.title AS label, NULL AS tactic, 0 AS review_required FROM reliability_study_decisions d WHERE d.id = ? AND d.equipment_id IS NOT NULL",
+            "title",
+        ),
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "source_type must be '{SOURCE_FMECA_ITEM}' or '{SOURCE_RCM_DECISION}' (got '{other}')."
+                "source_type must be '{SOURCE_FMECA_ITEM}', '{SOURCE_RCM_DECISION}' or '{SOURCE_RELIABILITY_DECISION}' (got '{other}')."
             )]))
         }
     };
@@ -432,6 +448,14 @@ async fn load_source(db: &impl ConnectionTrait, source_type: &str, source_id: i6
             entity: source_type.into(),
             id: source_id.to_string(),
         })?;
+    if row
+        .try_get::<i64>("", "review_required")
+        .map_err(|e| decode_err("review_required", e))?
+        != 0
+    {
+        // An FMECA row whose ratings nobody chose never drives a PM or work order (migration 221).
+        return Err(AppError::ValidationFailed(vec!["FMECA_ITEM_REVIEW_REQUIRED".into()]));
+    }
     Ok(SourceContext {
         equipment_id: row
             .try_get("", "equipment_id")
@@ -464,7 +488,7 @@ pub async fn create_pm_revision_from_source(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT trigger_definition_json, task_package_json, required_parts_json, required_skills_json, \
-             required_tools_json, estimated_duration_hours, estimated_labor_cost, estimated_parts_cost, \
+             required_tools_json, estimated_duration_hours, planned_crew_size, estimated_labor_cost, estimated_parts_cost, \
              estimated_service_cost FROM pm_plan_versions WHERE pm_plan_id = ? ORDER BY version_no DESC LIMIT 1",
             [input.pm_plan_id.into()],
         ))
@@ -492,10 +516,18 @@ pub async fn create_pm_revision_from_source(
             effective_to: None,
             trigger_definition_json: trigger,
             task_package_json: get_s("task_package_json")?,
-            required_parts_json: get_s("required_parts_json")?,
+            // Copied part lines go through the same rule as a revision made in the PM module
+            // (`pm::plan_tools`): a flag-less line (stored before migration 231 or received from a
+            // PC that has not run it) is read as required, so the copy is not refused.
+            required_parts_json: crate::pm::wo_content::normalized_required_parts_json(
+                get_s("required_parts_json")?.as_deref(),
+            ),
             required_skills_json: get_s("required_skills_json")?,
             required_tools_json: get_s("required_tools_json")?,
             estimated_duration_hours: get_f("estimated_duration_hours")?,
+            planned_crew_size: latest
+                .try_get("", "planned_crew_size")
+                .map_err(|e| decode_err("planned_crew_size", e))?,
             estimated_labor_cost: get_f("estimated_labor_cost")?,
             estimated_parts_cost: get_f("estimated_parts_cost")?,
             estimated_service_cost: get_f("estimated_service_cost")?,
@@ -517,11 +549,7 @@ pub async fn create_pm_revision_from_source(
             ],
         ))
         .await?;
-        let table = if input.source_type == SOURCE_FMECA_ITEM {
-            "fmeca_items"
-        } else {
-            "rcm_decisions"
-        };
+        let table = source_table(&input.source_type);
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
@@ -601,7 +629,8 @@ pub async fn create_wo_from_source(
             source_rca_cause_text: Some(format!("{}: {}", input.source_type, ctx.label)),
             entity_id: None,
             planner_id: None,
-            urgency_id: None,
+            urgency_code: None,
+            subtype_code: None,
             title,
             description: None,
             notes: None,
@@ -614,11 +643,7 @@ pub async fn create_wo_from_source(
         },
     )
     .await?;
-    let table = if input.source_type == SOURCE_FMECA_ITEM {
-        "fmeca_items"
-    } else {
-        "rcm_decisions"
-    };
+    let table = source_table(&input.source_type);
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         format!(
@@ -661,7 +686,7 @@ pub async fn fmeca_criticality_evidence(db: &impl ConnectionTrait, item_id: i64)
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT a.equipment_id, i.failure_mode_id FROM fmeca_items i \
+            "SELECT a.equipment_id, i.failure_mode_id, i.review_required FROM fmeca_items i \
              JOIN fmeca_analyses a ON a.id = i.analysis_id WHERE i.id = ?",
             [item_id.into()],
         ))
@@ -670,6 +695,14 @@ pub async fn fmeca_criticality_evidence(db: &impl ConnectionTrait, item_id: i64)
             entity: "FmecaItem".into(),
             id: item_id.to_string(),
         })?;
+    if row
+        .try_get::<i64>("", "review_required")
+        .map_err(|e| decode_err("review_required", e))?
+        != 0
+    {
+        // Rate the row in the FMECA first: its criticality would rest on ratings nobody chose.
+        return Err(AppError::ValidationFailed(vec!["FMECA_ITEM_REVIEW_REQUIRED".into()]));
+    }
     let equipment_id: i64 = row
         .try_get("", "equipment_id")
         .map_err(|e| decode_err("equipment_id", e))?;
@@ -740,8 +773,10 @@ pub struct FmecaCriticality {
     pub failure_rate_per_hour: f64,
     pub operating_hours: f64,
     pub criticality_number: f64,
-    /// Σ Cm of the items of the same analysis (item criticality Cr).
+    /// Σ Cm of the items of the same analysis (item criticality Cr), rows to review excluded.
     pub analysis_criticality: f64,
+    /// Rows of the analysis still to review, not counted in Cr.
+    pub analysis_rows_to_review: i64,
 }
 
 pub async fn compute_fmeca_criticality(
@@ -791,7 +826,9 @@ pub async fn compute_fmeca_criticality(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT i.row_version, (SELECT COALESCE(SUM(j.criticality_number), 0.0) FROM fmeca_items j \
-             WHERE j.analysis_id = i.analysis_id) AS cr FROM fmeca_items i WHERE i.id = ?",
+             WHERE j.analysis_id = i.analysis_id AND j.review_required = 0) AS cr, \
+             (SELECT COUNT(*) FROM fmeca_items k WHERE k.analysis_id = i.analysis_id AND k.review_required = 1) \
+             AS to_review FROM fmeca_items i WHERE i.id = ?",
             [input.item_id.into()],
         ))
         .await?
@@ -807,6 +844,7 @@ pub async fn compute_fmeca_criticality(
         operating_hours: input.operating_hours,
         criticality_number: cm,
         analysis_criticality: row.try_get("", "cr").map_err(|e| decode_err("cr", e))?,
+        analysis_rows_to_review: row.try_get("", "to_review").map_err(|e| decode_err("to_review", e))?,
     };
     txn.commit().await?;
     Ok(out)

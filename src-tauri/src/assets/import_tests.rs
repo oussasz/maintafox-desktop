@@ -10,8 +10,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::assets::governance::ConflictCategory;
     use crate::assets::identity::{self, CreateAssetPayload};
@@ -26,26 +25,7 @@ mod tests {
 
     /// In-memory SQLite with all migrations + seed data.
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Publish an org model and create an active root org node.
@@ -601,6 +581,7 @@ mod tests {
                 rams_utilization_factor: Some(1.0),
                 org_node_id,
                 commissioned_at: None,
+                commercial: None,
             },
             1,
         )
@@ -664,6 +645,7 @@ mod tests {
                 rams_utilization_factor: Some(1.0),
                 org_node_id,
                 commissioned_at: None,
+                commercial: None,
             },
             1,
         )
@@ -750,6 +732,39 @@ mod tests {
         assert_eq!(asset.asset_name, "Imported Pump A");
     }
 
+    #[tokio::test]
+    async fn v4_import_never_creates_a_retired_asset() {
+        let db = setup().await;
+        let org_node_id = setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
+        let csv = format!(
+            "asset_code,asset_name,class_code,criticality_code,status_code,org_node_id\n\
+             IMP-7001,Scrapped on arrival,PUMP,STANDARD,SCRAPPED,{org_node_id}\n"
+        )
+        .into_bytes();
+        let batch_id = stage_and_validate(&db, &csv, "retired.csv").await;
+        let policy = import::ApplyPolicy {
+            include_warnings: true,
+            external_system_code: None,
+        };
+        // Refused at validation or at apply: never written.
+        let created = import::apply_import_batch(&db, batch_id, &policy, Some(1))
+            .await
+            .map_or(0, |r| r.created);
+        assert_eq!(created, 0);
+        let present = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM equipment WHERE asset_id_code = 'IMP-7001'".to_string(),
+            ))
+            .await
+            .expect("query");
+        assert!(present.is_none(), "a retired asset is never imported");
+    }
+
     /// Find an equipment row's id by its asset_id_code.
     async fn find_equipment_id_by_code(db: &sea_orm::DatabaseConnection, code: &str) -> i64 {
         let row = db
@@ -789,6 +804,7 @@ mod tests {
                 rams_utilization_factor: Some(1.0),
                 org_node_id,
                 commissioned_at: None,
+                commercial: None,
             },
             1,
         )
@@ -1023,6 +1039,7 @@ mod tests {
                 rams_utilization_factor: Some(1.0),
                 org_node_id,
                 commissioned_at: None,
+                commercial: None,
             },
             1,
         )

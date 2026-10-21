@@ -11,6 +11,7 @@ function domain(
     name: "Test",
     governance_level: "tenant_managed",
     governance_category: "operational_dictionary",
+    audience: "company",
     is_extendable: true,
     validation_rules_json: null,
     created_at: "",
@@ -20,6 +21,19 @@ function domain(
 }
 
 describe("resolveReferenceValueColumns", () => {
+  it("shows the unit columns (symbol, base unit and factor) for MEASURE.UNITS only", () => {
+    const units = resolveReferenceValueColumns(
+      domain({ code: "MEASURE.UNITS", structure_type: "unit_set" }),
+    );
+    expect(units.showUnit).toBe(true);
+    // The base unit is edited in the unit columns, not as a generic parent.
+    expect(units.showParent).toBe(false);
+    expect(
+      resolveReferenceValueColumns(domain({ code: "EQUIPMENT.CLASS", structure_type: "flat" }))
+        .showUnit,
+    ).toBe(false);
+  });
+
   it("hides parent and shows schedule for ORG.SCHEDULE_CLASS", () => {
     const flags = resolveReferenceValueColumns(
       domain({ code: "ORG.SCHEDULE_CLASS", structure_type: "flat" }),
@@ -54,5 +68,26 @@ describe("resolveReferenceValueColumns", () => {
     );
     expect(flags.showParent).toBe(false);
     expect(flags.showSchedule).toBe(false);
+  });
+
+  it("shows the EN 13306 nature picker for request types only", () => {
+    const requestTypes = resolveReferenceValueColumns(
+      domain({ code: "DI.REQUEST_TYPE", structure_type: "flat" }),
+    );
+    expect(requestTypes.showNature).toBe(true);
+    expect(requestTypes.showParent).toBe(false);
+    const classes = resolveReferenceValueColumns(
+      domain({ code: "EQUIPMENT.CLASS", structure_type: "flat" }),
+    );
+    expect(classes.showNature).toBe(false);
+  });
+
+  it("hangs OT sub-types under a maintenance nature", () => {
+    const flags = resolveReferenceValueColumns(
+      domain({ code: "WORK.ORDER_SUBTYPES", structure_type: "flat" }),
+    );
+    expect(flags.showParent).toBe(true);
+    expect(flags.crossDomainParentCode).toBe("WORK.MAINTENANCE_NATURES");
+    expect(flags.showNature).toBe(false);
   });
 });

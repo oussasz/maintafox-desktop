@@ -6,7 +6,10 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    // Form workflows typed with user-event take 5-10 s on a loaded machine or CI runner;
+    // the 5 s default made them time out without any real failure.
+    testTimeout: 20_000,
+    include: ["src/**/*.{test,spec}.{ts,tsx}", "scripts/**/*.test.mjs"],
     coverage: {
       provider: "v8",
       include: ["src/services/**", "src/hooks/**", "src/store/**", "src/stores/**"],

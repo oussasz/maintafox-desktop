@@ -1,8 +1,9 @@
 //! Publish impact of a reference set (Phase 6.8): which records use a value that the candidate
 //! set removes or deactivates.
 //!
-//! Records keep pointing at the values of the set that was published when they were saved, and
-//! several modules still use the operational copy of a domain in `lookup_values` (same codes).
+//! Records point at the values of the published set (publishing a new version re-points them to
+//! the same codes, `publish::remap_usage_to_published_set`), and several modules still use the
+//! operational copy of a domain in `lookup_values` (same codes).
 //! The changed codes are therefore the codes of the published set that the candidate drops or
 //! deactivates (plus the candidate's own inactive codes), and their usage is counted through
 //! every foreign key of the schema that points to `reference_values` or `lookup_values` — found

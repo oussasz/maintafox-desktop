@@ -1,4 +1,8 @@
 {
+  "noSite": {
+    "badge": "To review: no site",
+    "hint": "Recorded without a site (before a site was required). Only users with a plant-wide role see this request and can act on it."
+  },
   "page": {
     "title": "Intervention Requests",
     "titleDetail": "Request detail",
@@ -11,6 +15,14 @@
     "filterSettings": "Filter settings"
   },
   "list": {
+    "hidden": {
+      "outsideScope_one": "{{count}} request is not shown: outside your sites.",
+      "outsideScope_other": "{{count}} requests are not shown: outside your sites.",
+      "withoutSite_one": "{{count}} request is not shown: it has no site.",
+      "withoutSite_other": "{{count}} requests are not shown: they have no site.",
+      "allRequests": "These counts cover all requests, whatever the filters or search.",
+      "askPlantWide": "Ask a user with a plant-wide role to see them."
+    },
     "columns": {
       "number": "No.",
       "subject": "Subject",
@@ -20,9 +32,16 @@
       "reportedBy": "Reported by",
       "reportedAt": "Reported on",
       "assignedTo": "Assigned to",
-      "sla": "SLA"
+      "sla": "SLA",
+      "nextStep": "Next step"
     },
     "filters": {
+      "waiting": "Waiting",
+      "waitingValue_one": "Being handled, submitted {{count}} day ago or more",
+      "waitingValue_other": "Being handled, submitted {{count}} days ago or more",
+      "scope": "Scope",
+      "scopeOpen": "Being handled (not closed or converted)",
+      "equipment": "Equipment",
       "status": "Status",
       "reviewQueue": "Validation queue",
       "triageInbox": "DIs to triage / entry queue",
@@ -42,6 +61,7 @@
       "history": "History"
     },
     "fields": {
+      "sourceInspectionRound": "Inspection round",
       "number": "Number",
       "subject": "Subject",
       "description": "Description",
@@ -68,14 +88,21 @@
       "slaResolutionElapsed": "SLA resolution elapsed",
       "slaResponseRemaining": "SLA response remaining",
       "slaResolutionRemaining": "SLA resolution remaining",
-      "hoursValue": "{{hours}} h"
+      "hoursValue": "{{hours}} h",
+      "reviewer": "Reviewer",
+      "slaPaused": "SLA clock paused"
     },
     "tabs": {
       "attachments": "Attachments",
       "stateLog": "State history",
       "review": "Review",
       "activity": "Activity log"
-    }
+    },
+    "nextStep": "Next step",
+    "reviewerQuestion": "Question from maintenance — your answer is needed",
+    "requesterAnswer": "Requester's answer ({{name}}, {{date}})",
+    "possibleDuplicates_one": "{{count}} other open request on this asset with the same symptom",
+    "possibleDuplicates_other": "{{count}} other open requests on this asset with the same symptom"
   },
   "form": {
     "section": {
@@ -99,7 +126,10 @@
     "equipmentSearch": "Search equipment...",
     "priority": {
       "label": "Priority",
-      "placeholder": "Select a priority"
+      "placeholder": "Select a priority",
+      "targetHint": "{{level}}: taken in charge within {{response}} h, completed within {{completion}} h.",
+      "noTarget": "No target time is set for this level.",
+      "chooseHint": "Each level shows the time maintenance commits to take the request in charge and complete it."
     },
     "observedAt": {
       "label": "Observation date"
@@ -181,7 +211,19 @@
     },
     "cancel": "Cancel",
     "submit": "Create request",
-    "update": "Save changes"
+    "update": "Save changes",
+    "location": {
+      "label": "Location:",
+      "none": "no location recorded on this equipment",
+      "parent": "part of {{parent}}"
+    },
+    "duplicates": {
+      "sameSymptom_one": "{{count}} open request already reports this symptom on this equipment",
+      "sameSymptom_other": "{{count}} open requests already report this symptom on this equipment",
+      "sameAsset_one": "{{count}} request is already open on this equipment",
+      "sameAsset_other": "{{count}} requests are already open on this equipment",
+      "hint": "Check that your problem is not already reported before sending a new request."
+    }
   },
   "status": {
     "new": "New",
@@ -197,12 +239,6 @@
     "closed": "Closed",
     "cancelled": "Cancelled"
   },
-  "priority": {
-    "low": "Low",
-    "medium": "Medium",
-    "high": "High",
-    "critical": "Critical"
-  },
   "action": {
     "create": "New Request",
     "approve": "Approve",
@@ -216,7 +252,8 @@
     "closeRequest": "Close request",
     "cancelOwn": "Cancel my request",
     "defer": "Defer",
-    "archive": "Archive"
+    "archive": "Archive",
+    "reactivate": "Reactivate"
   },
   "empty": {
     "list": "No intervention requests found.",
@@ -245,6 +282,7 @@
   "sla": {
     "title": "SLA Rules",
     "description": "Configure response and resolution targets for each urgency level.",
+    "scaleHint": "The target times of a level for every request are set in the urgency scale (Reference data). The rules below are the exceptions by origin or asset criticality.",
     "loading": "Loading rules…",
     "empty": "No SLA rules configured.",
     "columns": {
@@ -263,8 +301,11 @@
       "at_risk": "At Risk",
       "breached": "Breached",
       "completed": "Completed",
-      "none": "—"
-    }
+      "none": "—",
+      "paused": "Paused"
+    },
+    "pausedRequester": "Paused — waiting for the requester",
+    "pausedDeferred": "Paused — deferred"
   },
   "reviewTimeline": {
     "empty": "No review events recorded.",
@@ -288,7 +329,8 @@
       "converted": "Converted",
       "closed_non_executable": "Closed as non-executable",
       "closed": "Closed",
-      "archived": "Archived"
+      "archived": "Archived",
+      "resubmitted": "Answered and resubmitted"
     }
   },
   "stateLog": {
@@ -323,6 +365,7 @@
     "unknownAction": "Event: {{action}}"
   },
   "auditTimeline": {
+    "title": "Request history",
     "loadError": "Could not load activity log.",
     "empty": "No activity events for this request.",
     "rawAction": "Event code",
@@ -345,7 +388,11 @@
       "re_submitted": "Resubmitted",
       "closed_non_executable": "Closed as non-executable",
       "archived": "Archived",
-      "blocked": "Blocked"
+      "blocked": "Blocked",
+      "resubmitted": "Answered and resubmitted by the requester"
+    },
+    "summary": {
+      "resubmitted": "Answered by the requester and sent back to review."
     }
   },
   "attachments": {
@@ -360,6 +407,7 @@
     "deleteTitle": "Delete attachment"
   },
   "kanban": {
+    "statusFromDetailHint": "Click a card to open the request: review steps are made from its detail, where each step asks what it needs (validated urgency, return or deferral reason, approval).",
     "colSubmitted": "Submitted / intake",
     "colPendingReview": "In review",
     "colAwaitingApproval": "Awaiting approval",
@@ -370,6 +418,17 @@
     "colClosed": "Closed"
   },
   "woConversion": {
+    "permit": {
+      "required": "Permit required for {{code}}",
+      "byRule": "The rule {{rule}} calls for a {{permitType}} permit: the work order will not start without an active permit.",
+      "byRuleNoType": "The rule {{rule}} calls for a permit: the work order will not start without an active permit.",
+      "bySafetyFlag": "The request was flagged as a safety risk: the work order will not start without an active permit.",
+      "noMatch": "No permit requirement rule applies to {{code}}.",
+      "noneConfigured": "No permit requirement rule is configured",
+      "noneConfiguredHint": "Only a request's safety flag can call for a permit. Rules are set in Reference data › Permit requirement rules.",
+      "unreadableTitle": "Unreadable permit rules",
+      "unreadable": "These rules could not be read and were not applied to {{code}}: {{codes}}. Check whether {{code}} needs a permit, then fix the rules in Reference data › Permit requirement rules."
+    },
     "checkAsset": "Asset confirmed",
     "checkClassif": "Classification set",
     "checkUrgency": "Urgency validated",
@@ -457,12 +516,15 @@
     "diScreen": "Triage incoming intervention requests (submitted → review queue)"
   },
   "review": {
-    "panelTitle": "Pending DIs",
-    "seeAllInList": "View full list ({{more}} more)",
-    "modified": "Modified",
     "view": "View details",
     "returnAction": "Return",
     "approvalTitle": "Approve & Convert to Work Order",
+    "confirmApproveTitle": "Approve this request?",
+    "confirmApproveDescription": "{{code}} will be approved and ready to convert into a work order. The approval is recorded in your name in the audit trail.",
+    "confirmApproveAction": "Approve request",
+    "confirmConvertTitle": "Convert into a work order?",
+    "confirmConvertDescription": "A work order will be created from {{code}}, carrying its validated urgency, its safety flag (permit / LOTO required) and its symptom. The conversion is recorded in your name in the audit trail.",
+    "confirmConvertAction": "Create the work order",
     "woCodeAssignedOnConvert": "Work order code will be assigned on convert",
     "approvalNote": "Approval note",
     "approvalNotePlaceholder": "Optional note for the approval record…",
@@ -485,18 +547,16 @@
     "clarificationRequired": "A clarification note is required",
     "returnInfo": "The request will be returned to the requester.",
     "screenAction": "Validate screening",
-    "retryConversion": "Retry conversion"
+    "retryConversion": "Retry conversion",
+    "conversionMissingWoId": "The conversion succeeded but the work order could not be found. Open the work order list.",
+    "returnReason": "Reason",
+    "returnReasonPlaceholder": "Choose why information is needed",
+    "returnReasonRequired": "Choose a reason."
   },
   "dashboard": {
-    "total": "Total",
-    "pending": "Pending",
-    "inProgress": "In progress",
+    "pending": "Waiting for a decision",
     "slaCompliance": "SLA compliance",
-    "slaBreached": "SLA breached",
-    "slaMet": "SLA met",
-    "closedThisMonth": "Closed (month)",
-    "overdue": "Overdue",
-    "safetyIssues": "Safety issues",
+    "overdue": "SLA breached",
     "avgAge": "Avg. age",
     "statusDistribution": "Status distribution",
     "priorityDistribution": "Priority distribution",
@@ -505,8 +565,39 @@
     "created": "Created",
     "closed": "Closed",
     "topEquipment": "Top 10 Equipment",
-    "overdueDis": "Overdue DIs",
-    "daysOverdue": "Days overdue"
+    "overdueDis": "Requests past their SLA target",
+    "loading": "Loading the indicators…",
+    "title": "Request indicators",
+    "period": "Period",
+    "periodAll": "Since the first request",
+    "periodMonths": "Last {{months}}",
+    "now": "Now",
+    "openBacklog": "Open requests",
+    "slaAtRisk": "SLA at risk",
+    "overdueHint": "Open, past a target",
+    "slaComplianceHint": "{{met}} met · {{breached}} breached",
+    "conversionRate": "Converted to work order",
+    "conversionHint": "{{converted}} of {{closed}} closed requests",
+    "avgResponse": "Avg. time to screen",
+    "avgResponseHint": "Submission → screening",
+    "avgConversion": "Avg. time to work order",
+    "avgConversionHint": "Submission → work order",
+    "hoursUnit": "h",
+    "backlogByStatus": "Open backlog by status and age",
+    "noBacklog": "No open request.",
+    "count": "Requests",
+    "oldest": "Oldest",
+    "daysValue": "{{days}} d",
+    "slaOpen": "Open requests against their SLA",
+    "noTarget": "No target",
+    "closureReasons": "Closure reasons",
+    "noClosed": "No request closed over the period.",
+    "noDisposition": "Not recorded",
+    "noOverdue": "No open request is past its SLA target.",
+    "overdueDays": "{{days}} d late",
+    "overdueHours": "{{hours}} h late",
+    "safetyIssuesLine_one": "{{count}} request of the period flagged a safety concern.",
+    "safetyIssuesLine_other": "{{count}} requests of the period flagged a safety concern."
   },
   "calendar": {
     "today": "Today",
@@ -531,7 +622,8 @@
     "approve": "Approve",
     "reject": "Reject",
     "closeRequest": "Close request",
-    "return": "Return for clarification"
+    "return": "Return for clarification",
+    "actionsFor": "Actions for {{code}}"
   },
   "close": {
     "title": "Close request",
@@ -559,5 +651,112 @@
     "information_only": "Information only",
     "converted_to_wo": "Converted to work order",
     "other": "Other"
+  },
+  "screening": {
+    "title": "Screen request {{code}}",
+    "description": "Confirm the urgency and classification maintenance retains. The note is kept on the record.",
+    "validatedUrgency": "Validated urgency",
+    "urgencyChanged": "Changed from the reported urgency ({{reported}}).",
+    "urgencyAsReported": "Same as the urgency reported by the requester.",
+    "classification": "Classification",
+    "classificationLoading": "Loading classification…",
+    "classificationPlaceholder": "Choose a classification",
+    "classificationNone": "Not classified yet",
+    "classificationUnavailable": "The classification list could not be loaded; the current classification is kept.",
+    "classificationHelp": "Failure symptom catalogue (DI reference data). Required before conversion to a work order.",
+    "note": "Reviewer note",
+    "notePlaceholder": "Observations, what was checked, instructions for the planner…",
+    "cancel": "Cancel",
+    "submit": "Confirm screening"
+  },
+  "deferral": {
+    "title": "Defer request {{code}}",
+    "description": "The request leaves the active queue until the chosen date. The reason is kept in the history.",
+    "until": "Defer until",
+    "dateRequired": "Choose a deferral date.",
+    "dateFuture": "The date must be after today.",
+    "reason": "Reason",
+    "reasonPlaceholder": "Choose a reason",
+    "reasonRequired": "Choose a reason.",
+    "notes": "Comment",
+    "notesPlaceholder": "Details useful when the request is picked up again…",
+    "notesRequiredForOther": "Explain the reason in the comment.",
+    "cancel": "Cancel",
+    "submit": "Defer",
+    "deferredUntil": "Deferred until"
+  },
+  "confirm": {
+    "archiveTitle": "Archive request {{code}}?",
+    "archiveDescription": "The closed request leaves the active lists. It stays available in the archive.",
+    "cancelOwnTitle": "Cancel request {{code}}?",
+    "cancelOwnDescription": "Your request will be closed as cancelled by the requester. This cannot be undone.",
+    "reactivateTitle": "Reactivate request {{code}}?",
+    "reactivateDescription": "The request returns to the step it was deferred from."
+  },
+  "queues": {
+    "label": "Work queues",
+    "all": "All",
+    "mine": "My requests",
+    "to_screen": "To screen",
+    "to_review": "To review",
+    "awaiting_info": "Waiting for information",
+    "to_approve": "To approve",
+    "approved_not_converted": "Approved, no work order",
+    "deferred_due": "Deferral due",
+    "sla_at_risk": "SLA at risk",
+    "hint": {
+      "all": "Every request, newest first",
+      "mine": "The requests you raised, with their status and next step",
+      "to_screen": "Submitted requests waiting to be admitted for review",
+      "to_review": "Requests in review waiting for the screening decision",
+      "awaiting_info": "Requests sent back to their requester for information",
+      "to_approve": "Screened requests waiting for approval",
+      "approved_not_converted": "Approved requests that have no work order yet",
+      "deferred_due": "Deferred requests whose deferral date has come",
+      "sla_at_risk": "Open requests at risk of missing, or past, their SLA target"
+    },
+    "empty": {
+      "all": "No intervention requests found.",
+      "mine": "You have not raised any request yet.",
+      "to_screen": "No request waiting to be screened.",
+      "to_review": "No request waiting for review.",
+      "awaiting_info": "No request waiting for information.",
+      "to_approve": "No request waiting for approval.",
+      "approved_not_converted": "Every approved request has its work order.",
+      "deferred_due": "No deferral has come due.",
+      "sla_at_risk": "No open request is at risk of missing its SLA."
+    },
+    "emptyHint": "The queue fills as requests reach this step."
+  },
+  "bulk": {
+    "selectAll": "Select every request of the page",
+    "selectOne": "Select {{code}}",
+    "selected_one": "{{count}} request selected",
+    "selected_other": "{{count}} requests selected",
+    "triage_one": "Admit {{count}} request to review",
+    "triage_other": "Admit {{count}} requests to review",
+    "outsideYourSites": "Some selected requests are outside your sites: you cannot admit them to review.",
+    "clear": "Clear selection",
+    "triageResult": "{{done}} of {{total}} admitted to review; {{failed}} could not be (changed meanwhile or no longer submitted)."
+  },
+  "nextStep": {
+    "screening": "Waiting to be screened by maintenance",
+    "review": "Being reviewed by maintenance",
+    "answer": "Information requested from the requester",
+    "approval": "Waiting for approval",
+    "workOrder": "Approved — a work order is to be created",
+    "deferred": "Deferred until {{date}}",
+    "converted": "Handled by work order {{wo}}",
+    "closed": "Closed — {{disposition}}"
+  },
+  "resubmit": {
+    "title": "Answer and resubmit {{code}}",
+    "description": "Your answer is kept on the request's history and the request goes back to the review queue.",
+    "question": "Question from maintenance",
+    "answer": "Your answer",
+    "answerPlaceholder": "Give the information asked for (location, what you saw, when…)",
+    "answerRequired": "Write your answer.",
+    "editHint": "To correct the request itself (subject, symptom, urgency, photos), use Edit first.",
+    "submit": "Send back to review"
   }
 }

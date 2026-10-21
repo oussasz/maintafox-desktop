@@ -26,6 +26,9 @@ export function toErrorMessage(err: unknown): string {
   }
 }
 
+/** A validation message that is only an upper-case rule code, e.g. `DECISION_STALE`. */
+const BARE_CODE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
+
 /** Structured validation issues from AppError IPC `details` when present. */
 export function extractIpcValidationDetails(err: unknown): OrgIssueLike[] {
   if (typeof err !== "object" || err === null || !("details" in err)) {
@@ -55,7 +58,8 @@ export function extractIpcValidationDetails(err: unknown): OrgIssueLike[] {
           )
         : {};
     issues.push({
-      code: typeof row.code === "string" ? row.code : "",
+      // A refusal sent as a bare rule code ("STUDY_STALE") is that code: it gets translated.
+      code: typeof row.code === "string" ? row.code : BARE_CODE.test(message) ? message : "",
       message: message || (typeof row.code === "string" ? row.code : "Validation failed"),
       params,
     });

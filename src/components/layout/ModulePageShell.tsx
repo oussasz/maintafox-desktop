@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { Badge } from "@/components/ui/badge";
 import { mfLayout } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 
@@ -9,6 +10,8 @@ export interface ModulePageShellProps {
   headerLeft?: ReactNode;
   icon?: LucideIcon;
   title?: ReactNode;
+  /** Total number of records behind the page (rendered as a count badge next to the title). */
+  count?: number | null;
   description?: ReactNode;
   actions?: ReactNode;
   /** Second row under header (search/filters) — uses `mfLayout.moduleFilterBar` */
@@ -31,6 +34,7 @@ export function ModulePageShell({
   headerLeft,
   icon: Icon,
   title,
+  count,
   description,
   actions,
   filterBar,
@@ -44,7 +48,14 @@ export function ModulePageShell({
       <div className={cn(mfLayout.moduleTitleRow, "items-start sm:items-center")}>
         {Icon ? <Icon className={mfLayout.moduleHeaderIcon} /> : null}
         <div className="min-w-0">
-          <h1 className={mfLayout.moduleTitle}>{title}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className={mfLayout.moduleTitle}>{title}</h1>
+            {count != null ? (
+              <Badge variant="secondary" className={mfLayout.moduleCount}>
+                {count}
+              </Badge>
+            ) : null}
+          </div>
           {description ? <p className="mt-0.5 text-sm text-text-muted">{description}</p> : null}
         </div>
       </div>

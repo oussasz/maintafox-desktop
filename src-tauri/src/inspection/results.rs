@@ -26,7 +26,7 @@ const NOT_PERFORMED_STATUSES: &[&str] = &["not_accessible", "not_done"];
 /// Round statuses in which results may still be recorded.
 pub(crate) const ROUND_OPEN_STATUSES: &[&str] = &["scheduled", "released", "in_progress"];
 
-const ANOMALY_STATUSES: &[&str] = &["open", "triaged", "deferred", "resolved", "cancelled"];
+pub(crate) const ANOMALY_STATUSES: &[&str] = &["open", "triaged", "deferred", "resolved", "cancelled"];
 
 pub(crate) const ANOMALY_THRESHOLD_BREACH: &str = "threshold_breach";
 pub(crate) const ANOMALY_MISSING_PHOTO: &str = "missing_mandatory_photo";
@@ -136,6 +136,24 @@ pub(crate) fn eval_numeric_status(v: f64, cp: &InspectionCheckpoint) -> &'static
     } else {
         "fail"
     }
+}
+
+/// A measurement outside its limits is always explained by the technician: the comment says
+/// what was seen and travels with the follow-up request.
+pub(crate) fn reading_needs_comment(cp: &InspectionCheckpoint, status: &str) -> bool {
+    cp.check_type == "numeric" && (status == "warning" || status == "fail")
+}
+
+/// The limit a reading crossed: `("above", max)` or `("below", min)`. Beyond the warning band
+/// the warning limit is reported, otherwise the normal limit. `None` inside the limits.
+pub(crate) fn violated_limit(v: f64, cp: &InspectionCheckpoint) -> Option<(&'static str, f64)> {
+    let beyond = |lo: Option<f64>, hi: Option<f64>| -> Option<(&'static str, f64)> {
+        if let Some(h) = hi.filter(|h| v > *h) {
+            return Some(("above", h));
+        }
+        lo.filter(|l| v < *l).map(|l| ("below", l))
+    };
+    beyond(cp.warning_min, cp.warning_max).or_else(|| beyond(cp.normal_min, cp.normal_max))
 }
 
 fn map_result(row: &sea_orm::QueryResult) -> AppResult<InspectionResult> {
@@ -440,6 +458,12 @@ pub async fn record_inspection_result(
                 "comment or evidence required when requires_comment_on_exception and status is not pass.".into(),
             ]));
         }
+    }
+    if reading_needs_comment(&cp, &status) && !comment_given {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_INSP_READING_COMMENT_REQUIRED: {}: a reading outside its limits needs a comment.",
+            cp.checkpoint_code
+        )]));
     }
 
     let recorded_at = Utc::now().to_rfc3339();

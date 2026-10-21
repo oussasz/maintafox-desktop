@@ -1,14 +1,35 @@
-import { AlertCircle, RefreshCw } from "lucide-react";
+/**
+ * Activity feed (Settings › Activity & audit): what happened in the modules, newest first.
+ *
+ * FR/EN labels for modules, classes and severities; a summary as readable lines (never raw
+ * JSON); filters with plain names; load errors with retry; one page at a time with the
+ * pagination stating its position.
+ */
+import { Save } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
+import { useCanReadList } from "@/lib/list-access";
 import {
   type ActivityEventSummary,
   type ActivityFilter,
@@ -18,24 +39,49 @@ import {
   listSavedActivityFilters,
   saveActivityFilter,
 } from "@/services/activity-service";
-import { toErrorMessage } from "@/utils/errors";
+import { listOrgTree } from "@/services/org-node-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import { P } from "@shared/rbac/permissions.generated";
 
+import {
+  ACTIVITY_CLASS_OPTIONS,
+  ACTIVITY_MODULE_OPTIONS,
+  ACTIVITY_SEVERITY_OPTIONS,
+  eventClassLabel,
+  eventLabel,
+  humanizeCode,
+  moduleLabel,
+  payloadLines,
+  severityLabel,
+  severityTone,
+} from "./activity-labels";
+
 const PAGE_SIZE = 40;
+const ANY = "__any__";
+
+const TONE_TO_TIMELINE: Record<string, TimelineTone> = {
+  danger: "danger",
+  warning: "warning",
+  attention: "warning",
+  info: "info",
+  success: "success",
+};
 
 interface ActivityFeedPanelProps {
   className?: string;
 }
 
 export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
+  const { t } = useTranslation("activity");
   const { t: tShell } = useTranslation("shell");
   const { can, isLoading: permissionsLoading } = usePermissions();
+  const { formatDateTime } = useFormatters();
+
   const [items, setItems] = useState<ActivityEventSummary[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const [expanded, setExpanded] = useState<Record<number, string>>({});
+  const [expanded, setExpanded] = useState<Record<number, ActivityChainLine[]>>({});
   const [chainLoading, setChainLoading] = useState<Record<number, boolean>>({});
   const [savedViews, setSavedViews] = useState<SavedActivityFilter[]>([]);
   const [saveViewName, setSaveViewName] = useState("");
@@ -45,17 +91,45 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
   const [sourceModule, setSourceModule] = useState<string>("");
   const [severity, setSeverity] = useState<string>("");
   const [entityScopeId, setEntityScopeId] = useState<string>("");
+  // Organisation units to filter on, picked from the organisation tree (the filter matches one unit).
+  // Without the organisation view right the tree is not requested and the field says why.
+  const canReadOrg = useCanReadList("orgNodes");
+  const [orgNodes, setOrgNodes] = useState<{ id: string; label: string }[]>([]);
+  const [orgNodesError, setOrgNodesError] = useState<unknown>(null);
+  const [orgNodesReload, setOrgNodesReload] = useState(0);
+
+  useEffect(() => {
+    if (!canReadOrg) return;
+    let cancelled = false;
+    setOrgNodesError(null);
+    listOrgTree()
+      .then((rows) => {
+        if (cancelled) return;
+        setOrgNodes(
+          rows.map((r) => ({
+            id: String(r.node.id),
+            label: `${"  ".repeat(Math.max(0, r.node.depth))}${r.node.code} — ${r.node.name}`,
+          })),
+        );
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setOrgNodesError(err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canReadOrg, orgNodesReload]);
   const [correlationId, setCorrelationId] = useState<string>("");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
-  const [offset, setOffset] = useState(0);
   const [appliedFilter, setAppliedFilter] = useState<ActivityFilter>({
     limit: PAGE_SIZE,
     offset: 0,
   });
+  const offset = appliedFilter.offset ?? 0;
 
   const currentFilter = useMemo<ActivityFilter>(() => {
-    const out: ActivityFilter = { limit: PAGE_SIZE, offset };
+    const out: ActivityFilter = { limit: PAGE_SIZE, offset: 0 };
     if (eventClass) out.event_class = eventClass;
     if (sourceModule) out.source_module = sourceModule;
     if (severity) out.severity = severity;
@@ -67,23 +141,23 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
       if (!Number.isNaN(parsed)) out.entity_scope_id = parsed;
     }
     return out;
-  }, [correlationId, dateFrom, dateTo, entityScopeId, eventClass, offset, severity, sourceModule]);
+  }, [correlationId, dateFrom, dateTo, entityScopeId, eventClass, severity, sourceModule]);
 
   const loadSavedViews = useCallback(async () => {
     try {
       setSavedViews(await listSavedActivityFilters());
     } catch {
-      // non-fatal for feed rendering
+      // Saved views are a convenience; the feed itself still loads (the IPC toast reports it).
     }
   }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     try {
       setItems(await listActivityEvents(appliedFilter));
     } catch (err) {
-      setError(toErrorMessage(err));
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -92,13 +166,6 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
   useEffect(() => {
     void loadData();
   }, [loadData]);
-
-  useEffect(() => {
-    setAppliedFilter({
-      limit: PAGE_SIZE,
-      offset: 0,
-    });
-  }, []);
 
   useEffect(() => {
     void loadSavedViews();
@@ -125,70 +192,155 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
       setChainLoading((prev) => ({ ...prev, [row.id]: true }));
       try {
         const chain = await getEventChain(row.id, "activity_events");
-        const text = chain.events
-          .map((e) => {
-            const code = e.event_code ?? e.action_code ?? "unknown";
-            return `- ${e.happened_at} [${e.link_type ?? "related"}] ${code}`;
-          })
-          .join("\n");
-        setExpanded((prev) => ({ ...prev, [row.id]: text }));
+        setExpanded((prev) => ({
+          ...prev,
+          [row.id]: chain.events.map((e) => ({
+            key: `${e.table}-${e.event_id}`,
+            at: e.happened_at,
+            module: e.source_module,
+            code: e.event_code ?? e.action_code ?? null,
+            link: e.link_type,
+          })),
+        }));
       } catch (err) {
-        setError(toErrorMessage(err));
+        pushAppToast({
+          title: t("feed.chainFailed"),
+          description: describeAppError(err).title,
+          variant: "destructive",
+        });
       } finally {
         setChainLoading((prev) => ({ ...prev, [row.id]: false }));
       }
     },
-    [expanded],
+    [expanded, t],
   );
 
   const timelineEntries = useMemo((): TimelineEntry[] => {
-    const severityTone: Record<string, TimelineTone> = {
-      critical: "danger",
-      error: "danger",
-      warning: "warning",
-      info: "info",
-    };
-    return items.map((row) => ({
-      id: String(row.id),
-      title: row.event_code,
-      timestamp: row.happened_at,
-      actor: row.actor_username ?? `user:${row.actor_id ?? "system"}`,
-      badges: [
-        {
-          label: row.severity,
-          tone: severityTone[row.severity] ?? "muted",
-        },
-        { label: row.source_module, tone: "muted" },
-      ],
-      description: `${row.summary_json ? JSON.stringify(row.summary_json) : "No summary payload"}${
-        row.from_other_device ? ` — ${tShell("sync.history.fromOtherDevice")}` : ""
-      }`,
-      ...(row.source_record_id ? { link: { label: "Open source record", disabled: true } } : {}),
-      details: expanded[row.id] ? (
-        <pre className="whitespace-pre-wrap rounded bg-muted p-2 text-xs">{expanded[row.id]}</pre>
-      ) : (
-        <span className="sr-only">Expand to load correlation chain</span>
-      ),
-      detailsExpanded: Boolean(expanded[row.id]),
-      onDetailsToggle: () => void handleExpand(row),
-      detailsLabel: chainLoading[row.id] ? "Loading chain..." : "Correlation chain",
-    }));
-  }, [items, expanded, chainLoading, handleExpand, tShell]);
+    return items.map((row) => {
+      const lines = payloadLines(row.summary_json);
+      return {
+        id: String(row.id),
+        title: (
+          <span>
+            {moduleLabel(t, row.source_module)}
+            <span className="text-text-muted"> — {eventLabel(t, row.event_code)}</span>
+          </span>
+        ),
+        timestamp: row.happened_at,
+        actor: row.actor_username ?? t("feed.system"),
+        badges: [
+          {
+            label: severityLabel(t, row.severity),
+            tone: TONE_TO_TIMELINE[severityTone(row.severity)] ?? "muted",
+          },
+          { label: eventClassLabel(t, row.event_class), tone: "muted" },
+        ],
+        description: (
+          <>
+            {lines.length > 0 ? (
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+                {lines.map((l, i) => (
+                  <div key={`${l.key}-${i}`} className="contents">
+                    <dt className="text-text-muted">{l.key}</dt>
+                    <dd className="break-words text-text-secondary">{l.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : (
+              <span className="text-xs text-text-muted">{t("feed.noSummary")}</span>
+            )}
+            {row.from_other_device ? (
+              <p className="mt-1 text-xs text-text-muted">
+                {tShell("sync.history.fromOtherDevice")}
+              </p>
+            ) : null}
+          </>
+        ),
+        details: expanded[row.id] ? (
+          <ul className="space-y-1 text-xs">
+            {expanded[row.id]?.map((line) => (
+              <li key={line.key} className="flex flex-wrap gap-x-2">
+                <span className="text-text-muted">
+                  {line.link
+                    ? t(`feed.link.${line.link}`, { defaultValue: humanizeCode(line.link) })
+                    : t("feed.link.related")}
+                </span>
+                <span>{moduleLabel(t, line.module)}</span>
+                {line.code ? (
+                  <span className="text-text-secondary">{eventLabel(t, line.code)}</span>
+                ) : null}
+                <time className="text-text-muted" dateTime={line.at}>
+                  {formatDateTime(line.at)}
+                </time>
+              </li>
+            ))}
+          </ul>
+        ) : undefined,
+        detailsExpanded: Boolean(expanded[row.id]),
+        onDetailsToggle: () => void handleExpand(row),
+        detailsLabel: chainLoading[row.id] ? t("feed.chainLoading") : t("feed.chain"),
+      };
+    });
+  }, [items, expanded, chainLoading, handleExpand, t, tShell, formatDateTime]);
 
   const applyFilters = useCallback(() => {
-    setOffset(0);
-    setAppliedFilter({
-      ...currentFilter,
-      offset: 0,
-      limit: PAGE_SIZE,
-    });
+    setAppliedFilter({ ...currentFilter, offset: 0, limit: PAGE_SIZE });
   }, [currentFilter]);
+
+  const resetFilters = () => {
+    setEventClass("");
+    setSourceModule("");
+    setSeverity("");
+    setEntityScopeId("");
+    setCorrelationId("");
+    setDateFrom("");
+    setDateTo("");
+    setSelectedSavedViewId("");
+    setAppliedFilter({ limit: PAGE_SIZE, offset: 0 });
+  };
+
+  const applySavedView = (id: string) => {
+    setSelectedSavedViewId(id);
+    const selected = savedViews.find((s) => String(s.id) === id);
+    if (!selected || typeof selected.filter_json !== "object" || selected.filter_json === null) {
+      return;
+    }
+    const raw = selected.filter_json as Record<string, unknown>;
+    const text = (k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : "");
+    setEventClass(text("event_class"));
+    setSourceModule(text("source_module"));
+    setSeverity(text("severity"));
+    setCorrelationId(text("correlation_id"));
+    setEntityScopeId(
+      typeof raw["entity_scope_id"] === "number" ? String(raw["entity_scope_id"]) : "",
+    );
+    setDateFrom(text("date_from").slice(0, 10));
+    setDateTo(text("date_to").slice(0, 10));
+  };
+
+  const saveView = async () => {
+    try {
+      await saveActivityFilter({
+        view_name: saveViewName.trim(),
+        filter_json: currentFilter,
+        is_default: false,
+      });
+      setSaveViewName("");
+      await loadSavedViews();
+      pushAppToast({ title: t("feed.viewSaved"), variant: "success" });
+    } catch {
+      // The IPC toast reports the failure.
+    }
+  };
+
+  const pageStart = offset + 1;
+  const pageEnd = offset + items.length;
 
   if (permissionsLoading) {
     return (
       <Card className={className}>
-        <CardContent className="pt-6 text-sm text-muted-foreground">
-          Loading permissions…
+        <CardContent className="pt-6">
+          <LoadingState />
         </CardContent>
       </Card>
     );
@@ -198,241 +350,261 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
     return (
       <Card className={className}>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Activity Feed</CardTitle>
+          <CardTitle className="text-base">{t("tabs.activity")}</CardTitle>
         </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          You do not have permission to view activity logs.
-        </CardContent>
+        <CardContent className="text-sm text-text-muted">{t("feed.noPermission")}</CardContent>
       </Card>
     );
   }
 
+  const selectFilter = (
+    id: string,
+    label: string,
+    value: string,
+    onChange: (v: string) => void,
+    options: readonly string[],
+    optionLabel: (code: string) => string,
+  ) => (
+    <div className="space-y-1">
+      <Label htmlFor={id} className="text-xs text-text-muted">
+        {label}
+      </Label>
+      <Select value={value || ANY} onValueChange={(v) => onChange(v === ANY ? "" : v)}>
+        <SelectTrigger id={id} aria-label={label} className="h-10">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ANY}>{t("filters.any")}</SelectItem>
+          {options.map((o) => (
+            <SelectItem key={o} value={o}>
+              {optionLabel(o)}
+            </SelectItem>
+          ))}
+          {value && !options.includes(value) ? (
+            <SelectItem value={value}>{optionLabel(value)}</SelectItem>
+          ) : null}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
   return (
     <Card className={className}>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">Activity Feed</CardTitle>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+        <CardTitle className="text-base">{t("tabs.activity")}</CardTitle>
+        <RefreshButton onRefresh={() => void loadData()} loading={loading} />
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-          <Input
-            id="activity-filter-event-class"
-            aria-label="Event class filter"
-            placeholder="event_class"
-            value={eventClass}
-            onChange={(e) => setEventClass(e.target.value)}
-          />
-          <Input
-            id="activity-filter-source-module"
-            aria-label="Source module filter"
-            placeholder="source_module"
-            value={sourceModule}
-            onChange={(e) => setSourceModule(e.target.value)}
-          />
-          <Input
-            id="activity-filter-severity"
-            aria-label="Severity filter"
-            placeholder="severity"
-            value={severity}
-            onChange={(e) => setSeverity(e.target.value)}
-          />
-          <Input
-            id="activity-filter-entity-scope-id"
-            aria-label="Entity scope ID filter"
-            placeholder="entity_scope_id"
-            value={entityScopeId}
-            onChange={(e) => setEntityScopeId(e.target.value)}
-          />
-          <Input
-            id="activity-filter-correlation-id"
-            aria-label="Correlation ID filter"
-            placeholder="correlation_id"
-            value={correlationId}
-            onChange={(e) => setCorrelationId(e.target.value)}
-          />
-          <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          {selectFilter(
+            "activity-filter-module",
+            t("filters.module"),
+            sourceModule,
+            setSourceModule,
+            ACTIVITY_MODULE_OPTIONS,
+            (c) => moduleLabel(t, c),
+          )}
+          {selectFilter(
+            "activity-filter-severity",
+            t("filters.severity"),
+            severity,
+            setSeverity,
+            ACTIVITY_SEVERITY_OPTIONS,
+            (c) => severityLabel(t, c),
+          )}
+          {selectFilter(
+            "activity-filter-class",
+            t("filters.eventClass"),
+            eventClass,
+            setEventClass,
+            ACTIVITY_CLASS_OPTIONS,
+            (c) => eventClassLabel(t, c),
+          )}
+          <div className="space-y-1">
+            <Label htmlFor="activity-filter-date-from" className="text-xs text-text-muted">
+              {t("filters.dateFrom")}
+            </Label>
             <Input
               id="activity-filter-date-from"
-              aria-label="Date from filter"
               type="date"
+              className="h-10"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
             />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="activity-filter-date-to" className="text-xs text-text-muted">
+              {t("filters.dateTo")}
+            </Label>
             <Input
               id="activity-filter-date-to"
-              aria-label="Date to filter"
               type="date"
+              className="h-10"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
             />
           </div>
+          <details className="md:col-span-1">
+            <summary className="cursor-pointer select-none py-2 text-xs text-text-muted">
+              {t("filters.advanced")}
+            </summary>
+            <div className="mt-1 space-y-2">
+              {canReadOrg || entityScopeId
+                ? selectFilter(
+                    "activity-filter-entity-scope-id",
+                    t("filters.orgUnit"),
+                    entityScopeId,
+                    setEntityScopeId,
+                    orgNodes.map((n) => n.id),
+                    (id) =>
+                      orgNodes.find((n) => n.id === id)?.label ??
+                      t("filters.orgUnitUnlisted", { id }),
+                  )
+                : null}
+              {!canReadOrg ? <ListAccessNote list="orgNodes" /> : null}
+              {orgNodesError != null ? (
+                <ErrorState
+                  className="py-3"
+                  error={orgNodesError}
+                  onRetry={() => setOrgNodesReload((n) => n + 1)}
+                />
+              ) : null}
+              <div className="space-y-1">
+                <Label htmlFor="activity-filter-correlation-id" className="text-xs text-text-muted">
+                  {t("filters.correlation")}
+                </Label>
+                <Input
+                  id="activity-filter-correlation-id"
+                  className="h-10"
+                  value={correlationId}
+                  onChange={(e) => setCorrelationId(e.target.value)}
+                />
+              </div>
+            </div>
+          </details>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={applyFilters}>
-            Apply filters
+          <Button className="h-10" onClick={applyFilters}>
+            {t("filters.apply")}
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setEventClass("");
-              setSourceModule("");
-              setSeverity("");
-              setEntityScopeId("");
-              setCorrelationId("");
-              setDateFrom("");
-              setDateTo("");
-              setSelectedSavedViewId("");
-              setOffset(0);
-              setAppliedFilter({ limit: PAGE_SIZE, offset: 0 });
-            }}
-          >
-            Reset
+          <Button className="h-10" variant="outline" onClick={resetFilters}>
+            {t("filters.reset")}
           </Button>
-          <div className="flex items-center gap-2 rounded-md border px-2 py-1 text-xs">
+          <div className="flex min-h-10 items-center gap-2 rounded-md border border-surface-border px-3 text-xs">
             <Checkbox
               id="activity-auto-refresh"
-              aria-label="Auto-refresh activity feed"
               checked={autoRefresh}
               onCheckedChange={(v) => setAutoRefresh(Boolean(v))}
             />
             <label htmlFor="activity-auto-refresh" className="cursor-pointer">
-              Auto-refresh (30s)
+              {t("feed.autoRefresh")}
             </label>
           </div>
-          <Button size="sm" variant="ghost" onClick={() => void loadData()}>
-            <RefreshCw className="mr-1 h-3 w-3" /> Refresh
-          </Button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            aria-label="Saved activity views"
-            className="h-9 rounded-md border px-2 text-sm"
-            value={selectedSavedViewId}
-            onChange={(e) => {
-              setSelectedSavedViewId(e.target.value);
-              const id = Number(e.target.value);
-              const selected = savedViews.find((s) => s.id === id);
-              if (
-                !selected ||
-                typeof selected.filter_json !== "object" ||
-                selected.filter_json === null
-              )
-                return;
-              const raw = selected.filter_json as Record<string, unknown>;
-              setEventClass(typeof raw["event_class"] === "string" ? raw["event_class"] : "");
-              setSourceModule(typeof raw["source_module"] === "string" ? raw["source_module"] : "");
-              setSeverity(typeof raw["severity"] === "string" ? raw["severity"] : "");
-              setCorrelationId(
-                typeof raw["correlation_id"] === "string" ? raw["correlation_id"] : "",
-              );
-              setEntityScopeId(
-                typeof raw["entity_scope_id"] === "number" ? String(raw["entity_scope_id"]) : "",
-              );
-              setDateFrom(
-                typeof raw["date_from"] === "string" ? raw["date_from"].slice(0, 10) : "",
-              );
-              setDateTo(typeof raw["date_to"] === "string" ? raw["date_to"].slice(0, 10) : "");
-              setOffset(0);
-            }}
-          >
-            <option value="">Saved views</option>
-            {savedViews.map((view) => (
-              <option key={view.id} value={view.id}>
-                {view.view_name}
-                {view.is_default ? " (default)" : ""}
-              </option>
-            ))}
-          </select>
-          <Input
-            className="max-w-[220px]"
-            aria-label="Saved activity view name"
-            placeholder="Save current view as..."
-            value={saveViewName}
-            onChange={(e) => setSaveViewName(e.target.value)}
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!saveViewName.trim()}
-            onClick={() => {
-              void (async () => {
-                await saveActivityFilter({
-                  view_name: saveViewName.trim(),
-                  filter_json: currentFilter,
-                  is_default: false,
-                });
-                setSaveViewName("");
-                await loadSavedViews();
-              })().catch((err: unknown) => {
-                setError(toErrorMessage(err));
-              });
-            }}
-          >
-            Save current view
-          </Button>
-        </div>
-
-        {error && (
-          <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-2 text-sm text-destructive">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>{error}</span>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="space-y-1">
+            <Label htmlFor="activity-saved-views" className="text-xs text-text-muted">
+              {t("feed.savedViews")}
+            </Label>
+            <Select
+              value={selectedSavedViewId || ANY}
+              onValueChange={(v) => applySavedView(v === ANY ? "" : v)}
+            >
+              <SelectTrigger id="activity-saved-views" className="h-10 w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ANY}>{t("feed.noSavedView")}</SelectItem>
+                {savedViews.map((view) => (
+                  <SelectItem key={view.id} value={String(view.id)}>
+                    {view.is_default
+                      ? t("feed.defaultView", { name: view.view_name })
+                      : view.view_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        )}
+          <div className="space-y-1">
+            <Label htmlFor="activity-save-view-name" className="text-xs text-text-muted">
+              {t("feed.saveViewName")}
+            </Label>
+            <Input
+              id="activity-save-view-name"
+              className="h-10 max-w-[220px]"
+              value={saveViewName}
+              onChange={(e) => setSaveViewName(e.target.value)}
+            />
+          </div>
+          <Button
+            variant="outline"
+            className="h-10 gap-1.5"
+            disabled={!saveViewName.trim()}
+            onClick={() => void saveView()}
+          >
+            <Save className="h-4 w-4" aria-hidden />
+            {t("feed.saveView")}
+          </Button>
+        </div>
 
         <Timeline
           items={timelineEntries}
           loading={loading}
+          error={loadError}
+          onRetry={() => void loadData()}
           groupBy="day"
-          todayLabel="Today"
-          aria-label="Activity feed"
+          aria-label={t("tabs.activity")}
           empty={
-            <div className="rounded-md border p-4 text-center text-sm text-muted-foreground">
-              No activity events found for current filters.
+            <div className="rounded-md border border-surface-border p-4 text-center text-sm text-text-muted">
+              {t("feed.empty")}
             </div>
           }
         />
 
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {items.length > 0 ? (
+            <span className="text-xs text-text-muted" role="status">
+              {t("pager.range", { from: pageStart, to: pageEnd })}
+            </span>
+          ) : null}
           <Button
-            size="sm"
             variant="outline"
-            disabled={offset === 0}
+            className="h-10"
+            disabled={offset === 0 || loading}
             onClick={() =>
-              setOffset((prev) => {
-                const nextOffset = Math.max(0, prev - PAGE_SIZE);
-                setAppliedFilter((current) => ({
-                  ...current,
-                  offset: nextOffset,
-                  limit: PAGE_SIZE,
-                }));
-                return nextOffset;
-              })
+              setAppliedFilter((current) => ({
+                ...current,
+                offset: Math.max(0, (current.offset ?? 0) - PAGE_SIZE),
+              }))
             }
           >
-            Previous
+            {t("pager.previous")}
           </Button>
           <Button
-            size="sm"
             variant="outline"
-            disabled={items.length < PAGE_SIZE}
+            className="h-10"
+            disabled={items.length < PAGE_SIZE || loading}
             onClick={() =>
-              setOffset((prev) => {
-                const nextOffset = prev + PAGE_SIZE;
-                setAppliedFilter((current) => ({
-                  ...current,
-                  offset: nextOffset,
-                  limit: PAGE_SIZE,
-                }));
-                return nextOffset;
-              })
+              setAppliedFilter((current) => ({
+                ...current,
+                offset: (current.offset ?? 0) + PAGE_SIZE,
+              }))
             }
           >
-            Next
+            {t("pager.next")}
           </Button>
         </div>
       </CardContent>
     </Card>
   );
+}
+
+interface ActivityChainLine {
+  key: string;
+  at: string;
+  module: string | null;
+  code: string | null;
+  link: string | null;
 }

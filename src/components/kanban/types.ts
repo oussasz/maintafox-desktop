@@ -2,30 +2,15 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { LinkedEntityKind } from "@/components/common/LinkedEntityBadge";
+import type { Tone } from "@/design-system/tone";
 
 /**
- * Single semantic tone vocabulary for every board surface (column header,
- * badge, accent bar). KanbanBoard owns the class mapping — adapters never
- * pass colours, spacing, typography, or any other Tailwind for board chrome.
+ * Board colours are the seven status tones of the design system (`design-system/tone.ts`), the
+ * same vocabulary as the list chips: adapters pass `toneOf(WO_STATUS_TONE, code)`,
+ * `urgencyTone(code)` … so a status or an urgency level has the same colour on the board and
+ * in the list. KanbanBoard owns the class mapping — adapters never pass Tailwind classes.
  */
-export type KanbanTone =
-  | "draft"
-  | "planning"
-  | "ready"
-  | "executing"
-  | "success"
-  | "closed"
-  | "cancelled"
-  | "work"
-  | "info"
-  | "warning"
-  | "danger"
-  | "muted"
-  | "critical"
-  | "high"
-  | "medium"
-  | "low"
-  | "neutral";
+export type KanbanTone = Tone;
 
 export interface KanbanBadge {
   label: string;
@@ -85,13 +70,25 @@ export interface KanbanCard {
   /** Accent bar tone (urgency / priority). Defaults to neutral. */
   accent?: KanbanTone | undefined;
   actions?: KanbanCardAction[] | undefined;
-  /** When false, card is not HTML5-draggable even if the board enables drag. */
+  /**
+   * When false, the card cannot be moved (neither dragged nor moved with the keyboard / the
+   * "Move to" menu) even if the board enables moving.
+   */
   draggable?: boolean | undefined;
   disabled?: boolean | undefined;
   selected?: boolean | undefined;
   /** Accessible name override; defaults to code + title. */
   ariaLabel?: string | undefined;
 }
+
+/**
+ * Outcome of a move, returned (or resolved) by `onDrop`:
+ * - `undefined` / `true` / `{ ok: true }` — the server accepted the transition;
+ * - `false` / `{ ok: false, reason }` — refused (reason already localized; a generic refusal is
+ *   announced without one);
+ * - a thrown error / rejected promise — failed; announced with the shared error text.
+ */
+export type KanbanMoveOutcome = void | boolean | { ok: boolean; reason?: string | undefined };
 
 export interface KanbanBoardProps<T = KanbanCard> {
   columns: KanbanColumn[];
@@ -100,16 +97,33 @@ export interface KanbanBoardProps<T = KanbanCard> {
   items?: T[] | undefined;
   getCard?: ((item: T, index: number) => KanbanCard) | undefined;
   onCardClick?: ((card: KanbanCard) => void) | undefined;
+  /**
+   * Cards can change column: by drag and drop, by the card's "Move to" menu, or with
+   * Alt+←/→ on a focused card (keyboard alternative to dragging).
+   */
   enableDrag?: boolean | undefined;
   canDrag?: ((card: KanbanCard) => boolean) | undefined;
   canDrop?: ((card: KanbanCard, fromColumnId: string, toColumnId: string) => boolean) | undefined;
   /**
-   * Called after a drop when canDrop allows (or when canDrop is omitted).
-   * Adapters own validation feedback and open-detail side effects.
+   * Called after a drop / keyboard move when canDrop allows (or when canDrop is omitted). It must
+   * run the module's own server-side transition command; its outcome is announced to screen
+   * readers ("moved" only once accepted). Adapters own toasts and open-detail side effects.
    */
-  onDrop?: ((card: KanbanCard, fromColumnId: string, toColumnId: string) => void) | undefined;
+  onDrop?:
+    | ((
+        card: KanbanCard,
+        fromColumnId: string,
+        toColumnId: string,
+      ) => KanbanMoveOutcome | Promise<KanbanMoveOutcome>)
+    | undefined;
   pageSize?: number | undefined;
-  /** Already-localized load-more text builder. */
+  /**
+   * Lanes read from the server page by page (`useServerColumns`): each lane's count is its server
+   * total and "load more" asks the server for that lane's next page. Without it the board pages
+   * through the cards it was given.
+   */
+  serverPaging?: KanbanServerPaging | undefined;
+  /** Already-localized load-more text builder (defaults to common.kanban.showMore). */
   loadMoreLabel?: ((remaining: number) => string) | undefined;
   /**
    * Shared empty-column label for every column (from common.kanban.emptyColumn).
@@ -120,4 +134,11 @@ export interface KanbanBoardProps<T = KanbanCard> {
   empty?: ReactNode | undefined;
   className?: string | undefined;
   "aria-label"?: string | undefined;
+}
+
+export interface KanbanServerPaging {
+  /** Server total of each lane (by column id). */
+  totals: Record<string, number>;
+  onLoadMore: (columnId: string) => void;
+  loadingMore?: Record<string, boolean> | undefined;
 }

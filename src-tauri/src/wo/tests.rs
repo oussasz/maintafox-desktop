@@ -2,8 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::di::queries::{create_intervention_request, DiCreateInput};
     use crate::errors::AppError;
@@ -26,26 +25,7 @@ mod tests {
     use crate::wo::workflow::actions::submit::{submit_wo, WoSubmitInput};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn resolve_delay_reason_id(db: &sea_orm::DatabaseConnection, code: &str) -> i64 {
@@ -188,7 +168,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: title.to_string(),
                 description: Some("test WO".into()),
                 notes: None,
@@ -289,9 +270,13 @@ mod tests {
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
+                planned_crew_size: None,
+                clear_crew_size: false,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -521,9 +506,13 @@ mod tests {
                 planned_start: Some("2026-04-10T16:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T08:00:00Z".to_string()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
+                planned_crew_size: None,
+                clear_crew_size: false,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await;
@@ -640,6 +629,7 @@ mod tests {
                 auto_reserve: Some(false),
                 notes: None,
                 origin: None,
+                is_required: true,
             },
         )
         .await
@@ -909,6 +899,7 @@ mod tests {
                 auto_reserve: Some(false),
                 notes: None,
                 origin: None,
+                is_required: true,
             },
         )
         .await
@@ -1004,9 +995,13 @@ mod tests {
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
+                planned_crew_size: None,
+                clear_crew_size: false,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await;
@@ -1068,7 +1063,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: Some(1),
                 planner_id: None,
-                urgency_id: Some(4),
+                urgency_code: Some("high".into()),
+                subtype_code: None,
                 title: "WO from DI".into(),
                 description: Some("Full lifecycle".into()),
                 notes: None,
@@ -1155,9 +1151,13 @@ mod tests {
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
+                planned_crew_size: None,
+                clear_crew_size: false,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -1275,6 +1275,7 @@ mod tests {
                 auto_reserve: Some(false),
                 notes: None,
                 origin: None,
+                is_required: true,
             },
         )
         .await
@@ -1341,6 +1342,7 @@ mod tests {
                 wo_id: wo.id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
+                estimated_remaining_hours: None,
             },
         )
         .await
@@ -1453,6 +1455,7 @@ mod tests {
                 expected_row_version: wo.row_version,
                 reason: "Need final adjustment".into(),
                 target_status: None, // defaults to in_progress
+                estimated_remaining_hours: None,
             },
         )
         .await
@@ -1544,5 +1547,40 @@ mod tests {
         let closed_count = actions.iter().filter(|a| a.as_str() == "closed").count();
         assert!(closed_count >= 1, "expected at least one 'closed' event");
         assert!(events.len() >= 10, "expected at least 10 events, got {}", events.len());
+    }
+
+    /// A full history page keeps the LATEST events (oldest first on screen), not the first ones.
+    #[tokio::test]
+    async fn wo_change_events_page_keeps_latest_events_in_order() {
+        let db = setup().await;
+        let wo = create_wo_draft(&db, "history page").await;
+        let actor = admin_id(&db).await;
+        for action in ["e1", "e2", "e3"] {
+            audit::record_wo_change_event(
+                &db,
+                audit::WoAuditInput {
+                    wo_id: Some(wo.id),
+                    action: action.into(),
+                    actor_id: Some(actor),
+                    summary: None,
+                    details_json: None,
+                    requires_step_up: false,
+                    apply_result: "applied".into(),
+                },
+            )
+            .await;
+        }
+        let all = audit::list_wo_change_events(&db, wo.id, 500).await.expect("all");
+        let total = all.len();
+        assert!(total >= 3, "created + 3 recorded events");
+
+        let page = audit::list_wo_change_events(&db, wo.id, 2).await.expect("page");
+        let actions: Vec<&str> = page.iter().map(|e| e.action.as_str()).collect();
+        assert_eq!(actions, vec!["e2", "e3"], "latest two, chronological");
+
+        // Limit is clamped: 0 still returns one event, never an error or everything.
+        let one = audit::list_wo_change_events(&db, wo.id, 0).await.expect("clamped");
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].action, "e3");
     }
 }

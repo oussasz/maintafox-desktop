@@ -8,6 +8,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { InterventionRequestSchema } from "@/services/di-service";
 import type {
   DiSlaRule,
   DiSlaStatus,
@@ -17,73 +18,20 @@ import type {
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-const InterventionRequestSchema = z.object({
-  id: z.number(),
-  code: z.string(),
-  equipment_id: z.number(),
-  sub_asset_ref: z.string().nullable(),
-  org_node_id: z.number(),
-  status: z.string(),
-  title: z.string(),
-  description: z.string(),
-  origin_type: z.string(),
-  request_type: z.string().default("repair"),
-  symptom_code_id: z.number().nullable(),
-  impact_level: z.string(),
-  production_impact: z.boolean(),
+const PermitFlagOutcomeSchema = z.object({
+  requires_permit: z.boolean(),
+  reason_code: z.string(),
+  rule_code: z.string().nullable(),
+  permit_type_code: z.string().nullable(),
   safety_flag: z.boolean(),
-  environmental_flag: z.boolean(),
-  quality_flag: z.boolean(),
-  reported_urgency: z.string(),
-  validated_urgency: z.string().nullable(),
-  observed_at: z.string().nullable(),
-  submitted_at: z.string(),
-  reviewer_id: z.number().nullable(),
-  screened_at: z.string().nullable(),
-  approved_at: z.string().nullable(),
-  deferred_until: z.string().nullable(),
-  declined_at: z.string().nullable(),
-  closed_at: z.string().nullable(),
-  archived_at: z.string().nullable(),
-  converted_to_wo_id: z.number().nullable(),
-  converted_at: z.string().nullable(),
-  sla_rule_id: z.number().nullable().optional(),
-  sla_target_response_hours: z.number().nullable().optional(),
-  sla_target_resolution_hours: z.number().nullable().optional(),
-  sla_escalation_threshold_hours: z.number().nullable().optional(),
-  sla_response_deadline: z.string().nullable().optional(),
-  sla_resolution_deadline: z.string().nullable().optional(),
-  sla_response_breach_notified_at: z.string().nullable().optional(),
-  sla_resolution_breach_notified_at: z.string().nullable().optional(),
-  reviewer_note: z.string().nullable(),
-  classification_code_id: z.number().nullable(),
-  is_recurrence_flag: z.boolean(),
-  recurrence_di_id: z.number().nullable(),
-  is_modified: z.boolean().default(false),
-  row_version: z.number(),
-  submitter_id: z.number(),
-  created_at: z.string(),
-  updated_at: z.string(),
-  asset_code: z.string().nullable().optional(),
-  asset_label: z.string().nullable().optional(),
-  org_node_code: z.string().nullable().optional(),
-  org_node_label: z.string().nullable().optional(),
-  submitter_display_name: z.string().nullable().optional(),
-  reviewer_display_name: z.string().nullable().optional(),
-  converted_to_wo_code: z.string().nullable().optional(),
-  converted_to_wo_title: z.string().nullable().optional(),
-  disposition_code: z.string().nullable().optional(),
-  disposition_notes: z.string().nullable().optional(),
-  related_di_id: z.number().nullable().optional(),
-  closed_by_id: z.number().nullable().optional(),
-  deferred_from_status: z.string().nullable().optional(),
-  related_di_code: z.string().nullable().optional(),
+  unreadable_rule_codes: z.array(z.string()),
 });
 
 const WoConversionResultSchema = z.object({
   di: InterventionRequestSchema,
   wo_id: z.number(),
   wo_code: z.string(),
+  permit_flag: PermitFlagOutcomeSchema,
 });
 
 const DiSlaStatusSchema = z.object({
@@ -98,7 +46,8 @@ const DiSlaStatusSchema = z.object({
   resolution_remaining_hours: z.number().nullable(),
   is_response_breached: z.boolean(),
   is_resolution_breached: z.boolean(),
-  status: z.enum(["on_track", "at_risk", "breached", "completed"]).nullable(),
+  paused_hours: z.number().default(0),
+  status: z.enum(["on_track", "at_risk", "breached", "completed", "paused"]).nullable(),
 });
 
 const DiSlaRuleSchema = z.object({

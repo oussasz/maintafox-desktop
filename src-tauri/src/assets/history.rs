@@ -12,7 +12,7 @@ use serde_json::Value as JsonValue;
 
 use crate::errors::{AppError, AppResult};
 
-use super::{bindings, health};
+use super::bindings;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -55,7 +55,11 @@ pub struct AssetHistorySummary {
     pub wo_count: i64,
     pub pm_count: i64,
     pub failure_count: i64,
+    /// Operational availability (%) of the latest reliability snapshot of the asset (RAMS), None
+    /// until reliability has been computed for it. Not an estimate: no other figure is shown.
     pub availability_percent: Option<f64>,
+    /// End of the period that availability covers.
+    pub availability_period_end: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -187,10 +191,27 @@ pub async fn get_asset_history_summary(db: &DatabaseConnection, asset_id: i64) -
         .map(|dt| (Utc::now() - dt).num_days().max(0));
 
     let binding = bindings::get_asset_binding_summary(db, asset_id).await?;
-    let availability_percent = health::get_asset_health_score(db, asset_id)
-        .await?
-        .score
-        .map(|s| s as f64);
+    // Real availability (reliability snapshot), never the indicative health score.
+    let snapshot = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT availability, period_end FROM reliability_kpi_snapshots \
+             WHERE equipment_id = ? AND availability IS NOT NULL \
+             ORDER BY period_end DESC, id DESC LIMIT 1",
+            [asset_id.into()],
+        ))
+        .await?;
+    let (availability_percent, availability_period_end) = match snapshot {
+        Some(r) => (
+            r.try_get::<f64>("", "availability")
+                .map(|a| a * 100.0)
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("asset availability decode: {e}")))?
+                .into(),
+            r.try_get::<Option<String>>("", "period_end")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("asset availability period decode: {e}")))?,
+        ),
+        None => (None, None),
+    };
 
     Ok(AssetHistorySummary {
         asset_id,
@@ -200,6 +221,7 @@ pub async fn get_asset_history_summary(db: &DatabaseConnection, asset_id: i64) -
         pm_count: binding.linked_pm_plan_count.count.unwrap_or(0),
         failure_count: binding.linked_failure_event_count.count.unwrap_or(0),
         availability_percent,
+        availability_period_end,
     })
 }
 
@@ -276,11 +298,15 @@ pub async fn list_asset_history_events(
     let meter_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT mr.id, mr.reading_at, mr.reading_value, mr.quality_flag, \
-                    em.name AS meter_name, em.unit AS meter_unit \
+            concat!(
+                "SELECT mr.id, mr.reading_at, mr.reading_value, mr.quality_flag, \
+                    em.name AS meter_name, ",
+                crate::reference::units::unit_symbol_of!("em.unit_value_id"),
+                " AS meter_unit \
              FROM asset_meter_readings mr \
              INNER JOIN equipment_meters em ON em.id = mr.meter_id \
-             WHERE em.equipment_id = ?",
+             WHERE em.equipment_id = ?"
+            ),
             [asset_id.into()],
         ))
         .await?;
@@ -394,7 +420,7 @@ pub async fn list_asset_history_events(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT wo.id, wo.code, wo.title, wo.created_at, wo.actual_start, wo.closed_at, \
-                    wo.actual_duration_hours, wos.label AS status_label, \
+                    wo.actual_duration_hours, wos.code AS status_label, \
                     COALESCE(resp.display_name, resp.username) AS actor_label \
              FROM work_orders wo \
              LEFT JOIN work_order_statuses wos ON wos.id = wo.status_id \
@@ -699,7 +725,7 @@ pub async fn list_asset_history_events(
             "failure_recorded",
             occurred_at,
             "Failure recorded",
-            source_type.map(|st| format!("Source: {st}")),
+            None,
             None,
             downtime_h.map(|h| (h * 60.0).round() as i64),
             status,

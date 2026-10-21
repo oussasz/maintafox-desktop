@@ -12,10 +12,42 @@ import { P } from "@shared/rbac/permissions.generated";
 export const PERMIT_QUERY_SELECT = "permit";
 export const PERMIT_QUERY_CREATE_FOR_WO = "createForWo";
 
-export type IsolationState = "pending" | "applied" | "verified" | "removed";
+/**
+ * Namespaces holding the texts of the permit refusals (`training:errors.PERMIT_*`). They are
+ * loaded on demand, so the permit screens load them up front: a refusal shown before any other
+ * screen opened them is then in the user's language, not the server's English sentence.
+ */
+export const PERMIT_REFUSAL_NAMESPACES = ["training"] as const;
+
+/**
+ * `takenOff`: the lock was taken off (by its applier, "J'ai retiré mon cadenas", or by a forced
+ * removal) and its removal is not verified yet; `removed`: the removal is verified.
+ */
+export type IsolationState =
+  | "pending"
+  | "applied"
+  | "verified"
+  | "takenOff"
+  | "removed"
+  | "cancelled";
+
+/**
+ * A planned line cancelled and never applied (`COUNTED_ISOLATION_SQL` on the server): kept as
+ * history, no isolation of its permit. A line that would hold both still counts.
+ */
+export function isCancelledLine(iso: PermitIsolationRecord): boolean {
+  return iso.cancelled_at != null && iso.applied_at == null;
+}
+
+/** The lines that count as isolations of the permit (cancelled planned lines left out). */
+export function countedIsolations(isolations: PermitIsolationRecord[]): PermitIsolationRecord[] {
+  return isolations.filter((i) => !isCancelledLine(i));
+}
 
 export function isolationState(iso: PermitIsolationRecord): IsolationState {
+  if (isCancelledLine(iso)) return "cancelled";
   if (iso.removal_verified_at) return "removed";
+  if (iso.removed_at) return "takenOff";
   if (iso.verified_at) return "verified";
   if (iso.applied_at) return "applied";
   return "pending";
@@ -38,12 +70,44 @@ export const ISOLATION_REMOVAL_STATUSES: ReadonlySet<string> = new Set([
   "expired",
 ]);
 
+/**
+ * Statuses in which a planned line may be cancelled (`ISOLATION_CANCEL_STATUSES`): a cancellation
+ * while waiting for review sends the permit back to draft.
+ */
+export const ISOLATION_CANCEL_STATUSES: ReadonlySet<string> = new Set(["draft", "pending_review"]);
+
+/** Whether the line may be cancelled (rights aside): never applied, not cancelled, permit prepared. */
+export function canCancelIsolation(permitStatus: string, iso: PermitIsolationRecord): boolean {
+  return (
+    ISOLATION_CANCEL_STATUSES.has(permitStatus) &&
+    iso.cancelled_at == null &&
+    iso.applied_at == null &&
+    iso.applied_by_id == null &&
+    iso.verified_at == null &&
+    iso.removal_verified_at == null
+  );
+}
+
 /** Header fields (expiry) are editable only before activation. */
 export const PERMIT_EDITABLE_STATUSES: ReadonlySet<string> = new Set([
   "draft",
   "pending_review",
   "approved",
   "issued",
+]);
+
+/**
+ * Statuses a permit reaches only through an approval (`permit::sync_check::APPROVED_ON`): past
+ * review, a permit without a recorded approver was approved before the app recorded approvers.
+ */
+export const APPROVED_ON_STATUSES: ReadonlySet<string> = new Set([
+  "approved",
+  "issued",
+  "active",
+  "suspended",
+  "revalidation_required",
+  "closed",
+  "handed_back",
 ]);
 
 export function isPermitExpired(permit: WorkPermitRecord, now: Date = new Date()): boolean {
@@ -53,18 +117,24 @@ export function isPermitExpired(permit: WorkPermitRecord, now: Date = new Date()
 /** i18n key (in the `permits` namespace) explaining why activation is blocked, or null. */
 export function activationBlocker(
   permit: WorkPermitRecord,
-  isolations: PermitIsolationRecord[],
+  allIsolations: PermitIsolationRecord[],
 ): string | null {
+  const isolations = countedIsolations(allIsolations);
   if (isPermitExpired(permit)) return "gate.expired";
-  if (permit.permit_type_code === "loto" && isolations.length === 0) return "gate.noIsolation";
-  if (isolations.some((i) => i.removal_verified_at)) return "gate.removed";
+  // The type's own rule (`requires_energy_isolation`, set for LOTO), never a code in the program.
+  if (permit.permit_type_requires_energy_isolation && isolations.length === 0)
+    return "gate.noIsolation";
+  // A lock taken off protects nothing, its removal verified or not (the server refuses it too).
+  if (isolations.some((i) => i.removal_verified_at || i.removed_at)) return "gate.removed";
   if (isolations.some((i) => !i.verified_at)) return "gate.unverified";
   return null;
 }
 
 /** i18n key explaining why closing is blocked, or null. */
 export function closeBlocker(isolations: PermitIsolationRecord[]): string | null {
-  return isolations.some((i) => !i.removal_verified_at) ? "gate.pendingRemoval" : null;
+  return countedIsolations(isolations).some((i) => !i.removal_verified_at)
+    ? "gate.pendingRemoval"
+    : null;
 }
 
 export interface PermitTransition {
@@ -127,4 +197,32 @@ export function formatAssetLabel(permit: WorkPermitRecord): string | null {
   if (permit.asset_code && permit.asset_label)
     return `${permit.asset_code} — ${permit.asset_label}`;
   return permit.asset_code ?? permit.asset_label ?? null;
+}
+
+/** Isolation choice label in the UI language: a shipped value's English label, else its label. */
+export function optionLabel(
+  option: { label: string; label_en: string | null } | null | undefined,
+  language: string,
+): string {
+  if (!option) return "";
+  return language.toLowerCase().startsWith("en") && option.label_en
+    ? option.label_en
+    : option.label;
+}
+
+/** `char::is_whitespace` of Rust, which the server trims with (JS `trim()` differs on U+0085/U+FEFF). */
+const SERVER_WHITESPACE = "\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000";
+const SERVER_TRIM = new RegExp(`^[${SERVER_WHITESPACE}]+|[${SERVER_WHITESPACE}]+$`, "g");
+
+/** The text as the server trims it before it checks a minimum length. */
+export function serverTrim(text: string): string {
+  return text.replace(SERVER_TRIM, "");
+}
+
+/**
+ * Length of a text as the server counts it (`str::trim` then `chars().count()`): trimmed, in
+ * Unicode code points, so an emoji or a letter outside the first plane is one character, not two.
+ */
+export function serverTextLength(text: string): number {
+  return [...serverTrim(text)].length;
 }

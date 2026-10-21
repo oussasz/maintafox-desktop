@@ -67,7 +67,30 @@ pub struct RefImportRow {
 pub struct ImportRowMessage {
     pub category: String,
     pub severity: String,
+    /// Stable code (`REF_IMPORT_*`) and its params (`row`, `code`, …) for the screen to say the
+    /// detail in the user's language. Empty on rows checked before the codes existed.
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub params: std::collections::BTreeMap<String, String>,
+    /// The server's sentence (French), kept as the fallback detail.
     pub message: String,
+}
+
+impl ImportRowMessage {
+    fn error(category: &str, code: &str, params: &[(&str, String)], message: String) -> Self {
+        Self::new(category, "error", code, params, message)
+    }
+
+    fn new(category: &str, severity: &str, code: &str, params: &[(&str, String)], message: String) -> Self {
+        Self {
+            category: category.into(),
+            severity: severity.into(),
+            code: code.into(),
+            params: params.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect(),
+            message,
+        }
+    }
 }
 
 /// Full preview response: batch + all rows.
@@ -247,8 +270,9 @@ pub async fn create_import_batch(
     source_sha256: &str,
     actor_id: Option<i64>,
 ) -> AppResult<RefImportBatchSummary> {
-    // Verify domain exists.
-    domains::get_reference_domain(db, domain_id).await?;
+    // Verify domain exists and is a company list (SYSTEM lists are never imported into).
+    let domain = domains::get_reference_domain(db, domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
 
     let now = Utc::now().to_rfc3339();
 
@@ -298,6 +322,7 @@ pub async fn stage_import_rows(
     rows: Vec<ImportRowInput>,
 ) -> AppResult<RefImportBatchSummary> {
     let batch = get_batch_by_id(db, batch_id).await?;
+    crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "uploaded" {
         return Err(AppError::ValidationFailed(vec![format!(
             "Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet le chargement.",
@@ -366,6 +391,7 @@ pub async fn validate_import_batch(
     _actor_id: Option<i64>,
 ) -> AppResult<RefImportBatchSummary> {
     let batch = get_batch_by_id(db, batch_id).await?;
+    crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "uploaded" {
         return Err(AppError::ValidationFailed(vec![format!(
             "Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet la validation.",
@@ -432,37 +458,44 @@ pub async fn validate_import_batch(
         // â”€â”€ Check: code presence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         match &norm_code {
             None => {
-                messages.push(ImportRowMessage {
-                    category: "MissingCode".into(),
-                    severity: "error".into(),
-                    message: format!("Ligne {row_no}: code de reference manquant."),
-                });
+                messages.push(ImportRowMessage::error(
+                    "MissingCode",
+                    "REF_IMPORT_MISSING_CODE",
+                    &[("row", row_no.to_string())],
+                    format!("Ligne {row_no}: code de reference manquant."),
+                ));
                 status = "error";
             }
             Some(code) => {
                 // â”€â”€ Check: code format â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 if !is_valid_code(input.code.as_deref().unwrap_or("")) {
-                    messages.push(ImportRowMessage {
-                        category: "InvalidCodeFormat".into(),
-                        severity: "error".into(),
-                        message: format!(
+                    messages.push(ImportRowMessage::error(
+                        "InvalidCodeFormat",
+                        "REF_IMPORT_INVALID_CODE_FORMAT",
+                        &[("row", row_no.to_string()), ("code", code.clone())],
+                        format!(
                             "Ligne {row_no}: code '{code}' invalide \
                              (majuscules ASCII, chiffres, underscores, points; 1-64 car.)."
                         ),
-                    });
+                    ));
                     status = "error";
                 }
 
                 // â”€â”€ Check: duplicate within batch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 if let Some(prev_row) = batch_codes.get(code) {
-                    messages.push(ImportRowMessage {
-                        category: "DuplicateInBatch".into(),
-                        severity: "error".into(),
-                        message: format!(
+                    messages.push(ImportRowMessage::error(
+                        "DuplicateInBatch",
+                        "REF_IMPORT_DUPLICATE_IN_BATCH",
+                        &[
+                            ("row", row_no.to_string()),
+                            ("code", code.clone()),
+                            ("firstRow", prev_row.to_string()),
+                        ],
+                        format!(
                             "Ligne {row_no}: code '{code}' duplique dans le lot \
                              (premiere occurrence: ligne {prev_row})."
                         ),
-                    });
+                    ));
                     status = "error";
                 } else {
                     batch_codes.insert(code.clone(), row_no);
@@ -472,15 +505,21 @@ pub async fn validate_import_batch(
                 if existing_codes.contains(code) {
                     proposed_action = Some("update".into());
                     if is_protected {
-                        messages.push(ImportRowMessage {
-                            category: "ProtectedDomainUpdate".into(),
-                            severity: "warning".into(),
-                            message: format!(
+                        messages.push(ImportRowMessage::new(
+                            "ProtectedDomainUpdate",
+                            "warning",
+                            "REF_IMPORT_PROTECTED_DOMAIN_UPDATE",
+                            &[
+                                ("row", row_no.to_string()),
+                                ("code", code.clone()),
+                                ("domain", domain.code.clone()),
+                            ],
+                            format!(
                                 "Ligne {row_no}: code '{code}' existe dans le domaine \
                                  protege '{}'. La mise a jour sera trace.",
                                 domain.code
                             ),
-                        });
+                        ));
                         if status == "valid" {
                             status = "warning";
                         }
@@ -494,22 +533,115 @@ pub async fn validate_import_batch(
         // â”€â”€ Check: label presence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         match &input.label {
             None => {
-                messages.push(ImportRowMessage {
-                    category: "MissingLabel".into(),
-                    severity: "error".into(),
-                    message: format!("Ligne {row_no}: libelle manquant."),
-                });
+                messages.push(ImportRowMessage::error(
+                    "MissingLabel",
+                    "REF_IMPORT_MISSING_LABEL",
+                    &[("row", row_no.to_string())],
+                    format!("Ligne {row_no}: libelle manquant."),
+                ));
                 status = "error";
             }
             Some(label) if label.trim().is_empty() => {
-                messages.push(ImportRowMessage {
-                    category: "BlankLabel".into(),
-                    severity: "error".into(),
-                    message: format!("Ligne {row_no}: libelle vide."),
-                });
+                messages.push(ImportRowMessage::error(
+                    "BlankLabel",
+                    "REF_IMPORT_BLANK_LABEL",
+                    &[("row", row_no.to_string())],
+                    format!("Ligne {row_no}: libelle vide."),
+                ));
                 status = "error";
             }
             _ => {}
+        }
+
+        // ── Check: required parent in another domain (OT sub-type → maintenance nature) ──
+        if let Some(parent_domain) = values::required_parent_domain(&domain.code) {
+            match input.parent_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+                None => {
+                    messages.push(ImportRowMessage::error(
+                        "MissingParent",
+                        "REF_IMPORT_MISSING_PARENT",
+                        &[("row", row_no.to_string()), ("parentDomain", parent_domain.to_string())],
+                        format!(
+                            "Ligne {row_no}: la valeur doit etre rattachee a une valeur de '{parent_domain}' \
+                             (colonne parent_code)."
+                        ),
+                    ));
+                    status = "error";
+                }
+                Some(parent_code) => {
+                    if values::published_value_id_by_code(&txn, parent_domain, parent_code)
+                        .await?
+                        .is_none()
+                    {
+                        messages.push(ImportRowMessage::error(
+                            "InvalidParent",
+                            "REF_IMPORT_INVALID_PARENT",
+                            &[
+                                ("row", row_no.to_string()),
+                                ("parentCode", parent_code.to_string()),
+                                ("parentDomain", parent_domain.to_string()),
+                            ],
+                            format!("Ligne {row_no}: parent '{parent_code}' introuvable dans '{parent_domain}'."),
+                        ));
+                        status = "error";
+                    }
+                }
+            }
+        }
+
+        // ── Check: nature tag (request types: EN 13306 nature of the OT, or empty) ──
+        if let Err(AppError::ValidationFailed(errs)) =
+            values::checked_semantic_tag(&txn, &domain.code, input.semantic_tag.as_deref()).await
+        {
+            let detail = errs.join(" ");
+            messages.push(ImportRowMessage::error(
+                "InvalidNatureTag",
+                "REF_IMPORT_INVALID_NATURE_TAG",
+                &[
+                    ("row", row_no.to_string()),
+                    ("tag", input.semantic_tag.clone().unwrap_or_default()),
+                    ("detail", detail.clone()),
+                ],
+                format!("Ligne {row_no}: {detail}"),
+            ));
+            status = "error";
+        }
+
+        // ── Check: units of measure (a plant unit names its base standard unit and factor) ──
+        if crate::reference::units::is_units_domain(&domain.code) {
+            for problem in crate::reference::units::import_row_problems(
+                input.parent_code.as_deref(),
+                input.metadata_json.as_deref(),
+            ) {
+                messages.push(ImportRowMessage::error(
+                    "InvalidUnit",
+                    "REF_IMPORT_INVALID_UNIT",
+                    &[("row", row_no.to_string()), ("detail", problem.to_string())],
+                    format!("Ligne {row_no}: {problem}"),
+                ));
+                status = "error";
+            }
+        }
+
+        // ── Check: currencies (ISO 4217 code, minor units 0-4, symbol), as in the editor ──
+        if crate::reference::currencies::is_currency_domain(&domain.code) {
+            if let Err(AppError::ValidationFailed(errs)) = crate::reference::currencies::checked_currency_metadata(
+                input.code.as_deref().unwrap_or(""),
+                input.metadata_json.as_deref(),
+            ) {
+                let detail = errs.join(" ");
+                messages.push(ImportRowMessage::error(
+                    "InvalidCurrency",
+                    "REF_IMPORT_INVALID_CURRENCY",
+                    &[
+                        ("row", row_no.to_string()),
+                        ("code", input.code.clone().unwrap_or_default()),
+                        ("detail", detail.clone()),
+                    ],
+                    format!("Ligne {row_no}: {detail}"),
+                ));
+                status = "error";
+            }
         }
 
         let messages_json = serde_json::to_string(&messages)?;
@@ -576,6 +708,7 @@ pub async fn apply_import_batch(
     _actor_id: i64,
 ) -> AppResult<RefImportApplyResult> {
     let batch = get_batch_by_id(db, batch_id).await?;
+    crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "validated" {
         return Err(AppError::ValidationFailed(vec![format!(
             "Le lot d'import est en statut '{}'; seul le statut 'validated' permet l'application.",
@@ -617,6 +750,15 @@ pub async fn apply_import_batch(
         ))
         .await?;
 
+    // Product-seeded values of locked domains (equipment taxonomy) are never overwritten by an
+    // import; a row naming one of them is skipped.
+    let target_domain = domains::get_reference_domain(db, target_set.domain_id).await?;
+    let locked_system_codes = if crate::reference::governance::system_values_locked(&target_domain) {
+        load_system_value_codes(db, policy.target_set_id).await?
+    } else {
+        std::collections::HashSet::new()
+    };
+
     let txn = db.begin().await?;
 
     let mut created: i64 = 0;
@@ -645,7 +787,7 @@ pub async fn apply_import_batch(
             }
         };
 
-        let input: ImportRowInput = serde_json::from_str(&raw_json).unwrap_or(ImportRowInput {
+        let mut input: ImportRowInput = serde_json::from_str(&raw_json).unwrap_or(ImportRowInput {
             code: None,
             label: None,
             description: None,
@@ -666,10 +808,96 @@ pub async fn apply_import_batch(
             }
         };
 
+        // Only the product seeders create system values.
+        if crate::reference::governance::metadata_marks_system_origin(input.metadata_json.as_deref()) {
+            errored += 1;
+            continue;
+        }
+        if locked_system_codes.contains(&code) {
+            skipped += 1;
+            continue;
+        }
+
+        // Same server rules as a value created in the editor: a required cross-domain parent named
+        // by `parent_code`, and a nature tag that is one of the maintenance natures.
+        let parent_id = match values::required_parent_domain(&target_domain.code) {
+            Some(parent_domain) => {
+                let named = input.parent_code.as_deref().map(str::trim).filter(|c| !c.is_empty());
+                match named {
+                    Some(pc) => match values::published_value_id_by_code(&txn, parent_domain, pc).await? {
+                        Some(id) => Some(id),
+                        None => {
+                            errored += 1;
+                            continue;
+                        }
+                    },
+                    None => {
+                        errored += 1;
+                        continue;
+                    }
+                }
+            }
+            None => None,
+        };
+        let mut parent_id = parent_id;
+        let mut semantic_tag =
+            match values::checked_semantic_tag(&txn, &target_domain.code, input.semantic_tag.as_deref()).await {
+                Ok(tag) => tag,
+                Err(_) => {
+                    errored += 1;
+                    continue;
+                }
+            };
+        if crate::reference::units::is_units_domain(&target_domain.code) {
+            // Same rules as the editor: base standard unit of this version (`parent_code`), factor
+            // > 0, dimension of the base; a "to review" flag is never imported.
+            input.metadata_json = crate::reference::units::reviewed_metadata(input.metadata_json.as_deref());
+            let base = match input.parent_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+                Some(base_code) => txn
+                    .query_one(Statement::from_sql_and_values(
+                        DbBackend::Sqlite,
+                        "SELECT id FROM reference_values WHERE set_id = ? AND UPPER(TRIM(code)) = UPPER(TRIM(?))",
+                        [policy.target_set_id.into(), base_code.into()],
+                    ))
+                    .await?
+                    .and_then(|r| r.try_get::<i64>("", "id").ok()),
+                None => None,
+            };
+            match crate::reference::units::checked_plant_unit(
+                &txn,
+                policy.target_set_id,
+                &code,
+                base,
+                semantic_tag.as_deref(),
+                input.metadata_json.as_deref(),
+            )
+            .await
+            {
+                Ok(dimension) => {
+                    parent_id = base;
+                    semantic_tag = Some(dimension);
+                }
+                Err(_) => {
+                    errored += 1;
+                    continue;
+                }
+            }
+        }
+        if crate::reference::currencies::is_currency_domain(&target_domain.code) {
+            // Same rules as the editor: ISO 4217 code, minor units 0-4, short symbol.
+            match crate::reference::currencies::checked_currency_metadata(&code, input.metadata_json.as_deref()) {
+                Ok(meta) => input.metadata_json = Some(meta),
+                Err(_) => {
+                    errored += 1;
+                    continue;
+                }
+            }
+        }
+
         // Check if this code already exists in the draft set.
         if let Some(existing_id) = existing_in_set.get(&code) {
             // Update existing value.
-            match apply_update_value(&txn, *existing_id, &input, &label).await {
+            match apply_update_value(&txn, *existing_id, &input, &label, parent_id, semantic_tag.as_deref()).await {
                 Ok(_) => updated += 1,
                 Err(_) => errored += 1,
             }
@@ -681,10 +909,11 @@ pub async fn apply_import_batch(
                     DbBackend::Sqlite,
                     "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, \
                       color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-                     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
                     [
                         crate::sync::identity::new_entity_sync_id().into(),
                         policy.target_set_id.into(),
+                        parent_id.into(),
                         code.clone().into(),
                         label.into(),
                         input
@@ -706,8 +935,7 @@ pub async fn apply_import_batch(
                             .clone()
                             .map(|c| sea_orm::Value::String(Some(Box::new(c))))
                             .unwrap_or(sea_orm::Value::String(None)),
-                        input
-                            .semantic_tag
+                        semantic_tag
                             .clone()
                             .map(|c| sea_orm::Value::String(Some(Box::new(c))))
                             .unwrap_or(sea_orm::Value::String(None)),
@@ -896,15 +1124,44 @@ async fn load_draft_set_codes(
     Ok(map)
 }
 
+/// Codes of the product-seeded values (`origin = system`) of a set.
+async fn load_system_value_codes(db: &DatabaseConnection, set_id: i64) -> AppResult<std::collections::HashSet<String>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code, metadata_json FROM reference_values WHERE set_id = ?",
+            [set_id.into()],
+        ))
+        .await?;
+    let mut codes = std::collections::HashSet::new();
+    for r in &rows {
+        let code: String = r.try_get("", "code").map_err(|e| decode_err("code", e))?;
+        let metadata: Option<String> = r
+            .try_get("", "metadata_json")
+            .map_err(|e| decode_err("metadata_json", e))?;
+        if crate::reference::governance::metadata_marks_system_origin(metadata.as_deref()) {
+            codes.insert(code);
+        }
+    }
+    Ok(codes)
+}
+
 /// Update an existing reference value with import data.
 async fn apply_update_value(
     txn: &impl ConnectionTrait,
     value_id: i64,
     input: &ImportRowInput,
     label: &str,
+    parent_id: Option<i64>,
+    semantic_tag: Option<&str>,
 ) -> AppResult<()> {
     let mut set_clauses: Vec<String> = vec!["label = ?".into()];
     let mut binds: Vec<sea_orm::Value> = vec![label.into()];
+
+    if let Some(pid) = parent_id {
+        set_clauses.push("parent_id = ?".into());
+        binds.push(pid.into());
+    }
 
     if let Some(ref desc) = input.description {
         set_clauses.push("description = ?".into());
@@ -922,9 +1179,9 @@ async fn apply_update_value(
         set_clauses.push("icon_name = ?".into());
         binds.push(icon.clone().into());
     }
-    if let Some(ref tag) = input.semantic_tag {
+    if input.semantic_tag.is_some() {
         set_clauses.push("semantic_tag = ?".into());
-        binds.push(tag.clone().into());
+        binds.push(semantic_tag.map(str::to_string).into());
     }
     if let Some(ref ext) = input.external_code {
         set_clauses.push("external_code = ?".into());

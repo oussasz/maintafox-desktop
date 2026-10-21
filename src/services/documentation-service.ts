@@ -4,6 +4,7 @@
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  DocumentCategoryOption,
   LibraryDocument,
   LibraryDocumentCategory,
   UpdateLibraryDocumentPayload,
@@ -59,4 +60,9 @@ export async function updateLibraryDocument(
 export async function fileToNumberArray(file: File): Promise<number[]> {
   const buffer = await file.arrayBuffer();
   return Array.from(new Uint8Array(buffer));
+}
+
+/** The plant's document categories (`DOCUMENT.CATEGORIES` in Données de référence). */
+export async function listDocumentCategories(): Promise<DocumentCategoryOption[]> {
+  return invoke<DocumentCategoryOption[]>("list_document_categories");
 }

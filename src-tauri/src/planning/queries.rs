@@ -6,11 +6,11 @@ use serde_json::{json, Value};
 use crate::errors::{AppError, AppResult};
 
 use super::domain::{
-    CandidateConflictSummary, RefreshScheduleCandidatesInput, RefreshScheduleCandidatesResult, ScheduleBacklogSnapshot,
-    ScheduleCandidate, ScheduleCandidateFilter, SchedulingConflict,
+    CandidateConflictSummary, ConflictReason, RefreshScheduleCandidatesInput, RefreshScheduleCandidatesResult,
+    ScheduleBacklogSnapshot, ScheduleCandidate, ScheduleCandidateFilter, SchedulingConflict,
 };
 
-const CANDIDATE_COLS: &str = "sc.id,sc.source_type,sc.source_id,sc.source_di_id,sc.readiness_status,sc.readiness_score,sc.priority_id,sc.required_skill_set_json,sc.required_parts_ready,sc.permit_status,sc.shutdown_requirement,sc.prerequisite_status,sc.estimated_duration_hours,sc.assigned_personnel_id,sc.assigned_team_id,sc.window_start,sc.window_end,sc.suggested_assignees_json,sc.availability_conflict_count,sc.skill_match_score,sc.estimated_labor_cost_range_json,sc.blocking_flags_json,sc.open_work_count,sc.next_available_window,sc.estimated_assignment_risk,sc.risk_reason_codes_json,sc.row_version,sc.created_at,sc.updated_at";
+const CANDIDATE_COLS: &str = "sc.id,sc.source_type,sc.source_id,sc.source_di_id,sc.readiness_status,sc.readiness_score,sc.priority_id,sc.required_skill_set_json,sc.required_parts_ready,sc.permit_status,sc.shutdown_requirement,sc.prerequisite_status,sc.estimated_duration_hours,sc.planned_crew_size,sc.assigned_personnel_id,sc.assigned_team_id,sc.window_start,sc.window_end,sc.suggested_assignees_json,sc.availability_conflict_count,sc.skill_match_score,sc.estimated_labor_cost_range_json,sc.blocking_flags_json,sc.open_work_count,sc.next_available_window,sc.estimated_assignment_risk,sc.risk_reason_codes_json,sc.row_version,sc.created_at,sc.updated_at";
 const CANDIDATE_JOIN_COLS: &str = "\
     CASE sc.source_type \
         WHEN 'work_order' THEN wo.code \
@@ -26,7 +26,7 @@ const CANDIDATE_JOIN_COLS: &str = "\
     END AS source_title, \
     CASE WHEN t.id IS NOT NULL THEN t.name || ' (' || t.code || ')' ELSE NULL END AS assigned_team_label, \
     p.full_name AS assigned_personnel_name, \
-    ul.label AS priority_label";
+    ul.label AS priority_label, ul.code AS priority_code, ul.sort_order AS priority_rank";
 const CANDIDATE_JOINS: &str = "\
     LEFT JOIN work_orders wo ON sc.source_type = 'work_order' AND wo.id = sc.source_id \
     LEFT JOIN pm_occurrences po ON sc.source_type = 'pm_occurrence' AND po.id = sc.source_id \
@@ -34,7 +34,7 @@ const CANDIDATE_JOINS: &str = "\
     LEFT JOIN intervention_requests ir ON sc.source_type = 'inspection_follow_up' AND ir.id = sc.source_id \
     LEFT JOIN teams t ON t.id = sc.assigned_team_id \
     LEFT JOIN personnel p ON p.id = sc.assigned_personnel_id \
-    LEFT JOIN urgency_levels ul ON ul.id = sc.priority_id";
+    LEFT JOIN reference_values ul ON ul.id = sc.priority_id";
 const CONFLICT_COLS: &str =
     "id,candidate_id,conflict_type,reference_type,reference_id,reason_code,severity,details_json,resolved_at,created_at";
 
@@ -44,9 +44,9 @@ const CONFLICT_COLS: &str =
 const WO_SCHEDULE_CANDIDATE_STATUS_SQL: &str =
     "'planning','ready','planned','ready_to_schedule','assigned','waiting_for_prerequisite','awaiting_approval'";
 
-/// Open WO statuses counted as concurrent assignee load during readiness evaluation.
-const WO_OPEN_ASSIGNMENT_STATUS_SQL: &str =
-    "'planning','ready','planned','ready_to_schedule','assigned','waiting_for_prerequisite','awaiting_approval','in_progress','on_hold'";
+/// OTs counted as concurrent assignee load during readiness evaluation: the shared "Open (work to
+/// do)" rule (`wo::backlog::OPEN_STATUS_SQL`), the same as the person's workload and availability.
+const WO_OPEN_ASSIGNMENT_STATUS_SQL: &str = crate::wo::backlog::OPEN_STATUS_SQL;
 
 #[derive(Debug, Clone)]
 struct EvaluatedConflict {
@@ -57,6 +57,18 @@ struct EvaluatedConflict {
     severity: String,
     details_json: Option<String>,
     dimension: &'static str,
+}
+
+/// A conflict that refuses the commitment (the work cannot be done as planned).
+pub(crate) const SEVERITY_BLOCKING: &str = "blocking";
+/// A conflict the planner sees but that does not refuse the commitment: enforced later (OT
+/// start for permits and LOTO, the commit itself for the named technician) or a reminder.
+pub(crate) const SEVERITY_WARNING: &str = "warning";
+
+/// Every severity but `warning` refuses the commitment (rows from before the split said `high` /
+/// `medium`; an unknown severity fails closed).
+pub(crate) fn is_blocking_severity(severity: &str) -> bool {
+    severity != SEVERITY_WARNING
 }
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
@@ -100,6 +112,9 @@ fn map_candidate(row: &QueryResult) -> AppResult<ScheduleCandidate> {
         estimated_duration_hours: row
             .try_get("", "estimated_duration_hours")
             .map_err(|e| decode_err("estimated_duration_hours", e))?,
+        planned_crew_size: row
+            .try_get("", "planned_crew_size")
+            .map_err(|e| decode_err("planned_crew_size", e))?,
         assigned_personnel_id: row
             .try_get("", "assigned_personnel_id")
             .map_err(|e| decode_err("assigned_personnel_id", e))?,
@@ -149,6 +164,8 @@ fn map_candidate(row: &QueryResult) -> AppResult<ScheduleCandidate> {
             .try_get::<Option<String>>("", "assigned_personnel_name")
             .unwrap_or(None),
         priority_label: row.try_get::<Option<String>>("", "priority_label").unwrap_or(None),
+        priority_code: row.try_get::<Option<String>>("", "priority_code").unwrap_or(None),
+        priority_rank: row.try_get::<Option<i64>>("", "priority_rank").unwrap_or(None),
     })
 }
 
@@ -252,10 +269,18 @@ pub async fn list_schedule_candidates(
     }
 
     let limit = filter.limit.unwrap_or(400).clamp(1, 2_000);
+    // Blocked work (a blocking conflict; warnings do not hide a job) is listed only when the caller
+    // asks (the planning board does, explicitly).
+    // A job holding a slot is on the schedule, not in the backlog (released or cancelled ones
+    // come back).
+    where_sql.push(
+        "NOT EXISTS (SELECT 1 FROM schedule_commitments scm WHERE scm.schedule_candidate_id = sc.id AND scm.status = 'committed')"
+            .to_string(),
+    );
     let include_resolved = filter.include_resolved_conflicts.unwrap_or(false);
     if !include_resolved {
         where_sql.push(
-            "NOT EXISTS (SELECT 1 FROM scheduling_conflicts scx WHERE scx.candidate_id = sc.id AND scx.resolved_at IS NULL)"
+            "NOT EXISTS (SELECT 1 FROM scheduling_conflicts scx WHERE scx.candidate_id = sc.id AND scx.resolved_at IS NULL AND scx.severity <> 'warning')"
                 .to_string(),
         );
     }
@@ -266,7 +291,7 @@ pub async fn list_schedule_candidates(
          FROM schedule_candidates sc
          {CANDIDATE_JOINS}
          WHERE {}
-         ORDER BY sc.readiness_status DESC, sc.readiness_score DESC, sc.updated_at DESC
+         ORDER BY sc.readiness_status DESC, COALESCE(ul.sort_order, 99) ASC, sc.readiness_score DESC, sc.updated_at DESC
          LIMIT ?",
         where_sql.join(" AND ")
     );
@@ -332,6 +357,9 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
                     wo.planned_start AS window_start,
                     wo.planned_end AS window_end,
                     wo.expected_duration_hours,
+                    wo.planned_crew_size,
+                    wo.urgency_id,
+                    wo.requires_shutdown,
                     wos.code AS status_code
                  FROM work_orders wo
                  JOIN work_order_statuses wos ON wos.id = wo.status_id
@@ -363,9 +391,18 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
         let estimated_duration_hours: Option<f64> = row
             .try_get("", "expected_duration_hours")
             .map_err(|e| decode_err("expected_duration_hours", e))?;
+        let planned_crew_size: Option<i64> = row
+            .try_get("", "planned_crew_size")
+            .map_err(|e| decode_err("planned_crew_size", e))?;
         let status_code: String = row
             .try_get("", "status_code")
             .map_err(|e| decode_err("status_code", e))?;
+        let urgency_id: Option<i64> = row.try_get("", "urgency_id").map_err(|e| decode_err("urgency_id", e))?;
+        // "Needs shutdown" on the work order: the same requirement as a PM plan's.
+        let requires_shutdown: i64 = row
+            .try_get("", "requires_shutdown")
+            .map_err(|e| decode_err("requires_shutdown", e))?;
+        let shutdown_requirement = (requires_shutdown == 1).then(|| "required".to_string());
 
         let prerequisite_status = if status_code == "waiting_for_prerequisite" {
             "blocked"
@@ -377,16 +414,19 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement)
+                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, priority_id, planned_crew_size)
                  VALUES
-                    (?, 'work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL)
+                    (?, 'work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?, ?)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
+                    shutdown_requirement = excluded.shutdown_requirement,
+                    priority_id = excluded.priority_id,
                     assigned_personnel_id = excluded.assigned_personnel_id,
                     assigned_team_id = excluded.assigned_team_id,
                     window_start = excluded.window_start,
                     window_end = excluded.window_end,
                     estimated_duration_hours = excluded.estimated_duration_hours,
+                    planned_crew_size = excluded.planned_crew_size,
                     prerequisite_status = excluded.prerequisite_status,
                     row_version = schedule_candidates.row_version + 1,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
@@ -400,6 +440,9 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
                     window_end.into(),
                     estimated_duration_hours.into(),
                     prerequisite_status.to_string().into(),
+                    shutdown_requirement.into(),
+                    urgency_id.into(),
+                    planned_crew_size.into(),
                 ],
             ))
             .await?;
@@ -420,8 +463,10 @@ async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> A
             "SELECT
                 po.id AS source_id,
                 po.due_at AS window_start,
-                datetime(po.due_at, '+' || CAST(COALESCE(pv.estimated_duration_hours, 2) AS TEXT) || ' hours') AS window_end,
-                COALESCE(pv.estimated_duration_hours, 2) AS estimated_duration_hours,
+                -- No default duration: a PM version without an estimate is not estimated.
+                datetime(po.due_at, '+' || CAST(pv.estimated_duration_hours AS TEXT) || ' hours') AS window_end,
+                pv.estimated_duration_hours AS estimated_duration_hours,
+                pv.planned_crew_size AS planned_crew_size,
                 po.status AS occurrence_status,
                 pp.requires_permit,
                 pp.requires_shutdown,
@@ -475,6 +520,9 @@ async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> A
         let estimated_duration_hours: Option<f64> = row
             .try_get("", "estimated_duration_hours")
             .map_err(|e| decode_err("estimated_duration_hours", e))?;
+        let planned_crew_size: Option<i64> = row
+            .try_get("", "planned_crew_size")
+            .map_err(|e| decode_err("planned_crew_size", e))?;
         let occurrence_status: String = row
             .try_get("", "occurrence_status")
             .map_err(|e| decode_err("occurrence_status", e))?;
@@ -508,9 +556,9 @@ async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> A
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, required_skill_set_json)
+                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, required_skill_set_json, planned_crew_size)
                  VALUES
-                    (?, 'pm_occurrence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (?, 'pm_occurrence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
                     assigned_personnel_id = excluded.assigned_personnel_id,
@@ -518,6 +566,7 @@ async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> A
                     window_start = excluded.window_start,
                     window_end = excluded.window_end,
                     estimated_duration_hours = excluded.estimated_duration_hours,
+                    planned_crew_size = excluded.planned_crew_size,
                     prerequisite_status = excluded.prerequisite_status,
                     permit_status = excluded.permit_status,
                     shutdown_requirement = excluded.shutdown_requirement,
@@ -537,6 +586,7 @@ async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> A
                     permit_status.to_string().into(),
                     shutdown_requirement.into(),
                     required_skills_json.into(),
+                    planned_crew_size.into(),
                 ],
             ))
             .await?;
@@ -557,11 +607,13 @@ async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppR
             "SELECT
                 ir.id AS source_id,
                 ir.submitted_at AS window_start,
-                datetime(ir.submitted_at, '+4 hours') AS window_end,
-                4.0 AS estimated_duration_hours,
+                COALESCE(ir.validated_urgency, ir.reported_urgency) AS urgency_code,
+                -- A request carries no duration estimate: not estimated until it becomes a work order.
+                NULL AS estimated_duration_hours,
                 ir.deferred_until
              FROM intervention_requests ir
-             WHERE ir.status = 'approved_for_planning'
+             -- Approved and not converted yet (`approved_for_planning` became `approved`, migration 139).
+             WHERE ir.status = 'approved'
                AND ir.converted_to_wo_id IS NULL
              ORDER BY ir.updated_at DESC
              LIMIT ?",
@@ -575,7 +627,24 @@ async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppR
         let window_start: Option<String> = row
             .try_get("", "window_start")
             .map_err(|e| decode_err("window_start", e))?;
-        let window_end: Option<String> = row.try_get("", "window_end").map_err(|e| decode_err("window_end", e))?;
+        let urgency_code: String = row
+            .try_get("", "urgency_code")
+            .map_err(|e| decode_err("urgency_code", e))?;
+        // The request's level on the shared urgency scale: its id ranks the backlog and its
+        // completion target closes the planning window.
+        let level = crate::reference::urgency_scale::get_urgency_level(db, &urgency_code).await?;
+        let priority_id = level.as_ref().map(|l| l.id);
+        let window_end: Option<String> = match (
+            window_start.as_deref(),
+            level.as_ref().and_then(|l| l.completion_target_hours),
+        ) {
+            (Some(start), Some(hours)) => chrono::DateTime::parse_from_rfc3339(start).ok().map(|t| {
+                (t + chrono::Duration::hours(hours))
+                    .format("%Y-%m-%dT%H:%M:%SZ")
+                    .to_string()
+            }),
+            _ => None,
+        };
         let estimated_duration_hours: Option<f64> = row
             .try_get("", "estimated_duration_hours")
             .map_err(|e| decode_err("estimated_duration_hours", e))?;
@@ -588,11 +657,12 @@ async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppR
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (entity_sync_id, source_type, source_id, source_di_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status)
+                    (entity_sync_id, source_type, source_id, source_di_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, priority_id)
                  VALUES
-                    (?, 'inspection_follow_up', ?, ?, ?, ?, ?, ?, 'unknown')
+                    (?, 'inspection_follow_up', ?, ?, ?, ?, ?, ?, 'unknown', ?)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
+                    priority_id = excluded.priority_id,
                     window_start = excluded.window_start,
                     window_end = excluded.window_end,
                     estimated_duration_hours = excluded.estimated_duration_hours,
@@ -607,6 +677,7 @@ async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppR
                     window_end.into(),
                     estimated_duration_hours.into(),
                     prerequisite_status.to_string().into(),
+                    priority_id.into(),
                 ],
             ))
             .await?;
@@ -619,13 +690,13 @@ async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppR
     Ok((inserted, updated))
 }
 
-async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> AppResult<(String, f64, i64)> {
+/// Re-derives the candidate's conflicts and readiness from the sources (also run by the commit
+/// gate, so a commitment is judged on the current state).
+pub(crate) async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> AppResult<(String, f64, i64)> {
     let candidate = get_candidate(db, candidate_id).await?;
     let mut conflicts: Vec<EvaluatedConflict> = Vec::new();
 
     let mut required_skills = parse_string_array(candidate.required_skill_set_json.as_deref());
-    let mut required_parts_missing = false;
-    let mut permit_blocked = candidate.permit_status == "required_missing";
     let mut shutdown_required = candidate
         .shutdown_requirement
         .as_deref()
@@ -633,18 +704,35 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
         .unwrap_or(false);
     let mut prerequisite_blocked = candidate.prerequisite_status == "blocked";
 
+    // Not estimated (duration or crew size missing): the work cannot be committed — no default
+    // duration or crew is ever assumed.
+    let mut missing: Vec<&str> = Vec::new();
+    if candidate.estimated_duration_hours.is_none_or(|h| h <= 0.0) {
+        missing.push("duration");
+    }
+    if candidate.planned_crew_size.is_none_or(|n| n < 1) {
+        missing.push("crew_size");
+    }
+    if !missing.is_empty() {
+        conflicts.push(EvaluatedConflict {
+            conflict_type: "not_estimated".to_string(),
+            reference_type: Some(candidate.source_type.clone()),
+            reference_id: Some(candidate.source_id),
+            reason_code: "NOT_ESTIMATED".to_string(),
+            severity: SEVERITY_BLOCKING.to_string(),
+            details_json: Some(json!({ "missing": missing }).to_string()),
+            dimension: "estimate",
+        });
+    }
+
     if candidate.source_type == "work_order" {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT
-                    wos.code AS status_code,
-                    COALESCE(SUM(CASE WHEN wop.quantity_planned > COALESCE(wop.quantity_reserved, 0) THEN 1 ELSE 0 END), 0) AS uncovered_parts
+                "SELECT wos.code AS status_code, wo.requires_shutdown
                  FROM work_orders wo
                  JOIN work_order_statuses wos ON wos.id = wo.status_id
-                 LEFT JOIN work_order_parts wop ON wop.work_order_id = wo.id
-                 WHERE wo.id = ?
-                 GROUP BY wo.id, wos.code",
+                 WHERE wo.id = ?",
                 [candidate.source_id.into()],
             ))
             .await?;
@@ -652,24 +740,31 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
             let status_code: String = row
                 .try_get("", "status_code")
                 .map_err(|e| decode_err("status_code", e))?;
-            let uncovered_parts: i64 = row
-                .try_get("", "uncovered_parts")
-                .map_err(|e| decode_err("uncovered_parts", e))?;
             if status_code == "waiting_for_prerequisite" {
                 prerequisite_blocked = true;
             }
-            if uncovered_parts > 0 {
-                required_parts_missing = true;
-            }
+            // Read live from the work order, and kept on the candidate for the commit gate
+            // (`scheduling::enforce_shutdown_window`).
+            let requires_shutdown: i64 = row
+                .try_get("", "requires_shutdown")
+                .map_err(|e| decode_err("requires_shutdown", e))?;
+            shutdown_required = requires_shutdown == 1;
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE schedule_candidates SET shutdown_requirement = ? WHERE id = ?",
+                [
+                    shutdown_required.then(|| "required".to_string()).into(),
+                    candidate_id.into(),
+                ],
+            ))
+            .await?;
         }
     } else if candidate.source_type == "pm_occurrence" {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT
-                    pp.requires_permit,
                     pp.requires_shutdown,
-                    pv.required_parts_json,
                     pv.required_skills_json,
                     po.status
                  FROM pm_occurrences po
@@ -680,15 +775,9 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
             ))
             .await?;
         if let Some(row) = row {
-            let requires_permit: i64 = row
-                .try_get("", "requires_permit")
-                .map_err(|e| decode_err("requires_permit", e))?;
             let requires_shutdown: i64 = row
                 .try_get("", "requires_shutdown")
                 .map_err(|e| decode_err("requires_shutdown", e))?;
-            let required_parts_json: Option<String> = row
-                .try_get("", "required_parts_json")
-                .map_err(|e| decode_err("required_parts_json", e))?;
             let required_skills_json: Option<String> = row
                 .try_get("", "required_skills_json")
                 .map_err(|e| decode_err("required_skills_json", e))?;
@@ -696,39 +785,89 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
             if pm_status == "deferred" {
                 prerequisite_blocked = true;
             }
-            if !parse_string_array(required_parts_json.as_deref()).is_empty() {
-                required_parts_missing = true;
-            }
             if required_skills.is_empty() {
                 required_skills = parse_string_array(required_skills_json.as_deref());
             }
-            permit_blocked = requires_permit == 1 && candidate.permit_status != "approved";
             shutdown_required = requires_shutdown == 1;
         }
     }
 
-    if required_parts_missing {
+    // Parts against stock and reservations (stock units), and the permit / LOTO state of the
+    // work order (`planning::readiness`). A short part blocks the commitment; every other
+    // finding warns. Permits and LOTO are hard-enforced when the OT starts or resumes
+    // (`permit::wo_gate`), so planning warns about them — except a permit whose type is missing,
+    // which can never start: it blocks.
+    let mut required_parts_missing = false;
+    for finding in super::readiness::parts_findings(db, &candidate.source_type, candidate.source_id).await? {
+        let blocking = finding.reason_code == "PARTS_SHORT";
+        required_parts_missing |= blocking;
         conflicts.push(EvaluatedConflict {
-            conflict_type: "missing_critical_part".to_string(),
+            conflict_type: finding.conflict_type.to_string(),
             reference_type: Some(candidate.source_type.clone()),
             reference_id: Some(candidate.source_id),
-            reason_code: "PARTS_NOT_RESERVED".to_string(),
-            severity: "high".to_string(),
-            details_json: Some(
-                json!({
-                    "message": "Critical parts are not fully reserved for this candidate.",
-                    "source_type": candidate.source_type,
-                    "source_id": candidate.source_id
-                })
-                .to_string(),
-            ),
+            reason_code: finding.reason_code.to_string(),
+            severity: if blocking { SEVERITY_BLOCKING } else { SEVERITY_WARNING }.to_string(),
+            details_json: Some(finding.details.to_string()),
             dimension: "parts",
+        });
+    }
+    let work_end = candidate.window_end.as_deref();
+    for finding in super::readiness::permit_findings(db, &candidate.source_type, candidate.source_id, work_end).await? {
+        conflicts.push(EvaluatedConflict {
+            conflict_type: finding.conflict_type.to_string(),
+            reference_type: Some(candidate.source_type.clone()),
+            reference_id: Some(candidate.source_id),
+            reason_code: finding.reason_code.to_string(),
+            severity: if finding.reason_code == "PERMIT_TYPE_MISSING" {
+                SEVERITY_BLOCKING
+            } else {
+                SEVERITY_WARNING
+            }
+            .to_string(),
+            details_json: Some(finding.details.to_string()),
+            dimension: "permits",
         });
     }
 
     let mut skill_match_score: Option<f64> = None;
-    if !required_skills.is_empty() {
-        if let Some(personnel_id) = candidate.assigned_personnel_id {
+    if let Some(personnel_id) = candidate.assigned_personnel_id {
+        // The named technician against what the job asks (work order, PM or request), valid on
+        // the first day of its due window (today when it has none).
+        let work_day = candidate
+            .window_start
+            .as_deref()
+            .and_then(crate::wo::shifts::planned_instant)
+            .map_or_else(
+                || chrono::Local::now().date_naive(),
+                |t| t.with_timezone(&chrono::Local).date_naive(),
+            );
+        let check = super::qualifications::check_assignee(
+            db,
+            &candidate.source_type,
+            candidate.source_id,
+            personnel_id,
+            work_day,
+        )
+        .await?;
+        if let Some(check) = check.filter(|c| !c.qualified) {
+            conflicts.push(EvaluatedConflict {
+                conflict_type: "no_qualified_technician".to_string(),
+                reference_type: Some("personnel".to_string()),
+                reference_id: Some(personnel_id),
+                reason_code: "SKILL_GAP".to_string(),
+                // The commit gate refuses the named technician (`planning::qualifications`).
+                severity: SEVERITY_WARNING.to_string(),
+                details_json: Some(
+                    json!({
+                        "person": check.full_name,
+                        "gaps": check.gaps.iter().map(|g| g.label.clone()).collect::<Vec<_>>(),
+                    })
+                    .to_string(),
+                ),
+                dimension: "skills",
+            });
+        }
+        if !required_skills.is_empty() {
             let rows = db
                 .query_all(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
@@ -742,59 +881,25 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
                 .await?;
             let owned: BTreeSet<String> = rows
                 .iter()
-                .filter_map(|row| row.try_get::<String>("", "code").ok())
-                .collect();
+                .map(|row| row.try_get::<String>("", "code").map_err(|e| decode_err("code", e)))
+                .collect::<AppResult<_>>()?;
             let matched = required_skills.iter().filter(|code| owned.contains(*code)).count();
             skill_match_score = Some((matched as f64) / (required_skills.len() as f64));
-            if matched < required_skills.len() {
-                conflicts.push(EvaluatedConflict {
-                    conflict_type: "no_qualified_technician".to_string(),
-                    reference_type: Some("personnel".to_string()),
-                    reference_id: Some(personnel_id),
-                    reason_code: "SKILL_GAP".to_string(),
-                    severity: "high".to_string(),
-                    details_json: Some(
-                        json!({
-                            "required_skills": required_skills,
-                            "matched_skills": matched
-                        })
-                        .to_string(),
-                    ),
-                    dimension: "skills",
-                });
-            }
-        } else {
-            conflicts.push(EvaluatedConflict {
-                conflict_type: "no_qualified_technician".to_string(),
-                reference_type: Some("personnel".to_string()),
-                reference_id: None,
-                reason_code: "ASSIGNMENT_REQUIRED".to_string(),
-                severity: "high".to_string(),
-                details_json: Some(
-                    json!({
-                        "required_skills": required_skills
-                    })
-                    .to_string(),
-                ),
-                dimension: "skills",
-            });
         }
-    }
-
-    if permit_blocked {
+    } else if !required_skills.is_empty() {
         conflicts.push(EvaluatedConflict {
-            conflict_type: "permit_not_ready".to_string(),
-            reference_type: Some(candidate.source_type.clone()),
-            reference_id: Some(candidate.source_id),
-            reason_code: "PERMIT_REQUIRED".to_string(),
-            severity: "medium".to_string(),
+            conflict_type: "no_qualified_technician".to_string(),
+            reference_type: Some("personnel".to_string()),
+            reference_id: None,
+            reason_code: "ASSIGNMENT_REQUIRED".to_string(),
+            severity: SEVERITY_WARNING.to_string(),
             details_json: Some(
                 json!({
-                    "permit_status": candidate.permit_status
+                    "required_skills": required_skills
                 })
                 .to_string(),
             ),
-            dimension: "permits",
+            dimension: "skills",
         });
     }
 
@@ -804,38 +909,29 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
             reference_type: Some(candidate.source_type.clone()),
             reference_id: Some(candidate.source_id),
             reason_code: "PREREQUISITE_BLOCKED".to_string(),
-            severity: "medium".to_string(),
+            severity: SEVERITY_BLOCKING.to_string(),
             details_json: None,
             dimension: "prerequisites",
         });
     }
 
     if shutdown_required {
-        let has_window = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT 1 AS ok
-                 FROM planning_windows pw
-                 WHERE pw.is_locked = 0
-                   AND (? IS NULL OR pw.window_start <= ?)
-                   AND (? IS NULL OR pw.window_end >= ?)
-                 LIMIT 1",
-                [
-                    candidate.window_start.clone().into(),
-                    candidate.window_start.clone().into(),
-                    candidate.window_end.clone().into(),
-                    candidate.window_end.clone().into(),
-                ],
-            ))
-            .await?
-            .is_some();
+        // An open maintenance / shutdown window of the job's site or equipment over its due window.
+        let location = super::windows::job_location(db, &candidate.source_type, candidate.source_id).await?;
+        let has_window = super::windows::shutdown_window_overlaps(
+            db,
+            candidate.window_start.as_deref(),
+            candidate.window_end.as_deref(),
+            location,
+        )
+        .await?;
         if !has_window {
             conflicts.push(EvaluatedConflict {
                 conflict_type: "locked_window".to_string(),
                 reference_type: Some("planning_window".to_string()),
                 reference_id: None,
                 reason_code: "NO_FEASIBLE_WINDOW".to_string(),
-                severity: "medium".to_string(),
+                severity: SEVERITY_BLOCKING.to_string(),
                 details_json: Some(
                     json!({
                         "window_start": candidate.window_start,
@@ -848,10 +944,31 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
         }
     }
 
+    // A job whose site is unknown (no equipment location, no node; a PM scoped to a family or a
+    // criticality group) cannot be checked against its site's windows: said, never ignored.
+    if matches!(
+        candidate.source_type.as_str(),
+        "work_order" | "pm_occurrence" | "inspection_follow_up"
+    ) && super::windows::job_location(db, &candidate.source_type, candidate.source_id)
+        .await?
+        .node_id
+        .is_none()
+    {
+        conflicts.push(EvaluatedConflict {
+            conflict_type: "location_unknown".to_string(),
+            reference_type: Some(candidate.source_type.clone()),
+            reference_id: Some(candidate.source_id),
+            reason_code: "LOCATION_UNKNOWN".to_string(),
+            severity: SEVERITY_WARNING.to_string(),
+            details_json: None,
+            dimension: "windows",
+        });
+    }
+
     let mut availability_conflict_count = 0_i64;
     let mut next_available_window: Option<String> = None;
     let mut open_work_count: Option<i64> = None;
-    let mut suggested_assignees_json: Option<String> = None;
+    let suggested_assignees_json: Option<String> = None;
     let mut labor_cost_range: Option<String> = None;
     let mut risk_reasons: Vec<String> = Vec::new();
     if let Some(personnel_id) = candidate.assigned_personnel_id {
@@ -890,7 +1007,7 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
                      JOIN user_accounts ua ON ua.id = wo.primary_responsible_id
                       AND ua.deleted_at IS NULL
                       AND ua.personnel_id = ?
-                     WHERE wos.code IN ({WO_OPEN_ASSIGNMENT_STATUS_SQL})
+                     WHERE wos.code IN {WO_OPEN_ASSIGNMENT_STATUS_SQL}
                        AND wo.id != (
                          CASE WHEN ? = 'work_order' THEN ? ELSE -1 END
                        )
@@ -922,7 +1039,8 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
                 reference_type: Some("personnel".to_string()),
                 reference_id: Some(personnel_id),
                 reason_code: "ASSIGNEE_UNAVAILABLE".to_string(),
-                severity: "high".to_string(),
+                // The commit gate refuses the named technician unless overridden with a reason.
+                severity: SEVERITY_WARNING.to_string(),
                 details_json: Some(
                     json!({
                         "availability_conflict_count": availability_conflict_count,
@@ -944,7 +1062,7 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
                      JOIN user_accounts ua ON ua.id = wo.primary_responsible_id
                       AND ua.deleted_at IS NULL
                       AND ua.personnel_id = ?
-                     WHERE wos.code IN ({WO_OPEN_ASSIGNMENT_STATUS_SQL})"
+                     WHERE wos.code IN {WO_OPEN_ASSIGNMENT_STATUS_SQL}"
                 ),
                 [personnel_id.into()],
             ))
@@ -952,60 +1070,44 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
             .and_then(|row| row.try_get("", "c").ok());
 
         let rate_pair = crate::personnel::queries::resolve_active_rate_pair(db, personnel_id).await?;
-        if let (Some(duration), Some((labor_rate, overtime_rate))) = (candidate.estimated_duration_hours, rate_pair) {
+        if let (Some(duration), Some(crew), Some((labor_rate, overtime_rate))) = (
+            candidate.estimated_duration_hours,
+            candidate.planned_crew_size,
+            rate_pair,
+        ) {
+            // Labour hours of the job (duration × crew) at the normal and overtime rates.
+            let labour = duration * crew as f64;
             labor_cost_range = Some(
                 json!({
-                    "min": duration * labor_rate,
-                    "max": duration * overtime_rate
+                    "min": labour * labor_rate,
+                    "max": labour * overtime_rate
                 })
                 .to_string(),
             );
         }
     }
 
-    if candidate.assigned_personnel_id.is_none() && !required_skills.is_empty() {
-        let rows = db
-            .query_all(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT
-                    p.id,
-                    p.full_name,
-                    COUNT(DISTINCT rv.code) AS matching_skills
-                 FROM personnel p
-                 JOIN personnel_skills ps ON ps.personnel_id = p.id
-                 JOIN reference_values rv ON rv.id = ps.reference_value_id
-                 WHERE p.availability_status <> 'inactive'
-                 GROUP BY p.id, p.full_name
-                 ORDER BY matching_skills DESC, p.full_name ASC
-                 LIMIT 5",
-                [],
-            ))
-            .await?;
-        let suggestions: Vec<Value> = rows
-            .into_iter()
-            .map(|row| {
-                json!({
-                    "personnel_id": row.try_get::<i64>("", "id").unwrap_or_default(),
-                    "full_name": row.try_get::<String>("", "full_name").unwrap_or_default(),
-                    "matching_skills": row.try_get::<i64>("", "matching_skills").unwrap_or_default()
-                })
-            })
-            .collect();
-        if !suggestions.is_empty() {
-            suggested_assignees_json = Some(Value::Array(suggestions).to_string());
+    // Suggested assignees used to rank all personnel by skill count, whatever the required skills,
+    // team or availability: removed — nothing rather than a misleading suggestion.
+
+    // Ready unless a blocking conflict remains; warnings lower the score but never block.
+    let mut blocking_dimensions: BTreeSet<&'static str> = BTreeSet::new();
+    let mut warning_dimensions: BTreeSet<&'static str> = BTreeSet::new();
+    for conflict in &conflicts {
+        if is_blocking_severity(&conflict.severity) {
+            blocking_dimensions.insert(conflict.dimension);
+        } else {
+            warning_dimensions.insert(conflict.dimension);
         }
     }
-
-    let mut blocker_dimensions: BTreeSet<&'static str> = BTreeSet::new();
-    let blocker_codes: Vec<String> = conflicts
-        .iter()
-        .map(|conflict| {
-            blocker_dimensions.insert(conflict.dimension);
-            conflict.conflict_type.clone()
-        })
-        .collect();
-    let readiness_score = (100.0 - (blocker_dimensions.len() as f64 * 20.0)).max(0.0);
-    let readiness_status = if conflicts.is_empty() { "ready" } else { "blocked" };
+    let warning_only = warning_dimensions.difference(&blocking_dimensions).count();
+    let readiness_score = (100.0 - (blocking_dimensions.len() as f64 * 20.0) - (warning_only as f64 * 10.0)).max(0.0);
+    let readiness_status = if blocking_dimensions.is_empty() {
+        "ready"
+    } else {
+        "blocked"
+    };
+    let blocker_codes: Vec<String> = conflicts.iter().map(|c| c.conflict_type.clone()).collect();
 
     if availability_conflict_count > 0 {
         risk_reasons.push("ASSIGNEE_UNAVAILABLE".to_string());
@@ -1071,12 +1173,8 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
             json!(blocker_codes).to_string().into(),
             open_work_count.into(),
             next_available_window.into(),
-            (if conflicts.is_empty() {
-                0.0
-            } else {
-                0.35 + (conflicts.len() as f64 * 0.1)
-            })
-            .into(),
+            // No computed assignment risk exists: nothing rather than a made-up number.
+            None::<f64>.into(),
             json!(risk_reasons).to_string().into(),
             candidate_id.into(),
         ],
@@ -1209,12 +1307,21 @@ pub async fn get_schedule_backlog_snapshot(
                 "missing_critical_part" => "parts",
                 "no_qualified_technician" => "skills",
                 "permit_not_ready" => "permits",
-                "locked_window" | "double_booking" => "windows",
+                "locked_window" | "double_booking" | "location_unknown" => "windows",
                 _ => "prerequisites",
             })
             .collect::<BTreeSet<_>>()
             .into_iter()
             .map(str::to_string)
+            .collect();
+        let reasons = conflicts
+            .iter()
+            .map(|c| ConflictReason {
+                conflict_type: c.conflict_type.clone(),
+                reason_code: c.reason_code.clone(),
+                severity: c.severity.clone(),
+                details_json: c.details_json.clone(),
+            })
             .collect();
         conflict_summary.push(CandidateConflictSummary {
             candidate_id: candidate.id,
@@ -1222,6 +1329,7 @@ pub async fn get_schedule_backlog_snapshot(
             blocker_dimensions,
             readiness_status: candidate.readiness_status.clone(),
             readiness_score: candidate.readiness_score,
+            reasons,
         });
     }
 
@@ -1233,7 +1341,7 @@ pub async fn get_schedule_backlog_snapshot(
         candidates,
         conflict_summary,
         derivation_rules: vec![
-            "Readiness score starts at 100 and decreases by 20 per blocked dimension (parts, skills, permits, windows, prerequisites).".to_string(),
+            "Readiness score starts at 100, minus 20 per dimension with a blocking conflict and 10 per dimension with warnings only (estimate, parts, skills, permits, windows, prerequisites); only blocking conflicts refuse a commitment.".to_string(),
             "Personnel availability is validated against explicit availability blocks and overlapping active work orders.".to_string(),
             "Conflicts are persisted in scheduling_conflicts so guardrails are enforced by backend workflows, not only the UI.".to_string(),
             "DI-to-WO causality is preserved through source_di_id on schedule_candidates and conflict details payloads.".to_string(),

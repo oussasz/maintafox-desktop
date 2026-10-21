@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useStepUp } from "@/hooks/use-step-up";
+import { type AppErrorDescription, describeAppError } from "@/lib/app-error";
 import {
   activatePolicy,
   discardPolicyDraft,
@@ -46,6 +49,8 @@ import {
 } from "@/services/settings-service";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { AppSetting, PolicySnapshot } from "@shared/ipc-types";
+
+import { policyTestText } from "./policy-test-text";
 
 // ── Governed setting domains ────────────────────────────────────────────────
 
@@ -89,13 +94,13 @@ interface PolicyField {
 }
 
 const POLICY_FIELDS: Record<string, PolicyField[]> = {
+  // `offline_grace_hours`, `max_failed_attempts` and `lockout_minutes` stay in the stored policy
+  // but the sign-in does not read them: the lockout is set in the Lockout panel (the values the
+  // sign-in applies) and offline grace comes from the device configuration.
   session: [
     { key: "idle_timeout_minutes", type: "number" },
     { key: "absolute_session_minutes", type: "number" },
-    { key: "offline_grace_hours", type: "number" },
     { key: "step_up_window_minutes", type: "number" },
-    { key: "max_failed_attempts", type: "number" },
-    { key: "lockout_minutes", type: "number" },
   ],
   password: [
     { key: "min_length", type: "number" },
@@ -104,12 +109,10 @@ const POLICY_FIELDS: Record<string, PolicyField[]> = {
     { key: "max_age_days", type: "number" },
     { key: "history_count", type: "number" },
   ],
-  backup: [
-    { key: "schedule_cron", type: "string" },
-    { key: "retention_days", type: "number" },
-    { key: "include_photos", type: "boolean" },
-    { key: "compression_level", type: "number" },
-  ],
+  // Only the schedule is read (backup scheduler). `retention_days`, `include_photos` and
+  // `compression_level` stay in the stored policy but nothing uses them, so they are not shown;
+  // retention is the daily / weekly / monthly settings of the Backup section.
+  backup: [{ key: "schedule_cron", type: "string" }],
 };
 
 /** Domains that require step-up auth to activate. */
@@ -117,11 +120,23 @@ const SECURITY_DOMAINS = new Set(["session", "password"]);
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function parseJson(json: string): Record<string, unknown> {
+/** The app's FR/EN message for a failure (error code, validation details), never a raw object. */
+function errorText(described: AppErrorDescription): string {
+  return described.description ? `${described.title} — ${described.description}` : described.title;
+}
+
+/** Values of a stored policy snapshot; null when the stored JSON is not a readable object. */
+export function parseSnapshotValues(
+  json: string | null | undefined,
+): Record<string, unknown> | null {
+  if (json == null) return {};
   try {
-    return JSON.parse(json) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(json);
+    return parsed != null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
@@ -147,6 +162,10 @@ export function PolicyEditorPanel({
   onToast,
 }: PolicyEditorPanelProps) {
   const { t } = useTranslation("settings");
+  const tText = t as unknown as (key: string, options?: Record<string, unknown>) => string;
+  // Session and password policies need a recent re-authentication (the backend requires it):
+  // the step-up dialog opens when it is missing, then the activation runs.
+  const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const {
     draftPolicy,
@@ -160,6 +179,7 @@ export function PolicyEditorPanel({
   const [activeSnapshot, setActiveSnapshot] = useState<PolicySnapshot | null>(null);
   const [history, setHistory] = useState<PolicySnapshot[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [editing, setEditing] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
@@ -174,16 +194,22 @@ export function PolicyEditorPanel({
   );
 
   const fields = POLICY_FIELDS[domain] ?? [];
+  const shownKeys = useMemo(
+    () => new Set((POLICY_FIELDS[domain] ?? []).map((f) => f.key)),
+    [domain],
+  );
   const requiresStepUp = SECURITY_DOMAINS.has(domain);
 
   // ── Data loading ──────────────────────────────────────────────────────
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
+      // No snapshot yet is a normal state (null), not an error.
       const [snap, snapshots] = await Promise.all([
         getPolicySnapshot(domain),
-        listPolicySnapshots(domain).catch(() => [] as PolicySnapshot[]),
+        listPolicySnapshots(domain),
       ]);
       setActiveSnapshot(snap);
       setHistory(snapshots);
@@ -191,8 +217,8 @@ export function PolicyEditorPanel({
       // Look for existing draft in history
       const existingDraft = snapshots.find((s) => !s.is_active && !s.activated_at);
       setDraftPolicy(existingDraft ?? null);
-    } catch {
-      // snapshot may not exist yet
+    } catch (err) {
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -202,14 +228,16 @@ export function PolicyEditorPanel({
     void loadData();
   }, [loadData]);
 
-  const activeValues = useMemo(
-    () => parseJson(activeSnapshot?.snapshot_json ?? "{}"),
+  const parsedActive = useMemo(
+    () => parseSnapshotValues(activeSnapshot?.snapshot_json),
     [activeSnapshot],
   );
-  const draftSnapshotValues = useMemo(
-    () => parseJson(draftPolicy?.snapshot_json ?? "{}"),
-    [draftPolicy],
-  );
+  const parsedDraft = useMemo(() => parseSnapshotValues(draftPolicy?.snapshot_json), [draftPolicy]);
+  // An unreadable stored policy is shown as such and cannot be edited (editing would start
+  // from blank values and overwrite it).
+  const snapshotUnreadable = parsedActive == null || parsedDraft == null;
+  const activeValues = useMemo(() => parsedActive ?? {}, [parsedActive]);
+  const draftSnapshotValues = useMemo(() => parsedDraft ?? {}, [parsedDraft]);
 
   const hasActiveSnapshot = activeSnapshot?.is_active === true;
 
@@ -245,7 +273,7 @@ export function PolicyEditorPanel({
     } catch (err) {
       onToast({
         title: t("policy.draftSaveError"),
-        description: String(err),
+        description: errorText(describeAppError(err)),
         variant: "destructive",
       });
     } finally {
@@ -277,7 +305,7 @@ export function PolicyEditorPanel({
     } catch (err) {
       onToast({
         title: t("policy.testError"),
-        description: String(err),
+        description: errorText(describeAppError(err)),
         variant: "destructive",
       });
     } finally {
@@ -291,10 +319,12 @@ export function PolicyEditorPanel({
     if (!draftPolicy) return;
     setPolicyOperationLoading(true);
     try {
-      await activatePolicy({
-        domain,
-        snapshot_id: draftPolicy.id,
-      });
+      await withStepUp(() =>
+        activatePolicy({
+          domain,
+          snapshot_id: draftPolicy.id,
+        }),
+      );
       setDraftPolicy(null);
       setTestResults(null);
       if (domain === "session") {
@@ -306,8 +336,8 @@ export function PolicyEditorPanel({
       });
       void loadData();
     } catch (err) {
-      const msg = String(err);
-      if (msg.includes("STEP_UP_REQUIRED")) {
+      const described = describeAppError(err);
+      if (described.code === "STEP_UP_REQUIRED") {
         onToast({
           title: t("policy.stepUpRequired"),
           variant: "destructive",
@@ -315,7 +345,7 @@ export function PolicyEditorPanel({
       } else {
         onToast({
           title: t("policy.activateError"),
-          description: msg,
+          description: errorText(described),
           variant: "destructive",
         });
       }
@@ -331,6 +361,8 @@ export function PolicyEditorPanel({
     setPolicyOperationLoading,
     setTestResults,
     t,
+    ,
+    withStepUp,
   ]);
 
   // ── Discard ───────────────────────────────────────────────────────────
@@ -350,7 +382,7 @@ export function PolicyEditorPanel({
     } catch (err) {
       onToast({
         title: t("policy.discardError"),
-        description: String(err),
+        description: errorText(describeAppError(err)),
         variant: "destructive",
       });
     } finally {
@@ -383,8 +415,22 @@ export function PolicyEditorPanel({
     );
   }
 
+  if (loadError != null) {
+    return (
+      <ErrorState error={loadError} title={t("policy.loadError")} onRetry={() => void loadData()} />
+    );
+  }
+
   return (
     <div className="flex flex-1 flex-col gap-4 overflow-auto">
+      {snapshotUnreadable ? (
+        <p
+          role="alert"
+          className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
+        >
+          {t("policy.unreadable")}
+        </p>
+      ) : null}
       {/* Status banner */}
       <div className="flex items-center gap-3 rounded-md border bg-muted/30 p-3">
         <Shield className="h-5 w-5 shrink-0 text-primary" />
@@ -392,12 +438,12 @@ export function PolicyEditorPanel({
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">{t("policy.governedTitle")}</span>
             {hasActiveSnapshot && (
-              <Badge variant="outline" className="bg-green-50 text-xs text-green-700">
+              <Badge variant="outline" className="bg-tone-success-bg text-xs text-tone-success-fg">
                 {t("policy.active")}
               </Badge>
             )}
             {draftPolicy && (
-              <Badge className="bg-amber-100 text-xs text-amber-800">
+              <Badge className="bg-tone-warning-bg text-xs text-tone-warning-fg">
                 {t("policy.draftPending")}
               </Badge>
             )}
@@ -419,21 +465,23 @@ export function PolicyEditorPanel({
           {hasActiveSnapshot ? (
             <div className="rounded-lg border border-border bg-card">
               <ul className="divide-y divide-border px-4">
-                {Object.entries(activeValues).map(([key, val]) => (
-                  <li
-                    key={key}
-                    className="flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3"
-                  >
-                    <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
-                      {t(`policy.fields.${key}` as never, {
-                        defaultValue: key,
-                      })}
-                    </span>
-                    <span className="shrink-0 text-sm tabular-nums text-text-muted">
-                      {String(val)}
-                    </span>
-                  </li>
-                ))}
+                {Object.entries(activeValues)
+                  .filter(([key]) => shownKeys.has(key))
+                  .map(([key, val]) => (
+                    <li
+                      key={key}
+                      className="flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3"
+                    >
+                      <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
+                        {t(`policy.fields.${key}` as never, {
+                          defaultValue: key,
+                        })}
+                      </span>
+                      <span className="shrink-0 text-sm tabular-nums text-text-muted">
+                        {String(val)}
+                      </span>
+                    </li>
+                  ))}
               </ul>
               {activeSnapshot && (
                 <p className="border-t border-border px-4 py-2 text-xs text-text-muted">
@@ -460,13 +508,13 @@ export function PolicyEditorPanel({
           <h3 className="text-sm font-medium">{t("policy.draftConfig")}</h3>
           {editing ? (
             /* Edit form */
-            <div className="space-y-1 rounded-lg border border-amber-200 bg-amber-50/30 px-4 py-1 dark:bg-amber-950/20">
+            <div className="space-y-1 rounded-lg border border-tone-warning-border bg-tone-warning-bg px-4 py-1">
               {fields.map((field) => {
                 const val = draftValues[field.key];
                 return (
                   <div
                     key={field.key}
-                    className="flex items-center justify-between gap-4 border-b border-amber-200/60 py-3 last:border-b-0"
+                    className="flex items-center justify-between gap-4 border-b border-tone-warning-border py-3 last:border-b-0"
                   >
                     <Label
                       htmlFor={`draft-${field.key}`}
@@ -520,37 +568,39 @@ export function PolicyEditorPanel({
             </div>
           ) : draftPolicy ? (
             /* Read-only draft diff */
-            <div className="rounded-lg border border-amber-200 bg-card">
+            <div className="rounded-lg border border-tone-warning-border bg-card">
               <ul className="divide-y divide-border px-4">
-                {Object.entries(draftSnapshotValues).map(([key, val]) => {
-                  const changed = isValueChanged(key, val);
-                  return (
-                    <li
-                      key={key}
-                      className={`flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3 ${changed ? "bg-amber-50/80 dark:bg-amber-950/30" : ""}`}
-                    >
-                      <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
-                        {t(`policy.fields.${key}` as never, {
-                          defaultValue: key,
-                        })}
-                      </span>
-                      <div className="flex shrink-0 flex-col items-end gap-0.5">
-                        <span
-                          className={`text-sm tabular-nums ${changed ? "font-semibold text-amber-900 dark:text-amber-200" : "text-text-muted"}`}
-                        >
-                          {String(val)}
+                {Object.entries(draftSnapshotValues)
+                  .filter(([key]) => shownKeys.has(key))
+                  .map(([key, val]) => {
+                    const changed = isValueChanged(key, val);
+                    return (
+                      <li
+                        key={key}
+                        className={`flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3 ${changed ? "bg-tone-warning-bg" : ""}`}
+                      >
+                        <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
+                          {t(`policy.fields.${key}` as never, {
+                            defaultValue: key,
+                          })}
                         </span>
-                        {changed ? (
-                          <span className="text-xs text-amber-600">
-                            {String(activeValues[key] ?? "—")}
+                        <div className="flex shrink-0 flex-col items-end gap-0.5">
+                          <span
+                            className={`text-sm tabular-nums ${changed ? "font-semibold text-tone-warning-fg" : "text-text-muted"}`}
+                          >
+                            {String(val)}
                           </span>
-                        ) : null}
-                      </div>
-                    </li>
-                  );
-                })}
+                          {changed ? (
+                            <span className="text-xs text-tone-warning-fg">
+                              {String(activeValues[key] ?? "—")}
+                            </span>
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  })}
               </ul>
-              <p className="border-t border-amber-200 px-4 py-2 text-xs text-text-muted">
+              <p className="border-t border-tone-warning-border px-4 py-2 text-xs text-text-muted">
                 {t("policy.version", {
                   version: draftPolicy.version_no,
                 })}
@@ -571,7 +621,7 @@ export function PolicyEditorPanel({
           variant="outline"
           size="sm"
           onClick={handleEditDraft}
-          disabled={policyOperationLoading || editing}
+          disabled={policyOperationLoading || editing || snapshotUnreadable}
         >
           {t("policy.editDraft")}
         </Button>
@@ -615,15 +665,15 @@ export function PolicyEditorPanel({
             {testResults.map((result) => (
               <div key={result.rule_name} className="flex items-start gap-2 text-sm">
                 {result.severity === "pass" && (
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-tone-success-fg" />
                 )}
                 {result.severity === "warn" && (
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-tone-warning-fg" />
                 )}
                 {result.severity === "fail" && (
                   <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                 )}
-                <span>{result.message}</span>
+                <span>{policyTestText(result, tText)}</span>
               </div>
             ))}
           </div>
@@ -659,7 +709,7 @@ export function PolicyEditorPanel({
                           {String(parsed)}
                         </span>
                         {s.validation_status === "draft" && (
-                          <Badge className="bg-amber-100 text-xs text-amber-800">
+                          <Badge className="bg-tone-warning-bg text-xs text-tone-warning-fg">
                             {t("policy.draftPending")}
                           </Badge>
                         )}
@@ -725,6 +775,7 @@ export function PolicyEditorPanel({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {StepUpDialogElement}
     </div>
   );
 }

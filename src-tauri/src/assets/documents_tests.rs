@@ -6,8 +6,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::assets::documents::{self, UpsertDocumentLinkPayload};
     use crate::assets::identity::{self, CreateAssetPayload};
@@ -21,26 +20,7 @@ mod tests {
 
     /// In-memory SQLite with all migrations + seed data.
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Publish an org model and create an active root org node.
@@ -151,6 +131,7 @@ mod tests {
                 rams_utilization_factor: Some(1.0),
                 org_node_id,
                 commissioned_at: None,
+                commercial: None,
             },
             1,
         )
@@ -522,6 +503,7 @@ mod tests {
                 reason_code: None,
                 notes: Some("Preservation treatment".to_string()),
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -545,7 +527,7 @@ mod tests {
                 name: "Hours".to_string(),
                 meter_code: None,
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: None,
                 expected_rate_per_day: None,
                 rollover_value: None,
@@ -644,6 +626,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
+                expected_row_version: None,
             },
             1,
         )
@@ -681,7 +664,7 @@ mod tests {
                 name: "Runtime".to_string(),
                 meter_code: Some("RT-V3".to_string()),
                 meter_type: "HOURS".to_string(),
-                unit: Some("h".to_string()),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(&db, "H").await.expect("unit")),
                 initial_reading: Some(0.0),
                 expected_rate_per_day: Some(8.0),
                 rollover_value: Some(99999.0),

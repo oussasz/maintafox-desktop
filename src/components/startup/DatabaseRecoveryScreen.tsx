@@ -2,8 +2,8 @@ import { KeyRound, Loader2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { describeAppError } from "@/lib/app-error";
 import { recoverDatabaseKey } from "@/services/database-security-service";
-import { toErrorMessage } from "@/utils/errors";
 
 interface DatabaseRecoveryScreenProps {
   /** Backend reason (why the key could not be used). */
@@ -30,7 +30,7 @@ export function DatabaseRecoveryScreen({ reason }: DatabaseRecoveryScreenProps) 
       await recoverDatabaseKey(recoveryKey);
       // On success the backend restarts the application.
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
       setBusy(false);
     }
   };

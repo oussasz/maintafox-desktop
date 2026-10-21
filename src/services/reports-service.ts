@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { saveBlobWithDialog } from "@/export/download";
 import { invoke } from "@/lib/ipc-invoke";
 import type {
   ExportedBinaryDocument,
@@ -76,7 +77,16 @@ export async function listMyReportRuns(limit?: number): Promise<ReportRun[]> {
   return z.array(ReportRunSchema).parse(raw);
 }
 
-export async function exportReportNow(input: ExportReportInput): Promise<ExportedBinaryDocument> {
+/** Report language: titles, headers and labels of the generated PDF / XLSX. */
+export type ReportLocale = "fr" | "en";
+
+export function toReportLocale(appLocale: string): ReportLocale {
+  return appLocale.toLowerCase().startsWith("en") ? "en" : "fr";
+}
+
+export async function exportReportNow(
+  input: ExportReportInput & { locale: ReportLocale },
+): Promise<ExportedBinaryDocument> {
   const raw = await invoke<unknown>("export_report_now", { input });
   return ExportedBinaryDocumentSchema.parse(raw);
 }
@@ -86,6 +96,34 @@ export async function downloadReportRunArtifact(runId: number): Promise<Exported
   return ExportedBinaryDocumentSchema.parse(raw);
 }
 
+const SAVE_FILTERS: Record<string, { name: string; extensions: string[] }> = {
+  pdf: { name: "PDF", extensions: ["pdf"] },
+  xlsx: { name: "Excel", extensions: ["xlsx"] },
+};
+
+/**
+ * Writes an exported report through the native Save dialog (an anchor download does nothing in
+ * the packaged app). Resolves with the absolute path written; rejects with
+ * `ExportCancelledError` when the user closes the dialog (check with `isExportCancelled`).
+ */
+export async function saveExportedDocument(
+  doc: ExportedBinaryDocument,
+  dialogTitle?: string,
+): Promise<string> {
+  const blob = new Blob([new Uint8Array(doc.bytes)], { type: doc.mime_type });
+  const ext = doc.file_name.split(".").pop()?.toLowerCase() ?? "";
+  const filter = SAVE_FILTERS[ext];
+  return saveBlobWithDialog(blob, doc.file_name, {
+    ...(dialogTitle ? { title: dialogTitle } : {}),
+    ...(filter ? { filters: [filter] } : {}),
+  });
+}
+
+/**
+ * @deprecated Anchor download: does nothing in the packaged desktop app. Use
+ * {@link saveExportedDocument} (native Save dialog). Kept for the reliability export panel until
+ * it moves over.
+ */
 export function downloadExportedDocument(doc: ExportedBinaryDocument): void {
   const u8 = new Uint8Array(doc.bytes);
   const blob = new Blob([u8], { type: doc.mime_type });

@@ -3,35 +3,45 @@
  */
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { GanttChart, LayoutGrid, List, Plus, RefreshCw, Users } from "lucide-react";
+import { GanttChart, LayoutGrid, List, Plus, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
+import { RefreshButton, ViewToggle } from "@/components/layout/ModuleHeaderControls";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import {
   AvailabilityCalendar,
   type AvailabilityCalendarHandle,
 } from "@/components/personnel/AvailabilityCalendar";
+import { ExternalCompaniesPanel } from "@/components/personnel/ExternalCompaniesPanel";
 import { PersonnelArchivePanel } from "@/components/personnel/PersonnelArchivePanel";
 import { PersonnelCard } from "@/components/personnel/PersonnelCard";
 import { PersonnelCreateDialog } from "@/components/personnel/PersonnelCreateDialog";
 import { PersonnelDetailWorkspace } from "@/components/personnel/PersonnelDetailWorkspace";
 import { PersonnelExportMenu } from "@/components/personnel/PersonnelExportMenu";
 import { PersonnelImportWizard } from "@/components/personnel/PersonnelImportWizard";
+import { PersonnelStatusReviewNotice } from "@/components/personnel/PersonnelStatusReviewNotice";
 import {
   TeamCapacityBoard,
   type TeamCapacityBoardHandle,
 } from "@/components/personnel/TeamCapacityBoard";
+import { WorkCalendarPanel } from "@/components/personnel/WorkCalendarPanel";
 import { WorkforceReportPanel } from "@/components/personnel/WorkforceReportPanel";
 import type { AvailabilityViewMode } from "@/components/personnel/availability-model";
-import { Badge } from "@/components/ui/badge";
+import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { Button } from "@/components/ui/button";
+import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
+import { ReviewMark } from "@/components/ui/review-mark";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
-import { cn } from "@/lib/utils";
+import { type Tone, toneOf } from "@/design-system/tone";
+import { usePermissions } from "@/hooks/use-permissions";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import { listPositions } from "@/services/personnel-service";
 import { usePersonnelStore } from "@/stores/personnel-store";
@@ -40,7 +50,7 @@ import type { Personnel } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 type PersonnelViewMode = "list" | "cards";
-type PersonnelTab = "directory" | "availability" | "teams" | "analytics";
+type PersonnelTab = "directory" | "availability" | "teams" | "companies" | "calendar" | "analytics";
 
 const AVAILABILITY_CODES = [
   "available",
@@ -51,20 +61,18 @@ const AVAILABILITY_CODES = [
   "inactive",
 ] as const;
 
-const EMPLOYMENT_CODES = ["employee", "contractor", "temp", "vendor"] as const;
 const EMPLOYMENT_ORIGIN_CODES = ["internal", "external"] as const;
-const EMPLOYMENT_STATUS_CODES = ["active", "inactive", "suspended", "terminated"] as const;
 
 const VIEW_STORAGE_KEY = "personnel-view-mode";
 
 /** List/table badge styling — same pattern as DI / OT status chips */
-const AVAILABILITY_TABLE_STYLE: Record<string, string> = {
-  available: "bg-emerald-100 text-emerald-800",
-  assigned: "bg-blue-100 text-blue-800",
-  in_training: "bg-amber-100 text-amber-900",
-  on_leave: "bg-gray-100 text-gray-700",
-  blocked: "bg-red-100 text-red-800",
-  inactive: "bg-slate-100 text-slate-700",
+const AVAILABILITY_TONE: Record<string, Tone> = {
+  available: "success",
+  assigned: "progress",
+  in_training: "info",
+  on_leave: "neutral",
+  blocked: "danger",
+  inactive: "neutral",
 };
 
 export function PersonnelPage() {
@@ -73,7 +81,10 @@ export function PersonnelPage() {
   const items = usePersonnelStore((s) => s.items);
   const total = usePersonnelStore((s) => s.total);
   const loading = usePersonnelStore((s) => s.loading);
-  const error = usePersonnelStore((s) => s.error);
+  const loadError = usePersonnelStore((s) => s.loadError);
+  const detailError = usePersonnelStore((s) => s.detailError);
+  const loadingMore = usePersonnelStore((s) => s.loadingMore);
+  const loadMore = usePersonnelStore((s) => s.loadMore);
   const filter = usePersonnelStore((s) => s.filter);
   const setFilter = usePersonnelStore((s) => s.setFilter);
   const loadPersonnel = usePersonnelStore((s) => s.loadPersonnel);
@@ -81,11 +92,23 @@ export function PersonnelPage() {
   const openCreateForm = usePersonnelStore((s) => s.openCreateForm);
   const activePersonnel = usePersonnelStore((s) => s.activePersonnel);
 
-  const [view, setView] = useState<PersonnelViewMode>(
-    () => (localStorage.getItem(VIEW_STORAGE_KEY) as PersonnelViewMode) || "list",
-  );
+  const [view, setView] = useState<PersonnelViewMode>(() => {
+    try {
+      return localStorage.getItem(VIEW_STORAGE_KEY) === "cards" ? "cards" : "list";
+    } catch {
+      return "list";
+    }
+  });
   const [availabilityView, setAvailabilityView] = useState<AvailabilityViewMode>("chronology");
-  const [activeTab, setActiveTab] = useState<PersonnelTab>("directory");
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const requestedTeam = Number(searchParams.get("team"));
+  const openTeamId = Number.isInteger(requestedTeam) && requestedTeam > 0 ? requestedTeam : null;
+  const [activeTab, setActiveTab] = useState<PersonnelTab>(
+    requestedTab === "teams" || requestedTab === "calendar" || requestedTab === "companies"
+      ? requestedTab
+      : "directory",
+  );
   const [searchInput, setSearchInput] = useState("");
   const isDirectoryTab = activeTab === "directory";
   const isAvailabilityTab = activeTab === "availability";
@@ -93,25 +116,42 @@ export function PersonnelPage() {
   const availabilityRef = useRef<AvailabilityCalendarHandle>(null);
   const teamsRef = useRef<TeamCapacityBoardHandle>(null);
 
+  const { can } = usePermissions();
+  // Employment types and statuses come from the plant's lists (Données de référence).
+  const lists = usePersonnelLists();
+  // The position filter is offered only to users who may read positions (per.position.view).
+  const canViewPositions = can(P.PER_POSITION_VIEW);
   const [positions, setPositions] = useState<{ id: number; code: string; name: string }[]>([]);
   const [entityNodes, setEntityNodes] = useState<OrgDesignerNodeRow[]>([]);
+  const [lookupError, setLookupError] = useState<unknown>(null);
 
   const loadLookups = useCallback(async () => {
-    try {
-      const [pos, snap] = await Promise.all([listPositions(), getOrgDesignerSnapshot()]);
+    setLookupError(null);
+    const [pos, snap] = await Promise.allSettled([
+      canViewPositions ? listPositions() : Promise.resolve([]),
+      getOrgDesignerSnapshot(),
+    ]);
+    if (pos.status === "fulfilled") {
       setPositions(
-        pos.filter((p) => p.is_active !== 0).map((p) => ({ id: p.id, code: p.code, name: p.name })),
+        pos.value
+          .filter((p) => p.is_active !== 0)
+          .map((p) => ({ id: p.id, code: p.code, name: p.name })),
       );
-      const nodes = snap.nodes.filter((n) => n.status === "active");
+    } else {
+      setPositions([]);
+      setLookupError(pos.reason);
+    }
+    if (snap.status === "fulfilled") {
+      const nodes = snap.value.nodes.filter((n) => n.status === "active");
       const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
       setEntityNodes(
         entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
       );
-    } catch {
-      setPositions([]);
+    } else {
       setEntityNodes([]);
+      setLookupError(snap.reason);
     }
-  }, []);
+  }, [canViewPositions]);
 
   useEffect(() => {
     void loadPersonnel();
@@ -131,7 +171,11 @@ export function PersonnelPage() {
 
   const switchView = useCallback((v: PersonnelViewMode) => {
     setView(v);
-    localStorage.setItem(VIEW_STORAGE_KEY, v);
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, v);
+    } catch {
+      // Remembering the view is a convenience only.
+    }
   }, []);
 
   const selectedStatuses = useMemo(
@@ -223,17 +267,21 @@ export function PersonnelPage() {
         value: entityValue,
         onChange: handleEntityFilter,
       },
-      {
-        id: "position",
-        kind: "select",
-        label: t("filters.position"),
-        options: positions.map((p) => ({
-          value: String(p.id),
-          label: `${p.code} — ${p.name}`,
-        })),
-        value: positionValue,
-        onChange: handlePositionFilter,
-      },
+      ...(canViewPositions
+        ? [
+            {
+              id: "position",
+              kind: "select" as const,
+              label: t("filters.position"),
+              options: positions.map((p) => ({
+                value: String(p.id),
+                label: `${p.code} — ${p.name}`,
+              })),
+              value: positionValue,
+              onChange: handlePositionFilter,
+            },
+          ]
+        : []),
       {
         id: "status",
         kind: "multi-select",
@@ -249,9 +297,11 @@ export function PersonnelPage() {
         id: "employment",
         kind: "multi-select",
         label: t("filters.employmentType"),
-        options: EMPLOYMENT_CODES.map((code) => ({
-          value: code,
-          label: t(`employmentType.${code}`),
+        options: lists.values("employment_types").map((v) => ({
+          value: v.code,
+          label: v.review_required
+            ? `${lists.text("employment_types", v.code)} · ${t("common:listValue.review")}`
+            : lists.text("employment_types", v.code),
         })),
         value: selectedEmployment,
         onChange: handleEmploymentMulti,
@@ -271,9 +321,11 @@ export function PersonnelPage() {
         id: "empStatus",
         kind: "multi-select",
         label: t("filters.employmentStatus", "Status"),
-        options: EMPLOYMENT_STATUS_CODES.map((code) => ({
-          value: code,
-          label: t(`employmentStatus.${code}`, code),
+        options: lists.values("employment_statuses").map((v) => ({
+          value: v.code,
+          label: v.review_required
+            ? `${lists.text("employment_statuses", v.code)} · ${t("common:listValue.review")}`
+            : lists.text("employment_statuses", v.code),
         })),
         value: selectedEmpStatus,
         onChange: handleEmpStatusMulti,
@@ -281,6 +333,8 @@ export function PersonnelPage() {
     ],
     [
       t,
+      lists,
+      canViewPositions,
       entityNodes,
       positions,
       entityValue,
@@ -338,25 +392,23 @@ export function PersonnelPage() {
         header: t("list.columns.status"),
         cell: ({ row }) => {
           const s = row.original.availability_status;
-          return (
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-[10px] border-0",
-                AVAILABILITY_TABLE_STYLE[s] ?? "bg-gray-100 text-gray-600",
-              )}
-            >
-              {t(`status.${s}`)}
-            </Badge>
-          );
+          return <StatusChip label={t(`status.${s}`)} tone={toneOf(AVAILABILITY_TONE, s)} dot />;
         },
       },
       {
         accessorKey: "employment_type",
         header: t("list.columns.employmentType"),
         cell: ({ row }) => {
-          const et = row.original.employment_type as "employee" | "contractor" | "temp" | "vendor";
-          return <span className="text-xs text-text-muted">{t(`employmentType.${et}`)}</span>;
+          const code = row.original.employment_type;
+          const value = lists.option("employment_types", code);
+          return (
+            <span className="inline-flex items-center gap-1 text-xs text-text-muted">
+              {lists.text("employment_types", code)}
+              {lists.canRead && !lists.loading && (value == null || value.review_required) ? (
+                <ReviewMark />
+              ) : null}
+            </span>
+          );
         },
       },
       {
@@ -367,151 +419,89 @@ export function PersonnelPage() {
         ),
       },
     ],
-    [t],
+    [t, lists],
+  );
+
+  /** One refresh button: it reloads what the open tab shows. */
+  const refreshActiveTab = () => {
+    if (isDirectoryTab) void loadPersonnel();
+    else if (isAvailabilityTab) availabilityRef.current?.refresh();
+    else if (isTeamsTab) teamsRef.current?.refresh();
+  };
+  const canRefreshTab = isDirectoryTab || isAvailabilityTab || isTeamsTab;
+
+  const headerActions = (
+    <>
+      {isDirectoryTab ? (
+        <>
+          <PermissionGate permission={P.PER_MANAGE}>
+            <Button className={mfLayout.primaryAction} onClick={() => openCreateForm()}>
+              <Plus className="h-4 w-4" aria-hidden />
+              {t("action.create")}
+            </Button>
+          </PermissionGate>
+          <PersonnelImportWizard />
+          <PersonnelExportMenu />
+          <ViewToggle
+            value={view}
+            onChange={switchView}
+            options={[
+              { value: "list", label: t("view.list"), icon: List },
+              { value: "cards", label: t("view.cards"), icon: LayoutGrid },
+            ]}
+          />
+        </>
+      ) : null}
+
+      {isAvailabilityTab ? (
+        <>
+          <PermissionGate permission={P.PER_MANAGE}>
+            <Button
+              className={mfLayout.primaryAction}
+              onClick={() => availabilityRef.current?.openCreateBlock()}
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+              {t("availability.actions.createBlock")}
+            </Button>
+          </PermissionGate>
+          <ViewToggle
+            value={availabilityView}
+            onChange={setAvailabilityView}
+            options={[
+              { value: "chronology", label: t("availability.views.chronology"), icon: GanttChart },
+              { value: "list", label: t("availability.views.list"), icon: List },
+            ]}
+          />
+        </>
+      ) : null}
+
+      {isTeamsTab ? (
+        <PermissionGate permission={P.PER_MANAGE}>
+          <Button className={mfLayout.primaryAction} onClick={() => teamsRef.current?.openCreate()}>
+            <Plus className="h-4 w-4" aria-hidden />
+            {t("crews.actions.create")}
+          </Button>
+        </PermissionGate>
+      ) : null}
+
+      {canRefreshTab ? (
+        <RefreshButton onRefresh={refreshActiveTab} loading={isDirectoryTab && loading} />
+      ) : null}
+    </>
   );
 
   return (
-    <div className={mfLayout.moduleRoot}>
-      {/* ── Page header (same shell as DI / OT) ───────────────────────── */}
-      <div className={mfLayout.moduleHeader}>
-        <div className={mfLayout.moduleTitleRow}>
-          <Users className={mfLayout.moduleHeaderIcon} aria-hidden />
-          <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
-          <Badge variant="secondary" className="text-xs">
-            {total}
-          </Badge>
-        </div>
-
-        <div className={mfLayout.moduleHeaderActions}>
-          {isDirectoryTab ? (
-            <>
-              <PermissionGate permission={P.PER_MANAGE}>
-                <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
-                  <Plus className="h-3.5 w-3.5" />
-                  {t("action.create")}
-                </Button>
-              </PermissionGate>
-              <PersonnelImportWizard />
-              <PersonnelExportMenu />
-
-              <div className={mfLayout.viewToggleGroup}>
-                <Button
-                  variant={view === "list" ? "default" : "ghost"}
-                  size="sm"
-                  className={mfLayout.viewToggleButton}
-                  onClick={() => switchView("list")}
-                  title={t("view.list")}
-                >
-                  <List className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant={view === "cards" ? "default" : "ghost"}
-                  size="sm"
-                  className={mfLayout.viewToggleButton}
-                  onClick={() => switchView("cards")}
-                  title={t("view.cards")}
-                >
-                  <LayoutGrid className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </>
-          ) : null}
-
-          {isAvailabilityTab ? (
-            <>
-              <PermissionGate permission={P.PER_MANAGE}>
-                <Button
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => availabilityRef.current?.openCreateBlock()}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  {t("availability.actions.createBlock")}
-                </Button>
-              </PermissionGate>
-              <div className={mfLayout.viewToggleGroup}>
-                <Button
-                  variant={availabilityView === "chronology" ? "default" : "ghost"}
-                  size="sm"
-                  className={mfLayout.viewToggleButton}
-                  onClick={() => setAvailabilityView("chronology")}
-                  title={t("availability.views.chronology")}
-                  aria-label={t("availability.views.chronology")}
-                >
-                  <GanttChart className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant={availabilityView === "list" ? "default" : "ghost"}
-                  size="sm"
-                  className={mfLayout.viewToggleButton}
-                  onClick={() => setAvailabilityView("list")}
-                  title={t("availability.views.list")}
-                  aria-label={t("availability.views.list")}
-                >
-                  <List className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </>
-          ) : null}
-
-          {isDirectoryTab ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void loadPersonnel()}
-              disabled={loading}
-              className="gap-1.5"
-              title={t("action.refresh")}
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-            </Button>
-          ) : null}
-
-          {isAvailabilityTab ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => availabilityRef.current?.refresh()}
-              className="gap-1.5"
-              title={t("availability.actions.refresh")}
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </Button>
-          ) : null}
-
-          {isTeamsTab ? (
-            <PermissionGate permission={P.PER_MANAGE}>
-              <Button size="sm" className="gap-1.5" onClick={() => teamsRef.current?.openCreate()}>
-                <Plus className="h-3.5 w-3.5" />
-                {t("crews.actions.create")}
-              </Button>
-            </PermissionGate>
-          ) : null}
-
-          {isTeamsTab ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => teamsRef.current?.refresh()}
-              className="gap-1.5"
-              title={t("action.refresh")}
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
-      {error ? (
-        <div className="border-b border-destructive/20 bg-destructive/5 px-6 py-2 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
-
-      {/* ── Main workspace: Header → Tabs → tab-owned filters/content ─ */}
-      <div className={mfLayout.moduleWorkspace}>
-        <div className={mfLayout.moduleWorkspaceInner}>
-          <div className={mfLayout.moduleWorkspaceBody}>
+    <ModulePageShell
+      icon={Users}
+      title={t("page.title")}
+      count={loadError != null && items.length === 0 ? null : total}
+      actions={headerActions}
+      bodyClassName={null}
+    >
+      {/* ── Tabs → tab-owned filters/content ─ */}
+      <div className={mfLayout.moduleWorkspaceBody}>
+        <div>
+          <div>
             <Tabs
               value={activeTab}
               onValueChange={(v) => setActiveTab(v as PersonnelTab)}
@@ -521,6 +511,8 @@ export function PersonnelPage() {
                 <TabsTrigger value="directory">{t("tabs.directory")}</TabsTrigger>
                 <TabsTrigger value="availability">{t("tabs.availability")}</TabsTrigger>
                 <TabsTrigger value="teams">{t("tabs.teams")}</TabsTrigger>
+                <TabsTrigger value="companies">{t("tabs.companies")}</TabsTrigger>
+                <TabsTrigger value="calendar">{t("tabs.calendar")}</TabsTrigger>
                 <TabsTrigger value="analytics">{t("tabs.analytics")}</TabsTrigger>
               </TabsList>
 
@@ -537,43 +529,89 @@ export function PersonnelPage() {
                   resultCount={total}
                   onReset={clearAllFilters}
                 />
+                <PersonnelStatusReviewNotice
+                  className="mx-3 mb-2"
+                  refreshKey={items}
+                  onOpenPersonnel={(id) => void openPersonnel(id)}
+                />
+                {lists.error != null ? (
+                  <ErrorState
+                    className="mx-3 mb-2"
+                    error={lists.error}
+                    title={t("page.listsLoadError")}
+                    onRetry={() => void lists.reload()}
+                  />
+                ) : null}
+                {lookupError != null ? (
+                  <ErrorState
+                    className="mx-3 mb-2"
+                    error={lookupError}
+                    title={t("page.filterLookupError")}
+                    onRetry={() => void loadLookups()}
+                  />
+                ) : null}
                 <div className={mfLayout.moduleWorkspaceSplit}>
                   <div className="flex w-[55%] min-w-[400px] flex-col border-r border-surface-border">
                     <div className="min-h-0 flex-1 overflow-auto p-1">
-                      {view === "list" && (
-                        <DataTable
-                          columns={columns}
-                          data={items}
-                          searchable={false}
-                          pageSize={20}
-                          isLoading={loading}
-                          skeletonRows={8}
-                          onRowClick={(row) => void openPersonnel(row.id)}
-                          isRowSelected={(row) => row.id === activePersonnel?.personnel.id}
+                      {loadError != null && !loading ? (
+                        <ErrorState
+                          className="mb-2"
+                          error={loadError}
+                          title={t("page.loadError")}
+                          onRetry={() => void (items.length > 0 ? loadMore() : loadPersonnel())}
+                        />
+                      ) : null}
+                      {loadError != null && items.length === 0 ? null : (
+                        <TruncationNotice
+                          className="mb-2"
+                          shown={items.length}
+                          total={total}
+                          onLoadMore={() => void loadMore()}
+                          loadingMore={loadingMore}
                         />
                       )}
-                      {view === "cards" && (
-                        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                          {loading
-                            ? Array.from({ length: 6 }, (_, i) => (
-                                <div
-                                  key={i}
-                                  className="h-48 animate-pulse rounded-lg border border-surface-border bg-muted/40"
-                                />
-                              ))
-                            : items.map((p) => (
-                                <PersonnelCard
-                                  key={p.id}
-                                  personnel={p}
-                                  onViewDetails={() => void openPersonnel(p.id)}
-                                />
-                              ))}
-                        </div>
-                      )}
+                      {loadError != null && items.length === 0
+                        ? null
+                        : view === "list" && (
+                            <DataTable
+                              columns={columns}
+                              data={items}
+                              searchable={false}
+                              pageSize={20}
+                              isLoading={loading}
+                              skeletonRows={8}
+                              onRowClick={(row) => void openPersonnel(row.id)}
+                              isRowSelected={(row) => row.id === activePersonnel?.personnel.id}
+                            />
+                          )}
+                      {loadError != null && items.length === 0
+                        ? null
+                        : view === "cards" && (
+                            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                              {loading
+                                ? Array.from({ length: 6 }, (_, i) => (
+                                    <div
+                                      key={i}
+                                      className="h-48 animate-pulse rounded-lg border border-surface-border bg-muted/40"
+                                    />
+                                  ))
+                                : items.map((p) => (
+                                    <PersonnelCard
+                                      key={p.id}
+                                      personnel={p}
+                                      onViewDetails={() => void openPersonnel(p.id)}
+                                    />
+                                  ))}
+                            </div>
+                          )}
                     </div>
                   </div>
                   <div className="min-w-[300px] flex-1 overflow-hidden">
-                    {activePersonnel ? (
+                    {detailError != null ? (
+                      <div className="p-4">
+                        <ErrorState error={detailError} title={t("detail.loadError")} />
+                      </div>
+                    ) : activePersonnel ? (
                       <PersonnelDetailWorkspace detail={activePersonnel} />
                     ) : (
                       <div className="flex h-full items-center justify-center p-6">
@@ -601,9 +639,22 @@ export function PersonnelPage() {
                 <TeamCapacityBoard
                   ref={teamsRef}
                   entityId={filter.entity_id ?? null}
+                  openTeamId={openTeamId}
                   onOpenPersonnel={(personnelId) => {
+                    // The person's record lives in the directory tab: show it there.
+                    setActiveTab("directory");
                     void openPersonnel(personnelId);
                   }}
+                />
+              </TabsContent>
+
+              <TabsContent value="companies" className="mt-4">
+                <ExternalCompaniesPanel />
+              </TabsContent>
+
+              <TabsContent value="calendar" className="mt-4">
+                <WorkCalendarPanel
+                  entities={entityNodes.map((n) => ({ id: n.node_id, name: n.name }))}
                 />
               </TabsContent>
 
@@ -620,6 +671,6 @@ export function PersonnelPage() {
       <PersonnelArchivePanel />
 
       <PersonnelCreateDialog />
-    </div>
+    </ModulePageShell>
   );
 }

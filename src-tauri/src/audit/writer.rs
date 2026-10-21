@@ -67,13 +67,13 @@ pub async fn write_audit_event_in(conn: &impl ConnectionTrait, input: AuditEvent
                 happened_at.into(),
                 input.retention_class.into(),
                 details_json.into(),
-                origin.into(),
+                origin.clone().into(),
                 seq.into(),
                 prev_hash.clone().into(),
             ],
         ))
         .await?;
-    crate::audit::chain::seal(conn, &sync_id, prev_hash.as_deref()).await?;
+    crate::audit::chain::seal(conn, &sync_id, &origin, seq, prev_hash.as_deref()).await?;
     Ok(insert.last_insert_id() as i64)
 }
 
@@ -86,17 +86,11 @@ pub fn compute_hash(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{DbBackend, Statement};
 
     #[tokio::test]
     async fn write_audit_event_propagates_error_on_insert_failure() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect in-memory db");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("apply migrations");
+        let db = crate::db::test_db::migrated().await;
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,

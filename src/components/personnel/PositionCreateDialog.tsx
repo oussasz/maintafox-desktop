@@ -13,17 +13,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { mfInput } from "@/design-system/tokens";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { upsertPosition } from "@/services/personnel-service";
 import { listCertificationTypes } from "@/services/qualification-service";
 import type { CertificationType, Position, PositionUpsertInput } from "@shared/ipc-types";
+
+import { PersonnelListSelect } from "./PersonnelListSelect";
+import { usePersonnelLists } from "./use-personnel-lists";
 
 interface PositionCreateDialogProps {
   open: boolean;
@@ -44,7 +42,9 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
 
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
-  const [category, setCategory] = useState("technician");
+  // Position categories come from the plant's list (Données de référence).
+  const lists = usePersonnelLists();
+  const [category, setCategory] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [certs, setCerts] = useState<CertEntry[]>([]);
@@ -65,7 +65,7 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
     if (!open) return;
     setCode("");
     setName("");
-    setCategory("technician");
+    setCategory("");
     setIsActive(true);
     setSkills([]);
     setCerts([]);
@@ -111,6 +111,10 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
       setError(t("position.validation.nameRequired", "Position name is required"));
       return;
     }
+    if (!category) {
+      setError(t("position.validation.categoryRequired"));
+      return;
+    }
 
     const skillIds = skills
       .map((s) => (s.refValueIdStr ? Number(s.refValueIdStr) : null))
@@ -138,7 +142,7 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
       const created = await upsertPosition(input);
       onCreated(created);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeAppError(err).title);
     } finally {
       setSaving(false);
     }
@@ -167,30 +171,14 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="pos-category">{t("position.field.category", "Category")}</Label>
-              <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger id="pos-category">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(
-                    [
-                      "technician",
-                      "supervisor",
-                      "engineer",
-                      "operator",
-                      "contractor",
-                      "planner",
-                      "storekeeper",
-                      "hse",
-                    ] as const
-                  ).map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {t(`position.category.${cat}`, cat)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="pos-category">{t("position.field.category", "Category")} *</Label>
+              <PersonnelListSelect
+                id="pos-category"
+                list="position_categories"
+                lists={lists}
+                value={category}
+                onChange={setCategory}
+              />
             </div>
           </div>
 
@@ -291,10 +279,7 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
                 {certs.map((cert) => (
                   <div key={cert.key} className="flex items-center gap-2">
                     <select
-                      className={cn(
-                        "h-9 flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm",
-                        "focus:outline-none focus:ring-1 focus:ring-ring",
-                      )}
+                      className={cn(mfInput.nativeSelect, "w-auto flex-1")}
                       value={cert.certTypeId ?? ""}
                       onChange={(e) => updateCertType(cert.key, e.target.value)}
                     >

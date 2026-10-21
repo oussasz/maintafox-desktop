@@ -19,6 +19,7 @@ export function assetToSearchResult(
     subfamily_code: asset.subfamily_code,
     subfamily_name: asset.subfamily_name,
     criticality_code: asset.criticality_code,
+    criticality_to_review: asset.criticality_to_review,
     status_code: asset.status_code,
     org_node_id: asset.org_node_id,
     org_node_name: asset.org_node_name,

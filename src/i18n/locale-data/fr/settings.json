@@ -18,7 +18,8 @@
     "backup": "Sauvegarde",
     "reliability": "Fiabilité",
     "documents": "Documents et identité visuelle",
-    "work_orders": "Ordres de travail"
+    "work_orders": "Ordres de travail",
+    "inventory": "Inventaire"
   },
   "table": {
     "key": "Clé",
@@ -71,9 +72,14 @@
     "diagnostics.log_retention_days": "Rétention des logs (jours)",
     "ram.fmeca_rpn_critical_threshold": "Seuil RPN critique FMECA",
     "documents.default_header": "En-tête de document par défaut",
-    "wo.reopen_window_days": "Délai de réouverture après clôture (jours)"
+    "wo.reopen_window_days": "Délai de réouverture après clôture (jours)",
+    "inventory.count_critical_variance": "Écart critique d'un comptage d'inventaire",
+    "inventory.reconciliation_drift_break": "Écart de rupture du rapprochement de stock",
+    "locale.fiscal_year_start_month": "Début de l'exercice comptable"
   },
   "documentHeader": {
+    "removeLogoConfirmTitle": "Retirer le logo ?",
+    "removeLogoConfirmBody": "Le logo ne figurera plus dans l'en-tête des documents imprimés (OT, bons de commande…). Vous pourrez en téléverser un autre.",
     "title": "Documents et identité visuelle",
     "description": "Configurez l'en-tête par défaut injecté en haut des ordres de travail, demandes d'intervention et bons de commande imprimés.",
     "logoLabel": "Logo de l'entreprise",
@@ -114,12 +120,28 @@
     "summary": "Résumé",
     "changedAt": "Date",
     "changedBy": "Par",
-    "stepUp": "Élévation"
+    "stepUp": "Élévation",
+    "loadError": "Le journal des modifications n'a pas pu être chargé."
   },
   "sidebar": {
     "search": "Rechercher…"
   },
   "policy": {
+    "test": {
+      "POLICY_TEST_SCHEMA_INVALID": "Le brouillon n'est pas une politique « {{domain}} » lisible : {{detail}}",
+      "POLICY_TEST_IN_RANGE": "{{field}} : {{value}} est dans les limites ({{min}} à {{max}}).",
+      "POLICY_TEST_OUT_OF_RANGE": "{{field}} : {{value}} est hors limites ({{min}} à {{max}}).",
+      "POLICY_TEST_IDLE_WITHIN_ABSOLUTE": "Le délai d'inactivité ({{idle}} min) tient dans la durée de session ({{absolute}} min).",
+      "POLICY_TEST_IDLE_EXCEEDS_ABSOLUTE": "Le délai d'inactivité ({{idle}} min) dépasse la durée de session ({{absolute}} min).",
+      "POLICY_TEST_SCHEDULE_EMPTY": "La planification des sauvegardes est vide.",
+      "POLICY_TEST_SCHEDULE_INVALID": "La planification « {{schedule}} » est illisible : {{detail}}",
+      "POLICY_TEST_SCHEDULE_VALID": "La planification « {{schedule}} » est valide.",
+      "POLICY_TEST_INCLUDE_PHOTOS": "Photos incluses dans les sauvegardes : {{value}}.",
+      "POLICY_TEST_PASSWORD_ELSEWHERE": "La politique de mot de passe se règle dans son propre panneau.",
+      "POLICY_TEST_DOMAIN_UNSUPPORTED": "Domaine de politique inconnu : {{domain}}.",
+      "yes": "oui",
+      "no": "non"
+    },
     "governedTitle": "Paramètre réglementé",
     "governedDescription": "Ce paramètre utilise le workflow Brouillon → Test → Activation.",
     "active": "Actif",
@@ -169,7 +191,9 @@
       "retention_days": "Rétention (jours)",
       "include_photos": "Inclure les photos",
       "compression_level": "Niveau de compression"
-    }
+    },
+    "loadError": "La politique n'a pas pu être chargée.",
+    "unreadable": "La politique enregistrée est illisible : elle ne peut pas être modifiée ici. Contactez le support."
   },
   "permissionDenied": "Vous n'avez pas la permission d'accéder aux paramètres",
   "options": {
@@ -190,18 +214,6 @@
       "monday": "Lundi",
       "sunday": "Dimanche"
     },
-    "currency": {
-      "DZD": "Dinar algérien (DZD)",
-      "MAD": "Dirham marocain (MAD)",
-      "TND": "Dinar tunisien (TND)",
-      "EUR": "Euro (EUR)",
-      "USD": "Dollar américain (USD)",
-      "GBP": "Livre sterling (GBP)",
-      "CHF": "Franc suisse (CHF)",
-      "CAD": "Dollar canadien (CAD)",
-      "SAR": "Riyal saoudien (SAR)",
-      "AED": "Dirham des Émirats (AED)"
-    },
     "colorMode": {
       "light": "Clair",
       "dark": "Sombre"
@@ -220,6 +232,20 @@
     "channel": {
       "stable": "Stable",
       "beta": "Bêta"
+    },
+    "month": {
+      "1": "Janvier",
+      "2": "Février",
+      "3": "Mars",
+      "4": "Avril",
+      "5": "Mai",
+      "6": "Juin",
+      "7": "Juillet",
+      "8": "Août",
+      "9": "Septembre",
+      "10": "Octobre",
+      "11": "Novembre",
+      "12": "Décembre"
     }
   },
   "tabs": {
@@ -231,7 +257,7 @@
     "integrations": "Système & Sync",
     "profileHint": "Informations du compte, mot de passe, PIN, appareils de confiance et historique de session.",
     "notificationsHint": "Boîte de réception, accusés, reports et préférences par catégorie.",
-    "generalHint": "Langue, apparence et préférences système.",
+    "generalHint": "Langue, devise et exercice fiscal, ordres de travail, fiabilité, en-tête des documents imprimés. Chaque paramètre montre sa valeur livrée, qui peut le modifier et son historique.",
     "securityHint": "Politique mot de passe, session, journal d'activité et audit.",
     "integrationsHint": "État de sync, licence, connexions et diagnostics."
   },
@@ -265,7 +291,7 @@
     },
     "resetTitle": "Réinitialisation usine",
     "resetDescription": "Efface toutes les données de cet appareil et redémarre sur la configuration initiale. Une dernière sauvegarde est d'abord enregistrée dans le dossier « backups ». Les données non encore synchronisées avec le serveur n'existent que dans cette sauvegarde.",
-    "resetPhraseLabel": "Phrase de confirmation",
+    "resetPhraseLabel": "Saisissez « EFFACER TOUTES LES DONNÉES » (ou « ERASE ALL DATA ») pour confirmer",
     "resetPhrasePlaceholder": "Saisir la phrase de confirmation",
     "resetAction": "Tout effacer et redémarrer",
     "resetError": "Échec de la réinitialisation",
@@ -311,5 +337,217 @@
     "copied": "Clé copiée dans le presse-papiers",
     "copyError": "Copie impossible",
     "revealError": "Impossible d’afficher la clé de récupération"
+  },
+  "catalog": {
+    "shipped": "Valeur livrée",
+    "changed": "Modifiée",
+    "lastChange": "Modifiée par {{who}} le {{when}}",
+    "restoreShipped": "Revenir à la valeur livrée",
+    "restoredSummary": "Paramètre '{{key}}' remis à la valeur livrée",
+    "showHistory": "Historique des changements",
+    "hideHistory": "Masquer l'historique",
+    "system": "Système",
+    "whoMayChange": "Modifiable par les rôles : {{roles}} (permission adm.settings)",
+    "nobodyMayChange": "Aucun rôle actif ne détient la permission adm.settings.",
+    "outOfRange": "Valeur hors limites ({{min}} à {{max}}).",
+    "locked": {
+      "locale.fiscal_year_start_month": "Verrouillé : des réalisés budgétaires, des périodes clôturées ou des imputations sont déjà enregistrés par période fiscale. Changer le mois de début déplacerait tout le passé.",
+      "locale.currency_code": "Verrouillé : du stock, des réceptions ou des imputations sont déjà valorisés dans cette devise. La changer réétiquetterait tous les montants enregistrés."
+    },
+    "help": {
+      "locale.primary_language": "Langue de l'interface par défaut pour tous les utilisateurs.",
+      "locale.fallback_language": "Langue utilisée quand un texte manque dans la langue principale.",
+      "locale.currency_code": "Devise de valorisation du stock, des achats et des coûts (code ISO 4217).",
+      "locale.fiscal_year_start_month": "Mois de début de l'exercice : périodes budgétaires, imputations, clôtures.",
+      "wo.reopen_window_days": "Nombre de jours après clôture pendant lesquels un OT clôturé peut être rouvert (0 = jamais).",
+      "inventory.count_critical_variance": "Une ligne comptée dont l'écart atteint cette quantité (dans l'unité de l'article) est critique et doit être approuvée. Chaque session d'inventaire garde la valeur du jour de sa création.",
+      "inventory.reconciliation_drift_break": "Un écart entre le journal des mouvements et le solde de stock qui atteint cette quantité (dans l'unité de l'article) est une rupture. Doit être supérieur à zéro.",
+      "ram.fmeca_rpn_critical_threshold": "À partir de cet indice de priorité de risque (G × O × D), un mode de défaillance AMDEC est critique.",
+      "backup.retention_daily": "Nombre de sauvegardes planifiées quotidiennes conservées (au moins une).",
+      "backup.retention_weekly": "Nombre de sauvegardes hebdomadaires conservées en plus.",
+      "backup.retention_monthly": "Nombre de sauvegardes mensuelles conservées en plus."
+    },
+    "units": {
+      "wo.reopen_window_days_one": "{{count}} jour",
+      "wo.reopen_window_days_other": "{{count}} jours",
+      "inventory.count_critical_variance": "{{value, number(maximumFractionDigits: 6)}} (unité de l'article)",
+      "inventory.reconciliation_drift_break": "{{value, number(maximumFractionDigits: 6)}} (unité de l'article)",
+      "ram.fmeca_rpn_critical_threshold": "{{count}}",
+      "backup.retention_daily_one": "{{count}} sauvegarde",
+      "backup.retention_daily_other": "{{count}} sauvegardes",
+      "backup.retention_weekly_one": "{{count}} semaine",
+      "backup.retention_weekly_other": "{{count}} semaines",
+      "backup.retention_monthly_one": "{{count}} mois",
+      "backup.retention_monthly_other": "{{count}} mois"
+    },
+    "currencyLoadError": "La liste des devises (Données de référence › Devises) n'a pas pu être chargée : la devise ne peut pas être modifiée.",
+    "currencyLoading": "Chargement des devises…",
+    "historyLoadError": "L'historique de ce paramètre n'a pas pu être chargé.",
+    "highRisk": {
+      "title": "Modifier « {{setting}} » ?",
+      "body": "De {{from}} à {{to}}. Le changement est enregistré avec votre nom, l'heure et votre motif, et vous demande de confirmer votre identité.",
+      "confirm": "Modifier le paramètre",
+      "reason": "Motif du changement",
+      "reasonHint": "Au moins {{min}} caractères ; conservé dans l'historique du paramètre."
+    }
+  },
+  "license": {
+    "title": "Licence",
+    "loadError": "L'état de la licence n'a pas pu être chargé",
+    "entitlement": "Licence",
+    "activation": "Activation",
+    "trust": "Ce poste",
+    "policySyncPending": "Synchronisation de la politique en attente",
+    "edition": "Édition {{edition}}",
+    "pendingWrites": "Modifications en attente d'envoi :",
+    "lastAction": "Dernière action d'administration :",
+    "traces_one": "{{count}} événement de licence récent (détails techniques)",
+    "traces_other": "{{count}} événements de licence récents (détails techniques)",
+    "reason": "Motif",
+    "reasonHint": "Au moins {{min}} caractères. Conservé dans la piste d'audit de la licence.",
+    "states": {
+      "active": "active",
+      "suspended": "suspendue",
+      "revoked": "révoquée",
+      "trusted": "de confiance",
+      "untrusted": "non approuvé",
+      "verified": "vérifiée",
+      "soft_accepted": "acceptée",
+      "not_activated": "non activée",
+      "pending_online_validation": "en attente de validation en ligne",
+      "degraded_api_unavailable": "dégradée (serveur injoignable)",
+      "denied_revoked": "refusée (révoquée)",
+      "denied_expired": "refusée (expirée)",
+      "denied_slot_limit": "refusée (nombre de postes atteint)",
+      "denied_force_update_required": "refusée (mise à jour requise)",
+      "denied_invalid": "refusée (invalide)",
+      "denied_offline_grace_expired": "refusée (durée hors ligne dépassée)",
+      "other": "autre état"
+    },
+    "advice": {
+      "policySync": "La synchronisation de la politique est en attente : actualisez la politique avant toute modification.",
+      "revoked": "La licence est révoquée. Demandez à votre administrateur de la réactiver, puis actualisez la politique.",
+      "suspended": "La licence est suspendue : l'application est en lecture seule jusqu'à sa réactivation.",
+      "activationDenied": "L'activation du produit a été refusée. Réactivez ou contactez le support.",
+      "activationDegraded": "L'activation est dégradée : le serveur de licences est injoignable. Actualisez une fois en ligne.",
+      "activationPending": "L'activation du produit attend une validation en ligne.",
+      "machinePendingRevocation": "L'activation de ce poste sera révoquée à la prochaine connexion.",
+      "machineRevoked": "L'activation de ce poste est révoquée. Demandez à votre administrateur de le réactiver.",
+      "untrusted": "Ce poste n'est pas encore approuvé. Terminez le premier démarrage en ligne sur un poste de confiance.",
+      "healthy": "La licence est en règle : toutes les opérations sont autorisées.",
+      "activationIncomplete": "L'activation n'est pas terminée. Finalisez l'activation du produit."
+    },
+    "actions": {
+      "other": "autre action",
+      "suspend": {
+        "label": "Suspendre la licence",
+        "confirmTitle": "Suspendre la licence ?",
+        "confirmBody": "Tous les utilisateurs du site passent en lecture seule jusqu'à la réactivation. Les modifications non envoyées restent sur ce poste.",
+        "confirm": "Suspendre la licence"
+      },
+      "revoke": {
+        "label": "Révoquer la licence",
+        "confirmTitle": "Révoquer la licence ?",
+        "confirmBody": "La licence cesse d'être valable pour ce site. Seule une réactivation par un administrateur la rétablit.",
+        "confirm": "Révoquer la licence"
+      },
+      "reactivate": {
+        "label": "Réactiver la licence",
+        "confirmTitle": "Réactiver la licence ?",
+        "confirmBody": "Les utilisateurs retrouvent les opérations que leur licence autorise.",
+        "confirm": "Réactiver la licence"
+      },
+      "compromise": {
+        "label": "Déclarer la clé de signature compromise",
+        "confirmTitle": "Déclarer la clé de signature compromise ?",
+        "confirmBody": "La clé qui a signé la licence en cours est marquée compromise et la licence est révoquée immédiatement. À utiliser uniquement en cas de fuite de la clé.",
+        "confirm": "Déclarer compromise",
+        "noEnvelope": "Aucune licence signée n'est active : il n'y a pas de clé de signature à déclarer compromise."
+      }
+    }
+  },
+  "appearance": {
+    "title": "Apparence",
+    "intro": "Mode de couleur de l'application sur ce poste. Le choix est enregistré sur ce poste, pour l'utilisateur Windows de ce poste ; il n'est pas partagé avec les autres postes ni entre les comptes Maintafox de ce poste.",
+    "legend": "Mode de couleur",
+    "light": "Clair",
+    "lightHint": "Fond clair, recommandé en atelier bien éclairé.",
+    "dark": "Sombre",
+    "darkHint": "Fond sombre, moins éblouissant en salle de contrôle ou de nuit.",
+    "system": "Système",
+    "systemHint": "Suit le réglage de Windows et change avec lui.",
+    "current": "Affichage actuel : {{mode}}",
+    "currentLight": "clair",
+    "currentDark": "sombre",
+    "storedLocally": "Enregistré sur ce poste",
+    "authNote": "Les écrans de connexion, de verrouillage et d'activation restent toujours en clair."
+  },
+  "siteRules": {
+    "title": "Règles par site",
+    "hint": "Un site de planification peut assouplir une règle pour lui seul. Un site sans règle garde le choix strict par défaut. Chaque changement demande un motif et votre identité, et reste dans l'historique.",
+    "loadError": "Les sites n'ont pas pu être chargés",
+    "noSites": "Aucun site de planification",
+    "noSitesHint": "Un site est un nœud d'organisation dont le type peut porter des travaux (Organisation).",
+    "site": "Site",
+    "pickSite": "Choisissez un site",
+    "on": "Activé",
+    "off": "Désactivé",
+    "unset": "non défini",
+    "notSet": "Non défini sur ce site : {{value}} (par défaut).",
+    "lastChange": "Dernier changement par {{who}}, {{when}}",
+    "unknownUser": "Utilisateur inconnu",
+    "history": "Historique",
+    "historyError": "L'historique n'a pas pu être chargé",
+    "noHistory": "Aucun changement sur ce site.",
+    "selfApproval": {
+      "label": "Autoriser l'auto-approbation des décisions de fiabilité et des permis de travail",
+      "help": "Désactivé (recommandé) : une deuxième personne approuve chaque décision de fiabilité et chaque permis de travail de ce site (quatre yeux : pas la personne qui a rédigé ou soumis le permis). À activer seulement pour un site où la même personne prépare et approuve ; ces approbations sont signalées « auto-approbation (site sans 4 yeux) » sur le permis et « Auto-approuvée » sur la décision.",
+      "active": "Quatre yeux levé sur ce site"
+    },
+    "confirmTitle": "Modifier la règle de {{site}} ?",
+    "confirmOnBody": "La personne qui propose une décision de fiabilité, ou qui rédige ou soumet un permis de travail, à {{site}} pourra l'approuver. Les autres sites gardent les quatre yeux.",
+    "confirmOffBody": "Les décisions de fiabilité et les permis de travail de {{site}} demanderont de nouveau l'approbation d'une deuxième personne.",
+    "confirm": "Modifier la règle",
+    "reason": "Motif du changement",
+    "reasonHint": "Au moins {{min}} caractères ; conservé dans l'historique avec votre nom et l'heure.",
+    "saved": "Règle du site modifiée",
+    "unreadable": "La règle enregistrée est illisible : {{value}} (par défaut) s'applique jusqu'à ce qu'elle soit définie à nouveau."
+  },
+  "errors": {
+    "SETTING_REASON_REQUIRED": "Indiquez le motif de ce changement (au moins 10 caractères) : il est conservé dans l'historique.",
+    "SITE_SETTING_STALE": "Quelqu'un a modifié la règle de ce site entre-temps. Rechargez puis réessayez.",
+    "SITE_SETTING_NOT_A_SITE": "Ce nœud d'organisation n'est pas un site de planification (son type ne peut pas porter de travaux).",
+    "SITE_SETTING_UNKNOWN": "Règle de site inconnue.",
+    "FIRST_ADMIN_ALREADY_EXISTS": "Un administrateur existe déjà pour cette organisation : connectez-vous avec ce compte.",
+    "LICENSE_RECONCILE_ADMIN_REQUIRED": "Ce changement de licence demande un administrateur : connectez-vous en tant qu'administrateur ; l'écran de licence vous demande alors de confirmer votre identité et applique le changement.",
+    "LICENSE_EXTENSION_ADMIN_REQUIRED": "Cette mise à jour de licence étend les conditions de la licence ou lève un refus (échéance, postes, édition, droits) : connectez-vous en tant qu'administrateur ; l'écran de licence vous demande alors de confirmer votre identité et applique la mise à jour.",
+    "LICENSE_CLAIM_INVALID": "Les données de licence reçues sont incomplètes ou mal formées (organisation, licence, poste ou jeton d'activation) : rien n'a été modifié.",
+    "LICENSE_FIRST_ADMIN_RETRY": "Le premier administrateur n'a pas pu être enregistré car un autre est en cours de création au même moment : patientez un instant, puis réessayez.",
+    "LICENSE_RESET_BUILTIN_ADMIN_PENDING": "Ce poste détient une licence et n'est encore accessible que par son compte administrateur intégré : créez le premier administrateur, puis connectez-vous avec ce compte pour réinitialiser les données locales.",
+    "LAST_ADMINISTRATOR_REQUIRED": "Cette modification laisserait l'usine sans administrateur actif : créez ou réactivez d'abord un second administrateur.",
+    "ADMIN_RECOVERY_CODE_MALFORMED": "Ce n'est pas un code de récupération valide : copiez le code entier, qui commence par MFXREC1.",
+    "ADMIN_RECOVERY_CODE_NON_CANONICAL": "Ce code de récupération a été modifié : demandez-en un nouveau à l'éditeur.",
+    "ADMIN_RECOVERY_CODE_WRONG_ISSUER": "Ce code de récupération n'a pas été délivré par l'éditeur de Maintafox.",
+    "ADMIN_RECOVERY_CODE_UNTRUSTED_KEY": "Ce code de récupération est signé par une clé que ce poste ne reconnaît pas : demandez-en un nouveau à l'éditeur.",
+    "ADMIN_RECOVERY_CODE_COMPROMISED_KEY": "Ce code de récupération est signé par une clé retirée : demandez-en un nouveau à l'éditeur.",
+    "ADMIN_RECOVERY_CODE_INVALID_SIGNATURE": "La signature de ce code de récupération n'est pas valide : recopiez-le exactement, ou demandez-en un nouveau à l'éditeur.",
+    "ADMIN_RECOVERY_CODE_WRONG_VERSION": "Ce code de récupération est d'une version que cette application ne connaît pas : mettez l'application à jour ou contactez l'éditeur.",
+    "ADMIN_RECOVERY_CODE_WRONG_PURPOSE": "Ce code n'est pas un code de récupération administrateur.",
+    "ADMIN_RECOVERY_CODE_WRONG_ALGORITHM": "Ce code de récupération utilise une signature que cette application n'accepte pas.",
+    "ADMIN_RECOVERY_NOT_ACTIVATED": "Ce poste n'a pas d'activation de licence : activez-le avant d'utiliser un code de récupération.",
+    "ADMIN_RECOVERY_CODE_WRONG_TENANT": "Ce code de récupération a été délivré pour une autre organisation.",
+    "ADMIN_RECOVERY_CODE_WRONG_MACHINE": "Ce code de récupération a été délivré pour un autre poste.",
+    "ADMIN_RECOVERY_CODE_WRONG_LICENSE": "Ce code de récupération a été délivré pour une autre licence.",
+    "ADMIN_RECOVERY_CODE_INVALID_WINDOW": "La période de validité de ce code de récupération n'est pas celle que délivre l'éditeur (24 heures au plus, se terminant après son début) : demandez-en un nouveau à l'éditeur.",
+    "ADMIN_RECOVERY_CODE_EXPIRED": "Ce code de récupération a expiré : demandez-en un nouveau à l'éditeur.",
+    "ADMIN_RECOVERY_CODE_ISSUED_IN_FUTURE": "Ce code de récupération est daté dans le futur : vérifiez la date et l'heure de ce poste.",
+    "ADMIN_RECOVERY_CODE_ALREADY_USED": "Ce code de récupération a déjà été utilisé : demandez-en un nouveau à l'éditeur.",
+    "ADMIN_RECOVERY_USERNAME_INVALID": "L'identifiant doit compter 3 à 64 caractères : lettres, chiffres et . _ - @ uniquement.",
+    "ADMIN_RECOVERY_USERNAME_TAKEN": "Cet identifiant existe déjà sur ce poste : choisissez-en un nouveau. Un code de récupération ne reprend jamais un compte existant.",
+    "ADMIN_RECOVERY_NAME_INVISIBLE_CHARACTERS": "Le nom et l'identifiant ne doivent pas contenir de caractères invisibles ou de contrôle (par exemple une marque de sens d'écriture ou une espace de largeur nulle) : saisissez-les de nouveau.",
+    "ADMIN_RECOVERY_DISPLAY_NAME_REQUIRED": "Indiquez le nom complet du nouvel administrateur (1 à 120 caractères).",
+    "ADMIN_RECOVERY_PASSWORD_MISMATCH": "Les deux mots de passe ne correspondent pas.",
+    "ADMIN_RECOVERY_RETRY": "L'administrateur n'a pas pu être enregistré car la base de données est occupée : patientez un instant, puis réessayez.",
+    "ADMIN_RECOVERY_NOTICE_NOT_FOUND": "Cet avis ne vous est pas adressé ou a déjà été pris en compte."
   }
 }

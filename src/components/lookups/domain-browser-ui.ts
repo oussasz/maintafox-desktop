@@ -5,17 +5,17 @@
 
 /** Domain / set row shell: hover + selected + focus chrome stay on this class. */
 export const DOMAIN_TREE_ROW_CLASS =
-  "group flex min-w-0 items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-surface-1";
+  "group flex min-h-9 min-w-0 items-center gap-2 px-3 py-1 text-sm cursor-pointer hover:bg-surface-1";
 
 export const DOMAIN_TREE_ROW_SELECTED_CLASS = "bg-surface-2 font-medium text-text-primary";
 
 export const DOMAIN_TREE_ROW_IDLE_CLASS = "text-text-secondary";
 
-export const DOMAIN_TREE_ROW_FOCUS_CLASS = "ring-1 ring-inset ring-primary/40";
+export const DOMAIN_TREE_ROW_FOCUS_CLASS = "ring-2 ring-inset ring-ring";
 
 /** Fixed chevron column — expand/collapse only. */
 export const DOMAIN_TREE_CHEVRON_SLOT =
-  "flex h-7 w-5 shrink-0 items-center justify-center text-text-muted";
+  "flex h-9 w-8 shrink-0 items-center justify-center rounded text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 /** Folder / leading glyph — never shrinks. */
 export const DOMAIN_TREE_LEADING_ICON = "h-4 w-4 shrink-0 text-text-muted";
@@ -24,7 +24,8 @@ export const DOMAIN_TREE_LEADING_ICON = "h-4 w-4 shrink-0 text-text-muted";
  * Primary label region. Takes all leftover space; truncates only when necessary.
  * Sibling badges/actions must be `shrink-0` so they cannot starve this flex item.
  */
-export const DOMAIN_TREE_LABEL_CLASS = "min-w-0 flex-1 truncate text-left leading-5";
+export const DOMAIN_TREE_LABEL_CLASS =
+  "min-w-0 flex-1 line-clamp-2 break-words text-left leading-5";
 
 /**
  * Governance badge slot — equal width on every row so labels align vertically.
@@ -39,7 +40,7 @@ export const DOMAIN_TREE_BADGE_TEXT = "block w-full truncate text-center";
 export const DOMAIN_TREE_TRAIL_CLASS = "flex shrink-0 items-center gap-0.5";
 
 export const DOMAIN_TREE_ICON_SLOT =
-  "flex h-7 w-7 shrink-0 items-center justify-center [&_button]:shrink-0";
+  "flex h-9 w-9 shrink-0 items-center justify-center [&_button]:shrink-0";
 
 /** Child set indent aligns under domain label (chevron + gap + folder + gap). */
-export const DOMAIN_TREE_SET_INDENT = "pl-10 pr-3";
+export const DOMAIN_TREE_SET_INDENT = "pl-[4.75rem] pr-3";

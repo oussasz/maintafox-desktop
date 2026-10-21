@@ -11,6 +11,7 @@ import { CrewBadge } from "@/components/personnel/CrewBadge";
 import { TeamDetailWorkspace } from "@/components/personnel/TeamDetailWorkspace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -21,8 +22,10 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { mfLayout } from "@/design-system/tokens";
+import { mfInput, mfLayout } from "@/design-system/tokens";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import {
@@ -42,13 +45,16 @@ export type TeamCapacityBoardHandle = {
 interface TeamCapacityBoardProps {
   entityId?: number | null;
   onOpenPersonnel?: ((personnelId: number) => void) | undefined;
+  /** Team opened on its capacity tab (planning's "set up the team's Classe horaire" link). */
+  openTeamId?: number | null;
 }
 
+/** Capacity figures are null when the summary has no row for the team: unknown, not 0. */
 type CrewTableRow = TeamSummary & {
-  member_count: number;
-  lead_count: number;
-  total_available_minutes: number;
-  total_blocked_minutes: number;
+  member_count: number | null;
+  lead_count: number | null;
+  total_available_minutes: number | null;
+  total_blocked_minutes: number | null;
   avg_availability_ratio: number | null;
 };
 
@@ -59,7 +65,7 @@ function toIsoDate(value: Date): string {
 }
 
 export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacityBoardProps>(
-  function TeamCapacityBoard({ entityId, onOpenPersonnel }, ref) {
+  function TeamCapacityBoard({ entityId, onOpenPersonnel, openTeamId }, ref) {
     const { t } = useTranslation("personnel");
     const { can } = usePermissions();
     const canManage = can(P.PER_MANAGE);
@@ -67,7 +73,8 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
     const [rows, setRows] = useState<TeamCapacitySummaryRow[]>([]);
     const [crews, setCrews] = useState<TeamSummary[]>([]);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const { formatNumber } = useFormatters();
+    const [error, setError] = useState<unknown>(null);
     const [reloadToken, setReloadToken] = useState(0);
     const [dateFrom, setDateFrom] = useState(() => toIsoDate(new Date()));
     const [dateTo, setDateTo] = useState(() => {
@@ -93,7 +100,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
     const [formError, setFormError] = useState<string | null>(null);
     const [formSaving, setFormSaving] = useState(false);
 
-    const [detailTeamId, setDetailTeamId] = useState<number | null>(null);
+    const [detailTeamId, setDetailTeamId] = useState<number | null>(openTeamId ?? null);
 
     useEffect(() => {
       if (entityId != null) setFilterEntityId(entityId);
@@ -160,7 +167,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
           setCrews(crewList);
         })
         .catch((err: unknown) => {
-          if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+          if (!cancelled) setError(err);
         })
         .finally(() => {
           if (!cancelled) setLoading(false);
@@ -191,10 +198,10 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
           const capacity = capacityByTeam.get(crew.id);
           return {
             ...crew,
-            member_count: capacity?.member_count ?? 0,
-            lead_count: capacity?.lead_count ?? 0,
-            total_available_minutes: capacity?.total_available_minutes ?? 0,
-            total_blocked_minutes: capacity?.total_blocked_minutes ?? 0,
+            member_count: capacity?.member_count ?? null,
+            lead_count: capacity?.lead_count ?? null,
+            total_available_minutes: capacity?.total_available_minutes ?? null,
+            total_blocked_minutes: capacity?.total_blocked_minutes ?? null,
             avg_availability_ratio: capacity?.avg_availability_ratio ?? null,
           };
         });
@@ -285,11 +292,23 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
         setDialogOpen(false);
         refresh();
       } catch (err) {
-        setFormError(err instanceof Error ? err.message : String(err));
+        setFormError(describeAppError(err).title);
       } finally {
         setFormSaving(false);
       }
     };
+
+    const unknownOr = useCallback(
+      (n: number | null) =>
+        n == null ? (
+          <span className="text-text-muted" title={t("crews.capacityUnknown")}>
+            —
+          </span>
+        ) : (
+          formatNumber(n)
+        ),
+      [formatNumber, t],
+    );
 
     const columns = useMemo<ColumnDef<CrewTableRow>[]>(
       () => [
@@ -346,18 +365,22 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
         {
           accessorKey: "member_count",
           header: t("crews.list.members"),
+          cell: ({ row }) => unknownOr(row.original.member_count),
         },
         {
           accessorKey: "lead_count",
           header: t("crews.list.leads"),
+          cell: ({ row }) => unknownOr(row.original.lead_count),
         },
         {
           accessorKey: "total_available_minutes",
           header: t("crews.list.availableMin"),
+          cell: ({ row }) => unknownOr(row.original.total_available_minutes),
         },
         {
           accessorKey: "total_blocked_minutes",
           header: t("crews.list.blockedMin"),
+          cell: ({ row }) => unknownOr(row.original.total_blocked_minutes),
         },
         {
           id: "ratio",
@@ -385,7 +408,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
             ) : null,
         },
       ],
-      [t, canManage],
+      [t, canManage, unknownOr],
     );
 
     const detailCapacity = detailTeamId != null ? (capacityByTeam.get(detailTeamId) ?? null) : null;
@@ -423,7 +446,9 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
           </label>
         </div>
 
-        {error ? <div className="text-sm text-destructive">{error}</div> : null}
+        {error != null ? (
+          <ErrorState error={error} title={t("crews.loadError")} onRetry={refresh} />
+        ) : null}
         {loading ? <div className="text-sm text-text-muted">{t("common.loading")}</div> : null}
 
         {!loading && tableRows.length === 0 ? (
@@ -469,6 +494,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
                   }}
                   onOpenPersonnel={onOpenPersonnel}
                   onRosterChanged={refresh}
+                  {...(detailTeamId === openTeamId ? { initialTab: "capacity" } : {})}
                 />
               </div>
             ) : null}
@@ -494,7 +520,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
               <div className="space-y-1.5">
                 <Label>{t("crews.form.type")}</Label>
                 <select
-                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  className={mfInput.nativeSelect}
                   value={formType}
                   onChange={(e) => setFormType(e.target.value)}
                 >
@@ -508,7 +534,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
               <div className="space-y-1.5">
                 <Label>{t("crews.form.site")}</Label>
                 <select
-                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  className={mfInput.nativeSelect}
                   value={formNodeId ?? ""}
                   onChange={(e) => setFormNodeId(e.target.value ? Number(e.target.value) : null)}
                 >
@@ -523,7 +549,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
               <div className="space-y-1.5">
                 <Label>{t("crews.form.status")}</Label>
                 <select
-                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  className={mfInput.nativeSelect}
                   value={formStatus}
                   onChange={(e) => setFormStatus(e.target.value)}
                 >

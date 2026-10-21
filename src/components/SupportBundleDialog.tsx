@@ -12,6 +12,7 @@ import { ClipboardCopy, Download, Loader2, Send, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   getDiagnosticsInfo,
@@ -19,7 +20,6 @@ import {
   uploadSupportBundle,
   type SupportBundleUploadResult,
 } from "@/services/diagnostics-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { DiagnosticsAppInfo, SupportBundle } from "@shared/ipc-types";
 
 interface Props {
@@ -47,7 +47,7 @@ export function SupportBundleDialog({ open, onClose }: Props) {
       setSent(await uploadSupportBundle(trimmed.length > 0 ? trimmed : null));
       setNote("");
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setIsSending(false);
     }
@@ -62,7 +62,7 @@ export function SupportBundleDialog({ open, onClose }: Props) {
       setAppInfo(info);
       setBundle(b);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setIsGenerating(false);
     }
@@ -177,7 +177,7 @@ export function SupportBundleDialog({ open, onClose }: Props) {
           {error && (
             <p
               role="alert"
-              className="rounded-lg bg-status-error/10 border border-status-error/30 p-3 text-sm text-status-error"
+              className="rounded-lg border border-tone-danger-border bg-tone-danger-bg p-3 text-sm text-tone-danger-fg"
             >
               {error}
             </p>

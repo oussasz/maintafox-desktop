@@ -3,6 +3,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { notifyReferenceDataChanged } from "@/lib/reference-data-events";
 import type {
   ReferenceDomain,
   CreateReferenceDomainPayload,
@@ -24,11 +25,14 @@ import type {
   RefImportApplyResult,
   RefExportResult,
   ReferenceGovernanceCapabilities,
+  ReferenceModuleCatalog,
   SchedulePattern,
   UpsertSchedulePatternPayload,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export const ReferenceDomainAudienceSchema = z.enum(["system", "company"]);
 
 export const ReferenceDomainSchema = z.object({
   id: z.number().int(),
@@ -37,6 +41,7 @@ export const ReferenceDomainSchema = z.object({
   structure_type: z.string().min(1),
   governance_level: z.string().min(1),
   governance_category: z.string().min(1),
+  audience: ReferenceDomainAudienceSchema,
   is_extendable: z.boolean(),
   validation_rules_json: z.string().nullable(),
   created_at: z.string(),
@@ -101,6 +106,13 @@ export const ReferenceGovernanceCapabilitiesSchema = z.object({
   is_read_only: z.boolean(),
   requires_analytical_protection: z.boolean(),
   set_status: z.string().nullable(),
+  system_values_locked: z.boolean(),
+  audience: ReferenceDomainAudienceSchema,
+});
+
+export const ReferenceModuleCatalogSchema = z.object({
+  code: z.string().min(1),
+  audience: ReferenceDomainAudienceSchema,
 });
 
 // â”€â”€ Domain commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -108,6 +120,12 @@ export const ReferenceGovernanceCapabilitiesSchema = z.object({
 export async function listReferenceDomains(): Promise<ReferenceDomain[]> {
   const raw = await invoke<unknown[]>("list_reference_domains");
   return z.array(ReferenceDomainSchema).parse(raw);
+}
+
+/** Audience of the module tables (OT types, article families…) shown in the reference tree. */
+export async function listReferenceModuleCatalogs(): Promise<ReferenceModuleCatalog[]> {
+  const raw = await invoke<unknown[]>("list_reference_module_catalogs");
+  return z.array(ReferenceModuleCatalogSchema).parse(raw);
 }
 
 export async function getReferenceGovernanceCapabilities(
@@ -204,7 +222,9 @@ export async function validateReferenceSet(setId: number): Promise<ReferenceSet>
 
 export async function publishReferenceSet(setId: number): Promise<ReferenceSet> {
   const raw = await invoke<unknown>("publish_reference_set", { setId });
-  return ReferenceSetSchema.parse(raw);
+  const result = ReferenceSetSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 // â”€â”€ Value commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -223,7 +243,9 @@ export async function createReferenceValue(
   payload: CreateReferenceValuePayload,
 ): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("create_reference_value", { payload });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 /**
@@ -234,7 +256,9 @@ export async function createOperationalReferenceValue(
   payload: CreateOperationalReferenceValuePayload,
 ): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("create_operational_reference_value", { payload });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function updateReferenceValue(
@@ -242,17 +266,23 @@ export async function updateReferenceValue(
   payload: UpdateReferenceValuePayload,
 ): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("update_reference_value", { valueId, payload });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function deactivateReferenceValue(valueId: number): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("deactivate_reference_value", { valueId });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function reactivateReferenceValue(valueId: number): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("reactivate_reference_value", { valueId });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function moveReferenceValueParent(
@@ -260,7 +290,9 @@ export async function moveReferenceValueParent(
   newParentId: number | null,
 ): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("move_reference_value_parent", { valueId, newParentId });
-  return ReferenceValueSchema.parse(raw);
+  const result = ReferenceValueSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 // â”€â”€ Migration commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -275,7 +307,9 @@ export async function mergeReferenceValues(
     fromValueId,
     toValueId,
   });
-  return ReferenceUsageMigrationResultSchema.parse(raw);
+  const result = ReferenceUsageMigrationResultSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function migrateReferenceUsage(
@@ -288,7 +322,9 @@ export async function migrateReferenceUsage(
     fromValueId,
     toValueId,
   });
-  return ReferenceUsageMigrationResultSchema.parse(raw);
+  const result = ReferenceUsageMigrationResultSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function listReferenceMigrations(
@@ -345,6 +381,9 @@ export async function deleteReferenceAlias(aliasId: number): Promise<void> {
 const ImportRowMessageSchema = z.object({
   category: z.string(),
   severity: z.string(),
+  // Rows checked before the codes existed have none: the server's sentence is shown.
+  code: z.string().default(""),
+  params: z.record(z.string(), z.string()).default({}),
   message: z.string(),
 });
 
@@ -429,7 +468,9 @@ export async function applyRefImportBatch(
   policy: RefImportApplyPolicy,
 ): Promise<RefImportApplyResult> {
   const raw = await invoke<unknown>("apply_ref_import_batch", { batchId, policy });
-  return RefImportApplyResultSchema.parse(raw);
+  const result = RefImportApplyResultSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 export async function getRefImportPreview(batchId: number): Promise<RefImportPreview> {
@@ -548,7 +589,9 @@ export async function governedPublishReferenceSet(setId: number): Promise<Refere
   const raw = await invoke<unknown>("governed_publish_reference_set", {
     setId,
   });
-  return ReferencePublishResultSchema.parse(raw);
+  const result = ReferencePublishResultSchema.parse(raw);
+  notifyReferenceDataChanged();
+  return result;
 }
 
 const ScheduleDayPatternSchema = z.object({
@@ -565,7 +608,7 @@ const SchedulePatternSchema = z.object({
   is_active: z.boolean(),
   shift_pattern_code: z.string(),
   is_continuous: z.boolean(),
-  nominal_hours_per_day: z.number(),
+  nominal_hours_per_day: z.number().nullable(),
   details: z.array(ScheduleDayPatternSchema),
 });
 

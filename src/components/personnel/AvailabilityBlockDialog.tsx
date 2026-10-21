@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
@@ -11,6 +11,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { mfInput } from "@/design-system/tokens";
+import { describeAppError } from "@/lib/app-error";
 import {
   createAvailabilityBlock,
   isAvailabilityOverlapConfirmError,
@@ -18,6 +20,9 @@ import {
 } from "@/services/personnel-service";
 import type { PersonnelAvailabilityBlock } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
+
+import { PersonnelListSelect } from "./PersonnelListSelect";
+import { usePersonnelLists } from "./use-personnel-lists";
 
 export interface AvailabilityBlockPersonOption {
   id: number;
@@ -43,8 +48,6 @@ function toDatetimeLocalValue(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const FORCED_CRITICAL_TYPES = new Set(["medical", "restriction"]);
-
 export function AvailabilityBlockDialog({
   open,
   onOpenChange,
@@ -57,8 +60,11 @@ export function AvailabilityBlockDialog({
   onSaved,
 }: AvailabilityBlockDialogProps) {
   const { t } = useTranslation("personnel");
+  // Absence types come from the plant's list (Données de référence); a type tagged "critical"
+  // always makes the absence critical (the server applies the same rule).
+  const lists = usePersonnelLists();
   const [personnelId, setPersonnelId] = useState<number | null>(null);
-  const [blockType, setBlockType] = useState("leave");
+  const [blockType, setBlockType] = useState("");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [reason, setReason] = useState("");
@@ -67,36 +73,57 @@ export function AvailabilityBlockDialog({
   const [overlapConfirmPending, setOverlapConfirmPending] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const forcedCritical = FORCED_CRITICAL_TYPES.has(blockType);
+  // Without the sensitive-data right the server withholds the type and reason of someone else's
+  // block: the dialog then edits dates and the critical flag and keeps both (never sends them).
+  const typeHidden = mode === "edit" && editingBlock?.type_masked === true;
+  const reasonHidden = mode === "edit" && editingBlock?.reason_masked === true;
+  // A hidden type tagged critical shows as critical for planning without the block's own flag.
+  const forcedCritical = typeHidden
+    ? editingBlock?.critical_for_planning === true && editingBlock.is_critical === false
+    : lists.option("absence_types", blockType)?.tag === "critical";
 
-  useEffect(() => {
-    if (!open) return;
-    setError(null);
-    setOverlapConfirmPending(false);
-    if (mode === "edit" && editingBlock) {
-      setPersonnelId(editingBlock.personnel_id);
-      setBlockType(editingBlock.block_type);
-      setStartAt(toDatetimeLocalValue(editingBlock.start_at));
-      setEndAt(toDatetimeLocalValue(editingBlock.end_at));
-      setReason(editingBlock.reason_note ?? "");
-      setIsCritical(editingBlock.is_critical);
-      return;
-    }
-    setPersonnelId(initialPersonnelId ?? personOptions[0]?.id ?? null);
-    setBlockType("leave");
-    setStartAt(initialStartLocal ?? "");
-    setEndAt(initialEndLocal ?? "");
-    setReason("");
-    setIsCritical(false);
-  }, [
-    open,
-    mode,
+  // Latest props for the reset below, read without making them reset triggers: the parent
+  // rebuilds `personOptions` on every render, which used to wipe the form while typing.
+  const initialRef = useRef({
     editingBlock,
     initialPersonnelId,
     initialStartLocal,
     initialEndLocal,
     personOptions,
-  ]);
+  });
+  initialRef.current = {
+    editingBlock,
+    initialPersonnelId,
+    initialStartLocal,
+    initialEndLocal,
+    personOptions,
+  };
+  /** Changes only when the dialog opens, or opens on another block. */
+  const resetKey = open ? `${mode}:${editingBlock?.id ?? "new"}` : null;
+
+  useEffect(() => {
+    if (resetKey == null) return;
+    const init = initialRef.current;
+    setError(null);
+    setOverlapConfirmPending(false);
+    if (mode === "edit" && init.editingBlock) {
+      const b = init.editingBlock;
+      setPersonnelId(b.personnel_id);
+      setBlockType(b.block_type ?? "");
+      setStartAt(toDatetimeLocalValue(b.start_at));
+      setEndAt(toDatetimeLocalValue(b.end_at));
+      setReason(b.reason_note ?? "");
+      setIsCritical(b.is_critical);
+      return;
+    }
+    // Opened from a person, the absence is theirs; otherwise the planner chooses the person.
+    setPersonnelId(init.initialPersonnelId ?? null);
+    setBlockType("");
+    setStartAt(init.initialStartLocal ?? "");
+    setEndAt(init.initialEndLocal ?? "");
+    setReason("");
+    setIsCritical(false);
+  }, [resetKey, mode]);
 
   useEffect(() => {
     if (forcedCritical) setIsCritical(true);
@@ -110,6 +137,10 @@ export function AvailabilityBlockDialog({
   const submit = async (confirmOverlap: boolean) => {
     if (mode === "create" && personnelId == null) {
       setError(t("availability.form.errors.personnelRequired"));
+      return;
+    }
+    if (!typeHidden && !blockType) {
+      setError(t("availability.form.errors.typeRequired"));
       return;
     }
     if (!startAt || !endAt) {
@@ -129,10 +160,12 @@ export function AvailabilityBlockDialog({
       if (mode === "edit" && editingBlock) {
         const updateInput = {
           id: editingBlock.id,
-          block_type: blockType,
+          ...(typeHidden ? {} : { block_type: blockType }),
           start_at: startIso,
           end_at: endIso,
-          reason_note: reason.trim() || null,
+          ...(reasonHidden
+            ? { keep_reason_note: true as const }
+            : { reason_note: reason.trim() || null }),
           is_critical: forcedCritical || isCritical,
           ...(confirmOverlap ? { confirm_overlap: true as const } : {}),
         };
@@ -158,7 +191,7 @@ export function AvailabilityBlockDialog({
         setError(t("availability.form.errors.overlapConfirm"));
       } else {
         setOverlapConfirmPending(false);
-        setError(err instanceof Error ? err.message : String(err));
+        setError(describeAppError(err).title);
       }
     } finally {
       setSaving(false);
@@ -177,10 +210,15 @@ export function AvailabilityBlockDialog({
             <label className="text-sm">
               <span className="mb-1 block text-text-muted">{t("availability.form.personnel")}</span>
               <select
-                className="h-9 w-full rounded border bg-background px-2"
+                className={mfInput.nativeSelect}
                 value={personnelId ?? ""}
-                onChange={(e) => setPersonnelId(Number(e.target.value))}
+                onChange={(e) =>
+                  setPersonnelId(e.target.value === "" ? null : Number(e.target.value))
+                }
               >
+                <option value="" disabled>
+                  {t("availability.form.personnelPlaceholder")}
+                </option>
                 {personOptions.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
@@ -190,19 +228,22 @@ export function AvailabilityBlockDialog({
             </label>
           ) : null}
 
-          <label className="text-sm">
-            <span className="mb-1 block text-text-muted">{t("availability.form.blockType")}</span>
-            <select
-              className="h-9 w-full rounded border bg-background px-2"
-              value={blockType}
-              onChange={(e) => setBlockType(e.target.value)}
-            >
-              <option value="medical">{t("availability.form.types.medical")}</option>
-              <option value="restriction">{t("availability.form.types.restriction")}</option>
-              <option value="leave">{t("availability.form.types.leave")}</option>
-              <option value="training">{t("availability.form.types.training")}</option>
-            </select>
-          </label>
+          <div className="text-sm">
+            <span id="availability-block-type" className="mb-1 block text-text-muted">
+              {t("availability.form.blockType")}
+            </span>
+            {typeHidden ? (
+              <p className="text-text-muted">{t("availability.form.typeHidden")}</p>
+            ) : (
+              <PersonnelListSelect
+                list="absence_types"
+                lists={lists}
+                value={blockType}
+                onChange={setBlockType}
+                ariaLabel={t("availability.form.blockType")}
+              />
+            )}
+          </div>
 
           <label className="text-sm">
             <span className="mb-1 block text-text-muted">{t("availability.form.startAt")}</span>
@@ -218,10 +259,17 @@ export function AvailabilityBlockDialog({
             <Input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
           </label>
 
-          <label className="text-sm">
-            <span className="mb-1 block text-text-muted">{t("availability.form.reason")}</span>
-            <Input value={reason} onChange={(e) => setReason(e.target.value)} />
-          </label>
+          {reasonHidden ? (
+            <div className="text-sm">
+              <span className="mb-1 block text-text-muted">{t("availability.form.reason")}</span>
+              <p className="text-text-muted">{t("availability.form.reasonHidden")}</p>
+            </div>
+          ) : (
+            <label className="text-sm">
+              <span className="mb-1 block text-text-muted">{t("availability.form.reason")}</span>
+              <Input value={reason} onChange={(e) => setReason(e.target.value)} />
+            </label>
+          )}
 
           <label className="flex items-center gap-2 text-sm">
             <input

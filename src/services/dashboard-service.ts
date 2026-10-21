@@ -5,38 +5,21 @@ import { z } from "zod";
 import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
   DashboardDiStatusChart,
-  DashboardKpiValidation,
-  DashboardKpis,
   DashboardLayoutPayload,
-  DashboardReliabilitySnapshotSummary,
   DashboardWorkloadChart,
   OverviewKpiLayoutPayload,
   OverviewKpisPayload,
   SaveOverviewKpiLayoutInput,
 } from "@shared/ipc-types";
 
-// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Zod schemas ─────────────────────────────────────────────────────────────
 
-const KpiValueSchema = z.object({
-  key: z.string(),
-  value: z.number(),
-  previous_value: z.number(),
-  available: z.boolean(),
-  quality_badge: z.string().nullable().optional(),
-});
-
-const DashboardKpisSchema = z.object({
-  open_dis: KpiValueSchema,
-  open_wos: KpiValueSchema,
-  total_assets: KpiValueSchema,
-  overdue_items: KpiValueSchema,
-});
-
+/** A series the user may not see comes back `null` (never 0). */
 const WorkloadDaySchema = z.object({
   date: z.string(),
-  di_created: z.number(),
-  wo_completed: z.number(),
-  pm_due: z.number(),
+  di_created: z.number().nullable(),
+  wo_completed: z.number().nullable(),
+  pm_due: z.number().nullable(),
 });
 
 const DashboardWorkloadChartSchema = z.object({
@@ -54,29 +37,10 @@ const DashboardDiStatusChartSchema = z.object({
     z.object({
       status: z.string(),
       count: z.number(),
+      avg_age_days: z.number(),
     }),
   ),
   available: z.boolean(),
-});
-
-const DashboardReliabilitySnapshotSummarySchema = z.object({
-  available: z.boolean(),
-  snapshot_count: z.number(),
-  avg_data_quality_score: z.number().nullable().optional(),
-  avg_mtbf_hours: z.number().nullable().optional(),
-  total_failure_events: z.number(),
-});
-
-const KpiSqlSampleSchema = z.object({
-  key: z.string(),
-  value: z.number(),
-  sql: z.string(),
-  sample_ids: z.array(z.number()),
-});
-
-const DashboardKpiValidationSchema = z.object({
-  samples: z.array(KpiSqlSampleSchema),
-  overdue_items_total: z.number(),
 });
 
 const OverviewKpiCellSchema = z.object({
@@ -85,10 +49,10 @@ const OverviewKpiCellSchema = z.object({
   value: z.number(),
   previous_value: z.number(),
   available: z.boolean(),
+  baseline_available: z.boolean().optional(),
   quality_badge: z.string().nullable().optional(),
   value_kind: z.enum(["count", "percent", "hours", "currency"]),
   trend_sense: z.enum(["up-good", "up-bad", "neutral"]),
-  series: z.array(z.number()).optional(),
 });
 
 const OverviewKpisPayloadSchema = z.object({
@@ -96,13 +60,9 @@ const OverviewKpisPayloadSchema = z.object({
   cells: z.array(OverviewKpiCellSchema),
 });
 
-// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Service functions ───────────────────────────────────────────────────────
 
-export async function getDashboardKpis(): Promise<DashboardKpis> {
-  const raw = await invokeSilent<unknown>("get_dashboard_kpis");
-  return DashboardKpisSchema.parse(raw);
-}
-
+/** Activity over the last `periodDays` days (7 or 30): requests submitted, OTs closed, PM due. */
 export async function getDashboardWorkloadChart(
   periodDays: number,
 ): Promise<DashboardWorkloadChart> {
@@ -124,19 +84,10 @@ export async function saveDashboardLayout(layoutJson: string): Promise<Dashboard
   return DashboardLayoutPayloadSchema.parse(raw);
 }
 
+/** Open requests by status (the DI module's open backlog). */
 export async function getDashboardDiStatusChart(): Promise<DashboardDiStatusChart> {
   const raw = await invoke<unknown>("get_dashboard_di_status_chart");
   return DashboardDiStatusChartSchema.parse(raw);
-}
-
-export async function getDashboardReliabilitySnapshotSummary(): Promise<DashboardReliabilitySnapshotSummary> {
-  const raw = await invoke<unknown>("get_dashboard_reliability_snapshot_summary");
-  return DashboardReliabilitySnapshotSummarySchema.parse(raw);
-}
-
-export async function getDashboardKpiValidation(): Promise<DashboardKpiValidation> {
-  const raw = await invoke<unknown>("get_dashboard_kpi_validation");
-  return DashboardKpiValidationSchema.parse(raw);
 }
 
 export async function getOverviewKpis(): Promise<OverviewKpisPayload> {

@@ -169,23 +169,28 @@ export function useWoLifecycleActions(wo: WorkOrder | null) {
     }
   }, [wo, actorId, refreshActiveWo]);
 
-  const resume = useCallback(async () => {
-    if (!wo || !actorId) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await resumeWo({
-        wo_id: wo.id,
-        actor_id: actorId,
-        expected_row_version: wo.row_version,
-      });
-      await refreshActiveWo();
-    } catch (e) {
-      setError(toErrorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }, [wo, actorId, refreshActiveWo]);
+  /** `remainingHours`: the estimated remaining time entered for the permit gate (null: full duration). */
+  const resume = useCallback(
+    async (remainingHours: number | null = null) => {
+      if (!wo || !actorId) return;
+      setBusy(true);
+      setError(null);
+      try {
+        await resumeWo({
+          wo_id: wo.id,
+          actor_id: actorId,
+          expected_row_version: wo.row_version,
+          estimated_remaining_hours: remainingHours,
+        });
+        await refreshActiveWo();
+      } catch (e) {
+        setError(toErrorMessage(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [wo, actorId, refreshActiveWo],
+  );
 
   return {
     busy,

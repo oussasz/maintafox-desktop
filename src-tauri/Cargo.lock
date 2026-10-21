@@ -3147,6 +3147,7 @@ dependencies = [
  "rustls",
  "sea-orm",
  "sea-orm-migration",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

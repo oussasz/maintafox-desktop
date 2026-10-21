@@ -1,237 +1,298 @@
-import { AlertCircle, ShieldAlert, ShieldCheck } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+/**
+ * Settings → Integrations: licence enforcement state and the administrator's licence actions.
+ *
+ * Suspend, revoke, reactivate and the signing-key compromise response change what the whole site
+ * may do: each one opens a confirmation that names the effect and asks for a reason (kept in the
+ * licence audit), and runs through step-up re-authentication (the backend requires it). The
+ * compromise response targets the issuer and key that signed the active envelope, as reported by
+ * the backend — never a name written here.
+ */
+import { ShieldAlert, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { Label } from "@/components/ui/label";
+import { StatusChip } from "@/components/ui/status-chip";
+import { Textarea } from "@/components/ui/textarea";
+import type { Tone } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
+import { usePermissions } from "@/hooks/use-permissions";
+import { useStepUp } from "@/hooks/use-step-up";
 import {
   applyAdminLicenseAction,
   applyLicensingCompromiseResponse,
   getLicenseEnforcementStatus,
 } from "@/services/license-service";
-import type { ApplyAdminLicenseActionInput, LicenseStatusView } from "@shared/ipc-types";
+import type { LicenseStatusView } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
-const ACTIONS: ReadonlyArray<ApplyAdminLicenseActionInput["action"]> = [
-  "suspend",
-  "revoke",
-  "reactivate",
-];
+type LicenseAction = "suspend" | "revoke" | "reactivate" | "compromise";
 
-function stateTone(state: string): "default" | "secondary" | "destructive" | "outline" {
-  if (
-    state === "active" ||
-    state === "trusted" ||
-    state === "verified" ||
-    state === "soft_accepted"
-  ) {
-    return "secondary";
-  }
-  if (
-    state === "revoked" ||
-    state === "suspended" ||
-    state.startsWith("denied_") ||
-    state === "invalid_signature" ||
-    state === "untrusted"
-  ) {
-    return "destructive";
-  }
-  return "outline";
+/** Shortest reason accepted for an action that changes what the whole site may do. */
+export const LICENSE_REASON_MIN_LENGTH = 10;
+
+const GOOD_STATES = new Set(["active", "trusted", "verified", "soft_accepted"]);
+const BAD_STATES = new Set(["revoked", "suspended", "invalid_signature", "untrusted"]);
+
+/** Tone of a licence, activation or trust state (status is never shown by colour alone). */
+export function licenseStateTone(state: string | null | undefined): Tone {
+  if (!state) return "neutral";
+  if (GOOD_STATES.has(state)) return "success";
+  if (BAD_STATES.has(state) || state.startsWith("denied_")) return "danger";
+  if (state.startsWith("pending") || state.startsWith("degraded")) return "warning";
+  return "neutral";
 }
 
 /**
- * Settings License Enforcement panel.
- * Single SoT: `getLicenseEnforcementStatus` → canonical `LicenseStatusView` (no parallel stores).
+ * The one piece of advice for the current state, in the same order of precedence as the backend's
+ * enforcement (policy sync, licence, product activation, machine activation, device trust).
  */
-export function LicenseEnforcementPanel() {
-  const [status, setStatus] = useState<LicenseStatusView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState<ApplyAdminLicenseActionInput["action"] | null>(
-    null,
-  );
-  const [compromiseLoading, setCompromiseLoading] = useState(false);
+export type LicenseAdviceKey =
+  | "advice.policySync"
+  | "advice.revoked"
+  | "advice.suspended"
+  | "advice.activationDenied"
+  | "advice.activationDegraded"
+  | "advice.activationPending"
+  | "advice.machinePendingRevocation"
+  | "advice.machineRevoked"
+  | "advice.untrusted"
+  | "advice.healthy"
+  | "advice.activationIncomplete";
 
-  const reload = async () => {
+export function licenseAdviceKey(s: LicenseStatusView): LicenseAdviceKey {
+  if (s.policy_sync_pending) return "advice.policySync";
+  if (s.entitlement_state === "revoked") return "advice.revoked";
+  if (s.entitlement_state === "suspended") return "advice.suspended";
+  if (s.activation_state.startsWith("denied_")) return "advice.activationDenied";
+  if (s.activation_state === "degraded_api_unavailable") return "advice.activationDegraded";
+  if (s.activation_state === "pending_online_validation") return "advice.activationPending";
+  if (s.machine_activation_state === "pending_revocation") return "advice.machinePendingRevocation";
+  if (s.machine_activation_state === "revoked") return "advice.machineRevoked";
+  if (s.trust_state !== "trusted") return "advice.untrusted";
+  if (s.activation_state === "active") return "advice.healthy";
+  return "advice.activationIncomplete";
+}
+
+export function LicenseEnforcementPanel() {
+  const { t, i18n } = useTranslation("settings");
+  const { formatDateTime } = useFormatters();
+  const { can } = usePermissions();
+  const { withStepUp, StepUpDialogElement } = useStepUp();
+  const [status, setStatus] = useState<LicenseStatusView | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState<LicenseAction | null>(null);
+  const [reason, setReason] = useState("");
+
+  const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const next = await getLicenseEnforcementStatus();
-      setStatus(next);
+      setStatus(await getLicenseEnforcementStatus());
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load license status.");
+      setError(err);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void reload();
-  }, []);
+  }, [reload]);
 
-  const trustIcon = useMemo(() => {
-    if (!status) return null;
-    if (status.trust_state === "trusted")
-      return <ShieldCheck className="h-4 w-4 text-status-success" />;
-    return <ShieldAlert className="h-4 w-4 text-status-warning" />;
-  }, [status]);
-
-  const runAction = async (action: ApplyAdminLicenseActionInput["action"]) => {
-    setActionLoading(action);
-    try {
-      await applyAdminLicenseAction({
-        action,
-        reason: `Operator action from settings panel: ${action}`,
-        expected_entitlement_state: status?.entitlement_state ?? null,
-        // Admin concurrency checks machine contract state, not product activation.
-        expected_activation_state: status?.machine_activation_state ?? null,
-      });
-      await reload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to apply '${action}'.`);
-    } finally {
-      setActionLoading(null);
-    }
+  const stateLabel = (kind: "entitlement" | "activation" | "trust", code: string) => {
+    const key = `license.states.${code}`;
+    return i18n.exists(`settings:${key}`) ? t(key) : t("license.states.other", { kind });
   };
 
-  const handleCompromiseResponse = async () => {
-    // Target the key that actually signed the active envelope; there is nothing to revoke otherwise.
-    const keyId = status?.envelope_key_id;
-    if (!keyId) {
-      setError(
-        "No active signed entitlement envelope: there is no signing key to mark as compromised.",
+  const openAction = (action: LicenseAction) => {
+    setReason("");
+    setPending(action);
+  };
+
+  /** Runs inside the confirmation: a rejection keeps it open, the global toast says why. */
+  const confirmAction = async () => {
+    if (!pending || !status) return;
+    const why = reason.trim();
+    if (pending === "compromise") {
+      const issuer = status.envelope_issuer;
+      const keyId = status.envelope_key_id;
+      if (!issuer || !keyId) return;
+      await withStepUp(() =>
+        applyLicensingCompromiseResponse({
+          issuer,
+          key_id: keyId,
+          reason: why,
+          force_revocation: true,
+        }),
       );
-      return;
+    } else {
+      await withStepUp(() =>
+        applyAdminLicenseAction({
+          action: pending,
+          reason: why,
+          expected_entitlement_state: status.entitlement_state,
+          // Admin concurrency checks machine contract state, not product activation.
+          expected_activation_state: status.machine_activation_state,
+        }),
+      );
     }
-    setCompromiseLoading(true);
-    try {
-      await applyLicensingCompromiseResponse({
-        issuer: "maintafox-vps",
-        key_id: keyId,
-        reason: "operator initiated compromise drill",
-        force_revocation: true,
-      });
-      await reload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to apply compromise response.");
-    } finally {
-      setCompromiseLoading(false);
-    }
+    await reload();
   };
 
-  const traces = status?.recent_traces ?? [];
+  const canManage = can(P.LIC_MANAGE);
+  const hasEnvelopeSigner = Boolean(status?.envelope_issuer && status?.envelope_key_id);
+  const reasonOk = reason.trim().length >= LICENSE_REASON_MIN_LENGTH;
 
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-lg">License Enforcement</CardTitle>
+        <CardTitle className="text-lg">{t("license.title")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {error && (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        )}
-        {loading && !status && <p className="text-sm text-text-muted">Loading license state...</p>}
-        {status && (
+        {error != null && status == null ? (
+          <ErrorState
+            error={error}
+            title={t("license.loadError")}
+            onRetry={() => void reload()}
+            retrying={loading}
+          />
+        ) : status == null ? (
+          <LoadingState />
+        ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={stateTone(status.entitlement_state)}>
-                Entitlement: {status.entitlement_state}
-              </Badge>
-              <Badge variant={stateTone(status.activation_state)}>
-                Activation: {status.activation_state}
-              </Badge>
-              <Badge variant={stateTone(status.trust_state)}>
-                <span className="mr-1 inline-flex">{trustIcon}</span>
-                Trust: {status.trust_state}
-              </Badge>
-              {status.policy_sync_pending && <Badge variant="outline">Policy Sync Pending</Badge>}
-              {status.license_edition && (
-                <Badge variant="outline">Edition: {status.license_edition}</Badge>
-              )}
-              {status.verification_result && (
-                <Badge variant={stateTone(status.verification_result)}>
-                  Envelope: {status.verification_result}
-                </Badge>
-              )}
+              <StatusChip
+                tone={licenseStateTone(status.entitlement_state)}
+                label={`${t("license.entitlement")} : ${stateLabel("entitlement", status.entitlement_state)}`}
+              />
+              <StatusChip
+                tone={licenseStateTone(status.activation_state)}
+                label={`${t("license.activation")} : ${stateLabel("activation", status.activation_state)}`}
+              />
+              <StatusChip
+                tone={licenseStateTone(status.trust_state)}
+                icon={status.trust_state === "trusted" ? ShieldCheck : ShieldAlert}
+                label={`${t("license.trust")} : ${stateLabel("trust", status.trust_state)}`}
+              />
+              {status.policy_sync_pending ? (
+                <StatusChip tone="warning" label={t("license.policySyncPending")} />
+              ) : null}
+              {status.license_edition ? (
+                <StatusChip
+                  tone="neutral"
+                  label={t("license.edition", { edition: status.license_edition })}
+                />
+              ) : null}
             </div>
 
-            <div className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-secondary">
-              {status.actionable_message}
-            </div>
+            <p className="rounded-md border border-surface-border bg-surface-2 px-3 py-2 text-sm text-text-secondary">
+              {t(`license.${licenseAdviceKey(status)}`)}
+            </p>
 
-            <div className="grid gap-1 text-sm text-text-muted">
-              <span>Pending local writes: {status.pending_local_writes}</span>
-              {status.envelope_id && <span>Active envelope: {status.envelope_id}</span>}
-              {status.machine_activation_state !== "not_activated" && (
-                <span>Machine activation: {status.machine_activation_state}</span>
-              )}
-              {status.last_admin_action && (
-                <span>
-                  Last admin action: {status.last_admin_action} at{" "}
-                  {status.last_admin_action_at
-                    ? new Date(status.last_admin_action_at).toLocaleString()
-                    : "unknown"}
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {ACTIONS.map((action) => (
-                <Button
-                  key={action}
-                  size="sm"
-                  variant={action === "reactivate" ? "default" : "outline"}
-                  disabled={actionLoading !== null}
-                  onClick={() => void runAction(action)}
-                >
-                  {actionLoading === action ? "Applying..." : action}
-                </Button>
-              ))}
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={compromiseLoading || actionLoading !== null}
-                onClick={() => void handleCompromiseResponse()}
-              >
-                {compromiseLoading ? "Applying..." : "Compromise response"}
-              </Button>
-            </div>
-
-            <div className="text-xs text-text-muted">
-              <div className="mb-1 inline-flex items-center gap-1">
-                <AlertCircle className="h-3.5 w-3.5" />
-                Recovery Paths
+            <dl className="grid gap-1 text-sm text-text-muted sm:grid-cols-2">
+              <div>
+                <dt className="inline">{t("license.pendingWrites")} </dt>
+                <dd className="inline font-medium text-text-primary">
+                  {status.pending_local_writes}
+                </dd>
               </div>
-              <div className="flex flex-wrap gap-1">
-                {status.recovery_paths.map((path) => (
-                  <Badge key={path} variant="outline">
-                    {path}
-                  </Badge>
+              {status.last_admin_action ? (
+                <div>
+                  <dt className="inline">{t("license.lastAction")} </dt>
+                  <dd className="inline font-medium text-text-primary">
+                    {t(`license.actions.${status.last_admin_action}.label`, {
+                      defaultValue: t("license.actions.other"),
+                    })}
+                    {status.last_admin_action_at
+                      ? ` · ${formatDateTime(status.last_admin_action_at)}`
+                      : ""}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+
+            {canManage ? (
+              <div className="flex flex-wrap gap-2">
+                {(["suspend", "revoke", "reactivate"] as const).map((action) => (
+                  <Button
+                    key={action}
+                    variant={action === "reactivate" ? "default" : "outline"}
+                    className="h-11"
+                    onClick={() => openAction(action)}
+                  >
+                    {t(`license.actions.${action}.label`)}
+                  </Button>
                 ))}
+                <Button
+                  variant="destructive"
+                  className="h-11"
+                  disabled={!hasEnvelopeSigner}
+                  title={hasEnvelopeSigner ? undefined : t("license.actions.compromise.noEnvelope")}
+                  onClick={() => openAction("compromise")}
+                >
+                  {t("license.actions.compromise.label")}
+                </Button>
+                {!hasEnvelopeSigner ? (
+                  <p className="basis-full text-xs text-text-muted">
+                    {t("license.actions.compromise.noEnvelope")}
+                  </p>
+                ) : null}
               </div>
-            </div>
+            ) : null}
 
-            {traces.length > 0 && (
-              <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
-                <div className="mb-2 text-xs font-semibold text-text-secondary">
-                  Recent immutable traces
-                </div>
-                <div className="space-y-1 text-xs text-text-muted">
-                  {traces.map((trace) => (
-                    <div key={trace.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="font-medium text-text-secondary">{trace.event_type}</span>
+            {status.recent_traces.length > 0 ? (
+              <details className="text-xs text-text-muted">
+                <summary className="cursor-pointer select-none">
+                  {t("license.traces", { count: status.recent_traces.length })}
+                </summary>
+                <ul className="mt-2 space-y-1">
+                  {status.recent_traces.map((trace) => (
+                    <li key={trace.id} className="flex flex-wrap gap-x-2">
+                      <span className="text-text-secondary">
+                        {formatDateTime(trace.occurred_at)}
+                      </span>
+                      <span>{trace.event_type}</span>
                       <span>{trace.outcome}</span>
-                      <span>{new Date(trace.occurred_at).toLocaleString()}</span>
-                      <Badge variant="outline">{trace.correlation_id}</Badge>
-                    </div>
+                    </li>
                   ))}
-                </div>
-              </div>
-            )}
+                </ul>
+              </details>
+            ) : null}
           </>
         )}
       </CardContent>
+
+      <ConfirmDialog
+        open={pending != null}
+        onOpenChange={(open) => !open && setPending(null)}
+        {...(pending ? { title: t(`license.actions.${pending}.confirmTitle`) } : {})}
+        description={pending ? t(`license.actions.${pending}.confirmBody`) : ""}
+        confirmLabel={pending ? t(`license.actions.${pending}.confirm`) : ""}
+        destructive={pending !== "reactivate"}
+        confirmDisabled={!reasonOk}
+        onConfirm={confirmAction}
+      >
+        <div className="grid gap-1.5">
+          <Label htmlFor="license-action-reason">{t("license.reason")}</Label>
+          <Textarea
+            id="license-action-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+            aria-describedby="license-action-reason-hint"
+          />
+          <p id="license-action-reason-hint" className="text-xs text-text-muted">
+            {t("license.reasonHint", { min: LICENSE_REASON_MIN_LENGTH })}
+          </p>
+        </div>
+      </ConfirmDialog>
+      {StepUpDialogElement}
     </Card>
   );
 }
