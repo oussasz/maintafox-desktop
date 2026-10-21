@@ -984,7 +984,10 @@ pub(crate) async fn get_activation_bootstrap_state_in(
     // closes the first-administrator step.
     let has_tenant_admin = tenant_id.is_some() && plant_has_administrator(db).await?;
     let plant_join = match tenant_id.as_deref() {
-        Some(tenant) => Some(crate::sync::plant_join::plant_join_state(db, tenant, has_tenant_admin, worker).await?),
+        Some(tenant) => {
+            let licence_syncs = crate::sync::plant_join::licence_syncs(db).await?;
+            Some(crate::sync::plant_join::plant_join_state(db, tenant, has_tenant_admin, licence_syncs, worker).await?)
+        }
         None => None,
     };
     Ok(ActivationBootstrapState {
@@ -1087,7 +1090,8 @@ fn first_admin_retry() -> AppError {
 /// an administrator once one exists). It is also refused until a complete sync pull has confirmed
 /// that the organisation has no user account on the server (`sync::plant_join`, CMMS Advisor
 /// decision 2026-10-21): a new PC of an existing plant gets that plant's accounts, never a second
-/// first administrator; the creation consumes that fact. The checks and the account, role and
+/// first administrator; the creation consumes that fact. A licence without sync (a single-PC
+/// plant, `plant_join::licence_syncs`) has no plant to join and skips that condition. The checks and the account, role and
 /// scope rows are one write transaction that holds the write lock from its start
 /// (`begin_write_transaction`): two submissions at once make one administrator, the other waits
 /// and gets the coded refusal.
@@ -1113,7 +1117,9 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
     if plant_has_administrator(db).await? {
         return Err(first_admin_exists());
     }
-    if !crate::sync::plant_join::server_confirmed_no_accounts(db, &tenant_id).await? {
+    // A single-PC licence (no sync) has no plant to join.
+    let must_join = crate::sync::plant_join::licence_syncs(db).await?;
+    if must_join && !crate::sync::plant_join::server_confirmed_no_accounts(db, &tenant_id).await? {
         return Err(plant_join_required());
     }
 
@@ -1134,7 +1140,7 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
             return Err(first_admin_exists());
         }
         // An account received while the form was being filled in closes the creation here too.
-        if !crate::sync::plant_join::server_confirmed_no_accounts(&txn, &tenant_id).await? {
+        if must_join && !crate::sync::plant_join::server_confirmed_no_accounts(&txn, &tenant_id).await? {
             return Err(plant_join_required());
         }
         let exists = txn

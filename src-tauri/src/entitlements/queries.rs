@@ -711,6 +711,19 @@ pub async fn check_entitlement_capability(
     })
 }
 
+/// Whether the licence itself includes `capability`: the capability map of the active signed
+/// envelope, the map [`check_entitlement_capability`] reads (a capability it does not list is
+/// included), whatever the entitlement state. `check_entitlement_capability` also refuses every
+/// capability while the entitlement is suspended, revoked or expired; this answers what the
+/// licence is, not whether it may be used right now.
+pub async fn licence_includes_capability(db: &DatabaseConnection, capability: &str) -> AppResult<bool> {
+    let summary = get_entitlement_summary(db).await?;
+    Ok(parse_json_map(&summary.capability_map_json)
+        .get(capability)
+        .copied()
+        .unwrap_or(true))
+}
+
 fn capability_from_permission(permission: &str) -> Option<&'static str> {
     // Module-level commercial capabilities. CRUD remains RBAC-owned.
     if permission.starts_with("eq.") {
