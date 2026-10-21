@@ -2,6 +2,7 @@ import { History } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { UpdateProgress } from "@/components/updates/UpdateProgress";
+import { mfAuth } from "@/design-system/tokens";
 import { useLocaleStore } from "@/stores/locale-store";
 import { useUpdaterStore } from "@/stores/updater-store";
 
@@ -56,7 +57,7 @@ export function UpdateRecoveryScreen({
       : null;
 
   return (
-    <div className="flex h-screen flex-col items-center justify-center gap-4 bg-surface-0 px-8 text-center">
+    <div className={mfAuth.startupShell}>
       <History className="h-10 w-10 text-primary" aria-hidden />
       <p className="text-lg font-semibold">{t("updates.recovery.title")}</p>
       <p className="max-w-md text-sm text-text-secondary">
