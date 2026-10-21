@@ -2427,6 +2427,9 @@ mod tests {
     /// journal is written.
     #[tokio::test]
     async fn an_upgrade_backs_up_after_the_download_so_changes_made_meanwhile_are_kept() {
+        // Its own barrier: TEST_BARRIER is shared by tests that run in parallel, and this test
+        // asserts when the barrier is down.
+        static BARRIER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         use sea_orm::ConnectionTrait;
         let dir = tempfile::tempdir().unwrap();
         let paths = paths_in(dir.path());
@@ -2441,7 +2444,7 @@ mod tests {
         let download = async {
             log.lock().unwrap().push("download".into());
             assert!(
-                refuse_while_installing_on(&TEST_BARRIER).is_ok(),
+                refuse_while_installing_on(&BARRIER).is_ok(),
                 "the app stays usable during the download"
             );
             // The app stays usable during the download: a technician closes a work order.
@@ -2460,7 +2463,7 @@ mod tests {
             assert_eq!(j.state, JournalState::Installing);
             assert!(j.backup_path.is_some() && j.backup_sha256.is_some());
             assert!(
-                refuse_while_installing_on(&TEST_BARRIER).is_err(),
+                refuse_while_installing_on(&BARRIER).is_err(),
                 "nothing can be changed from the backup on"
             );
             install_log.lock().unwrap().push("install".into());
@@ -2473,7 +2476,7 @@ mod tests {
             Some(1),
             &no_key,
             &progress,
-            &TEST_BARRIER,
+            &BARRIER,
             download,
             install,
         )
@@ -2628,6 +2631,9 @@ mod tests {
     /// changed since it was taken is never staged.
     #[tokio::test]
     async fn a_rollback_stages_its_restore_after_the_download_and_cancels_it_if_the_installer_fails() {
+        // Its own barrier: TEST_BARRIER is shared by tests that run in parallel, and this test
+        // asserts when the barrier is down.
+        static BARRIER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         use std::sync::atomic::{AtomicBool, Ordering};
         let dir = tempfile::tempdir().unwrap();
         let (paths, key, db, target) = recall_setup(dir.path()).await;
@@ -2651,15 +2657,7 @@ mod tests {
             )))
         };
         let result = run_install(
-            &db,
-            &paths,
-            &target,
-            None,
-            &load_key,
-            &progress,
-            &TEST_BARRIER,
-            download,
-            install,
+            &db, &paths, &target, None, &load_key, &progress, &BARRIER, download, install,
         )
         .await;
         assert!(result.is_err());
@@ -2691,7 +2689,7 @@ mod tests {
             None,
             &load_key,
             &progress,
-            &TEST_BARRIER,
+            &BARRIER,
             async { Ok(Vec::new()) },
             |_| Ok(()),
         )
@@ -2724,7 +2722,7 @@ mod tests {
             None,
             &load_key,
             &progress,
-            &TEST_BARRIER,
+            &BARRIER,
             async { Ok(Vec::new()) },
             |_| -> AppResult<()> { panic!("never installed") },
         )
@@ -2738,7 +2736,7 @@ mod tests {
         ));
         assert!(!pending.exists());
         assert!(
-            refuse_while_installing_on(&TEST_BARRIER).is_ok(),
+            refuse_while_installing_on(&BARRIER).is_ok(),
             "the barrier comes down when the install stops"
         );
         db.close().await.unwrap();
