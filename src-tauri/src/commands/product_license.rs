@@ -879,6 +879,15 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
             wiped_rows_total = wiped_rows_total.saturating_add(result.rows_affected());
         }
 
+        // `system_config` is kept, the accounts and the sync checkpoint are not: "the server
+        // confirmed no user accounts" must come from a new complete pull (`sync::plant_join`).
+        tx.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "DELETE FROM system_config WHERE key = ?",
+            [crate::sync::plant_join::SERVER_CONFIRMED_NO_ACCOUNTS_KEY.into()],
+        ))
+        .await?;
+
         // Tenant-scoped preferences are tenant-owned context and should not leak across activations.
         tx.execute(Statement::from_string(
             DatabaseBackend::Sqlite,
@@ -934,6 +943,9 @@ pub struct ActivationBootstrapState {
     pub tenant_id: Option<String>,
     pub company_display_name: Option<String>,
     pub has_tenant_admin: bool,
+    /// What the first-start screen shows on an activated PC (`sync::plant_join`); `None` when this
+    /// PC is not activated.
+    pub plant_join: Option<crate::sync::plant_join::PlantJoinState>,
 }
 
 #[derive(Debug, Serialize)]
@@ -949,27 +961,54 @@ pub struct ActivationLicenseMetadata {
 
 #[tauri::command]
 pub async fn get_activation_bootstrap_state(state: State<'_, AppState>) -> AppResult<ActivationBootstrapState> {
-    get_activation_bootstrap_state_in(&state.db).await
+    get_activation_bootstrap_state_in(&state.db, &state.sync_worker.status()).await
 }
 
-pub(crate) async fn get_activation_bootstrap_state_in(db: &DatabaseConnection) -> AppResult<ActivationBootstrapState> {
+/// `worker`: the sync worker's last status, from which the first-start screen tells "joining
+/// your plant" from "a connection is needed" (`plant_join::plant_join_state`).
+pub(crate) async fn get_activation_bootstrap_state_in(
+    db: &DatabaseConnection,
+    worker: &crate::sync::transport::SyncWorkerStatus,
+) -> AppResult<ActivationBootstrapState> {
     let record = load_state_record_from_db(db).await?;
     let Some(record) = record else {
         return Ok(ActivationBootstrapState {
             tenant_id: None,
             company_display_name: None,
             has_tenant_admin: false,
+            plant_join: None,
         });
     };
     let tenant_id = record.activation_claim.as_ref().map(|c| c.tenant_id.clone());
     // As `bootstrap_initial_tenant_admin` decides: an administrator of any organisation on this PC
     // closes the first-administrator step.
     let has_tenant_admin = tenant_id.is_some() && plant_has_administrator(db).await?;
+    let plant_join = match tenant_id.as_deref() {
+        Some(tenant) => Some(crate::sync::plant_join::plant_join_state(db, tenant, has_tenant_admin, worker).await?),
+        None => None,
+    };
     Ok(ActivationBootstrapState {
         tenant_id,
         company_display_name: record.company_display_name,
         has_tenant_admin,
+        plant_join,
     })
+}
+
+/// The first-start screen joins the plant: the sync worker runs a cycle now instead of waiting for
+/// its next re-check (it reads the activation made a moment ago), and again on "Retry". Signed out,
+/// so only while this PC has no administrator: afterwards sync is run by signed-in operators
+/// (`run_sync_now`, `sync.view`).
+#[tauri::command]
+pub async fn request_plant_join(state: State<'_, AppState>) -> AppResult<()> {
+    if get_activation_claim_tenant_id(&state.db).await?.is_none() {
+        return Err(AppError::ValidationFailed(vec!["Device is not activated.".into()]));
+    }
+    if plant_has_administrator(&state.db).await? {
+        return Err(first_admin_exists());
+    }
+    state.sync_worker.send(crate::sync::transport::SyncCommand::RunNow);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1018,6 +1057,18 @@ fn first_admin_exists() -> AppError {
     )
 }
 
+/// A first-start action refused because no complete pull has confirmed that the organisation has
+/// no user account on the server (`sync::plant_join`): this PC may belong to a plant whose
+/// accounts have not arrived yet.
+fn plant_join_required() -> AppError {
+    crate::errors::org_validation_failed(
+        "FIRST_ADMIN_PLANT_JOIN_REQUIRED",
+        "This PC has not joined your plant yet: it must synchronise with the server once to check whether your \
+         organisation already has accounts. Connect it to the network, then retry.",
+        std::collections::HashMap::new(),
+    )
+}
+
 /// A first-administrator creation that could not take the database (another one is being written):
 /// coded, to be retried.
 fn first_admin_retry() -> AppError {
@@ -1033,9 +1084,13 @@ fn first_admin_retry() -> AppError {
 /// so it is refused as soon as this PC has an administrator, for this organisation or any other
 /// (`plant_has_administrator`): the organisation stored here is not proof of a first start, since
 /// it can be replaced, while the administrators stay until local data is reset (which itself needs
-/// an administrator once one exists). The check and the account, role and scope rows are one
-/// write transaction that holds the write lock from its start (`begin_write_transaction`): two
-/// submissions at once make one administrator, the other waits and gets the coded refusal.
+/// an administrator once one exists). It is also refused until a complete sync pull has confirmed
+/// that the organisation has no user account on the server (`sync::plant_join`, CMMS Advisor
+/// decision 2026-10-21): a new PC of an existing plant gets that plant's accounts, never a second
+/// first administrator; the creation consumes that fact. The checks and the account, role and
+/// scope rows are one write transaction that holds the write lock from its start
+/// (`begin_write_transaction`): two submissions at once make one administrator, the other waits
+/// and gets the coded refusal.
 /// The password meets the plant password policy (`builtin_admin::validate_first_admin_password`);
 /// the same transaction records the "first administrator created" marker, which keeps this screen
 /// closed for good; once committed, a built-in "admin" never used is retired
@@ -1058,6 +1113,9 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
     if plant_has_administrator(db).await? {
         return Err(first_admin_exists());
     }
+    if !crate::sync::plant_join::server_confirmed_no_accounts(db, &tenant_id).await? {
+        return Err(plant_join_required());
+    }
 
     let username = input.username.trim();
     if username.is_empty() {
@@ -1074,6 +1132,10 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
         let txn = begin_write_transaction(db).await?;
         if plant_has_administrator(&txn).await? {
             return Err(first_admin_exists());
+        }
+        // An account received while the form was being filled in closes the creation here too.
+        if !crate::sync::plant_join::server_confirmed_no_accounts(&txn, &tenant_id).await? {
+            return Err(plant_join_required());
         }
         let exists = txn
             .query_one(Statement::from_sql_and_values(
@@ -1154,6 +1216,7 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
         ))
         .await?;
         crate::auth::builtin_admin::record_first_administrator_in(&txn, &entity_sync_id).await?;
+        crate::sync::plant_join::forget(&txn).await?;
         txn.commit().await?;
         Ok::<(), AppError>(())
     }

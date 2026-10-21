@@ -11,6 +11,7 @@ pub mod domain;
 pub mod identity;
 pub mod materialize;
 pub mod media;
+pub mod plant_join;
 pub mod queries;
 pub mod registry;
 pub(crate) mod row_codec;

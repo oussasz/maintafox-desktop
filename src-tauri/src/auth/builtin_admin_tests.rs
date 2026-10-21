@@ -57,6 +57,7 @@ async fn create_first_admin(db: &DatabaseConnection, username: &str) {
     record_activation_claim_for_tests(db, TENANT, "fp-e1", "token-e1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(db, TENANT).await;
     bootstrap_initial_tenant_admin_in(db, first_admin(username))
         .await
         .expect("first administrator");
@@ -188,6 +189,7 @@ async fn the_first_admin_is_refused_a_password_that_breaks_the_plant_policy() {
     record_activation_claim_for_tests(&db, TENANT, "fp-e1", "token-e1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     exec(
         &db,
         "INSERT INTO rbac_settings (key, value) VALUES ('password_min_length', '16')
@@ -841,6 +843,7 @@ async fn l3_a_signed_out_reset_is_refused() {
 #[tokio::test]
 async fn l3_the_first_admin_is_still_allowed_and_replaces_the_builtin_account() {
     let db = licensed_pc_with_unused_builtin_admin().await;
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     bootstrap_initial_tenant_admin_in(&db, first_admin("chef"))
         .await
         .expect("first start stays open");

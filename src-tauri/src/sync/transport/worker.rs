@@ -14,6 +14,8 @@
 //! 5. Media received from other devices (`sync_media_downloads`) is downloaded at the end of a
 //!    cycle that synced: presigned GET, streamed to a temporary file, size and SHA-256 checked,
 //!    then moved into place; failures are retried per file with backoff and never block sync.
+//! 6. A cycle whose exchanges reached the server head records whether the organisation has user
+//!    accounts on the server: the first administrator of a new PC waits for that (`plant_join`).
 //!
 //! Failures: no connection → `offline`, retried with backoff and woken by the webview `online`
 //! event; 5xx / interrupted → retried with the same key and counted as a delivery attempt
@@ -750,6 +752,9 @@ impl SyncWorker {
             s.next_attempt_at = None;
         });
         store::record_attempt(&self.db).await?;
+        // The organisation this pull runs for, read before any request: a complete pull records
+        // "the server confirmed no user accounts" for it only (`plant_join`).
+        let pulled_for = crate::commands::product_license::get_activation_claim_tenant_id(&self.db).await?;
 
         let mut snapshot_done = false;
         if !has_v2_checkpoint(&self.db).await? {
@@ -770,10 +775,30 @@ impl SyncWorker {
                 Step::Stop(outcome) => return Ok(outcome),
             }
         }
+        if !more_work {
+            self.after_complete_pull(pulled_for.as_deref()).await?;
+        }
         let more_downloads = self.download_pending_media(&token).await?;
         Ok(CycleOutcome::Synced {
             more_work: more_work || more_downloads,
         })
+    }
+
+    /// The exchanges of this cycle reached the server head (`Step::Done`: `has_more` false and the
+    /// outbox drained, every received row materialized): this PC now holds everything the server
+    /// has for its organisation, which is the only time "the server has no user accounts" can be
+    /// told apart from "not received yet" (`plant_join::record_complete_pull`). Nothing is recorded
+    /// when the activation changed during the cycle: the pull ran for another organisation.
+    async fn after_complete_pull(&self, pulled_for: Option<&str>) -> AppResult<()> {
+        let Some(tenant_id) = pulled_for else {
+            return Ok(());
+        };
+        let current = crate::commands::product_license::get_activation_claim_tenant_id(&self.db).await?;
+        if current.as_deref() != Some(tenant_id) {
+            return Ok(());
+        }
+        crate::sync::plant_join::record_complete_pull(&self.db, tenant_id).await?;
+        Ok(())
     }
 
     /// Scope `all` snapshot; stores the delta checkpoint on its last page. `Some(outcome)` stops the

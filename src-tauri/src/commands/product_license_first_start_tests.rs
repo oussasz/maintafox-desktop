@@ -52,6 +52,7 @@ async fn activated_plant_with_admin() -> DatabaseConnection {
     record_activation_claim_for_tests(&db, TENANT, FINGERPRINT, "token-1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     bootstrap_initial_tenant_admin_in(&db, admin_input("chef"))
         .await
         .expect("first administrator");
@@ -109,6 +110,7 @@ async fn the_first_administrator_is_created_once() {
     record_activation_claim_for_tests(&db, TENANT, FINGERPRINT, "token-1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     assert!(!tenant_has_administrator_for_id(&db, TENANT).await.expect("check"));
     bootstrap_initial_tenant_admin_in(&db, admin_input("chef"))
         .await
@@ -608,6 +610,7 @@ async fn two_first_administrators_at_once_make_one() {
     record_activation_claim_for_tests(&setup, TENANT, FINGERPRINT, "token-1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&setup, TENANT).await;
     setup.close().await.expect("close setup");
 
     // Two connections, so the two submissions really compete for the write lock.
@@ -1193,6 +1196,7 @@ async fn the_first_administrator_audit_detail_is_valid_json() {
     record_activation_claim_for_tests(&db, TENANT, FINGERPRINT, "token-1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     let username = r#"chef "o'neil" \ x"#;
     bootstrap_initial_tenant_admin_in(&db, admin_input(username))
         .await
@@ -1849,13 +1853,20 @@ async fn checklist_9_4_first_start_actions_work_then_are_refused_once_an_adminis
         .await
         .expect("first reconciliation signed out");
     assert_eq!(state.status, ProductLicenseActivationStatus::Active);
-    let before = super::get_activation_bootstrap_state_in(&db)
-        .await
-        .expect("bootstrap state");
+    let before =
+        super::get_activation_bootstrap_state_in(&db, &crate::sync::transport::SyncWorkerHandle::new().status())
+            .await
+            .expect("bootstrap state");
     assert_eq!(before.tenant_id.as_deref(), Some(TENANT));
     assert!(!before.has_tenant_admin, "the first-administrator step is open");
+    assert_eq!(
+        before.plant_join,
+        Some(crate::sync::plant_join::PlantJoinState::Joining),
+        "no complete pull yet: the screen joins the plant first"
+    );
 
     // (2) The first administrator, signed out.
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     bootstrap_initial_tenant_admin_in(&db, admin_input("chef"))
         .await
         .expect("first administrator");
@@ -1912,10 +1923,12 @@ async fn checklist_9_4_first_start_actions_work_then_are_refused_once_an_adminis
     assert_eq!(administrator_count(&db).await, 1);
 
     // (5) The first-start state reports the step as closed.
-    let after = super::get_activation_bootstrap_state_in(&db)
-        .await
-        .expect("bootstrap state");
+    let after =
+        super::get_activation_bootstrap_state_in(&db, &crate::sync::transport::SyncWorkerHandle::new().status())
+            .await
+            .expect("bootstrap state");
     assert!(after.has_tenant_admin, "the first-administrator step is closed");
+    assert_eq!(after.plant_join, Some(crate::sync::plant_join::PlantJoinState::SignIn));
 }
 
 // ── Round 3 ────────────────────────────────────────────────────────────────────────────────────
@@ -2316,6 +2329,7 @@ async fn the_seeded_administrator_counts_once_taken_into_use() {
     }
 
     set_seeded_admin(&db, 1, None).await;
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     bootstrap_initial_tenant_admin_in(&db, admin_input("chef"))
         .await
         .expect("never used again: the first administrator is created");
@@ -2639,6 +2653,7 @@ async fn a_concurrent_signed_out_claim_never_overwrites_a_revocation() {
     record_activation_claim_for_tests(&setup, TENANT, FINGERPRINT, STORED_TOKEN)
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&setup, TENANT).await;
     bootstrap_initial_tenant_admin_in(&setup, admin_input("chef"))
         .await
         .expect("first administrator");
