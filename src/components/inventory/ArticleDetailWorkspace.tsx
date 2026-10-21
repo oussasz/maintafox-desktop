@@ -23,7 +23,9 @@ import {
 } from "@/components/detail";
 import { ArticleConsumptionChart } from "@/components/inventory/ArticleConsumptionChart";
 import { InventoryAdjustmentDialog } from "@/components/inventory/InventoryAdjustmentDialog";
+import { NegativeStockBadge } from "@/components/inventory/NegativeStockBadge";
 import { ReservationInsightsPanel } from "@/components/inventory/ReservationInsightsPanel";
+import { StockTransferAction } from "@/components/inventory/StockTransferAction";
 import {
   type SourceSupplierOption,
   SupplierArticleSourcesSection,
@@ -588,12 +590,20 @@ export function ArticleDetailWorkspace({
               ) : (
                 balances.data.map((b) => (
                   <div key={b.id} className="rounded border border-surface-border p-2.5 text-sm">
-                    <div className="font-medium">
-                      {formatSiteLabel(b.warehouse_code, b.warehouse_name)}
-                      <span className="text-text-muted"> / </span>
-                      {formatSiteLabel(b.location_code, b.location_name)}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-medium">
+                        {formatSiteLabel(b.warehouse_code, b.warehouse_name)}
+                        <span className="text-text-muted"> / </span>
+                        {formatSiteLabel(b.location_code, b.location_name)}
+                      </div>
+                      <StockTransferAction
+                        article={article}
+                        balance={b}
+                        onTransferred={handleStockAdjusted}
+                      />
                     </div>
-                    <div className="mt-1 text-xs text-text-muted">
+                    <div className="mt-1 flex flex-wrap items-center gap-x-1 text-xs text-text-muted">
+                      <NegativeStockBadge onHand={b.on_hand_qty} available={b.available_qty} />
                       {t("detail.kpis.onHand")}: {formatQty(b.on_hand_qty)} ·{" "}
                       {t("detail.kpis.reserved")}: {formatQty(b.reserved_qty)} ·{" "}
                       {t("detail.kpis.available")}: {formatQty(b.available_qty)} ·{" "}

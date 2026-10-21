@@ -8,7 +8,91 @@
     "statusInactive": "Inactif",
     "stock": "Stock",
     "stockBelowReorder": "Au point de commande ou en dessous",
-    "stockOut": "Rien de disponible"
+    "stockOut": "Rien de disponible",
+    "stockNegative": "Stock négatif"
+  },
+  "negativeStock": {
+    "title": "Stock à rapprocher",
+    "description": "Les mouvements reçus d'un autre poste sont appliqués tels quels. Un emplacement passé sous zéro reste ici jusqu'à ce qu'un comptage y soit enregistré ou qu'une entrée ultérieure le ramène à zéro ou plus : réception, transfert entrant, retour sur sa sortie ou sa réparation, ou entrée motivée.",
+    "showClosed": "Afficher les éléments rapprochés",
+    "noneOpen": "Aucun emplacement sous zéro.",
+    "openList": "Emplacements sous zéro à rapprocher",
+    "closedList": "Emplacements rapprochés",
+    "flag": "Négatif — à rapprocher",
+    "balance": "En stock {{onHand}}, réservé {{reserved}}, disponible {{available}}",
+    "openedAt": "Constaté sous zéro le {{date}} (dernière sortie : {{movement}})",
+    "recordCount": "Enregistrer un comptage",
+    "overReservedTitle": "Réservations supérieures au stock (avertissement)",
+    "overReservedLine": "{{article}} à {{location}} : {{reserved}} réservé(s) pour {{onHand}} en stock",
+    "closure": {
+      "count": "Rapproché par comptage le {{date}}",
+      "adjustment": "Rapproché par un ajustement motivé le {{date}} ({{movement}})",
+      "receipt": "Régularisé par réception le {{date}} ({{movement}})",
+      "return": "Régularisé par retour le {{date}} ({{movement}})",
+      "prior_entry": "Régularisé par saisie antérieure le {{date}} ({{movement}}) : entrée faite sur un poste qui ne voyait pas encore le stock négatif, sans motif demandé",
+      "other": "Revenu à zéro ou plus le {{date}} sans entrée de stock enregistrée"
+    },
+    "loadError": "Impossible de charger le stock à rapprocher",
+    "loading": "Chargement du stock à rapprocher…",
+    "dialog": {
+      "title": "Enregistrer un comptage",
+      "description": "{{article}} à {{location}} est à {{onHand}} sur ce poste. Comptez ce qui est physiquement présent : le stock devient la quantité comptée et l'élément est clos. Le comptage est passé comme tout inventaire et tracé dans l'audit.",
+      "counted": "Quantité comptée",
+      "varianceReason": "Motif d'écart",
+      "varianceReasonPlaceholder": "Choisir un motif",
+      "reason": "Justification",
+      "reasonPlaceholder": "Au moins {{count}} caractères : ce qui a été constaté et pourquoi",
+      "confirm": "Enregistrer le comptage"
+    },
+    "doubleCount": {
+      "flag": "Double comptage — à vérifier",
+      "list": "Emplacements comptés deux fois",
+      "explain": "Compté sur deux postes sans que l'un connaisse l'autre : chacun a corrigé le stock, qui peut donc l'être deux fois (actuellement {{onHand}} en stock). Vérifiez le stock et enregistrez un nouveau comptage.",
+      "countLine": "{{who}} sur le poste {{device}}, {{date}}, par {{path}} : compté {{counted}} (correction {{variance}})",
+      "unknownUser": "Utilisateur inconnu",
+      "closedByReversal": "clos par annulation du comptage {{session}} ({{who}}, {{date}})",
+      "path": {
+        "reconciliation": "liste du stock à rapprocher",
+        "count_session": "inventaire {{session}}"
+      }
+    },
+    "label": "Stock négatif",
+    "hint": "À corriger : un autre poste a peut-être enregistré un mouvement. Enregistrez un comptage dans « Stock à rapprocher » (Stock › Contrôles).",
+    "hintTotal": "Total des magasins négatif. À corriger : un autre poste a peut-être enregistré un mouvement. Enregistrez un comptage dans « Stock à rapprocher » (Stock › Contrôles)."
+  },
+  "transfer": {
+    "action": "Transférer",
+    "noneAvailable": "Aucun stock disponible à transférer",
+    "actionHint": "Transférer ce stock vers un autre magasin",
+    "title": "Transférer du stock vers un autre magasin",
+    "description": "Déplace du stock disponible de ce magasin vers un autre. Le stock réservé reste en place.",
+    "cancel": "Annuler",
+    "submit": "Transférer",
+    "sections": {
+      "source": "Article et magasin source",
+      "move": "Transfert"
+    },
+    "from": "Magasin source",
+    "to": "Magasin de destination",
+    "toPlaceholder": "Choisir le magasin de destination",
+    "noDestination": "Aucun autre magasin actif n’est disponible.",
+    "storesFailed": "La liste des magasins n’a pas pu être chargée.",
+    "availableLine": "Disponible : {{available}} {{unit}} (en stock {{onHand}}, dont {{reserved}} réservé, non transférable)",
+    "lot": "Lot ou numéro de série",
+    "lotFefo": "Automatique : le lot qui expire en premier (FEFO)",
+    "quantity": "Quantité ({{unit}})",
+    "quantityMax": "Maximum transférable : {{max}} {{unit}}",
+    "wholeUnitsHint": "Cet article est suivi par numéro de série : la quantité se transfère par unités entières.",
+    "reason": "Motif",
+    "confirm": "Transférer {{qty}} {{unit}} de {{article}} du magasin {{from}} vers {{to}} ?",
+    "done": "Transfert effectué : {{qty}} {{unit}} de {{article}} vers {{to}}",
+    "errors": {
+      "toRequired": "Choisissez le magasin de destination.",
+      "quantityInvalid": "Saisissez une quantité supérieure à 0.",
+      "quantityAbove": "La quantité dépasse le stock disponible ({{max}} {{unit}}).",
+      "wholeUnits": "Saisissez un nombre entier d’unités.",
+      "reasonShort": "Le motif doit faire au moins {{min}} caractères."
+    }
   },
   "adjustStock": {
     "title": "Ajuster le stock",
@@ -97,6 +181,10 @@
       "hint": "Aujourd'hui, sauf si le mouvement a eu lieu plus tôt. Les dates d'une période de valorisation clôturée sont refusées.",
       "blocker": "Saisissez la date du mouvement.",
       "future": "La date du mouvement ne peut pas être dans le futur."
+    },
+    "negativeLocation": {
+      "hint": "Cet emplacement est sous zéro sur ce poste : une entrée ici le rapproche. Indiquez la justification dans le commentaire (au moins {{count}} caractères) ; elle est tracée dans l’audit.",
+      "blocker": "Indiquez la justification de l’entrée dans le commentaire (au moins {{count}} caractères) : l’emplacement est sous zéro."
     }
   },
   "detail": {
@@ -1726,5 +1814,13 @@
         "blocker": "Saisissez un montant supérieur ou égal à 0, ou laissez vide."
       }
     }
+  },
+  "errors": {
+    "NEGATIVE_STOCK_REASON_SHORT": "Indiquez la justification du comptage (au moins {{min}} caractères).",
+    "NEGATIVE_STOCK_COUNT_INVALID": "La quantité comptée doit être supérieure ou égale à zéro.",
+    "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choisissez le motif d'écart du comptage.",
+    "NEGATIVE_STOCK_NOT_OPEN": "Le stock de cet emplacement n'est plus sous zéro : rien à rapprocher. Actualisez la liste.",
+    "NEGATIVE_STOCK_ENTRY_REASON_SHORT": "Cet emplacement est sous zéro : une entrée ici le rapproche et demande une justification dans le commentaire (au moins {{min}} caractères).",
+    "COUNT_SESSION_STALE_SNAPSHOT": "Un comptage a été validé sur cet article et cet emplacement depuis l'ouverture de cette session : annulez cette session et recomptez dans une nouvelle session."
   }
 }

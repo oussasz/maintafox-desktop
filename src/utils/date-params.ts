@@ -22,6 +22,8 @@ export const DATE_TIME_PARAMS: ReadonlySet<string> = new Set([
   "changed_at",
   // When a lock was taken off by a forced removal (notifications).
   "removed_at",
+  // When a location's current shortage began (stock to reconcile, notifications).
+  "opened_at",
 ]);
 
 /**

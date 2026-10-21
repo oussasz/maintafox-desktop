@@ -11,6 +11,7 @@
 //! | `wo_overdue`              | an open work order is past its planned end             | order + planned end                |
 //! | `inspection_round_missed` | an inspection round was missed                         | round (window end)                 |
 //! | `stock_critical`          | available stock at or below the reorder point          | article + movement that crossed it |
+//! | `stock_to_reconcile`      | a location below zero, or counted twice (two PCs)      | article + location (+ counts)      |
 //! | `ptw_expiring`            | an open permit expires within the rule's lead time     | permit + expiry (expiry − lead)    |
 //! | `ptw_critical`            | an open permit is past its expiry                      | permit + expiry                    |
 //! | `sync_conflict`           | a synchronisation conflict waits for review            | conflict (creation)                |
@@ -44,6 +45,7 @@ pub const WATCHERS: &[&str] = &[
     "wo_overdue",
     "inspection_round_missed",
     "stock_critical",
+    "stock_to_reconcile",
     "ptw_expiring",
     "ptw_critical",
     "sync_conflict",
@@ -351,6 +353,131 @@ pub async fn candidates(
                         fr,
                         format!("{name} : {qty} disponible(s), seuil {reorder}."),
                         format!("{name}: {qty} available, reorder point {reorder}."),
+                    ),
+                });
+            }
+        }
+        // Stock to reconcile after sync (`inventory::negative_stock`): one notice per article and
+        // location below zero and per double count (named by the counts it is made of). The
+        // negative occurrence is the pair itself: no value read from the ledger can name the
+        // opening the same way on every PC and stay fixed while a movement dated earlier arrives
+        // late, so a later item of the same pair reopens the same notice instead of a new one. The
+        // movement that took it below zero (ledger order every PC shares) only dates it.
+        "stock_to_reconcile" => {
+            use crate::inventory::negative_stock::{double_count_pairs, negative_crossing, QTY_TOLERANCE};
+            const COLUMNS: &str = "SELECT a.id AS article_id, a.entity_sync_id AS asid, a.article_code, a.article_name,                     sl.id AS location_id, sl.entity_sync_id AS lsid, sl.code AS location_code, w.code AS warehouse_code,                     COALESCE(sb.on_hand_qty, 0) AS on_hand_qty";
+            const SYNCED: &str = "a.entity_sync_id IS NOT NULL AND sl.entity_sync_id IS NOT NULL";
+            let action_url = crate::inventory::negative_stock::LIST_URL.to_string();
+            let negatives = conn
+                .query_all(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    format!(
+                        "{COLUMNS} FROM stock_balances sb JOIN articles a ON a.id = sb.article_id                          JOIN stock_locations sl ON sl.id = sb.location_id JOIN warehouses w ON w.id = sl.warehouse_id                          WHERE {SYNCED} AND sb.on_hand_qty < ? ORDER BY a.id, sl.id"
+                    ),
+                    [(-QTY_TOLERANCE).into()],
+                ))
+                .await?;
+            for r in &negatives {
+                let (article_id, location_id) = (
+                    i(r, "article_id")?.unwrap_or_default(),
+                    i(r, "location_id")?.unwrap_or_default(),
+                );
+                let on_hand = f(r, "on_hand_qty")?;
+                // When the current shortage opened: the crossing, or the first movement when the
+                // ledger shows the location below zero from the start (CMMS Advisor: the notice
+                // says it; a later shortage reopens the notice with its own date).
+                let opened_raw = match negative_crossing(conn, article_id, location_id, on_hand).await? {
+                    Some((_, at)) => at,
+                    None => conn
+                        .query_one(Statement::from_sql_and_values(
+                            DbBackend::Sqlite,
+                            "SELECT MIN(performed_at) AS first_at FROM inventory_transactions \
+                             WHERE article_id = ? AND location_id = ?",
+                            [article_id.into(), location_id.into()],
+                        ))
+                        .await?
+                        .and_then(|row| row.try_get::<Option<String>>("", "first_at").ok().flatten()),
+                };
+                let since = opened_raw.as_deref().and_then(parse_time);
+                let opened_at = since.map(ts).unwrap_or_default();
+                // The stored fallback text (email, older readers) reads the date; the in-app text is
+                // localised from `opened_at` (`notifications:messages.stock_negative`).
+                let since_text = |fr: bool| match since {
+                    Some(at) if fr => format!(", sous zéro depuis le {} UTC", at.format("%d/%m/%Y %H:%M")),
+                    Some(at) => format!(", below zero since {} UTC", at.format("%Y-%m-%d %H:%M")),
+                    None => String::new(),
+                };
+                let code = s(r, "article_code")?;
+                let name = s(r, "article_name")?;
+                let location = format!("{}/{}", s(r, "warehouse_code")?, s(r, "location_code")?);
+                out.push(Candidate {
+                    record_id: Some(article_id),
+                    record_key: format!("negative|{}|{}", s(r, "asid")?, s(r, "lsid")?),
+                    since,
+                    source_module: "inventory",
+                    message_key: "stock_negative",
+                    params: json!({
+                        "code": code,
+                        "title": name,
+                        "location": location,
+                        "on_hand": on_hand,
+                        "opened_at": opened_at,
+                    }),
+                    urgency: None,
+                    action_url: action_url.clone(),
+                    severity: severity.clone(),
+                    title: text(
+                        fr,
+                        format!("Stock négatif à rapprocher — {code}"),
+                        format!("Negative stock to reconcile — {code}"),
+                    ),
+                    body: text(
+                        fr,
+                        format!("{name} à {location} : {on_hand} en stock{}.", since_text(true)),
+                        format!("{name} at {location}: {on_hand} on hand{}.", since_text(false)),
+                    ),
+                });
+            }
+            for (article_id, location_id, counts) in double_count_pairs(conn).await? {
+                let Some(r) = conn
+                    .query_one(Statement::from_sql_and_values(
+                        DbBackend::Sqlite,
+                        format!(
+                            "{COLUMNS} FROM articles a JOIN stock_locations sl ON sl.id = ?                              JOIN warehouses w ON w.id = sl.warehouse_id                              LEFT JOIN stock_balances sb ON sb.article_id = a.id AND sb.location_id = sl.id                              WHERE {SYNCED} AND a.id = ?"
+                        ),
+                        [location_id.into(), article_id.into()],
+                    ))
+                    .await?
+                else {
+                    continue;
+                };
+                let code = s(&r, "article_code")?;
+                let name = s(&r, "article_name")?;
+                let location = format!("{}/{}", s(&r, "warehouse_code")?, s(&r, "location_code")?);
+                let ids: Vec<&str> = counts.iter().map(|c| c.count_sync_id.as_str()).collect();
+                let since = counts.iter().filter_map(|c| parse_time(&c.counted_at)).max();
+                out.push(Candidate {
+                    record_id: Some(article_id),
+                    record_key: format!("double|{}|{}|{}", s(&r, "asid")?, s(&r, "lsid")?, ids.join(",")),
+                    since,
+                    source_module: "inventory",
+                    message_key: "stock_double_count",
+                    params: json!({ "code": code, "title": name, "location": location, "count": counts.len() }),
+                    urgency: None,
+                    action_url: action_url.clone(),
+                    severity: severity.clone(),
+                    title: text(
+                        fr,
+                        format!("Double comptage à vérifier — {code}"),
+                        format!("Double count to verify — {code}"),
+                    ),
+                    body: text(
+                        fr,
+                        format!(
+                            "{name} à {location} : {} comptages sur des postes différents.",
+                            counts.len()
+                        ),
+                        format!("{name} at {location}: {} counts on different PCs.", counts.len()),
                     ),
                 });
             }

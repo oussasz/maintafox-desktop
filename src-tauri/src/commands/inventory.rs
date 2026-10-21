@@ -489,7 +489,7 @@ pub async fn transfer_inventory_stock(
         crate::rbac::permissions::INV_MANAGE,
         PermissionScope::Global
     );
-    queries::transfer_stock(&state.db, input).await
+    queries::transfer_stock(&state.db, input, Some(i64::from(user.user_id))).await
 }
 
 #[tauri::command]

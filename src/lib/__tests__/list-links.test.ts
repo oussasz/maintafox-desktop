@@ -25,6 +25,7 @@ describe("list links", () => {
     expect(listLinks.requests({ waitingDays: 7 })).toBe("/requests?waiting=7");
     expect(listLinks.pmDue("overdue")).toBe("/pm?due=overdue");
     expect(listLinks.inventory({ belowReorder: true })).toBe("/inventory?stock=below_reorder");
+    expect(listLinks.inventory({ toReconcile: true })).toBe("/inventory?stock=to_reconcile");
     expect(listLinks.equipment()).toBe("/equipment");
   });
 

@@ -186,7 +186,8 @@
     "wo_assigned": "Work order assigned",
     "wo_overdue": "Work order overdue",
     "safety_rule_received": "Safety rule changed on another PC",
-    "loto_forced_removal": "Lock taken off by a forced removal"
+    "loto_forced_removal": "Lock taken off by a forced removal",
+    "stock_to_reconcile": "Stock to reconcile after sync"
   },
   "messages": {
     "wo_assigned": {
@@ -299,6 +300,14 @@
     "loto_forced_removal": {
       "title": "Forced lock removal: {{point}} (permit {{permit}})",
       "body": "{{authorised_by}} authorised {{removed_by}} to take off the lock of {{worker}}, who was absent, on {{removed_at}} — reason: {{reason}}. The worker must be told (Work permits › forced removals to follow up)."
+    },
+    "stock_negative": {
+      "title": "{{code}} below zero at {{location}}",
+      "body": "{{title}}: {{on_hand}} on hand, below zero since {{opened_at}}. Record a count to reconcile it."
+    },
+    "stock_double_count": {
+      "title": "{{code}} counted twice at {{location}}",
+      "body": "{{title}}: {{count}} counts recorded on different PCs. Check the stock and record a new count."
     }
   },
   "audience": {

@@ -186,6 +186,51 @@ describe("InventoryAdjustmentDialog", () => {
     );
   });
 
+  it("asks the reason of an entry at a location below zero, in the comment", async () => {
+    svc.listInventoryStockBalances.mockResolvedValue([
+      { location_id: 3, on_hand_qty: -5, moving_avg_unit_cost: 4 },
+    ]);
+    render(
+      <InventoryAdjustmentDialog
+        articleId={4}
+        defaultWarehouseId={2}
+        defaultLocationId={3}
+        open
+        onOpenChange={vi.fn()}
+        onSuccess={vi.fn()}
+      />,
+    );
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText(/Bearing/);
+
+    fireEvent.change(within(dialog).getByLabelText("Quantity"), { target: { value: "5" } });
+    fireEvent.click(within(dialog).getByLabelText("Reason"));
+    fireEvent.click(await screen.findByRole("option", { name: "Purchase receipt" }));
+    fireEvent.change(within(dialog).getByLabelText(/^Unit cost/), { target: { value: "4" } });
+
+    const validate = within(dialog).getByRole("button", { name: "Validate" });
+    expect(
+      await within(dialog).findByText(/This location is below zero on this PC/),
+    ).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Comment"), { target: { value: " short  " } });
+    expect(validate).toBeDisabled();
+    expect(
+      within(dialog).getByText(/Give the reason of the entry in the comment/),
+    ).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Comment"), {
+      target: { value: "Found 5 in the back of the bin" },
+    });
+    await waitFor(() => expect(validate).toBeEnabled());
+    fireEvent.click(validate);
+    await waitFor(() =>
+      expect(svc.adjustInventoryStock).toHaveBeenCalledWith(
+        expect.objectContaining({ delta_qty: 5, notes: "Found 5 in the back of the bin" }),
+        4,
+        { lotId: null, newLot: null, postingDate: null },
+      ),
+    );
+  });
+
   it("asks for the lot and expiry of an entry of a lot-tracked article", async () => {
     svc.listInventoryArticles.mockResolvedValue([
       {

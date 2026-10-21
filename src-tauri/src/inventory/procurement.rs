@@ -207,7 +207,13 @@ async fn upsert_balance<C: ConnectionTrait>(
     reserved_qty: f64,
 ) -> AppResult<()> {
     let available_qty = on_hand_qty - reserved_qty;
-    if on_hand_qty < 0.0 || reserved_qty < 0.0 || available_qty < 0.0 {
+    // A receipt into a location below zero is accepted (CMMS Advisor decision 1): never made worse,
+    // its item stays open until the stock is zero or more (`negative_stock::balance_change_allowed`).
+    let current = get_balance_snapshot(db, article_id, warehouse_id, location_id).await?;
+    if !crate::inventory::negative_stock::balance_change_allowed(
+        (current.on_hand, current.reserved),
+        (on_hand_qty, reserved_qty),
+    ) {
         return Err(AppError::ValidationFailed(vec![
             "Stock invariants violated (negative on-hand/reserved/available).".to_string(),
         ]));

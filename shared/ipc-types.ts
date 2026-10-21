@@ -3005,7 +3005,10 @@ export interface InventoryTransferInput {
   source_type?: string | null;
   source_id?: number | null;
   source_ref?: string | null;
+  /** Required: why the stock moves (at least 5 characters). */
   notes?: string | null;
+  /** Lot to move (tracked articles); first-expired-first-out when absent. */
+  lot_id?: number | null;
 }
 
 export interface InventoryReleaseReservationInput {
@@ -10534,7 +10537,12 @@ export interface ResolveSyncConflictInput {
     | "retry_later"
     | "escalate"
     | "dismiss";
-  resolution_note?: string | null;
+  /**
+   * Why this choice was made: required for every action, at least `MIN_REASON_CHARS`
+   * (src-tauri/src/settings/catalog.rs) characters once trimmed. Stored on the conflict and in the
+   * audit event `sync.conflict_resolved`.
+   */
+  resolution_note: string;
 }
 
 export interface ReplaySyncFailuresInput {

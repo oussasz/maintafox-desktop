@@ -247,6 +247,7 @@ pub(crate) const CONFIG_NOTIFICATION_TYPES: &[&str] = &[
     "retention_policies",
     "activity_events",
     "audit_events",
+    "audit_chain_stubs",
     "admin_change_events",
     "settings_change_events",
     "site_settings",

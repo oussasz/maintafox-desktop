@@ -188,11 +188,16 @@ const AuditChainReportSchema = z.object({
       is_this_device: z.boolean(),
       events: z.number(),
       last_seq: z.number(),
+      /** Positions kept on that device, linked through their hash-only stub. */
+      kept_positions: z.number(),
+      /** Positions kept on that device before stubs existed, accepted as a run (not linked). */
+      kept_before_stubs: z.number(),
       intact: z.boolean(),
       first_problem: z
         .object({
           chain_seq: z.number(),
-          audit_event_id: z.number(),
+          /** Null for a position kept on its device (only its stub is here). */
+          audit_event_id: z.number().nullable(),
           kind: z.enum(["hash_mismatch", "prev_mismatch", "missing_positions"]),
         })
         .nullable(),

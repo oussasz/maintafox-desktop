@@ -678,7 +678,7 @@ describe("resolveConflictAction", () => {
       conflict_id: 11,
       expected_row_version: 1,
       action: "dismiss" as const,
-      resolution_note: "noise",
+      resolution_note: "Duplicate of an older conflict",
     };
     await useSyncOrchestratorStore.getState().resolveConflictAction(input);
 
@@ -692,9 +692,12 @@ describe("resolveConflictAction", () => {
     "triggers an immediate sync after %s",
     async (action) => {
       mockResolve.mockResolvedValueOnce(makeConflict({ status: "resolved" }));
-      await useSyncOrchestratorStore
-        .getState()
-        .resolveConflictAction({ conflict_id: 11, expected_row_version: 1, action });
+      await useSyncOrchestratorStore.getState().resolveConflictAction({
+        conflict_id: 11,
+        expected_row_version: 1,
+        action,
+        resolution_note: "Checked with the planner",
+      });
       expect(mockRunSyncNow).toHaveBeenCalledTimes(1);
     },
   );
@@ -707,6 +710,7 @@ describe("resolveConflictAction", () => {
         conflict_id: 11,
         expected_row_version: 1,
         action: "accept_local",
+        resolution_note: "Checked with the planner",
       }),
     ).resolves.toBeUndefined();
     expect(useSyncOrchestratorStore.getState().actionError).toBeNull();
@@ -719,9 +723,12 @@ describe("resolveConflictAction", () => {
     mockResolve.mockRejectedValueOnce(err);
 
     await expect(
-      useSyncOrchestratorStore
-        .getState()
-        .resolveConflictAction({ conflict_id: 11, expected_row_version: 1, action: "dismiss" }),
+      useSyncOrchestratorStore.getState().resolveConflictAction({
+        conflict_id: 11,
+        expected_row_version: 1,
+        action: "dismiss",
+        resolution_note: "Duplicate of an older conflict",
+      }),
     ).rejects.toBe(err);
     expect(useSyncOrchestratorStore.getState().conflictInbox).toBe(inbox);
     expect(useSyncOrchestratorStore.getState().actionError).toBeNull();

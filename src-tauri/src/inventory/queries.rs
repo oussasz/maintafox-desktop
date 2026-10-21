@@ -1932,22 +1932,32 @@ pub async fn adjust_stock_full(
             ]));
         }
     }
-    let source_type = "MANUAL_ADJUSTMENT".to_string();
     ensure_work_order_reference(db, input.reason_code.as_deref(), input.source_ref.as_deref()).await?;
 
     let tx = db.begin().await?;
     let warehouse_id = ensure_active_mutation_context(&tx, input.article_id, input.location_id).await?;
     let (on_hand, reserved) = get_balance_snapshot(&tx, input.article_id, input.location_id).await?;
     let next_on_hand = on_hand + input.delta_qty;
-    let next_available = next_on_hand - reserved;
-    if next_on_hand < 0.0 || next_available < 0.0 {
+    // An exit never takes stock below zero; an entry at a location already below zero is accepted
+    // (CMMS Advisor decision 1) and is a count resolution: its comment is the reason, at least 8
+    // characters, and it is audited (decision 2, `inventory::negative_stock`).
+    if !crate::inventory::negative_stock::balance_change_allowed((on_hand, reserved), (next_on_hand, reserved)) {
         return Err(AppError::ValidationFailed(vec![
             "Adjustment would produce negative stock.".to_string(),
         ]));
     }
+    crate::inventory::negative_stock::check_entry_reason(on_hand, input.delta_qty, input.notes.as_deref())?;
+    let reconciles_negative = input.delta_qty > 0.0 && on_hand < -crate::inventory::negative_stock::QTY_TOLERANCE;
+    // An entry made here while the location stood below zero is marked as such on the movement, so
+    // every PC tells it (reason asked, audited) from an entry made before the shortage was visible.
+    let source_type = if reconciles_negative {
+        crate::inventory::negative_stock::SOURCE_NEGATIVE_STOCK_ENTRY
+    } else {
+        "MANUAL_ADJUSTMENT"
+    };
 
-    // Critical spare guard: block adjustments that would leave on_hand = 0
-    if next_on_hand == 0.0 {
+    // Critical spare guard: block exits that would leave on_hand = 0
+    if input.delta_qty < 0.0 && next_on_hand == 0.0 {
         let critical_row = tx
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -2023,7 +2033,7 @@ pub async fn adjust_stock_full(
             None,
             if delta >= 0.0 { "ADJUST_IN" } else { "ADJUST_OUT" },
             delta.abs(),
-            &source_type,
+            source_type,
             None,
             input.source_ref.as_deref(),
             input.reason_code.as_deref(),
@@ -2057,6 +2067,36 @@ pub async fn adjust_stock_full(
             transaction_id,
             crate::inventory::valuation::COST_SOURCE_MANUAL_ENTRY,
             input.source_ref.as_deref(),
+        )
+        .await?;
+    }
+
+    if reconciles_negative {
+        crate::inventory::negative_stock::reconcile_pair_in(&tx, input.article_id, input.location_id).await?;
+        crate::audit::writer::write_audit_event_in(
+            &tx,
+            crate::audit::writer::AuditEventInput {
+                action_code: "inventory.negative_stock.adjusted".to_string(),
+                target_type: Some("stock_location_article".to_string()),
+                target_id: Some(format!("{}:{}", input.article_id, input.location_id)),
+                actor_id: options.actor_id,
+                auth_context: "session".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "standard".to_string(),
+                details_json: Some(serde_json::json!({
+                    "summary": "Manual stock entry at a location below zero",
+                    "article_id": input.article_id,
+                    "location_id": input.location_id,
+                    "on_hand_before": on_hand,
+                    "delta_qty": input.delta_qty,
+                    "on_hand_after": next_on_hand,
+                    "reason_code": input.reason_code,
+                    "reason": input.notes.as_deref().map(str::trim),
+                    "transaction_id": transaction_id,
+                })),
+            },
         )
         .await?;
     }
@@ -2158,17 +2198,19 @@ async fn upsert_balance<C: ConnectionTrait>(
     on_hand_qty: f64,
     reserved_qty: f64,
 ) -> AppResult<()> {
-    if on_hand_qty < 0.0 || reserved_qty < 0.0 {
+    // Never below zero, except a location already there may be improved (a receipt, a transfer in,
+    // a return, a released reservation): `negative_stock::balance_change_allowed`.
+    let current = get_balance_snapshot(db, article_id, location_id).await?;
+    if !crate::inventory::negative_stock::balance_change_allowed(current, (on_hand_qty, reserved_qty)) {
         return Err(AppError::ValidationFailed(vec![
-            "Stock balances cannot be negative.".to_string()
+            if on_hand_qty < 0.0 || reserved_qty < 0.0 {
+                "Stock balances cannot be negative.".to_string()
+            } else {
+                "available_qty cannot be negative.".to_string()
+            },
         ]));
     }
     let available_qty = on_hand_qty - reserved_qty;
-    if available_qty < 0.0 {
-        return Err(AppError::ValidationFailed(vec![
-            "available_qty cannot be negative.".to_string()
-        ]));
-    }
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -2810,62 +2852,143 @@ pub async fn release_stock_reservation(
     Ok(released)
 }
 
+/// Stable refusal codes of a store-to-store transfer (translated in `training:errors`).
+pub mod transfer_codes {
+    pub const QUANTITY_INVALID: &str = "INV_TRANSFER_QUANTITY_INVALID";
+    pub const SAME_LOCATION: &str = "INV_TRANSFER_SAME_LOCATION";
+    pub const NOTE_TOO_SHORT: &str = "INV_TRANSFER_NOTE_TOO_SHORT";
+    pub const ARTICLE_INACTIVE: &str = "INV_TRANSFER_ARTICLE_INACTIVE";
+    pub const LOCATION_UNAVAILABLE: &str = "INV_TRANSFER_LOCATION_UNAVAILABLE";
+    pub const INSUFFICIENT_AVAILABLE: &str = "INV_TRANSFER_INSUFFICIENT_AVAILABLE";
+    pub const WHOLE_UNITS: &str = "INV_TRANSFER_WHOLE_UNITS";
+    pub const LOT_UNAVAILABLE: &str = "INV_TRANSFER_LOT_UNAVAILABLE";
+}
+
+/// Minimum length (characters, after trimming) of the reason of a transfer.
+pub const TRANSFER_NOTE_MIN_CHARS: usize = 5;
+
+fn transfer_refusal(code: &str, message: impl Into<String>, params: &[(&str, String)]) -> AppError {
+    crate::errors::org_validation_failed(code, message, crate::errors::issue_params(params))
+}
+
+/// A business failure of a check becomes its coded refusal; a real error (database, I/O) is
+/// never presented as a business refusal and propagates unchanged.
+fn coded_or_propagate(err: AppError, refusal: impl FnOnce() -> AppError) -> AppError {
+    match err {
+        AppError::ValidationFailed(_) | AppError::NotFound { .. } | AppError::OrgValidationFailed(_) => refusal(),
+        other => other,
+    }
+}
+
+/// Tolerance of the available-stock check: float noise (0.3 - 0.1 = 0.19999999999999998) must not
+/// refuse a quantity the screen shows as available.
+const TRANSFER_QTY_TOLERANCE: f64 = 1e-9;
+
+/// A quantity as shown to the storekeeper: up to 3 decimals, no trailing zeros.
+fn transfer_qty_text(value: f64) -> String {
+    let text = format!("{value:.3}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// Moves stock between two stores in one transaction. The reserved quantity never moves: only
+/// the available stock (on hand minus reserved) can be transferred. The reason is required and
+/// is written, with the actor and the time, on the OUT and the IN movement of each lot.
 pub async fn transfer_stock(
     db: &DatabaseConnection,
     input: InventoryTransferInput,
+    actor_id: Option<i64>,
 ) -> AppResult<Vec<InventoryStockBalance>> {
-    if input.quantity <= 0.0 {
-        return Err(AppError::ValidationFailed(vec![
-            "quantity must be greater than 0.".to_string()
-        ]));
+    if !input.quantity.is_finite() || input.quantity <= 0.0 {
+        return Err(transfer_refusal(
+            transfer_codes::QUANTITY_INVALID,
+            "quantity must be greater than 0.",
+            &[],
+        ));
     }
     if input.from_location_id == input.to_location_id {
-        return Err(AppError::ValidationFailed(vec![
-            "from_location_id and to_location_id must be different.".to_string(),
-        ]));
+        return Err(transfer_refusal(
+            transfer_codes::SAME_LOCATION,
+            "from_location_id and to_location_id must be different.",
+            &[],
+        ));
+    }
+    let note = input.notes.as_deref().map(str::trim).unwrap_or_default().to_string();
+    if note.chars().count() < TRANSFER_NOTE_MIN_CHARS {
+        return Err(transfer_refusal(
+            transfer_codes::NOTE_TOO_SHORT,
+            format!("A transfer needs a reason of at least {TRANSFER_NOTE_MIN_CHARS} characters."),
+            &[("min", TRANSFER_NOTE_MIN_CHARS.to_string())],
+        ));
     }
 
     let tx = db.begin().await?;
-    ensure_article_active(&tx, input.article_id).await?;
-    let from_warehouse = ensure_location_exists(&tx, input.from_location_id).await?;
-    let to_warehouse = ensure_location_exists(&tx, input.to_location_id).await?;
+    ensure_article_active(&tx, input.article_id).await.map_err(|e| {
+        coded_or_propagate(e, || {
+            transfer_refusal(
+                transfer_codes::ARTICLE_INACTIVE,
+                "The article is inactive or unknown.",
+                &[],
+            )
+        })
+    })?;
+    let from_warehouse = ensure_location_exists(&tx, input.from_location_id).await.map_err(|e| {
+        coded_or_propagate(e, || {
+            transfer_refusal(
+                transfer_codes::LOCATION_UNAVAILABLE,
+                "The source store is unknown or inactive.",
+                &[("side", "from".to_string())],
+            )
+        })
+    })?;
+    let to_warehouse = ensure_location_exists(&tx, input.to_location_id).await.map_err(|e| {
+        coded_or_propagate(e, || {
+            transfer_refusal(
+                transfer_codes::LOCATION_UNAVAILABLE,
+                "The destination store is unknown or inactive.",
+                &[("side", "to".to_string())],
+            )
+        })
+    })?;
 
-    let (from_on_hand, from_reserved) = get_balance_snapshot(&tx, input.article_id, input.from_location_id).await?;
-    let from_available = from_on_hand - from_reserved;
-    if from_available < input.quantity {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Insufficient available stock at source location ({from_available})."
-        )]));
-    }
-
-    let (to_on_hand, to_reserved) = get_balance_snapshot(&tx, input.article_id, input.to_location_id).await?;
-
-    upsert_balance(
-        &tx,
-        input.article_id,
-        from_warehouse,
-        input.from_location_id,
-        from_on_hand - input.quantity,
-        from_reserved,
-    )
-    .await?;
-    upsert_balance(
-        &tx,
-        input.article_id,
-        to_warehouse,
-        input.to_location_id,
-        to_on_hand + input.quantity,
-        to_reserved,
-    )
-    .await?;
-
-    let source_type = input
-        .source_type
-        .clone()
-        .unwrap_or_else(|| "INTERNAL_TRANSFER".to_string());
     // Tracked articles move lot by lot (chosen lot, else FEFO) so each lot follows its parts.
     let tracking = crate::inventory::lots::article_tracking(&tx, input.article_id).await?;
-    crate::inventory::lots::ensure_whole_units(&tracking, input.quantity)?;
+    crate::inventory::lots::ensure_whole_units(&tracking, input.quantity).map_err(|e| {
+        coded_or_propagate(e, || {
+            transfer_refusal(
+                transfer_codes::WHOLE_UNITS,
+                "Serial-tracked articles move by whole units.",
+                &[],
+            )
+        })
+    })?;
+
+    let (from_on_hand, from_reserved) = get_balance_snapshot(&tx, input.article_id, input.from_location_id).await?;
+    let quantity_requested = input.quantity;
+    let from_available = from_on_hand - from_reserved;
+    if from_available + TRANSFER_QTY_TOLERANCE < quantity_requested {
+        let available = transfer_qty_text(from_available.max(0.0));
+        return Err(transfer_refusal(
+            transfer_codes::INSUFFICIENT_AVAILABLE,
+            format!(
+                "Insufficient available stock at the source store ({available}); reserved stock cannot be transferred."
+            ),
+            &[
+                ("available", available.clone()),
+                ("requested", transfer_qty_text(input.quantity)),
+            ],
+        ));
+    }
+
+    let lot_refusal = |err: AppError| {
+        let detail = err.to_string();
+        coded_or_propagate(err, || {
+            transfer_refusal(
+                transfer_codes::LOT_UNAVAILABLE,
+                detail,
+                &[("requested", transfer_qty_text(input.quantity))],
+            )
+        })
+    };
     let allocation: Vec<(Option<i64>, f64)> = if tracking.is_tracked() {
         match input.lot_id {
             Some(lot) => {
@@ -2874,22 +2997,63 @@ pub async fn transfer_stock(
                     lot,
                     input.article_id,
                     input.from_location_id,
-                    input.quantity,
+                    quantity_requested,
                 )
-                .await?;
-                vec![(Some(lot), input.quantity)]
+                .await
+                .map_err(lot_refusal)?;
+                vec![(Some(lot), quantity_requested)]
             }
             None => {
-                crate::inventory::lots::fefo_allocate(&tx, input.article_id, input.from_location_id, input.quantity)
-                    .await?
+                crate::inventory::lots::fefo_allocate(&tx, input.article_id, input.from_location_id, quantity_requested)
+                    .await
+                    .map_err(lot_refusal)?
                     .into_iter()
                     .map(|(lot, qty)| (Some(lot), qty))
                     .collect()
             }
         }
     } else {
-        vec![(None, input.quantity)]
+        vec![(None, quantity_requested)]
     };
+
+    let (to_on_hand, to_reserved) = get_balance_snapshot(&tx, input.article_id, input.to_location_id).await?;
+
+    // Raw arithmetic, like every other movement: the reserved quantity is written back exactly as
+    // read (a transfer never changes it). Only when the result falls below the raw reserved
+    // quantity by float noise (within the tolerance of the check above) is the on-hand raised to
+    // it, so the balance rules never refuse a quantity the check accepted.
+    let source_on_hand_after = {
+        let after = from_on_hand - quantity_requested;
+        if after < from_reserved && from_reserved - after <= TRANSFER_QTY_TOLERANCE {
+            from_reserved
+        } else {
+            after
+        }
+    };
+
+    upsert_balance(
+        &tx,
+        input.article_id,
+        from_warehouse,
+        input.from_location_id,
+        source_on_hand_after,
+        from_reserved,
+    )
+    .await?;
+    upsert_balance(
+        &tx,
+        input.article_id,
+        to_warehouse,
+        input.to_location_id,
+        to_on_hand + quantity_requested,
+        to_reserved,
+    )
+    .await?;
+
+    let source_type = input
+        .source_type
+        .clone()
+        .unwrap_or_else(|| "INTERNAL_TRANSFER".to_string());
     let mut destination_on_hand = to_on_hand;
     for (lot_id, quantity) in allocation {
         let out_id = insert_inventory_transaction(
@@ -2904,7 +3068,7 @@ pub async fn transfer_stock(
             input.source_id,
             input.source_ref.as_deref(),
             None,
-            input.notes.as_deref(),
+            Some(note.as_str()),
             None,
         )
         .await?;
@@ -2920,10 +3084,12 @@ pub async fn transfer_stock(
             input.source_id,
             input.source_ref.as_deref(),
             None,
-            input.notes.as_deref(),
+            Some(note.as_str()),
             None,
         )
         .await?;
+        set_movement_actor(&tx, out_id, actor_id).await?;
+        set_movement_actor(&tx, in_id, actor_id).await?;
         if let Some(lot) = lot_id {
             crate::inventory::lots::set_movement_lot(&tx, out_id, lot).await?;
             crate::inventory::lots::set_movement_lot(&tx, in_id, lot).await?;

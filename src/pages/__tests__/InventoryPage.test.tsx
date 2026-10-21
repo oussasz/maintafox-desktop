@@ -290,6 +290,41 @@ describe("InventoryPage", () => {
     expect(within(okRow).getAllByText("—").length).toBeGreaterThan(0);
   });
 
+  it("flags an article whose total on hand is negative with a text badge, and not a healthy one", async () => {
+    primeLists([
+      article(),
+      article({
+        id: 6,
+        article_code: "ART-NEG",
+        article_name: "Oversold seal",
+        on_hand_qty: -2,
+        reserved_qty: 0,
+        available_qty: -2,
+      }),
+    ]);
+
+    renderPage();
+
+    const negativeRow = (await screen.findByText("ART-NEG")).closest("tr");
+    const healthyRow = screen.getByText("ART-001").closest("tr");
+    if (!negativeRow || !healthyRow) throw new Error("expected article rows");
+    const badge = within(negativeRow).getByText("Negative stock");
+    expect(badge.closest("span[title]")).toHaveAttribute(
+      "title",
+      "Total over all stores is negative. To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",
+    );
+    expect(within(healthyRow).queryByText("Negative stock")).toBeNull();
+
+    // The chip is also a status of the list's stock filter.
+    Element.prototype.scrollIntoView = vi.fn();
+    const stockFilter = screen.getAllByRole("combobox")[1];
+    if (!stockFilter) throw new Error("expected the stock filter");
+    fireEvent.click(stockFilter);
+    fireEvent.click(await screen.findByRole("option", { name: "Negative stock" }));
+    await waitFor(() => expect(screen.queryByText("ART-001")).toBeNull());
+    expect(screen.getByText("ART-NEG")).toBeInTheDocument();
+  });
+
   it("opens the article named in ?articleId= (link from another module)", async () => {
     primeLists([article(), article({ id: 5, article_code: "ART-002", article_name: "Seal kit" })]);
 
@@ -308,7 +343,9 @@ describe("InventoryPage", () => {
 
     renderPage("/inventory?articleId=4");
 
-    expect(await screen.findByText("detail ART-001")).toBeInTheDocument();
+    // Two list loads in a row (the search hiding the article, then the cleared search): give them
+    // more than the default second under a loaded full-suite run.
+    expect(await screen.findByText("detail ART-001", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(useInventoryStore.getState().articleSearch).toBe("");
   });
 

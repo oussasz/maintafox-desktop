@@ -3,7 +3,8 @@
 //! The generic materializer writes the replicated columns. Some tables also feed data that each
 //! device derives for itself; those derivations run here, in the same transaction as the apply:
 //! - `inventory_transactions`: a received movement changes `stock_balances` of its location
-//!   (`inventory::ledger`);
+//!   (`inventory::ledger`), never refused; a location left below zero gets its one review item
+//!   "négatif — à rapprocher", closed again by a count or a later entry (`inventory::negative_stock`);
 //! - `org_nodes`: `ancestor_path` / `depth` (paths of local ids) are recomputed for the node and
 //!   its subtree;
 //! - `user_dismissals`: `scope_key` (`<issue_code>:<local equipment id>`) is rebuilt;
@@ -95,12 +96,16 @@ pub(crate) fn before_upsert(
     }
 }
 
+/// Conflict code of an audit chain stub refused on arrival (`audit::chain::inbound_stub_check`).
+pub(crate) const AUDIT_STUB_REFUSED: &str = "AUDIT_STUB_REFUSED";
+
 /// Checks of an inbound row that need the local database; `Some` stops the apply with that
 /// outcome (recorded like every other sync conflict, for a person to decide).
 /// - `app_settings`: the fiscal-year start month and the tenant currency cannot change once this
 ///   device stores postings that depend on them (`finance::fiscal`, `inventory::fx`). A change
 ///   made on a device where they were still free is refused here, as it is in Settings.
 /// - `weekly_schedules`: a week never moves backwards in its lifecycle by synchronisation.
+/// - `audit_chain_stubs`: never this PC's own chain, never malformed (`audit::chain`).
 pub(crate) async fn before_upsert_checked(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
@@ -108,6 +113,14 @@ pub(crate) async fn before_upsert_checked(
     payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
     use crate::sync::materialize::ApplyOutcome;
+    if layout.def.entity_type == "audit_chain_stubs" {
+        return Ok(crate::audit::chain::inbound_stub_check(conn, payload)
+            .await?
+            .map(|message| ApplyOutcome::Conflict {
+                code: AUDIT_STUB_REFUSED.into(),
+                message,
+            }));
+    }
     // `user_accounts` / `user_scope_assignments` / `roles`: a change that would leave this PC
     // without an active administrator is a conflict (`auth::last_admin`).
     if let Some(outcome) = crate::auth::last_admin::inbound_change_check(
@@ -515,15 +528,19 @@ async fn apply_movement_to_balance(conn: &impl ConnectionTrait, movement_id: i64
     let quantity: f64 = row
         .try_get("", "quantity")
         .map_err(|e| hook_err("inventory_transactions", e))?;
+    let (article_id, location_id) = (get_i64("article_id")?, get_i64("location_id")?);
     crate::inventory::ledger::apply_received_movement(
         conn,
-        get_i64("article_id")?,
+        article_id,
         get_i64("warehouse_id")?,
-        get_i64("location_id")?,
+        location_id,
         &movement_type,
         quantity,
     )
-    .await
+    .await?;
+    // Applied as received (a physical fact); a location left below zero is to reconcile, one
+    // item per article and location (`inventory::negative_stock`).
+    crate::inventory::negative_stock::reconcile_pair_in(conn, article_id, location_id).await
 }
 
 /// `ancestor_path` (root `/{id}/`, child `{parent path}{id}/`) and `depth` for a node and every
