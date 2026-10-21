@@ -55,6 +55,9 @@
 //! - `user_accounts`: the built-in "admin" account received with its password never changed is
 //!   disabled on arrival when this PC has another administrator or did not have the account
 //!   (`auth::builtin_admin::after_inbound_user_account`).
+//! - `user_accounts`: an account received with a username already used here by another account
+//!   (trimmed, case-insensitive) is refused as a `USERNAME_CLASH` conflict, never renamed or merged
+//!   (`sync::username_clash::inbound_username_clash`).
 //! - `user_accounts` / `user_scope_assignments` / `roles`: a received change or delete that would
 //!   leave this PC without an active administrator is refused as a conflict
 //!   (`auth::last_admin::inbound_change_check`, `before_upsert_checked`, `before_delete_checked`).
@@ -120,6 +123,15 @@ pub(crate) async fn before_upsert_checked(
                 code: AUDIT_STUB_REFUSED.into(),
                 message,
             }));
+    }
+    // `user_accounts`: a username already used here by another account is a coded conflict, not a
+    // failed insert (`sync::username_clash::inbound_username_clash`).
+    if layout.def.entity_type == "user_accounts" {
+        if let Some(outcome) =
+            crate::sync::username_clash::inbound_username_clash(conn, entity_sync_id, payload).await?
+        {
+            return Ok(Some(outcome));
+        }
     }
     // `user_accounts` / `user_scope_assignments` / `roles`: a change that would leave this PC
     // without an active administrator is a conflict (`auth::last_admin`).

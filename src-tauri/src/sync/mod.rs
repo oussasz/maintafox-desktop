@@ -20,6 +20,7 @@ pub mod row_spec;
 pub mod row_state;
 pub mod seeded_identity;
 pub mod transport;
+pub mod username_clash;
 
 #[cfg(test)]
 mod convergence_tests;

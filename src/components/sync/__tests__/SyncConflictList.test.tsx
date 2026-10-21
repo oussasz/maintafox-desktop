@@ -165,6 +165,29 @@ describe("SyncConflictList", () => {
       ),
     );
   });
+
+  it("explains a username created on two PCs and offers no version to take", async () => {
+    inbox = [
+      {
+        ...conflict,
+        entity_type: "user_accounts",
+        conflict_type: "USERNAME_CLASH",
+        recommended_action: "review",
+        local_payload_json: null,
+        inbound_payload_json: JSON.stringify({ username: "chef", display_name: "Chef" }),
+      },
+    ];
+    mockRefresh.mockResolvedValue(undefined);
+
+    render(<SyncConflictList />);
+
+    expect(await screen.findByText("sync.conflictKind.USERNAME_CLASH")).toBeInTheDocument();
+    expect(screen.getByText("sync.usernameClash")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /sync\.panel\.action\.accept_/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "sync.panel.action.dismiss" })).toBeInTheDocument();
+  });
 });
 
 describe("conflict reason minimum follows the server", () => {

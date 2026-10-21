@@ -27,6 +27,7 @@ import {
   KNOWN_CONFLICT_KINDS,
   KNOWN_SYNC_ENTITY_TYPES,
   clashingNumber,
+  clashingUsername,
   conflictRecordIdentity,
 } from "./sync-conflict-display";
 
@@ -151,10 +152,14 @@ export function SyncConflictList({
         {conflictInbox.map((c) => {
           const id = conflictRecordIdentity(c);
           const recommended = c.recommended_action;
+          // A username created on two PCs: no version to choose and no merge tool (CMMS Advisor
+          // decision); a person keeps one account, disables the other, then dismisses this.
           const primary: ConflictAction[] =
             c.conflict_type === "CODE_CLASH"
               ? ["renumber_local"]
-              : ["accept_local", "accept_remote"];
+              : c.conflict_type === "USERNAME_CLASH"
+                ? []
+                : ["accept_local", "accept_remote"];
           const actions: ConflictAction[] = [
             ...primary,
             ...(showTriageActions ? (["retry_later", "escalate"] as ConflictAction[]) : []),
@@ -190,6 +195,13 @@ export function SyncConflictList({
               {c.conflict_type === "CODE_CLASH" ? (
                 <p className="mt-1 text-xs text-text-primary">
                   {t("sync.codeClash", { number: clashingNumber(c) ?? t("sync.versionUnknown") })}
+                </p>
+              ) : null}
+              {c.conflict_type === "USERNAME_CLASH" ? (
+                <p className="mt-1 text-xs text-text-primary">
+                  {t("sync.usernameClash", {
+                    username: clashingUsername(c) ?? t("sync.versionUnknown"),
+                  })}
                 </p>
               ) : null}
               <details className="mt-1 text-xs text-text-muted">
