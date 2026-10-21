@@ -33,6 +33,9 @@ pub enum StartupEvent {
         from_version: String,
         to_version: String,
         reason: String,
+        /// Set when the pre-update backup could not be verified (missing, no checksum, changed):
+        /// nothing was restored and no reinstall is offered.
+        backup_refusal: Option<String>,
     },
 }
 
@@ -115,6 +118,19 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Phase 1: database integrity and connection
     info!("startup: initialising database");
     let db_path = resolve_db_path(&app)?;
+    // A restore staged for a rollback whose installer never ran is cancelled first: only a restore
+    // the update journal justifies (or one an administrator staged) is ever applied.
+    match crate::updater::reconcile_staged_restore_at_startup(&app, std::path::Path::new(&db_path)) {
+        Ok(true) => warn!("startup: the rollback was not installed; its staged restore was cancelled"),
+        Ok(false) => {}
+        Err(e) => {
+            let reason = format!("The staged restore was not applied: the update journal could not be checked: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    }
     // A restore staged by `restore_from_backup` is swapped in before the database is opened.
     let restored = match crate::backup::restore::apply_pending_restore(std::path::Path::new(&db_path)) {
         Ok(restored) => restored,
@@ -168,6 +184,7 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
                     from_version: j.from_version.clone(),
                     to_version: j.to_version.clone(),
                     reason: j.failure.clone().unwrap_or_default(),
+                    backup_refusal: j.backup_refusal.clone(),
                 },
             );
         }
@@ -212,6 +229,7 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
                             from_version: view.from_version,
                             to_version: view.to_version,
                             reason,
+                            backup_refusal: view.backup_refusal,
                         },
                     ),
                     Err(restore_error) => {

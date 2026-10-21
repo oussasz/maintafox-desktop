@@ -4,10 +4,13 @@
 //!   device's activation token. The server decides (ring, rollout %, pause, recall, minimum
 //!   version) and answers in the Tauri updater format plus a `maintafox` object: upgrade or
 //!   rollback, mandatory or not, notes in French and English.
-//! - **Install:** the manifest is checked again right before downloading (a recall or pause stops
-//!   the install), the database is backed up (`pre_update` run, Phase 1.3 backup service), the
-//!   journal (`journal.rs`) is written, the signed installer is downloaded with progress and
-//!   verified against the public key built into this app, then installed (the app restarts).
+//! - **Install:** the manifest is checked again (a recall or pause stops the install, and an offer
+//!   other than the one the administrator confirmed is never installed), the signed installer is
+//!   downloaded with progress and verified against the public key built into this app, and only
+//!   then the database is backed up (`pre_update` run, Phase 1.3 backup service) or its restore
+//!   staged, the journal (`journal.rs`) written and the installer started at once (the app
+//!   restarts). Nothing the user can do happens between the backup and the installer, so no
+//!   change made during the download is left out of the backup.
 //! - **Failed database update:** migrations are forward-only. When the new version cannot update
 //!   the database, it stages the pre-update backup (Phase 1.3 restore) and asks for the previous
 //!   signed installer (`X-Maintafox-Rollback-To`); the previous version starts on the backup.
@@ -125,6 +128,8 @@ pub struct UpdateCheckResult {
     pub available: bool,
     pub current_version: String,
     pub version: Option<String>,
+    /// The catalog release offered: the install names it back (`ConfirmedOffer`).
+    pub release_id: Option<String>,
     pub notes: Option<String>,
     pub pub_date: Option<String>,
     pub kind: Option<UpdateKind>,
@@ -143,6 +148,7 @@ impl UpdateCheckResult {
             available: false,
             current_version: current_version.to_string(),
             version: None,
+            release_id: None,
             notes: None,
             pub_date: None,
             kind: None,
@@ -229,8 +235,47 @@ pub fn accept_offer(
     }
 }
 
-/// Asks the manifest. What it offers is checked by `accept_offer` here, and the installer's
-/// signature against this build's public key before anything is installed.
+/// The installer name the release workflow signs and the control API requires for `version`.
+pub fn installer_file_name(version: &str) -> String {
+    format!("Maintafox_{}_x64-setup.exe", version.trim())
+}
+
+/// The file a Tauri updater signature was made for: the `file:` field of the minisign trusted
+/// comment (`trusted comment: timestamp:<n>\tfile:<name>`; the signature is base64 of the minisign
+/// text). The trusted comment is covered by the signature's global signature, which the updater
+/// plugin verifies against this build's public key before it returns the downloaded bytes.
+pub fn signed_file_name(signature_base64: &str) -> Result<String, String> {
+    use base64::Engine;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(signature_base64.trim())
+        .map_err(|e| format!("the update signature is not base64: {e}"))?;
+    let text = String::from_utf8(raw).map_err(|_| "the update signature is not text".to_string())?;
+    let trusted = text
+        .lines()
+        .find_map(|line| line.strip_prefix("trusted comment:"))
+        .ok_or_else(|| "the update signature has no trusted comment".to_string())?;
+    trusted
+        .trim()
+        .split('\t')
+        .find_map(|field| field.strip_prefix("file:"))
+        .map(str::to_string)
+        .ok_or_else(|| "the update signature does not name the signed file".to_string())
+}
+
+/// Binds the signature to the offered version (security review S2): a correctly signed installer
+/// of another version offered under this version number is refused. Case-sensitive, exact.
+pub fn check_signed_file(signature_base64: &str, offered: &str) -> Result<(), String> {
+    let expected = installer_file_name(offered);
+    let named = signed_file_name(signature_base64)?;
+    if named == expected {
+        Ok(())
+    } else {
+        Err(format!("the update signature was made for {named}, not for {expected}"))
+    }
+}
+
+/// Asks the manifest. What it offers is checked by `accept_offer` and `check_signed_file` here,
+/// and the installer's signature against this build's public key before anything is installed.
 pub async fn ask_manifest(
     app: &AppHandle,
     db: &sea_orm::DatabaseConnection,
@@ -279,7 +324,9 @@ pub async fn ask_manifest(
         None => Ok(ManifestAnswer::None),
         Some(update) => {
             let ext = parse_extension(&update.raw_json)?;
-            if let Err(why) = accept_offer(&running_version(), &update.version, &ext, rollback_to) {
+            let accepted = accept_offer(&running_version(), &update.version, &ext, rollback_to)
+                .and_then(|()| check_signed_file(&update.signature, &update.version));
+            if let Err(why) = accepted {
                 tracing::warn!(offered = %update.version, "update: offer refused: {why}");
                 return Ok(ManifestAnswer::NotAcceptable(why));
             }
@@ -311,6 +358,7 @@ pub async fn check(app: &AppHandle, db: &sea_orm::DatabaseConnection, locale: Op
             available: true,
             current_version: current,
             version: Some(update.version.clone()),
+            release_id: Some(ext.release_id.clone()),
             notes: update.body.clone(),
             pub_date: update.date.map(|d| d.to_string()),
             kind: Some(ext.kind),
@@ -335,19 +383,22 @@ pub async fn check(app: &AppHandle, db: &sea_orm::DatabaseConnection, locale: Op
 pub enum DowngradePlan {
     /// No migration ran since `target`: the older version opens this database as it is.
     KeepDatabase,
-    /// Migrations ran since `target`: its pre-update backup must be restored first.
-    RestoreBackup { backup_path: PathBuf },
+    /// Migrations ran since `target`: its pre-update backup must be restored first. `sha256`: the
+    /// checksum recorded when the backup was taken (checked again before it is staged).
+    RestoreBackup { backup_path: PathBuf, sha256: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum InstallRefusal {
-    /// No pre-update backup of `target` is known on this device.
+    /// No pre-update backup of `target` is known on this device, or it cannot be verified
+    /// (no checksum recorded, or the file changed since it was taken).
     RollbackBackupMissing,
     /// Changes not yet synchronised would be lost by the restore.
     RollbackUnsyncedChanges { count: i64 },
-    /// The server no longer offers this update (recalled or paused since the check), or offers
-    /// something this device does not accept.
+    /// The server no longer offers this update (recalled or paused since the check), offers
+    /// something this device does not accept, or offers something other than what the
+    /// administrator confirmed (they are asked again).
     UpdateWithdrawn,
     /// The rollback after a failed database update was refused (none offered, a refusal status,
     /// another version): keep this PC as it is and contact the vendor.
@@ -378,12 +429,25 @@ pub fn plan_downgrade(
     let Some(path) = j.backup_path.as_ref().map(PathBuf::from).filter(|p| p.is_file()) else {
         return Err(InstallRefusal::RollbackBackupMissing);
     };
+    // A backup whose checksum was not recorded cannot be shown to be the one that was taken.
+    let Some(sha256) = j.backup_sha256.clone().filter(|s| !s.trim().is_empty()) else {
+        return Err(InstallRefusal::RollbackBackupMissing);
+    };
     if unsynced_changes > 0 {
         return Err(InstallRefusal::RollbackUnsyncedChanges {
             count: unsynced_changes,
         });
     }
-    Ok(DowngradePlan::RestoreBackup { backup_path: path })
+    Ok(DowngradePlan::RestoreBackup {
+        backup_path: path,
+        sha256,
+    })
+}
+
+/// Whether the file at `path` is the backup that was taken (the checksum recorded then).
+pub fn backup_matches_checksum(path: &Path, expected_sha256: &str) -> AppResult<bool> {
+    let actual = crate::backup::file_sha256(path)?;
+    Ok(actual.eq_ignore_ascii_case(expected_sha256.trim()))
 }
 
 pub async fn applied_migration_count(db: &sea_orm::DatabaseConnection) -> AppResult<i64> {
@@ -398,9 +462,17 @@ pub async fn applied_migration_count(db: &sea_orm::DatabaseConnection) -> AppRes
     Ok(row.try_get::<i64>("", "cnt")?)
 }
 
+/// Local changes not yet synchronised (captured, pending or in flight): a restore would lose them.
+async fn unsynced_change_count(db: &sea_orm::DatabaseConnection) -> AppResult<i64> {
+    let summary = crate::sync::queries::get_sync_state_summary(db).await?;
+    Ok(summary.pending_outbox_count + summary.in_flight_outbox_count)
+}
+
 // ── Install ─────────────────────────────────────────────────────────────────────────────────
 
 /// Progress sent to the window while installing (`UpdateProgressEvent` in shared/ipc-types.ts).
+/// Order: downloading, then backing up (upgrade) or restoring the backup (rollback), then
+/// installing.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum UpdateProgressEvent {
@@ -421,6 +493,24 @@ pub enum InstallOutcome {
     Refused {
         refusal: InstallRefusal,
     },
+}
+
+/// The offer the administrator saw and confirmed (the last check's `version`, `kind` and
+/// `release_id`). The install re-asks the manifest and installs only this offer: anything else
+/// (another version, a rollback instead of an upgrade, another catalog release) is refused with
+/// `UpdateWithdrawn`, and the UI shows the new offer for a new confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ConfirmedOffer {
+    pub version: String,
+    pub kind: UpdateKind,
+    pub release_id: String,
+}
+
+/// Whether what the manifest offers now is exactly what the administrator confirmed.
+pub fn offer_matches_confirmation(offered_version: &str, ext: &ManifestExtension, confirmed: &ConfirmedOffer) -> bool {
+    offered_version.trim() == confirmed.version.trim()
+        && ext.kind == confirmed.kind
+        && ext.release_id == confirmed.release_id
 }
 
 /// Where an update keeps its files: the journal (app data folder), the pre-update backups (the
@@ -451,25 +541,73 @@ pub struct InstallTarget {
     pub kind: UpdateKind,
 }
 
-/// Outcome of everything that runs before the download.
+/// Outcome of the preparation that runs right before the installer.
 #[derive(Debug)]
 pub enum Prepared {
-    /// The journal is written; the download may start. `staged_restore`: a rollback staged the
-    /// pre-update backup (to cancel if the installer does not run).
+    /// The journal is written; the installer must start now. `staged_restore`: a rollback staged
+    /// the pre-update backup (cancelled if the installer does not start).
     Ready {
         entry: Box<UpdateJournal>,
         staged_restore: bool,
     },
-    /// Nothing was changed.
+    /// Nothing was changed (a restore staged on the way was cancelled again).
     Refused(InstallRefusal),
 }
 
 /// Loads this installation's database key (the OS credential store in the app).
 pub type KeyLoader = dyn Fn() -> AppResult<crate::db::encryption::DatabaseKey> + Sync;
 
-/// Before the download: the pre-update backup (upgrade) or the downgrade plan (rollback), then the
-/// journal. Every failure returns before the journal is written, so nothing is downloaded or
-/// installed without its backup, and the next start does not believe an update ran.
+/// Only one install or reinstall runs at a time in this process (security review N2): two would
+/// race on the backup, the staged restore, the journal and the installer.
+static INSTALL_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Held while an install or reinstall runs; released when dropped.
+#[derive(Debug)]
+pub struct InstallSlot(&'static std::sync::atomic::AtomicBool);
+
+impl InstallSlot {
+    /// The process-wide slot of `install` / `reinstall_previous`.
+    pub fn acquire() -> AppResult<Self> {
+        Self::acquire_on(&INSTALL_RUNNING)
+    }
+
+    fn acquire_on(flag: &'static std::sync::atomic::AtomicBool) -> AppResult<Self> {
+        use std::sync::atomic::Ordering;
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| Self(flag))
+            .map_err(|_| {
+                AppError::ValidationFailed(vec!["an update is already being installed on this computer".to_string()])
+            })
+    }
+}
+
+impl Drop for InstallSlot {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Before the download, without changing anything: a rollback this device would refuse anyway
+/// (no verifiable pre-update backup, unsynchronised changes) is refused before minutes of
+/// download. `prepare_install` decides again, authoritatively, after the download.
+async fn downgrade_precheck(
+    db: &sea_orm::DatabaseConnection,
+    paths: &UpdatePaths,
+    target: &InstallTarget,
+) -> AppResult<Option<InstallRefusal>> {
+    if target.kind != UpdateKind::Rollback {
+        return Ok(None);
+    }
+    let previous = journal::load(&paths.data_dir)?;
+    let schema_now = applied_migration_count(db).await?;
+    let pending = unsynced_change_count(db).await?;
+    Ok(plan_downgrade(previous.as_ref(), &target.running, &target.version, schema_now, pending).err())
+}
+
+/// Right before the installer (after the download): the pre-update backup (upgrade) or the
+/// downgrade plan and its staged restore (rollback), then the journal. Every refusal or failure
+/// leaves nothing behind (no journal entry, no staged restore), so the next start does not believe
+/// an update ran and never applies a restore nobody installed.
 pub async fn prepare_install(
     db: &sea_orm::DatabaseConnection,
     paths: &UpdatePaths,
@@ -494,6 +632,7 @@ pub async fn prepare_install(
         failure: None,
         rollback_refusal: None,
         rollback_allowed_version: None,
+        backup_refusal: None,
         notice_acknowledged: false,
     };
     let mut staged_restore = false;
@@ -513,12 +652,16 @@ pub async fn prepare_install(
             entry.backup_sha256 = Some(backup.sha256_checksum);
         }
         UpdateKind::Rollback => {
-            let summary = crate::sync::queries::get_sync_state_summary(db).await?;
-            let pending = summary.pending_outbox_count + summary.in_flight_outbox_count;
+            let pending = unsynced_change_count(db).await?;
             match plan_downgrade(previous.as_ref(), &target.running, &target.version, schema_now, pending) {
                 Err(refusal) => return Ok(Prepared::Refused(refusal)),
                 Ok(DowngradePlan::KeepDatabase) => {}
-                Ok(DowngradePlan::RestoreBackup { backup_path }) => {
+                Ok(DowngradePlan::RestoreBackup { backup_path, sha256 }) => {
+                    // The file must be the backup that was taken (security review S8).
+                    if !backup_matches_checksum(&backup_path, &sha256)? {
+                        tracing::error!(backup = %backup_path.display(), "update: pre-update backup checksum mismatch; rollback refused");
+                        return Ok(Prepared::Refused(InstallRefusal::RollbackBackupMissing));
+                    }
                     progress(UpdateProgressEvent::RestoringBackup);
                     // The restore service's checks (integrity, this installation's key, schema not
                     // newer) and its safety backup of the current database.
@@ -531,44 +674,67 @@ pub async fn prepare_install(
                         actor,
                     )
                     .await?;
+                    // A change made while the restore was being staged would be lost with it.
+                    let pending_now = match unsynced_change_count(db).await {
+                        Ok(count) => count,
+                        Err(e) => {
+                            crate::backup::restore::cancel_pending_restore(&paths.live_db)?;
+                            return Err(e);
+                        }
+                    };
+                    if pending_now > 0 {
+                        crate::backup::restore::cancel_pending_restore(&paths.live_db)?;
+                        return Ok(Prepared::Refused(InstallRefusal::RollbackUnsyncedChanges {
+                            count: pending_now,
+                        }));
+                    }
                     staged_restore = true;
                     entry.backup_path = Some(backup_path.to_string_lossy().to_string());
+                    entry.backup_sha256 = Some(sha256);
                 }
             }
         }
     }
-    journal::save(&paths.data_dir, &entry)?;
+    if let Err(e) = journal::save(&paths.data_dir, &entry) {
+        // Without its journal entry the staged restore would not be justified at the next start.
+        if staged_restore {
+            crate::backup::restore::cancel_pending_restore(&paths.live_db)?;
+        }
+        return Err(e);
+    }
     Ok(Prepared::Ready {
         entry: Box::new(entry),
         staged_restore,
     })
 }
 
-/// The installer did not start: the journal says so, and a restore staged for the older version
-/// that was not installed is removed.
+/// The installer did not start: a restore staged for the older version that was not installed is
+/// removed first, then the journal says so.
 pub fn record_install_not_started(
     paths: &UpdatePaths,
     entry: &mut UpdateJournal,
     staged_restore: bool,
     failure: &str,
 ) -> AppResult<()> {
+    let cancelled = if staged_restore {
+        crate::backup::restore::cancel_pending_restore(&paths.live_db).map(|_| ())
+    } else {
+        Ok(())
+    };
     entry.state = JournalState::InstallNotCompleted;
     entry.failure = Some(failure.to_string());
     entry.finished_at = Some(chrono::Utc::now().to_rfc3339());
     entry.notice_acknowledged = true;
-    journal::save(&paths.data_dir, entry)?;
-    if staged_restore {
-        crate::backup::restore::cancel_pending_restore(&paths.live_db)?;
-    }
-    Ok(())
+    let saved = journal::save(&paths.data_dir, entry);
+    cancelled.and(saved)
 }
 
-/// Downloads (progress), then hands the installer to Windows; the app exits on success.
-async fn download_and_install(mut update: Update, progress: &(dyn Fn(UpdateProgressEvent) + Sync)) -> AppResult<()> {
-    // The download URL is a presigned object-storage URL: it must not carry the device token.
-    update.headers.clear();
+/// Downloads with progress; the plugin verifies the minisign signature against this build's
+/// public key before it returns the bytes. The download URL is a presigned object-storage URL:
+/// the caller has removed the device token from the update's headers.
+async fn download_verified(update: &Update, progress: &(dyn Fn(UpdateProgressEvent) + Sync)) -> AppResult<Vec<u8>> {
     let mut downloaded: u64 = 0;
-    let bytes = update
+    update
         .download(
             |chunk, total| {
                 downloaded += chunk as u64;
@@ -580,24 +746,60 @@ async fn download_and_install(mut update: Update, progress: &(dyn Fn(UpdateProgr
             || {},
         )
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("download or signature check failed: {e}")))?;
-    progress(UpdateProgressEvent::Installing);
-    update
-        .install(bytes)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("the installer could not be started: {e}")))?;
-    Ok(())
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("download or signature check failed: {e}")))
 }
 
-/// Install what the manifest offers now. The caller (`commands::updater`) has checked who may
-/// install; the user confirmed in the UI.
+/// The install sequence (security review B1): download and verify first, while the app stays
+/// usable and nothing is written; then prepare (backup or staged restore, journal); then the
+/// installer at once, with nothing awaited in between, so no change can be made after the backup
+/// was taken. If the installer cannot start, the staged restore is cancelled and the journal says
+/// so. `download` and `install` are the updater plugin's in the app.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_install<Dl, Inst>(
+    db: &sea_orm::DatabaseConnection,
+    paths: &UpdatePaths,
+    target: &InstallTarget,
+    actor: Option<i32>,
+    load_key: &KeyLoader,
+    progress: &(dyn Fn(UpdateProgressEvent) + Sync),
+    download: Dl,
+    install: Inst,
+) -> AppResult<InstallOutcome>
+where
+    Dl: std::future::Future<Output = AppResult<Vec<u8>>>,
+    Inst: FnOnce(Vec<u8>) -> AppResult<()>,
+{
+    if let Some(refusal) = downgrade_precheck(db, paths, target).await? {
+        return Ok(InstallOutcome::Refused { refusal });
+    }
+    // Nothing is written before or during the download: a failed download leaves no trace.
+    let bytes = download.await?;
+    let (mut entry, staged_restore) = match prepare_install(db, paths, target, actor, load_key, progress).await? {
+        Prepared::Refused(refusal) => return Ok(InstallOutcome::Refused { refusal }),
+        Prepared::Ready { entry, staged_restore } => (*entry, staged_restore),
+    };
+    tracing::info!(from = %entry.from_version, to = %entry.to_version, kind = ?entry.kind, "update: installing");
+    progress(UpdateProgressEvent::Installing);
+    // On Windows the plugin starts the installer and exits this process: it returns only on error.
+    if let Err(e) = install(bytes) {
+        // Nothing was installed: no restore stays staged and the next start knows it.
+        record_install_not_started(paths, &mut entry, staged_restore, &e.to_string())?;
+        return Err(e);
+    }
+    Ok(InstallOutcome::Restarting)
+}
+
+/// Install the offer the administrator confirmed, if the manifest still offers exactly that. The
+/// caller (`commands::updater`) has checked who may install and holds the install slot.
 pub async fn install(
     app: &AppHandle,
     db: &sea_orm::DatabaseConnection,
     locale: Option<&str>,
     actor: Option<i32>,
+    confirmed: &ConfirmedOffer,
     progress: &(dyn Fn(UpdateProgressEvent) + Sync),
 ) -> AppResult<InstallOutcome> {
-    let (update, ext) = match ask_manifest(app, db, locale, None).await? {
+    let (mut update, ext) = match ask_manifest(app, db, locale, None).await? {
         ManifestAnswer::Offer(update, ext) => (*update, ext),
         ManifestAnswer::NotConfigured => {
             return Err(AppError::ValidationFailed(vec![
@@ -615,32 +817,39 @@ pub async fn install(
             })
         }
     };
+    if !offer_matches_confirmation(&update.version, &ext, confirmed) {
+        tracing::warn!(
+            confirmed = %confirmed.version, confirmed_kind = ?confirmed.kind, offered = %update.version,
+            offered_kind = ?ext.kind, "update: the offer changed since it was confirmed; asking again"
+        );
+        return Ok(InstallOutcome::Refused {
+            refusal: InstallRefusal::UpdateWithdrawn,
+        });
+    }
     let paths = UpdatePaths::of(app)?;
     let target = InstallTarget {
         running: running_version(),
         version: update.version.clone(),
         kind: ext.kind,
     };
-    let prepared = prepare_install(
+    // The download URL is a presigned object-storage URL: it must not carry the device token.
+    update.headers.clear();
+    let update = &update;
+    run_install(
         db,
         &paths,
         &target,
         actor,
         &crate::commands::backup::require_database_key,
         progress,
+        download_verified(update, progress),
+        |bytes| {
+            update
+                .install(bytes)
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("the installer could not be started: {e}")))
+        },
     )
-    .await?;
-    let (mut entry, staged_restore) = match prepared {
-        Prepared::Refused(refusal) => return Ok(InstallOutcome::Refused { refusal }),
-        Prepared::Ready { entry, staged_restore } => (*entry, staged_restore),
-    };
-    tracing::info!(from = %entry.from_version, to = %entry.to_version, kind = ?entry.kind, "update: installing");
-    if let Err(e) = download_and_install(update, progress).await {
-        // Nothing was installed: the next start of this version must not believe otherwise.
-        record_install_not_started(&paths, &mut entry, staged_restore, &e.to_string())?;
-        return Err(e);
-    }
-    Ok(InstallOutcome::Restarting)
+    .await
 }
 
 /// What the rollback request after a failed database update got (`reinstall_previous`).
@@ -759,8 +968,38 @@ async fn read_rollback_refusal(db: &sea_orm::DatabaseConnection, rollback_to: &s
     }
 }
 
+/// What the sessionless recovery reinstall may do with this journal (security review N1, S8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReinstallCheck {
+    /// Ask the server for exactly the journal's `from_version`.
+    Ask(Box<UpdateJournal>),
+    /// The pre-update backup could not be verified and was not staged: reinstalling the older
+    /// version would put it on a database it cannot open. Keep the PC as it is (support).
+    BackupNotVerified,
+}
+
+/// Only while the journal is `RollbackRequired`, only on the version that failed to update the
+/// database (`to_version`), and only when its pre-update backup was verified and staged.
+pub fn reinstall_check(journal: Option<UpdateJournal>, running: &str) -> AppResult<ReinstallCheck> {
+    let Some(entry) = journal.filter(|j| j.state == JournalState::RollbackRequired) else {
+        return Err(AppError::ValidationFailed(vec![
+            "no failed update to roll back".to_string()
+        ]));
+    };
+    if entry.to_version != running {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "the failed update was to {}, this is version {running}: nothing to roll back here",
+            entry.to_version
+        )]));
+    }
+    if entry.backup_refusal.is_some() {
+        return Ok(ReinstallCheck::BackupNotVerified);
+    }
+    Ok(ReinstallCheck::Ask(Box::new(entry)))
+}
+
 /// From the recovery screen: reinstall the version this device came from after its database
-/// update failed (the pre-update backup is already staged).
+/// update failed (the pre-update backup is already staged). The caller holds the install slot.
 pub async fn reinstall_previous(
     app: &AppHandle,
     db: &sea_orm::DatabaseConnection,
@@ -768,10 +1007,13 @@ pub async fn reinstall_previous(
     progress: &(dyn Fn(UpdateProgressEvent) + Sync),
 ) -> AppResult<InstallOutcome> {
     let data_dir = app_data_dir(app)?;
-    let Some(entry) = journal::load(&data_dir)?.filter(|j| j.state == JournalState::RollbackRequired) else {
-        return Err(AppError::ValidationFailed(vec![
-            "no failed update to roll back".to_string()
-        ]));
+    let entry = match reinstall_check(journal::load(&data_dir)?, &running_version())? {
+        ReinstallCheck::Ask(entry) => *entry,
+        ReinstallCheck::BackupNotVerified => {
+            return Ok(InstallOutcome::Refused {
+                refusal: InstallRefusal::RollbackBackupMissing,
+            })
+        }
     };
     let answer = ask_manifest(app, db, locale, Some(&entry.from_version)).await?;
     match rollback_answer(&answer, &entry.from_version) {
@@ -779,7 +1021,14 @@ pub async fn reinstall_previous(
             let ManifestAnswer::Offer(update, _) = answer else {
                 unreachable!("rollback_answer accepts only an offer")
             };
-            download_and_install(*update, progress).await?;
+            let mut update = *update;
+            // The download URL is a presigned object-storage URL: it must not carry the token.
+            update.headers.clear();
+            let bytes = download_verified(&update, progress).await?;
+            progress(UpdateProgressEvent::Installing);
+            update
+                .install(bytes)
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("the installer could not be started: {e}")))?;
             Ok(InstallOutcome::Restarting)
         }
         RollbackAnswer::Refused(mut reason) => {
@@ -812,6 +1061,9 @@ pub struct UpdateJournalView {
     pub failure: Option<String>,
     pub rollback_refusal: Option<String>,
     pub rollback_allowed_version: Option<String>,
+    /// Why the pre-update backup was not restored (no checksum, or the file changed): the
+    /// recovery screen then offers no reinstall.
+    pub backup_refusal: Option<String>,
     pub notice_acknowledged: bool,
 }
 
@@ -825,6 +1077,7 @@ impl From<&UpdateJournal> for UpdateJournalView {
             failure: j.failure.clone(),
             rollback_refusal: j.rollback_refusal.clone(),
             rollback_allowed_version: j.rollback_allowed_version.clone(),
+            backup_refusal: j.backup_refusal.clone(),
             notice_acknowledged: j.notice_acknowledged,
         }
     }
@@ -843,6 +1096,39 @@ pub fn acknowledge_notice(app: &AppHandle) -> AppResult<()> {
         journal::save(&dir, &j)?;
     }
     Ok(())
+}
+
+/// Before the database opens, a staged restore is applied only when the journal justifies it
+/// (security review B1): a restore staged for a rollback whose installer never ran
+/// (`journal::staged_restore_is_orphaned`) is cancelled and the journal closed as
+/// `InstallNotCompleted`. Without a staged restore nothing is read. Returns whether one was
+/// cancelled. An unreadable journal with a staged restore is an error: the restore is not applied.
+pub fn reconcile_staged_restore(data_dir: &Path, live_db: &Path, running: &str) -> AppResult<bool> {
+    if !crate::backup::restore::pending_restore_path(live_db).exists() {
+        return Ok(false);
+    }
+    let Some(mut j) = journal::load(data_dir)? else {
+        // No update in progress: a restore staged by an administrator (Settings > Backup).
+        return Ok(false);
+    };
+    if !journal::staged_restore_is_orphaned(&j, running) {
+        return Ok(false);
+    }
+    crate::backup::restore::cancel_pending_restore(live_db)?;
+    j.state = JournalState::InstallNotCompleted;
+    j.failure = Some(format!(
+        "the installer of {} did not complete; the database restore staged for it was cancelled",
+        j.to_version
+    ));
+    j.finished_at = Some(chrono::Utc::now().to_rfc3339());
+    journal::save(data_dir, &j)?;
+    tracing::warn!(from = %j.from_version, to = %j.to_version, running, "update: rollback not installed; staged restore cancelled");
+    Ok(true)
+}
+
+/// `reconcile_staged_restore` for this app's folders and running version.
+pub fn reconcile_staged_restore_at_startup(app: &AppHandle, live_db: &Path) -> AppResult<bool> {
+    reconcile_staged_restore(&app_data_dir(app)?, live_db, &running_version())
 }
 
 /// The journal and what startup must do with it.
@@ -883,10 +1169,36 @@ pub async fn on_migration_failed(
     stage_pre_update_backup(db, &paths, j, failure, &key).await
 }
 
+/// Why the pre-update backup the journal names cannot be shown to be the backup that was taken
+/// (security review S8): it is gone, no checksum was recorded, or the file changed since.
+pub fn unverified_pre_update_backup(j: &UpdateJournal) -> AppResult<Result<PathBuf, String>> {
+    let Some(backup) = j.backup_path.as_ref().map(PathBuf::from).filter(|p| p.is_file()) else {
+        return Ok(Err("the backup taken before the update is missing".to_string()));
+    };
+    let Some(expected) = j.backup_sha256.as_deref().filter(|s| !s.trim().is_empty()) else {
+        return Ok(Err(format!(
+            "no checksum was recorded for the backup {} taken before the update",
+            backup.display()
+        )));
+    };
+    if !backup_matches_checksum(&backup, expected)? {
+        return Ok(Err(format!(
+            "the backup {} taken before the update has changed since it was taken (checksum mismatch)",
+            backup.display()
+        )));
+    }
+    Ok(Ok(backup))
+}
+
 /// Journal-driven rollback: checks the pre-update backup the journal names is the file that was
-/// taken (checksum), stages it through the restore service (`backup::restore::stage_restore`:
-/// integrity, key, schema not newer, safety backup of the half-migrated database), and records
-/// `RollbackRequired`. Nothing is staged and the journal is unchanged when a check fails.
+/// taken (checksum, required), stages it through the restore service
+/// (`backup::restore::stage_restore`: integrity, key, schema not newer, safety backup of the
+/// half-migrated database), and records `RollbackRequired`.
+///
+/// When the backup cannot be verified nothing is staged, ever: the journal records
+/// `RollbackRequired` with `backup_refusal`, so this version stays on the recovery screen without
+/// touching the database again, and the screen offers no reinstall (contact support). When the
+/// restore service refuses the backup, nothing is staged and the journal is unchanged.
 pub async fn stage_pre_update_backup(
     db: &sea_orm::DatabaseConnection,
     paths: &UpdatePaths,
@@ -894,30 +1206,22 @@ pub async fn stage_pre_update_backup(
     failure: &str,
     key: &crate::db::encryption::DatabaseKey,
 ) -> AppResult<UpdateJournalView> {
-    let backup = j
-        .backup_path
-        .as_ref()
-        .map(PathBuf::from)
-        .filter(|p| p.is_file())
-        .ok_or_else(|| AppError::NotFound {
-            entity: "pre_update_backup".to_string(),
-            id: j.from_version.clone(),
-        })?;
-    if let Some(expected) = &j.backup_sha256 {
-        let actual = crate::backup::file_sha256(&backup)?;
-        if &actual != expected {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "the pre-update backup {} has changed since it was taken (checksum mismatch)",
-                backup.display()
-            )]));
-        }
-    }
-    crate::backup::restore::stage_restore(db, &paths.live_db, &backup, key, &paths.backup_dir, None).await?;
-    j.state = JournalState::RollbackRequired;
     j.failure = Some(failure.to_string());
     j.finished_at = Some(chrono::Utc::now().to_rfc3339());
-    journal::save(&paths.data_dir, &j)?;
-    tracing::error!(from = %j.from_version, to = %j.to_version, "update: database update failed; pre-update backup staged");
+    j.state = JournalState::RollbackRequired;
+    match unverified_pre_update_backup(&j)? {
+        Err(why) => {
+            j.backup_refusal = Some(why.clone());
+            journal::save(&paths.data_dir, &j)?;
+            tracing::error!(from = %j.from_version, to = %j.to_version, "update: database update failed; pre-update backup NOT restored: {why}");
+        }
+        Ok(backup) => {
+            crate::backup::restore::stage_restore(db, &paths.live_db, &backup, key, &paths.backup_dir, None).await?;
+            j.backup_refusal = None;
+            journal::save(&paths.data_dir, &j)?;
+            tracing::error!(from = %j.from_version, to = %j.to_version, "update: database update failed; pre-update backup staged");
+        }
+    }
     Ok(UpdateJournalView::from(&j))
 }
 
@@ -933,13 +1237,14 @@ mod tests {
             kind: UpdateKind::Upgrade,
             state: JournalState::Completed,
             backup_path: backup.map(|p| p.to_string_lossy().to_string()),
-            backup_sha256: None,
+            backup_sha256: backup.map(|_| "ab".repeat(32)),
             schema_version_before: Some(schema_before),
             started_at: "2026-10-13T10:00:00Z".into(),
             finished_at: Some("2026-10-13T10:05:00Z".into()),
             failure: None,
             rollback_refusal: None,
             rollback_allowed_version: None,
+            backup_refusal: None,
             notice_acknowledged: false,
         }
     }
@@ -994,8 +1299,16 @@ mod tests {
         assert_eq!(
             plan_downgrade(Some(&j), "1.1.0", "1.0.0", 125, 0),
             Ok(DowngradePlan::RestoreBackup {
-                backup_path: backup.clone()
+                backup_path: backup.clone(),
+                sha256: "ab".repeat(32),
             })
+        );
+        let mut unverifiable = j.clone();
+        unverifiable.backup_sha256 = None;
+        assert_eq!(
+            plan_downgrade(Some(&unverifiable), "1.1.0", "1.0.0", 125, 0),
+            Err(InstallRefusal::RollbackBackupMissing),
+            "a backup without a recorded checksum is never restored"
         );
         assert_eq!(
             plan_downgrade(Some(&j), "1.1.0", "1.0.0", 125, 3),
@@ -1200,23 +1513,43 @@ mod tests {
             .await
             .unwrap();
 
-        // A backup that changed since it was taken is never staged.
-        let mut tampered = entry.clone();
-        tampered.backup_sha256 = Some("0".repeat(64));
-        let err = stage_pre_update_backup(&db, &paths, tampered, "Migration failed", &key)
-            .await
-            .unwrap_err();
-        assert!(format!("{err:?}").contains("checksum mismatch"), "{err:?}");
-        assert!(!crate::backup::restore::pending_restore_path(&paths.live_db).exists());
-        assert_eq!(
-            journal::load(&paths.data_dir).unwrap().unwrap().state,
-            JournalState::Installing
-        );
+        // A backup that changed since it was taken, or without a recorded checksum, is never
+        // staged: the journal records why, this version stays on the recovery screen, and the
+        // recovery reinstall is refused.
+        for (case, sha) in [("checksum mismatch", Some("0".repeat(64))), ("no checksum", None)] {
+            let mut unverified = entry.clone();
+            unverified.backup_sha256 = sha;
+            let view = stage_pre_update_backup(&db, &paths, unverified, "Migration failed", &key)
+                .await
+                .unwrap();
+            assert_eq!(view.state, JournalState::RollbackRequired, "{case}");
+            assert!(
+                view.backup_refusal.as_deref().is_some_and(|r| r.contains(case)),
+                "{case}: {view:?}"
+            );
+            assert!(
+                !crate::backup::restore::pending_restore_path(&paths.live_db).exists(),
+                "{case}: nothing staged"
+            );
+            let stored = journal::load(&paths.data_dir).unwrap();
+            assert_eq!(
+                journal::classify(stored.as_ref(), "1.1.0"),
+                StartupAction::RecoveryPending,
+                "{case}: the database is not migrated again"
+            );
+            assert_eq!(
+                reinstall_check(stored, "1.1.0").unwrap(),
+                ReinstallCheck::BackupNotVerified,
+                "{case}"
+            );
+        }
+        journal::save(&paths.data_dir, &entry).unwrap();
 
         let view = stage_pre_update_backup(&db, &paths, entry, "Migration failed: m1", &key)
             .await
             .unwrap();
         assert_eq!(view.state, JournalState::RollbackRequired);
+        assert_eq!(view.backup_refusal, None);
         assert_eq!(view.failure.as_deref(), Some("Migration failed: m1"));
         assert!(crate::backup::restore::pending_restore_path(&paths.live_db).is_file());
         let stored = journal::load(&paths.data_dir).unwrap().unwrap();
@@ -1441,5 +1774,444 @@ mod tests {
         assert!(is_plain_release_version("10.2.30"));
         assert!(!is_plain_release_version("1.2"));
         assert!(!is_plain_release_version("0.4.0-dev"));
+    }
+
+    // ── Security review fixes (B1, S1, S2, S8, N1, N2) ──
+
+    fn minisign_text(trusted: &str) -> String {
+        use base64::Engine;
+        let text = format!(
+            "untrusted comment: signature from tauri secret key\nRUQ...\ntrusted comment: {trusted}\nglobal...\n"
+        );
+        base64::engine::general_purpose::STANDARD.encode(text)
+    }
+
+    /// S2: the signature's trusted comment must name the installer of the offered version.
+    #[test]
+    fn the_signature_must_name_the_offered_installer() {
+        use base64::Engine;
+        let sig = minisign_text("timestamp:1760000000\tfile:Maintafox_1.2.0_x64-setup.exe");
+        assert_eq!(signed_file_name(&sig).unwrap(), "Maintafox_1.2.0_x64-setup.exe");
+        assert!(check_signed_file(&sig, "1.2.0").is_ok());
+        let err = check_signed_file(&sig, "1.3.0").unwrap_err();
+        assert!(err.contains("Maintafox_1.3.0_x64-setup.exe"), "{err}");
+        // An old installer signed under its own name, offered as a newer version.
+        let old = minisign_text("timestamp:1750000000\tfile:Maintafox_1.0.0_x64-setup.exe");
+        assert!(check_signed_file(&old, "1.2.0").is_err());
+        assert!(
+            check_signed_file(
+                &minisign_text("timestamp:1\tfile:maintafox_1.2.0_x64-setup.exe"),
+                "1.2.0"
+            )
+            .is_err(),
+            "case-sensitive"
+        );
+        assert!(
+            check_signed_file(&minisign_text("timestamp:1"), "1.2.0").is_err(),
+            "no file field"
+        );
+        assert!(check_signed_file("not base64 !!", "1.2.0").is_err());
+        let no_trusted = base64::engine::general_purpose::STANDARD.encode("untrusted comment: x\nRUQ\n");
+        assert!(check_signed_file(&no_trusted, "1.2.0").is_err(), "no trusted comment");
+    }
+
+    /// S1: the install is bound to the version, kind and release the administrator confirmed.
+    #[test]
+    fn the_install_is_bound_to_the_confirmed_offer() {
+        let confirmed = ConfirmedOffer {
+            version: "1.2.0".into(),
+            kind: UpdateKind::Upgrade,
+            release_id: "rel_1".into(),
+        };
+        let upgrade = ext(UpdateKind::Upgrade, None);
+        let recalled = ext(UpdateKind::Rollback, Some(REASON_RECALLED_VERSION));
+        assert!(offer_matches_confirmation("1.2.0", &upgrade, &confirmed));
+        assert!(
+            !offer_matches_confirmation("1.0.0", &recalled, &confirmed),
+            "recalled since the confirmation: a rollback is never installed silently"
+        );
+        assert!(
+            !offer_matches_confirmation("1.2.1", &upgrade, &confirmed),
+            "another version"
+        );
+        let mut other_release = upgrade.clone();
+        other_release.release_id = "rel_2".into();
+        assert!(
+            !offer_matches_confirmation("1.2.0", &other_release, &confirmed),
+            "another release"
+        );
+        assert!(
+            !offer_matches_confirmation("1.2.0", &recalled, &confirmed),
+            "kind differs"
+        );
+        let mut confirmed_rollback = confirmed.clone();
+        confirmed_rollback.kind = UpdateKind::Rollback;
+        assert!(offer_matches_confirmation("1.2.0", &recalled, &confirmed_rollback));
+    }
+
+    /// N2: one install or reinstall at a time.
+    #[test]
+    fn only_one_install_runs_at_a_time() {
+        static FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let first = InstallSlot::acquire_on(&FLAG).unwrap();
+        assert!(matches!(
+            InstallSlot::acquire_on(&FLAG),
+            Err(AppError::ValidationFailed(_))
+        ));
+        drop(first);
+        assert!(InstallSlot::acquire_on(&FLAG).is_ok(), "released when the install ends");
+    }
+
+    /// N1 and S8: the sessionless reinstall asks only on the version that failed to migrate, and
+    /// never when the pre-update backup could not be verified.
+    #[test]
+    fn the_recovery_reinstall_needs_the_failed_version_and_a_verified_backup() {
+        let mut failed = completed_upgrade(None, 1);
+        failed.state = JournalState::RollbackRequired;
+        assert!(matches!(
+            reinstall_check(Some(failed.clone()), "1.1.0").unwrap(),
+            ReinstallCheck::Ask(_)
+        ));
+        assert!(
+            reinstall_check(Some(failed.clone()), "1.0.0").is_err(),
+            "not the failed version"
+        );
+        assert!(reinstall_check(Some(failed.clone()), "1.2.0").is_err());
+        assert!(
+            reinstall_check(Some(completed_upgrade(None, 1)), "1.1.0").is_err(),
+            "no failure"
+        );
+        assert!(reinstall_check(None, "1.1.0").is_err());
+        failed.backup_refusal = Some("checksum mismatch".into());
+        assert_eq!(
+            reinstall_check(Some(failed), "1.1.0").unwrap(),
+            ReinstallCheck::BackupNotVerified
+        );
+    }
+
+    /// B1 at startup: a restore staged for a rollback whose installer never ran is cancelled
+    /// before the database opens, and the journal is closed; a justified one is kept.
+    #[test]
+    fn startup_cancels_a_restore_staged_for_a_rollback_that_was_not_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_in(dir.path());
+        let pending = crate::backup::restore::pending_restore_path(&paths.live_db);
+        std::fs::write(&paths.live_db, b"live with today's work").unwrap();
+        let mut rollback = completed_upgrade(None, 1);
+        rollback.kind = UpdateKind::Rollback;
+        rollback.state = JournalState::Installing;
+        rollback.from_version = "1.1.0".into();
+        rollback.to_version = "1.0.0".into();
+
+        // The installer was cancelled: 1.1.0 starts again.
+        journal::save(&paths.data_dir, &rollback).unwrap();
+        std::fs::write(&pending, b"old backup").unwrap();
+        assert!(reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.1.0").unwrap());
+        assert!(!pending.exists());
+        assert!(!crate::backup::restore::apply_pending_restore(&paths.live_db).unwrap());
+        assert_eq!(std::fs::read(&paths.live_db).unwrap(), b"live with today's work");
+        let closed = journal::load(&paths.data_dir).unwrap().unwrap();
+        assert_eq!(closed.state, JournalState::InstallNotCompleted);
+        assert!(closed.failure.clone().unwrap().contains("cancelled"));
+        assert_eq!(journal::classify(Some(&closed), "1.1.0"), StartupAction::Nothing);
+
+        // The rollback was installed: 1.0.0 starts on the staged backup.
+        journal::save(&paths.data_dir, &rollback).unwrap();
+        std::fs::write(&pending, b"old backup").unwrap();
+        assert!(!reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.0.0").unwrap());
+        assert!(pending.exists(), "justified: applied");
+
+        // No journal: a restore an administrator staged in Settings > Backup.
+        std::fs::remove_file(journal::journal_path(&paths.data_dir)).unwrap();
+        assert!(!reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.1.0").unwrap());
+        assert!(pending.exists());
+
+        // An unreadable journal with a staged restore: the restore is not applied blindly.
+        std::fs::write(journal::journal_path(&paths.data_dir), "{not json").unwrap();
+        assert!(reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.1.0").is_err());
+    }
+
+    type Log = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+    fn logging(log: &Log) -> impl Fn(UpdateProgressEvent) + Sync {
+        let sink = log.clone();
+        move |event: UpdateProgressEvent| sink.lock().unwrap().push(format!("{event:?}"))
+    }
+
+    /// B1, upgrade: the download comes first and the backup after it, so a work order closed
+    /// during the download is in the pre-update backup; the installer starts right after the
+    /// journal is written.
+    #[tokio::test]
+    async fn an_upgrade_backs_up_after_the_download_so_changes_made_meanwhile_are_kept() {
+        use sea_orm::ConnectionTrait;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_in(dir.path());
+        let key = crate::db::encryption::DatabaseKey::generate();
+        let db = encrypted_live_db(&paths.live_db, &key).await;
+        db.execute_unprepared("CREATE TABLE update_marker (note TEXT); INSERT INTO update_marker VALUES ('before');")
+            .await
+            .unwrap();
+
+        let log: Log = Default::default();
+        let progress = logging(&log);
+        let download = async {
+            log.lock().unwrap().push("download".into());
+            // The app stays usable during the download: a technician closes a work order.
+            db.execute_unprepared("UPDATE update_marker SET note = 'closed during the download';")
+                .await
+                .unwrap();
+            Ok(b"verified installer".to_vec())
+        };
+        let data_dir = paths.data_dir.clone();
+        let install_log = log.clone();
+        let install = move |bytes: Vec<u8>| {
+            assert_eq!(bytes, b"verified installer");
+            let j = journal::load(&data_dir)
+                .unwrap()
+                .expect("journal written before the installer");
+            assert_eq!(j.state, JournalState::Installing);
+            assert!(j.backup_path.is_some() && j.backup_sha256.is_some());
+            install_log.lock().unwrap().push("install".into());
+            Ok(())
+        };
+        let outcome = run_install(
+            &db,
+            &paths,
+            &upgrade_target(),
+            Some(1),
+            &no_key,
+            &progress,
+            download,
+            install,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(outcome, InstallOutcome::Restarting));
+        assert_eq!(
+            log.lock().unwrap().as_slice(),
+            ["download", "BackingUp", "Installing", "install"],
+            "download, then backup, then the installer at once"
+        );
+        let entry = journal::load(&paths.data_dir).unwrap().unwrap();
+        let backup = PathBuf::from(entry.backup_path.unwrap());
+        let copy = crate::db::connect_sqlcipher(&backup, Some(&key), false).await.unwrap();
+        assert_eq!(
+            marker(&copy).await.as_deref(),
+            Some("closed during the download"),
+            "the pre-update backup holds the change made during the download"
+        );
+        copy.close().await.unwrap();
+        db.close().await.unwrap();
+    }
+
+    /// A failed download changes nothing: no journal entry, no backup step.
+    #[tokio::test]
+    async fn a_failed_download_writes_nothing() {
+        let db = crate::db::test_db::migrated().await;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_in(dir.path());
+        let log: Log = Default::default();
+        let progress = logging(&log);
+        let download = async { Err(AppError::Internal(anyhow::anyhow!("signature check failed"))) };
+        let install = |_: Vec<u8>| -> AppResult<()> { panic!("nothing is installed") };
+        let result = run_install(
+            &db,
+            &paths,
+            &upgrade_target(),
+            Some(1),
+            &no_key,
+            &progress,
+            download,
+            install,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(journal::load(&paths.data_dir).unwrap(), None);
+        assert!(log.lock().unwrap().is_empty(), "no backup was taken");
+    }
+
+    /// A recall rollback on a real encrypted database: 1.0.0's pre-update backup (checksum
+    /// recorded) and a Completed journal, then 1.1.0 is running with one more migration.
+    async fn recall_setup(
+        dir: &Path,
+    ) -> (
+        UpdatePaths,
+        crate::db::encryption::DatabaseKey,
+        sea_orm::DatabaseConnection,
+        InstallTarget,
+    ) {
+        use sea_orm::ConnectionTrait;
+        let paths = paths_in(dir);
+        let key = crate::db::encryption::DatabaseKey::generate();
+        let db = encrypted_live_db(&paths.live_db, &key).await;
+        db.execute_unprepared("CREATE TABLE update_marker (note TEXT); INSERT INTO update_marker VALUES ('1.0.0');")
+            .await
+            .unwrap();
+        std::fs::create_dir_all(&paths.backup_dir).unwrap();
+        let backup_path = paths.backup_dir.join("maintafox-pre-update-1.0.0-to-1.1.0.db");
+        let backup = crate::backup::run_manual_backup(
+            &db,
+            &backup_path.to_string_lossy(),
+            crate::backup::TRIGGER_PRE_UPDATE,
+            None,
+        )
+        .await
+        .unwrap();
+        let schema = applied_migration_count(&db).await.unwrap();
+        let mut done = completed_upgrade(Some(&backup_path), schema - 1);
+        done.backup_sha256 = Some(backup.sha256_checksum);
+        journal::save(&paths.data_dir, &done).unwrap();
+        let target = InstallTarget {
+            running: "1.1.0".into(),
+            version: "1.0.0".into(),
+            kind: UpdateKind::Rollback,
+        };
+        (paths, key, db, target)
+    }
+
+    fn remove_safety_backups(backup_dir: &Path) {
+        for entry in std::fs::read_dir(backup_dir).unwrap().flatten() {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("maintafox-pre-restore-")
+            {
+                std::fs::remove_file(entry.path()).unwrap();
+            }
+        }
+    }
+
+    /// B1, recall rollback: a change made during the download is waiting to sync, so the restore
+    /// would lose it: refused after the download, nothing staged, the journal unchanged.
+    #[tokio::test]
+    async fn a_rollback_refuses_when_changes_were_made_during_the_download() {
+        use sea_orm::ConnectionTrait;
+        let dir = tempfile::tempdir().unwrap();
+        let (paths, key, db, target) = recall_setup(dir.path()).await;
+        let before = journal::load(&paths.data_dir).unwrap();
+        let load_key = move || Ok(key.clone());
+        let (_, progress) = recording();
+        let download = async {
+            // A change captured for sync while the installer downloads.
+            db.execute_unprepared(
+                "INSERT INTO sync_capture_journal (entity_type, entity_sync_id, operation) \
+                 VALUES ('work_orders', 'wo-1', 'upsert')",
+            )
+            .await
+            .unwrap();
+            Ok(b"verified installer".to_vec())
+        };
+        let install = |_: Vec<u8>| -> AppResult<()> { panic!("never installed") };
+        let outcome = run_install(&db, &paths, &target, None, &load_key, &progress, download, install)
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                outcome,
+                InstallOutcome::Refused {
+                    refusal: InstallRefusal::RollbackUnsyncedChanges { count: 1 }
+                }
+            ),
+            "{outcome:?}"
+        );
+        assert!(!crate::backup::restore::pending_restore_path(&paths.live_db).exists());
+        assert_eq!(journal::load(&paths.data_dir).unwrap(), before);
+        db.close().await.unwrap();
+    }
+
+    /// B1, recall rollback: the restore is staged only after the download and the installer
+    /// starts right after; if it cannot start, the staged restore is cancelled. S8: a backup that
+    /// changed since it was taken is never staged.
+    #[tokio::test]
+    async fn a_rollback_stages_its_restore_after_the_download_and_cancels_it_if_the_installer_fails() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let (paths, key, db, target) = recall_setup(dir.path()).await;
+        let pending = crate::backup::restore::pending_restore_path(&paths.live_db);
+        let completed = journal::load(&paths.data_dir).unwrap().unwrap();
+        let load_key = move || Ok(key.clone());
+
+        // The installer cannot start.
+        let log: Log = Default::default();
+        let progress = logging(&log);
+        let pending_at_download = AtomicBool::new(true);
+        let download = async {
+            pending_at_download.store(pending.exists(), Ordering::SeqCst);
+            Ok(b"verified installer".to_vec())
+        };
+        let staged_at_install = AtomicBool::new(false);
+        let install = |_: Vec<u8>| -> AppResult<()> {
+            staged_at_install.store(pending.is_file(), Ordering::SeqCst);
+            Err(AppError::Internal(anyhow::anyhow!(
+                "the installer could not be started"
+            )))
+        };
+        let result = run_install(&db, &paths, &target, None, &load_key, &progress, download, install).await;
+        assert!(result.is_err());
+        assert!(
+            !pending_at_download.load(Ordering::SeqCst),
+            "nothing staged during the download"
+        );
+        assert!(
+            staged_at_install.load(Ordering::SeqCst),
+            "staged right before the installer"
+        );
+        assert!(!pending.exists(), "a failed install leaves no staged restore");
+        let j = journal::load(&paths.data_dir).unwrap().unwrap();
+        assert_eq!(j.state, JournalState::InstallNotCompleted);
+        assert_eq!(j.kind, UpdateKind::Rollback);
+        assert_eq!(log.lock().unwrap().as_slice(), ["RestoringBackup", "Installing"]);
+
+        // The installer starts (the process would exit): the restore stays staged for 1.0.0.
+        // (The restore service names its safety backup by the second: the first one is removed so
+        // a second staging within the same second does not collide with it.)
+        remove_safety_backups(&paths.backup_dir);
+        journal::save(&paths.data_dir, &completed).unwrap();
+        let (_, progress) = recording();
+        let outcome = run_install(
+            &db,
+            &paths,
+            &target,
+            None,
+            &load_key,
+            &progress,
+            async { Ok(Vec::new()) },
+            |_| Ok(()),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(outcome, InstallOutcome::Restarting));
+        assert!(pending.is_file());
+        assert_eq!(
+            journal::load(&paths.data_dir).unwrap().unwrap().state,
+            JournalState::Installing
+        );
+        crate::backup::restore::cancel_pending_restore(&paths.live_db).unwrap();
+
+        // S8: the pre-update backup changed since it was taken.
+        let mut tampered = completed.clone();
+        tampered.backup_sha256 = Some("0".repeat(64));
+        journal::save(&paths.data_dir, &tampered).unwrap();
+        let (_, progress) = recording();
+        let outcome = run_install(
+            &db,
+            &paths,
+            &target,
+            None,
+            &load_key,
+            &progress,
+            async { Ok(Vec::new()) },
+            |_| -> AppResult<()> { panic!("never installed") },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            InstallOutcome::Refused {
+                refusal: InstallRefusal::RollbackBackupMissing
+            }
+        ));
+        assert!(!pending.exists());
+        db.close().await.unwrap();
     }
 }

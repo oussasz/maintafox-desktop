@@ -11,7 +11,7 @@
  *   4. Store state transitions with the real service.
  */
 
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useUpdaterStore } from "@/stores/updater-store";
@@ -133,6 +133,7 @@ describe("updater schemas", () => {
       failure: null,
       rollback_refusal: null,
       rollback_allowed_version: null,
+      backup_refusal: null,
       notice_acknowledged: false,
     };
     expect(UpdateJournalViewSchema.safeParse(journal).success).toBe(true);
@@ -165,12 +166,15 @@ describe("updater service", () => {
     mockInvoke.mockResolvedValueOnce({ outcome: "restarting" });
     const events: UpdateProgressEvent[] = [];
 
-    const outcome = await installPendingUpdate("en", (e) => events.push(e));
+    const offer = { version: "1.2.0", kind: "upgrade" as const, release_id: "rel_120" };
+
+    const outcome = await installPendingUpdate("en", offer, (e) => events.push(e));
 
     expect(outcome).toEqual({ outcome: "restarting" });
+    // The install is bound to the offer the user confirmed.
     expect(mockInvoke).toHaveBeenCalledWith(
       "install_pending_update",
-      expect.objectContaining({ locale: "en", onProgress: expect.anything() }),
+      expect.objectContaining({ locale: "en", offer, onProgress: expect.anything() }),
     );
     const channel = progressChannelOf("install_pending_update");
     channel.onmessage({ event: "backing_up" });
@@ -240,7 +244,13 @@ describe("useUpdaterStore with the updater service", () => {
         }),
     );
 
+    useUpdaterStore.setState({ lastCheckResult: { ...fixtures.updateCheckAvailable } });
     const pending = useUpdaterStore.getState().install("en");
+    await waitFor(() =>
+      expect(mockInvoke.mock.calls.some(([command]) => command === "install_pending_update")).toBe(
+        true,
+      ),
+    );
     const channel = progressChannelOf("install_pending_update");
 
     act(() => channel.onmessage({ event: "downloading", downloaded_bytes: 300, total_bytes: 600 }));

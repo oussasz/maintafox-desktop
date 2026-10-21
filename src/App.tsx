@@ -29,6 +29,7 @@ export function App() {
           fromVersion={updateRecovery.fromVersion}
           toVersion={updateRecovery.toVersion}
           reason={updateRecovery.reason}
+          backupRefusal={updateRecovery.backupRefusal}
         />
       ) : (
         <RouterProvider

@@ -117,6 +117,7 @@ describe("useStartupBridge", () => {
       from_version: "1.1.0",
       to_version: "1.2.0",
       reason: "Migration failed: m20261001 added column twice",
+      backup_refusal: null,
     });
 
     const { appStatus, updateRecovery } = useAppStore.getState();
@@ -125,6 +126,7 @@ describe("useStartupBridge", () => {
       fromVersion: "1.1.0",
       toVersion: "1.2.0",
       reason: "Migration failed: m20261001 added column twice",
+      backupRefusal: null,
     });
   });
 
@@ -140,6 +142,7 @@ describe("useStartupBridge", () => {
           failure: "Migration failed",
           rollback_refusal: null,
           rollback_allowed_version: null,
+          backup_refusal: "the backup changed since it was taken (checksum mismatch)",
           notice_acknowledged: false,
         };
       }
@@ -162,6 +165,7 @@ describe("useStartupBridge", () => {
       fromVersion: "1.1.0",
       toVersion: "1.2.0",
       reason: "Migration failed",
+      backupRefusal: "the backup changed since it was taken (checksum mismatch)",
     });
   });
 

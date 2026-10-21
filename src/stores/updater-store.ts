@@ -20,6 +20,7 @@ import {
 import type { InstallGuard, UpdateInstallPhase } from "@/types";
 import { extractIpcErrorCode, toErrorMessage } from "@/utils/errors";
 import type {
+  ConfirmedUpdateOffer,
   InstallOutcome,
   InstallRefusal,
   UpdateCheckResult,
@@ -115,6 +116,15 @@ export function isInstallInProgress(phase: UpdateInstallPhase): boolean {
 
 function phaseFor(event: UpdateProgressEvent): UpdateInstallPhase {
   return event.event;
+}
+
+/**
+ * The offer the user sees and confirms: the install is bound to it (the backend installs nothing
+ * else). Null when the last check offers nothing installable.
+ */
+export function confirmedOffer(result: UpdateCheckResult | null): ConfirmedUpdateOffer | null {
+  if (!result?.available || !result.version || !result.kind || !result.release_id) return null;
+  return { version: result.version, kind: result.kind, release_id: result.release_id };
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -215,13 +225,21 @@ export const useUpdaterStore = create<UpdaterState>()((set, get) => {
       }
     },
 
-    install: (locale, guard) =>
-      runInstall(
-        () => installPendingUpdate(locale, onProgress),
+    install: async (locale, guard) => {
+      const offer = confirmedOffer(get().lastCheckResult);
+      if (!offer) {
+        // Nothing confirmable is offered any more: say so and refresh the offer.
+        set({ refusal: { code: "update_withdrawn" } });
+        await get().check(locale);
+        return;
+      }
+      await runInstall(
+        () => installPendingUpdate(locale, offer, onProgress),
         locale,
-        get().lastCheckResult?.version ?? null,
+        offer.version,
         guard,
-      ),
+      );
+    },
 
     reinstallPrevious: async (locale, previousVersion) => {
       await runInstall(() => reinstallPreviousVersion(locale, onProgress), locale, previousVersion);

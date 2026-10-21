@@ -51,6 +51,7 @@ export function useStartupBridge(): void {
                 fromVersion: payload.from_version,
                 toVersion: payload.to_version,
                 reason: payload.reason,
+                backupRefusal: payload.backup_refusal ?? null,
               });
               break;
             default:
@@ -92,6 +93,7 @@ export function useStartupBridge(): void {
                 fromVersion: journal.from_version,
                 toVersion: journal.to_version,
                 reason: journal.failure ?? "",
+                backupRefusal: journal.backup_refusal,
               });
             }
           } catch {

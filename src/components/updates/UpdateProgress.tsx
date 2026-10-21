@@ -15,7 +15,8 @@ interface UpdateProgressProps {
 
 /**
  * Progress of an in-app install / reinstall, driven by the Rust progress channel:
- * backing up → (restoring backup) → downloading (real bytes) → installing / restarting.
+ * downloading (real bytes, signature checked) → backing up or restoring the backup → installing /
+ * restarting.
  * Shared by the update banner and the update recovery screen.
  */
 export function UpdateProgress({ phase, downloadedBytes, totalBytes }: UpdateProgressProps) {

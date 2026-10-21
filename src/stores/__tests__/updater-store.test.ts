@@ -19,7 +19,12 @@ import {
   installPendingUpdate,
   reinstallPreviousVersion,
 } from "@/services/updater-service";
-import type { InstallOutcome, UpdateCheckResult, UpdateJournalView } from "@shared/ipc-types";
+import type {
+  ConfirmedUpdateOffer,
+  InstallOutcome,
+  UpdateCheckResult,
+  UpdateJournalView,
+} from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 import {
@@ -56,6 +61,7 @@ function makeCheck(overrides: Partial<UpdateCheckResult> = {}): UpdateCheckResul
     available: true,
     current_version: "1.1.0",
     version: "1.2.0",
+    release_id: "rel_120",
     notes: "Bug fixes",
     pub_date: "2026-10-01T00:00:00Z",
     kind: "upgrade",
@@ -78,6 +84,7 @@ function makeJournal(overrides: Partial<UpdateJournalView> = {}): UpdateJournalV
     failure: null,
     rollback_refusal: null,
     rollback_allowed_version: null,
+    backup_refusal: null,
     notice_acknowledged: false,
     ...overrides,
   };
@@ -101,7 +108,11 @@ function controllableInstall() {
   let progress: UpdateProgressHandler = () => undefined;
   let finish: (outcome: InstallOutcome) => void = () => undefined;
   let fail: (err: Error) => void = () => undefined;
-  const impl = (_locale: string | undefined, onProgress: UpdateProgressHandler) => {
+  const impl = (
+    _locale: string | undefined,
+    _offer: ConfirmedUpdateOffer,
+    onProgress: UpdateProgressHandler,
+  ) => {
     progress = onProgress;
     return new Promise<InstallOutcome>((resolve, reject) => {
       finish = resolve;
@@ -110,6 +121,9 @@ function controllableInstall() {
   };
   return {
     impl,
+    /** The same, for the recovery reinstall (no confirmed offer). */
+    reinstallImpl: (locale: string | undefined, onProgress: UpdateProgressHandler) =>
+      impl(locale, { version: "", kind: "rollback", release_id: "" }, onProgress),
     progress: (e: Parameters<UpdateProgressHandler>[0]) => progress(e),
     finish: (o: InstallOutcome) => finish(o),
     fail: (e: Error) => fail(e),
@@ -297,18 +311,58 @@ describe("updater-store", () => {
   });
 
   describe("install", () => {
+    beforeEach(() => {
+      useUpdaterStore.setState({ lastCheckResult: makeCheck() });
+    });
+
+    it("installs exactly the offer the user saw (version, kind, release)", async () => {
+      mockInstall.mockResolvedValueOnce({ outcome: "restarting" });
+      useUpdaterStore.setState({
+        lastCheckResult: makeCheck({
+          version: "1.0.0",
+          kind: "rollback",
+          release_id: "rel_100",
+          mandatory: true,
+          mandatory_reason: "recalled_version",
+        }),
+      });
+
+      await useUpdaterStore.getState().install("en");
+
+      expect(mockInstall).toHaveBeenCalledWith(
+        "en",
+        { version: "1.0.0", kind: "rollback", release_id: "rel_100" },
+        expect.any(Function),
+      );
+    });
+
+    it("installs nothing without a confirmable offer and refreshes the offer", async () => {
+      mockCheck.mockResolvedValueOnce(makeCheck({ status: "up_to_date", available: false }));
+      mockOnboarding.mockResolvedValueOnce(makeOnboarding());
+      useUpdaterStore.setState({ lastCheckResult: makeCheck({ release_id: null }) });
+
+      await useUpdaterStore.getState().install("en");
+
+      expect(mockInstall).not.toHaveBeenCalled();
+      expect(useUpdaterStore.getState().refusal).toEqual({ code: "update_withdrawn" });
+      expect(mockCheck).toHaveBeenCalledTimes(1);
+    });
+
     it("goes through the progress phases and ends restarting", async () => {
       const ctl = controllableInstall();
       mockInstall.mockImplementationOnce(ctl.impl);
       useUpdaterStore.setState({ lastCheckResult: makeCheck(), error: "old" });
 
       const pending = useUpdaterStore.getState().install("fr");
-      expect(mockInstall).toHaveBeenCalledWith("fr", expect.any(Function));
+      expect(mockInstall).toHaveBeenCalledWith(
+        "fr",
+        { version: "1.2.0", kind: "upgrade", release_id: "rel_120" },
+        expect.any(Function),
+      );
       expect(useUpdaterStore.getState().phase).toBe("starting");
       expect(useUpdaterStore.getState().error).toBeNull();
 
-      ctl.progress({ event: "backing_up" });
-      expect(useUpdaterStore.getState().phase).toBe("backing_up");
+      // Download first (the app stays usable), then the backup, then the installer at once.
       ctl.progress({ event: "downloading", downloaded_bytes: 1_000, total_bytes: 4_000 });
       expect(useUpdaterStore.getState()).toMatchObject({
         phase: "downloading",
@@ -317,6 +371,8 @@ describe("updater-store", () => {
       });
       ctl.progress({ event: "downloading", downloaded_bytes: 2_000, total_bytes: null });
       expect(useUpdaterStore.getState().totalBytes).toBeNull();
+      ctl.progress({ event: "backing_up" });
+      expect(useUpdaterStore.getState().phase).toBe("backing_up");
       ctl.progress({ event: "installing" });
       expect(useUpdaterStore.getState().phase).toBe("installing");
 
@@ -404,7 +460,7 @@ describe("updater-store", () => {
   describe("reinstallPrevious", () => {
     it("reinstalls the previous version with progress", async () => {
       const ctl = controllableInstall();
-      mockReinstall.mockImplementationOnce(ctl.impl);
+      mockReinstall.mockImplementationOnce(ctl.reinstallImpl);
 
       const pending = useUpdaterStore.getState().reinstallPrevious("fr", "1.1.0");
       expect(mockReinstall).toHaveBeenCalledWith("fr", expect.any(Function));
@@ -419,7 +475,7 @@ describe("updater-store", () => {
 
     it("captures a failure", async () => {
       const ctl = controllableInstall();
-      mockReinstall.mockImplementationOnce(ctl.impl);
+      mockReinstall.mockImplementationOnce(ctl.reinstallImpl);
 
       const pending = useUpdaterStore.getState().reinstallPrevious("en", "1.1.0");
       ctl.fail(new Error("no network"));

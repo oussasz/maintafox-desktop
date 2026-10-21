@@ -12,17 +12,25 @@ interface UpdateRecoveryScreenProps {
   toVersion: string;
   /** Technical reason (migration error). */
   reason: string;
+  /**
+   * Why the backup taken before the update was not put back (it could not be verified). Then
+   * nothing is offered: reinstalling the previous version could not open the data.
+   */
+  backupRefusal?: string | null;
 }
 
 /**
  * Shown at startup when the version installed by an in-app update could not update the database
  * (master plan Phase 5.5). The backend has already staged the backup taken just before the update;
- * reinstalling the previous version puts it back. Nothing is changed until the user acts.
+ * reinstalling the previous version puts it back. Nothing is changed until the user acts. When
+ * that backup could not be verified (missing, no checksum, changed), it was not staged and the
+ * screen offers nothing: keep the PC as it is and contact support.
  */
 export function UpdateRecoveryScreen({
   fromVersion,
   toVersion,
   reason,
+  backupRefusal = null,
 }: UpdateRecoveryScreenProps) {
   const { t } = useTranslation("shell");
   const phase = useUpdaterStore((s) => s.phase);
@@ -52,14 +60,22 @@ export function UpdateRecoveryScreen({
       <History className="h-10 w-10 text-primary" aria-hidden />
       <p className="text-lg font-semibold">{t("updates.recovery.title")}</p>
       <p className="max-w-md text-sm text-text-secondary">
-        {t("updates.recovery.body", { to: toVersion })}
+        {backupRefusal
+          ? t("updates.recovery.bodyBackupUnverified", { to: toVersion })
+          : t("updates.recovery.body", { to: toVersion })}
       </p>
-      <p className="max-w-md text-sm font-medium">
-        {t("updates.recovery.action", { from: fromVersion })}
-      </p>
+      {backupRefusal ? (
+        <p role="alert" className="max-w-md text-sm font-medium text-text-danger">
+          {t("updates.recovery.backupUnverified", { from: fromVersion })}
+        </p>
+      ) : (
+        <p className="max-w-md text-sm font-medium">
+          {t("updates.recovery.action", { from: fromVersion })}
+        </p>
+      )}
 
       <div className="flex w-full max-w-md flex-col gap-3">
-        {busy ? (
+        {backupRefusal ? null : busy ? (
           <div className="text-left">
             <UpdateProgress
               phase={phase}
@@ -95,12 +111,17 @@ export function UpdateRecoveryScreen({
         ) : null}
       </div>
 
-      {reason ? (
+      {reason || backupRefusal ? (
         <details className="max-w-md text-left text-xs text-text-muted">
           <summary className="cursor-pointer select-none">
             {t("updates.recovery.technical")}
           </summary>
-          <p className="mt-1 whitespace-pre-wrap break-words font-mono">{reason}</p>
+          {reason ? (
+            <p className="mt-1 whitespace-pre-wrap break-words font-mono">{reason}</p>
+          ) : null}
+          {backupRefusal ? (
+            <p className="mt-1 whitespace-pre-wrap break-words font-mono">{backupRefusal}</p>
+          ) : null}
         </details>
       ) : null}
     </div>

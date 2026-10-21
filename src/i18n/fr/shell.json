@@ -489,7 +489,7 @@
       "starting": "Préparation de la mise à jour…"
     },
     "refusal": {
-      "update_withdrawn": "Cette mise à jour n’est plus proposée (elle a peut-être été suspendue ou retirée). Rien n’a été modifié.",
+      "update_withdrawn": "Cette mise à jour n’est plus proposée telle que vous l’avez confirmée (elle a peut-être été suspendue, retirée ou remplacée). Rien n’a été modifié. Vérifiez ce qui est proposé maintenant avant d’installer.",
       "rollback_unsynced_changes_one": "{{count}} modification n’est pas encore synchronisée. Synchronisez d’abord, puis réessayez ; sinon elle serait perdue.",
       "rollback_unsynced_changes_other": "{{count}} modifications ne sont pas encore synchronisées. Synchronisez d’abord, puis réessayez ; sinon elles seraient perdues.",
       "rollback_backup_missing": "La sauvegarde nécessaire pour revenir à la version {{version}} n’est pas sur cet ordinateur. Contactez le support Maintafox.",
@@ -530,7 +530,9 @@
       "unavailable": "La version précédente ne peut pas être téléchargée pour le moment. Vérifiez la connexion internet et réessayez, ou contactez le support Maintafox.",
       "error": "La version {{from}} n’a pas pu être réinstallée. Vérifiez la connexion internet et réessayez, ou contactez le support Maintafox.",
       "refused": "Le serveur de mises à jour a refusé de réinstaller la version {{from}}. Laissez cet ordinateur tel quel : ne réinstallez pas, ne réinitialisez pas et ne remplacez pas Maintafox. Vos données sont à l’abri dans la sauvegarde faite avant la mise à jour. Contactez le support Maintafox.",
-      "allowedVersion": "Pour information : le serveur de mises à jour indique la version {{version}} comme autorisée à la place. Elle n’est pas installée automatiquement ; le support Maintafox décide."
+      "allowedVersion": "Pour information : le serveur de mises à jour indique la version {{version}} comme autorisée à la place. Elle n’est pas installée automatiquement ; le support Maintafox décide.",
+      "bodyBackupUnverified": "La version {{to}} n’a pas pu mettre à jour vos données, et la sauvegarde faite juste avant la mise à jour n’a pas pu être vérifiée : elle n’a donc pas été remise en place.",
+      "backupUnverified": "Laissez cet ordinateur tel quel : ne réinstallez pas, ne réinitialisez pas et ne remplacez pas Maintafox, et ne réinstallez pas la version {{from}} (elle ne pourrait pas ouvrir les données). Contactez le support Maintafox."
     },
     "mandatoryReason": {
       "forced_update_floor": "Votre organisation exige cette version ou une version plus récente.",

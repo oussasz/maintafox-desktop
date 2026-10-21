@@ -41,6 +41,8 @@ export type StartupEvent =
       from_version: string;
       to_version: string;
       reason: string;
+      /** The pre-update backup could not be verified: nothing was restored, no reinstall offered. */
+      backup_refusal: string | null;
     };
 
 // â”€â”€â”€ App Info â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1358,6 +1360,8 @@ export interface UpdateCheckResult {
   available: boolean;
   current_version: string;
   version: string | null;
+  /** The catalog release offered; the install names it back with `version` and `kind`. */
+  release_id: string | null;
   notes: string | null;
   pub_date: string | null;
   kind: UpdateKind | null;
@@ -1408,7 +1412,16 @@ export interface UpdateJournalView {
   rollback_refusal: string | null;
   /** The version the server's refusal named as allowed instead (information only, never installed). */
   rollback_allowed_version: string | null;
+  /** Why the pre-update backup was not restored (missing, no checksum, changed): no reinstall. */
+  backup_refusal: string | null;
   notice_acknowledged: boolean;
+}
+
+/** The offer the administrator confirmed (`ConfirmedOffer` in src-tauri/src/updater/mod.rs). */
+export interface ConfirmedUpdateOffer {
+  version: string;
+  kind: UpdateKind;
+  release_id: string;
 }
 
 // â”€â”€â”€ Diagnostics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

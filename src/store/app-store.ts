@@ -20,6 +20,11 @@ export interface UpdateRecoveryInfo {
   toVersion: string;
   /** Technical reason (migration error). */
   reason: string;
+  /**
+   * Set when the backup taken before the update could not be verified: it was not put back and
+   * no reinstall is offered (contact support).
+   */
+  backupRefusal: string | null;
 }
 
 export interface AppStore {

@@ -99,6 +99,7 @@ describe("UpdateRecoveryScreen", () => {
       failure: "Migration failed",
       rollback_refusal: "the server refused the rollback request (rollback_target_not_allowed)",
       rollback_allowed_version: "1.0.9",
+      backup_refusal: null,
       notice_acknowledged: false,
     });
 
@@ -128,5 +129,27 @@ describe("UpdateRecoveryScreen", () => {
     expect(
       screen.getByText("Technical detail: download or signature check failed"),
     ).toBeInTheDocument();
+  });
+
+  it("offers no reinstall when the backup taken before the update could not be verified", () => {
+    render(
+      <UpdateRecoveryScreen
+        fromVersion="1.1.0"
+        toVersion="1.2.0"
+        reason="Migration failed: duplicate column"
+        backupRefusal="the backup changed since it was taken (checksum mismatch)"
+      />,
+    );
+
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Your data is safe/)).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Keep this computer as it is: do not reinstall, reset or replace Maintafox, and do not reinstall version 1.1.0",
+    );
+    expect(screen.getByText(/could not be verified, so it was not put back/)).toBeInTheDocument();
+    expect(
+      screen.getByText("the backup changed since it was taken (checksum mismatch)"),
+    ).toBeInTheDocument();
+    expect(mockReinstall).not.toHaveBeenCalled();
   });
 });

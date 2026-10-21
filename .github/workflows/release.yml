@@ -1,10 +1,19 @@
 # Release workflow (master plan Phase 5.2): builds the Windows NSIS installer, Authenticode-signs it
 # when a code-signing provider is configured (otherwise a loud warning, never a fake signature),
-# signs it for the in-app updater, uploads it to the control API (object storage) and registers
-# the release as a DRAFT. Publishing to customers is done in the console (Updates > Releases).
+# signs it for the in-app updater, verifies that signature against the committed public key,
+# uploads it to the control API (object storage) and registers the release as a DRAFT. Publishing
+# to customers is done in the console (Updates > Releases).
 #
 # Run it by pushing a tag vX.Y.Z whose X.Y.Z is the version in src-tauri/tauri.conf.json, with
 # release notes in docs/release/notes/X.Y.Z.en.md and X.Y.Z.fr.md. Setup: docs/release/RELEASE_SETUP.md.
+#
+# Supply-chain rules (security review of the release chain):
+# - no `${{ }}` value is ever pasted into a script: every one goes through `env:` and is read as
+#   $env:NAME (a tag name or a variable could otherwise run code in this job);
+# - every third-party action is pinned to a full commit SHA (the version is in the comment);
+# - no build cache is restored: the signed installer is built from source every time;
+# - the updater signing key is given to one step only, after the build, so no build script or
+#   package script ever sees it; the job runs in the protected `release` environment (reviewers).
 name: Release (Windows)
 
 on:
@@ -29,21 +38,29 @@ jobs:
   release-windows:
     name: Build, sign and register the Windows release
     runs-on: windows-latest
+    # Protected environment: the owner sets required reviewers (docs/release/RELEASE_SETUP.md), so
+    # a pushed tag waits for approval before any secret of this environment is available.
+    environment: release
     env:
       MAINTAFOX_CODESIGN_PROVIDER: ${{ vars.MAINTAFOX_CODESIGN_PROVIDER }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Release version and notes
         id: version
         shell: pwsh
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
         run: |
-          if ("${{ github.ref_type }}" -ne "tag") {
+          if ($env:REF_TYPE -ne "tag") {
             Write-Host "::error::Run this workflow on a release tag vX.Y.Z (push the tag, or choose it in 'Use workflow from')."; exit 1
           }
-          $tag = "${{ github.ref_name }}"
-          if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') { Write-Host "::error::Tag '$tag' is not vX.Y.Z."; exit 1 }
+          $tag = $env:TAG
+          if ($tag -cnotmatch '^v(\d+\.\d+\.\d+)$') { Write-Host "::error::The tag is not vX.Y.Z."; exit 1 }
           $version = $Matches[1]
           $conf = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           # The release catalog accepts plain versions only (MAJOR.MINOR.PATCH): a pre-release build
@@ -71,15 +88,16 @@ jobs:
       - name: Required release secrets
         shell: pwsh
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          MAINTAFOX_RELEASE_PUBLISHER_TOKEN: ${{ secrets.MAINTAFOX_RELEASE_PUBLISHER_TOKEN }}
+          # Presence only: the secrets themselves are not loaded here.
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          HAS_UPDATER_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD != '' }}
+          HAS_PUBLISHER_TOKEN: ${{ secrets.MAINTAFOX_RELEASE_PUBLISHER_TOKEN != '' }}
         run: |
           $missing = @()
           if (-not (Test-Path src-tauri/updater/maintafox-updater.pub)) { $missing += "src-tauri/updater/maintafox-updater.pub (run scripts/release/setup-updater-key.ps1)" }
-          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { $missing += "secret TAURI_SIGNING_PRIVATE_KEY (run scripts/release/setup-updater-key.ps1)" }
-          if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) { $missing += "secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD (run scripts/release/setup-updater-key.ps1)" }
-          if (-not $env:MAINTAFOX_RELEASE_PUBLISHER_TOKEN) { $missing += "secret MAINTAFOX_RELEASE_PUBLISHER_TOKEN (Console > Updates > Releases > Release workflow keys)" }
+          if ($env:HAS_UPDATER_KEY -ne "true") { $missing += "secret TAURI_SIGNING_PRIVATE_KEY (run scripts/release/setup-updater-key.ps1)" }
+          if ($env:HAS_UPDATER_KEY_PASSWORD -ne "true") { $missing += "secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD (run scripts/release/setup-updater-key.ps1)" }
+          if ($env:HAS_PUBLISHER_TOKEN -ne "true") { $missing += "secret MAINTAFOX_RELEASE_PUBLISHER_TOKEN (Console > Updates > Releases > Release workflow keys)" }
           if ($missing.Count -gt 0) {
             foreach ($m in $missing) { Write-Host "::error::Missing: $m" }
             Write-Host "No release was built: an update without these could not be installed or registered. See docs/release/RELEASE_SETUP.md."
@@ -105,7 +123,7 @@ jobs:
             exit 0
           }
           if ($env:MAINTAFOX_CODESIGN_PROVIDER -ne "sslcom-esigner") {
-            Write-Host "::error::Unknown MAINTAFOX_CODESIGN_PROVIDER '$($env:MAINTAFOX_CODESIGN_PROVIDER)' (supported: sslcom-esigner)."; exit 1
+            Write-Host "::error::Unknown MAINTAFOX_CODESIGN_PROVIDER (supported: sslcom-esigner)."; exit 1
           }
           $need = @("CODESIGNTOOL_DOWNLOAD_URL", "CODESIGNTOOL_SHA256", "ES_USERNAME", "ES_PASSWORD", "ES_CREDENTIAL_ID", "ES_TOTP_SECRET")
           $missing = $need | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
@@ -121,115 +139,124 @@ jobs:
           $bat = Get-ChildItem -Path $dir -Recurse -Filter CodeSignTool.bat | Select-Object -First 1
           if (-not $bat) { Write-Host "::error::CodeSignTool.bat not found in the downloaded archive."; exit 1 }
           "CODESIGNTOOL_DIR=$($bat.DirectoryName)" >> $env:GITHUB_ENV
-          $script = (Resolve-Path scripts/release/sign-windows.ps1).Path
-          $config = @{ bundle = @{ windows = @{ signCommand = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$script`" %1" } } } | ConvertTo-Json -Depth 5
-          $configPath = Join-Path $env:RUNNER_TEMP "codesign.conf.json"
-          [System.IO.File]::WriteAllText($configPath, $config)
           "signed=true" >> $env:GITHUB_OUTPUT
-          "config_path=$configPath" >> $env:GITHUB_OUTPUT
 
-      - name: Install Rust stable (MSVC)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (MSVC, the toolchain of src-tauri/rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master 2026-10-09 (input handling fix)
         with:
+          toolchain: "1.94.1"
           targets: x86_64-pc-windows-msvc
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: cargo-win-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-win-release-
-
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
-          cache: "pnpm"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Built WITHOUT the updater signing key (createUpdaterArtifacts off for this build): no cargo
+      # build script, npm script or bundler step can read it. The installer is signed for the
+      # updater in the next step.
       - name: Build the installer
         shell: pwsh
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CODE_SIGNED: ${{ steps.codesign.outputs.signed }}
           ES_USERNAME: ${{ secrets.ES_USERNAME }}
           ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
           ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
           ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
         run: |
-          $extra = @()
-          if ("${{ steps.codesign.outputs.config_path }}") { $extra = @("--config", "${{ steps.codesign.outputs.config_path }}") }
-          pnpm tauri build --bundles nsis @extra
+          $bundle = @{ createUpdaterArtifacts = $false }
+          if ($env:CODE_SIGNED -eq "true") {
+            $script = (Resolve-Path scripts/release/sign-windows.ps1).Path
+            $bundle.windows = @{ signCommand = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$script`" %1" }
+          }
+          $configPath = Join-Path $env:RUNNER_TEMP "release.conf.json"
+          [System.IO.File]::WriteAllText($configPath, (@{ bundle = $bundle } | ConvertTo-Json -Depth 5))
+          pnpm tauri build --bundles nsis --config $configPath
           if ($LASTEXITCODE -ne 0) { Write-Host "::error::tauri build failed."; exit 1 }
 
-      - name: Check the built installer
+      - name: Locate the installer
         id: artifacts
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CODE_SIGNED: ${{ steps.codesign.outputs.signed }}
         run: |
-          $version = "${{ steps.version.outputs.version }}"
-          # The control API requires exactly this installer name.
-          $expectedName = "Maintafox_${version}_x64-setup.exe"
+          # The control API and the desktop updater require exactly this installer name.
+          $expectedName = "Maintafox_$($env:VERSION)_x64-setup.exe"
           $path = Join-Path "src-tauri/target/release/bundle/nsis" $expectedName
           if (-not (Test-Path -LiteralPath $path)) {
             $found = (Get-ChildItem src-tauri/target/release/bundle/nsis -Filter "*-setup.exe" -ErrorAction SilentlyContinue | ForEach-Object Name) -join ", "
             Write-Host "::error::The installer must be named exactly $expectedName; found: $found"; exit 1
           }
           $installer = Get-Item -LiteralPath $path
-          $sig = "$($installer.FullName).sig"
-          if (-not (Test-Path $sig)) {
-            Write-Host "::error::The updater signature $sig was not produced: the build did not sign the installer for the updater (check TAURI_SIGNING_PRIVATE_KEY and its password)."; exit 1
-          }
-          # The .sig is base64 of a minisign signature; its trusted comment names the signed file
-          # ("trusted comment: timestamp:<n><TAB>file:<name>"), which the control API checks too.
-          try {
-            $minisign = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String((Get-Content -LiteralPath $sig -Raw).Trim()))
-          } catch {
-            Write-Host "::error::The updater signature $sig is not base64: $($_.Exception.Message)"; exit 1
-          }
-          $trusted = ($minisign -split "`n" | Where-Object { $_ -like "trusted comment:*" } | Select-Object -First 1)
-          if (-not $trusted) { Write-Host "::error::The updater signature has no trusted comment line."; exit 1 }
-          $signedFile = $null
-          foreach ($field in ($trusted.Substring("trusted comment:".Length).Trim() -split "`t")) {
-            if ($field.StartsWith("file:")) { $signedFile = $field.Substring(5).TrimEnd("`r") }
-          }
-          if ($signedFile -cne $installer.Name) {
-            Write-Host "::error::The updater signature was made for file '$signedFile', not '$($installer.Name)'."; exit 1
-          }
-          if ("${{ steps.codesign.outputs.signed }}" -eq "true") {
+          if ($env:CODE_SIGNED -eq "true") {
             $auth = Get-AuthenticodeSignature -LiteralPath $installer.FullName
             if ($auth.Status -ne "Valid") { Write-Host "::error::The installer's Authenticode signature is $($auth.Status)."; exit 1 }
           }
           "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
-          "signature=$sig" >> $env:GITHUB_OUTPUT
+          "signature=$($installer.FullName).sig" >> $env:GITHUB_OUTPUT
+          "file_name=$expectedName" >> $env:GITHUB_OUTPUT
+
+      # The only step that holds the updater signing key: it signs the finished (Authenticode-signed)
+      # installer with the Tauri CLI, which reads the key and its password from these variables.
+      - name: Sign the installer for the in-app updater
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          INSTALLER: ${{ steps.artifacts.outputs.installer }}
+        run: |
+          pnpm exec tauri signer sign $env:INSTALLER
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::The installer could not be signed for the updater (check TAURI_SIGNING_PRIVATE_KEY and its password)."; exit 1 }
+
+      # The signature must verify against the public key built into the app; a mismatched secret
+      # would otherwise only show up as refused updates on customers' PCs.
+      - name: Verify the updater signature against the committed public key
+        shell: pwsh
+        env:
+          INSTALLER: ${{ steps.artifacts.outputs.installer }}
+          SIGNATURE: ${{ steps.artifacts.outputs.signature }}
+          FILE_NAME: ${{ steps.artifacts.outputs.file_name }}
+        run: |
+          if (-not (Test-Path -LiteralPath $env:SIGNATURE)) { Write-Host "::error::The updater signature was not produced."; exit 1 }
+          node scripts/release/verify-updater-signature.mjs `
+            --file $env:INSTALLER `
+            --signature $env:SIGNATURE `
+            --public-key src-tauri/updater/maintafox-updater.pub `
+            --expected-file-name $env:FILE_NAME
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Register the release (draft) in the control API
         shell: pwsh
         env:
           MAINTAFOX_RELEASE_PUBLISHER_TOKEN: ${{ secrets.MAINTAFOX_RELEASE_PUBLISHER_TOKEN }}
+          API_BASE_OVERRIDE: ${{ vars.MAINTAFOX_RELEASE_API_BASE_URL }}
+          VERSION: ${{ steps.version.outputs.version }}
+          INSTALLER: ${{ steps.artifacts.outputs.installer }}
+          SIGNATURE: ${{ steps.artifacts.outputs.signature }}
+          GIT_COMMIT: ${{ github.sha }}
+          CODE_SIGNED: ${{ steps.codesign.outputs.signed }}
         run: |
           # Same API origin the desktop build uses (shared/control-plane.json); a repository variable
-          # MAINTAFOX_RELEASE_API_BASE_URL overrides it (e.g. a staging API).
-          $env:MAINTAFOX_RELEASE_API_BASE_URL = "${{ vars.MAINTAFOX_RELEASE_API_BASE_URL }}"
+          # MAINTAFOX_RELEASE_API_BASE_URL overrides it (e.g. a staging API). https only.
+          $env:MAINTAFOX_RELEASE_API_BASE_URL = $env:API_BASE_OVERRIDE
           if (-not $env:MAINTAFOX_RELEASE_API_BASE_URL) {
             $env:MAINTAFOX_RELEASE_API_BASE_URL = (Get-Content shared/control-plane.json -Raw | ConvertFrom-Json).defaultApiBaseUrl
           }
-          $version = "${{ steps.version.outputs.version }}"
           node scripts/release/publish-release.mjs `
-            --version $version `
-            --installer "${{ steps.artifacts.outputs.installer }}" `
-            --signature "${{ steps.artifacts.outputs.signature }}" `
-            --notes-en "docs/release/notes/$version.en.md" `
-            --notes-fr "docs/release/notes/$version.fr.md" `
-            --git-commit "${{ github.sha }}" `
-            --code-signed "${{ steps.codesign.outputs.signed }}"
+            --version $env:VERSION `
+            --installer $env:INSTALLER `
+            --signature $env:SIGNATURE `
+            --notes-en "docs/release/notes/$($env:VERSION).en.md" `
+            --notes-fr "docs/release/notes/$($env:VERSION).fr.md" `
+            --git-commit $env:GIT_COMMIT `
+            --code-signed $env:CODE_SIGNED
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       # Every signed installer is also kept as a GitHub release: the "previous signed artifact" a
@@ -238,14 +265,16 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          INSTALLER: ${{ steps.artifacts.outputs.installer }}
+          SIGNATURE: ${{ steps.artifacts.outputs.signature }}
         run: |
-          $tag = "${{ github.ref_name }}"
-          $version = "${{ steps.version.outputs.version }}"
-          $files = @("${{ steps.artifacts.outputs.installer }}", "${{ steps.artifacts.outputs.signature }}")
-          gh release view $tag *> $null
+          $files = @($env:INSTALLER, $env:SIGNATURE)
+          gh release view $env:TAG *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag @files --clobber
+            gh release upload $env:TAG @files --clobber
           } else {
-            gh release create $tag @files --title "Maintafox $version" --notes-file "docs/release/notes/$version.en.md"
+            gh release create $env:TAG @files --title "Maintafox $($env:VERSION)" --notes-file "docs/release/notes/$($env:VERSION).en.md"
           }
           if ($LASTEXITCODE -ne 0) { Write-Host "::error::The GitHub release could not be created."; exit 1 }

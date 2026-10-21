@@ -30,6 +30,7 @@ function makeCheck(overrides: Partial<UpdateCheckResult> = {}): UpdateCheckResul
     available: true,
     current_version: "1.1.0",
     version: "1.2.0",
+    release_id: "rel_120",
     notes: "Generic notes",
     pub_date: null,
     kind: "upgrade",
@@ -124,7 +125,13 @@ describe("UpdateBanner", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 
-    await waitFor(() => expect(mockInstall).toHaveBeenCalledWith("en", expect.any(Function)));
+    await waitFor(() =>
+      expect(mockInstall).toHaveBeenCalledWith(
+        "en",
+        { version: "1.2.0", kind: "upgrade", release_id: "rel_120" },
+        expect.any(Function),
+      ),
+    );
     expect(await screen.findByText("Preparing the update…")).toBeInTheDocument();
   });
 
@@ -203,6 +210,7 @@ describe("UpdateBanner", () => {
         failure: "Migration failed",
         rollback_refusal: null,
         rollback_allowed_version: null,
+        backup_refusal: null,
         notice_acknowledged: false,
       },
     });

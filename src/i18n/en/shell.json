@@ -489,7 +489,7 @@
       "starting": "Preparing the update…"
     },
     "refusal": {
-      "update_withdrawn": "This update is no longer offered (it may have been paused or withdrawn). Nothing was changed.",
+      "update_withdrawn": "This update is no longer offered as you confirmed it (it may have been paused, withdrawn or replaced). Nothing was changed. Check what is offered now before installing.",
       "rollback_unsynced_changes_one": "{{count}} change is not synchronised yet. Synchronise first, then try again; otherwise it would be lost.",
       "rollback_unsynced_changes_other": "{{count}} changes are not synchronised yet. Synchronise first, then try again; otherwise they would be lost.",
       "rollback_backup_missing": "The backup needed to go back to version {{version}} is not on this computer. Contact Maintafox support.",
@@ -530,7 +530,9 @@
       "unavailable": "The previous version cannot be downloaded right now. Check the internet connection and try again, or contact Maintafox support.",
       "error": "Version {{from}} could not be reinstalled. Check the internet connection and try again, or contact Maintafox support.",
       "refused": "The update server refused to reinstall version {{from}}. Keep this computer as it is: do not reinstall, reset or replace Maintafox. Your data is safe in the backup made before the update. Contact Maintafox support.",
-      "allowedVersion": "For information: the update server names version {{version}} as allowed instead. It is not installed automatically; Maintafox support decides."
+      "allowedVersion": "For information: the update server names version {{version}} as allowed instead. It is not installed automatically; Maintafox support decides.",
+      "bodyBackupUnverified": "Version {{to}} could not update your data, and the backup made just before the update could not be verified, so it was not put back.",
+      "backupUnverified": "Keep this computer as it is: do not reinstall, reset or replace Maintafox, and do not reinstall version {{from}} (it could not open the data). Contact Maintafox support."
     },
     "mandatoryReason": {
       "forced_update_floor": "Your organisation requires this version or a newer one.",

@@ -3,10 +3,14 @@
 //! `check_for_update`           — no session: safe at startup and on the login screen; never fails
 //!                                the app (the result says why there is no update).
 //! `install_pending_update`     — an administrator of this PC with a fresh identity check
-//!                                (`install_authority`): pre-update backup, download with
-//!                                progress, signature check, install (the app restarts).
+//!                                (`install_authority`), for the offer they confirmed
+//!                                (`ConfirmedOffer`): download with progress and signature check,
+//!                                then pre-update backup, journal and install (the app restarts).
 //! `reinstall_previous_version` — recovery screen after a failed database update (no session:
-//!                                the database could not be opened by this version).
+//!                                the database could not be opened by this version); only on the
+//!                                version that failed, for exactly the version it came from.
+//!
+//! Only one install or reinstall runs at a time (`updater::InstallSlot`).
 //! `get_update_journal` / `acknowledge_update_notice` — the outcome of the last update.
 
 use tauri::ipc::Channel;
@@ -15,7 +19,9 @@ use tauri::{AppHandle, Manager, State};
 use crate::errors::{AppError, AppResult};
 use crate::require_session;
 use crate::state::AppState;
-use crate::updater::{InstallOutcome, UpdateCheckResult, UpdateJournalView, UpdateProgressEvent};
+use crate::updater::{
+    ConfirmedOffer, InstallOutcome, InstallSlot, UpdateCheckResult, UpdateJournalView, UpdateProgressEvent,
+};
 
 fn database(app: &AppHandle) -> AppResult<sea_orm::DatabaseConnection> {
     app.try_state::<AppState>()
@@ -54,24 +60,36 @@ pub(crate) fn install_authority(caller: &crate::commands::product_license::Licen
     Ok(())
 }
 
-/// Installs the update the manifest offers now. The frontend asks for confirmation first.
+/// Installs the offer the administrator confirmed (`offer`: the version, kind and release of the
+/// last check they saw), if the manifest still offers exactly that; otherwise `update_withdrawn`
+/// and the UI shows the new offer for a new confirmation.
 #[tauri::command]
 pub async fn install_pending_update(
     app: AppHandle,
     state: State<'_, AppState>,
     locale: Option<String>,
+    offer: ConfirmedOffer,
     on_progress: Channel<UpdateProgressEvent>,
 ) -> AppResult<InstallOutcome> {
     let user = require_session!(state);
     let step_up = state.session.read().await.is_step_up_valid();
     let caller = crate::commands::product_license::licence_caller(&state.db, Some(user.user_id), step_up).await?;
     install_authority(&caller)?;
+    let _slot = InstallSlot::acquire()?;
     let progress = move |event: UpdateProgressEvent| {
         if let Err(e) = on_progress.send(event) {
             tracing::warn!("update progress could not reach the window: {e}");
         }
     };
-    crate::updater::install(&app, &state.db, locale.as_deref(), Some(user.user_id), &progress).await
+    crate::updater::install(
+        &app,
+        &state.db,
+        locale.as_deref(),
+        Some(user.user_id),
+        &offer,
+        &progress,
+    )
+    .await
 }
 
 /// Reinstalls the version this device ran before a failed database update.
@@ -82,6 +100,7 @@ pub async fn reinstall_previous_version(
     on_progress: Channel<UpdateProgressEvent>,
 ) -> AppResult<InstallOutcome> {
     let db = database(&app)?;
+    let _slot = InstallSlot::acquire()?;
     let progress = move |event: UpdateProgressEvent| {
         if let Err(e) = on_progress.send(event) {
             tracing::warn!("update progress could not reach the window: {e}");

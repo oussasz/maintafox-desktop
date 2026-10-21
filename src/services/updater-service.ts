@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  ConfirmedUpdateOffer,
   InstallOutcome,
   UpdateCheckResult,
   UpdateJournalView,
@@ -28,6 +29,7 @@ export const UpdateCheckResultSchema = z.object({
   available: z.boolean(),
   current_version: z.string(),
   version: z.string().nullable(),
+  release_id: z.string().nullable(),
   notes: z.string().nullable(),
   pub_date: z.string().nullable(),
   kind: UpdateKindSchema.nullable(),
@@ -81,6 +83,7 @@ export const UpdateJournalViewSchema = z.object({
   failure: z.string().nullable(),
   rollback_refusal: z.string().nullable(),
   rollback_allowed_version: z.string().nullable(),
+  backup_refusal: z.string().nullable(),
   notice_acknowledged: z.boolean(),
 });
 
@@ -116,17 +119,20 @@ export async function checkForUpdate(locale?: string): Promise<UpdateCheckResult
 }
 
 /**
- * Backs up the database, downloads, verifies and installs the offered update.
- * Requires a signed-in session (enforced by the Rust command). The caller shows a
- * confirmation first. On `restarting` the installer runs and this process exits.
+ * Downloads and verifies the offer the user confirmed, then backs up the database and installs
+ * it. Requires an administrator of this PC (enforced by the Rust command). The caller shows a
+ * confirmation first and passes the offer it showed: if the server now offers anything else, the
+ * answer is `update_withdrawn` and nothing is installed. On `restarting` the installer runs and
+ * this process exits.
  */
 export async function installPendingUpdate(
   locale: string | undefined,
+  offer: ConfirmedUpdateOffer,
   onProgress: UpdateProgressHandler,
 ): Promise<InstallOutcome> {
   const raw = await invoke<unknown>(
     "install_pending_update",
-    { locale, onProgress: progressChannel(onProgress) },
+    { locale, offer, onProgress: progressChannel(onProgress) },
     { notifyOnError: false },
   );
   return InstallOutcomeSchema.parse(raw);
