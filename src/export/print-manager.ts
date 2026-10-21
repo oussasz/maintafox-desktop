@@ -22,20 +22,30 @@ export const PRINT_FRAME_FALLBACK_MS = 60_000;
 /** Lets the written document be laid out before the print dialog snapshots it. */
 const PAINT_FALLBACK_MS = 50;
 
+/** A frame that never paints (window minimized right after the click) must not block printing. */
+export const PRINT_PAINT_TIMEOUT_MS = 1000;
+
 function nextPaint(frameWindow: Window): Promise<void> {
   return new Promise((resolve) => {
+    // Settles on the first of: two animation frames, or the timeout (then print anyway).
+    const timer = setTimeout(resolve, PRINT_PAINT_TIMEOUT_MS);
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
     if (typeof frameWindow.requestAnimationFrame === "function") {
       frameWindow.requestAnimationFrame(() => {
-        frameWindow.requestAnimationFrame(() => resolve());
+        frameWindow.requestAnimationFrame(done);
       });
     } else {
-      setTimeout(resolve, PAINT_FALLBACK_MS);
+      setTimeout(done, PAINT_FALLBACK_MS);
     }
   });
 }
 
 /** The print request in progress; a second request made meanwhile (double click) joins it. */
 let inFlight: Promise<void> | null = null;
+let inFlightHtml: string | null = null;
 
 /**
  * Print a dedicated HTML document through a hidden frame of the current window.
@@ -46,11 +56,22 @@ let inFlight: Promise<void> | null = null;
  * double click never appends two frames or calls `print()` twice.
  */
 export function printHtml(html: string, options: PrintHtmlOptions = {}): Promise<void> {
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    if (html !== inFlightHtml) {
+      console.warn(
+        "[PrintManager] A print is already open; this different document was not printed.",
+      );
+    }
+    return inFlight;
+  }
   const run = printInFrame(html, options).finally(() => {
-    if (inFlight === run) inFlight = null;
+    if (inFlight === run) {
+      inFlight = null;
+      inFlightHtml = null;
+    }
   });
   inFlight = run;
+  inFlightHtml = html;
   return run;
 }
 

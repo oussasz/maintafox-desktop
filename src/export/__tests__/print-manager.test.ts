@@ -3,7 +3,7 @@ import { type MockInstance, afterEach, beforeEach, describe, expect, it, vi } fr
 const webviewWindowCtor = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/webviewWindow", () => ({ WebviewWindow: webviewWindowCtor }));
 
-import { PRINT_FRAME_FALLBACK_MS, printHtml } from "../print-manager";
+import { PRINT_FRAME_FALLBACK_MS, PRINT_PAINT_TIMEOUT_MS, printHtml } from "../print-manager";
 
 interface FakeFrame {
   print: ReturnType<typeof vi.fn> | undefined;
@@ -107,5 +107,31 @@ describe("printHtml", () => {
     expect(document.querySelector("iframe")).toBeNull();
     await printHtml("<p>y</p>");
     expect(win.print).toHaveBeenCalledTimes(2);
+  });
+
+  it("still prints after the timeout when the frame never paints, and does not stay locked", async () => {
+    const { win } = stubFrame();
+    win.requestAnimationFrame = () => {
+      // never fires
+    };
+    const pending = printHtml("<p>x</p>");
+    await vi.advanceTimersByTimeAsync(PRINT_PAINT_TIMEOUT_MS + 1);
+    await pending;
+    expect(win.print).toHaveBeenCalledTimes(1);
+
+    win.requestAnimationFrame = (cb) => cb();
+    await printHtml("<p>y</p>");
+    expect(win.print).toHaveBeenCalledTimes(2);
+  });
+
+  it("warns when a joined request carries a different document", async () => {
+    stubFrame();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const first = printHtml("<p>a</p>");
+    void printHtml("<p>a</p>");
+    expect(warn).not.toHaveBeenCalled();
+    void printHtml("<p>b</p>");
+    expect(warn).toHaveBeenCalledTimes(1);
+    await first;
   });
 });
