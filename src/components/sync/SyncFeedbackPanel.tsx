@@ -104,7 +104,7 @@ export function SyncFeedbackPanel() {
           {t("sync.panel.conflictsTitle")}
         </h3>
         <div className="max-h-[28rem] overflow-auto">
-          <SyncConflictList showTriageActions withResolutionNote />
+          <SyncConflictList showTriageActions />
         </div>
       </div>
 

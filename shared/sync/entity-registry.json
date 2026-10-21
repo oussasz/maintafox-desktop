@@ -155,6 +155,15 @@
       "note": "Device audit trail; step 2.4 decides between append-only sync and a dedicated audit channel."
     },
     {
+      "entity_type": "audit_chain_stubs",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced",
+      "note": "Hash-only place of an audit event kept on its PC (no content): other PCs verify that PC's chain across it (audit::chain, migration 250)."
+    },
+    {
       "entity_type": "budget_actuals",
       "scope": "tenant",
       "conflict_policy": "operator_review",

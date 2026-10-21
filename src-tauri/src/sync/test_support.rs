@@ -281,6 +281,28 @@ impl TestServer {
 /// Literal values for columns the generic generator cannot guess (enumerations checked by code,
 /// cross-column constraints). `(entity type, column, SQL literal)`.
 const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
+    // A received audit chain stub must be well formed (`audit::chain::inbound_stub_check`): a
+    // position after 1 with its link, a stub-era hash and its content digest.
+    (
+        "audit_chain_stubs",
+        "chain_seq",
+        "(SELECT COALESCE(MAX(chain_seq), 1) + 1 FROM audit_chain_stubs)",
+    ),
+    (
+        "audit_chain_stubs",
+        "chain_prev_hash",
+        "'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'",
+    ),
+    (
+        "audit_chain_stubs",
+        "chain_hash",
+        "'L2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'",
+    ),
+    (
+        "audit_chain_stubs",
+        "content_digest",
+        "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+    ),
     // Movement types are an enumeration of the inventory commands (`inventory::ledger`).
     ("inventory_transactions", "movement_type", "'ADJUST_IN'"),
     // The next run is computed from it on every device.
