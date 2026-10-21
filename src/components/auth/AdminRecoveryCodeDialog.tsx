@@ -83,7 +83,10 @@ export function AdminRecoveryCodeDialog({ open, onOpenChange }: AdminRecoveryCod
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md" data-testid="admin-recovery-dialog">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] max-w-md overflow-y-auto"
+        data-testid="admin-recovery-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{t("login.recoveryCode.title")}</DialogTitle>
           <DialogDescription>{t("login.recoveryCode.description")}</DialogDescription>
