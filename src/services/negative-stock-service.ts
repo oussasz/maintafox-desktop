@@ -53,11 +53,16 @@ export const OverReservationWarningSchema = z.object({
 export type OverReservationWarning = z.infer<typeof OverReservationWarningSchema>;
 
 export const ReconciliationCountSchema = z.object({
-  session_sync_id: z.string(),
+  /** Sync id of the count line. */
+  count_sync_id: z.string(),
   session_code: z.string(),
+  /** Which path posted the count: the stock-to-reconcile list or a count session. */
+  path: z.enum(["reconciliation", "count_session"]),
   counted_by: z.string().nullable(),
   device_code: z.string(),
   counted_at: z.string(),
+  /** Stock on record the count was set against, on the PC that posted it. */
+  system_qty: z.number(),
   counted_qty: z.number(),
   variance_qty: z.number(),
 });

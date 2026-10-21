@@ -195,7 +195,9 @@ describe("NegativeStockReviewPanel", () => {
           available_qty: 5,
           counts: [
             {
-              session_sync_id: "s1",
+              count_sync_id: "s1",
+              path: "reconciliation",
+              system_qty: -5,
               session_code: "CC-1",
               counted_by: "Alice",
               device_code: "7KQ2",
@@ -204,7 +206,9 @@ describe("NegativeStockReviewPanel", () => {
               variance_qty: 5,
             },
             {
-              session_sync_id: "s2",
+              count_sync_id: "s2",
+              path: "count_session",
+              system_qty: -5,
               session_code: "CC-2",
               counted_by: "Bob",
               device_code: "M3XZ",
@@ -219,8 +223,12 @@ describe("NegativeStockReviewPanel", () => {
     });
     render(<NegativeStockReviewPanel />);
     expect(await screen.findByText("Double count — to verify")).toBeInTheDocument();
-    expect(screen.getByText(/Alice on PC 7KQ2, .*: counted 0/)).toBeInTheDocument();
-    expect(screen.getByText(/Bob on PC M3XZ, .*: counted 0/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Alice on PC 7KQ2, .*, by stock-to-reconcile list: counted 0/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Bob on PC M3XZ, .*, by count session CC-2: counted 0/),
+    ).toBeInTheDocument();
     expect(screen.queryByText("No location below zero.")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Record a count" }));
     expect(await screen.findByRole("button", { name: "Record the count" })).toBeDisabled();

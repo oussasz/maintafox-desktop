@@ -425,7 +425,7 @@ pub async fn candidates(
                 let code = s(&r, "article_code")?;
                 let name = s(&r, "article_name")?;
                 let location = format!("{}/{}", s(&r, "warehouse_code")?, s(&r, "location_code")?);
-                let ids: Vec<&str> = counts.iter().map(|c| c.session_sync_id.as_str()).collect();
+                let ids: Vec<&str> = counts.iter().map(|c| c.count_sync_id.as_str()).collect();
                 let since = counts.iter().filter_map(|c| parse_time(&c.counted_at)).max();
                 out.push(Candidate {
                     record_id: Some(article_id),

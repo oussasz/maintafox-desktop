@@ -16,7 +16,7 @@ import {
 import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
 import { InventoryIssueDesk } from "@/components/inventory/InventoryIssueDesk";
 import { InventoryValuationPanel } from "@/components/inventory/InventoryValuationPanel";
-import { NegativeStockBadge } from "@/components/inventory/NegativeStockBadge";
+import { NegativeStockBadge, isNegativeStock } from "@/components/inventory/NegativeStockBadge";
 import { NegativeStockReviewPanel } from "@/components/inventory/NegativeStockReviewPanel";
 import {
   type ProcurementPanelRequest,
@@ -596,6 +596,8 @@ export function InventoryPage() {
         options: [
           { value: "below_reorder", label: t("filters.stockBelowReorder") },
           { value: "out_of_stock", label: t("filters.stockOut") },
+          // The "Stock négatif" chip of the list (total over the stores), as a filter.
+          { value: "negative", label: t("filters.stockNegative") },
         ],
         value: masterStockFilter,
         onChange: setMasterStockFilter,
@@ -624,6 +626,12 @@ export function InventoryPage() {
       if (masterStatusFilter === "inactive" && article.is_active === 1) return false;
       if (masterStockFilter === "below_reorder" && !isBelowReorderPoint(article)) return false;
       if (masterStockFilter === "out_of_stock" && article.available_qty > 0) return false;
+      if (
+        masterStockFilter === "negative" &&
+        !isNegativeStock(article.on_hand_qty, article.available_qty)
+      ) {
+        return false;
+      }
       return true;
     });
   }, [articles, masterFamilyFilter, masterStatusFilter, masterStockFilter]);

@@ -107,6 +107,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
   const countLine = (c: ReconciliationCount) =>
     t("negativeStock.doubleCount.countLine", {
       who: c.counted_by ?? t("negativeStock.doubleCount.unknownUser"),
+      path: t(`negativeStock.doubleCount.path.${c.path}`, { session: c.session_code }),
       device: c.device_code || "—",
       date: c.counted_at ? formatDateTime(c.counted_at) : "—",
       counted: qty(c.counted_qty),
@@ -250,7 +251,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                 </p>
                 <ul className="mt-1 list-disc ps-5 text-xs text-text-secondary">
                   {item.counts.map((c) => (
-                    <li key={c.session_sync_id}>{countLine(c)}</li>
+                    <li key={c.count_sync_id}>{countLine(c)}</li>
                   ))}
                 </ul>
               </div>

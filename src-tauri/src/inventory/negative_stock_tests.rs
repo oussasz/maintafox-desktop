@@ -9,8 +9,8 @@ use sea_orm::DatabaseConnection;
 use crate::errors::AppError;
 use crate::inventory::domain::{InventoryIssueInput, InventoryReserveInput, InventoryStockAdjustInput};
 use crate::inventory::negative_stock::{
-    self, ResolveNegativeStockInput, CLOSURE_ADJUSTMENT, CLOSURE_COUNT, CLOSURE_RECEIPT, REFUSED_NOT_OPEN,
-    REFUSED_REASON_SHORT,
+    self, ResolveNegativeStockInput, CLOSURE_ADJUSTMENT, CLOSURE_COUNT, CLOSURE_RECEIPT, CLOSURE_RETURN,
+    REFUSED_ENTRY_REASON_SHORT, REFUSED_NOT_OPEN, REFUSED_REASON_SHORT,
 };
 use crate::inventory::queries;
 use crate::sync::test_support::{exec, scalar_i64, started_device_db, CreatedRow, RowFactory, TestServer};
@@ -44,6 +44,17 @@ async fn stocked_pair(a: &DatabaseConnection, factory: &mut RowFactory, qty: f64
 }
 
 async fn adjust(db: &DatabaseConnection, article_id: i64, location_id: i64, delta: f64) -> Result<(), AppError> {
+    adjust_noted(db, article_id, location_id, delta, "test").await
+}
+
+/// A manual movement with its comment (the reason of an entry at a location below zero).
+async fn adjust_noted(
+    db: &DatabaseConnection,
+    article_id: i64,
+    location_id: i64,
+    delta: f64,
+    notes: &str,
+) -> Result<(), AppError> {
     queries::adjust_stock(
         db,
         InventoryStockAdjustInput {
@@ -51,7 +62,7 @@ async fn adjust(db: &DatabaseConnection, article_id: i64, location_id: i64, delt
             location_id,
             delta_qty: delta,
             reason_code: None,
-            notes: Some("test".into()),
+            notes: Some(notes.into()),
             source_ref: None,
         },
     )
@@ -325,7 +336,8 @@ async fn two_pcs_issuing_the_last_units_leave_one_item_that_a_count_closes_on_bo
             "SELECT COUNT(*) FROM inventory_count_lines cl JOIN inventory_count_sessions cs ON cs.id = cl.session_id
              WHERE cs.status = 'posted' AND cl.article_id = ? AND cl.location_id = ?
                AND cl.counted_qty = 0 AND cl.variance_qty = 5 AND cl.approval_note = 'Recompté : bac vide'
-               AND cs.reconciliation_heads_json = '[]' AND cs.reconciliation_device_code IS NOT NULL",
+               AND cl.count_follows_json = '[]' AND cl.count_device_code IS NOT NULL
+               AND cl.count_path = 'reconciliation'",
             vec![art_a.into(), loc_a.into()],
         )
         .await,
@@ -450,23 +462,39 @@ async fn a_transfer_in_closes_the_item_as_regularised_by_receipt() {
     sync_clean(&mut server, "B", &b).await;
     assert_eq!(review_rows(&b, art_b, loc_b).await, 1, "B: item open");
 
-    // B moves 8 in from the other location: back to 3.
-    queries::transfer_stock(
-        &b,
-        InventoryTransferInput {
-            article_id: art_b,
-            from_location_id: spare_b,
-            to_location_id: loc_b,
-            quantity: 8.0,
-            source_type: None,
-            source_id: None,
-            source_ref: None,
-            notes: None,
-            lot_id: None,
-        },
-    )
-    .await
-    .expect("transfer into a location below zero");
+    let transfer = |quantity: f64| InventoryTransferInput {
+        article_id: art_b,
+        from_location_id: spare_b,
+        to_location_id: loc_b,
+        quantity,
+        source_type: None,
+        source_id: None,
+        source_ref: None,
+        notes: Some("Réapprovisionnement depuis la réserve".into()),
+        lot_id: None,
+    };
+    // A partial receipt into the location below zero is accepted; the item stays open (−2).
+    queries::transfer_stock(&b, transfer(3.0), None)
+        .await
+        .expect("partial transfer into a location below zero");
+    assert_eq!(on_hand_milli(&b, art_b, loc_b).await, -2000);
+    let on_b = negative_stock::list_reviews(&b, true).await.expect("list B");
+    assert_eq!(on_b.items.len(), 1);
+    assert_eq!(on_b.items[0].status, "open", "still below zero");
+    // 5 more: back to 3. Local transfers are not hooked: the row stays open until the list is read.
+    queries::transfer_stock(&b, transfer(5.0), None)
+        .await
+        .expect("transfer back above zero");
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM stock_negative_reviews WHERE article_id = ? AND location_id = ? AND status = 'open'",
+            vec![art_b.into(), loc_b.into()],
+        )
+        .await,
+        1,
+        "the row is still open before the list is read"
+    );
     let on_b = negative_stock::list_reviews(&b, true).await.expect("list B");
     assert_eq!(on_b.items.len(), 1);
     assert_eq!(on_b.items[0].status, "closed");
@@ -484,10 +512,10 @@ async fn a_transfer_in_closes_the_item_as_regularised_by_receipt() {
     assert_eq!(on_a.items[0].closing_movement_type.as_deref(), Some("TRANSFER_IN"));
 }
 
-/// A manual entry made here at a location below zero is not a receipt: once the list is read the
-/// item (still open in the table until then) closes as an adjustment.
+/// A manual entry made here at a location below zero is a count resolution, not a receipt: it needs
+/// a reason of at least 8 characters, is audited, and closes the item as an adjustment.
 #[tokio::test]
-async fn a_local_manual_entry_closes_the_item_as_an_adjustment_when_the_list_is_read() {
+async fn a_manual_entry_at_a_negative_location_needs_a_reason_and_closes_as_an_adjustment() {
     let a = started_device_db().await;
     let b = started_device_db().await;
     let mut server = TestServer::new();
@@ -502,8 +530,32 @@ async fn a_local_manual_entry_closes_the_item_as_an_adjustment_when_the_list_is_
     sync_clean(&mut server, "A", &a).await;
     let (art, loc) = (article.rowid, location.rowid);
 
-    adjust(&a, art, loc, 5.0).await.expect("entry back to zero");
+    for short in ["test", "   abcdefg   "] {
+        let err = adjust_noted(&a, art, loc, 5.0, short)
+            .await
+            .expect_err("an entry at a location below zero needs its reason");
+        assert_eq!(refusal_code(err), REFUSED_ENTRY_REASON_SHORT, "{short:?}");
+    }
+    assert_eq!(on_hand_milli(&a, art, loc).await, -5000, "refusals write nothing");
+    // A partial entry is accepted (the item stays open), the next one brings it back to zero.
+    adjust_noted(&a, art, loc, 2.0, "Trouvé 2 au fond du bac")
+        .await
+        .expect("partial entry");
+    assert_eq!(review_rows(&a, art, loc).await, 1);
+    adjust_noted(&a, art, loc, 3.0, "Trouvé 3 sur l'étagère")
+        .await
+        .expect("entry back to zero");
     assert_eq!(on_hand_milli(&a, art, loc).await, 0);
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'inventory.negative_stock.adjusted'",
+            vec![],
+        )
+        .await,
+        2,
+        "each entry at a location below zero is audited"
+    );
     assert_eq!(
         scalar_i64(
             &a,
@@ -511,17 +563,183 @@ async fn a_local_manual_entry_closes_the_item_as_an_adjustment_when_the_list_is_
             vec![art.into(), loc.into()],
         )
         .await,
-        1,
-        "local movements are not hooked: the row is still open"
+        0,
+        "the entry closes it at once"
     );
     let list = negative_stock::list_reviews(&a, true).await.expect("list");
     assert_eq!(list.items.len(), 1);
-    assert_eq!(
-        list.items[0].status, "closed",
-        "brought in line with the balance on read"
-    );
+    assert_eq!(list.items[0].status, "closed");
     assert_eq!(list.items[0].closure_kind.as_deref(), Some(CLOSURE_ADJUSTMENT));
     assert_eq!(list.items[0].closing_movement_type.as_deref(), Some("ADJUST_IN"));
+}
+
+/// Stock returned against the work-order issue it came from is a documented inflow: it closes the
+/// item as "régularisé par retour", without a reason.
+#[tokio::test]
+async fn a_return_against_its_issue_closes_the_item_as_regularised_by_return() {
+    use crate::inventory::domain::InventoryReturnInput;
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 5.0).await;
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    let (art_b, loc_b) = local_pair(&b, &article, &location).await;
+    let (art, loc) = (article.rowid, location.rowid);
+    let reservation = reserve(&a, art, loc, 5.0).await.expect("reserve");
+    queries::issue_reserved_stock(
+        &a,
+        InventoryIssueInput {
+            reservation_id: reservation,
+            quantity: 5.0,
+            source_type: None,
+            source_id: None,
+            source_ref: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("issue");
+    issue(&b, art_b, loc_b, 5.0).await;
+    sync_clean(&mut server, "B", &b).await;
+    sync_clean(&mut server, "A", &a).await;
+    assert_eq!(on_hand_milli(&a, art, loc).await, -5000);
+
+    queries::return_reserved_stock(
+        &a,
+        InventoryReturnInput {
+            reservation_id: reservation,
+            quantity: 5.0,
+            notes: None,
+        },
+    )
+    .await
+    .expect("a return into a location below zero is accepted");
+    assert_eq!(on_hand_milli(&a, art, loc).await, 0);
+    let list = negative_stock::list_reviews(&a, true).await.expect("list");
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].status, "closed");
+    assert_eq!(list.items[0].closure_kind.as_deref(), Some(CLOSURE_RETURN));
+    assert_eq!(list.items[0].closing_movement_type.as_deref(), Some("RETURN"));
+}
+
+/// One PC reconciles from the list, the other posts a count session for the same location, offline:
+/// every count counts, whatever its path — one "double comptage — à vérifier" naming both paths.
+#[tokio::test]
+async fn a_list_count_and_a_count_session_on_two_pcs_are_a_double_count() {
+    use crate::inventory::controls;
+    use crate::inventory::domain::{
+        ApproveInventoryCountLineInput, CreateInventoryCountSessionInput, PostInventoryCountSessionInput,
+        TransitionInventoryCountSessionInput, UpsertInventoryCountLineInput,
+    };
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 5.0).await;
+    let manager_a = user_with(&a, "negpatha", &[crate::rbac::permissions::INV_MANAGE]).await;
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    let counter_b = user_with(&b, "negpathb", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art, loc) = (article.rowid, location.rowid);
+    let (art_b, loc_b) = local_pair(&b, &article, &location).await;
+    issue(&a, art, loc, 5.0).await;
+    issue(&b, art_b, loc_b, 5.0).await;
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    sync_clean(&mut server, "A", &a).await;
+
+    negative_stock::resolve_by_count(&a, manager_a, resolution(art, loc, 0.0, "Comptage depuis la liste"))
+        .await
+        .expect("A reconciles from the list");
+    // B counts the location through the count workflow.
+    let actor = Some(i64::from(counter_b));
+    let warehouse_b = scalar_i64(
+        &b,
+        "SELECT warehouse_id FROM stock_locations WHERE id = ?",
+        vec![loc_b.into()],
+    )
+    .await;
+    let mut session = controls::create_count_session(
+        &b,
+        CreateInventoryCountSessionInput {
+            warehouse_id: warehouse_b,
+            location_id: Some(loc_b),
+            actor_id: actor,
+        },
+    )
+    .await
+    .expect("session");
+    let move_to =
+        |session: &crate::inventory::domain::InventoryCountSession, next: &str| TransitionInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            next_status: next.to_string(),
+            reason: None,
+            actor_id: actor,
+        };
+    session = controls::transition_count_session(&b, move_to(&session, "counting"))
+        .await
+        .expect("counting");
+    let line = controls::upsert_count_line(
+        &b,
+        UpsertInventoryCountLineInput {
+            session_id: session.id,
+            article_id: art_b,
+            location_id: loc_b,
+            counted_qty: 0.0,
+            variance_reason_code: Some("COUNT_ERROR".into()),
+        },
+    )
+    .await
+    .expect("line");
+    session = controls::transition_count_session(&b, move_to(&session, "submitted"))
+        .await
+        .expect("submitted");
+    controls::approve_count_line(
+        &b,
+        ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: i64::from(counter_b),
+            reviewer_evidence: "Bac vide au comptage".into(),
+        },
+    )
+    .await
+    .expect("approve");
+    session = controls::transition_count_session(&b, move_to(&session, "approved"))
+        .await
+        .expect("approved");
+    controls::post_count_session(
+        &b,
+        PostInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            actor_id: actor,
+        },
+    )
+    .await
+    .expect("posted");
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    sync_clean(&mut server, "A", &a).await;
+
+    for (pc, db, art, loc) in [("A", &a, art, loc), ("B", &b, art_b, loc_b)] {
+        assert_eq!(on_hand_milli(db, art, loc).await, 5000, "{pc}: corrected twice");
+        let list = negative_stock::list_reviews(db, false).await.expect("list");
+        assert_eq!(list.double_counts.len(), 1, "{pc}: one double count");
+        let mut paths: Vec<_> = list.double_counts[0].counts.iter().map(|c| c.path.clone()).collect();
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec![
+                negative_stock::COUNT_PATH_COUNT_SESSION.to_string(),
+                negative_stock::COUNT_PATH_RECONCILIATION.to_string()
+            ],
+            "{pc}: both paths named"
+        );
+    }
 }
 
 /// More reserved than held while the stock is zero or more is a warning only, no item.

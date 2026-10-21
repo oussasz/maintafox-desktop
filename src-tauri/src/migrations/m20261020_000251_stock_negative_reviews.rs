@@ -1,4 +1,4 @@
-//! Migration 250 — stock balances to reconcile after sync (CMMS Advisor 2026-10-20,
+//! Migration 251 — stock balances to reconcile after sync (CMMS Advisor 2026-10-20,
 //! `inventory::negative_stock`).
 //!
 //! A stock movement received from another PC is applied as received (it is a physical fact): two
@@ -10,15 +10,16 @@
 //!   (itself derived from the synchronised movement ledger) and is never synchronised: an item is
 //!   open exactly while the location's on-hand stock is below zero, so every PC holding the same
 //!   ledger shows the same open items. A closed item keeps how it was closed (`closure_kind`: a
-//!   count, a manual adjustment, a goods receipt — "régularisé par réception" —, a return to stock,
-//!   or none on record) and the movement that closed it. The partial unique index allows one open
-//!   item per article and location.
-//! - `inventory_count_sessions` gains what marks a count recorded to reconcile a location
-//!   (`reconciliation_device_code`, the code of the PC that recorded it, and
-//!   `reconciliation_heads_json`, the reconciliation counts of that article and location this PC
-//!   knew and that no other count it knew had followed). Both travel with the session: two counts
-//!   made on two PCs without either knowing the other show as a double count "à vérifier" on every
-//!   PC (CMMS Advisor ruling S1), until a later count that knows both.
+//!   count, a manual adjustment, a goods receipt — "régularisé par réception" —, a documented
+//!   return — "régularisé par retour" —, or none on record) and the movement that closed it. The
+//!   partial unique index allows one open item per article and location.
+//! - `inventory_count_lines` gains the mark of every count posted from this version on, whatever
+//!   path posted it: `count_device_code` (the code of the PC that posted it), `count_follows_json`
+//!   (the posted counts of that article and location this PC knew and that no other count it knew
+//!   had followed) and `count_path` (`reconciliation`: the stock-to-reconcile list;
+//!   `count_session`: a count session). They travel with the line: two counts posted on two PCs
+//!   without either knowing the other, since the location last went below zero, show as a double
+//!   count "à vérifier" on every PC (CMMS Advisor ruling S1), until a later count that knows both.
 //! - The notification category of the watcher `stock_to_reconcile` and its rule: the inv.manage
 //!   holders are told once per item, in-app.
 
@@ -31,7 +32,7 @@ pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20261020_000250_stock_negative_reviews"
+        "m20261020_000251_stock_negative_reviews"
     }
 }
 
@@ -66,18 +67,18 @@ impl MigrationTrait for Migration {
                 .await?;
         }
         // Re-runnable: a column already there is kept.
-        for column in ["reconciliation_device_code", "reconciliation_heads_json"] {
+        for column in ["count_device_code", "count_follows_json", "count_path"] {
             let exists = txn
                 .query_one(Statement::from_sql_and_values(
                     DatabaseBackend::Sqlite,
-                    "SELECT 1 AS ok FROM pragma_table_info('inventory_count_sessions') WHERE name = ?",
+                    "SELECT 1 AS ok FROM pragma_table_info('inventory_count_lines') WHERE name = ?",
                     [column.into()],
                 ))
                 .await?
                 .is_some();
             if !exists {
                 txn.execute_unprepared(&format!(
-                    "ALTER TABLE inventory_count_sessions ADD COLUMN {column} TEXT NULL"
+                    "ALTER TABLE inventory_count_lines ADD COLUMN {column} TEXT NULL"
                 ))
                 .await?;
             }
@@ -128,7 +129,7 @@ impl MigrationTrait for Migration {
             ))
             .await?;
         }
-        // The two count-session columns stay (SQLite cannot drop them on every supported version).
+        // The three count-line columns stay (SQLite cannot drop them on every supported version).
         Ok(())
     }
 }

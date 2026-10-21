@@ -1939,15 +1939,19 @@ pub async fn adjust_stock_full(
     let warehouse_id = ensure_active_mutation_context(&tx, input.article_id, input.location_id).await?;
     let (on_hand, reserved) = get_balance_snapshot(&tx, input.article_id, input.location_id).await?;
     let next_on_hand = on_hand + input.delta_qty;
-    let next_available = next_on_hand - reserved;
-    if next_on_hand < 0.0 || next_available < 0.0 {
+    // An exit never takes stock below zero; an entry at a location already below zero is accepted
+    // (CMMS Advisor decision 1) and is a count resolution: its comment is the reason, at least 8
+    // characters, and it is audited (decision 2, `inventory::negative_stock`).
+    if !crate::inventory::negative_stock::balance_change_allowed((on_hand, reserved), (next_on_hand, reserved)) {
         return Err(AppError::ValidationFailed(vec![
             "Adjustment would produce negative stock.".to_string(),
         ]));
     }
+    crate::inventory::negative_stock::check_entry_reason(on_hand, input.delta_qty, input.notes.as_deref())?;
+    let reconciles_negative = input.delta_qty > 0.0 && on_hand < 0.0;
 
-    // Critical spare guard: block adjustments that would leave on_hand = 0
-    if next_on_hand == 0.0 {
+    // Critical spare guard: block exits that would leave on_hand = 0
+    if input.delta_qty < 0.0 && next_on_hand == 0.0 {
         let critical_row = tx
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -2061,6 +2065,36 @@ pub async fn adjust_stock_full(
         .await?;
     }
 
+    if reconciles_negative {
+        crate::inventory::negative_stock::reconcile_pair_in(&tx, input.article_id, input.location_id).await?;
+        crate::audit::writer::write_audit_event_in(
+            &tx,
+            crate::audit::writer::AuditEventInput {
+                action_code: "inventory.negative_stock.adjusted".to_string(),
+                target_type: Some("stock_location_article".to_string()),
+                target_id: Some(format!("{}:{}", input.article_id, input.location_id)),
+                actor_id: options.actor_id,
+                auth_context: "session".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "standard".to_string(),
+                details_json: Some(serde_json::json!({
+                    "summary": "Manual stock entry at a location below zero",
+                    "article_id": input.article_id,
+                    "location_id": input.location_id,
+                    "on_hand_before": on_hand,
+                    "delta_qty": input.delta_qty,
+                    "on_hand_after": next_on_hand,
+                    "reason_code": input.reason_code,
+                    "reason": input.notes.as_deref().map(str::trim),
+                    "transaction_id": transaction_id,
+                })),
+            },
+        )
+        .await?;
+    }
+
     tx.commit().await?;
     load_balance(db, input.article_id, input.location_id).await
 }
@@ -2158,17 +2192,19 @@ async fn upsert_balance<C: ConnectionTrait>(
     on_hand_qty: f64,
     reserved_qty: f64,
 ) -> AppResult<()> {
-    if on_hand_qty < 0.0 || reserved_qty < 0.0 {
+    // Never below zero, except a location already there may be improved (a receipt, a transfer in,
+    // a return, a released reservation): `negative_stock::balance_change_allowed`.
+    let current = get_balance_snapshot(db, article_id, location_id).await?;
+    if !crate::inventory::negative_stock::balance_change_allowed(current, (on_hand_qty, reserved_qty)) {
         return Err(AppError::ValidationFailed(vec![
-            "Stock balances cannot be negative.".to_string()
+            if on_hand_qty < 0.0 || reserved_qty < 0.0 {
+                "Stock balances cannot be negative.".to_string()
+            } else {
+                "available_qty cannot be negative.".to_string()
+            },
         ]));
     }
     let available_qty = on_hand_qty - reserved_qty;
-    if available_qty < 0.0 {
-        return Err(AppError::ValidationFailed(vec![
-            "available_qty cannot be negative.".to_string()
-        ]));
-    }
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
