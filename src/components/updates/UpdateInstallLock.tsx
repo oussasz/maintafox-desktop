@@ -90,9 +90,9 @@ function LockScreen({ phase }: { phase: Exclude<UpdateInstallPhase, "idle"> }) {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) e.currentTarget.focus();
       }}
       // Above every popover (z-200), dialog and the forced-removal screen (z-300).
-      className="fixed inset-0 z-[400] flex items-center justify-center bg-surface-0/95 p-4 outline-none"
+      className="fixed inset-0 z-[400] flex overflow-y-auto bg-surface-0/95 p-4 outline-none"
     >
-      <div className="w-full max-w-md space-y-4 rounded-lg border border-surface-border bg-surface-1 p-5 shadow-lg">
+      <div className="m-auto w-full max-w-md space-y-4 rounded-lg border border-surface-border bg-surface-1 p-5 shadow-lg">
         <div className="flex items-start gap-3">
           <Loader2 className="mt-0.5 h-6 w-6 shrink-0 animate-spin text-primary" aria-hidden />
           <div className="space-y-1">
