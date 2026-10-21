@@ -9,6 +9,10 @@ use crate::inventory::domain::{
     UpsertInventoryCountLineInput,
 };
 
+/// Refusal code: a count of the same article and location was posted on this PC since the session
+/// was opened (its snapshot is stale).
+pub const REFUSED_COUNT_SESSION_STALE: &str = "COUNT_SESSION_STALE_SNAPSHOT";
+
 /// Tenant setting (catalog, decimal): a counted line whose variance is at least this much is
 /// critical. Each count session keeps the value it was opened with.
 pub const SETTING_COUNT_CRITICAL_VARIANCE: &str = "inventory.count_critical_variance";
@@ -259,7 +263,11 @@ pub async fn upsert_count_line(
             "Count lines can only be edited in draft/counting status.".to_string(),
         ]));
     }
-    let (warehouse_id, system_qty) = get_balance(db, input.article_id, input.location_id).await?;
+    // The stock the count is set against and the counts it knows are read in one transaction (one
+    // snapshot): a sync pass in between can never make the count know a correction its stock does
+    // not include (`negative_stock::count_mark` also follows only counts whose movement is here).
+    let tx = db.begin().await?;
+    let (warehouse_id, system_qty) = get_balance(&tx, input.article_id, input.location_id).await?;
     if warehouse_id != session.warehouse_id {
         return Err(AppError::ValidationFailed(vec![
             "Count line location must belong to session warehouse.".to_string(),
@@ -272,7 +280,7 @@ pub async fn upsert_count_line(
         ]));
     }
     if let Some(code) = input.variance_reason_code.as_deref() {
-        ensure_lookup_variance_reason_active(db, code).await?;
+        ensure_lookup_variance_reason_active(&tx, code).await?;
     }
     let is_critical = i64::from(variance_qty.abs() >= session.critical_abs_threshold);
     let approval_required = i64::from(variance_qty.abs() > f64::EPSILON);
@@ -280,8 +288,8 @@ pub async fn upsert_count_line(
     // counts this PC knows at this moment, not at posting, so a count received in between still
     // shows as a double count (`inventory::negative_stock`, CMMS Advisor). Each entry refreshes it.
     let (replica_id, follows_json) =
-        crate::inventory::negative_stock::count_mark(db, input.article_id, input.location_id).await?;
-    db.execute(Statement::from_sql_and_values(
+        crate::inventory::negative_stock::count_mark(&tx, input.article_id, input.location_id).await?;
+    tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_count_lines
             (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
@@ -322,6 +330,7 @@ pub async fn upsert_count_line(
         ],
     ))
     .await?;
+    tx.commit().await?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -415,6 +424,49 @@ pub async fn post_count_session(
     }
 
     let tx = db.begin().await?;
+    // A count posted on this PC for the same article and location since this session was opened
+    // (times to the second; within the same second, a session opened after this one) makes its
+    // snapshot stale: its variance would correct the stock a second time. Refused; the
+    // session is counted again from a fresh snapshot (CMMS Advisor). Counts from other PCs are not
+    // refused here: they arrive later and show as a double count (`inventory::negative_stock`).
+    let replica_id = crate::sync::queries::local_replica_id(&tx).await?;
+    for line in &lines {
+        let stale = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT cs.session_code FROM inventory_count_lines cl
+                 JOIN inventory_count_sessions cs ON cs.id = cl.session_id
+                 WHERE cl.article_id = ? AND cl.location_id = ? AND cl.session_id <> ?
+                   AND cs.status IN ('posted', 'reversed') AND cl.count_replica_id = ?
+                   AND (cs.posted_at > ? OR (cs.posted_at = ? AND cs.id > ?))
+                 ORDER BY cs.posted_at DESC LIMIT 1",
+                [
+                    line.article_id.into(),
+                    line.location_id.into(),
+                    input.session_id.into(),
+                    replica_id.clone().into(),
+                    session.created_at.clone().into(),
+                    session.created_at.clone().into(),
+                    input.session_id.into(),
+                ],
+            ))
+            .await?;
+        if let Some(row) = stale {
+            let other: String = row.try_get("", "session_code")?;
+            return Err(crate::errors::org_validation_failed(
+                REFUSED_COUNT_SESSION_STALE,
+                format!(
+                    "A count was posted for {} at {} since this session was opened ({other}): count again.",
+                    line.article_code, line.location_code
+                ),
+                crate::errors::issue_params(&[
+                    ("article", line.article_code.clone()),
+                    ("location", line.location_code.clone()),
+                    ("session", other),
+                ]),
+            ));
+        }
+    }
     for line in lines {
         // Every posted line is a count of its pair and keeps the mark taken when its quantity was
         // entered (`upsert_count_line`). A line entered before this version has none: it is marked
@@ -538,7 +590,12 @@ pub async fn reverse_count_session(
         }
         let (_, current_qty) = get_balance(&tx, line.article_id, line.location_id).await?;
         let next_qty = current_qty - line.variance_qty;
-        if next_qty < 0.0 {
+        // A reversal never takes stock below zero, but one that raises a location already below
+        // zero is accepted even if it stays there (CMMS Advisor): its item stays open until the
+        // stock is zero or more, and it is audited.
+        let improves_negative =
+            current_qty < -crate::inventory::negative_stock::QTY_TOLERANCE && next_qty > current_qty;
+        if next_qty < 0.0 && !improves_negative {
             return Err(AppError::ValidationFailed(vec![format!(
                 "Reversal would produce negative stock for line {}.",
                 line.id
@@ -564,6 +621,36 @@ pub async fn reverse_count_session(
             [reverse_tx_id.into(), now_iso().into(), line.id.into()],
         ))
         .await?;
+        if improves_negative {
+            crate::inventory::negative_stock::reconcile_pair_in(&tx, line.article_id, line.location_id).await?;
+            crate::audit::writer::write_audit_event_in(
+                &tx,
+                crate::audit::writer::AuditEventInput {
+                    action_code: "inventory.negative_stock.count_reversed".to_string(),
+                    target_type: Some("stock_location_article".to_string()),
+                    target_id: Some(format!("{}:{}", line.article_id, line.location_id)),
+                    actor_id: input.actor_id,
+                    auth_context: "session".to_string(),
+                    result: "success".to_string(),
+                    before_hash: None,
+                    after_hash: None,
+                    retention_class: "standard".to_string(),
+                    details_json: Some(serde_json::json!({
+                        "summary": "Count reversed at a location below zero",
+                        "article_id": line.article_id,
+                        "location_id": line.location_id,
+                        "on_hand_before": current_qty,
+                        "on_hand_after": next_qty,
+                        "count_session_id": input.session_id,
+                        "count_session_code": session.session_code,
+                        "count_line_id": line.id,
+                        "transaction_id": reverse_tx_id,
+                        "reason": input.reason.trim(),
+                    })),
+                },
+            )
+            .await?;
+        }
     }
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

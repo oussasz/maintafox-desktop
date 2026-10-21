@@ -1433,3 +1433,343 @@ async fn a_negative_location_refuses_local_issues_and_the_count_needs_the_right_
         .expect_err("nothing left to reconcile");
     assert_eq!(refusal_code(again), REFUSED_NOT_OPEN);
 }
+
+/// Runs `sql` on `db` with change capture suppressed: a local repair the other PCs never receive.
+async fn exec_unsent(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
+    use sea_orm::TransactionTrait;
+    let tx = db.begin().await.expect("tx");
+    crate::sync::capture::begin_suppression(&tx).await.expect("suppress");
+    exec(&tx, sql, values).await;
+    crate::sync::capture::end_suppression(&tx).await.expect("unsuppress");
+    tx.commit().await.expect("commit");
+}
+
+/// The count session `code` on `db`.
+async fn session_by_code(db: &DatabaseConnection, code: &str) -> crate::inventory::domain::InventoryCountSession {
+    crate::inventory::controls::list_count_sessions(db)
+        .await
+        .expect("sessions")
+        .into_iter()
+        .find(|s| s.session_code == code)
+        .expect("session")
+}
+
+/// SF1: a count line received before its stock movement is not followed by a new count's mark: the
+/// new count never "knows" a correction its stock does not include.
+#[tokio::test]
+async fn a_count_whose_movement_is_not_here_is_not_followed() {
+    let Shortage { dbs, mut server, pairs } = shortage(2).await;
+    let (a, b) = (&dbs[0], &dbs[1]);
+    let manager_a = user_with(a, "negunapplieda", &[crate::rbac::permissions::INV_MANAGE]).await;
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+    let counter_b = user_with(b, "negunappliedb", &[crate::rbac::permissions::INV_MANAGE]).await;
+    negative_stock::resolve_by_count(
+        a,
+        manager_a,
+        resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
+    )
+    .await
+    .expect("A1");
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+    // As if A1's line had arrived on B but not yet its movement.
+    exec_unsent(
+        b,
+        "UPDATE inventory_count_lines SET posted_transaction_id = NULL WHERE count_path = 'reconciliation'",
+        vec![],
+    )
+    .await;
+    let entered = enter_count(b, counter_b, pairs[1].0, pairs[1].1, 0.0).await;
+    let follows = crate::sync::test_support::scalar_opt_text(
+        b,
+        "SELECT count_follows_json FROM inventory_count_lines WHERE id = ?",
+        vec![entered.1.id.into()],
+    )
+    .await;
+    assert_eq!(
+        follows.as_deref(),
+        Some("[]"),
+        "A1's movement is not counted here: not followed"
+    );
+}
+
+/// SF3: B enters at −5, receives A's count, enters the line again: it is now set against the
+/// corrected stock and knows A's count, so posting it is no double count.
+#[tokio::test]
+async fn a_count_entered_again_after_the_other_count_arrived_is_no_double_count() {
+    let Shortage { dbs, mut server, pairs } = shortage(2).await;
+    let (a, b) = (&dbs[0], &dbs[1]);
+    let manager_a = user_with(a, "negreentera", &[crate::rbac::permissions::INV_MANAGE]).await;
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+    let counter_b = user_with(b, "negreenterb", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (session, first) = enter_count(b, counter_b, pairs[1].0, pairs[1].1, 0.0).await;
+    assert_eq!(first.system_qty, -5.0);
+    negative_stock::resolve_by_count(
+        a,
+        manager_a,
+        resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
+    )
+    .await
+    .expect("A1");
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+    let again = crate::inventory::controls::upsert_count_line(
+        b,
+        crate::inventory::domain::UpsertInventoryCountLineInput {
+            session_id: session.id,
+            article_id: pairs[1].0,
+            location_id: pairs[1].1,
+            counted_qty: 0.0,
+            variance_reason_code: Some("COUNT_ERROR".into()),
+        },
+    )
+    .await
+    .expect("entered again");
+    assert_eq!((again.system_qty, again.variance_qty), (0.0, 0.0));
+    post_count(b, counter_b, (session, again)).await;
+    sync_clean(&mut server, "B", b).await;
+    sync_clean(&mut server, "A", a).await;
+    for (pc, db, (art, loc)) in [("A", a, pairs[0]), ("B", b, pairs[1])] {
+        assert_eq!(on_hand_milli(db, art, loc).await, 0, "{pc}: corrected once");
+        let list = negative_stock::list_reviews(db, true).await.expect("list");
+        assert!(list.double_counts.is_empty(), "{pc}: no double count");
+    }
+}
+
+/// Advisor: on one PC, a session whose location was counted and posted since it was opened is
+/// refused at posting (its snapshot is stale); it is counted again from a fresh snapshot.
+#[tokio::test]
+async fn a_session_counted_after_another_count_on_the_same_pc_is_refused() {
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let b = &dbs[1];
+    let counter_b = user_with(b, "negstalesession", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art, loc) = pairs[1];
+    let stale = enter_count(b, counter_b, art, loc, 0.0).await;
+    negative_stock::resolve_by_count(b, counter_b, resolution(art, loc, 0.0, "Comptage depuis la liste"))
+        .await
+        .expect("a count posted from the list on the same PC");
+    assert_eq!(on_hand_milli(b, art, loc).await, 0);
+
+    use crate::inventory::controls;
+    let session = controls::transition_count_session(b, move_to(&stale.0, "submitted", counter_b))
+        .await
+        .expect("submitted");
+    controls::approve_count_line(
+        b,
+        crate::inventory::domain::ApproveInventoryCountLineInput {
+            line_id: stale.1.id,
+            expected_row_version: stale.1.row_version,
+            reviewer_id: i64::from(counter_b),
+            reviewer_evidence: "Bac vérifié au comptage".into(),
+        },
+    )
+    .await
+    .expect("approve");
+    let session = controls::transition_count_session(b, move_to(&session, "approved", counter_b))
+        .await
+        .expect("approved");
+    let refused = controls::post_count_session(
+        b,
+        crate::inventory::domain::PostInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            actor_id: Some(i64::from(counter_b)),
+        },
+    )
+    .await
+    .expect_err("stale snapshot");
+    assert_eq!(refusal_code(refused), controls::REFUSED_COUNT_SESSION_STALE);
+    assert_eq!(on_hand_milli(b, art, loc).await, 0, "nothing corrected twice");
+
+    // Counted again in a new session, from today's stock: posted.
+    let fresh = enter_count(b, counter_b, art, loc, 0.0).await;
+    assert_eq!(fresh.1.variance_qty, 0.0);
+    post_count(b, counter_b, fresh).await;
+}
+
+/// Advisor: a reversal that raises a location below zero without bringing it back to zero is
+/// accepted, with its reason and an audit event; the item stays open.
+#[tokio::test]
+async fn a_reversal_that_leaves_the_location_below_zero_is_accepted_and_the_item_stays_open() {
+    use crate::inventory::controls;
+    use crate::inventory::domain::ReverseInventoryCountSessionInput;
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    let manager = user_with(&a, "negpartialrev", &[crate::rbac::permissions::INV_MANAGE]).await;
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    let (art_b, loc_b) = local_pair(&b, &article, &location).await;
+    let (art, loc) = (article.rowid, location.rowid);
+
+    // A counts 8 where 10 were on record (−2), issues the 8; B's issue of 10 arrives: −10.
+    let session = post_count(&a, manager, enter_count(&a, manager, art, loc, 8.0).await).await;
+    issue(&a, art, loc, 8.0).await;
+    issue(&b, art_b, loc_b, 10.0).await;
+    sync_clean(&mut server, "B", &b).await;
+    sync_clean(&mut server, "A", &a).await;
+    assert_eq!(on_hand_milli(&a, art, loc).await, -10000);
+
+    let reverse = |reason: &str| ReverseInventoryCountSessionInput {
+        session_id: session.id,
+        expected_row_version: session.row_version,
+        reason: reason.to_string(),
+        actor_id: Some(i64::from(manager)),
+    };
+    assert!(
+        controls::reverse_count_session(&a, reverse("abcdefg")).await.is_err(),
+        "7 characters"
+    );
+    controls::reverse_count_session(&a, reverse("Mauvais bac compté"))
+        .await
+        .expect("a reversal that improves a location below zero");
+    assert_eq!(on_hand_milli(&a, art, loc).await, -8000, "still below zero");
+    let list = negative_stock::list_reviews(&a, false).await.expect("list");
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].status, "open", "the item stays open");
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'inventory.negative_stock.count_reversed' AND actor_id = ?",
+            vec![i64::from(manager).into()],
+        )
+        .await,
+        1,
+        "audited"
+    );
+}
+
+/// Advisor (SF2): reversing one of the two counts of a double count closes it, noted with the
+/// reversed count, who reversed it and when; the stock is then corrected once. If it is still below
+/// zero, the location's negative item stays open.
+#[tokio::test]
+async fn reversing_one_of_the_two_counts_closes_the_double_count() {
+    use crate::inventory::controls;
+    use crate::inventory::domain::ReverseInventoryCountSessionInput;
+    let Shortage { dbs, mut server, pairs } = shortage(2).await;
+    let (a, b) = (&dbs[0], &dbs[1]);
+    let manager_a = user_with(a, "negrevdoublea", &[crate::rbac::permissions::INV_MANAGE]).await;
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+    let manager_b = user_with(b, "negrevdoubleb", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let resolved_a = negative_stock::resolve_by_count(
+        a,
+        manager_a,
+        resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
+    )
+    .await
+    .expect("A1");
+    negative_stock::resolve_by_count(
+        b,
+        manager_b,
+        resolution(pairs[1].0, pairs[1].1, 0.0, "Comptage poste B"),
+    )
+    .await
+    .expect("B1");
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+    sync_clean(&mut server, "A", a).await;
+    assert_eq!(
+        negative_stock::list_reviews(a, false)
+            .await
+            .expect("list")
+            .double_counts
+            .len(),
+        1
+    );
+
+    let session = session_by_code(a, &resolved_a.session_code).await;
+    controls::reverse_count_session(
+        a,
+        ReverseInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            reason: "Compté en double avec le poste B".into(),
+            actor_id: Some(i64::from(manager_a)),
+        },
+    )
+    .await
+    .expect("reversal of A1");
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+    for (pc, db, (art, loc)) in [("A", a, pairs[0]), ("B", b, pairs[1])] {
+        assert_eq!(on_hand_milli(db, art, loc).await, 0, "{pc}: corrected once");
+        let list = negative_stock::list_reviews(db, true).await.expect("list");
+        assert!(list.double_counts.is_empty(), "{pc}: closed");
+        assert_eq!(list.closed_double_counts.len(), 1, "{pc}: kept as closed");
+        let closed = &list.closed_double_counts[0];
+        let by = closed.closed_by_reversal.as_ref().expect("closed by the reversal");
+        assert_eq!(by.session_code, resolved_a.session_code, "{pc}");
+        assert_eq!(by.reversed_by.as_deref(), Some("negrevdoublea"), "{pc}");
+        assert!(!by.reversed_at.is_empty(), "{pc}");
+        assert_eq!(closed.counts.len(), 2, "{pc}: both counts named");
+        assert_eq!(
+            negative_stock::summary(db).await.expect("summary").double_count_count,
+            0
+        );
+        assert!(negative_stock::list_reviews(db, false)
+            .await
+            .expect("list")
+            .closed_double_counts
+            .is_empty());
+    }
+}
+
+/// Advisor: the notice of a location below zero says when the current shortage opened; a later
+/// shortage of the same location reopens the same notice with its own date.
+#[tokio::test]
+async fn the_notice_says_when_the_shortage_opened_and_a_new_shortage_reopens_it_with_its_date() {
+    let Shortage { dbs, mut server, pairs } = shortage(2).await;
+    let (a, b) = (&dbs[0], &dbs[1]);
+    let manager = user_with(a, "negnoticedate", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art, loc) = pairs[0];
+    let params = || async {
+        crate::sync::test_support::scalar_opt_text(
+            a,
+            "SELECT message_params_json FROM notification_events WHERE category_code = ?",
+            vec![negative_stock::NOTIFICATION_CATEGORY.into()],
+        )
+        .await
+        .map(|p| serde_json::from_str::<serde_json::Value>(&p).expect("params"))
+        .expect("one notice")
+    };
+    watch(a).await;
+    let first_crossing = negative_stock::negative_crossing(a, art, loc, -5.0)
+        .await
+        .expect("crossing")
+        .and_then(|(_, at)| at)
+        .expect("dated");
+    assert_eq!(params().await["opened_at"], serde_json::json!(first_crossing));
+
+    negative_stock::resolve_by_count(a, manager, resolution(art, loc, 0.0, "Comptage poste A"))
+        .await
+        .expect("count");
+    assert_eq!(watch(a).await.resolved, 1);
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+
+    // A new shortage, dated later: A stocks 3 and issues them, B's issue of 3 arrives.
+    adjust(a, art, loc, 3.0).await.expect("stock in");
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+    issue(a, art, loc, 3.0).await;
+    issue(b, pairs[1].0, pairs[1].1, 3.0).await;
+    exec_unsent(
+        b,
+        "UPDATE inventory_transactions SET performed_at = '2099-01-01T09:00:00Z'
+         WHERE movement_type = 'ISSUE' AND article_id = ? AND location_id = ? AND performed_at < '2099'",
+        vec![pairs[1].0.into(), pairs[1].1.into()],
+    )
+    .await;
+    sync_clean(&mut server, "B", b).await;
+    sync_clean(&mut server, "A", a).await;
+    assert_eq!(on_hand_milli(a, art, loc).await, -3000);
+    let again = watch(a).await;
+    assert_eq!(again.raised + again.already_true, 1, "the notice comes back");
+    assert_eq!(notices(a).await.0, 1, "the same notice, reopened");
+    assert_eq!(params().await["opened_at"], serde_json::json!("2099-01-01T09:00:00Z"));
+}

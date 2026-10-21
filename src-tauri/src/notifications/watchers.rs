@@ -383,9 +383,23 @@ pub async fn candidates(
                     i(r, "location_id")?.unwrap_or_default(),
                 );
                 let on_hand = f(r, "on_hand_qty")?;
-                let since = negative_crossing(conn, article_id, location_id, on_hand)
-                    .await?
-                    .and_then(|(_, at)| at.as_deref().and_then(parse_time));
+                // When the current shortage opened: the crossing, or the first movement when the
+                // ledger shows the location below zero from the start (CMMS Advisor: the notice
+                // says it; a later shortage reopens the notice with its own date).
+                let opened_raw = match negative_crossing(conn, article_id, location_id, on_hand).await? {
+                    Some((_, at)) => at,
+                    None => conn
+                        .query_one(Statement::from_sql_and_values(
+                            DbBackend::Sqlite,
+                            "SELECT MIN(performed_at) AS first_at FROM inventory_transactions \
+                             WHERE article_id = ? AND location_id = ?",
+                            [article_id.into(), location_id.into()],
+                        ))
+                        .await?
+                        .and_then(|row| row.try_get::<Option<String>>("", "first_at").ok().flatten()),
+                };
+                let since = opened_raw.as_deref().and_then(parse_time);
+                let opened_at = since.map(ts).unwrap_or_default();
                 let code = s(r, "article_code")?;
                 let name = s(r, "article_name")?;
                 let location = format!("{}/{}", s(r, "warehouse_code")?, s(r, "location_code")?);
@@ -395,7 +409,13 @@ pub async fn candidates(
                     since,
                     source_module: "inventory",
                     message_key: "stock_negative",
-                    params: json!({ "code": code, "title": name, "location": location, "on_hand": on_hand }),
+                    params: json!({
+                        "code": code,
+                        "title": name,
+                        "location": location,
+                        "on_hand": on_hand,
+                        "opened_at": opened_at,
+                    }),
                     urgency: None,
                     action_url: action_url.clone(),
                     severity: severity.clone(),
@@ -406,8 +426,8 @@ pub async fn candidates(
                     ),
                     body: text(
                         fr,
-                        format!("{name} à {location} : {on_hand} en stock."),
-                        format!("{name} at {location}: {on_hand} on hand."),
+                        format!("{name} à {location} : {on_hand} en stock, sous zéro depuis le {opened_at}."),
+                        format!("{name} at {location}: {on_hand} on hand, below zero since {opened_at}."),
                     ),
                 });
             }

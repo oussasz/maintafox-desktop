@@ -303,7 +303,7 @@
     },
     "stock_negative": {
       "title": "{{code}} sous zéro à {{location}}",
-      "body": "{{title}} : {{on_hand}} en stock. Enregistrez un comptage pour le rapprocher."
+      "body": "{{title}} : {{on_hand}} en stock, sous zéro depuis le {{opened_at}}. Enregistrez un comptage pour le rapprocher."
     },
     "stock_double_count": {
       "title": "{{code}} compté deux fois à {{location}}",

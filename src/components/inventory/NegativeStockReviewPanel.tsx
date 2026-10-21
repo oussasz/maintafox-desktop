@@ -283,7 +283,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
         </div>
       ) : null}
 
-      {includeClosed && closed.length > 0 ? (
+      {includeClosed && (closed.length > 0 || list.closed_double_counts.length > 0) ? (
         <ul className="mt-3 space-y-1" aria-label={t("negativeStock.closedList")}>
           {closed.map((item) => (
             <li key={item.id} className="text-xs text-text-muted">
@@ -294,6 +294,26 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
               {t(`negativeStock.closure.${item.closure_kind ?? "other"}`, {
                 date: item.closed_at ? formatDateTime(item.closed_at) : "—",
                 movement: movementLabel(item.closing_movement_type),
+              })}
+            </li>
+          ))}
+          {list.closed_double_counts.map((item) => (
+            <li
+              key={`${item.article_id}-${item.location_id}-${item.closed_by_reversal?.count_sync_id ?? ""}`}
+              className="text-xs text-text-muted"
+            >
+              <span className="font-medium text-text-secondary">
+                {item.article_code} — {item.warehouse_code}/{item.location_code}
+              </span>{" "}
+              · {t("negativeStock.doubleCount.flag")} ·{" "}
+              {t("negativeStock.doubleCount.closedByReversal", {
+                session: item.closed_by_reversal?.session_code ?? "—",
+                who:
+                  item.closed_by_reversal?.reversed_by ??
+                  t("negativeStock.doubleCount.unknownUser"),
+                date: item.closed_by_reversal?.reversed_at
+                  ? formatDateTime(item.closed_by_reversal.reversed_at)
+                  : "—",
               })}
             </li>
           ))}

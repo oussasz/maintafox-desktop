@@ -90,6 +90,7 @@ describe("NegativeStockReviewPanel", () => {
     mocks.listNegativeStockReviews.mockResolvedValue({
       items: [item()],
       double_counts: [],
+      closed_double_counts: [],
       over_reservations: [
         {
           article_id: 22,
@@ -119,11 +120,13 @@ describe("NegativeStockReviewPanel", () => {
     mocks.listNegativeStockReviews.mockResolvedValueOnce({
       items: [item()],
       double_counts: [],
+      closed_double_counts: [],
       over_reservations: [],
     });
     mocks.listNegativeStockReviews.mockResolvedValue({
       items: [],
       double_counts: [],
+      closed_double_counts: [],
       over_reservations: [],
     });
     mocks.resolveNegativeStockByCount.mockResolvedValue({
@@ -169,6 +172,7 @@ describe("NegativeStockReviewPanel", () => {
         }),
       ],
       double_counts: [],
+      closed_double_counts: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -193,6 +197,7 @@ describe("NegativeStockReviewPanel", () => {
           on_hand_qty: 5,
           reserved_qty: 0,
           available_qty: 5,
+          closed_by_reversal: null,
           counts: [
             {
               count_sync_id: "s1",
@@ -219,6 +224,7 @@ describe("NegativeStockReviewPanel", () => {
           ],
         },
       ],
+      closed_double_counts: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -246,6 +252,7 @@ describe("NegativeStockReviewPanel", () => {
         }),
       ],
       double_counts: [],
+      closed_double_counts: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -268,6 +275,7 @@ describe("NegativeStockReviewPanel", () => {
         }),
       ],
       double_counts: [],
+      closed_double_counts: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -278,6 +286,42 @@ describe("NegativeStockReviewPanel", () => {
     expect(screen.queryByText(/Reconciled by an adjustment/)).not.toBeInTheDocument();
     expect(frInventory.negativeStock.closure.prior_entry).toMatch(
       /^Régularisé par saisie antérieure/,
+    );
+  });
+
+  it("shows a double count closed by the reversal of one of its counts", async () => {
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [],
+      closed_double_counts: [
+        {
+          article_id: 21,
+          article_code: "A-21",
+          article_name: "Bearing",
+          location_id: 10,
+          location_code: "BIN",
+          warehouse_code: "MAIN",
+          on_hand_qty: 0,
+          reserved_qty: 0,
+          available_qty: 0,
+          closed_by_reversal: {
+            count_sync_id: "s1",
+            session_code: "CC-1",
+            reversed_by: "Alice",
+            reversed_at: TS,
+          },
+          counts: [],
+        },
+      ],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    fireEvent.click(await screen.findByLabelText("Show reconciled items"));
+    expect(
+      await screen.findByText(/closed by the reversal of count CC-1 \(Alice, .+\)/),
+    ).toBeInTheDocument();
+    expect(frInventory.negativeStock.doubleCount.closedByReversal).toMatch(
+      /^clos par annulation du comptage/,
     );
   });
 

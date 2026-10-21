@@ -50,6 +50,7 @@
       "explain": "Counted on two PCs, neither knowing the other: each corrected the stock, so it may be corrected twice (now {{onHand}} on hand). Check the stock and record a new count.",
       "countLine": "{{who}} on PC {{device}}, {{date}}, by {{path}}: counted {{counted}} (correction {{variance}})",
       "unknownUser": "Unknown user",
+      "closedByReversal": "closed by the reversal of count {{session}} ({{who}}, {{date}})",
       "path": {
         "reconciliation": "stock-to-reconcile list",
         "count_session": "count session {{session}}"
@@ -1819,6 +1820,7 @@
     "NEGATIVE_STOCK_COUNT_INVALID": "The counted quantity must be zero or more.",
     "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choose the variance reason of the count.",
     "NEGATIVE_STOCK_NOT_OPEN": "This location's stock is no longer below zero: nothing to reconcile. Refresh the list.",
-    "NEGATIVE_STOCK_ENTRY_REASON_SHORT": "This location is below zero: an entry here reconciles it and needs a reason in the comment (at least {{min}} characters)."
+    "NEGATIVE_STOCK_ENTRY_REASON_SHORT": "This location is below zero: an entry here reconciles it and needs a reason in the comment (at least {{min}} characters).",
+    "COUNT_SESSION_STALE_SNAPSHOT": "A count was posted for this article and location since this session was opened — count again."
   }
 }

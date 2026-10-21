@@ -27,7 +27,12 @@
 //! replica id and the count's path). Knowing is transitive through those lists. Two counts made
 //! while the location stood below zero on their PC (the stock on record kept on the line), on
 //! different PCs, neither knowing the other, are a double count until a later count knows both,
-//! which closes it on every PC that has received it.
+//! which closes it on every PC that has received it, or until one of the two is reversed (the
+//! stock is then corrected once): it is closed "par annulation du comptage <ref> (<qui>, <quand>)"
+//! and kept in the closed history; the location's negative item, if the stock is still below zero,
+//! stays open on its own (CMMS Advisor ruling, intended rule). A count only follows counts whose
+//! movement is already in this PC's stock, and on one PC a session whose location was counted and
+//! posted since it was opened is refused at posting (`controls::post_count_session`).
 //!
 //! Resolution. A stock count of that article at that location ([`resolve_by_count`], `inv.manage`,
 //! plant-wide while stores have no site), with the variance reason and a reason of at least
@@ -156,8 +161,20 @@ pub struct ReconciliationCount {
     pub variance_qty: f64,
 }
 
+/// The reversal of a count session that ended a double count (CMMS Advisor ruling on SF2): "clos par
+/// annulation du comptage <ref> (<qui>, <quand>)".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CountReversal {
+    /// Sync id of the reversed count line.
+    pub count_sync_id: String,
+    pub session_code: String,
+    pub reversed_by: Option<String>,
+    pub reversed_at: String,
+}
+
 /// "Double comptage — à vérifier": counts of one article and location posted on different PCs since
-/// it last went below zero, none knowing the others.
+/// it last went below zero, none knowing the others. Closed (`closed_by_reversal`) when one of them
+/// was reversed: the stock is then corrected once.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DoubleCountReview {
     pub article_id: i64,
@@ -168,6 +185,8 @@ pub struct DoubleCountReview {
     pub warehouse_code: String,
     /// Oldest first.
     pub counts: Vec<ReconciliationCount>,
+    /// `None` while it is to verify; the reversal that closed it otherwise.
+    pub closed_by_reversal: Option<CountReversal>,
     pub on_hand_qty: f64,
     pub reserved_qty: f64,
     pub available_qty: f64,
@@ -177,7 +196,11 @@ pub struct DoubleCountReview {
 pub struct NegativeStockReviewList {
     /// Open items first, then the closed ones when asked for.
     pub items: Vec<NegativeStockReview>,
+    /// The double counts to verify.
     pub double_counts: Vec<DoubleCountReview>,
+    /// The double counts closed by the reversal of one of their counts (when the closed items are
+    /// asked for), latest reversal first.
+    pub closed_double_counts: Vec<DoubleCountReview>,
     pub over_reservations: Vec<OverReservationWarning>,
 }
 
@@ -415,6 +438,12 @@ struct CountNode {
     follows: Vec<String>,
     /// Its session was reversed: its correction is undone, what it knew stays known.
     reversed: bool,
+    /// Who reversed it and when (its session), when reversed.
+    reversed_by: Option<String>,
+    reversed_at: String,
+    /// Its correction is in this PC's stock: no variance, or its movement (and, once reversed, the
+    /// reversal's) has arrived here. Only such counts are followed by a new count's mark.
+    applied: bool,
 }
 
 /// The marked counts of an article and location whose session is posted (or was posted, then
@@ -426,10 +455,16 @@ async fn count_nodes(conn: &impl ConnectionTrait, article_id: i64, location_id: 
         .query_all(sqlite(
             "SELECT cl.entity_sync_id, cs.session_code, cs.status, cl.count_replica_id, cl.count_follows_json,
                     cl.count_path, cs.posted_at, ua.display_name, ua.username, cl.system_qty, cl.counted_qty,
-                    cl.variance_qty
+                    cl.variance_qty, cs.reversed_at, ra.display_name AS reversed_display, ra.username AS reversed_username,
+                    (ABS(cl.variance_qty) <= 1e-9
+                     OR (EXISTS (SELECT 1 FROM inventory_transactions t WHERE t.id = cl.posted_transaction_id)
+                         AND (cs.status <> 'reversed'
+                              OR EXISTS (SELECT 1 FROM inventory_transactions t
+                                         WHERE t.id = cl.reversed_transaction_id)))) AS applied
              FROM inventory_count_lines cl
              JOIN inventory_count_sessions cs ON cs.id = cl.session_id
              LEFT JOIN user_accounts ua ON ua.id = cs.posted_by_id
+             LEFT JOIN user_accounts ra ON ra.id = cs.reversed_by_id
              WHERE cl.count_follows_json IS NOT NULL AND cl.entity_sync_id IS NOT NULL
                AND cs.status IN ('posted', 'reversed')
                AND cl.article_id = ? AND cl.location_id = ?
@@ -450,6 +485,8 @@ async fn count_nodes(conn: &impl ConnectionTrait, article_id: i64, location_id: 
         let display: Option<String> = row.try_get("", "display_name")?;
         let username: Option<String> = row.try_get("", "username")?;
         let status: String = row.try_get("", "status")?;
+        let reversed_display: Option<String> = row.try_get("", "reversed_display")?;
+        let reversed_username: Option<String> = row.try_get("", "reversed_username")?;
         nodes.push(CountNode {
             count: ReconciliationCount {
                 count_sync_id: row.try_get("", "entity_sync_id")?,
@@ -471,6 +508,9 @@ async fn count_nodes(conn: &impl ConnectionTrait, article_id: i64, location_id: 
             replica_id,
             follows,
             reversed: status == "reversed",
+            reversed_by: reversed_display.filter(|d| !d.trim().is_empty()).or(reversed_username),
+            reversed_at: row.try_get::<Option<String>>("", "reversed_at")?.unwrap_or_default(),
+            applied: row.try_get::<i64>("", "applied")? != 0,
         });
     }
     Ok(nodes)
@@ -505,17 +545,36 @@ fn known_by(nodes: &[CountNode]) -> HashMap<&str, HashSet<&str>> {
 /// `controls::record_location_count_in`): this PC's sync replica id and the JSON list of the counts
 /// it follows — the counts this PC knows that no other known count follows, reversed ones included
 /// (what they knew stays known), so the new count knows every count this PC knows.
+///
+/// Only counts whose correction is already in this PC's stock are followed, with everything they
+/// know: a count line that arrived before its movement, or a count that knows one whose movement is
+/// not here yet, is left out. A count never "knows" a correction the stock it is set against does
+/// not include; the price is at worst a double count shown until the movement arrives (fail-safe).
+/// Read it in the transaction that reads that stock.
 pub(crate) async fn count_mark(
     conn: &impl ConnectionTrait,
     article_id: i64,
     location_id: i64,
 ) -> AppResult<(String, String)> {
     let nodes = count_nodes(conn, article_id, location_id).await?;
-    let followed: HashSet<&str> = nodes
+    let known = known_by(&nodes);
+    let applied: HashSet<&str> = nodes
+        .iter()
+        .filter(|n| n.applied)
+        .map(|n| n.count.count_sync_id.as_str())
+        .collect();
+    let eligible: Vec<&CountNode> = nodes
+        .iter()
+        .filter(|n| {
+            let id = n.count.count_sync_id.as_str();
+            applied.contains(id) && known.get(id).is_none_or(|k| k.iter().all(|a| applied.contains(a)))
+        })
+        .collect();
+    let followed: HashSet<&str> = eligible
         .iter()
         .flat_map(|n| n.follows.iter().map(String::as_str))
         .collect();
-    let follows: Vec<&str> = nodes
+    let follows: Vec<&str> = eligible
         .iter()
         .map(|n| n.count.count_sync_id.as_str())
         .filter(|id| !followed.contains(id))
@@ -524,31 +583,48 @@ pub(crate) async fn count_mark(
     Ok((crate::sync::queries::local_replica_id(conn).await?, follows_json))
 }
 
-/// The double count to verify of an article and location, if any (CMMS Advisor ruling S1):
+/// The double counts of an article and location: those to verify, and those closed by a reversal.
+/// The rule (CMMS Advisor ruling S1 and its SF2 ruling):
 /// - a count takes part when it was made while the location stood below zero on its PC (the stock
-///   on record when its variance was fixed, `system_qty`, kept on the line) and its session is not
-///   reversed;
+///   on record when its variance was fixed, `system_qty`, kept on the line);
 /// - two such counts are a double count when they come from different PCs (sync replica ids; a
 ///   line without one counts as another PC) and neither knows the other, even indirectly: knowing
 ///   goes through every count in between, so a count at zero or more (a zero-variance cycle count)
 ///   neither hides an earlier count nor links two counts that never knew each other;
-/// - it is closed once a count whose session is not reversed knows both.
+/// - it is closed by a later count whose session is not reversed and that knows both, or by the
+///   reversal of one of the two counts — the stock is then corrected once — noted "clos par
+///   annulation du comptage <ref> (<qui>, <quand>)". This is the intended rule, not a limit; the
+///   location's negative item, if the stock is still below zero, stays open on its own.
 ///
 /// Only synchronised columns of the count lines and sessions are read, so every PC holding the same
-/// lines gives the same answer. The counts named are those of every open pair, oldest first.
-pub(crate) async fn double_count_of(
+/// lines gives the same answer. Counts are named oldest first.
+struct DoubleCountState {
+    /// The counts of every pair to verify (none: nothing to verify).
+    open: Vec<ReconciliationCount>,
+    /// For each reversed count that ended a double count: the reversal and the counts of its pairs.
+    closed_by_reversal: Vec<(CountReversal, Vec<ReconciliationCount>)>,
+}
+
+async fn double_count_state(
     conn: &impl ConnectionTrait,
     article_id: i64,
     location_id: i64,
-) -> AppResult<Option<Vec<ReconciliationCount>>> {
+) -> AppResult<DoubleCountState> {
     let nodes = count_nodes(conn, article_id, location_id).await?;
     let known = known_by(&nodes);
     let knows = |who: &str, what: &str| known.get(who).is_some_and(|k| k.contains(what));
-    let below: Vec<&CountNode> = nodes
-        .iter()
-        .filter(|n| !n.reversed && n.count.system_qty < -QTY_TOLERANCE)
-        .collect();
+    let below: Vec<&CountNode> = nodes.iter().filter(|n| n.count.system_qty < -QTY_TOLERANCE).collect();
+    // The reversal that ends a pair: the earlier one (time reversed, then line sync id).
+    let ending = |x: &'_ CountNode, y: &'_ CountNode| -> Option<String> {
+        let mut reversed: Vec<&CountNode> = [x, y].into_iter().filter(|n| n.reversed).collect();
+        reversed.sort_by(|a, b| {
+            (a.reversed_at.as_str(), a.count.count_sync_id.as_str())
+                .cmp(&(b.reversed_at.as_str(), b.count.count_sync_id.as_str()))
+        });
+        reversed.first().map(|n| n.count.count_sync_id.clone())
+    };
     let mut open: HashSet<&str> = HashSet::new();
+    let mut closed: HashMap<String, HashSet<&str>> = HashMap::new();
     for (i, x) in below.iter().enumerate() {
         for y in &below[i + 1..] {
             let (xi, yi) = (x.count.count_sync_id.as_str(), y.count.count_sync_id.as_str());
@@ -560,22 +636,61 @@ pub(crate) async fn double_count_of(
                 let zi = z.count.count_sync_id.as_str();
                 !z.reversed && knows(zi, xi) && knows(zi, yi)
             });
-            if !verified {
-                open.insert(xi);
-                open.insert(yi);
+            if verified {
+                continue;
+            }
+            match ending(x, y) {
+                None => {
+                    open.insert(xi);
+                    open.insert(yi);
+                }
+                Some(by) => {
+                    let members = closed.entry(by).or_default();
+                    members.insert(xi);
+                    members.insert(yi);
+                }
             }
         }
     }
-    if open.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(
+    let named = |ids: &HashSet<&str>| -> Vec<ReconciliationCount> {
         below
             .iter()
-            .filter(|n| open.contains(n.count.count_sync_id.as_str()))
+            .filter(|n| ids.contains(n.count.count_sync_id.as_str()))
             .map(|n| n.count.clone())
-            .collect(),
-    ))
+            .collect()
+    };
+    let mut closed_by_reversal: Vec<(CountReversal, Vec<ReconciliationCount>)> = closed
+        .iter()
+        .filter_map(|(by, ids)| {
+            let n = nodes.iter().find(|n| n.count.count_sync_id == *by)?;
+            Some((
+                CountReversal {
+                    count_sync_id: by.clone(),
+                    session_code: n.count.session_code.clone(),
+                    reversed_by: n.reversed_by.clone(),
+                    reversed_at: n.reversed_at.clone(),
+                },
+                named(ids),
+            ))
+        })
+        .collect();
+    closed_by_reversal.sort_by(|(a, _), (b, _)| {
+        (b.reversed_at.as_str(), b.count_sync_id.as_str()).cmp(&(a.reversed_at.as_str(), a.count_sync_id.as_str()))
+    });
+    Ok(DoubleCountState {
+        open: named(&open),
+        closed_by_reversal,
+    })
+}
+
+/// The double count to verify of an article and location, if any ([`double_count_state`]).
+pub(crate) async fn double_count_of(
+    conn: &impl ConnectionTrait,
+    article_id: i64,
+    location_id: i64,
+) -> AppResult<Option<Vec<ReconciliationCount>>> {
+    let state = double_count_state(conn, article_id, location_id).await?;
+    Ok((!state.open.is_empty()).then_some(state.open))
 }
 
 /// Every article and location with a double count to verify.
@@ -680,26 +795,57 @@ pub async fn list_reviews(db: &DatabaseConnection, include_closed: bool) -> AppR
         .map(map_review)
         .collect::<AppResult<Vec<_>>>()?;
     let mut double_counts = Vec::new();
-    for (article_id, location_id, counts) in double_count_pairs(db).await? {
+    let mut closed_double_counts = Vec::new();
+    let pairs = db
+        .query_all(sqlite(
+            "SELECT DISTINCT article_id, location_id FROM inventory_count_lines
+             WHERE count_follows_json IS NOT NULL
+             ORDER BY article_id, location_id",
+            vec![],
+        ))
+        .await?;
+    for pair in pairs {
+        let (article_id, location_id): (i64, i64) = (pair.try_get("", "article_id")?, pair.try_get("", "location_id")?);
+        let state = double_count_state(db, article_id, location_id).await?;
+        if state.open.is_empty() && (!include_closed || state.closed_by_reversal.is_empty()) {
+            continue;
+        }
         let Some(row) = db
             .query_one(sqlite(PAIR_SELECT, vec![location_id.into(), article_id.into()]))
             .await?
         else {
             continue;
         };
-        double_counts.push(DoubleCountReview {
-            article_id,
-            article_code: row.try_get("", "article_code")?,
-            article_name: row.try_get("", "article_name")?,
-            location_id,
-            location_code: row.try_get("", "location_code")?,
-            warehouse_code: row.try_get("", "warehouse_code")?,
-            counts,
-            on_hand_qty: row.try_get("", "on_hand_qty")?,
-            reserved_qty: row.try_get("", "reserved_qty")?,
-            available_qty: row.try_get("", "available_qty")?,
-        });
+        let review = |counts: Vec<ReconciliationCount>,
+                      closed_by_reversal: Option<CountReversal>|
+         -> AppResult<DoubleCountReview> {
+            Ok(DoubleCountReview {
+                article_id,
+                article_code: row.try_get("", "article_code")?,
+                article_name: row.try_get("", "article_name")?,
+                location_id,
+                location_code: row.try_get("", "location_code")?,
+                warehouse_code: row.try_get("", "warehouse_code")?,
+                counts,
+                closed_by_reversal,
+                on_hand_qty: row.try_get("", "on_hand_qty")?,
+                reserved_qty: row.try_get("", "reserved_qty")?,
+                available_qty: row.try_get("", "available_qty")?,
+            })
+        };
+        if !state.open.is_empty() {
+            double_counts.push(review(state.open, None)?);
+        }
+        if include_closed {
+            for (reversal, counts) in state.closed_by_reversal {
+                closed_double_counts.push(review(counts, Some(reversal))?);
+            }
+        }
     }
+    closed_double_counts.sort_by(|a, b| {
+        let at = |d: &DoubleCountReview| d.closed_by_reversal.as_ref().map(|r| r.reversed_at.clone());
+        at(b).cmp(&at(a))
+    });
     let over_reservations = db
         .query_all(sqlite(
             "SELECT sb.article_id, a.article_code, a.article_name, sb.location_id, sl.code AS location_code,
@@ -731,6 +877,7 @@ pub async fn list_reviews(db: &DatabaseConnection, include_closed: bool) -> AppR
     Ok(NegativeStockReviewList {
         items,
         double_counts,
+        closed_double_counts,
         over_reservations,
     })
 }

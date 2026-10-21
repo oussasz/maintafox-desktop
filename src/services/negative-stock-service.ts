@@ -70,6 +70,15 @@ export const ReconciliationCountSchema = z.object({
 });
 export type ReconciliationCount = z.infer<typeof ReconciliationCountSchema>;
 
+/** The reversal of a count session that ended a double count. */
+export const CountReversalSchema = z.object({
+  count_sync_id: z.string(),
+  session_code: z.string(),
+  reversed_by: z.string().nullable(),
+  reversed_at: z.string(),
+});
+export type CountReversal = z.infer<typeof CountReversalSchema>;
+
 export const DoubleCountReviewSchema = z.object({
   article_id: z.number(),
   article_code: z.string(),
@@ -78,6 +87,8 @@ export const DoubleCountReviewSchema = z.object({
   location_code: z.string(),
   warehouse_code: z.string(),
   counts: z.array(ReconciliationCountSchema),
+  /** The reversal of one of its counts that closed it (null while it is to verify). */
+  closed_by_reversal: CountReversalSchema.nullable(),
   on_hand_qty: z.number(),
   reserved_qty: z.number(),
   available_qty: z.number(),
@@ -87,6 +98,8 @@ export type DoubleCountReview = z.infer<typeof DoubleCountReviewSchema>;
 const NegativeStockReviewListSchema = z.object({
   items: z.array(NegativeStockReviewSchema),
   double_counts: z.array(DoubleCountReviewSchema),
+  /** Double counts closed by the reversal of one of their counts (when closed items are asked). */
+  closed_double_counts: z.array(DoubleCountReviewSchema),
   over_reservations: z.array(OverReservationWarningSchema),
 });
 export type NegativeStockReviewList = z.infer<typeof NegativeStockReviewListSchema>;

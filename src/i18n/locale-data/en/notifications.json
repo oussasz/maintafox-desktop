@@ -303,7 +303,7 @@
     },
     "stock_negative": {
       "title": "{{code}} below zero at {{location}}",
-      "body": "{{title}}: {{on_hand}} on hand. Record a count to reconcile it."
+      "body": "{{title}}: {{on_hand}} on hand, below zero since {{opened_at}}. Record a count to reconcile it."
     },
     "stock_double_count": {
       "title": "{{code}} counted twice at {{location}}",
