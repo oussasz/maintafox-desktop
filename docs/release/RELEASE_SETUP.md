@@ -1,6 +1,7 @@
 # Release setup (one time) and how to ship a version
 
-Plain-language guide for the owner. Technical background: master plan Phase 5 and
+Plain-language guide for the owner. For the big picture, every key and token, and how to do the
+next releases, read `docs/release/RELEASE_WORKFLOW_GUIDE.md`. Technical background: master plan Phase 5 and
 `deploy/RELEASES.md` in the vendor console repository.
 
 ## What exists
