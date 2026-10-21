@@ -46,14 +46,18 @@ environments) FIRST: the key script and the secret commands below store the secr
    (GitHub > the desktop repository > Settings > Environments > New environment):
    - `release`: tick **Required reviewers** and add yourself (and only people you trust to ship to
      every customer). Tick **Prevent self-review** if a second person reviews. Under **Deployment
-     branches and tags**, choose "Selected branches and tags" and add the tag rule `v*.*.*`. Put
-     the updater key and the publisher token here (Environment secrets), not in the repository:
-     `gh secret set TAURI_SIGNING_PRIVATE_KEY --env release`, and the same for
-     `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and `MAINTAFOX_RELEASE_PUBLISHER_TOKEN`.
+     branches and tags**, choose "Selected branches and tags" and add the tag rule `v*.*.*`.
+     Create the environment now; its secrets (the updater key, its password and the publisher
+     token) are added in steps 1 and 4, always as Environment secrets (`--env release`), never in
+     the repository.
    - `release-build`: the same tag rule `v*.*.*` (reviewers are not needed). Put only the `ES_*`
      code-signing secrets here, if you have them (`gh secret set ES_USERNAME --env release-build`,
      ...). Never put the updater key or the publisher token in `release-build`.
-   - Delete the repository-level copies (`gh secret delete TAURI_SIGNING_PRIVATE_KEY`, ...).
+   - If any of these were ever stored at repository level, delete those copies (a repository
+     secret can be read by any workflow, without your approval): `gh secret delete
+     TAURI_SIGNING_PRIVATE_KEY`, `gh secret delete TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and
+     `gh secret delete MAINTAFOX_RELEASE_PUBLISHER_TOKEN`. The key script refuses to finish while
+     one is left.
    - Settings > Rules > Rulesets: add a tag ruleset for `v*` so only you can create or move release
      tags.
    From then on, each pushed tag waits in GitHub Actions for your "Approve and deploy", twice: once

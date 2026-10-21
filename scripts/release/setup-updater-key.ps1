@@ -94,10 +94,14 @@ try {
   $names = & gh secret list --env $Environment --repo $repo --json name --jq ".[].name"
   $missing = @($SecretKeyName, $SecretPasswordName) | Where-Object { $names -notcontains $_ }
   if ($missing) { Stop-WithMessage "These secrets are not set in the '$Environment' environment yet: $($missing -join ', '). Run the commands above, then run 'gh secret list --env $Environment'." }
+  # A repository-level copy is readable by any workflow on any branch, without the reviewer gate
+  # of the 'release' environment: refuse to finish until none is left (the publisher token included).
   $repoNames = & gh secret list --repo $repo --json name --jq ".[].name"
-  $atRepoLevel = @($SecretKeyName, $SecretPasswordName) | Where-Object { $repoNames -contains $_ }
+  $atRepoLevel = @($SecretKeyName, $SecretPasswordName, "MAINTAFOX_RELEASE_PUBLISHER_TOKEN") | Where-Object { $repoNames -contains $_ }
   if ($atRepoLevel) {
-    Write-Host "Also found as REPOSITORY secrets: $($atRepoLevel -join ', '). Delete those copies: gh secret delete <name> --repo $repo" -ForegroundColor Yellow
+    Write-Host "These secrets also exist at REPOSITORY level, where any workflow can read them:" -ForegroundColor Yellow
+    foreach ($name in $atRepoLevel) { Write-Host "  gh secret delete $name --repo $repo" }
+    Stop-WithMessage "Delete the repository-level copies above (the environment copies stay), then run 'gh secret list --repo $repo' to check."
   }
   Write-Host "Both secrets are set in the '$Environment' environment." -ForegroundColor Green
 
