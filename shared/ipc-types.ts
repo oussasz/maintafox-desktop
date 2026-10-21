@@ -10445,7 +10445,12 @@ export interface ResolveSyncConflictInput {
     | "retry_later"
     | "escalate"
     | "dismiss";
-  resolution_note?: string | null;
+  /**
+   * Why this choice was made: required for every action, at least `MIN_REASON_CHARS`
+   * (src-tauri/src/settings/catalog.rs) characters once trimmed. Stored on the conflict and in the
+   * audit event `sync.conflict_resolved`.
+   */
+  resolution_note: string;
 }
 
 export interface ReplaySyncFailuresInput {

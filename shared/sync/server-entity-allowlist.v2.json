@@ -914,6 +914,10 @@
     {
       "entity_type": "admin_recovery_acknowledgements",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "audit_chain_stubs",
+      "scope": "tenant"
     }
   ]
 }
