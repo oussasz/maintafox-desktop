@@ -15,7 +15,9 @@ Customers' PCs  ->  check every 2 hours, back up their data, download, verify, i
 
 ## One-time setup (about 20 minutes)
 
-You do every step yourself; nothing secret is ever shared with Claude.
+You do every step yourself; nothing secret is ever shared with Claude. Do step 6 (the two GitHub
+environments) FIRST: the key script and the secret commands below store the secrets in the
+`release` environment, which must exist already.
 
 1. **Updater key** (signs every update; the app refuses anything else).
    On your PC, in the `maintafox-desktop` folder, in PowerShell:
@@ -24,7 +26,9 @@ You do every step yourself; nothing secret is ever shared with Claude.
    ```
    It asks you for a password (choose a strong one and keep it in your password manager), creates
    the key outside the project folder, writes the public key into
-   `src-tauri\updater\maintafox-updater.pub`, and shows you two `gh secret set` commands to type.
+   `src-tauri\updater\maintafox-updater.pub`, and shows you two `gh secret set ... --env release`
+   commands to type (the key and its password go into the protected `release` environment, never
+   into the repository).
    Back up the key file and its password offline: **if they are lost, installed copies of
    Maintafox can never be updated again** (customers would have to reinstall by hand).
 2. Ask Claude to commit `src-tauri\updater\maintafox-updater.pub` (it is public).
@@ -32,7 +36,7 @@ You do every step yourself; nothing secret is ever shared with Claude.
    (the script prints it at the end). Claude does this at the next deploy when you say "deploy".
 4. **Release workflow key:** Console > Updates > Releases > Release workflow keys > Create
    ("GitHub Actions"), confirm with your authenticator code, copy the token shown once, then type
-   `gh secret set MAINTAFOX_RELEASE_PUBLISHER_TOKEN` and paste the token.
+   `gh secret set MAINTAFOX_RELEASE_PUBLISHER_TOKEN --env release` and paste the token.
 5. **Code signing certificate** (optional at first, strongly recommended before customers):
    see `docs/release/CODE_SIGNING.md`. Until then every release says "NOT CODE-SIGNED" in GitHub
    and in the console, and Windows shows a SmartScreen warning when installing.

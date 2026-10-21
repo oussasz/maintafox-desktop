@@ -13,7 +13,11 @@
        The private key file is written outside the repository (default: %USERPROFILE%\.maintafox\updater\).
     3. Copies the PUBLIC key into src-tauri\updater\maintafox-updater.pub (committed: the app embeds it).
     4. Shows the two `gh secret set` commands that you type to store the private key and its
-       password as GitHub secrets for the release workflow, then checks that both secrets exist.
+       password as secrets of the protected GitHub environment `release` (never as repository
+       secrets), then checks that both secrets exist there.
+
+  Before running it, create the GitHub environment `release` (docs/release/RELEASE_SETUP.md,
+  step 6): the script stops if it does not exist yet.
 
   Nothing secret is printed, logged or sent anywhere by this script. It never overwrites an
   existing key: every installed Maintafox only accepts updates signed with the key it was built
@@ -31,6 +35,8 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $PublicKeyTarget = Join-Path $RepoRoot "src-tauri\updater\maintafox-updater.pub"
 $SecretKeyName = "TAURI_SIGNING_PRIVATE_KEY"
 $SecretPasswordName = "TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+# The release workflow reads the key only in its signing job, from this protected environment.
+$Environment = "release"
 
 function Step([string]$Text) { Write-Host ""; Write-Host "==> $Text" -ForegroundColor Cyan }
 function Stop-WithMessage([string]$Text) { Write-Host ""; Write-Host "STOPPED: $Text" -ForegroundColor Red; exit 1 }
@@ -45,6 +51,10 @@ try {
   $repo = (& gh repo view --json nameWithOwner --jq .nameWithOwner).Trim()
   if (-not $repo) { Stop-WithMessage "This folder is not a GitHub repository known to gh." }
   Write-Host "Repository: $repo"
+  & gh api "repos/$repo/environments/$Environment" *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Stop-WithMessage "The GitHub environment '$Environment' does not exist yet. Create it first (docs\release\RELEASE_SETUP.md, step 6), then run this script again."
+  }
   if (-not (Test-Path (Join-Path $RepoRoot "node_modules\.bin\tauri.cmd"))) {
     Stop-WithMessage "The project dependencies are not installed. Run 'pnpm install' in $RepoRoot first."
   }
@@ -72,19 +82,24 @@ try {
   [System.IO.File]::WriteAllText($PublicKeyTarget, "$publicKey`n")
   Write-Host "Written: src-tauri\updater\maintafox-updater.pub (commit this file)."
 
-  Step "Storing the private key and its password as GitHub secrets"
+  Step "Storing the private key and its password as secrets of the '$Environment' environment"
   Write-Host "Type these two commands yourself in this PowerShell window:" -ForegroundColor Yellow
   Write-Host ""
-  Write-Host "  Get-Content `"$KeyPath`" -Raw | gh secret set $SecretKeyName --repo $repo"
-  Write-Host "  gh secret set $SecretPasswordName --repo $repo"
+  Write-Host "  Get-Content `"$KeyPath`" -Raw | gh secret set $SecretKeyName --env $Environment --repo $repo"
+  Write-Host "  gh secret set $SecretPasswordName --env $Environment --repo $repo"
   Write-Host ""
   Write-Host "The second command asks for the password: paste or type the password you chose above."
   Read-Host "Press Enter when both commands have been run"
 
-  $names = & gh secret list --repo $repo --json name --jq ".[].name"
+  $names = & gh secret list --env $Environment --repo $repo --json name --jq ".[].name"
   $missing = @($SecretKeyName, $SecretPasswordName) | Where-Object { $names -notcontains $_ }
-  if ($missing) { Stop-WithMessage "These secrets are not set yet: $($missing -join ', '). Run the commands above, then run 'gh secret list'." }
-  Write-Host "Both secrets are set." -ForegroundColor Green
+  if ($missing) { Stop-WithMessage "These secrets are not set in the '$Environment' environment yet: $($missing -join ', '). Run the commands above, then run 'gh secret list --env $Environment'." }
+  $repoNames = & gh secret list --repo $repo --json name --jq ".[].name"
+  $atRepoLevel = @($SecretKeyName, $SecretPasswordName) | Where-Object { $repoNames -contains $_ }
+  if ($atRepoLevel) {
+    Write-Host "Also found as REPOSITORY secrets: $($atRepoLevel -join ', '). Delete those copies: gh secret delete <name> --repo $repo" -ForegroundColor Yellow
+  }
+  Write-Host "Both secrets are set in the '$Environment' environment." -ForegroundColor Green
 
   Step "Done. Next steps"
   Write-Host "1. Back up the private key file and its password OFFLINE (password manager + a USB key kept safe):"
