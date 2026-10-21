@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { useModuleCapabilities } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -45,6 +45,16 @@ export function Sidebar({ items }: SidebarProps) {
   const { can } = usePermissions();
   const { capabilityMap } = useModuleCapabilities();
   const location = useLocation();
+  const navigate = useNavigate();
+
+  // The menu always changes page inside this window. A modifier click or a middle click on a link
+  // would otherwise ask the webview for a new window; route it in place instead.
+  const openInPlace = (e: MouseEvent<HTMLAnchorElement>, path: string) => {
+    if (e.button === 1 || e.ctrlKey || e.shiftKey || e.metaKey || e.altKey) {
+      e.preventDefault();
+      navigate(path);
+    }
+  };
 
   // Filter by RBAC + soft module capabilities, then group — hide empty groups
   const visibleItems = items.filter(
@@ -107,6 +117,9 @@ export function Sidebar({ items }: SidebarProps) {
                 <Link
                   key={item.key}
                   to={item.path}
+                  target="_self"
+                  onClick={(e) => openInPlace(e, item.path)}
+                  onAuxClick={(e) => openInPlace(e, item.path)}
                   title={collapsed ? t(item.labelKey as never) : undefined}
                   className={cn(
                     "flex items-center gap-2.5 rounded-md px-2 py-1.5",

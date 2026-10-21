@@ -6,6 +6,9 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { defaultNavItems, appRoutes } from "@/navigation/nav-registry";
 import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
+const webviewWindowCtor = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/webviewWindow", () => ({ WebviewWindow: webviewWindowCtor }));
+
 const mockCan = vi.fn((_permission: PermissionName) => true);
 
 vi.mock("@/hooks/use-permissions", () => ({
@@ -119,5 +122,46 @@ describe("Sidebar ΓÇö permission-based filtering", () => {
     renderSidebar();
 
     expect(await screen.findByText("nav.admin")).toBeInTheDocument();
+  });
+});
+
+describe("Sidebar - same-window navigation", () => {
+  it("never opens another window and changes the route in place", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const { useLocation } = await import("react-router-dom");
+    mockCan.mockImplementation(() => true);
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    const probe = { path: "" };
+    function Probe() {
+      probe.path = useLocation().pathname;
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Sidebar items={defaultNavItems} />
+        <Probe />
+      </MemoryRouter>,
+    );
+    const links = screen.getAllByRole("link");
+    const link = links.find((l) => l.getAttribute("href") !== "/") as HTMLElement;
+    const href = link.getAttribute("href") as string;
+    expect(href.startsWith("/")).toBe(true);
+    expect(link.getAttribute("target")).toBe("_self");
+
+    fireEvent.click(link);
+    expect(probe.path).toBe(href.split("?")[0]);
+
+    // modifier and middle clicks are suppressed and still route in place
+    const other = links.find((l) => l !== link && l.getAttribute("href") !== "/") as HTMLElement;
+    const otherPath = (other.getAttribute("href") as string).split("?")[0];
+    expect(fireEvent.click(other, { ctrlKey: true })).toBe(false);
+    expect(probe.path).toBe(otherPath);
+    expect(
+      fireEvent(link, new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 })),
+    ).toBe(false);
+    expect(probe.path).toBe(href.split("?")[0]);
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(webviewWindowCtor).not.toHaveBeenCalled();
+    openSpy.mockRestore();
   });
 });
