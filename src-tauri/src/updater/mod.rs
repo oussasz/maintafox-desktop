@@ -9,8 +9,10 @@
 //!   downloaded with progress and verified against the public key built into this app, and only
 //!   then the database is backed up (`pre_update` run, Phase 1.3 backup service) or its restore
 //!   staged, the journal (`journal.rs`) written and the installer started at once (the app
-//!   restarts). Nothing the user can do happens between the backup and the installer, so no
-//!   change made during the download is left out of the backup.
+//!   restarts). From the backup on, the app accepts no change (`WriteBarrier`: the window shows a
+//!   blocking screen, session commands are refused, the sync worker pauses), so a change made
+//!   during the download is in the backup. A save already running when the barrier went up can
+//!   still finish during the backup (milliseconds).
 //! - **Failed database update:** migrations are forward-only. When the new version cannot update
 //!   the database, it stages the pre-update backup (Phase 1.3 restore) and asks for the previous
 //!   signed installer (`X-Maintafox-Rollback-To`); the previous version starts on the backup.
@@ -391,9 +393,15 @@ pub enum DowngradePlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum InstallRefusal {
-    /// No pre-update backup of `target` is known on this device, or it cannot be verified
-    /// (no checksum recorded, or the file changed since it was taken).
+    /// No pre-update backup of `target` is known on this device, or no checksum was recorded
+    /// for it.
     RollbackBackupMissing,
+    /// The pre-update backup of `target` is there, but it changed since it was taken (checksum
+    /// mismatch): it is never restored (security review N5).
+    RollbackBackupChanged,
+    /// A database restore is staged for the next start (an administrator's, Settings > Backup, or
+    /// one the updater could not cancel): no update runs until Maintafox has restarted (N1).
+    RestorePending,
     /// Changes not yet synchronised would be lost by the restore.
     RollbackUnsyncedChanges { count: i64 },
     /// The server no longer offers this update (recalled or paused since the check), offers
@@ -587,6 +595,56 @@ impl Drop for InstallSlot {
     }
 }
 
+/// Raised from the pre-update backup (or the staged restore) until the process exits or the
+/// install stops (security review SF1): a change made then would be missing from the backup, or
+/// lost with the restore. While it is up, every IPC command that needs a session is refused
+/// (`require_session!`), the sync worker skips its cycles and the window cannot be closed; the UI
+/// shows a blocking screen (`UpdateInstallLock`).
+static UPDATE_WRITE_BARRIER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The refusal while the barrier is up.
+pub const UPDATE_IN_PROGRESS_MESSAGE: &str =
+    "Une mise à jour est en cours d'installation et Maintafox va redémarrer : aucune modification n'est possible maintenant.";
+
+/// The barrier, lowered when dropped (the install stopped; on success the process exits first).
+#[derive(Debug)]
+pub struct WriteBarrier(&'static std::sync::atomic::AtomicBool);
+
+impl WriteBarrier {
+    fn raise_on(flag: &'static std::sync::atomic::AtomicBool) -> Self {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        Self(flag)
+    }
+}
+
+impl Drop for WriteBarrier {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Whether an update is between its backup (or staged restore) and the restart.
+pub fn writes_barred() -> bool {
+    UPDATE_WRITE_BARRIER.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Refuses a command while an update is being installed (`require_session!` calls it first).
+pub fn refuse_while_installing() -> AppResult<()> {
+    refuse_while_installing_on(&UPDATE_WRITE_BARRIER)
+}
+
+fn refuse_while_installing_on(flag: &std::sync::atomic::AtomicBool) -> AppResult<()> {
+    if flag.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(AppError::ValidationFailed(vec![UPDATE_IN_PROGRESS_MESSAGE.to_string()]));
+    }
+    Ok(())
+}
+
+/// A database restore is staged for the next start.
+fn restore_pending(paths: &UpdatePaths) -> bool {
+    crate::backup::restore::pending_restore_path(&paths.live_db).exists()
+}
+
 /// Before the download, without changing anything: a rollback this device would refuse anyway
 /// (no verifiable pre-update backup, unsynchronised changes) is refused before minutes of
 /// download. `prepare_install` decides again, authoritatively, after the download.
@@ -607,7 +665,9 @@ async fn downgrade_precheck(
 /// Right before the installer (after the download): the pre-update backup (upgrade) or the
 /// downgrade plan and its staged restore (rollback), then the journal. Every refusal or failure
 /// leaves nothing behind (no journal entry, no staged restore), so the next start does not believe
-/// an update ran and never applies a restore nobody installed.
+/// an update ran and never applies a restore nobody installed. A restore is named in the journal
+/// before it is staged (`UpdateJournal::staged_restore`): if it cannot be cancelled again, the
+/// journal does not justify it and the next start cancels it (security review SF2).
 pub async fn prepare_install(
     db: &sea_orm::DatabaseConnection,
     paths: &UpdatePaths,
@@ -616,6 +676,10 @@ pub async fn prepare_install(
     load_key: &KeyLoader,
     progress: &(dyn Fn(UpdateProgressEvent) + Sync),
 ) -> AppResult<Prepared> {
+    // An administrator may have staged a restore during the download (N1).
+    if restore_pending(paths) {
+        return Ok(Prepared::Refused(InstallRefusal::RestorePending));
+    }
     let previous = journal::load(&paths.data_dir)?;
     let schema_now = applied_migration_count(db).await?;
 
@@ -634,6 +698,7 @@ pub async fn prepare_install(
         rollback_allowed_version: None,
         backup_refusal: None,
         notice_acknowledged: false,
+        staged_restore: None,
     };
     let mut staged_restore = false;
     match target.kind {
@@ -660,30 +725,54 @@ pub async fn prepare_install(
                     // The file must be the backup that was taken (security review S8).
                     if !backup_matches_checksum(&backup_path, &sha256)? {
                         tracing::error!(backup = %backup_path.display(), "update: pre-update backup checksum mismatch; rollback refused");
-                        return Ok(Prepared::Refused(InstallRefusal::RollbackBackupMissing));
+                        return Ok(Prepared::Refused(InstallRefusal::RollbackBackupChanged));
                     }
+                    // `plan_downgrade` restores only from the completed upgrade it read.
+                    let Some(previous) = previous.as_ref() else {
+                        return Ok(Prepared::Refused(InstallRefusal::RollbackBackupMissing));
+                    };
+                    let record = journal::StagedRestore {
+                        pending_path: crate::backup::restore::pending_restore_path(&paths.live_db)
+                            .to_string_lossy()
+                            .to_string(),
+                        sha256: sha256.clone(),
+                    };
+                    // Written before the restore is staged (SF2): whatever fails from here on, a
+                    // failed cancel included, the next start finds a restore the journal does not
+                    // justify (the completed upgrade) and cancels it.
+                    let mut marked = previous.clone();
+                    marked.staged_restore = Some(record.clone());
+                    journal::save(&paths.data_dir, &marked)?;
                     progress(UpdateProgressEvent::RestoringBackup);
                     // The restore service's checks (integrity, this installation's key, schema not
                     // newer) and its safety backup of the current database.
-                    crate::backup::restore::stage_restore(
-                        db,
-                        &paths.live_db,
-                        &backup_path,
-                        &load_key()?,
-                        &paths.backup_dir,
-                        actor,
-                    )
-                    .await?;
+                    let staged = match load_key() {
+                        Ok(key) => crate::backup::restore::stage_restore(
+                            db,
+                            &paths.live_db,
+                            &backup_path,
+                            &key,
+                            &paths.backup_dir,
+                            actor,
+                        )
+                        .await
+                        .map(|_| ()),
+                        Err(e) => Err(e),
+                    };
+                    if let Err(e) = staged {
+                        withdraw_staged_restore(paths, previous);
+                        return Err(e);
+                    }
                     // A change made while the restore was being staged would be lost with it.
                     let pending_now = match unsynced_change_count(db).await {
                         Ok(count) => count,
                         Err(e) => {
-                            crate::backup::restore::cancel_pending_restore(&paths.live_db)?;
+                            withdraw_staged_restore(paths, previous);
                             return Err(e);
                         }
                     };
                     if pending_now > 0 {
-                        crate::backup::restore::cancel_pending_restore(&paths.live_db)?;
+                        withdraw_staged_restore(paths, previous);
                         return Ok(Prepared::Refused(InstallRefusal::RollbackUnsyncedChanges {
                             count: pending_now,
                         }));
@@ -691,14 +780,15 @@ pub async fn prepare_install(
                     staged_restore = true;
                     entry.backup_path = Some(backup_path.to_string_lossy().to_string());
                     entry.backup_sha256 = Some(sha256);
+                    entry.staged_restore = Some(record);
                 }
             }
         }
     }
     if let Err(e) = journal::save(&paths.data_dir, &entry) {
         // Without its journal entry the staged restore would not be justified at the next start.
-        if staged_restore {
-            crate::backup::restore::cancel_pending_restore(&paths.live_db)?;
+        if let (true, Some(previous)) = (staged_restore, previous.as_ref()) {
+            withdraw_staged_restore(paths, previous);
         }
         return Err(e);
     }
@@ -708,19 +798,41 @@ pub async fn prepare_install(
     })
 }
 
+/// Abandons a restore `prepare_install` staged (a refusal or a failure after the staging): the
+/// staged file is removed, then the journal the install started from is put back. When the file
+/// cannot be removed, the journal written before the staging stays: it names the restore without
+/// justifying it, so the next start cancels it, and no update runs before that restart
+/// (`RestorePending`). Returns whether the restore was removed.
+fn withdraw_staged_restore(paths: &UpdatePaths, previous: &UpdateJournal) -> bool {
+    match crate::backup::restore::cancel_pending_restore(&paths.live_db) {
+        Ok(_) => {
+            if let Err(e) = journal::save(&paths.data_dir, previous) {
+                // Harmless: no restore is pending any more.
+                tracing::warn!("update: the journal still names the cancelled restore: {e}");
+            }
+            true
+        }
+        Err(e) => {
+            tracing::error!(
+                "update: the staged restore could not be cancelled; the next start cancels it (the journal does not justify it): {e}"
+            );
+            false
+        }
+    }
+}
+
 /// The installer did not start: a restore staged for the older version that was not installed is
-/// removed first, then the journal says so.
-pub fn record_install_not_started(
-    paths: &UpdatePaths,
-    entry: &mut UpdateJournal,
-    staged_restore: bool,
-    failure: &str,
-) -> AppResult<()> {
-    let cancelled = if staged_restore {
+/// removed first, then the journal says so. If the restore cannot be removed, the entry keeps
+/// naming it: `InstallNotCompleted` does not justify it, so the next start cancels it (SF2).
+pub fn record_install_not_started(paths: &UpdatePaths, entry: &mut UpdateJournal, failure: &str) -> AppResult<()> {
+    let cancelled = if entry.staged_restore.is_some() {
         crate::backup::restore::cancel_pending_restore(&paths.live_db).map(|_| ())
     } else {
         Ok(())
     };
+    if cancelled.is_ok() {
+        entry.staged_restore = None;
+    }
     entry.state = JournalState::InstallNotCompleted;
     entry.failure = Some(failure.to_string());
     entry.finished_at = Some(chrono::Utc::now().to_rfc3339());
@@ -750,10 +862,11 @@ async fn download_verified(update: &Update, progress: &(dyn Fn(UpdateProgressEve
 }
 
 /// The install sequence (security review B1): download and verify first, while the app stays
-/// usable and nothing is written; then prepare (backup or staged restore, journal); then the
-/// installer at once, with nothing awaited in between, so no change can be made after the backup
-/// was taken. If the installer cannot start, the staged restore is cancelled and the journal says
-/// so. `download` and `install` are the updater plugin's in the app.
+/// usable and nothing is written; then the write barrier goes up (SF1) and the install prepares
+/// (backup or staged restore, journal); then the installer at once, with nothing awaited in
+/// between. If the installer cannot start, the staged restore is cancelled, the journal says so
+/// and the barrier comes down. `download` and `install` are the updater plugin's in the app;
+/// `barrier` is the process-wide one (`writes_barred`) in the app.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_install<Dl, Inst>(
     db: &sea_orm::DatabaseConnection,
@@ -762,6 +875,7 @@ pub async fn run_install<Dl, Inst>(
     actor: Option<i32>,
     load_key: &KeyLoader,
     progress: &(dyn Fn(UpdateProgressEvent) + Sync),
+    barrier: &'static std::sync::atomic::AtomicBool,
     download: Dl,
     install: Inst,
 ) -> AppResult<InstallOutcome>
@@ -769,21 +883,30 @@ where
     Dl: std::future::Future<Output = AppResult<Vec<u8>>>,
     Inst: FnOnce(Vec<u8>) -> AppResult<()>,
 {
+    // A restore staged for the next start comes first: an update now would back up or replace
+    // the database it is about to swap out (N1).
+    if restore_pending(paths) {
+        return Ok(InstallOutcome::Refused {
+            refusal: InstallRefusal::RestorePending,
+        });
+    }
     if let Some(refusal) = downgrade_precheck(db, paths, target).await? {
         return Ok(InstallOutcome::Refused { refusal });
     }
     // Nothing is written before or during the download: a failed download leaves no trace.
     let bytes = download.await?;
-    let (mut entry, staged_restore) = match prepare_install(db, paths, target, actor, load_key, progress).await? {
+    // From the backup until the process exits, nothing can be changed in the app.
+    let _barrier = WriteBarrier::raise_on(barrier);
+    let mut entry = match prepare_install(db, paths, target, actor, load_key, progress).await? {
         Prepared::Refused(refusal) => return Ok(InstallOutcome::Refused { refusal }),
-        Prepared::Ready { entry, staged_restore } => (*entry, staged_restore),
+        Prepared::Ready { entry, .. } => *entry,
     };
     tracing::info!(from = %entry.from_version, to = %entry.to_version, kind = ?entry.kind, "update: installing");
     progress(UpdateProgressEvent::Installing);
     // On Windows the plugin starts the installer and exits this process: it returns only on error.
     if let Err(e) = install(bytes) {
         // Nothing was installed: no restore stays staged and the next start knows it.
-        record_install_not_started(paths, &mut entry, staged_restore, &e.to_string())?;
+        record_install_not_started(paths, &mut entry, &e.to_string())?;
         return Err(e);
     }
     Ok(InstallOutcome::Restarting)
@@ -842,6 +965,7 @@ pub async fn install(
         actor,
         &crate::commands::backup::require_database_key,
         progress,
+        &UPDATE_WRITE_BARRIER,
         download_verified(update, progress),
         |bytes| {
             update
@@ -1098,32 +1222,66 @@ pub fn acknowledge_notice(app: &AppHandle) -> AppResult<()> {
     Ok(())
 }
 
-/// Before the database opens, a staged restore is applied only when the journal justifies it
-/// (security review B1): a restore staged for a rollback whose installer never ran
-/// (`journal::staged_restore_is_orphaned`) is cancelled and the journal closed as
-/// `InstallNotCompleted`. Without a staged restore nothing is read. Returns whether one was
-/// cancelled. An unreadable journal with a staged restore is an error: the restore is not applied.
+/// Before the database opens, a restore the updater staged is applied only when the journal
+/// justifies it (security review B1, SF2): the journal names it (`staged_restore`, same checksum)
+/// and `journal::staged_restore_is_justified` holds. Otherwise it is cancelled, the journal stops
+/// naming it, and an `Installing` entry is closed as `InstallNotCompleted`. A pending restore the
+/// journal does not name (no record, or another checksum) is one an administrator staged and is
+/// left to be applied. Without a staged restore nothing is read. Returns whether one was
+/// cancelled. An unreadable journal, or a staged file that cannot be read, is an error: the
+/// restore is not applied (support procedure in docs/release/ROLLBACK.md).
 pub fn reconcile_staged_restore(data_dir: &Path, live_db: &Path, running: &str) -> AppResult<bool> {
-    if !crate::backup::restore::pending_restore_path(live_db).exists() {
+    let pending = crate::backup::restore::pending_restore_path(live_db);
+    if !pending.exists() {
         return Ok(false);
     }
     let Some(mut j) = journal::load(data_dir)? else {
         // No update in progress: a restore staged by an administrator (Settings > Backup).
         return Ok(false);
     };
-    if !journal::staged_restore_is_orphaned(&j, running) {
+    let Some(record) = j.staged_restore.clone() else {
+        // The updater staged nothing for this entry: an administrator's restore.
+        return Ok(false);
+    };
+    if !backup_matches_checksum(&pending, &record.sha256)? {
+        // Another file replaced the updater's: an administrator staged it afterwards.
+        return Ok(false);
+    }
+    if journal::staged_restore_is_justified(&j, running) {
         return Ok(false);
     }
     crate::backup::restore::cancel_pending_restore(live_db)?;
-    j.state = JournalState::InstallNotCompleted;
-    j.failure = Some(format!(
-        "the installer of {} did not complete; the database restore staged for it was cancelled",
-        j.to_version
-    ));
-    j.finished_at = Some(chrono::Utc::now().to_rfc3339());
-    journal::save(data_dir, &j)?;
-    tracing::warn!(from = %j.from_version, to = %j.to_version, running, "update: rollback not installed; staged restore cancelled");
+    j.staged_restore = None;
+    if j.state == JournalState::Installing {
+        j.state = JournalState::InstallNotCompleted;
+        j.failure = Some(format!(
+            "the installer of {} did not complete; the database restore staged for it was cancelled",
+            j.to_version
+        ));
+        j.finished_at = Some(chrono::Utc::now().to_rfc3339());
+    }
+    if let Err(e) = journal::save(data_dir, &j) {
+        // The restore is already cancelled: the stale record no longer matches anything pending.
+        tracing::warn!("update: the journal still names the cancelled restore: {e}");
+    }
+    tracing::warn!(from = %j.from_version, to = %j.to_version, state = ?j.state, running, "update: a restore the journal does not justify was cancelled");
     Ok(true)
+}
+
+/// An administrator staged a restore (Settings > Backup): it replaced any restore the updater had
+/// staged, so the journal stops naming one and the administrator's restore is applied at the next
+/// start, even when it is the same backup file.
+pub fn forget_staged_restore(data_dir: &Path) -> AppResult<()> {
+    if let Some(mut j) = journal::load(data_dir)?.filter(|j| j.staged_restore.is_some()) {
+        j.staged_restore = None;
+        journal::save(data_dir, &j)?;
+    }
+    Ok(())
+}
+
+/// `forget_staged_restore` for this app's data folder.
+pub fn forget_staged_restore_for_app(app: &AppHandle) -> AppResult<()> {
+    forget_staged_restore(&app_data_dir(app)?)
 }
 
 /// `reconcile_staged_restore` for this app's folders and running version.
@@ -1151,6 +1309,8 @@ pub fn on_migrations_succeeded(
         StartupAction::InstallNotCompleted => JournalState::InstallNotCompleted,
         StartupAction::Nothing | StartupAction::RecoveryPending => return Ok(()),
     };
+    // A restore staged for this entry was applied before the database opened.
+    j.staged_restore = None;
     j.finished_at = Some(chrono::Utc::now().to_rfc3339());
     tracing::info!(state = ?j.state, from = %j.from_version, to = %j.to_version, "update: journal closed");
     journal::save(&app_data_dir(app)?, &j)
@@ -1218,6 +1378,13 @@ pub async fn stage_pre_update_backup(
         Ok(backup) => {
             crate::backup::restore::stage_restore(db, &paths.live_db, &backup, key, &paths.backup_dir, None).await?;
             j.backup_refusal = None;
+            // `RollbackRequired` justifies it whichever version starts next.
+            j.staged_restore = j.backup_sha256.clone().map(|sha256| journal::StagedRestore {
+                pending_path: crate::backup::restore::pending_restore_path(&paths.live_db)
+                    .to_string_lossy()
+                    .to_string(),
+                sha256,
+            });
             journal::save(&paths.data_dir, &j)?;
             tracing::error!(from = %j.from_version, to = %j.to_version, "update: database update failed; pre-update backup staged");
         }
@@ -1246,6 +1413,7 @@ mod tests {
             rollback_allowed_version: None,
             backup_refusal: None,
             notice_acknowledged: false,
+            staged_restore: None,
         }
     }
 
@@ -1355,6 +1523,9 @@ mod tests {
         );
     }
 
+    /// The write barrier of these tests (the app's own is never raised by a test).
+    static TEST_BARRIER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
     fn paths_in(dir: &Path) -> UpdatePaths {
         UpdatePaths {
             data_dir: dir.join("data"),
@@ -1369,6 +1540,10 @@ mod tests {
             version: "1.1.0".into(),
             kind: UpdateKind::Upgrade,
         }
+    }
+
+    fn never_downloaded() -> AppResult<Vec<u8>> {
+        panic!("nothing is downloaded")
     }
 
     fn no_key() -> AppResult<crate::db::encryption::DatabaseKey> {
@@ -1554,6 +1729,11 @@ mod tests {
         assert!(crate::backup::restore::pending_restore_path(&paths.live_db).is_file());
         let stored = journal::load(&paths.data_dir).unwrap().unwrap();
         assert_eq!(stored.state, JournalState::RollbackRequired);
+        assert!(stored.staged_restore.is_some(), "the journal names the staged backup");
+        assert!(
+            !reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.0.0").unwrap(),
+            "justified"
+        );
         assert_eq!(
             journal::classify(Some(&stored), "1.1.0"),
             StartupAction::RecoveryPending
@@ -1612,12 +1792,14 @@ mod tests {
         std::fs::write(crate::backup::restore::pending_restore_path(&paths.live_db), b"staged").unwrap();
         let mut entry = completed_upgrade(None, 1);
         entry.state = JournalState::Installing;
-        record_install_not_started(&paths, &mut entry, true, "download failed").unwrap();
+        entry.staged_restore = Some(staged_record(&paths, b"staged"));
+        record_install_not_started(&paths, &mut entry, "download failed").unwrap();
         assert!(!crate::backup::restore::pending_restore_path(&paths.live_db).exists());
         let stored = journal::load(&paths.data_dir).unwrap().unwrap();
         assert_eq!(stored.state, JournalState::InstallNotCompleted);
         assert!(stored.notice_acknowledged);
         assert_eq!(stored.failure.as_deref(), Some("download failed"));
+        assert_eq!(stored.staged_restore, None, "cancelled: the journal no longer names it");
     }
 
     /// The vendor console's manifest (vendor-console `routes/updates.ts`): `mandatory_reason` and
@@ -1889,12 +2071,27 @@ mod tests {
         );
     }
 
-    /// B1 at startup: a restore staged for a rollback whose installer never ran is cancelled
-    /// before the database opens, and the journal is closed; a justified one is kept.
+    /// What the updater records for a staged restore whose content is `content`.
+    fn staged_record(paths: &UpdatePaths, content: &[u8]) -> journal::StagedRestore {
+        let pending = crate::backup::restore::pending_restore_path(&paths.live_db);
+        let scratch = paths.live_db.with_extension("record-content");
+        std::fs::write(&scratch, content).unwrap();
+        let sha256 = crate::backup::file_sha256(&scratch).unwrap();
+        std::fs::remove_file(&scratch).unwrap();
+        journal::StagedRestore {
+            pending_path: pending.to_string_lossy().to_string(),
+            sha256,
+        }
+    }
+
+    /// B1, SF2 at startup: a restore the updater staged is applied only when the journal justifies
+    /// it, and cancelled otherwise before the database opens (the journal stops naming it, an
+    /// `Installing` entry is closed); a restore the journal does not name is an administrator's.
     #[test]
-    fn startup_cancels_a_restore_staged_for_a_rollback_that_was_not_installed() {
+    fn startup_applies_a_staged_restore_only_when_the_journal_justifies_it() {
         let dir = tempfile::tempdir().unwrap();
         let paths = paths_in(dir.path());
+        std::fs::create_dir_all(&paths.data_dir).unwrap();
         let pending = crate::backup::restore::pending_restore_path(&paths.live_db);
         std::fs::write(&paths.live_db, b"live with today's work").unwrap();
         let mut rollback = completed_upgrade(None, 1);
@@ -1902,6 +2099,7 @@ mod tests {
         rollback.state = JournalState::Installing;
         rollback.from_version = "1.1.0".into();
         rollback.to_version = "1.0.0".into();
+        rollback.staged_restore = Some(staged_record(&paths, b"old backup"));
 
         // The installer was cancelled: 1.1.0 starts again.
         journal::save(&paths.data_dir, &rollback).unwrap();
@@ -1913,6 +2111,7 @@ mod tests {
         let closed = journal::load(&paths.data_dir).unwrap().unwrap();
         assert_eq!(closed.state, JournalState::InstallNotCompleted);
         assert!(closed.failure.clone().unwrap().contains("cancelled"));
+        assert_eq!(closed.staged_restore, None);
         assert_eq!(journal::classify(Some(&closed), "1.1.0"), StartupAction::Nothing);
 
         // The rollback was installed: 1.0.0 starts on the staged backup.
@@ -1921,7 +2120,43 @@ mod tests {
         assert!(!reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.0.0").unwrap());
         assert!(pending.exists(), "justified: applied");
 
-        // No journal: a restore an administrator staged in Settings > Backup.
+        // A failed database update: applied whichever version starts.
+        let mut failed = rollback.clone();
+        failed.state = JournalState::RollbackRequired;
+        journal::save(&paths.data_dir, &failed).unwrap();
+        assert!(!reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.1.0").unwrap());
+        assert!(pending.exists());
+
+        // A closed entry still naming the restore (its cancel failed): cancelled, state kept.
+        for state in [JournalState::Completed, JournalState::InstallNotCompleted] {
+            let mut abandoned = rollback.clone();
+            abandoned.state = state;
+            journal::save(&paths.data_dir, &abandoned).unwrap();
+            std::fs::write(&pending, b"old backup").unwrap();
+            assert!(
+                reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.0.0").unwrap(),
+                "{state:?}"
+            );
+            assert!(!pending.exists(), "{state:?}");
+            let stored = journal::load(&paths.data_dir).unwrap().unwrap();
+            assert_eq!(stored.state, state);
+            assert_eq!(stored.staged_restore, None);
+        }
+
+        // An administrator staged another backup after the updater's: theirs is applied.
+        journal::save(&paths.data_dir, &rollback).unwrap();
+        std::fs::write(&pending, b"the administrator's backup").unwrap();
+        assert!(!reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.1.0").unwrap());
+        assert!(pending.exists());
+
+        // The journal names no staged restore (an administrator's, Settings > Backup).
+        let mut plain = rollback.clone();
+        plain.staged_restore = None;
+        journal::save(&paths.data_dir, &plain).unwrap();
+        assert!(!reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.1.0").unwrap());
+        assert!(pending.exists());
+
+        // No journal: a restore an administrator staged.
         std::fs::remove_file(journal::journal_path(&paths.data_dir)).unwrap();
         assert!(!reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.1.0").unwrap());
         assert!(pending.exists());
@@ -1929,6 +2164,255 @@ mod tests {
         // An unreadable journal with a staged restore: the restore is not applied blindly.
         std::fs::write(journal::journal_path(&paths.data_dir), "{not json").unwrap();
         assert!(reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.1.0").is_err());
+    }
+
+    /// An administrator's restore (Settings > Backup) replaces the updater's: the journal stops
+    /// naming one, so it is applied even when it is the same backup file.
+    #[test]
+    fn an_administrator_restore_is_never_taken_for_the_updater_s() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_in(dir.path());
+        let pending = crate::backup::restore::pending_restore_path(&paths.live_db);
+        let mut abandoned = completed_upgrade(None, 1);
+        abandoned.staged_restore = Some(staged_record(&paths, b"pre-update backup"));
+        journal::save(&paths.data_dir, &abandoned).unwrap();
+        std::fs::write(&pending, b"pre-update backup").unwrap();
+        forget_staged_restore(&paths.data_dir).unwrap();
+        assert_eq!(journal::load(&paths.data_dir).unwrap().unwrap().staged_restore, None);
+        assert!(!reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.1.0").unwrap());
+        assert!(pending.exists(), "the administrator's restore is applied");
+        forget_staged_restore(&tempfile::tempdir().unwrap().path().join("none")).unwrap();
+    }
+
+    /// Makes the staged restore impossible to remove (a folder stands where the file was), as an
+    /// antivirus lock would; `unlock` puts the staged file back.
+    fn lock_pending(pending: &Path) -> PathBuf {
+        let kept = pending.with_extension("kept");
+        std::fs::rename(pending, &kept).unwrap();
+        std::fs::create_dir(pending).unwrap();
+        std::fs::write(pending.join("busy"), b"x").unwrap();
+        kept
+    }
+
+    fn unlock_pending(pending: &Path, kept: &Path) {
+        std::fs::remove_dir_all(pending).unwrap();
+        std::fs::rename(kept, pending).unwrap();
+    }
+
+    /// SF2, first cancel path: a refusal or failure after the staging cannot remove the staged
+    /// restore. The journal written before the staging names it and does not justify it, so the
+    /// next start cancels it; no update runs before that restart.
+    #[tokio::test]
+    async fn a_staging_that_cannot_be_withdrawn_is_cancelled_at_the_next_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let (paths, key, db, target) = recall_setup(dir.path()).await;
+        let pending = crate::backup::restore::pending_restore_path(&paths.live_db);
+        let completed = journal::load(&paths.data_dir).unwrap().unwrap();
+        let load_key = move || Ok(key.clone());
+
+        // The journal names the restore before it is staged.
+        let data_dir = paths.data_dir.clone();
+        let named_before_staging = std::sync::atomic::AtomicBool::new(false);
+        let progress = |event: UpdateProgressEvent| {
+            if matches!(event, UpdateProgressEvent::RestoringBackup) {
+                let j = journal::load(&data_dir).unwrap().unwrap();
+                named_before_staging.store(
+                    j.staged_restore.is_some() && j.state == JournalState::Completed,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
+        };
+        let prepared = prepare_install(&db, &paths, &target, None, &load_key, &progress)
+            .await
+            .unwrap();
+        assert!(named_before_staging.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(matches!(
+            prepared,
+            Prepared::Ready {
+                staged_restore: true,
+                ..
+            }
+        ));
+        assert!(pending.is_file());
+
+        // Withdrawn normally: removed, and the journal is the completed upgrade again.
+        journal::save(&paths.data_dir, &{
+            let mut marked = completed.clone();
+            marked.staged_restore = journal::load(&paths.data_dir).unwrap().unwrap().staged_restore;
+            marked
+        })
+        .unwrap();
+        assert!(withdraw_staged_restore(&paths, &completed));
+        assert!(!pending.exists());
+        assert_eq!(journal::load(&paths.data_dir).unwrap(), Some(completed.clone()));
+
+        // The cancel fails: the marked journal stays and the restore stays pending.
+        remove_safety_backups(&paths.backup_dir);
+        let prepared = prepare_install(&db, &paths, &target, None, &load_key, &|_| {})
+            .await
+            .unwrap();
+        let Prepared::Ready { entry, .. } = prepared else {
+            panic!("staged")
+        };
+        let mut marked = completed.clone();
+        marked.staged_restore = entry.staged_restore.clone();
+        journal::save(&paths.data_dir, &marked).unwrap();
+        let kept = lock_pending(&pending);
+        assert!(!withdraw_staged_restore(&paths, &completed));
+        let stored = journal::load(&paths.data_dir).unwrap().unwrap();
+        assert_eq!(stored.state, JournalState::Completed);
+        assert!(stored.staged_restore.is_some(), "the journal still names it");
+
+        // No update runs before the restart.
+        let outcome = run_install(
+            &db,
+            &paths,
+            &target,
+            None,
+            &load_key,
+            &|_| {},
+            &TEST_BARRIER,
+            async { never_downloaded() },
+            |_| -> AppResult<()> { panic!("never installed") },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            InstallOutcome::Refused {
+                refusal: InstallRefusal::RestorePending
+            }
+        ));
+
+        // The next start (1.1.0, nothing installed) cancels it and keeps the completed upgrade.
+        unlock_pending(&pending, &kept);
+        assert!(reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.1.0").unwrap());
+        assert!(!pending.exists());
+        assert_eq!(journal::load(&paths.data_dir).unwrap(), Some(completed));
+        db.close().await.unwrap();
+    }
+
+    /// SF2, second cancel path: the installer did not start and its staged restore cannot be
+    /// removed. The journal says the install did not complete and still names the restore, so the
+    /// next start cancels it instead of applying it.
+    #[tokio::test]
+    async fn a_failed_installer_whose_restore_cannot_be_cancelled_is_cancelled_at_the_next_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let (paths, key, db, target) = recall_setup(dir.path()).await;
+        let pending = crate::backup::restore::pending_restore_path(&paths.live_db);
+        let load_key = move || Ok(key.clone());
+        let kept = std::sync::Mutex::new(None);
+        let install = |_: Vec<u8>| -> AppResult<()> {
+            *kept.lock().unwrap() = Some(lock_pending(&pending));
+            Err(AppError::Internal(anyhow::anyhow!(
+                "the installer could not be started"
+            )))
+        };
+        let result = run_install(
+            &db,
+            &paths,
+            &target,
+            None,
+            &load_key,
+            &|_| {},
+            &TEST_BARRIER,
+            async { Ok(Vec::new()) },
+            install,
+        )
+        .await;
+        assert!(result.is_err(), "the cancel failure is reported");
+        let stored = journal::load(&paths.data_dir).unwrap().unwrap();
+        assert_eq!(stored.state, JournalState::InstallNotCompleted);
+        assert!(stored.staged_restore.is_some(), "the journal still names the restore");
+        assert!(!journal::staged_restore_is_justified(&stored, "1.1.0"));
+        assert!(!journal::staged_restore_is_justified(&stored, "1.0.0"));
+
+        unlock_pending(&pending, &kept.lock().unwrap().take().unwrap());
+        assert!(reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.1.0").unwrap());
+        assert!(!pending.exists());
+        assert!(!crate::backup::restore::apply_pending_restore(&paths.live_db).unwrap());
+        let closed = journal::load(&paths.data_dir).unwrap().unwrap();
+        assert_eq!(closed.state, JournalState::InstallNotCompleted);
+        assert_eq!(closed.staged_restore, None);
+        db.close().await.unwrap();
+    }
+
+    /// N1: an update does not start while a restore is staged for the next start, and one staged
+    /// during the download stops it before the backup.
+    #[tokio::test]
+    async fn no_update_runs_while_a_restore_is_staged() {
+        let db = crate::db::test_db::migrated().await;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_in(dir.path());
+        let pending = crate::backup::restore::pending_restore_path(&paths.live_db);
+        std::fs::write(&pending, b"the administrator's restore").unwrap();
+        let outcome = run_install(
+            &db,
+            &paths,
+            &upgrade_target(),
+            Some(1),
+            &no_key,
+            &|_| {},
+            &TEST_BARRIER,
+            async { never_downloaded() },
+            |_| -> AppResult<()> { panic!("never installed") },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            InstallOutcome::Refused {
+                refusal: InstallRefusal::RestorePending
+            }
+        ));
+        std::fs::remove_file(&pending).unwrap();
+
+        let staged_meanwhile = async {
+            std::fs::write(&pending, b"staged during the download").unwrap();
+            Ok(b"verified installer".to_vec())
+        };
+        let (seen, progress) = recording();
+        let outcome = run_install(
+            &db,
+            &paths,
+            &upgrade_target(),
+            Some(1),
+            &no_key,
+            &progress,
+            &TEST_BARRIER,
+            staged_meanwhile,
+            |_| -> AppResult<()> { panic!("never installed") },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            InstallOutcome::Refused {
+                refusal: InstallRefusal::RestorePending
+            }
+        ));
+        assert!(seen.lock().unwrap().is_empty(), "no backup was taken");
+        assert_eq!(journal::load(&paths.data_dir).unwrap(), None);
+    }
+
+    /// SF1: the write barrier is up from the backup until the installer, down during the
+    /// download and again when the install stops.
+    #[test]
+    fn the_write_barrier_refuses_commands_while_it_is_up() {
+        static FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        assert!(refuse_while_installing_on(&FLAG).is_ok());
+        let barrier = WriteBarrier::raise_on(&FLAG);
+        match refuse_while_installing_on(&FLAG) {
+            Err(AppError::ValidationFailed(messages)) => {
+                assert_eq!(messages, vec![UPDATE_IN_PROGRESS_MESSAGE.to_string()]);
+            }
+            other => panic!("refused while installing: {other:?}"),
+        }
+        drop(barrier);
+        assert!(
+            refuse_while_installing_on(&FLAG).is_ok(),
+            "lowered when the install stops"
+        );
     }
 
     type Log = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
@@ -1956,6 +2440,10 @@ mod tests {
         let progress = logging(&log);
         let download = async {
             log.lock().unwrap().push("download".into());
+            assert!(
+                refuse_while_installing_on(&TEST_BARRIER).is_ok(),
+                "the app stays usable during the download"
+            );
             // The app stays usable during the download: a technician closes a work order.
             db.execute_unprepared("UPDATE update_marker SET note = 'closed during the download';")
                 .await
@@ -1971,6 +2459,10 @@ mod tests {
                 .expect("journal written before the installer");
             assert_eq!(j.state, JournalState::Installing);
             assert!(j.backup_path.is_some() && j.backup_sha256.is_some());
+            assert!(
+                refuse_while_installing_on(&TEST_BARRIER).is_err(),
+                "nothing can be changed from the backup on"
+            );
             install_log.lock().unwrap().push("install".into());
             Ok(())
         };
@@ -1981,6 +2473,7 @@ mod tests {
             Some(1),
             &no_key,
             &progress,
+            &TEST_BARRIER,
             download,
             install,
         )
@@ -2021,6 +2514,7 @@ mod tests {
             Some(1),
             &no_key,
             &progress,
+            &TEST_BARRIER,
             download,
             install,
         )
@@ -2102,9 +2596,19 @@ mod tests {
             Ok(b"verified installer".to_vec())
         };
         let install = |_: Vec<u8>| -> AppResult<()> { panic!("never installed") };
-        let outcome = run_install(&db, &paths, &target, None, &load_key, &progress, download, install)
-            .await
-            .unwrap();
+        let outcome = run_install(
+            &db,
+            &paths,
+            &target,
+            None,
+            &load_key,
+            &progress,
+            &TEST_BARRIER,
+            download,
+            install,
+        )
+        .await
+        .unwrap();
         assert!(
             matches!(
                 outcome,
@@ -2146,7 +2650,18 @@ mod tests {
                 "the installer could not be started"
             )))
         };
-        let result = run_install(&db, &paths, &target, None, &load_key, &progress, download, install).await;
+        let result = run_install(
+            &db,
+            &paths,
+            &target,
+            None,
+            &load_key,
+            &progress,
+            &TEST_BARRIER,
+            download,
+            install,
+        )
+        .await;
         assert!(result.is_err());
         assert!(
             !pending_at_download.load(Ordering::SeqCst),
@@ -2159,6 +2674,7 @@ mod tests {
         assert!(!pending.exists(), "a failed install leaves no staged restore");
         let j = journal::load(&paths.data_dir).unwrap().unwrap();
         assert_eq!(j.state, JournalState::InstallNotCompleted);
+        assert_eq!(j.staged_restore, None);
         assert_eq!(j.kind, UpdateKind::Rollback);
         assert_eq!(log.lock().unwrap().as_slice(), ["RestoringBackup", "Installing"]);
 
@@ -2175,6 +2691,7 @@ mod tests {
             None,
             &load_key,
             &progress,
+            &TEST_BARRIER,
             async { Ok(Vec::new()) },
             |_| Ok(()),
         )
@@ -2182,9 +2699,16 @@ mod tests {
         .unwrap();
         assert!(matches!(outcome, InstallOutcome::Restarting));
         assert!(pending.is_file());
-        assert_eq!(
-            journal::load(&paths.data_dir).unwrap().unwrap().state,
-            JournalState::Installing
+        let installing = journal::load(&paths.data_dir).unwrap().unwrap();
+        assert_eq!(installing.state, JournalState::Installing);
+        let record = installing
+            .staged_restore
+            .clone()
+            .expect("the journal names the staged restore");
+        assert!(backup_matches_checksum(&pending, &record.sha256).unwrap());
+        assert!(
+            !reconcile_staged_restore(&paths.data_dir, &paths.live_db, "1.0.0").unwrap(),
+            "applied by the rollback's version"
         );
         crate::backup::restore::cancel_pending_restore(&paths.live_db).unwrap();
 
@@ -2200,6 +2724,7 @@ mod tests {
             None,
             &load_key,
             &progress,
+            &TEST_BARRIER,
             async { Ok(Vec::new()) },
             |_| -> AppResult<()> { panic!("never installed") },
         )
@@ -2208,10 +2733,14 @@ mod tests {
         assert!(matches!(
             outcome,
             InstallOutcome::Refused {
-                refusal: InstallRefusal::RollbackBackupMissing
+                refusal: InstallRefusal::RollbackBackupChanged
             }
         ));
         assert!(!pending.exists());
+        assert!(
+            refuse_while_installing_on(&TEST_BARRIER).is_ok(),
+            "the barrier comes down when the install stops"
+        );
         db.close().await.unwrap();
     }
 }

@@ -1385,6 +1385,10 @@ export type UpdateProgressEvent =
 /** Why an install was not started (`InstallRefusal` in src-tauri/src/updater/mod.rs). */
 export type InstallRefusal =
   | { code: "rollback_backup_missing" }
+  /** The pre-update backup is there but changed since it was taken (checksum mismatch). */
+  | { code: "rollback_backup_changed" }
+  /** A database restore is staged for the next start: restart Maintafox before updating. */
+  | { code: "restore_pending" }
   | { code: "rollback_refused" }
   | { code: "rollback_unsynced_changes"; count: number }
   | { code: "update_withdrawn" };

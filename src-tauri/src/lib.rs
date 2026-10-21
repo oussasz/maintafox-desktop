@@ -118,6 +118,12 @@ pub fn run() {
         app.get_webview_window("main")
             .expect("main window must exist")
             .on_window_event(move |event| {
+                // The window stays open while an update is between its backup and the restart.
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if crate::updater::writes_barred() {
+                        api.prevent_close();
+                    }
+                }
                 if matches!(event, tauri::WindowEvent::Destroyed) {
                     let h = shutdown_handle.clone();
                     tauri::async_runtime::block_on(async move {

@@ -51,8 +51,16 @@ Signing quickstart (learn.microsoft.com/azure/artifact-signing/quickstart), Sign
    - `MAINTAFOX_CODESIGN_PROVIDER` = `sslcom-esigner`
    - `CODESIGNTOOL_DOWNLOAD_URL` = the address you downloaded the zip from
    - `CODESIGNTOOL_SHA256` = the checksum from step 2
-4. Repository **secrets**, typed by you one by one: `gh secret set ES_USERNAME`,
-   `gh secret set ES_PASSWORD`, `gh secret set ES_CREDENTIAL_ID`, `gh secret set ES_TOTP_SECRET`.
+4. Secrets of the `release-build` environment (`docs/release/RELEASE_SETUP.md`, step 6), typed by
+   you one by one: `gh secret set ES_USERNAME --env release-build`, and the same for `ES_PASSWORD`,
+   `ES_CREDENTIAL_ID` and `ES_TOTP_SECRET`. The build job is the only one that gets them, and only
+   its build step receives their values (the step before checks only that they are set).
+
+   Accepted risk: Tauri calls the signing command during `tauri build`, so the credentials are in
+   the environment of the step that runs every cargo build script and npm package script. A
+   malicious build dependency could read them and sign other programs as Maintafox. It could not
+   ship an update: the app installs only what the updater key signed, and that key is never in the
+   build job. If you suspect a leak, revoke the eSigner credential at SSL.com.
 5. The next release is signed: `tauri build` calls `scripts/release/sign-windows.ps1` for the app,
    the uninstaller and the installer (before the updater signature is computed), and the workflow
    checks that Windows reports the installer's signature as valid. A failure stops the release.

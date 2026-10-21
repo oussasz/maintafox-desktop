@@ -600,6 +600,13 @@ impl SyncWorker {
     /// One cycle, then the persisted bookkeeping and the published status. Returns the outcome and
     /// how long to wait before the next cycle.
     pub async fn cycle_once(&self) -> (CycleOutcome, Duration) {
+        // An update is between its backup and the restart (updater SF1): the database is left
+        // alone, nothing is recorded, and the next cycle comes soon in case the install stops.
+        if crate::updater::writes_barred() {
+            let wait = Duration::from_secs(5);
+            let until = (chrono::Utc::now() + chrono::Duration::seconds(5)).to_rfc3339();
+            return (CycleOutcome::Paused { until }, wait);
+        }
         let outcome = match self.try_cycle().await {
             Ok(outcome) => outcome,
             Err(e) => {

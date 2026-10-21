@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 
 import { UpdateInstallDialog } from "./UpdateInstallDialog";
+import { UpdateInstallLock } from "./UpdateInstallLock";
 import { UpdateProgress } from "./UpdateProgress";
 import { mandatoryReasonMessage, notesForLocale, refusalMessage } from "./update-messages";
 
@@ -76,7 +77,8 @@ function BannerBox({
  * `ForcedUpdatePanel`): the offered update (mandatory or not, upgrade or Maintafox-initiated
  * rollback), install progress, refusals and errors in plain language, and the outcome notice of
  * the last update. Installing asks for a fresh identity check (step-up); only an administrator of
- * this PC installs (the Rust command decides; a refusal is explained here).
+ * this PC installs (the Rust command decides; a refusal is explained here). From the backup until
+ * the restart, the whole app is locked behind `UpdateInstallLock`.
  */
 export function UpdateBanner({ embedded = false }: { embedded?: boolean } = {}) {
   const { t, i18n } = useTranslation("shell");
@@ -246,6 +248,7 @@ export function UpdateBanner({ embedded = false }: { embedded?: boolean } = {}) 
       }
     >
       {sections}
+      <UpdateInstallLock phase={u.phase} />
       {offeredVersion ? (
         <UpdateInstallDialog
           open={confirmOpen}

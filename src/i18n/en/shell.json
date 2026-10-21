@@ -488,12 +488,18 @@
       "keepOpen": "Keep the computer on until Maintafox has restarted.",
       "starting": "Preparing the update…"
     },
+    "lock": {
+      "title": "Maintafox is installing an update",
+      "body": "Your data is being backed up and the update installed. Nothing can be changed until Maintafox has restarted. Do not turn off the computer."
+    },
     "refusal": {
       "update_withdrawn": "This update is no longer offered as you confirmed it (it may have been paused, withdrawn or replaced). Nothing was changed. Check what is offered now before installing.",
       "rollback_unsynced_changes_one": "{{count}} change is not synchronised yet. Synchronise first, then try again; otherwise it would be lost.",
       "rollback_unsynced_changes_other": "{{count}} changes are not synchronised yet. Synchronise first, then try again; otherwise they would be lost.",
       "rollback_backup_missing": "The backup needed to go back to version {{version}} is not on this computer. Contact Maintafox support.",
-      "rollback_refused": "Going back to version {{version}} was refused by the update server. Nothing was changed. Contact Maintafox support."
+      "rollback_refused": "Going back to version {{version}} was refused by the update server. Nothing was changed. Contact Maintafox support.",
+      "rollback_backup_changed": "The backup needed to go back to version {{version}} has changed since it was taken (its checksum does not match), so it is not used. Nothing was changed. Contact Maintafox support.",
+      "restore_pending": "A restore of the database is waiting for Maintafox to restart. Restart Maintafox first, then install the update. Nothing was changed."
     },
     "error": {
       "install": "The update could not be installed. Nothing was changed: Maintafox keeps working on version {{version}}. Check the internet connection and try again, or contact Maintafox support.",

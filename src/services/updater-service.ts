@@ -56,6 +56,8 @@ export const UpdateProgressEventSchema = z.discriminatedUnion("event", [
 
 const InstallRefusalSchema = z.discriminatedUnion("code", [
   z.object({ code: z.literal("rollback_backup_missing") }),
+  z.object({ code: z.literal("rollback_backup_changed") }),
+  z.object({ code: z.literal("restore_pending") }),
   z.object({ code: z.literal("rollback_refused") }),
   z.object({
     code: z.literal("rollback_unsynced_changes"),

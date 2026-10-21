@@ -36,30 +36,45 @@ You do every step yourself; nothing secret is ever shared with Claude.
 5. **Code signing certificate** (optional at first, strongly recommended before customers):
    see `docs/release/CODE_SIGNING.md`. Until then every release says "NOT CODE-SIGNED" in GitHub
    and in the console, and Windows shows a SmartScreen warning when installing.
-6. **Protected `release` environment (required).** The release workflow runs in a GitHub
-   environment named `release`; without your approval it gets none of its secrets. Create it once:
-   - GitHub > the desktop repository > Settings > Environments > New environment, name `release`.
-   - Tick **Required reviewers** and add yourself (and only people you trust to ship to every
-     customer). Tick **Prevent self-review** if a second person reviews. Under **Deployment branches
-     and tags**, choose "Selected branches and tags" and add the tag rule `v*.*.*`.
-   - Put the three release secrets in this environment (Environment secrets), not in the repository:
-     `gh secret set TAURI_SIGNING_PRIVATE_KEY --env release` (and the same for
-     `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `MAINTAFOX_RELEASE_PUBLISHER_TOKEN`, and the `ES_*`
-     code-signing secrets), then delete the repository-level copies
-     (`gh secret delete TAURI_SIGNING_PRIVATE_KEY`, ...).
+6. **Two GitHub environments (required).** The release workflow has three jobs: it builds the
+   installer, signs it, then registers it. The build runs in an environment named `release-build`;
+   the signing and the registering run in a protected environment named `release`. Create both once
+   (GitHub > the desktop repository > Settings > Environments > New environment):
+   - `release`: tick **Required reviewers** and add yourself (and only people you trust to ship to
+     every customer). Tick **Prevent self-review** if a second person reviews. Under **Deployment
+     branches and tags**, choose "Selected branches and tags" and add the tag rule `v*.*.*`. Put
+     the updater key and the publisher token here (Environment secrets), not in the repository:
+     `gh secret set TAURI_SIGNING_PRIVATE_KEY --env release`, and the same for
+     `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and `MAINTAFOX_RELEASE_PUBLISHER_TOKEN`.
+   - `release-build`: the same tag rule `v*.*.*` (reviewers are not needed). Put only the `ES_*`
+     code-signing secrets here, if you have them (`gh secret set ES_USERNAME --env release-build`,
+     ...). Never put the updater key or the publisher token in `release-build`.
+   - Delete the repository-level copies (`gh secret delete TAURI_SIGNING_PRIVATE_KEY`, ...).
    - Settings > Rules > Rulesets: add a tag ruleset for `v*` so only you can create or move release
      tags.
-   From then on, each pushed tag waits in GitHub Actions for your "Approve and deploy".
+   From then on, each pushed tag waits in GitHub Actions for your "Approve and deploy", twice: once
+   for the signing job, once for the registering job.
 
 Check: `gh secret list --env release` shows `TAURI_SIGNING_PRIVATE_KEY`,
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and `MAINTAFOX_RELEASE_PUBLISHER_TOKEN`.
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and `MAINTAFOX_RELEASE_PUBLISHER_TOKEN`;
+`gh secret list --env release-build` shows only the `ES_*` secrets (or nothing).
 
-How the workflow protects the key: the installer is built without it (no build script or package
-script can read it), then one step signs the finished installer (`tauri signer sign`), and the next
-step checks that signature against the committed `src-tauri/updater/maintafox-updater.pub`
-(`scripts/release/verify-updater-signature.mjs`): a secret that does not match the key built into
-the app stops the release instead of breaking updates on customers' PCs. No build cache is used,
-every action is pinned to a commit, and no tag name or variable is ever pasted into a script.
+How the workflow protects the key: the build job, which installs the npm packages and runs every
+build script, never has the updater key. The signing job runs on a fresh computer: it checks out
+the repository again, runs no `pnpm install` and nothing from `node_modules`, receives the installer
+from the build job (checked by its SHA-256), signs it with the Tauri CLI installed from crates.io at
+a pinned version and checksum, and checks the signature against the committed
+`src-tauri/updater/maintafox-updater.pub` with node alone (`scripts/release/verify-updater-signature.mjs`):
+a secret that does not match the key built into the app stops the release instead of breaking
+updates on customers' PCs. The registering job checks both files again before uploading. No build
+cache is used, every action is pinned to a commit, and no tag name or variable is ever pasted into a
+script.
+
+What remains: the Authenticode (`ES_*`) credentials are in the build step, because Tauri signs the
+app and the installer during the build (`signCommand`); a malicious build dependency could read
+them (see `docs/release/CODE_SIGNING.md`). The signing job builds the pinned Tauri CLI from
+crates.io, so that crate's own dependencies run their build scripts there, before the signing step
+and without the key in their environment.
 
 Builds made before step 2 (and developer builds) have no in-app updates; the app says so instead
 of pretending to check.
@@ -75,10 +90,10 @@ of pretending to check.
    control API does at upload.
 2. Write the release notes in `docs/release/notes/1.2.0.en.md` and `docs/release/notes/1.2.0.fr.md`
    (customers see them before installing).
-3. Merge, then tag: `git tag v1.2.0` and `git push origin v1.2.0`. Approve the run in GitHub
-   Actions (the `release` environment asks you). The "Release (Windows)" workflow then runs (about
-   30-40 minutes: it builds from scratch, without a cache). It stops with a clear message if
-   anything is missing.
+3. Merge, then tag: `git tag v1.2.0` and `git push origin v1.2.0`. Approve the signing job and then
+   the registering job in GitHub Actions (the `release` environment asks you each time). The
+   "Release (Windows)" workflow takes about 40-50 minutes: it builds from scratch, without a cache,
+   and builds the pinned signer. It stops with a clear message if anything is missing.
 4. In the console, the release appears as a draft. Publish it to **Internal** first and install it
    on your own PC (update banner > Install now). Then **Pilot** with a percentage, then **Stable**.
 

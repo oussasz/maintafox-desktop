@@ -39,6 +39,8 @@ pub(crate) mod scope_tests;
 #[macro_export]
 macro_rules! require_session {
     ($state:expr) => {{
+        // From the pre-update backup until the restart, nothing can be changed (updater SF1).
+        $crate::updater::refuse_while_installing()?;
         let (user, session_db_id) = {
             let mut guard = $state.session.write().await;
             match guard.require_active_user() {

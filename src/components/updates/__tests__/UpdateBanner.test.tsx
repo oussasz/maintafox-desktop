@@ -176,12 +176,68 @@ describe("UpdateBanner", () => {
       refusal: { code: "rollback_backup_missing" },
       installTargetVersion: "1.0.4",
     });
-    render(<UpdateBanner />);
+    const missing = render(<UpdateBanner />);
     expect(
       screen.getByText(
         "The backup needed to go back to version 1.0.4 is not on this computer. Contact Maintafox support.",
       ),
     ).toBeInTheDocument();
+    missing.unmount();
+
+    // A backup that changed since it was taken is told apart from a missing one (N5).
+    useUpdaterStore.setState({ refusal: { code: "rollback_backup_changed" } });
+    const changed = render(<UpdateBanner />);
+    expect(
+      screen.getByText(/has changed since it was taken \(its checksum does not match\)/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/is not on this computer/)).not.toBeInTheDocument();
+    changed.unmount();
+
+    useUpdaterStore.setState({ refusal: { code: "restore_pending" } });
+    render(<UpdateBanner />);
+    expect(
+      screen.getByText(/A restore of the database is waiting for Maintafox to restart/),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the app usable during the download, then locks it until the restart", () => {
+    const outside = document.createElement("button");
+    outside.textContent = "Save work order";
+    document.body.appendChild(outside);
+    useUpdaterStore.setState({ lastCheckResult: makeCheck(), phase: "downloading" });
+    const { rerender, unmount } = render(<UpdateBanner />);
+    expect(screen.queryByTestId("update-install-lock")).not.toBeInTheDocument();
+    expect(outside).not.toHaveAttribute("inert");
+
+    for (const phase of ["backing_up", "restoring_backup", "installing"] as const) {
+      useUpdaterStore.setState({ phase });
+      rerender(<UpdateBanner />);
+      const lock = screen.getByTestId("update-install-lock");
+      expect(lock).toHaveAttribute("aria-modal", "true");
+      expect(lock).toHaveTextContent("Maintafox is installing an update");
+      expect(lock.querySelector("button")).toBeNull();
+      expect(document.activeElement).toBe(lock);
+      expect(outside).toHaveAttribute("inert");
+      expect(outside).toHaveAttribute("aria-hidden", "true");
+      // No key leaves the screen.
+      const escape = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      });
+      lock.dispatchEvent(escape);
+      expect(escape.defaultPrevented).toBe(true);
+      expect(screen.getByTestId("update-install-lock")).toBeInTheDocument();
+    }
+
+    // The install stopped (refused or failed): the app comes back.
+    useUpdaterStore.setState({ phase: "idle", error: "the installer could not be started" });
+    rerender(<UpdateBanner />);
+    expect(screen.queryByTestId("update-install-lock")).not.toBeInTheDocument();
+    expect(outside).not.toHaveAttribute("inert");
+    expect(outside).not.toHaveAttribute("aria-hidden");
+    unmount();
+    outside.remove();
   });
 
   it("shows an install error with the technical detail on a secondary line", () => {

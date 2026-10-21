@@ -18,6 +18,10 @@ export function refusalMessage(
       return t("updates.refusal.rollback_unsynced_changes", { count: refusal.count });
     case "rollback_backup_missing":
       return t("updates.refusal.rollback_backup_missing", { version: targetVersion });
+    case "rollback_backup_changed":
+      return t("updates.refusal.rollback_backup_changed", { version: targetVersion });
+    case "restore_pending":
+      return t("updates.refusal.restore_pending");
     case "rollback_refused":
       return t("updates.refusal.rollback_refused", { version: targetVersion });
   }

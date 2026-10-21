@@ -488,12 +488,18 @@
       "keepOpen": "Laissez l’ordinateur allumé jusqu’au redémarrage de Maintafox.",
       "starting": "Préparation de la mise à jour…"
     },
+    "lock": {
+      "title": "Maintafox installe une mise à jour",
+      "body": "Vos données sont sauvegardées et la mise à jour s’installe. Rien ne peut être modifié avant le redémarrage de Maintafox. N’éteignez pas l’ordinateur."
+    },
     "refusal": {
       "update_withdrawn": "Cette mise à jour n’est plus proposée telle que vous l’avez confirmée (elle a peut-être été suspendue, retirée ou remplacée). Rien n’a été modifié. Vérifiez ce qui est proposé maintenant avant d’installer.",
       "rollback_unsynced_changes_one": "{{count}} modification n’est pas encore synchronisée. Synchronisez d’abord, puis réessayez ; sinon elle serait perdue.",
       "rollback_unsynced_changes_other": "{{count}} modifications ne sont pas encore synchronisées. Synchronisez d’abord, puis réessayez ; sinon elles seraient perdues.",
       "rollback_backup_missing": "La sauvegarde nécessaire pour revenir à la version {{version}} n’est pas sur cet ordinateur. Contactez le support Maintafox.",
-      "rollback_refused": "Le retour à la version {{version}} a été refusé par le serveur de mises à jour. Rien n’a été modifié. Contactez le support Maintafox."
+      "rollback_refused": "Le retour à la version {{version}} a été refusé par le serveur de mises à jour. Rien n’a été modifié. Contactez le support Maintafox.",
+      "rollback_backup_changed": "La sauvegarde nécessaire pour revenir à la version {{version}} a été modifiée depuis sa création (son empreinte ne correspond plus) : elle n’est pas utilisée. Rien n’a été modifié. Contactez le support Maintafox.",
+      "restore_pending": "Une restauration de la base de données attend le redémarrage de Maintafox. Redémarrez d’abord Maintafox, puis installez la mise à jour. Rien n’a été modifié."
     },
     "error": {
       "install": "La mise à jour n’a pas pu être installée. Rien n’a été modifié : Maintafox continue de fonctionner en version {{version}}. Vérifiez la connexion internet et réessayez, ou contactez le support Maintafox.",

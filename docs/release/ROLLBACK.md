@@ -2,6 +2,9 @@
 
 ## Before every update
 In this order (`updater::run_install`):
+0. If a database restore is waiting for the next start (an administrator's, staged in Settings >
+   Backup, or one an update could not cancel), no update starts: the banner asks to restart
+   Maintafox first. The same check runs again after the download.
 1. The app asks the server again. A recall or pause since the last check stops the install, and
    so does any offer other than the one the administrator confirmed (version, kind, release): the
    banner then shows the new offer for a new confirmation. Nothing is switched silently.
@@ -9,18 +12,36 @@ In this order (`updater::run_install`):
    the key built into the app. The signature's trusted comment must name
    `Maintafox_<offered version>_x64-setup.exe`: a correctly signed installer of another version is
    refused. Nothing is written before or during the download.
-3. Right after the download it backs up the database
-   (`backups/maintafox-pre-update-<from>-to-<to>-<time>.db`, encrypted like the database, recorded
-   in the backup history as `pre_update`, with its checksum) or, for a rollback, stages the restore
-   (below), and writes `update-journal.json` next to the database.
-4. It starts the installer at once (the app restarts). Nothing is awaited between step 3 and the
-   installer, so work done during the download is in the backup. If the installer cannot start,
-   a staged restore is cancelled and the journal says the install did not complete.
+3. Right after the download the app is locked: a screen covers the whole window (nothing behind
+   it can be clicked or reached with the keyboard, nothing to close), every command that needs a
+   session is refused, the sync worker pauses, and the window and the tray cannot quit. Then it
+   backs up the database (`backups/maintafox-pre-update-<from>-to-<to>-<time>.db`, encrypted like
+   the database, recorded in the backup history as `pre_update`, with its checksum) or, for a
+   rollback, stages the restore (below), and writes `update-journal.json` next to the database.
+4. It starts the installer at once (the app restarts). Work done during the download is in the
+   backup. If the installer cannot start, a staged restore is cancelled, the journal says the
+   install did not complete, and the app is unlocked again.
 
-At the next start, before the database opens, a restore staged for a rollback whose installer never
-ran (the journal says a rollback was being installed, and the version that starts is not the
-rollback's) is cancelled and never applied. Only a restore the journal justifies, or one an
-administrator staged in Settings > Backup, is applied. Only one install or reinstall runs at a time.
+The lock leaves one small gap: a save that was already running when the lock started can still
+finish during the first moments of the backup (milliseconds). Changes to tables the sync does not
+track are never counted by the "waiting to be synchronised" check of a rollback.
+
+**Staged restores are always explained.** Before a rollback stages its restore, the journal records
+which restore it is (the pending file and its checksum, `staged_restore`). At the next start,
+before the database opens, a staged restore with that checksum is applied only when the journal
+justifies it: the rollback was installed (the version that starts is the rollback's), or the new
+version could not update the database (`rollback_required`). In every other case (the installer was
+cancelled or failed, another version was installed, the update stopped after staging) it is
+cancelled and never applied, even when the app could not delete it at the time (a locked file, for
+example): the journal still names it, so the next start removes it. A staged restore the journal
+does not name, or with another checksum, is one an administrator staged in Settings > Backup and is
+applied as usual (staging one in Settings > Backup also clears the journal's record). Only one
+install or reinstall runs at a time.
+
+On Windows the updater plugin does not report a declined administrator prompt or an installer that
+failed to start: it starts the installer (`ShellExecuteW`), ignores the result and closes the app.
+So a cancelled installer shows up only at the next start, where the rule above cancels the staged
+restore and the banner says the update did not complete.
 
 ## Database migrations are forward-only
 An older version cannot open a database that a newer version has migrated. So:
@@ -40,8 +61,9 @@ An older version cannot open a database that a newer version has migrated. So:
   is restored first, and only when nothing is waiting to be synchronised (otherwise the user is
   asked to synchronise first). That is checked before the download, again after it, and once more
   after the restore is staged (a change made meanwhile cancels the staging). If this PC has no
-  backup of that version, or its checksum is missing or does not match, it refuses and says to
-  contact support.
+  backup of that version or no checksum was recorded for it, it refuses ("the backup is not on this
+  computer"); if the backup changed since it was taken (checksum mismatch), it refuses with its own
+  message ("the backup has changed since it was taken"). Both say to contact support.
 
 ## Which offers the app accepts
 Checked by the desktop (`updater::accept_offer`), whatever the signature:
@@ -69,6 +91,28 @@ backup):
    (Settings > Backup > Restore) before or right after reinstalling.
 3. Run the installer (the installer allows going back to an older version).
 
+## Support: the app stops at start with "the update journal could not be checked"
+This start screen means a database restore is staged (`maintafox.db.restore-pending` next to
+`maintafox.db` in the app data folder, `%APPDATA%\systems.maintafox.desktop`) and
+`update-journal.json` in the same folder cannot be read (damaged or half-written). The app applies
+neither on its own: it cannot tell whether the restore is the one an update needs or one left by an
+update that did not install.
+
+1. Close Maintafox. Copy the whole app data folder somewhere safe before changing anything.
+2. Open `update-journal.json` in Notepad. If it is readable JSON with an obvious defect (cut off at
+   the end, for example), compare it with the `UpdateJournal` fields in
+   `src-tauri/src/updater/journal.rs` to read its state, and decide with the steps below; do not
+   invent values.
+3. Decide about the staged restore:
+   - the PC was rolling back to an older version and that older version is now installed, or the
+     journal said `rollback_required`: the restore is needed. Delete `update-journal.json` and start
+     Maintafox: with no journal, the staged restore is applied as an administrator's restore;
+   - otherwise (the installer was cancelled, the same version runs as before, or you cannot tell):
+     delete `maintafox.db.restore-pending`, then `update-journal.json`, and start Maintafox: the
+     database stays as it was, with today's work.
+4. When in doubt, keep the copy from step 1 and contact Maintafox support before deleting anything.
+   The pre-update backups stay in the backups folder in every case.
+
 ## What is tested, what is not
 - Rust unit tests: journal state machine, downgrade decision, manifest parsing, accepted offers,
   rollback refusals (409, 204, mismatch, upgrade answer), a failed pre-update backup stopping the
@@ -78,8 +122,14 @@ backup):
   nothing; a rollback whose installer cannot start leaves no staged restore; startup cancels a
   restore staged for a rollback that was not installed; the signature must name the offered
   installer; the install is bound to the confirmed offer; unverifiable backups are never restored.
+  The journal names a staged restore before it is staged; when the restore cannot be cancelled
+  (after a refusal, or after the installer failed to start), the next start cancels it; an
+  administrator's restore is never taken for the updater's; no update starts while a restore is
+  staged; the write barrier refuses commands from the backup on and comes down when the install
+  stops. The lock screen has vitest tests (inert app, focus, keys).
 - Release workflow: `scripts/release/verify-updater-signature.mjs` (minisign check against the
-  committed key) and the https rule of `publish-release.mjs` have node tests.
+  committed key) and the https rule of `publish-release.mjs` have node tests. The workflow itself
+  (three jobs: build, sign, publish) has not run on GitHub yet.
 - Vendor API integration test: recall, pause, rollback offer, minimum version, rollout percentage.
 - **Not tested end to end:** a real installed build updating itself (needs the owner's updater key
   and a published release). First real check: publish the first release to Internal and update

@@ -66,6 +66,21 @@ pub struct UpdateJournal {
     /// The user has seen the outcome notice (rolled back / installer not completed).
     #[serde(default)]
     pub notice_acknowledged: bool,
+    /// The database restore the updater staged for this entry (security review SF2): written
+    /// before the restore is staged, so a staged restore is never left without an explanation.
+    /// At startup a pending restore with this checksum is applied only when the journal justifies
+    /// it (`staged_restore_is_justified`), otherwise cancelled; a pending restore with another
+    /// checksum is one an administrator staged (Settings > Backup).
+    #[serde(default)]
+    pub staged_restore: Option<StagedRestore>,
+}
+
+/// A database restore staged by the updater: the pending file and the checksum of its content
+/// (the pre-update backup it is a copy of).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StagedRestore {
+    pub pending_path: String,
+    pub sha256: String,
 }
 
 pub fn journal_path(app_data_dir: &Path) -> PathBuf {
@@ -131,12 +146,18 @@ pub fn classify(journal: Option<&UpdateJournal>, running_version: &str) -> Start
     }
 }
 
-/// A restore staged for a rollback whose installer never ran: the journal says a rollback was
-/// being installed, and the version that starts is not the rollback's target (the installer was
-/// cancelled, failed, or another version was installed). Such a restore is not justified and must
-/// not be applied: it would put back an old backup under the running version.
-pub fn staged_restore_is_orphaned(j: &UpdateJournal, running_version: &str) -> bool {
-    j.state == JournalState::Installing && j.kind == UpdateKind::Rollback && running_version != j.to_version
+/// Whether a restore the updater staged for this entry may be applied by the version that
+/// starts: the rollback it was staged for was installed (journal `Installing`, kind rollback, the
+/// running version is its target), or the new version could not update the database
+/// (`RollbackRequired`: the pre-update backup must go back whichever version starts). Anything
+/// else (the installer was cancelled or failed, another version was installed, the staging was
+/// abandoned, a closed entry) must not put an old backup under the running version.
+pub fn staged_restore_is_justified(j: &UpdateJournal, running_version: &str) -> bool {
+    match j.state {
+        JournalState::Installing => j.kind == UpdateKind::Rollback && running_version == j.to_version,
+        JournalState::RollbackRequired => true,
+        JournalState::Completed | JournalState::RolledBack | JournalState::InstallNotCompleted => false,
+    }
 }
 
 #[cfg(test)]
@@ -159,35 +180,55 @@ mod tests {
             rollback_allowed_version: None,
             backup_refusal: None,
             notice_acknowledged: false,
+            staged_restore: None,
         }
     }
 
     #[test]
-    fn a_restore_staged_for_an_uninstalled_rollback_is_orphaned() {
+    fn a_staged_restore_is_applied_only_when_the_journal_justifies_it() {
         let mut rollback = journal(JournalState::Installing);
         rollback.kind = UpdateKind::Rollback;
         rollback.from_version = "1.1.0".into();
         rollback.to_version = "1.0.0".into();
-        assert!(staged_restore_is_orphaned(&rollback, "1.1.0"), "installer never ran");
+        assert!(!staged_restore_is_justified(&rollback, "1.1.0"), "installer never ran");
         assert!(
-            staged_restore_is_orphaned(&rollback, "1.2.0"),
+            !staged_restore_is_justified(&rollback, "1.2.0"),
             "another version installed"
         );
         assert!(
-            !staged_restore_is_orphaned(&rollback, "1.0.0"),
+            staged_restore_is_justified(&rollback, "1.0.0"),
             "the rollback ran: apply it"
         );
         let upgrade = journal(JournalState::Installing);
         assert!(
-            !staged_restore_is_orphaned(&upgrade, "1.0.0"),
+            !staged_restore_is_justified(&upgrade, "1.1.0"),
             "upgrades stage no restore"
         );
         let mut failed = journal(JournalState::RollbackRequired);
         failed.kind = UpdateKind::Rollback;
         assert!(
-            !staged_restore_is_orphaned(&failed, "1.1.0"),
+            staged_restore_is_justified(&failed, "1.1.0"),
             "failed migration: justified"
         );
+        assert!(staged_restore_is_justified(&failed, "1.0.0"));
+        for closed in [
+            JournalState::Completed,
+            JournalState::RolledBack,
+            JournalState::InstallNotCompleted,
+        ] {
+            let mut j = journal(closed);
+            j.kind = UpdateKind::Rollback;
+            assert!(!staged_restore_is_justified(&j, "1.0.0"), "{closed:?}");
+            assert!(!staged_restore_is_justified(&j, "1.1.0"), "{closed:?}");
+        }
+    }
+
+    #[test]
+    fn an_older_journal_without_a_staged_restore_still_reads() {
+        let mut value = serde_json::to_value(journal(JournalState::Completed)).unwrap();
+        value.as_object_mut().unwrap().remove("staged_restore");
+        let j: UpdateJournal = serde_json::from_value(value).unwrap();
+        assert_eq!(j.staged_restore, None);
     }
 
     #[test]

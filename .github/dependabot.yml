@@ -1,0 +1,10 @@
+# Dependabot (security review of the release chain, N8): proposes updates of the GitHub Actions
+# the workflows pin by commit SHA (release.yml included), as reviewable pull requests. Nothing is
+# merged automatically.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

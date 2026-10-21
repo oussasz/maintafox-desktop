@@ -127,6 +127,11 @@ pub async fn restore_from_backup(app: AppHandle, state: State<'_, AppState>, bac
         Some(user.user_id),
     )
     .await?;
+    // This restore replaced any the updater had staged: the update journal no longer names one,
+    // so the next start applies this one (`updater::reconcile_staged_restore`).
+    if let Err(e) = crate::updater::forget_staged_restore_for_app(&app) {
+        tracing::warn!("restore: the update journal could not be updated: {e}");
+    }
     app.restart()
 }
 
