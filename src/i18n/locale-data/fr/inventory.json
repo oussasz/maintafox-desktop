@@ -13,7 +13,7 @@
   },
   "negativeStock": {
     "title": "Stock à rapprocher",
-    "description": "Les mouvements reçus d'un autre poste sont appliqués tels quels. Un emplacement passé sous zéro reste ici jusqu'à ce qu'un comptage y soit enregistré ou qu'une réception ou un transfert entrant ultérieur le ramène à zéro ou plus.",
+    "description": "Les mouvements reçus d'un autre poste sont appliqués tels quels. Un emplacement passé sous zéro reste ici jusqu'à ce qu'un comptage y soit enregistré ou qu'une entrée ultérieure le ramène à zéro ou plus : réception, transfert entrant, retour sur sa sortie ou sa réparation, ou entrée motivée.",
     "showClosed": "Afficher les éléments rapprochés",
     "noneOpen": "Aucun emplacement sous zéro.",
     "openList": "Emplacements sous zéro à rapprocher",
@@ -26,9 +26,10 @@
     "overReservedLine": "{{article}} à {{location}} : {{reserved}} réservé(s) pour {{onHand}} en stock",
     "closure": {
       "count": "Rapproché par comptage le {{date}}",
-      "adjustment": "Rapproché par une entrée de stock manuelle le {{date}}",
+      "adjustment": "Rapproché par un ajustement motivé le {{date}} ({{movement}})",
       "receipt": "Régularisé par réception le {{date}} ({{movement}})",
       "return": "Régularisé par retour le {{date}} ({{movement}})",
+      "prior_entry": "Régularisé par saisie antérieure le {{date}} ({{movement}}) : entrée faite sur un poste qui ne voyait pas encore le stock négatif, sans motif demandé",
       "other": "Revenu à zéro ou plus le {{date}} sans entrée de stock enregistrée"
     },
     "loadError": "Impossible de charger le stock à rapprocher",

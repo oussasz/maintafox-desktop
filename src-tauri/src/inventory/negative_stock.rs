@@ -8,11 +8,11 @@
 //!   at most one open per pair), whatever movement brought it there;
 //! - on-hand stock at zero or more but more reserved than held: a warning only ("réservations
 //!   supérieures au stock"), derived from the balance, never stored and never a review item;
-//! - two counts of the same article and location posted on different PCs, each while the location
-//!   stood below zero on its PC, neither knowing the other, whatever path recorded them (this list,
-//!   a count session):
-//!   each corrected the stock by its own variance, so it is corrected twice. A "double comptage — à
-//!   vérifier" item, derived from the synchronised count lines (CMMS Advisor, S1 follow-up).
+//! - two counts of the same article and location made on different PCs, each while the location
+//!   stood below zero on its PC, neither knowing the other even indirectly, whatever path recorded
+//!   them (this list, a count session, an inventory campaign): each corrected the stock by its own
+//!   variance, so it is corrected twice. A "double comptage — à vérifier" item, derived from the
+//!   synchronised count lines (CMMS Advisor, S1 follow-up; rule in [`double_count_of`]).
 //!
 //! Determinism. A negative item is open exactly while the location's on-hand stock is below zero:
 //! [`reconcile_pair_in`] opens or closes it from the balance, after each received movement
@@ -21,30 +21,36 @@
 //! the synchronised ledger, so every PC holding the same movements shows the same open items,
 //! whatever order they arrived in. The items are this PC's projection and are not synchronised
 //! (`sync::registry`, derived projection); what resolves them — the count session, its movement and
-//! its audit — is. A double count is computed from the count lines alone: every count posted here
-//! records the posted counts of its pair that this PC knew and that no other known count had
-//! followed (`count_follows_json`, with this PC's code and the count's path); the counts no other
-//! count follows are the heads, and two heads or more from different PCs, each counted while the
-//! location stood below zero on its PC (the stock on record kept on the line), are a double count.
-//! A later count
-//! recorded with both known follows them both, which closes it on every PC that has received it.
+//! its audit — is. A double count is computed from the count lines alone: every count records,
+//! when its counted quantity and variance are fixed, the posted counts of its pair that this PC
+//! knew and that no other known count had followed (`count_follows_json`, with this PC's sync
+//! replica id and the count's path). Knowing is transitive through those lists. Two counts made
+//! while the location stood below zero on their PC (the stock on record kept on the line), on
+//! different PCs, neither knowing the other, are a double count until a later count knows both,
+//! which closes it on every PC that has received it.
 //!
 //! Resolution. A stock count of that article at that location ([`resolve_by_count`], `inv.manage`,
 //! plant-wide while stores have no site), with the variance reason and a reason of at least
 //! [`REVIEW_REASON_MIN_CHARS`] characters (the count-approval rule): it is posted through the count
 //! workflow (`controls::record_location_count_in`) and audited. It resolves a negative item and a
 //! double count alike. A later entry that brings the stock back to zero or more also closes a
-//! negative item; how is kept: a goods receipt or a transfer in is "régularisé par réception", a
-//! return naming its source document (the work-order issue it returns, the repair order) is
-//! "régularisé par retour", a manual entry or a return without source is an adjustment (its reason
-//! is required where it is made: `queries::adjust_stock_full`). A receipt into a location below
-//! zero is accepted and the item stays open until the stock is zero or more
+//! negative item; how is kept ([`closure_kind_of`], one kind for each stock entry of the ledger): a
+//! goods receipt or a transfer in is "régularisé par réception", a return naming its source
+//! document (the work-order issue it returns, the repair order — a repair return or a cancelled
+//! repair release) is "régularisé par retour", a manual entry made where the location stood below
+//! zero (its reason is required there: `queries::adjust_stock_full`, marked
+//! [`SOURCE_NEGATIVE_STOCK_ENTRY`]), a count reversal (its reason is required) or a return without
+//! source is an adjustment, and a manual entry made on a PC that still saw the location at zero or
+//! more — no reason was asked — is "régularisé par saisie antérieure". A receipt into a location
+//! below zero is accepted and the item stays open until the stock is zero or more
 //! ([`balance_change_allowed`]). There is no reject and no "accept anyway".
 //!
 //! Notice. The inv.manage holders are told once per item, in-app (watcher [`NOTIFICATION_CATEGORY`],
-//! `notifications::watchers`), with the same identity on every PC.
+//! `notifications::watchers`), with the same identity on every PC: the occurrence is the article
+//! and location, so a movement arriving late never changes it while the item is open; a later
+//! item of the same pair reopens it.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait, Value};
 use serde::{Deserialize, Serialize};
@@ -64,24 +70,27 @@ pub const NOTIFICATION_CATEGORY: &str = "stock_to_reconcile";
 /// Where the stock to reconcile is listed (Inventory › Controls; `listLinks.inventory` on screen).
 pub const LIST_URL: &str = "/inventory?stock=to_reconcile";
 
-/// Closed by a stock count (or the reversal of one).
+/// Closed by a stock count.
 pub const CLOSURE_COUNT: &str = "count";
-/// Closed by a manual stock entry (counted as a count resolution, CMMS Advisor decision 2).
+/// Closed by an entry recorded with its reason (at least [`REVIEW_REASON_MIN_CHARS`] characters):
+/// a manual entry made where the location stood below zero (CMMS Advisor decision 2), the reversal
+/// of a count, or a return that names no source document.
 pub const CLOSURE_ADJUSTMENT: &str = "adjustment";
 /// Closed by a goods receipt or a transfer in: "régularisé par réception".
 pub const CLOSURE_RECEIPT: &str = "receipt";
 /// Closed by stock returned to the store naming its source (the work-order issue, the repair order):
 /// "régularisé par retour".
 pub const CLOSURE_RETURN: &str = "return";
+/// Closed by a manual entry made on a PC that still saw the location at zero or more, so no reason
+/// was asked: "régularisé par saisie antérieure".
+pub const CLOSURE_PRIOR_ENTRY: &str = "prior_entry";
 /// Back to zero or more without a stock entry on record since the item opened (a data repair).
 pub const CLOSURE_OTHER: &str = "other";
 
-/// `(movement types, closure kind)` of the stock entries that close an item.
-const CLOSING_MOVEMENTS: &[(&[&str], &str)] = &[
-    (&["COUNT_ADJUST", "COUNT_REVERSAL"], CLOSURE_COUNT),
-    (&["ADJUST_IN"], CLOSURE_ADJUSTMENT),
-    (&["GR_ACCEPT", "TRANSFER_IN"], CLOSURE_RECEIPT),
-];
+/// `source_type` of a manual entry made where the location stood below zero: its reason was asked
+/// and it was audited (`queries::adjust_stock_full`). It travels with the movement, so every PC
+/// tells such an entry from one made before the shortage was visible.
+pub const SOURCE_NEGATIVE_STOCK_ENTRY: &str = "NEGATIVE_STOCK_ENTRY";
 
 pub const REFUSED_REASON_SHORT: &str = "NEGATIVE_STOCK_REASON_SHORT";
 pub const REFUSED_COUNT_INVALID: &str = "NEGATIVE_STOCK_COUNT_INVALID";
@@ -213,17 +222,29 @@ fn sqlite(sql: &str, values: Vec<Value>) -> Statement {
     Statement::from_sql_and_values(DbBackend::Sqlite, sql, values)
 }
 
-/// How a stock entry closes an item. A return is a documented inflow only when it names its source
-/// document (`documented`: the reservation of the work-order issue, the repair order); without it,
-/// it is an adjustment (CMMS Advisor).
-fn closure_kind_of(movement_type: &str, documented: bool) -> &'static str {
-    if matches!(movement_type, "RETURN" | "REPAIRABLE_RETURN") {
-        return if documented { CLOSURE_RETURN } else { CLOSURE_ADJUSTMENT };
-    }
-    CLOSING_MOVEMENTS
-        .iter()
-        .find(|(types, _)| types.contains(&movement_type))
-        .map_or(CLOSURE_OTHER, |(_, kind)| kind)
+/// How a stock entry closes an item, for every movement that can raise the on-hand stock
+/// (`ledger::ON_HAND_MOVEMENTS`; a test keeps the two in step). A return is a documented inflow
+/// only when it names its source document (`documented`: the reservation of the work-order issue,
+/// the repair order); without it, it is an adjustment (CMMS Advisor). A manual entry is an
+/// adjustment when it was made where the location stood below zero (`source_type`
+/// [`SOURCE_NEGATIVE_STOCK_ENTRY`], its reason asked), otherwise an entry made before the shortage
+/// was visible. `None`: the movement never raises the on-hand stock.
+pub(crate) fn closure_kind_of(
+    movement_type: &str,
+    documented: bool,
+    source_type: Option<&str>,
+) -> Option<&'static str> {
+    Some(match movement_type {
+        "COUNT_ADJUST" => CLOSURE_COUNT,
+        // Undoing a count is not a count: it needs its reason and is kept on the session.
+        "COUNT_REVERSAL" => CLOSURE_ADJUSTMENT,
+        "ADJUST_IN" if source_type == Some(SOURCE_NEGATIVE_STOCK_ENTRY) => CLOSURE_ADJUSTMENT,
+        "ADJUST_IN" => CLOSURE_PRIOR_ENTRY,
+        "GR_ACCEPT" | "TRANSFER_IN" => CLOSURE_RECEIPT,
+        "RETURN" | "REPAIRABLE_RETURN" | "REPAIRABLE_CANCEL_RESTORE" if documented => CLOSURE_RETURN,
+        "RETURN" | "REPAIRABLE_RETURN" | "REPAIRABLE_CANCEL_RESTORE" => CLOSURE_ADJUSTMENT,
+        _ => return None,
+    })
 }
 
 /// Whether a stock balance may change from `current` to `next` (`(on hand, reserved)`): never below
@@ -319,7 +340,7 @@ pub async fn reconcile_pair_in(conn: &impl ConnectionTrait, article_id: i64, loc
             let closing = conn
                 .query_one(sqlite(
                     &format!(
-                        "SELECT t.id, t.movement_type, t.performed_at,
+                        "SELECT t.id, t.movement_type, t.performed_at, t.source_type,
                                 (t.reservation_id IS NOT NULL OR t.source_id IS NOT NULL) AS documented
                          FROM inventory_transactions t
                          WHERE t.article_id = ? AND t.location_id = ? AND t.id > ? AND ({delta}) > 0
@@ -333,11 +354,13 @@ pub async fn reconcile_pair_in(conn: &impl ConnectionTrait, article_id: i64, loc
                     let movement_type: String = row.try_get("", "movement_type")?;
                     let performed_at: Option<String> = row.try_get("", "performed_at")?;
                     let documented = row.try_get::<i64>("", "documented")? != 0;
+                    let source_type: Option<String> = row.try_get("", "source_type")?;
                     // The time of the movement that closed it, never before the item opened here
                     // (a movement made earlier on another PC may arrive after the item opened).
                     let closed_at = performed_at.filter(|at| *at > opened_at).unwrap_or(opened_at);
                     (
-                        closure_kind_of(&movement_type, documented),
+                        // Only on-hand entries are read here, and each has its kind.
+                        closure_kind_of(&movement_type, documented, source_type.as_deref()).unwrap_or(CLOSURE_OTHER),
                         Some(row.try_get::<i64>("", "id")?),
                         closed_at,
                     )
@@ -383,19 +406,25 @@ pub const COUNT_PATH_RECONCILIATION: &str = "reconciliation";
 /// Path of a count posted through a count session (cycle count, inventory campaign).
 pub const COUNT_PATH_COUNT_SESSION: &str = "count_session";
 
-/// The posted counts of an article and location that no other count follows, oldest first (time
-/// posted, then line sync id: the same order on every PC). Every path counts (the list, count
-/// sessions); a count line posted before this version carries no mark and takes no part. A count
-/// whose session was reversed is no longer a head (its correction was undone), but what it follows
-/// stays followed.
-pub(crate) async fn reconciliation_heads(
-    conn: &impl ConnectionTrait,
-    article_id: i64,
-    location_id: i64,
-) -> AppResult<Vec<ReconciliationCount>> {
+/// One marked count of a pair and what its mark says.
+struct CountNode {
+    count: ReconciliationCount,
+    /// Sync replica id of the PC that recorded it (empty when the line carries none).
+    replica_id: String,
+    /// The counts it follows directly (the counts this PC knew when its variance was fixed).
+    follows: Vec<String>,
+    /// Its session was reversed: its correction is undone, what it knew stays known.
+    reversed: bool,
+}
+
+/// The marked counts of an article and location whose session is posted (or was posted, then
+/// reversed), oldest first (time posted, then line sync id: the same order on every PC). Every
+/// path counts (the list, count sessions, inventory campaigns); a count line recorded before this
+/// version carries no mark and takes no part.
+async fn count_nodes(conn: &impl ConnectionTrait, article_id: i64, location_id: i64) -> AppResult<Vec<CountNode>> {
     let rows = conn
         .query_all(sqlite(
-            "SELECT cl.entity_sync_id, cs.session_code, cs.status, cl.count_device_code, cl.count_follows_json,
+            "SELECT cl.entity_sync_id, cs.session_code, cs.status, cl.count_replica_id, cl.count_follows_json,
                     cl.count_path, cs.posted_at, ua.display_name, ua.username, cl.system_qty, cl.counted_qty,
                     cl.variance_qty
              FROM inventory_count_lines cl
@@ -408,70 +437,145 @@ pub(crate) async fn reconciliation_heads(
             vec![article_id.into(), location_id.into()],
         ))
         .await?;
-    let mut followed: HashSet<String> = HashSet::new();
-    let mut counts = Vec::new();
+    let mut nodes = Vec::with_capacity(rows.len());
     for row in &rows {
         let follows_json: String = row.try_get("", "count_follows_json")?;
-        // A list this version cannot read follows nothing: its counts stay heads (fail-safe).
-        if let Ok(follows) = serde_json::from_str::<Vec<String>>(&follows_json) {
-            followed.extend(follows);
-        }
-        let status: String = row.try_get("", "status")?;
-        if status == "reversed" {
-            continue;
-        }
+        // A list this version cannot read follows nothing: its count stays independent (fail-safe).
+        let follows = serde_json::from_str::<Vec<String>>(&follows_json).unwrap_or_default();
+        let replica_id = row
+            .try_get::<Option<String>>("", "count_replica_id")?
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let display: Option<String> = row.try_get("", "display_name")?;
         let username: Option<String> = row.try_get("", "username")?;
-        counts.push(ReconciliationCount {
-            count_sync_id: row.try_get("", "entity_sync_id")?,
-            session_code: row.try_get("", "session_code")?,
-            path: row
-                .try_get::<Option<String>>("", "count_path")?
-                .unwrap_or_else(|| COUNT_PATH_COUNT_SESSION.to_string()),
-            counted_by: display.filter(|d| !d.trim().is_empty()).or(username),
-            device_code: row
-                .try_get::<Option<String>>("", "count_device_code")?
-                .unwrap_or_default(),
-            counted_at: row.try_get::<Option<String>>("", "posted_at")?.unwrap_or_default(),
-            system_qty: row.try_get("", "system_qty")?,
-            counted_qty: row.try_get("", "counted_qty")?,
-            variance_qty: row.try_get("", "variance_qty")?,
+        let status: String = row.try_get("", "status")?;
+        nodes.push(CountNode {
+            count: ReconciliationCount {
+                count_sync_id: row.try_get("", "entity_sync_id")?,
+                session_code: row.try_get("", "session_code")?,
+                path: row
+                    .try_get::<Option<String>>("", "count_path")?
+                    .unwrap_or_else(|| COUNT_PATH_COUNT_SESSION.to_string()),
+                counted_by: display.filter(|d| !d.trim().is_empty()).or(username),
+                device_code: if replica_id.is_empty() {
+                    String::new()
+                } else {
+                    crate::sync::device_code::device_code_for(&replica_id)
+                },
+                counted_at: row.try_get::<Option<String>>("", "posted_at")?.unwrap_or_default(),
+                system_qty: row.try_get("", "system_qty")?,
+                counted_qty: row.try_get("", "counted_qty")?,
+                variance_qty: row.try_get("", "variance_qty")?,
+            },
+            replica_id,
+            follows,
+            reversed: status == "reversed",
         });
     }
-    counts.retain(|c| !followed.contains(&c.count_sync_id));
-    Ok(counts)
+    Ok(nodes)
 }
 
-/// The mark of a count being posted here for an article and location: this PC's code and the JSON
-/// list of the counts it follows (every head this PC knows). Written on the count line by every
-/// count path (`controls::post_count_session`, `controls::record_location_count_in`).
+/// Every count each count knows: those it follows and, through them, all they know (a walk over
+/// the marks, safe against a list that loops).
+fn known_by(nodes: &[CountNode]) -> HashMap<&str, HashSet<&str>> {
+    let direct: HashMap<&str, &[String]> = nodes
+        .iter()
+        .map(|n| (n.count.count_sync_id.as_str(), n.follows.as_slice()))
+        .collect();
+    nodes
+        .iter()
+        .map(|n| {
+            let mut known: HashSet<&str> = HashSet::new();
+            let mut stack: Vec<&str> = n.follows.iter().map(String::as_str).collect();
+            while let Some(id) = stack.pop() {
+                if known.insert(id) {
+                    if let Some(next) = direct.get(id) {
+                        stack.extend(next.iter().map(String::as_str));
+                    }
+                }
+            }
+            (n.count.count_sync_id.as_str(), known)
+        })
+        .collect()
+}
+
+/// The mark of a count of an article and location, taken when its counted quantity and variance
+/// are fixed (the count line entry, `controls::upsert_count_line`; the list,
+/// `controls::record_location_count_in`): this PC's sync replica id and the JSON list of the counts
+/// it follows — the counts this PC knows that no other known count follows, reversed ones included
+/// (what they knew stays known), so the new count knows every count this PC knows.
 pub(crate) async fn count_mark(
     conn: &impl ConnectionTrait,
     article_id: i64,
     location_id: i64,
 ) -> AppResult<(String, String)> {
-    let heads = reconciliation_heads(conn, article_id, location_id).await?;
-    let follows: Vec<&str> = heads.iter().map(|c| c.count_sync_id.as_str()).collect();
+    let nodes = count_nodes(conn, article_id, location_id).await?;
+    let followed: HashSet<&str> = nodes
+        .iter()
+        .flat_map(|n| n.follows.iter().map(String::as_str))
+        .collect();
+    let follows: Vec<&str> = nodes
+        .iter()
+        .map(|n| n.count.count_sync_id.as_str())
+        .filter(|id| !followed.contains(id))
+        .collect();
     let follows_json = serde_json::to_string(&follows).map_err(|e| AppError::Internal(e.into()))?;
-    Ok((crate::sync::device_code::this_device_code(conn).await?, follows_json))
+    Ok((crate::sync::queries::local_replica_id(conn).await?, follows_json))
 }
 
-/// The heads counted while the location stood below zero on the PC that posted them (after its
-/// item opened there: the stock on record the count was set against, kept on the line), posted on
-/// two PCs or more: a double count to verify. Read from the synchronised count lines only, so every
-/// PC holding them gives the same answer.
-pub(crate) async fn double_count_heads(
+/// The double count to verify of an article and location, if any (CMMS Advisor ruling S1):
+/// - a count takes part when it was made while the location stood below zero on its PC (the stock
+///   on record when its variance was fixed, `system_qty`, kept on the line) and its session is not
+///   reversed;
+/// - two such counts are a double count when they come from different PCs (sync replica ids; a
+///   line without one counts as another PC) and neither knows the other, even indirectly: knowing
+///   goes through every count in between, so a count at zero or more (a zero-variance cycle count)
+///   neither hides an earlier count nor links two counts that never knew each other;
+/// - it is closed once a count whose session is not reversed knows both.
+///
+/// Only synchronised columns of the count lines and sessions are read, so every PC holding the same
+/// lines gives the same answer. The counts named are those of every open pair, oldest first.
+pub(crate) async fn double_count_of(
     conn: &impl ConnectionTrait,
     article_id: i64,
     location_id: i64,
 ) -> AppResult<Option<Vec<ReconciliationCount>>> {
-    let heads: Vec<ReconciliationCount> = reconciliation_heads(conn, article_id, location_id)
-        .await?
-        .into_iter()
-        .filter(|c| c.system_qty < -QTY_TOLERANCE)
+    let nodes = count_nodes(conn, article_id, location_id).await?;
+    let known = known_by(&nodes);
+    let knows = |who: &str, what: &str| known.get(who).is_some_and(|k| k.contains(what));
+    let below: Vec<&CountNode> = nodes
+        .iter()
+        .filter(|n| !n.reversed && n.count.system_qty < -QTY_TOLERANCE)
         .collect();
-    let devices = heads.iter().map(|c| c.device_code.as_str()).collect::<BTreeSet<_>>();
-    Ok((devices.len() >= 2).then_some(heads))
+    let mut open: HashSet<&str> = HashSet::new();
+    for (i, x) in below.iter().enumerate() {
+        for y in &below[i + 1..] {
+            let (xi, yi) = (x.count.count_sync_id.as_str(), y.count.count_sync_id.as_str());
+            let same_pc = !x.replica_id.is_empty() && x.replica_id == y.replica_id;
+            if same_pc || knows(xi, yi) || knows(yi, xi) {
+                continue;
+            }
+            let verified = nodes.iter().any(|z| {
+                let zi = z.count.count_sync_id.as_str();
+                !z.reversed && knows(zi, xi) && knows(zi, yi)
+            });
+            if !verified {
+                open.insert(xi);
+                open.insert(yi);
+            }
+        }
+    }
+    if open.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(
+        below
+            .iter()
+            .filter(|n| open.contains(n.count.count_sync_id.as_str()))
+            .map(|n| n.count.clone())
+            .collect(),
+    ))
 }
 
 /// Every article and location with a double count to verify.
@@ -489,8 +593,8 @@ pub(crate) async fn double_count_pairs(
     let mut out = Vec::new();
     for row in pairs {
         let (article_id, location_id): (i64, i64) = (row.try_get("", "article_id")?, row.try_get("", "location_id")?);
-        if let Some(heads) = double_count_heads(conn, article_id, location_id).await? {
-            out.push((article_id, location_id, heads));
+        if let Some(counts) = double_count_of(conn, article_id, location_id).await? {
+            out.push((article_id, location_id, counts));
         }
     }
     Ok(out)
@@ -658,8 +762,9 @@ pub async fn summary(db: &DatabaseConnection) -> AppResult<NegativeStockSummary>
 
 /// The most recent movement that took the on-hand stock of an article at a location from zero or
 /// more to below zero, in the order every PC shares (time, then sync id), walked back from today's
-/// level; `None` when the ledger shows it below zero from the start. Names the occurrence of the
-/// notice the same way on every PC.
+/// level; `None` when the ledger shows it below zero from the start. Dates the notice (when the
+/// shortage began); it does not name it, since a movement dated earlier that arrives late can move
+/// it.
 pub(crate) async fn negative_crossing(
     conn: &impl ConnectionTrait,
     article_id: i64,
@@ -697,8 +802,8 @@ pub(crate) async fn negative_crossing(
 /// to verify, or both — by a stock count recorded there by `user_id`: needs `inv.manage`
 /// (plant-wide: stores have no site yet, as for stock adjustments), a reason of at least
 /// [`REVIEW_REASON_MIN_CHARS`] characters, the quantity counted (zero or more) and a code of the
-/// variance-reason list. The count is posted through the count workflow, marked as following every
-/// reconciliation count of the pair this PC knows, and audited; the negative item closes since the
+/// variance-reason list. The count is posted through the count workflow, marked as knowing every
+/// count of the pair this PC knows ([`count_mark`]), and audited; the negative item closes since the
 /// stock is now the counted quantity.
 pub async fn resolve_by_count(
     db: &DatabaseConnection,
@@ -752,7 +857,7 @@ pub async fn resolve_by_count(
         .await?
         .map(|row| row.try_get::<i64>("", "id"))
         .transpose()?;
-    let double_count = double_count_heads(&tx, input.article_id, input.location_id)
+    let double_count = double_count_of(&tx, input.article_id, input.location_id)
         .await?
         .is_some();
     if item_id.is_none() && !double_count {
@@ -762,7 +867,7 @@ pub async fn resolve_by_count(
             &[],
         ));
     }
-    let (device_code, follows_json) = count_mark(&tx, input.article_id, input.location_id).await?;
+    let (replica_id, follows_json) = count_mark(&tx, input.article_id, input.location_id).await?;
     let actor_id = i64::from(user_id);
     let posted = crate::inventory::controls::record_location_count_in(
         &tx,
@@ -773,7 +878,7 @@ pub async fn resolve_by_count(
             variance_reason_code,
             evidence: reason,
             actor_id,
-            mark: (&device_code, &follows_json),
+            mark: (&replica_id, &follows_json),
         },
     )
     .await?;
@@ -797,7 +902,7 @@ pub async fn resolve_by_count(
                 "negative_review_id": item_id,
                 "double_count": double_count,
                 "follows_counts": serde_json::from_str::<serde_json::Value>(&follows_json).unwrap_or_default(),
-                "device_code": device_code,
+                "replica_id": replica_id,
                 "system_qty": posted.system_qty,
                 "counted_qty": input.counted_qty,
                 "variance_qty": posted.variance_qty,

@@ -13,7 +13,7 @@
   },
   "negativeStock": {
     "title": "Stock to reconcile",
-    "description": "Movements received from another PC are applied as received. A location left below zero stays here until a stock count is recorded there or a later goods receipt or transfer in brings it back to zero or more.",
+    "description": "Movements received from another PC are applied as received. A location left below zero stays here until a stock count is recorded there or a later entry brings it back to zero or more: a goods receipt, a transfer in, a return against its issue or repair, or an entry with its reason.",
     "showClosed": "Show reconciled items",
     "noneOpen": "No location below zero.",
     "openList": "Locations below zero to reconcile",
@@ -26,9 +26,10 @@
     "overReservedLine": "{{article}} at {{location}}: {{reserved}} reserved for {{onHand}} on hand",
     "closure": {
       "count": "Reconciled by a count on {{date}}",
-      "adjustment": "Reconciled by a manual stock entry on {{date}}",
+      "adjustment": "Reconciled by an adjustment with its reason on {{date}} ({{movement}})",
       "receipt": "Regularised by receipt on {{date}} ({{movement}})",
       "return": "Regularised by return on {{date}} ({{movement}})",
+      "prior_entry": "Regularised by an earlier entry on {{date}} ({{movement}}): entered on a PC that did not yet see the negative stock, no reason asked",
       "other": "Back to zero or more on {{date}} without a stock entry on record"
     },
     "loadError": "The stock to reconcile could not be loaded",

@@ -250,8 +250,35 @@ describe("NegativeStockReviewPanel", () => {
     });
     render(<NegativeStockReviewPanel />);
     fireEvent.click(await screen.findByLabelText("Show reconciled items"));
-    expect(await screen.findByText(/Reconciled by a manual stock entry on/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Reconciled by an adjustment with its reason on .*\(Stock entry\)/),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Regularised by receipt/)).not.toBeInTheDocument();
+  });
+
+  it("says when an entry made before the shortage was visible closed the item", async () => {
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [
+        item({
+          id: 4,
+          status: "closed",
+          closure_kind: "prior_entry",
+          closed_at: TS,
+          closing_movement_type: "ADJUST_IN",
+        }),
+      ],
+      double_counts: [],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    fireEvent.click(await screen.findByLabelText("Show reconciled items"));
+    expect(
+      await screen.findByText(/Regularised by an earlier entry on .*no reason asked/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Reconciled by an adjustment/)).not.toBeInTheDocument();
+    expect(frInventory.negativeStock.closure.prior_entry).toMatch(
+      /^Régularisé par saisie antérieure/,
+    );
   });
 
   it("has every text in French too", () => {

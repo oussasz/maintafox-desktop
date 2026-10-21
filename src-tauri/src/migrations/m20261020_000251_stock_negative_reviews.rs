@@ -10,16 +10,20 @@
 //!   (itself derived from the synchronised movement ledger) and is never synchronised: an item is
 //!   open exactly while the location's on-hand stock is below zero, so every PC holding the same
 //!   ledger shows the same open items. A closed item keeps how it was closed (`closure_kind`: a
-//!   count, a manual adjustment, a goods receipt — "régularisé par réception" —, a documented
-//!   return — "régularisé par retour" —, or none on record) and the movement that closed it. The
-//!   partial unique index allows one open item per article and location.
-//! - `inventory_count_lines` gains the mark of every count posted from this version on, whatever
-//!   path posted it: `count_device_code` (the code of the PC that posted it), `count_follows_json`
-//!   (the posted counts of that article and location this PC knew and that no other count it knew
+//!   count, an adjustment with its reason, a goods receipt — "régularisé par réception" —, a
+//!   documented return — "régularisé par retour" —, a manual entry made on a PC that did not yet
+//!   see the location below zero — "régularisé par saisie antérieure" —, or none on record) and
+//!   the movement that closed it. The partial unique index allows one open item per article and
+//!   location.
+//! - `inventory_count_lines` gains the mark of every count from this version on, whatever path
+//!   records it, set when its counted quantity and variance are fixed: `count_replica_id` (the sync
+//!   replica id of the PC that recorded it, the origin sync itself uses), `count_follows_json` (the
+//!   posted counts of that article and location this PC knew then and that no other count it knew
 //!   had followed) and `count_path` (`reconciliation`: the stock-to-reconcile list;
-//!   `count_session`: a count session). They travel with the line: two counts posted on two PCs
-//!   without either knowing the other, since the location last went below zero, show as a double
-//!   count "à vérifier" on every PC (CMMS Advisor ruling S1), until a later count that knows both.
+//!   `count_session`: a count session). They travel with the line: two counts made on two PCs
+//!   while the location stood below zero there, neither knowing the other even indirectly, show as
+//!   a double count "à vérifier" on every PC (CMMS Advisor ruling S1), until a later count that
+//!   knows both.
 //! - The notification category of the watcher `stock_to_reconcile` and its rule: the inv.manage
 //!   holders are told once per item, in-app.
 
@@ -53,7 +57,7 @@ impl MigrationTrait for Migration {
                 opening_transaction_id  INTEGER NULL REFERENCES inventory_transactions(id),
                 closed_at               TEXT    NULL,
                 closure_kind            TEXT    NULL
-                    CHECK (closure_kind IN ('count', 'adjustment', 'receipt', 'return', 'other')),
+                    CHECK (closure_kind IN ('count', 'adjustment', 'receipt', 'return', 'prior_entry', 'other')),
                 closing_transaction_id  INTEGER NULL REFERENCES inventory_transactions(id),
                 CHECK ((status = 'open') = (closed_at IS NULL)),
                 CHECK ((status = 'open') = (closure_kind IS NULL))
@@ -67,7 +71,7 @@ impl MigrationTrait for Migration {
                 .await?;
         }
         // Re-runnable: a column already there is kept.
-        for column in ["count_device_code", "count_follows_json", "count_path"] {
+        for column in ["count_replica_id", "count_follows_json", "count_path"] {
             let exists = txn
                 .query_one(Statement::from_sql_and_values(
                     DatabaseBackend::Sqlite,

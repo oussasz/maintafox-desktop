@@ -281,6 +281,20 @@ describe("InventoryControlsPanel", () => {
     });
   });
 
+  it("asks for a reversal reason of at least 8 characters once trimmed", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "posted" })]);
+
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Posted)");
+
+    const reason = screen.getByLabelText("Reversal reason");
+    fireEvent.change(reason, { target: { value: "  Erreur!  " } });
+    expect(screen.getByRole("button", { name: "Reverse posting" })).toBeDisabled();
+    fireEvent.change(reason, { target: { value: "Mauvais bac" } });
+    expect(screen.getByRole("button", { name: "Reverse posting" })).toBeEnabled();
+  });
+
   it("replaces the panel with an error and a retry when loading fails", async () => {
     mocks.listInventoryCountSessions.mockRejectedValueOnce(new Error("database locked"));
 

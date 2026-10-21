@@ -1932,7 +1932,6 @@ pub async fn adjust_stock_full(
             ]));
         }
     }
-    let source_type = "MANUAL_ADJUSTMENT".to_string();
     ensure_work_order_reference(db, input.reason_code.as_deref(), input.source_ref.as_deref()).await?;
 
     let tx = db.begin().await?;
@@ -1948,7 +1947,14 @@ pub async fn adjust_stock_full(
         ]));
     }
     crate::inventory::negative_stock::check_entry_reason(on_hand, input.delta_qty, input.notes.as_deref())?;
-    let reconciles_negative = input.delta_qty > 0.0 && on_hand < 0.0;
+    let reconciles_negative = input.delta_qty > 0.0 && on_hand < -crate::inventory::negative_stock::QTY_TOLERANCE;
+    // An entry made here while the location stood below zero is marked as such on the movement, so
+    // every PC tells it (reason asked, audited) from an entry made before the shortage was visible.
+    let source_type = if reconciles_negative {
+        crate::inventory::negative_stock::SOURCE_NEGATIVE_STOCK_ENTRY
+    } else {
+        "MANUAL_ADJUSTMENT"
+    };
 
     // Critical spare guard: block exits that would leave on_hand = 0
     if input.delta_qty < 0.0 && next_on_hand == 0.0 {
@@ -2027,7 +2033,7 @@ pub async fn adjust_stock_full(
             None,
             if delta >= 0.0 { "ADJUST_IN" } else { "ADJUST_OUT" },
             delta.abs(),
-            &source_type,
+            source_type,
             None,
             input.source_ref.as_deref(),
             input.reason_code.as_deref(),

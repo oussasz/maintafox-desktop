@@ -11,7 +11,7 @@
 //! | `wo_overdue`              | an open work order is past its planned end             | order + planned end                |
 //! | `inspection_round_missed` | an inspection round was missed                         | round (window end)                 |
 //! | `stock_critical`          | available stock at or below the reorder point          | article + movement that crossed it |
-//! | `stock_to_reconcile`      | a location below zero, or counted twice (two PCs)      | article + location + crossing / counts |
+//! | `stock_to_reconcile`      | a location below zero, or counted twice (two PCs)      | article + location (+ counts)      |
 //! | `ptw_expiring`            | an open permit expires within the rule's lead time     | permit + expiry (expiry − lead)    |
 //! | `ptw_critical`            | an open permit is past its expiry                      | permit + expiry                    |
 //! | `sync_conflict`           | a synchronisation conflict waits for review            | conflict (creation)                |
@@ -358,8 +358,11 @@ pub async fn candidates(
             }
         }
         // Stock to reconcile after sync (`inventory::negative_stock`): one notice per article and
-        // location below zero (named by the movement that took it below zero, in the ledger order
-        // every PC shares) and per double count (named by the counts it is made of).
+        // location below zero and per double count (named by the counts it is made of). The
+        // negative occurrence is the pair itself: no value read from the ledger can name the
+        // opening the same way on every PC and stay fixed while a movement dated earlier arrives
+        // late, so a later item of the same pair reopens the same notice instead of a new one. The
+        // movement that took it below zero (ledger order every PC shares) only dates it.
         "stock_to_reconcile" => {
             use crate::inventory::negative_stock::{double_count_pairs, negative_crossing, QTY_TOLERANCE};
             const COLUMNS: &str = "SELECT a.id AS article_id, a.entity_sync_id AS asid, a.article_code, a.article_name,                     sl.id AS location_id, sl.entity_sync_id AS lsid, sl.code AS location_code, w.code AS warehouse_code,                     COALESCE(sb.on_hand_qty, 0) AS on_hand_qty";
@@ -380,16 +383,15 @@ pub async fn candidates(
                     i(r, "location_id")?.unwrap_or_default(),
                 );
                 let on_hand = f(r, "on_hand_qty")?;
-                let (episode, since) = match negative_crossing(conn, article_id, location_id, on_hand).await? {
-                    Some((movement, at)) => (movement, at.as_deref().and_then(parse_time)),
-                    None => ("below-from-start".to_string(), None),
-                };
+                let since = negative_crossing(conn, article_id, location_id, on_hand)
+                    .await?
+                    .and_then(|(_, at)| at.as_deref().and_then(parse_time));
                 let code = s(r, "article_code")?;
                 let name = s(r, "article_name")?;
                 let location = format!("{}/{}", s(r, "warehouse_code")?, s(r, "location_code")?);
                 out.push(Candidate {
                     record_id: Some(article_id),
-                    record_key: format!("negative|{}|{}|{episode}", s(r, "asid")?, s(r, "lsid")?),
+                    record_key: format!("negative|{}|{}", s(r, "asid")?, s(r, "lsid")?),
                     since,
                     source_module: "inventory",
                     message_key: "stock_negative",

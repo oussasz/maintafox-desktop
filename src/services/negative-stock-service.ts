@@ -30,7 +30,9 @@ export const NegativeStockReviewSchema = z.object({
   opening_transaction_id: z.number().nullable(),
   opening_movement_type: z.string().nullable(),
   closed_at: z.string().nullable(),
-  closure_kind: z.enum(["count", "adjustment", "receipt", "return", "other"]).nullable(),
+  closure_kind: z
+    .enum(["count", "adjustment", "receipt", "return", "prior_entry", "other"])
+    .nullable(),
   closing_transaction_id: z.number().nullable(),
   closing_movement_type: z.string().nullable(),
   on_hand_qty: z.number(),

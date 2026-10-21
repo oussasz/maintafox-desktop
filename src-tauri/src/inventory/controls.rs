@@ -276,12 +276,18 @@ pub async fn upsert_count_line(
     }
     let is_critical = i64::from(variance_qty.abs() >= session.critical_abs_threshold);
     let approval_required = i64::from(variance_qty.abs() > f64::EPSILON);
+    // The count's mark is taken now, with the stock on record its variance is set against: the
+    // counts this PC knows at this moment, not at posting, so a count received in between still
+    // shows as a double count (`inventory::negative_stock`, CMMS Advisor). Each entry refreshes it.
+    let (replica_id, follows_json) =
+        crate::inventory::negative_stock::count_mark(db, input.article_id, input.location_id).await?;
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_count_lines
             (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
-             variance_reason_code, is_critical, approval_required, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             variance_reason_code, is_critical, approval_required, created_at, updated_at,
+             count_replica_id, count_follows_json, count_path)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id, article_id, location_id) DO UPDATE SET
              counted_qty = excluded.counted_qty,
              system_qty = excluded.system_qty,
@@ -292,6 +298,9 @@ pub async fn upsert_count_line(
              approved_by_id = NULL,
              approved_at = NULL,
              approval_note = NULL,
+             count_replica_id = excluded.count_replica_id,
+             count_follows_json = excluded.count_follows_json,
+             count_path = excluded.count_path,
              row_version = inventory_count_lines.row_version + 1,
              updated_at = excluded.updated_at",
         [
@@ -307,6 +316,9 @@ pub async fn upsert_count_line(
             approval_required.into(),
             now_iso().into(),
             now_iso().into(),
+            replica_id.into(),
+            follows_json.into(),
+            crate::inventory::negative_stock::COUNT_PATH_COUNT_SESSION.into(),
         ],
     ))
     .await?;
@@ -331,7 +343,7 @@ pub async fn approve_count_line(
     db: &DatabaseConnection,
     input: ApproveInventoryCountLineInput,
 ) -> AppResult<InventoryCountLine> {
-    if input.reviewer_evidence.trim().len() < 8 {
+    if input.reviewer_evidence.trim().chars().count() < crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS {
         return Err(AppError::ValidationFailed(vec![
             "reviewer_evidence must be explicit and at least 8 characters.".to_string(),
         ]));
@@ -404,24 +416,34 @@ pub async fn post_count_session(
 
     let tx = db.begin().await?;
     for line in lines {
-        // Every posted line is a count of its pair: it carries this PC's code and the counts it
-        // follows, so two counts made on two PCs without knowing each other show as a double count
-        // (`inventory::negative_stock`, CMMS Advisor).
-        let (device_code, follows_json) =
-            crate::inventory::negative_stock::count_mark(&tx, line.article_id, line.location_id).await?;
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE inventory_count_lines SET count_device_code = ?, count_follows_json = ?, count_path = ?,
-                 row_version = row_version + 1, updated_at = ? WHERE id = ?",
-            [
-                device_code.into(),
-                follows_json.into(),
-                crate::inventory::negative_stock::COUNT_PATH_COUNT_SESSION.into(),
-                now_iso().into(),
-                line.id.into(),
-            ],
-        ))
-        .await?;
+        // Every posted line is a count of its pair and keeps the mark taken when its quantity was
+        // entered (`upsert_count_line`). A line entered before this version has none: it is marked
+        // now, with what this PC knows at posting (`inventory::negative_stock`, CMMS Advisor).
+        let unmarked = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS unmarked FROM inventory_count_lines WHERE id = ? AND count_follows_json IS NULL",
+                [line.id.into()],
+            ))
+            .await?
+            .is_some();
+        if unmarked {
+            let (replica_id, follows_json) =
+                crate::inventory::negative_stock::count_mark(&tx, line.article_id, line.location_id).await?;
+            tx.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE inventory_count_lines SET count_replica_id = ?, count_follows_json = ?, count_path = ?,
+                     row_version = row_version + 1, updated_at = ? WHERE id = ?",
+                [
+                    replica_id.into(),
+                    follows_json.into(),
+                    crate::inventory::negative_stock::COUNT_PATH_COUNT_SESSION.into(),
+                    now_iso().into(),
+                    line.id.into(),
+                ],
+            ))
+            .await?;
+        }
         if line.variance_qty.abs() <= f64::EPSILON {
             continue;
         }
@@ -489,10 +511,13 @@ pub async fn reverse_count_session(
     db: &DatabaseConnection,
     input: ReverseInventoryCountSessionInput,
 ) -> AppResult<InventoryCountSession> {
-    if input.reason.trim().len() < 5 {
-        return Err(AppError::ValidationFailed(vec![
-            "Reversal reason must be explicit.".to_string()
-        ]));
+    // Like a count's approval: a reversal can bring a location below zero back to zero or more,
+    // which closes its item as an adjustment (`inventory::negative_stock`).
+    if input.reason.trim().chars().count() < crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Reversal reason must be explicit (at least {} characters).",
+            crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS
+        )]));
     }
     let session = ensure_count_session(db, input.session_id).await?;
     if session.row_version != input.expected_row_version {
@@ -568,8 +593,8 @@ pub(crate) struct LocationCount<'a> {
     /// Why the count was made: kept as the line's reviewer evidence and on the movement's audit link.
     pub evidence: &'a str,
     pub actor_id: i64,
-    /// The count's mark (`negative_stock::count_mark`): this PC's code and the JSON list of the
-    /// counts of the pair it follows.
+    /// The count's mark (`negative_stock::count_mark`): this PC's sync replica id and the JSON list
+    /// of the counts of the pair it follows.
     pub mark: (&'a str, &'a str),
 }
 
@@ -635,7 +660,7 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
         "INSERT INTO inventory_count_lines
             (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
              variance_reason_code, is_critical, approval_required, approved_by_id, approved_at, approval_note,
-             created_at, updated_at, count_device_code, count_follows_json, count_path)
+             created_at, updated_at, count_replica_id, count_follows_json, count_path)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             session_id.into(),
