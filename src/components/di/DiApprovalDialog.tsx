@@ -37,6 +37,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { printHtml } from "@/export/print-manager";
 import { useAccessAt } from "@/hooks/use-access-at";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
@@ -164,12 +165,9 @@ function printApprovalSheet(
 </body>
 </html>`;
 
-  const w = window.open("", "_blank");
-  if (w) {
-    w.document.write(html);
-    w.document.close();
-    w.print();
-  }
+  printHtml(html, { title: di.code }).catch((err: unknown) => {
+    console.error("[DiApprovalDialog] print failed", err);
+  });
 }
 
 // ── Component ───────────────────────────────────────────────────────────────

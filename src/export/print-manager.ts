@@ -1,115 +1,97 @@
 /**
- * PrintManager — official Maintafox print transport.
+ * PrintManager - official Maintafox print transport.
  *
- * Opens a dedicated temporary OS window with only the printable document,
- * triggers the system print dialog, then closes that window.
- * Never prints from (or replaces) the main application UI.
+ * Prints a self-contained HTML document from a hidden frame inside the main window, then removes
+ * the frame. No second window is ever opened: the webview refuses new-window requests (wry
+ * answers them with "handled" when the app registers no handler), so `window.open` and a
+ * secondary Tauri window are not part of printing.
+ *
+ * The document is written into the frame (`document.write`), not loaded from a blob: URL or an
+ * inline script, because the app CSP is `default-src 'self'; script-src 'self'` with no
+ * `frame-src`. A frame created without a URL inherits the parent's origin and CSP.
  */
 
 export interface PrintHtmlOptions {
-  /** Window title for the temporary print surface. */
+  /** Title of the printed document (print header, print dialog). */
   title?: string;
 }
 
-function injectPrintLifecycle(html: string): string {
-  const script = `<script>
-(function () {
-  function triggerPrint() {
-    requestAnimationFrame(function () {
-      requestAnimationFrame(function () {
-        try { window.focus(); } catch (e) {}
-        window.print();
+/** The frame is removed when the print dialog reports it is finished, or after this long. */
+export const PRINT_FRAME_FALLBACK_MS = 60_000;
+
+/** Lets the written document be laid out before the print dialog snapshots it. */
+const PAINT_FALLBACK_MS = 50;
+
+function nextPaint(frameWindow: Window): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof frameWindow.requestAnimationFrame === "function") {
+      frameWindow.requestAnimationFrame(() => {
+        frameWindow.requestAnimationFrame(() => resolve());
       });
-    });
-  }
-  if (document.readyState === "complete") triggerPrint();
-  else window.addEventListener("load", triggerPrint);
-  window.onafterprint = function () {
-    setTimeout(function () { try { window.close(); } catch (e) {} }, 150);
-  };
-  setTimeout(function () { try { window.close(); } catch (e) {} }, 60000);
-})();
-</script>`;
-
-  if (html.includes("</body>")) {
-    return html.replace("</body>", `${script}</body>`);
-  }
-  return `${html}${script}`;
-}
-
-function isTauriRuntime(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+    } else {
+      setTimeout(resolve, PAINT_FALLBACK_MS);
+    }
+  });
 }
 
 /**
- * Print a dedicated HTML document in a temporary native window.
- * The main Maintafox window is left unchanged.
+ * Print a dedicated HTML document through a hidden frame of the current window.
+ * Rejects when the frame cannot be created or the runtime has no `print()` for it.
  */
 export async function printHtml(html: string, options: PrintHtmlOptions = {}): Promise<void> {
-  const documentHtml = injectPrintLifecycle(html);
   const title = options.title ?? "Print";
 
-  // Blob window: separate OS window, inline print script runs (CSP-safe vs asset protocol).
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.title = title;
+  frame.style.position = "fixed";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  document.body.appendChild(frame);
+
+  let removed = false;
+  const remove = () => {
+    if (removed) return;
+    removed = true;
+    frame.remove();
+  };
+
+  const frameDoc = frame.contentDocument;
+  const frameWindow = frame.contentWindow;
+  if (!frameDoc || !frameWindow) {
+    remove();
+    throw new Error("PrintManager: unable to create the print frame.");
+  }
+  if (typeof frameWindow.print !== "function") {
+    remove();
+    throw new Error("PrintManager: printing is not available in this environment.");
+  }
+
+  frameDoc.open();
+  frameDoc.write(html);
+  frameDoc.close();
   try {
-    await printViaBlobWindow(documentHtml);
-    return;
-  } catch (blobErr) {
-    if (!isTauriRuntime()) throw blobErr;
-    console.warn("[PrintManager] Blob print window failed; trying Tauri WebviewWindow.", blobErr);
+    frameDoc.title = title;
+  } catch {
+    // The title only labels the print job.
   }
 
-  await printViaTauriWindow(documentHtml, title);
-}
+  frameWindow.onafterprint = () => {
+    // Give the runtime a moment to finish handing the job over before the frame goes away.
+    setTimeout(remove, 300);
+  };
+  // The runtime may never emit `afterprint`.
+  setTimeout(remove, PRINT_FRAME_FALLBACK_MS);
 
-async function printViaBlobWindow(html: string): Promise<void> {
-  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const printWindow = window.open(url, "_blank", "noopener,noreferrer,width=480,height=680");
-
-  if (!printWindow) {
-    URL.revokeObjectURL(url);
-    throw new Error(
-      "PrintManager: unable to open a temporary print window. Check popup permissions.",
-    );
+  try {
+    await nextPaint(frameWindow);
+    frameWindow.focus();
+    frameWindow.print();
+  } catch (err) {
+    remove();
+    throw err;
   }
-
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
-
-async function printViaTauriWindow(html: string, title: string): Promise<void> {
-  const { tempDir, join } = await import("@tauri-apps/api/path");
-  const { writeTextFile, remove } = await import("@tauri-apps/plugin-fs");
-  const { convertFileSrc } = await import("@tauri-apps/api/core");
-  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-
-  const dir = await tempDir();
-  const fileName = `maintafox-print-${Date.now()}.html`;
-  const filePath = await join(dir, fileName);
-  await writeTextFile(filePath, html);
-
-  const label = `print-${Date.now()}`;
-  const url = convertFileSrc(filePath);
-
-  const win = new WebviewWindow(label, {
-    url,
-    title,
-    width: 480,
-    height: 680,
-    center: true,
-    focus: true,
-    resizable: true,
-    decorations: true,
-    visible: true,
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    void win.once("tauri://created", () => resolve());
-    void win.once("tauri://error", (e) => {
-      reject(e instanceof Error ? e : new Error(String(e)));
-    });
-  });
-
-  setTimeout(() => {
-    void remove(filePath).catch(() => {});
-  }, 120_000);
 }
