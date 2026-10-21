@@ -1773,3 +1773,62 @@ async fn the_notice_says_when_the_shortage_opened_and_a_new_shortage_reopens_it_
     assert_eq!(notices(a).await.0, 1, "the same notice, reopened");
     assert_eq!(params().await["opened_at"], serde_json::json!("2099-01-01T09:00:00Z"));
 }
+
+/// Advisor (SF2): a double count closed by a reversal while the stock is still below zero: the
+/// double count is closed, the location's "à rapprocher" item stays open.
+#[tokio::test]
+async fn a_double_count_closed_by_a_reversal_leaves_the_negative_item_open() {
+    use crate::inventory::controls;
+    use crate::inventory::domain::ReverseInventoryCountSessionInput;
+    let Shortage { dbs, mut server, pairs } = shortage(2).await;
+    let (a, b) = (&dbs[0], &dbs[1]);
+    let manager_a = user_with(a, "negrevopena", &[crate::rbac::permissions::INV_MANAGE]).await;
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+    let manager_b = user_with(b, "negrevopenb", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let resolved_a = negative_stock::resolve_by_count(
+        a,
+        manager_a,
+        resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
+    )
+    .await
+    .expect("A1");
+    negative_stock::resolve_by_count(
+        b,
+        manager_b,
+        resolution(pairs[1].0, pairs[1].1, 0.0, "Comptage poste B"),
+    )
+    .await
+    .expect("B1");
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+    sync_clean(&mut server, "A", a).await;
+    assert_eq!(on_hand_milli(a, pairs[0].0, pairs[0].1).await, 5000, "corrected twice");
+
+    // Offline: B issues the 5 it shows; A reverses its count (5 → 0 on A).
+    issue(b, pairs[1].0, pairs[1].1, 5.0).await;
+    let session = session_by_code(a, &resolved_a.session_code).await;
+    controls::reverse_count_session(
+        a,
+        ReverseInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            reason: "Compté en double avec le poste B".into(),
+            actor_id: Some(i64::from(manager_a)),
+        },
+    )
+    .await
+    .expect("reversal of A1");
+    sync_clean(&mut server, "A", a).await;
+    sync_clean(&mut server, "B", b).await;
+    sync_clean(&mut server, "A", a).await;
+    for (pc, db, (art, loc)) in [("A", a, pairs[0]), ("B", b, pairs[1])] {
+        assert_eq!(on_hand_milli(db, art, loc).await, -5000, "{pc}: still below zero");
+        let list = negative_stock::list_reviews(db, true).await.expect("list");
+        assert!(list.double_counts.is_empty(), "{pc}: the double count is closed");
+        assert_eq!(list.closed_double_counts.len(), 1, "{pc}: closed by the reversal");
+        let open: Vec<_> = list.items.iter().filter(|i| i.status == "open").collect();
+        assert_eq!(open.len(), 1, "{pc}: the location stays to reconcile");
+        assert_eq!((open[0].article_id, open[0].location_id), (art, loc), "{pc}");
+    }
+}

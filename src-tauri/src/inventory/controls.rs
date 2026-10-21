@@ -456,7 +456,7 @@ pub async fn post_count_session(
             return Err(crate::errors::org_validation_failed(
                 REFUSED_COUNT_SESSION_STALE,
                 format!(
-                    "A count was posted for {} at {} since this session was opened ({other}): count again.",
+                    "A count was posted for {} at {} since this session was opened ({other}): cancel this session and count again in a new session.",
                     line.article_code, line.location_code
                 ),
                 crate::errors::issue_params(&[

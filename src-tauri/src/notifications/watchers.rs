@@ -400,6 +400,13 @@ pub async fn candidates(
                 };
                 let since = opened_raw.as_deref().and_then(parse_time);
                 let opened_at = since.map(ts).unwrap_or_default();
+                // The stored fallback text (email, older readers) reads the date; the in-app text is
+                // localised from `opened_at` (`notifications:messages.stock_negative`).
+                let since_text = |fr: bool| match since {
+                    Some(at) if fr => format!(", sous zéro depuis le {} UTC", at.format("%d/%m/%Y %H:%M")),
+                    Some(at) => format!(", below zero since {} UTC", at.format("%Y-%m-%d %H:%M")),
+                    None => String::new(),
+                };
                 let code = s(r, "article_code")?;
                 let name = s(r, "article_name")?;
                 let location = format!("{}/{}", s(r, "warehouse_code")?, s(r, "location_code")?);
@@ -426,8 +433,8 @@ pub async fn candidates(
                     ),
                     body: text(
                         fr,
-                        format!("{name} à {location} : {on_hand} en stock, sous zéro depuis le {opened_at}."),
-                        format!("{name} at {location}: {on_hand} on hand, below zero since {opened_at}."),
+                        format!("{name} à {location} : {on_hand} en stock{}.", since_text(true)),
+                        format!("{name} at {location}: {on_hand} on hand{}.", since_text(false)),
                     ),
                 });
             }
