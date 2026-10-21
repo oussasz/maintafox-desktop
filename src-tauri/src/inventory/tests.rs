@@ -2482,3 +2482,273 @@ async fn a_transfer_never_rewrites_the_reserved_quantity_and_reservations_stay_r
     let (_, reserved_end) = balance_of(&db, article_id, main_loc).await.expect("balance");
     assert!(reserved_end.abs() < 1e-12, "nothing stays reserved, got {reserved_end}");
 }
+
+#[tokio::test]
+async fn reconciliation_of_a_consistent_ledger_reports_no_drift_and_still_catches_a_real_one() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-RECON-OK").await;
+    let main_loc = main_location_id(&db).await;
+    let aux_loc = insert_aux_location(&db, "AUX-RECON").await;
+
+    let adjust = |delta: f64| InventoryStockAdjustInput {
+        article_id,
+        location_id: main_loc,
+        delta_qty: delta,
+        reason_code: Some("recon ledger".to_string()),
+        notes: None,
+        source_ref: None,
+    };
+    // ADJUST_IN then ADJUST_OUT.
+    queries::adjust_stock(&db, adjust(20.0)).await.expect("adjust in");
+    queries::adjust_stock(&db, adjust(-3.0)).await.expect("adjust out");
+    // A transfer (TRANSFER_OUT + TRANSFER_IN).
+    queries::transfer_stock(
+        &db,
+        transfer_input(article_id, main_loc, aux_loc, 4.0, Some("recon transfer")),
+        Some(1),
+    )
+    .await
+    .expect("transfer");
+    // Reserve, issue, return (RESERVE, ISSUE, RETURN).
+    let reservation = queries::reserve_stock(
+        &db,
+        InventoryReserveInput {
+            article_id,
+            location_id: main_loc,
+            quantity: 5.0,
+            source_type: "WO".to_string(),
+            source_id: Some(9301),
+            source_ref: Some("WO-9301".to_string()),
+            notes: None,
+        },
+    )
+    .await
+    .expect("reserve");
+    queries::issue_reserved_stock(
+        &db,
+        InventoryIssueInput {
+            reservation_id: reservation.id,
+            quantity: 3.0,
+            source_type: Some("WO".to_string()),
+            source_id: Some(9301),
+            source_ref: Some("WO-9301".to_string()),
+            notes: None,
+        },
+    )
+    .await
+    .expect("issue");
+    queries::return_reserved_stock(
+        &db,
+        InventoryReturnInput {
+            reservation_id: reservation.id,
+            quantity: 1.0,
+            notes: None,
+        },
+    )
+    .await
+    .expect("return");
+
+    // A posted count adjusts the stock (COUNT_ADJUST).
+    let (on_hand, _) = balance_of(&db, article_id, main_loc)
+        .await
+        .expect("balance before count");
+    let mut session = controls::create_count_session(
+        &db,
+        CreateInventoryCountSessionInput {
+            warehouse_id: 1,
+            location_id: Some(main_loc),
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("create session");
+    session = controls::transition_count_session(
+        &db,
+        TransitionInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            next_status: "counting".to_string(),
+            reason: None,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("to counting");
+    let line = controls::upsert_count_line(
+        &db,
+        UpsertInventoryCountLineInput {
+            session_id: session.id,
+            article_id,
+            location_id: main_loc,
+            counted_qty: on_hand - 2.0,
+            variance_reason_code: Some("COUNT_ERROR".to_string()),
+        },
+    )
+    .await
+    .expect("count line");
+    for next in ["submitted", "approved"] {
+        session = controls::transition_count_session(
+            &db,
+            TransitionInventoryCountSessionInput {
+                session_id: session.id,
+                expected_row_version: session.row_version,
+                next_status: next.to_string(),
+                reason: None,
+                actor_id: Some(if next == "approved" { 2 } else { 1 }),
+            },
+        )
+        .await
+        .expect("count transition");
+    }
+    controls::approve_count_line(
+        &db,
+        ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: 99,
+            reviewer_evidence: "Counted twice".to_string(),
+        },
+    )
+    .await
+    .expect("approve line");
+    controls::post_count_session(
+        &db,
+        PostInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("post count");
+
+    let consistent = controls::run_reconciliation(&db, RunInventoryReconciliationInput { actor_id: Some(1) })
+        .await
+        .expect("reconciliation of a consistent ledger");
+    assert!(consistent.checked_rows >= 2, "both locations are checked");
+    let findings = controls::list_reconciliation_findings(&db, consistent.id)
+        .await
+        .expect("findings");
+    assert_eq!(
+        consistent.drift_rows, 0,
+        "a ledger made only of real commands must not drift: {findings:?}"
+    );
+
+    // A balance edited by hand is a real drift and is still reported.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "UPDATE stock_balances SET on_hand_qty = on_hand_qty + 7, available_qty = available_qty + 7 \
+             WHERE article_id = {article_id} AND location_id = {main_loc}"
+        ),
+    ))
+    .await
+    .expect("edit balance by hand");
+    let drifted = controls::run_reconciliation(&db, RunInventoryReconciliationInput { actor_id: Some(1) })
+        .await
+        .expect("drift run");
+    assert_eq!(drifted.drift_rows, 1);
+    let findings = controls::list_reconciliation_findings(&db, drifted.id)
+        .await
+        .expect("drift findings");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].location_id, main_loc);
+    assert!((findings[0].drift_qty - 7.0).abs() < 1e-9);
+}
+
+/// Run a repairable order through the real procurement path up to `last` and return its movements.
+async fn repairable_to_write_off(db: &DatabaseConnection, article_id: i64, location_id: i64, steps: &[&str]) {
+    let order = procurement::create_repairable_order(
+        db,
+        CreateRepairableOrderInput {
+            article_id,
+            quantity: 2.0,
+            source_location_id: location_id,
+            return_location_id: Some(location_id),
+            linked_po_line_id: None,
+            linked_reservation_id: None,
+            reason: Some("ledger write-off".to_string()),
+            serial_number: None,
+            vendor_supplier_id: None,
+            actor_id: None,
+        },
+    )
+    .await
+    .expect("create");
+    let mut row_version = order.row_version;
+    for step in steps {
+        let next = procurement::transition_repairable_order(
+            db,
+            TransitionRepairableOrderInput {
+                next_status: (*step).to_string(),
+                reason: Some("ledger write-off".to_string()),
+                ..repairable_transition(order.id, row_version, location_id)
+            },
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{step}: {e:?}"));
+        row_version = next.row_version;
+    }
+}
+
+async fn assert_repairable_write_off_reconciles(steps: &[&str], code: &str, movement: &str, sign: f64) {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, code).await;
+    let location_id = main_location_id(&db).await;
+    seed_stock(&db, article_id, location_id, 5.0).await;
+    repairable_to_write_off(&db, article_id, location_id, steps).await;
+    let movements = repairable_movements(&db, article_id).await;
+    assert!(
+        movements.iter().any(|t| t.movement_type == movement),
+        "{movement} written"
+    );
+
+    let run = controls::run_reconciliation(&db, RunInventoryReconciliationInput { actor_id: Some(1) })
+        .await
+        .expect("reconciliation");
+    let findings = controls::list_reconciliation_findings(&db, run.id)
+        .await
+        .expect("findings");
+    assert_eq!(run.drift_rows, 0, "{movement} must count in the ledger: {findings:?}");
+
+    // The same movement coming from another PC is applied like the local command did.
+    let aux_loc = insert_aux_location(&db, &format!("AUX-{movement}")).await;
+    let warehouse_id: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT warehouse_id FROM stock_locations WHERE id = ?",
+            [aux_loc.into()],
+        ))
+        .await
+        .expect("warehouse query")
+        .expect("warehouse row")
+        .try_get("", "warehouse_id")
+        .expect("warehouse id");
+    crate::inventory::ledger::apply_received_movement(&db, article_id, warehouse_id, aux_loc, movement, 2.0)
+        .await
+        .expect("received movement is accepted");
+    let (on_hand, reserved) = balance_of(&db, article_id, aux_loc).await.expect("aux balance");
+    assert!((on_hand - 2.0 * sign).abs() < 1e-9 && reserved.abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn a_repairable_cancelled_after_release_reconciles_and_applies_from_sync() {
+    assert_repairable_write_off_reconciles(
+        &["RELEASED", "CANCELLED"],
+        "INV-REP-LEDGER-CXL",
+        "REPAIRABLE_CANCEL_RESTORE",
+        1.0,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_repairable_scrapped_after_return_reconciles_and_applies_from_sync() {
+    assert_repairable_write_off_reconciles(
+        &["RELEASED", "SENT_FOR_REPAIR", "RETURNED_FROM_REPAIR", "SCRAPPED"],
+        "INV-REP-LEDGER-SCRAP",
+        "REPAIRABLE_SCRAP_WRITEOFF",
+        -1.0,
+    )
+    .await;
+}

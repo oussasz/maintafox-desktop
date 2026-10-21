@@ -16,8 +16,10 @@ use crate::errors::{AppError, AppResult};
 /// count postings store a signed variance.
 pub fn movement_balance_effect(movement_type: &str, quantity: f64) -> Option<(f64, f64)> {
     Some(match movement_type {
-        "ADJUST_IN" | "TRANSFER_IN" | "GR_ACCEPT" | "REPAIRABLE_RETURN" => (quantity, 0.0),
-        "ADJUST_OUT" | "TRANSFER_OUT" | "REPAIRABLE_RELEASE" => (-quantity, 0.0),
+        "ADJUST_IN" | "TRANSFER_IN" | "GR_ACCEPT" | "REPAIRABLE_RETURN" | "REPAIRABLE_CANCEL_RESTORE" => {
+            (quantity, 0.0)
+        }
+        "ADJUST_OUT" | "TRANSFER_OUT" | "REPAIRABLE_RELEASE" | "REPAIRABLE_SCRAP_WRITEOFF" => (-quantity, 0.0),
         "COUNT_ADJUST" | "COUNT_REVERSAL" => (quantity, 0.0),
         "RESERVE" => (0.0, quantity),
         "RELEASE" => (0.0, -quantity),
@@ -34,9 +36,11 @@ pub const ON_HAND_MOVEMENTS: &[(&str, f64)] = &[
     ("TRANSFER_IN", 1.0),
     ("GR_ACCEPT", 1.0),
     ("REPAIRABLE_RETURN", 1.0),
+    ("REPAIRABLE_CANCEL_RESTORE", 1.0),
     ("ADJUST_OUT", -1.0),
     ("TRANSFER_OUT", -1.0),
     ("REPAIRABLE_RELEASE", -1.0),
+    ("REPAIRABLE_SCRAP_WRITEOFF", -1.0),
     ("COUNT_ADJUST", 1.0),
     ("COUNT_REVERSAL", 1.0),
     ("ISSUE", -1.0),
@@ -111,11 +115,25 @@ mod tests {
         assert_eq!(movement_balance_effect("ISSUE", 1.0), Some((-1.0, -1.0)));
         assert_eq!(movement_balance_effect("RETURN", 1.0), Some((1.0, 1.0)));
         assert_eq!(movement_balance_effect("COUNT_ADJUST", -4.0), Some((-4.0, 0.0)));
+        assert_eq!(
+            movement_balance_effect("REPAIRABLE_CANCEL_RESTORE", 2.0),
+            Some((2.0, 0.0))
+        );
+        assert_eq!(
+            movement_balance_effect("REPAIRABLE_SCRAP_WRITEOFF", 2.0),
+            Some((-2.0, 0.0))
+        );
         assert_eq!(movement_balance_effect("UNKNOWN", 1.0), None);
     }
 
     #[test]
     fn on_hand_sql_matches_balance_effect() {
+        for movement in ["REPAIRABLE_CANCEL_RESTORE", "REPAIRABLE_SCRAP_WRITEOFF"] {
+            assert!(
+                super::ON_HAND_MOVEMENTS.iter().any(|(m, _)| m == &movement),
+                "{movement} changes on-hand stock"
+            );
+        }
         for (movement, sign) in super::ON_HAND_MOVEMENTS {
             let (on_hand, _) = movement_balance_effect(movement, 2.0).expect("known movement");
             assert_eq!(on_hand, 2.0 * sign, "{movement}");
