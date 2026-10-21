@@ -75,7 +75,8 @@ steps in GitHub, and you publish in the vendor console. GitHub and the server do
 What each step means:
 
 - **Tag** (a permanent label on one exact point of the code, such as `v1.0.0`). Pushing a tag
-  starts the release run. The workflow only accepts tags that look like `vX.Y.Z`.
+  starts the release run. The workflow only accepts tags that look like `vX.Y.Z`. It can also be started by hand
+  ("Run workflow", `workflow_dispatch`) to re-run a release, but you must still choose the tag.
 - **Build job.** It compiles the app and makes the installer, `Maintafox_<version>_x64-setup.exe`.
   It checks that the tag, the three version files and the French and English notes agree. It never
   holds the updater key, so a bad code library cannot steal it.
@@ -138,7 +139,7 @@ What each step means:
   installer that every PC would accept. A leak alone is not enough to attack: the attacker must also
   get the file onto the server or the storage, or sit between the PC and the server. But you must not
   wait. Do this, in this order:
-  1. In the console, pause updates (Updates > Rollouts > Pause) so nothing is offered while you work.
+  1. In the console, pause updates (Updates > Rollout groups > "Pause stage") so nothing is offered while you work.
   2. In GitHub, delete the two secrets from the `release` environment. Revoke the publisher token in
      the console (Updates > Releases > Release workflow keys).
   3. Tell Claude: "updater key leaked". Claude and you create a new key (see below), commit the new
@@ -215,8 +216,9 @@ What each step means:
 - **What they are.** One per PC, created when the PC is activated. The PC uses it to ask the server
   for updates and licence checks. The app never shows it.
 - **If LOST or the PC is replaced.** Activate the new PC in the normal way (licence process).
-- **If LEAKED** (a PC is stolen or copied). Revoke or suspend that device in the vendor console.
-  To confirm: the exact console action and screen for revoking one device (not checked for this guide).
+- **If LEAKED** (a PC is stolen or copied). Revoke that device in the vendor console: the Devices
+  page (Customer > Devices, the PC's "..." menu) lets an operator revoke one machine.
+  To confirm: the exact action name and that a revoked PC stops getting updates.
 
 ### Vendor licence-signing keys (Ed25519)
 
@@ -226,13 +228,18 @@ What each step means:
   (`src-tauri/src/entitlements/trusted_keys.rs`; current key id `mfx-ed25519-2026-10`).
 - **Where the private key lives.** In the server `.env` only (`ENTITLEMENT_SIGNING_KEY_ID` and
   `ENTITLEMENT_SIGNING_PRIVATE_KEY`). It never leaves the server and is not in any repository.
-  To confirm: that the server `.env` (which holds this key) is kept in a safe copy of its own;
-  the backup documents cover the database, not this file.
+  The `.env` is **not** in the server backups (`deploy/BACKUP_AND_RESTORE.md`, section 4.3). Keep a
+  copy of it in your password manager: without `ENTITLEMENT_SIGNING_PRIVATE_KEY` (and the other
+  `.env` secrets) a restored server cannot sign licences.
 - **If LOST.** The server cannot sign new licences until a new key exists. Existing signed
   licences still verify until they expire. Fix: rotate (below).
-- **If LEAKED.** Someone could forge licences and recovery codes. This is an emergency: ask Claude to
-  start the licence-key rotation in the console's `key_rotation` runbook, and mark the old key
-  compromised (the desktop has a `licensing_trust_keys.is_compromised` flag for this).
+- **If LEAKED.** Someone could forge licences and recovery codes. This is an emergency. Be clear
+  about the limit: **forged licences stay accepted by the desktops until the PCs carry the
+  "compromised" flag for that key (`licensing_trust_keys.is_compromised` in the desktop) or get a
+  new release that no longer trusts it.** Switching the server key alone does not stop them. The
+  procedure is the `key_rotation` runbook (vendor console `api/src/app/runbooks.ts`): ask Claude to
+  start it. To confirm: whether the console can set the compromised flag on PCs, or whether only a
+  new desktop release can.
 - **To rotate (no lock-out).** (1) Generate a new key with
   `api/scripts/generate-entitlement-signing-key.mjs` in the vendor console repository. (2) Ship a
   desktop release that trusts the new public key next to the old one, and wait until PCs have it.
@@ -284,19 +291,23 @@ the link between the release and its code.
 
 ### Forced update
 
-To make an update mandatory, set a minimum version (a "floor") in the console (Updates > Forced
-updates). PCs below the floor are told they must update, and the offer ignores the rollout
+To make an update mandatory, set a minimum version (a "floor") in the console (Updates > Required
+versions; French: "Versions obligatoires"). PCs below the floor are told they must update, and the offer ignores the rollout
 percentage. **Always publish the release first, then set the floor.** A floor with no published
 release for that PC blocks the PC: it is forced to update and nothing is offered. A "required"
-policy with no readable minimum blocks every PC. Remove or lower the floor to unblock.
+policy with no readable minimum blocks every PC. Remove or lower the floor to unblock. **Pause and Recall still win over a forced
+update:** a paused or recalled release is not offered, even to PCs below the floor.
 
 ### Bad release
 
 - **Recall** (Console > Updates > Releases > Recall, with your authenticator code). PCs stop being
-  offered it. A PC already on it is offered the previous release. If a PC has no previous release
-  available, it stays where it is, so publish a fixed release next (a hotfix).
-- **Pause** (Console > Updates > Rollouts > Pause). Nothing is offered to that group until you
-  resume. Use it to stop, think and decide.
+  offered it. A PC already on it is offered a **newer** release if there is one for it; otherwise
+  the previous allowed release. With neither, it stays where it is, so publish a fixed release next
+  (a hotfix).
+- **Pause** (Console > Updates > Rollout groups > "Pause stage"). Nothing is offered to that group
+  until you resume. The one exception: a PC whose database update failed may still ask to go back to
+  the version it came from (an explicit rollback), also while paused. Use Pause to stop, think and
+  decide.
 
 ### An update failed on one PC
 
@@ -359,6 +370,13 @@ previous version. The same document has the manual reinstall and the support ste
 - Never share the key file or its password with anyone, Claude included.
 - Never email the `.key` file, or put it in a chat, a shared folder or the repository.
 - Never delete the `release` environment.
+- Never switch the server's licence-signing key before the desktops trust the new one.
+- Never change `RELEASE_UPDATER_PUBLIC_KEY` on the server, or the committed `.pub` file, outside the
+  key-replacement procedure.
+- Never put `ENTITLEMENT_SIGNING_PRIVATE_KEY` in a repository or a chat.
+- Never lose the backup key (the owner's age key): without it every server backup is unreadable.
+- Never delete or lower the publisher token before the new one is set.
+- Never build or tag from a branch you did not review.
 - Never turn a failing release check into a warning to "get it through". Fix the cause.
 
 ---
@@ -376,7 +394,7 @@ installe et redémarre. Si la mise à jour de la base échoue, elle remet la sau
 la version précédente.
 
 **Clés et secrets.** La clé privée de mise à jour (fichier + mot de passe) est sur votre PC, sur une
-clé USB hors ligne et dans l'environnement GitHub `release`. Si elle est perdue ou volée, les PC
+clé USB hors ligne et dans l'environnement GitHub `release`. Si elle est perdue (toutes les copies) ou divulguée, les PC
 déjà installés n'acceptent que la clé avec laquelle ils ont été construits : il faut créer une
 nouvelle clé et réinstaller chaque PC à la main. Une fuite est une urgence : mettre les mises à
 jour en pause, supprimer les secrets GitHub, révoquer le jeton, puis remplacer la clé. Le jeton
