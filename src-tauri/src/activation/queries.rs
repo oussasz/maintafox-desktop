@@ -84,8 +84,7 @@ fn validate_activation_input(input: &ApplyMachineActivationInput) -> AppResult<(
 fn read_machine_id_or_fallback() -> String {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-        if let Ok(output) = Command::new("reg")
+        if let Ok(output) = crate::auth::device::hidden_console_command("reg")
             .args(["query", r"HKLM\SOFTWARE\Microsoft\Cryptography", "/v", "MachineGuid"])
             .output()
         {

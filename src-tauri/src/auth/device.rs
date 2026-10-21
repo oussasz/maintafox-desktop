@@ -44,13 +44,27 @@ pub fn derive_device_fingerprint() -> AppResult<String> {
     Ok(encode(hasher.finalize()))
 }
 
+/// A console program (`reg`) started without a window. The release app is a GUI
+/// program (`windows_subsystem = "windows"`), so Windows opens a new console window for every
+/// console program it starts unless told not to: a black window flashing over the app at each
+/// licence or device check (owner test of 0.9.0). The program, its arguments and its output are
+/// unchanged, so the device fingerprint is the same.
+#[cfg(target_os = "windows")]
+pub(crate) fn hidden_console_command(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    /// `CREATE_NO_WINDOW` (Win32 process creation flag).
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut command = std::process::Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
 /// Read the platform machine ID.
 /// Returns Err if the platform doesn't expose a machine ID.
 fn read_machine_id() -> AppResult<String> {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-        let output = Command::new("reg")
+        let output = hidden_console_command("reg")
             .args(["query", r"HKLM\SOFTWARE\Microsoft\Cryptography", "/v", "MachineGuid"])
             .output()?;
         let text = String::from_utf8_lossy(&output.stdout);
@@ -375,20 +389,23 @@ async fn read_offline_grace_hours(db: &DatabaseConnection) -> AppResult<i64> {
 
 /// Best-effort check for network availability.
 ///
-/// Returns true if any non-loopback network interface has an assigned IP.
+/// Returns true if this PC has a route to the internet from a non-loopback, non-link-local address.
 /// This is NOT a VPS round-trip — it is local-only; used only to gate
 /// first-login requirement and offline grace bypass detection.
 pub fn is_network_available() -> bool {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-        let output = Command::new("ipconfig").output();
-        if let Ok(out) = output {
-            let text = String::from_utf8_lossy(&out.stdout);
-            // Look for any non-loopback IPv4 address (reject APIPA 169.254.x.x)
-            return text.contains("IPv4 Address") && !text.contains("169.254.");
-        }
-        false
+        // The address Windows would send from to reach a public address: connecting a UDP socket
+        // only picks the route, it sends nothing. Before, this read `ipconfig`'s English text
+        // ("IPv4 Address"), so a French Windows ("Adresse IPv4") was always offline and the first
+        // sign-in on the PC was refused.
+        use std::net::UdpSocket;
+        UdpSocket::bind("0.0.0.0:0")
+            .and_then(|socket| {
+                socket.connect("8.8.8.8:53")?;
+                socket.local_addr()
+            })
+            .is_ok_and(|local| is_routable_local_address(local.ip()))
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -396,6 +413,16 @@ pub fn is_network_available() -> bool {
         // Probe a fast-fail connection to a well-known public DNS on port 53.
         // Returns within 1s if offline.
         TcpStream::connect_timeout(&"8.8.8.8:53".parse().unwrap(), std::time::Duration::from_secs(1)).is_ok()
+    }
+}
+
+/// A local address that reaches a network: not loopback, unset or link-local (169.254.x.x, the
+/// address Windows gives itself when no network answers).
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_routable_local_address(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => !(v4.is_loopback() || v4.is_unspecified() || v4.is_link_local()),
+        std::net::IpAddr::V6(v6) => !(v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xffc0) == 0xfe80),
     }
 }
 
@@ -447,5 +474,21 @@ mod tests {
     fn network_available_returns_bool() {
         // Just verify it doesn't panic \u{2014} result varies by machine
         let _result = is_network_available();
+    }
+
+    #[test]
+    fn a_routable_address_is_one_that_reaches_a_network() {
+        for (ip, routable) in [
+            ("192.168.1.20", true),
+            ("10.0.0.5", true),
+            ("127.0.0.1", false),
+            ("0.0.0.0", false),
+            ("169.254.10.2", false),
+            ("fe80::1", false),
+            ("::1", false),
+            ("2001:db8::5", true),
+        ] {
+            assert_eq!(is_routable_local_address(ip.parse().expect("ip")), routable, "{ip}");
+        }
     }
 }
