@@ -687,19 +687,22 @@ async fn write_recovery(
 
     let stamp = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
-    // The password was chosen by the person creating the account: no forced change.
+    // The password was chosen by the person creating the account: no forced change, and its date
+    // is recorded, else the sign-in reads a password never set and forces the change anyway
+    // (`password_policy::PasswordExpiryStatus::NeverSet`).
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_accounts
             (entity_sync_id, username, display_name, identity_mode, password_hash,
-             is_active, is_admin, force_password_change, failed_login_attempts,
+             is_active, is_admin, force_password_change, password_changed_at, failed_login_attempts,
              created_at, updated_at, row_version)
-         VALUES (?, ?, ?, 'local', ?, 1, 0, 0, 0, ?, ?, 1)",
+         VALUES (?, ?, ?, 'local', ?, 1, 0, 0, ?, 0, ?, ?, 1)",
         [
             entity_sync_id.clone().into(),
             username.into(),
             display_name.into(),
             password_hash.into(),
+            now.to_rfc3339().into(),
             stamp.clone().into(),
             stamp.clone().into(),
         ],
