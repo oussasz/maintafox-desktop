@@ -457,7 +457,7 @@
       "rollback": "Cette version a été retirée par Maintafox. La version {{version}} (précédente) va être réinstallée.",
       "mandatory": "Obligatoire",
       "mandatoryDefault": "Cette mise à jour est nécessaire pour continuer à utiliser Maintafox.",
-      "forcedNotOffered": "Votre licence exige une version plus récente de Maintafox, mais aucune mise à jour n’est encore proposée à cet ordinateur. Contactez le support Maintafox.",
+      "forcedNotOffered": "Votre licence exige une version plus récente de Maintafox, mais aucune n’est encore publiée pour cet ordinateur. Contactez Maintafox.",
       "notes": "Ce qui change",
       "installNow": "Installer maintenant",
       "dismiss": "Plus tard",
@@ -485,18 +485,22 @@
       "megabytes": "{{downloaded}} Mo téléchargés",
       "megabytesOfTotal": "{{downloaded}} Mo sur {{total}} Mo",
       "barLabel": "Progression du téléchargement",
-      "keepOpen": "Laissez l’ordinateur allumé jusqu’au redémarrage de Maintafox."
+      "keepOpen": "Laissez l’ordinateur allumé jusqu’au redémarrage de Maintafox.",
+      "starting": "Préparation de la mise à jour…"
     },
     "refusal": {
       "update_withdrawn": "Cette mise à jour n’est plus proposée (elle a peut-être été suspendue ou retirée). Rien n’a été modifié.",
       "rollback_unsynced_changes_one": "{{count}} modification n’est pas encore synchronisée. Synchronisez d’abord, puis réessayez ; sinon elle serait perdue.",
       "rollback_unsynced_changes_other": "{{count}} modifications ne sont pas encore synchronisées. Synchronisez d’abord, puis réessayez ; sinon elles seraient perdues.",
-      "rollback_backup_missing": "La sauvegarde nécessaire pour revenir à la version {{version}} n’est pas sur cet ordinateur. Contactez le support Maintafox."
+      "rollback_backup_missing": "La sauvegarde nécessaire pour revenir à la version {{version}} n’est pas sur cet ordinateur. Contactez le support Maintafox.",
+      "rollback_refused": "Le retour à la version {{version}} a été refusé par le serveur de mises à jour. Rien n’a été modifié. Contactez le support Maintafox."
     },
     "error": {
       "install": "La mise à jour n’a pas pu être installée. Rien n’a été modifié : Maintafox continue de fonctionner en version {{version}}. Vérifiez la connexion internet et réessayez, ou contactez le support Maintafox.",
       "check": "La vérification des mises à jour n’a pas pu se faire. Maintafox continue de fonctionner ; il réessaiera plus tard.",
-      "detail": "Détail technique : {{detail}}"
+      "detail": "Détail technique : {{detail}}",
+      "adminRequired": "Seul un administrateur de cet ordinateur peut installer les mises à jour. Demandez à un administrateur de se connecter et de l’installer.",
+      "signInRequired": "Connectez-vous en tant qu’administrateur de cet ordinateur pour installer la mise à jour."
     },
     "notice": {
       "rolledBack": "La mise à jour vers la version {{to}} n’a pas pu mettre à jour vos données. Maintafox est revenu à la version {{from}} et a remis vos données telles qu’elles étaient avant la mise à jour. Les modifications faites depuis sont téléchargées à nouveau depuis le serveur lors de la synchronisation.",
@@ -524,7 +528,19 @@
       "technical": "Détails techniques",
       "reinstall": "Réinstaller la version {{from}}",
       "unavailable": "La version précédente ne peut pas être téléchargée pour le moment. Vérifiez la connexion internet et réessayez, ou contactez le support Maintafox.",
-      "error": "La version {{from}} n’a pas pu être réinstallée. Vérifiez la connexion internet et réessayez, ou contactez le support Maintafox."
+      "error": "La version {{from}} n’a pas pu être réinstallée. Vérifiez la connexion internet et réessayez, ou contactez le support Maintafox.",
+      "refused": "Le serveur de mises à jour a refusé de réinstaller la version {{from}}. Laissez cet ordinateur tel quel : ne réinstallez pas, ne réinitialisez pas et ne remplacez pas Maintafox. Vos données sont à l’abri dans la sauvegarde faite avant la mise à jour. Contactez le support Maintafox.",
+      "allowedVersion": "Pour information : le serveur de mises à jour indique la version {{version}} comme autorisée à la place. Elle n’est pas installée automatiquement ; le support Maintafox décide."
+    },
+    "mandatoryReason": {
+      "forced_update_floor": "Votre organisation exige cette version ou une version plus récente.",
+      "emergency": "Maintafox exige cette mise à jour en urgence.",
+      "rollback_requested": "Cet ordinateur revient à la version utilisée avant la mise à jour qui a échoué.",
+      "recalled_version": "La version installée ici a été retirée par Maintafox."
+    },
+    "forced": {
+      "check": "Rechercher la mise à jour requise",
+      "adminHint": "Un administrateur de cet ordinateur installe la mise à jour : connectez-vous en tant qu’administrateur, puis installez-la ici. Après le redémarrage, vérifiez de nouveau la licence."
     }
   }
 }

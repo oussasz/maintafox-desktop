@@ -102,7 +102,7 @@ fn main() {
     match updater_public_key(manifest_dir) {
         Some(key) => println!("cargo:rustc-env=MAINTAFOX_UPDATER_PUBKEY={key}"),
         None => println!(
-            "cargo:warning=No updater public key ({UPDATER_KEY_DIR}/{UPDATER_PUBLIC_KEY_FILE}): this build has no in-app              updates. The owner creates it with scripts/release/setup-updater-key.ps1."
+            "cargo:warning=No updater public key ({UPDATER_KEY_DIR}/{UPDATER_PUBLIC_KEY_FILE}): this build has no in-app updates. The owner creates it with scripts/release/setup-updater-key.ps1."
         ),
     }
     tauri_build::build()

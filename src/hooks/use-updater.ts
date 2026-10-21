@@ -6,8 +6,9 @@
 // useUpdater(): state + actions for update UI (banner, "check for updates" panel). No effects:
 //   safe to use in several components.
 //
-// check_for_update does NOT require a session. install_pending_update DOES require one — the
-// Rust command enforces this; the UI presents a confirmation dialog before calling install().
+// check_for_update does NOT require a session. install_pending_update needs an administrator of
+// this PC with a fresh identity check — the Rust command enforces this (the UI runs it through the
+// step-up dialog after its own confirmation dialog).
 // The current UI locale is passed to the commands so server-side texts match the UI language.
 
 import { useCallback, useEffect } from "react";
@@ -19,7 +20,7 @@ import {
   pendingUpdateNotice,
   useUpdaterStore,
 } from "@/stores/updater-store";
-import type { UseUpdaterResult } from "@/types";
+import type { InstallGuard, UseUpdaterResult } from "@/types";
 
 // Re-check every 2 hours while the application is running.
 export const CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
@@ -49,7 +50,10 @@ export function useUpdater(): UseUpdaterResult {
 
   const { check, install: installAction, dismiss, acknowledgeNotice, clearOutcome } = s;
   const checkNow = useCallback(() => void check(currentLocale()), [check]);
-  const install = useCallback(() => void installAction(currentLocale()), [installAction]);
+  const install = useCallback(
+    (guard?: InstallGuard) => void installAction(currentLocale(), guard),
+    [installAction],
+  );
   const acknowledge = useCallback(() => void acknowledgeNotice(), [acknowledgeNotice]);
 
   return {
@@ -66,6 +70,7 @@ export function useUpdater(): UseUpdaterResult {
     installTargetVersion: s.installTargetVersion,
     refusal: s.refusal,
     error: s.error,
+    errorCode: s.errorCode,
     notice: pendingUpdateNotice(s),
     checkNow,
     install,

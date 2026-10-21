@@ -12,6 +12,7 @@ import { AuthField } from "@/components/auth/shell/AuthField";
 import { AuthAlert, AuthButton, AuthStatusChip } from "@/components/auth/shell/AuthPrimitives";
 import { AuthShell } from "@/components/auth/shell/AuthShell";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
+import { ForcedUpdatePanel } from "@/components/updates/ForcedUpdatePanel";
 import { ProductLicenseGateContext } from "@/contexts/product-license-gate-context";
 import { mfAuth } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
@@ -1056,6 +1057,10 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
         )
       ) : (
         <div className="mt-6 space-y-3">
+          {/* A forced update is the one denial this PC ends by itself: by installing the update,
+              offered here because the app it would be offered in is blocked. The licence check
+              below then lifts the denial once the installed version meets the minimum. */}
+          {state?.status === "denied_force_update_required" ? <ForcedUpdatePanel /> : null}
           {errorBlock}
           {licenceRefusalBlock}
           <AuthButton

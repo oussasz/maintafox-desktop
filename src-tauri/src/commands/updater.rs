@@ -2,8 +2,9 @@
 //!
 //! `check_for_update`           — no session: safe at startup and on the login screen; never fails
 //!                                the app (the result says why there is no update).
-//! `install_pending_update`     — signed-in user: pre-update backup, download with progress,
-//!                                signature check, install (the app restarts).
+//! `install_pending_update`     — an administrator of this PC with a fresh identity check
+//!                                (`install_authority`): pre-update backup, download with
+//!                                progress, signature check, install (the app restarts).
 //! `reinstall_previous_version` — recovery screen after a failed database update (no session:
 //!                                the database could not be opened by this version).
 //! `get_update_journal` / `acknowledge_update_notice` — the outcome of the last update.
@@ -29,6 +30,30 @@ pub async fn check_for_update(app: AppHandle, locale: Option<String>) -> AppResu
     Ok(crate::updater::check(&app, &db, locale.as_deref()).await)
 }
 
+/// Who may install an update on this PC: the administrator of the PC as the licence rule names it
+/// (`product_license::licence_caller`: `adm.settings` plant-wide, or at any scope on a plant whose
+/// administrators are all site-scoped), with a fresh identity check, as for a restore (an update
+/// takes a backup, may stage a restore, and restarts the app for everyone on this PC).
+///
+/// It is the RBAC rule alone, not the licence permission matrix of `require_permission!`: a licence
+/// that requires an update blocks everything else, and installing the update is how it ends, so
+/// the install must stay possible then. It grants nothing the licence denies: what is installed is
+/// what the update server offers this device, signed with the key built into this app. E-1: there
+/// is no built-in administrator; the plant always has a named one (last-administrator guard) or
+/// gets one with a vendor recovery code.
+pub(crate) fn install_authority(caller: &crate::commands::product_license::LicenceCaller) -> AppResult<()> {
+    if !caller.may_administer {
+        return Err(AppError::PermissionDenied(format!(
+            "Permission requise : {}",
+            crate::rbac::permissions::ADM_SETTINGS
+        )));
+    }
+    if !caller.step_up {
+        return Err(AppError::StepUpRequired);
+    }
+    Ok(())
+}
+
 /// Installs the update the manifest offers now. The frontend asks for confirmation first.
 #[tauri::command]
 pub async fn install_pending_update(
@@ -38,6 +63,9 @@ pub async fn install_pending_update(
     on_progress: Channel<UpdateProgressEvent>,
 ) -> AppResult<InstallOutcome> {
     let user = require_session!(state);
+    let step_up = state.session.read().await.is_step_up_valid();
+    let caller = crate::commands::product_license::licence_caller(&state.db, Some(user.user_id), step_up).await?;
+    install_authority(&caller)?;
     let progress = move |event: UpdateProgressEvent| {
         if let Err(e) = on_progress.send(event) {
             tracing::warn!("update progress could not reach the window: {e}");
@@ -72,4 +100,38 @@ pub fn get_update_journal(app: AppHandle) -> AppResult<Option<UpdateJournalView>
 #[tauri::command]
 pub fn acknowledge_update_notice(app: AppHandle) -> AppResult<()> {
     crate::updater::acknowledge_notice(&app)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::install_authority;
+    use crate::commands::product_license::LicenceCaller;
+    use crate::errors::AppError;
+
+    fn caller(may_administer: bool, step_up: bool) -> LicenceCaller {
+        LicenceCaller {
+            user_id: Some(7),
+            may_administer,
+            step_up,
+        }
+    }
+
+    #[test]
+    fn only_an_administrator_with_a_fresh_identity_check_installs() {
+        assert!(install_authority(&caller(true, true)).is_ok());
+        assert!(matches!(
+            install_authority(&caller(true, false)),
+            Err(AppError::StepUpRequired)
+        ));
+        match install_authority(&caller(false, true)) {
+            Err(AppError::PermissionDenied(message)) => {
+                assert!(message.contains(crate::rbac::permissions::ADM_SETTINGS), "{message}");
+            }
+            other => panic!("a user who does not administer this PC is refused: {other:?}"),
+        }
+        assert!(matches!(
+            install_authority(&LicenceCaller::default()),
+            Err(AppError::PermissionDenied(_))
+        ));
+    }
 }

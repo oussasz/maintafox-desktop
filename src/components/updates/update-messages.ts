@@ -18,7 +18,26 @@ export function refusalMessage(
       return t("updates.refusal.rollback_unsynced_changes", { count: refusal.count });
     case "rollback_backup_missing":
       return t("updates.refusal.rollback_backup_missing", { version: targetVersion });
+    case "rollback_refused":
+      return t("updates.refusal.rollback_refused", { version: targetVersion });
   }
+}
+
+/** The reason codes the update server gives for a mandatory update (vendor-console PR #3). */
+export const MANDATORY_REASON_CODES = [
+  "forced_update_floor",
+  "emergency",
+  "rollback_requested",
+  "recalled_version",
+] as const;
+
+/**
+ * Why an update is mandatory, translated from the server's code. An unknown code gets the generic
+ * text; the raw code is never shown.
+ */
+export function mandatoryReasonMessage(t: TFunction<"shell">, code: string | null): string {
+  const known = MANDATORY_REASON_CODES.find((c) => c === code);
+  return known ? t(`updates.mandatoryReason.${known}`) : t("updates.banner.mandatoryDefault");
 }
 
 /** Release notes in the UI language (French notes for "fr", English otherwise). */

@@ -4,21 +4,37 @@ import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
 import { useUpdater } from "@/hooks/use-updater";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 
 import { UpdateInstallDialog } from "./UpdateInstallDialog";
 import { UpdateProgress } from "./UpdateProgress";
-import { notesForLocale, refusalMessage } from "./update-messages";
+import { mandatoryReasonMessage, notesForLocale, refusalMessage } from "./update-messages";
 
 type Tone = "info" | "warning" | "danger";
 
 const TONE_CLASSES: Record<Tone, string> = {
-  info: "border-primary/30 bg-primary/5",
-  warning: "border-status-warning/40 bg-status-warning/10",
-  danger: "border-status-danger/30 bg-status-danger/5",
+  info: "border-tone-info-border bg-tone-info-bg",
+  warning: "border-tone-warning-border bg-tone-warning-bg",
+  danger: "border-tone-danger-border bg-tone-danger-bg",
 };
+
+/** Plain-language text of an install failure, by its IPC code. */
+function installErrorKey(
+  code: string | null,
+): "updates.error.adminRequired" | "updates.error.signInRequired" | "updates.error.install" {
+  switch (code) {
+    case "PERMISSION_DENIED":
+      return "updates.error.adminRequired";
+    case "AUTH_ERROR":
+    case "SESSION_LOCKED":
+      return "updates.error.signInRequired";
+    default:
+      return "updates.error.install";
+  }
+}
 
 function BannerBox({
   tone,
@@ -55,14 +71,18 @@ function BannerBox({
 }
 
 /**
- * In-app update banner (master plan Phase 5.5), mounted once at the top of the main shell:
- * the offered update (mandatory or not, upgrade or Maintafox-initiated rollback), install
- * progress, refusals and errors in plain language, and the outcome notice of the last update.
+ * In-app update banner (master plan Phase 5.5), mounted once at the top of the main shell, and
+ * inside the licence screen while the licence requires an update (`embedded`, see
+ * `ForcedUpdatePanel`): the offered update (mandatory or not, upgrade or Maintafox-initiated
+ * rollback), install progress, refusals and errors in plain language, and the outcome notice of
+ * the last update. Installing asks for a fresh identity check (step-up); only an administrator of
+ * this PC installs (the Rust command decides; a refusal is explained here).
  */
-export function UpdateBanner() {
+export function UpdateBanner({ embedded = false }: { embedded?: boolean } = {}) {
   const { t, i18n } = useTranslation("shell");
   const appVersion = useAppStore((s) => s.appVersion);
   const u = useUpdater();
+  const { withStepUp, StepUpDialogElement } = useStepUp();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const result = u.result;
@@ -143,7 +163,7 @@ export function UpdateBanner() {
           onClose={u.clearOutcome}
           closeLabel={t("updates.banner.dismissOutcome")}
         >
-          <p role="alert">{t("updates.error.install", { version: currentVersion })}</p>
+          <p role="alert">{t(installErrorKey(u.errorCode), { version: currentVersion })}</p>
           <p className="text-xs text-text-muted">
             {t("updates.error.detail", { detail: u.error })}
           </p>
@@ -171,8 +191,14 @@ export function UpdateBanner() {
           </div>
           {u.mandatory ? (
             <p className="text-text-secondary">
-              {result.mandatory_reason ?? u.forceReason ?? t("updates.banner.mandatoryDefault")}
+              {result.mandatory_reason || !u.forceReason
+                ? mandatoryReasonMessage(t, result.mandatory_reason)
+                : u.forceReason}
             </p>
+          ) : null}
+          {u.mandatory && result.mandatory_message?.trim() ? (
+            // Operator text: rendered as text (React escapes it), never as HTML.
+            <p className="whitespace-pre-line text-text-secondary">{result.mandatory_message}</p>
           ) : null}
           {notes ? (
             <div>
@@ -192,7 +218,9 @@ export function UpdateBanner() {
           </div>
         </BannerBox>,
       );
-    } else if (u.forceRequired && !result?.available) {
+    } else if (u.forceRequired && result?.status === "up_to_date") {
+      // The licence requires an update but the server publishes none for this PC (204): say so;
+      // the licence stays denied (nothing here unblocks it).
       sections.push(
         <BannerBox
           key="forced"
@@ -211,7 +239,11 @@ export function UpdateBanner() {
   return (
     <section
       aria-label={t("updates.banner.regionLabel")}
-      className="sticky top-0 z-20 flex flex-col gap-2 border-b border-surface-border bg-surface-0 px-4 py-2"
+      className={
+        embedded
+          ? "flex flex-col gap-2"
+          : "sticky top-0 z-20 flex flex-col gap-2 border-b border-surface-border bg-surface-0 px-4 py-2"
+      }
     >
       {sections}
       {offeredVersion ? (
@@ -222,10 +254,11 @@ export function UpdateBanner() {
           onCancel={() => setConfirmOpen(false)}
           onConfirm={() => {
             setConfirmOpen(false);
-            u.install();
+            u.install({ run: withStepUp, isCancelled: isStepUpCancelled });
           }}
         />
       ) : null}
+      {StepUpDialogElement}
     </section>
   );
 }

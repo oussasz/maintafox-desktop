@@ -138,6 +138,8 @@ describe("useStartupBridge", () => {
           from_version: "1.1.0",
           to_version: "1.2.0",
           failure: "Migration failed",
+          rollback_refusal: null,
+          rollback_allowed_version: null,
           notice_acknowledged: false,
         };
       }
@@ -173,6 +175,8 @@ describe("useStartupBridge", () => {
           from_version: "1.1.0",
           to_version: "1.2.0",
           failure: null,
+          rollback_refusal: null,
+          rollback_allowed_version: null,
           notice_acknowledged: false,
         };
       }

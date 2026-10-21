@@ -17,8 +17,8 @@ import {
   installPendingUpdate,
   reinstallPreviousVersion,
 } from "@/services/updater-service";
-import type { UpdateInstallPhase } from "@/types";
-import { toErrorMessage } from "@/utils/errors";
+import type { InstallGuard, UpdateInstallPhase } from "@/types";
+import { extractIpcErrorCode, toErrorMessage } from "@/utils/errors";
 import type {
   InstallOutcome,
   InstallRefusal,
@@ -28,7 +28,12 @@ import type {
 } from "@shared/ipc-types";
 
 /** Licence onboarding status meaning "this client must update before it may run". */
-const FORCE_UPDATE_LICENSE_STATUS = "denied_force_update_required";
+export const FORCE_UPDATE_LICENSE_STATUS = "denied_force_update_required";
+
+const NO_GUARD: InstallGuard = {
+  run: (action) => action(),
+  isCancelled: () => false,
+};
 
 // ── State shape ───────────────────────────────────────────────────────────────
 
@@ -57,12 +62,17 @@ export interface UpdaterState {
   refusal: InstallRefusal | null;
   /** Non-null when the last install / reinstall failed (technical detail). */
   error: string | null;
+  /**
+   * IPC code of that failure: `PERMISSION_DENIED` (only an administrator of this PC installs),
+   * `AUTH_ERROR` / `SESSION_LOCKED` (sign in first); null for other failures.
+   */
+  errorCode: string | null;
 
   /** The last update's journal — null when never updated in the app or not loaded. */
   journal: UpdateJournalView | null;
 
   check: (locale?: string) => Promise<void>;
-  install: (locale?: string) => Promise<void>;
+  install: (locale?: string, guard?: InstallGuard) => Promise<void>;
   /** Recovery screen: reinstall `previousVersion` after a failed database update. */
   reinstallPrevious: (locale: string | undefined, previousVersion: string) => Promise<void>;
   loadJournal: () => Promise<void>;
@@ -127,18 +137,21 @@ export const useUpdaterStore = create<UpdaterState>()((set, get) => {
     command: () => Promise<InstallOutcome>,
     locale: string | undefined,
     targetVersion: string | null,
+    guard: InstallGuard = NO_GUARD,
   ): Promise<void> => {
     if (isInstallInProgress(get().phase)) return;
+    // "starting" until the backend reports its first step (it may first ask who installs).
     set({
       installTargetVersion: targetVersion,
-      phase: "backing_up",
+      phase: "starting",
       downloadedBytes: 0,
       totalBytes: null,
       refusal: null,
       error: null,
+      errorCode: null,
     });
     try {
-      const outcome = await command();
+      const outcome = await guard.run(command);
       if (outcome.outcome === "restarting") {
         // The installer runs and this process exits: keep showing "restarting".
         set({ phase: "restarting" });
@@ -150,7 +163,11 @@ export const useUpdaterStore = create<UpdaterState>()((set, get) => {
         await get().check(locale);
       }
     } catch (err) {
-      set({ phase: "idle", error: toErrorMessage(err) });
+      if (guard.isCancelled(err)) {
+        set({ phase: "idle" });
+        return;
+      }
+      set({ phase: "idle", error: toErrorMessage(err), errorCode: extractIpcErrorCode(err) });
     }
   };
 
@@ -167,6 +184,7 @@ export const useUpdaterStore = create<UpdaterState>()((set, get) => {
     installTargetVersion: null,
     refusal: null,
     error: null,
+    errorCode: null,
     journal: null,
 
     check: async (locale) => {
@@ -197,15 +215,20 @@ export const useUpdaterStore = create<UpdaterState>()((set, get) => {
       }
     },
 
-    install: (locale) =>
+    install: (locale, guard) =>
       runInstall(
         () => installPendingUpdate(locale, onProgress),
         locale,
         get().lastCheckResult?.version ?? null,
+        guard,
       ),
 
-    reinstallPrevious: (locale, previousVersion) =>
-      runInstall(() => reinstallPreviousVersion(locale, onProgress), locale, previousVersion),
+    reinstallPrevious: async (locale, previousVersion) => {
+      await runInstall(() => reinstallPreviousVersion(locale, onProgress), locale, previousVersion);
+      // A refused rollback is recorded in the journal (with the version the server would allow,
+      // shown as information only): read it again for the recovery screen.
+      if (get().refusal?.code === "rollback_refused") await get().loadJournal();
+    },
 
     loadJournal: async () => {
       try {
@@ -235,9 +258,10 @@ export const useUpdaterStore = create<UpdaterState>()((set, get) => {
         dismissedVersion: s.lastCheckResult?.version ?? s.dismissedVersion,
         refusal: null,
         error: null,
+        errorCode: null,
       });
     },
 
-    clearOutcome: () => set({ refusal: null, error: null }),
+    clearOutcome: () => set({ refusal: null, error: null, errorCode: null }),
   };
 });

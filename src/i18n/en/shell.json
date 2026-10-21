@@ -457,7 +457,7 @@
       "rollback": "This version was withdrawn by Maintafox. Version {{version}} (previous) will be reinstalled.",
       "mandatory": "Mandatory",
       "mandatoryDefault": "This update is required to keep using Maintafox.",
-      "forcedNotOffered": "Your licence requires a newer version of Maintafox, but no update is offered to this computer yet. Contact Maintafox support.",
+      "forcedNotOffered": "Your licence requires a newer version of Maintafox, but none is published for this computer yet. Contact Maintafox.",
       "notes": "What changes",
       "installNow": "Install now",
       "dismiss": "Later",
@@ -485,18 +485,22 @@
       "megabytes": "{{downloaded}} MB downloaded",
       "megabytesOfTotal": "{{downloaded}} MB of {{total}} MB",
       "barLabel": "Download progress",
-      "keepOpen": "Keep the computer on until Maintafox has restarted."
+      "keepOpen": "Keep the computer on until Maintafox has restarted.",
+      "starting": "Preparing the update…"
     },
     "refusal": {
       "update_withdrawn": "This update is no longer offered (it may have been paused or withdrawn). Nothing was changed.",
       "rollback_unsynced_changes_one": "{{count}} change is not synchronised yet. Synchronise first, then try again; otherwise it would be lost.",
       "rollback_unsynced_changes_other": "{{count}} changes are not synchronised yet. Synchronise first, then try again; otherwise they would be lost.",
-      "rollback_backup_missing": "The backup needed to go back to version {{version}} is not on this computer. Contact Maintafox support."
+      "rollback_backup_missing": "The backup needed to go back to version {{version}} is not on this computer. Contact Maintafox support.",
+      "rollback_refused": "Going back to version {{version}} was refused by the update server. Nothing was changed. Contact Maintafox support."
     },
     "error": {
       "install": "The update could not be installed. Nothing was changed: Maintafox keeps working on version {{version}}. Check the internet connection and try again, or contact Maintafox support.",
       "check": "The update check could not run. Maintafox keeps working; it will try again later.",
-      "detail": "Technical detail: {{detail}}"
+      "detail": "Technical detail: {{detail}}",
+      "adminRequired": "Only an administrator of this computer can install updates. Ask an administrator to sign in and install it.",
+      "signInRequired": "Sign in as an administrator of this computer to install the update."
     },
     "notice": {
       "rolledBack": "The update to version {{to}} could not update your data. Maintafox went back to version {{from}} and restored your data as it was before the update. Changes made after that are downloaded again from the server when you synchronise.",
@@ -524,7 +528,19 @@
       "technical": "Technical details",
       "reinstall": "Reinstall version {{from}}",
       "unavailable": "The previous version cannot be downloaded right now. Check the internet connection and try again, or contact Maintafox support.",
-      "error": "Version {{from}} could not be reinstalled. Check the internet connection and try again, or contact Maintafox support."
+      "error": "Version {{from}} could not be reinstalled. Check the internet connection and try again, or contact Maintafox support.",
+      "refused": "The update server refused to reinstall version {{from}}. Keep this computer as it is: do not reinstall, reset or replace Maintafox. Your data is safe in the backup made before the update. Contact Maintafox support.",
+      "allowedVersion": "For information: the update server names version {{version}} as allowed instead. It is not installed automatically; Maintafox support decides."
+    },
+    "mandatoryReason": {
+      "forced_update_floor": "Your organisation requires this version or a newer one.",
+      "emergency": "Maintafox requires this update urgently.",
+      "rollback_requested": "This computer goes back to the version it ran before the failed update.",
+      "recalled_version": "The version installed here was withdrawn by Maintafox."
+    },
+    "forced": {
+      "check": "Check for the required update",
+      "adminHint": "An administrator of this computer installs the update: sign in as an administrator, then install it here. After the restart, check the licence again."
     }
   }
 }

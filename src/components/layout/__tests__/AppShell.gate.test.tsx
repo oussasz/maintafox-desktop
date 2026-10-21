@@ -28,6 +28,8 @@ vi.mock("@/components/auth/SingleAdministratorWarning", () => ({
 vi.mock("@/components/notifications/SafetyRuleNotice", () => ({ SafetyRuleNotice: () => null }));
 vi.mock("@/components/shell/AppToastHost", () => ({ AppToastHost: () => null }));
 vi.mock("@/hooks/use-startup-bridge", () => ({ useStartupBridge: () => undefined }));
+vi.mock("@/components/updates/UpdateBanner", () => ({ UpdateBanner: () => null }));
+vi.mock("@/hooks/use-updater", () => ({ useUpdateScheduler: () => undefined }));
 vi.mock("@/lib/ipc-invoke", () => ({ invokeSilent: vi.fn(async () => undefined) }));
 vi.mock("@/lib/session-ready", () => ({ isSessionActiveForBackgroundWork: () => false }));
 vi.mock("@/store/app-store", () => ({

@@ -46,8 +46,19 @@ jobs:
           if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') { Write-Host "::error::Tag '$tag' is not vX.Y.Z."; exit 1 }
           $version = $Matches[1]
           $conf = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          # The release catalog accepts plain versions only (MAJOR.MINOR.PATCH): a pre-release build
+          # (0.4.0-dev, 1.2.3-rc.1) is never uploaded.
+          if ($conf -notmatch '^\d+\.\d+\.\d+$') {
+            Write-Host "::error::src-tauri/tauri.conf.json has version '$conf', which is not a plain release version MAJOR.MINOR.PATCH (pre-release versions such as 0.4.0-dev are never released). Set it to $version before tagging."; exit 1
+          }
           if ($conf -ne $version) {
             Write-Host "::error::src-tauri/tauri.conf.json has version '$conf' but the tag is $tag. Set the version to $version (tauri.conf.json, src-tauri/Cargo.toml, package.json) before tagging."; exit 1
+          }
+          # The licence's forced-update rule reads the Cargo version; the updater sends the Tauri one.
+          $cargo = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $npm = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($cargo -ne $version -or $npm -ne $version) {
+            Write-Host "::error::Versions differ: src-tauri/Cargo.toml '$cargo', package.json '$npm', tag $tag. Set all three (with tauri.conf.json) to $version."; exit 1
           }
           foreach ($lang in @("en", "fr")) {
             $notes = "docs/release/notes/$version.$lang.md"
@@ -164,11 +175,33 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter "*_${version}_x64-setup.exe" | Select-Object -First 1
-          if (-not $installer) { Write-Host "::error::No NSIS installer for $version in src-tauri/target/release/bundle/nsis."; exit 1 }
+          # The control API requires exactly this installer name.
+          $expectedName = "Maintafox_${version}_x64-setup.exe"
+          $path = Join-Path "src-tauri/target/release/bundle/nsis" $expectedName
+          if (-not (Test-Path -LiteralPath $path)) {
+            $found = (Get-ChildItem src-tauri/target/release/bundle/nsis -Filter "*-setup.exe" -ErrorAction SilentlyContinue | ForEach-Object Name) -join ", "
+            Write-Host "::error::The installer must be named exactly $expectedName; found: $found"; exit 1
+          }
+          $installer = Get-Item -LiteralPath $path
           $sig = "$($installer.FullName).sig"
           if (-not (Test-Path $sig)) {
             Write-Host "::error::The updater signature $sig was not produced: the build did not sign the installer for the updater (check TAURI_SIGNING_PRIVATE_KEY and its password)."; exit 1
+          }
+          # The .sig is base64 of a minisign signature; its trusted comment names the signed file
+          # ("trusted comment: timestamp:<n><TAB>file:<name>"), which the control API checks too.
+          try {
+            $minisign = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String((Get-Content -LiteralPath $sig -Raw).Trim()))
+          } catch {
+            Write-Host "::error::The updater signature $sig is not base64: $($_.Exception.Message)"; exit 1
+          }
+          $trusted = ($minisign -split "`n" | Where-Object { $_ -like "trusted comment:*" } | Select-Object -First 1)
+          if (-not $trusted) { Write-Host "::error::The updater signature has no trusted comment line."; exit 1 }
+          $signedFile = $null
+          foreach ($field in ($trusted.Substring("trusted comment:".Length).Trim() -split "`t")) {
+            if ($field.StartsWith("file:")) { $signedFile = $field.Substring(5).TrimEnd("`r") }
+          }
+          if ($signedFile -cne $installer.Name) {
+            Write-Host "::error::The updater signature was made for file '$signedFile', not '$($installer.Name)'."; exit 1
           }
           if ("${{ steps.codesign.outputs.signed }}" -eq "true") {
             $auth = Get-AuthenticodeSignature -LiteralPath $installer.FullName

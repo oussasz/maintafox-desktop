@@ -33,6 +33,7 @@ export const UpdateCheckResultSchema = z.object({
   kind: UpdateKindSchema.nullable(),
   mandatory: z.boolean(),
   mandatory_reason: z.string().nullable(),
+  mandatory_message: z.string().nullable(),
   notes_en: z.string().nullable(),
   notes_fr: z.string().nullable(),
   message: z.string().nullable(),
@@ -53,6 +54,7 @@ export const UpdateProgressEventSchema = z.discriminatedUnion("event", [
 
 const InstallRefusalSchema = z.discriminatedUnion("code", [
   z.object({ code: z.literal("rollback_backup_missing") }),
+  z.object({ code: z.literal("rollback_refused") }),
   z.object({
     code: z.literal("rollback_unsynced_changes"),
     count: z.number().int().nonnegative(),
@@ -77,6 +79,8 @@ export const UpdateJournalViewSchema = z.object({
   from_version: z.string(),
   to_version: z.string(),
   failure: z.string().nullable(),
+  rollback_refusal: z.string().nullable(),
+  rollback_allowed_version: z.string().nullable(),
   notice_acknowledged: z.boolean(),
 });
 

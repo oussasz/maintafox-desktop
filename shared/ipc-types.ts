@@ -1362,7 +1362,10 @@ export interface UpdateCheckResult {
   pub_date: string | null;
   kind: UpdateKind | null;
   mandatory: boolean;
+  /** Code: forced_update_floor | emergency | rollback_requested | recalled_version (or unknown). */
   mandatory_reason: string | null;
+  /** Optional operator text, shown as plain text. */
+  mandatory_message: string | null;
   notes_en: string | null;
   notes_fr: string | null;
   message: string | null;
@@ -1378,6 +1381,7 @@ export type UpdateProgressEvent =
 /** Why an install was not started (`InstallRefusal` in src-tauri/src/updater/mod.rs). */
 export type InstallRefusal =
   | { code: "rollback_backup_missing" }
+  | { code: "rollback_refused" }
   | { code: "rollback_unsynced_changes"; count: number }
   | { code: "update_withdrawn" };
 
@@ -1400,6 +1404,10 @@ export interface UpdateJournalView {
   from_version: string;
   to_version: string;
   failure: string | null;
+  /** Why the rollback after a failed database update was refused (kept for support). */
+  rollback_refusal: string | null;
+  /** The version the server's refusal named as allowed instead (information only, never installed). */
+  rollback_allowed_version: string | null;
   notice_acknowledged: boolean;
 }
 

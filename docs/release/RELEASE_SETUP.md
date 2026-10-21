@@ -46,7 +46,12 @@ of pretending to check.
 ## Shipping a version (Claude does steps 1-3 when you ask for a release)
 
 1. Set the version (for example `1.2.0`) in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`
-   and `package.json`.
+   and `package.json` (the three must be equal; the workflow checks). Only a plain version
+   MAJOR.MINOR.PATCH is released: the release catalog refuses pre-release versions (`0.4.0-dev`,
+   `1.2.3-rc.1`), so the workflow stops on them and a pre-release build is never uploaded. The
+   installer is then exactly `Maintafox_<version>_x64-setup.exe`, and its updater signature
+   (`.sig`, minisign) must name that file in its trusted comment; the workflow checks both, as the
+   control API does at upload.
 2. Write the release notes in `docs/release/notes/1.2.0.en.md` and `docs/release/notes/1.2.0.fr.md`
    (customers see them before installing).
 3. Merge, then tag: `git tag v1.2.0` and `git push origin v1.2.0`. The "Release (Windows)" workflow

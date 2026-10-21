@@ -47,11 +47,22 @@ export type Theme = "dark" | "light";
 /** Where an in-app install / reinstall is (driven by the Rust progress channel). */
 export type UpdateInstallPhase =
   | "idle"
+  | "starting"
   | "backing_up"
   | "restoring_backup"
   | "downloading"
   | "installing"
   | "restarting";
+
+/**
+ * How the UI runs the install command: the step-up dialog (`useStepUp().withStepUp`) asks for a
+ * fresh identity check when the command answers STEP_UP_REQUIRED, then retries. `isCancelled`
+ * recognises the user closing that dialog (nothing happened: no error is shown).
+ */
+export interface InstallGuard {
+  run: <T>(action: () => Promise<T>) => Promise<T>;
+  isCancelled: (err: unknown) => boolean;
+}
 
 export interface UseUpdaterResult {
   /** Last check result — null before the first check answers. */
@@ -74,10 +85,13 @@ export interface UseUpdaterResult {
   refusal: InstallRefusal | null;
   /** Install failed (technical detail; the UI adds a plain-language explanation). */
   error: string | null;
+  /** IPC code of that failure (`PERMISSION_DENIED`, `AUTH_ERROR`, …) or null. */
+  errorCode: string | null;
   /** Outcome notice of the last update to show once (rolled back / not completed), or null. */
   notice: UpdateJournalView | null;
   checkNow: () => void;
-  install: () => void;
+  /** Installs the offered update; `guard` runs it through the step-up dialog. */
+  install: (guard?: InstallGuard) => void;
   dismiss: () => void;
   acknowledgeNotice: () => void;
   clearOutcome: () => void;

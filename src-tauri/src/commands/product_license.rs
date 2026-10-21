@@ -1404,8 +1404,10 @@ fn minimum_version_lowered(stored: Option<&str>, incoming: Option<&str>) -> bool
 
 /// The version of the app running on this PC: the one the app reports everywhere
 /// (`commands::app::get_app_info`, read by the licence screen and sent to the control plane), fixed
-/// at build time.
-fn running_app_version() -> &'static str {
+/// at build time. The in-app updater reports the same version to the update server
+/// (`updater::running_version`), so the forced update the licence asks for and the update offered
+/// are decided on one version.
+pub(crate) fn running_app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
@@ -2592,10 +2594,35 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
 /// Rust sync worker. Never exposed as a command: the sync token stays in Rust. `None` unless the
 /// activation is currently active.
 pub async fn sync_activation_bearer_token(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    activation_bearer_token_when(db, &[ProductLicenseActivationStatus::Active]).await
+}
+
+/// Bearer token for the update manifest (`updater::ask_manifest`). As for sync, plus one denial: a
+/// forced update (`DeniedForceUpdateRequired`) is ended on this PC only by installing the update,
+/// so the update server must still be asked while the licence blocks everything else (the server
+/// accepts the token: a forced update is not a revoked activation). Any other denial, the offline
+/// grace expired, or no activation: none (the server would refuse the device anyway).
+pub async fn update_manifest_bearer_token(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    activation_bearer_token_when(
+        db,
+        &[
+            ProductLicenseActivationStatus::Active,
+            ProductLicenseActivationStatus::DeniedForceUpdateRequired,
+        ],
+    )
+    .await
+}
+
+/// The stored activation token when the effective licence status is one of `allowed` and the
+/// stored claim is a valid activation claim.
+async fn activation_bearer_token_when(
+    db: &DatabaseConnection,
+    allowed: &[ProductLicenseActivationStatus],
+) -> AppResult<Option<String>> {
     let Some(rec) = load_state_record_from_db(db).await? else {
         return Ok(None);
     };
-    if effective_status(&rec, Utc::now()) != ProductLicenseActivationStatus::Active {
+    if !allowed.contains(&effective_status(&rec, Utc::now())) {
         return Ok(None);
     }
     if !record_has_valid_activation_claim(&rec) {

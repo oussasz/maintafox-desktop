@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { i18n, initI18n } from "@/i18n";
-import { reinstallPreviousVersion } from "@/services/updater-service";
+import { getUpdateJournal, reinstallPreviousVersion } from "@/services/updater-service";
 import { useLocaleStore } from "@/stores/locale-store";
 import { useUpdaterStore } from "@/stores/updater-store";
 
@@ -84,6 +84,36 @@ describe("UpdateRecoveryScreen", () => {
     );
     // The user can try again.
     expect(screen.getByRole("button", { name: "Reinstall version 1.1.0" })).toBeEnabled();
+  });
+
+  it("tells the user to keep the PC as it is and contact the vendor when the rollback is refused", async () => {
+    mockReinstall.mockResolvedValueOnce({
+      outcome: "refused",
+      refusal: { code: "rollback_refused" },
+    });
+    vi.mocked(getUpdateJournal).mockResolvedValueOnce({
+      state: "rollback_required",
+      kind: "upgrade",
+      from_version: "1.1.0",
+      to_version: "1.2.0",
+      failure: "Migration failed",
+      rollback_refusal: "the server refused the rollback request (rollback_target_not_allowed)",
+      rollback_allowed_version: "1.0.9",
+      notice_acknowledged: false,
+    });
+
+    renderScreen();
+    fireEvent.click(screen.getByRole("button", { name: "Reinstall version 1.1.0" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The update server refused to reinstall version 1.1.0.");
+    expect(alert).toHaveTextContent("Keep this computer as it is");
+    expect(alert).toHaveTextContent("Contact Maintafox support.");
+    // The version the server would allow is information only: shown, never installed.
+    expect(await screen.findByText(/names version 1.0.9 as allowed instead/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /1\.0\.9/ })).not.toBeInTheDocument();
+    // Exactly one request: no other version is tried.
+    expect(mockReinstall).toHaveBeenCalledTimes(1);
   });
 
   it("shows a failure with its technical detail", async () => {

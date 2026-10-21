@@ -20,6 +20,7 @@ import {
   reinstallPreviousVersion,
 } from "@/services/updater-service";
 import type { InstallOutcome, UpdateCheckResult, UpdateJournalView } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import {
   isOfferVisible,
@@ -60,6 +61,7 @@ function makeCheck(overrides: Partial<UpdateCheckResult> = {}): UpdateCheckResul
     kind: "upgrade",
     mandatory: false,
     mandatory_reason: null,
+    mandatory_message: null,
     notes_en: "Bug fixes",
     notes_fr: "Corrections",
     message: null,
@@ -74,6 +76,8 @@ function makeJournal(overrides: Partial<UpdateJournalView> = {}): UpdateJournalV
     from_version: "1.2.0",
     to_version: "1.1.0",
     failure: null,
+    rollback_refusal: null,
+    rollback_allowed_version: null,
     notice_acknowledged: false,
     ...overrides,
   };
@@ -300,7 +304,7 @@ describe("updater-store", () => {
 
       const pending = useUpdaterStore.getState().install("fr");
       expect(mockInstall).toHaveBeenCalledWith("fr", expect.any(Function));
-      expect(useUpdaterStore.getState().phase).toBe("backing_up");
+      expect(useUpdaterStore.getState().phase).toBe("starting");
       expect(useUpdaterStore.getState().error).toBeNull();
 
       ctl.progress({ event: "backing_up" });
@@ -454,6 +458,60 @@ describe("updater-store", () => {
       await useUpdaterStore.getState().loadJournal();
 
       expect(useUpdaterStore.getState().journal).toBeNull();
+    });
+  });
+
+  describe("install guard (step-up)", () => {
+    it("runs the install through the guard and records the IPC code of a failure", async () => {
+      mockInstall.mockRejectedValueOnce({
+        code: "PERMISSION_DENIED",
+        message: `Permission requise : ${P.ADM_SETTINGS}`,
+      });
+      useUpdaterStore.setState({ lastCheckResult: makeCheck() });
+      let runs = 0;
+      const run = <T>(action: () => Promise<T>): Promise<T> => {
+        runs += 1;
+        return action();
+      };
+
+      await useUpdaterStore.getState().install("en", { run, isCancelled: () => false });
+
+      expect(runs).toBe(1);
+      expect(useUpdaterStore.getState()).toMatchObject({
+        phase: "idle",
+        errorCode: "PERMISSION_DENIED",
+      });
+      expect(useUpdaterStore.getState().error).toContain(P.ADM_SETTINGS);
+    });
+
+    it("a cancelled identity check leaves no error", async () => {
+      const cancelled = new Error("cancelled");
+      useUpdaterStore.setState({ lastCheckResult: makeCheck() });
+
+      await useUpdaterStore.getState().install("en", {
+        run: () => Promise.reject(cancelled),
+        isCancelled: (err) => err === cancelled,
+      });
+
+      expect(mockInstall).not.toHaveBeenCalled();
+      expect(useUpdaterStore.getState()).toMatchObject({
+        phase: "idle",
+        error: null,
+        errorCode: null,
+      });
+    });
+
+    it("a mandatory update forced by the licence stays installable", async () => {
+      mockInstall.mockResolvedValueOnce({ outcome: "restarting" });
+      useUpdaterStore.setState({ lastCheckResult: makeCheck(), forceRequired: true });
+      expect(isUpdateMandatory(useUpdaterStore.getState())).toBe(true);
+      useUpdaterStore.getState().dismiss();
+      expect(isOfferVisible(useUpdaterStore.getState())).toBe(true);
+
+      await useUpdaterStore.getState().install("en");
+
+      expect(mockInstall).toHaveBeenCalledTimes(1);
+      expect(useUpdaterStore.getState().phase).toBe("restarting");
     });
   });
 });

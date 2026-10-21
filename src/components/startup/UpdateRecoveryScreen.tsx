@@ -30,13 +30,19 @@ export function UpdateRecoveryScreen({
   const totalBytes = useUpdaterStore((s) => s.totalBytes);
   const refusal = useUpdaterStore((s) => s.refusal);
   const error = useUpdaterStore((s) => s.error);
+  const allowedVersion = useUpdaterStore((s) =>
+    s.refusal?.code === "rollback_refused" ? (s.journal?.rollback_allowed_version ?? null) : null,
+  );
   const reinstallPrevious = useUpdaterStore((s) => s.reinstallPrevious);
   const locale = useLocaleStore((s) => s.activeLocale);
 
   const busy = phase !== "idle";
-  // The server does not offer the previous version (or this device cannot ask): plain advice.
+  // The server refused the rollback (refusal status, nothing offered, another version): keep the
+  // PC as it is and contact the vendor; nothing else is tried. Other refusals: plain advice.
   const failureText = refusal
-    ? t("updates.recovery.unavailable")
+    ? refusal.code === "rollback_refused"
+      ? t("updates.recovery.refused", { from: fromVersion })
+      : t("updates.recovery.unavailable")
     : error
       ? t("updates.recovery.error", { from: fromVersion })
       : null;
@@ -74,6 +80,12 @@ export function UpdateRecoveryScreen({
         {failureText && !busy ? (
           <div role="alert" className="text-left text-sm text-text-danger">
             <p>{failureText}</p>
+            {allowedVersion ? (
+              // Information for support only: this version is never installed automatically.
+              <p className="mt-1 text-text-secondary">
+                {t("updates.recovery.allowedVersion", { version: allowedVersion })}
+              </p>
+            ) : null}
             {error ? (
               <p className="mt-1 text-xs text-text-muted">
                 {t("updates.error.detail", { detail: error })}

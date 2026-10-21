@@ -52,6 +52,12 @@ pub struct UpdateJournal {
     pub finished_at: Option<String>,
     /// Why the update failed (shown to the user, kept for support).
     pub failure: Option<String>,
+    /// Why the rollback after a failed database update was refused (kept for support).
+    #[serde(default)]
+    pub rollback_refusal: Option<String>,
+    /// The version the server's refusal named as allowed instead (information only).
+    #[serde(default)]
+    pub rollback_allowed_version: Option<String>,
     /// The user has seen the outcome notice (rolled back / installer not completed).
     #[serde(default)]
     pub notice_acknowledged: bool,
@@ -136,6 +142,8 @@ mod tests {
             started_at: "2026-10-13T10:00:00Z".into(),
             finished_at: None,
             failure: None,
+            rollback_refusal: None,
+            rollback_allowed_version: None,
             notice_acknowledged: false,
         }
     }

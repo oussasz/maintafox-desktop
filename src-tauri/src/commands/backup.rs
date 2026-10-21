@@ -87,7 +87,8 @@ pub(crate) fn app_backup_dir(app: &AppHandle) -> AppResult<std::path::PathBuf> {
     Ok(dir)
 }
 
-fn require_database_key() -> AppResult<encryption::DatabaseKey> {
+/// This installation's database key from the OS credential store (restore, update rollback).
+pub(crate) fn require_database_key() -> AppResult<encryption::DatabaseKey> {
     encryption::load_stored_key()?
         .ok_or_else(|| AppError::DatabaseKeyUnavailable("no database key is stored in the OS credential store".into()))
 }

@@ -6,6 +6,7 @@ import { installPendingUpdate } from "@/services/updater-service";
 import { useLocaleStore } from "@/stores/locale-store";
 import { useUpdaterStore } from "@/stores/updater-store";
 import type { UpdateCheckResult } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { UpdateBanner } from "../UpdateBanner";
 
@@ -34,6 +35,7 @@ function makeCheck(overrides: Partial<UpdateCheckResult> = {}): UpdateCheckResul
     kind: "upgrade",
     mandatory: false,
     mandatory_reason: null,
+    mandatory_message: null,
     notes_en: "Faster work order search.",
     notes_fr: "Recherche des OT plus rapide.",
     message: null,
@@ -88,13 +90,22 @@ describe("UpdateBanner", () => {
 
   it("shows a mandatory update with its reason and no dismiss button", () => {
     useUpdaterStore.setState({
-      lastCheckResult: makeCheck({ mandatory: true, mandatory_reason: "Security fix" }),
+      lastCheckResult: makeCheck({
+        mandatory: true,
+        mandatory_reason: "forced_update_floor",
+        mandatory_message: "<b>Security fix</b>",
+      }),
     });
 
     render(<UpdateBanner />);
 
     expect(screen.getByText("Mandatory")).toBeInTheDocument();
-    expect(screen.getByText("Security fix")).toBeInTheDocument();
+    expect(
+      screen.getByText("Your organisation requires this version or a newer one."),
+    ).toBeInTheDocument();
+    // The operator's text is plain text, never HTML; the raw code is never shown.
+    expect(screen.getByText("<b>Security fix</b>")).toBeInTheDocument();
+    expect(screen.queryByText(/forced_update_floor/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Later" })).not.toBeInTheDocument();
   });
 
@@ -114,7 +125,7 @@ describe("UpdateBanner", () => {
     fireEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 
     await waitFor(() => expect(mockInstall).toHaveBeenCalledWith("en", expect.any(Function)));
-    expect(await screen.findByText("Backing up your data…")).toBeInTheDocument();
+    expect(await screen.findByText("Preparing the update…")).toBeInTheDocument();
   });
 
   it("shows real download progress", () => {
@@ -190,6 +201,8 @@ describe("UpdateBanner", () => {
         from_version: "1.1.0",
         to_version: "1.2.0",
         failure: "Migration failed",
+        rollback_refusal: null,
+        rollback_allowed_version: null,
         notice_acknowledged: false,
       },
     });
@@ -203,5 +216,54 @@ describe("UpdateBanner", () => {
     await waitFor(() =>
       expect(screen.queryByText(/could not update your data/)).not.toBeInTheDocument(),
     );
+  });
+
+  it("translates every mandatory reason code, with a generic text for an unknown one", () => {
+    for (const [code, text] of [
+      ["emergency", "Maintafox requires this update urgently."],
+      [
+        "rollback_requested",
+        "This computer goes back to the version it ran before the failed update.",
+      ],
+      ["recalled_version", "The version installed here was withdrawn by Maintafox."],
+      ["a_future_code", "This update is required to keep using Maintafox."],
+    ] as const) {
+      useUpdaterStore.setState({
+        lastCheckResult: makeCheck({ mandatory: true, mandatory_reason: code }),
+      });
+      const { unmount } = render(<UpdateBanner />);
+      expect(screen.getByText(text)).toBeInTheDocument();
+      expect(screen.queryByText(new RegExp(code))).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("explains that only an administrator installs, or that one must sign in", () => {
+    useUpdaterStore.setState({
+      lastCheckResult: makeCheck(),
+      error: `Permission requise : ${P.ADM_SETTINGS}`,
+      errorCode: "PERMISSION_DENIED",
+    });
+    const { unmount } = render(<UpdateBanner />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Only an administrator of this computer can install updates.",
+    );
+    unmount();
+
+    useUpdaterStore.setState({ error: "Session expirée", errorCode: "AUTH_ERROR" });
+    render(<UpdateBanner />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Sign in as an administrator of this computer to install the update.",
+    );
+  });
+
+  it("says a required update is not published yet when the licence forces one and none is offered", () => {
+    useUpdaterStore.setState({
+      lastCheckResult: makeCheck({ status: "up_to_date", available: false, version: null }),
+      forceRequired: true,
+    });
+    render(<UpdateBanner />);
+    expect(screen.getByText(/none is published for this computer yet/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Install now" })).not.toBeInTheDocument();
   });
 });

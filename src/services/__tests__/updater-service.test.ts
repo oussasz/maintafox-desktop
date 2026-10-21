@@ -131,6 +131,8 @@ describe("updater schemas", () => {
       from_version: "1.2.0",
       to_version: "1.1.0",
       failure: null,
+      rollback_refusal: null,
+      rollback_allowed_version: null,
       notice_acknowledged: false,
     };
     expect(UpdateJournalViewSchema.safeParse(journal).success).toBe(true);
