@@ -40,6 +40,17 @@ $Environment = "release"
 
 function Step([string]$Text) { Write-Host ""; Write-Host "==> $Text" -ForegroundColor Cyan }
 function Stop-WithMessage([string]$Text) { Write-Host ""; Write-Host "STOPPED: $Text" -ForegroundColor Red; exit 1 }
+# A repository-level copy of a release secret is readable by any workflow on any branch, without the
+# reviewer gate of the 'release' environment. Returns the names found there (the publisher token included).
+function Get-RepositoryLevelReleaseSecrets([string]$Repo) {
+  $repoNames = & gh secret list --repo $Repo --json name --jq ".[].name"
+  if ($LASTEXITCODE -ne 0) { Stop-WithMessage "Could not list the repository secrets of $Repo (gh secret list failed)." }
+  return @("TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD", "MAINTAFOX_RELEASE_PUBLISHER_TOKEN") | Where-Object { $repoNames -contains $_ }
+}
+function Show-RepositoryLevelCopies([string]$Repo, $Names) {
+  Write-Host "These secrets also exist at REPOSITORY level, where any workflow can read them:" -ForegroundColor Yellow
+  foreach ($name in $Names) { Write-Host "  gh secret delete $name --repo $Repo" }
+}
 
 Step "Checking the tools"
 if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { Stop-WithMessage "pnpm is not installed (https://pnpm.io/installation)." }
@@ -54,6 +65,11 @@ try {
   & gh api "repos/$repo/environments/$Environment" *> $null
   if ($LASTEXITCODE -ne 0) {
     Stop-WithMessage "The GitHub environment '$Environment' does not exist yet. Create it first (docs\release\RELEASE_SETUP.md, step 6), then run this script again."
+  }
+  $early = Get-RepositoryLevelReleaseSecrets $repo
+  if ($early) {
+    Show-RepositoryLevelCopies $repo $early
+    Stop-WithMessage "Delete the repository-level copies above first (nothing was created yet), then run this script again."
   }
   if (-not (Test-Path (Join-Path $RepoRoot "node_modules\.bin\tauri.cmd"))) {
     Stop-WithMessage "The project dependencies are not installed. Run 'pnpm install' in $RepoRoot first."
@@ -94,15 +110,6 @@ try {
   $names = & gh secret list --env $Environment --repo $repo --json name --jq ".[].name"
   $missing = @($SecretKeyName, $SecretPasswordName) | Where-Object { $names -notcontains $_ }
   if ($missing) { Stop-WithMessage "These secrets are not set in the '$Environment' environment yet: $($missing -join ', '). Run the commands above, then run 'gh secret list --env $Environment'." }
-  # A repository-level copy is readable by any workflow on any branch, without the reviewer gate
-  # of the 'release' environment: refuse to finish until none is left (the publisher token included).
-  $repoNames = & gh secret list --repo $repo --json name --jq ".[].name"
-  $atRepoLevel = @($SecretKeyName, $SecretPasswordName, "MAINTAFOX_RELEASE_PUBLISHER_TOKEN") | Where-Object { $repoNames -contains $_ }
-  if ($atRepoLevel) {
-    Write-Host "These secrets also exist at REPOSITORY level, where any workflow can read them:" -ForegroundColor Yellow
-    foreach ($name in $atRepoLevel) { Write-Host "  gh secret delete $name --repo $repo" }
-    Stop-WithMessage "Delete the repository-level copies above (the environment copies stay), then run 'gh secret list --repo $repo' to check."
-  }
   Write-Host "Both secrets are set in the '$Environment' environment." -ForegroundColor Green
 
   Step "Done. Next steps"
@@ -114,6 +121,13 @@ try {
   Write-Host "   in the vendor console repository). It is public; this is its value:"
   Write-Host ""
   Write-Host $publicKey
+
+  # Checked again last (the key now exists, so the next steps above were shown first).
+  $late = Get-RepositoryLevelReleaseSecrets $repo
+  if ($late) {
+    Show-RepositoryLevelCopies $repo $late
+    Stop-WithMessage "The key is created, but delete the repository-level copies above (the environment copies stay), then check with 'gh secret list --repo $repo'. Do not run this script again: the key already exists."
+  }
 }
 finally {
   Pop-Location
