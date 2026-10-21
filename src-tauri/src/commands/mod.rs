@@ -26,6 +26,7 @@ pub mod fta_rbd_eta;
 pub mod home;
 pub mod inspection;
 pub mod inventory;
+pub mod inventory_negative_stock;
 pub mod library_documents;
 pub mod license;
 pub mod locale;

@@ -252,7 +252,7 @@ describe("ArticleDetailWorkspace", () => {
     expect(badges).toHaveLength(1);
     expect(badges[0]?.closest("span[title]")).toHaveAttribute(
       "title",
-      "To be corrected: another PC may have recorded a movement",
+      "To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",
     );
     const transferButtons = screen.getAllByRole("button", { name: /Transfer/ });
     expect(transferButtons[0]).toBeDisabled();

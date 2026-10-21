@@ -2752,3 +2752,136 @@ async fn a_repairable_scrapped_after_return_reconciles_and_applies_from_sync() {
     )
     .await;
 }
+
+/// A goods receipt into a location below zero (left there by movements received from another PC)
+/// is accepted (CMMS Advisor decision 1): a partial receipt leaves the item open, the receipt that
+/// brings the stock back to zero or more closes it as "régularisé par réception".
+#[tokio::test]
+async fn a_goods_receipt_into_a_negative_location_is_accepted_and_closes_it_once_back_to_zero() {
+    use crate::inventory::negative_stock::{self, CLOSURE_RECEIPT};
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-NEG-GR").await;
+    let location_id = main_location_id(&db).await;
+    let supplier_id = first_supplier_id(&db).await;
+    // What two PCs issuing the same last units leave once both issues are applied here.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO stock_balances (article_id, warehouse_id, location_id, on_hand_qty, reserved_qty, available_qty, updated_at)
+         SELECT ?, warehouse_id, id, -5, 0, -5, strftime('%Y-%m-%dT%H:%M:%SZ','now') FROM stock_locations WHERE id = ?",
+        [article_id.into(), location_id.into()],
+    ))
+    .await
+    .expect("negative balance");
+    assert_eq!(
+        negative_stock::list_reviews(&db, false)
+            .await
+            .expect("list")
+            .items
+            .len(),
+        1
+    );
+
+    let req = procurement::create_procurement_requisition(
+        &db,
+        CreateProcurementRequisitionInput {
+            article_id,
+            preferred_location_id: Some(location_id),
+            requested_qty: 7.0,
+            demand_source_type: "REORDER".to_string(),
+            demand_source_id: Some(4545),
+            demand_source_ref: Some("ROR-4545".to_string()),
+            demand_source_line_id: None,
+            source_reservation_id: None,
+            source_reorder_trigger: Some("threshold_crossed".to_string()),
+            purchase_priority: None,
+            reason: Some("negative location".to_string()),
+            actor_id: None,
+        },
+    )
+    .await
+    .expect("create requisition");
+    let mut req = req;
+    for (status, actor) in [("SUBMITTED", None), ("APPROVED", Some(1))] {
+        req = procurement::transition_procurement_requisition(
+            &db,
+            TransitionProcurementRequisitionInput {
+                requisition_id: req.id,
+                expected_row_version: req.row_version,
+                next_status: status.to_string(),
+                reason: None,
+                note: None,
+                actor_id: actor,
+            },
+        )
+        .await
+        .expect("requisition transition");
+    }
+    let mut po = procurement::create_purchase_order_from_requisition(
+        &db,
+        CreatePurchaseOrderFromRequisitionInput {
+            requisition_id: req.id,
+            supplier_id: None,
+            supplier_company_id: Some(supplier_id),
+            actor_id: None,
+            currency_code: None,
+        },
+    )
+    .await
+    .expect("create po");
+    for (status, actor) in [("SUBMITTED", None), ("APPROVED", Some(1))] {
+        po = procurement::transition_purchase_order(
+            &db,
+            TransitionPurchaseOrderInput {
+                purchase_order_id: po.id,
+                expected_row_version: po.row_version,
+                next_status: status.to_string(),
+                reason: None,
+                note: None,
+                actor_id: actor,
+            },
+        )
+        .await
+        .expect("po transition");
+    }
+    let po_line = procurement::list_purchase_order_lines(&db, po.id)
+        .await
+        .expect("po lines")
+        .remove(0);
+    let receive = |qty: f64| ReceiveGoodsInput {
+        purchase_order_id: po.id,
+        lines: vec![ReceivePurchaseOrderLineInput {
+            po_line_id: po_line.id,
+            article_id,
+            location_id,
+            received_qty: qty,
+            accepted_qty: qty,
+            rejected_qty: 0.0,
+            rejection_reason: None,
+            lots: None,
+            entered_unit_value_id: None,
+        }],
+        fulfillment_action: None,
+        actor_id: None,
+        exchange_rate: None,
+        posting_date: None,
+    };
+
+    procurement::receive_purchase_order_goods(&db, receive(3.0))
+        .await
+        .expect("a partial receipt into a location below zero is accepted");
+    let (on_hand, _) = balance_of(&db, article_id, location_id).await.expect("balance");
+    assert!((on_hand + 2.0).abs() < 1e-9, "−5 + 3, got {on_hand}");
+    let list = negative_stock::list_reviews(&db, true).await.expect("list");
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].status, "open", "still below zero: the item stays open");
+
+    procurement::receive_purchase_order_goods(&db, receive(4.0))
+        .await
+        .expect("the rest of the order");
+    let list = negative_stock::list_reviews(&db, true).await.expect("list");
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].status, "closed");
+    assert_eq!(list.items[0].closure_kind.as_deref(), Some(CLOSURE_RECEIPT));
+    assert_eq!(list.items[0].closing_movement_type.as_deref(), Some("GR_ACCEPT"));
+    assert!((list.items[0].on_hand_qty - 2.0).abs() < 1e-9);
+}

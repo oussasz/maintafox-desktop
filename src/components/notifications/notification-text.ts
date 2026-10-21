@@ -19,6 +19,9 @@ export const MESSAGE_KEYS = [
   "wo_overdue",
   "inspection_round_missed",
   "stock_critical",
+  // Stock left below zero or counted twice by sync (inv.manage holders).
+  "stock_negative",
+  "stock_double_count",
   "ptw_expiring",
   "ptw_expired",
   "sync_conflict",

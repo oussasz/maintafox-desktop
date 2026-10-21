@@ -33,7 +33,9 @@ describe("NegativeStockBadge", () => {
     const { rerender } = render(<NegativeStockBadge onHand={-2} available={-2} />);
     expect(screen.getByText("Negative stock")).toBeInTheDocument();
     expect(
-      screen.getByTitle("To be corrected: another PC may have recorded a movement"),
+      screen.getByTitle(
+        "To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",
+      ),
     ).toBeTruthy();
     rerender(<NegativeStockBadge onHand={2} available={1} />);
     expect(screen.queryByText("Negative stock")).toBeNull();

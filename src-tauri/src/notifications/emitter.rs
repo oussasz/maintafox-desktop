@@ -264,7 +264,7 @@ pub(crate) async fn emit(
         .await?;
     let event_id = row_id_of(pool, "notification_events", &event_sync_id).await?;
     if inserted.rows_affected() == 0 {
-        reopen_event(pool, event_id, input, arrival).await?;
+        reopen_event(pool, event_id, input, message, message_params.as_deref(), arrival).await?;
     }
 
     // A category that cannot be muted or re-routed goes to its fixed audience; its rule row and the
@@ -350,11 +350,14 @@ pub(crate) async fn emit(
 }
 
 /// The same occurrence (same seeded identity) is true again after it was resolved: the event and
-/// its notifications are open again, unread when it is new to this device's watch.
+/// its notifications are open again, unread when it is new to this device's watch, and its message
+/// says what is true now (for example when the location went below zero this time).
 async fn reopen_event(
     pool: &impl ConnectionTrait,
     event_id: i64,
     input: &NotificationEventInput,
+    message: Option<&NotificationMessage>,
+    message_params: Option<&str>,
     arrival: Arrival,
 ) -> Result<()> {
     let reopened = pool
@@ -367,6 +370,19 @@ async fn reopen_event(
         .await?;
     if reopened.rows_affected() == 0 {
         return Ok(());
+    }
+    if let Some(m) = message {
+        pool.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE notification_events SET message_key = ?, message_params_json = ?, urgency_code = ? WHERE id = ?",
+            [
+                m.key.clone().into(),
+                message_params.map(str::to_string).into(),
+                m.urgency_code.clone().into(),
+                event_id.into(),
+            ],
+        ))
+        .await?;
     }
     let unread = arrival == Arrival::New;
     pool.execute(Statement::from_sql_and_values(

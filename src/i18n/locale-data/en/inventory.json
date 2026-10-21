@@ -8,12 +8,57 @@
     "statusInactive": "Inactive",
     "stock": "Stock",
     "stockBelowReorder": "At or below reorder point",
-    "stockOut": "Nothing available"
+    "stockOut": "Nothing available",
+    "stockNegative": "Negative stock"
   },
   "negativeStock": {
+    "title": "Stock to reconcile",
+    "description": "Movements received from another PC are applied as received. A location left below zero stays here until a stock count is recorded there or a later entry brings it back to zero or more: a goods receipt, a transfer in, a return against its issue or repair, or an entry with its reason.",
+    "showClosed": "Show reconciled items",
+    "noneOpen": "No location below zero.",
+    "openList": "Locations below zero to reconcile",
+    "closedList": "Reconciled locations",
+    "flag": "Negative — to reconcile",
+    "balance": "On hand {{onHand}}, reserved {{reserved}}, available {{available}}",
+    "openedAt": "Found below zero on {{date}} (last exit: {{movement}})",
+    "recordCount": "Record a count",
+    "overReservedTitle": "Reservations above stock (warning)",
+    "overReservedLine": "{{article}} at {{location}}: {{reserved}} reserved for {{onHand}} on hand",
+    "closure": {
+      "count": "Reconciled by a count on {{date}}",
+      "adjustment": "Reconciled by an adjustment with its reason on {{date}} ({{movement}})",
+      "receipt": "Regularised by receipt on {{date}} ({{movement}})",
+      "return": "Regularised by return on {{date}} ({{movement}})",
+      "prior_entry": "Regularised by an earlier entry on {{date}} ({{movement}}): entered on a PC that did not yet see the negative stock, no reason asked",
+      "other": "Back to zero or more on {{date}} without a stock entry on record"
+    },
+    "loadError": "The stock to reconcile could not be loaded",
+    "loading": "Loading the stock to reconcile…",
+    "dialog": {
+      "title": "Record a stock count",
+      "description": "{{article}} at {{location}} stands at {{onHand}} on this PC. Count what is physically there: the stock becomes the counted quantity and the item closes. The count is posted like any count and audited.",
+      "counted": "Quantity counted",
+      "varianceReason": "Variance reason",
+      "varianceReasonPlaceholder": "Choose a reason",
+      "reason": "Reason",
+      "reasonPlaceholder": "At least {{count}} characters: what was found and why",
+      "confirm": "Record the count"
+    },
+    "doubleCount": {
+      "flag": "Double count — to verify",
+      "list": "Locations counted twice",
+      "explain": "Counted on two PCs, neither knowing the other: each corrected the stock, so it may be corrected twice (now {{onHand}} on hand). Check the stock and record a new count.",
+      "countLine": "{{who}} on PC {{device}}, {{date}}, by {{path}}: counted {{counted}} (correction {{variance}})",
+      "unknownUser": "Unknown user",
+      "closedByReversal": "closed by the reversal of count {{session}} ({{who}}, {{date}})",
+      "path": {
+        "reconciliation": "stock-to-reconcile list",
+        "count_session": "count session {{session}}"
+      }
+    },
     "label": "Negative stock",
-    "hint": "To be corrected: another PC may have recorded a movement",
-    "hintTotal": "Total over all stores is negative. To be corrected: another PC may have recorded a movement"
+    "hint": "To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",
+    "hintTotal": "Total over all stores is negative. To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls)."
   },
   "transfer": {
     "action": "Transfer",
@@ -136,6 +181,10 @@
       "hint": "Today unless the movement happened earlier. Dates inside a closed valuation period are refused.",
       "blocker": "Enter the movement date.",
       "future": "The movement date cannot be in the future."
+    },
+    "negativeLocation": {
+      "hint": "This location is below zero on this PC: an entry here reconciles it. Give the reason in the comment (at least {{count}} characters); it is audited.",
+      "blocker": "Give the reason of the entry in the comment (at least {{count}} characters): the location is below zero."
     }
   },
   "detail": {
@@ -1765,5 +1814,13 @@
         "blocker": "Enter an amount of 0 or more, or leave it empty."
       }
     }
+  },
+  "errors": {
+    "NEGATIVE_STOCK_REASON_SHORT": "Give the reason of the count (at least {{min}} characters).",
+    "NEGATIVE_STOCK_COUNT_INVALID": "The counted quantity must be zero or more.",
+    "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choose the variance reason of the count.",
+    "NEGATIVE_STOCK_NOT_OPEN": "This location's stock is no longer below zero: nothing to reconcile. Refresh the list.",
+    "NEGATIVE_STOCK_ENTRY_REASON_SHORT": "This location is below zero: an entry here reconciles it and needs a reason in the comment (at least {{min}} characters).",
+    "COUNT_SESSION_STALE_SNAPSHOT": "A count was posted for this article and location since this session was opened: cancel this session and count again in a new session."
   }
 }

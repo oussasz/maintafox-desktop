@@ -68,6 +68,20 @@ describe("notification text", () => {
     expect(formatParam("code", null, fmt)).toBe("—");
   });
 
+  it("says when the shortage of a location below zero began", () => {
+    const text = notificationText(
+      {
+        title: "stored",
+        body: null,
+        message_key: "stock_negative",
+        message_params: { code: "A-1", on_hand: -5, opened_at: "2026-10-20T08:00:00Z" },
+      },
+      t,
+      fmt,
+    );
+    expect(text.body).toContain('"opened_at":"DT(2026-10-20T08:00:00Z)"');
+  });
+
   it("explains permission and escalation reasons", () => {
     expect(notificationReason({ reason_code: "permission", reason_ref: P.INV_MANAGE }, t)).toBe(
       `reason.permission:{"permission":"${P.INV_MANAGE}"}`,

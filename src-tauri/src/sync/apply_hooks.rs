@@ -3,7 +3,8 @@
 //! The generic materializer writes the replicated columns. Some tables also feed data that each
 //! device derives for itself; those derivations run here, in the same transaction as the apply:
 //! - `inventory_transactions`: a received movement changes `stock_balances` of its location
-//!   (`inventory::ledger`);
+//!   (`inventory::ledger`), never refused; a location left below zero gets its one review item
+//!   "négatif — à rapprocher", closed again by a count or a later entry (`inventory::negative_stock`);
 //! - `org_nodes`: `ancestor_path` / `depth` (paths of local ids) are recomputed for the node and
 //!   its subtree;
 //! - `user_dismissals`: `scope_key` (`<issue_code>:<local equipment id>`) is rebuilt;
@@ -527,15 +528,19 @@ async fn apply_movement_to_balance(conn: &impl ConnectionTrait, movement_id: i64
     let quantity: f64 = row
         .try_get("", "quantity")
         .map_err(|e| hook_err("inventory_transactions", e))?;
+    let (article_id, location_id) = (get_i64("article_id")?, get_i64("location_id")?);
     crate::inventory::ledger::apply_received_movement(
         conn,
-        get_i64("article_id")?,
+        article_id,
         get_i64("warehouse_id")?,
-        get_i64("location_id")?,
+        location_id,
         &movement_type,
         quantity,
     )
-    .await
+    .await?;
+    // Applied as received (a physical fact); a location left below zero is to reconcile, one
+    // item per article and location (`inventory::negative_stock`).
+    crate::inventory::negative_stock::reconcile_pair_in(conn, article_id, location_id).await
 }
 
 /// `ancestor_path` (root `/{id}/`, child `{parent path}{id}/`) and `depth` for a node and every

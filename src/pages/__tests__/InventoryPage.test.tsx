@@ -311,9 +311,18 @@ describe("InventoryPage", () => {
     const badge = within(negativeRow).getByText("Negative stock");
     expect(badge.closest("span[title]")).toHaveAttribute(
       "title",
-      "Total over all stores is negative. To be corrected: another PC may have recorded a movement",
+      "Total over all stores is negative. To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",
     );
     expect(within(healthyRow).queryByText("Negative stock")).toBeNull();
+
+    // The chip is also a status of the list's stock filter.
+    Element.prototype.scrollIntoView = vi.fn();
+    const stockFilter = screen.getAllByRole("combobox")[1];
+    if (!stockFilter) throw new Error("expected the stock filter");
+    fireEvent.click(stockFilter);
+    fireEvent.click(await screen.findByRole("option", { name: "Negative stock" }));
+    await waitFor(() => expect(screen.queryByText("ART-001")).toBeNull());
+    expect(screen.getByText("ART-NEG")).toBeInTheDocument();
   });
 
   it("opens the article named in ?articleId= (link from another module)", async () => {
@@ -334,7 +343,9 @@ describe("InventoryPage", () => {
 
     renderPage("/inventory?articleId=4");
 
-    expect(await screen.findByText("detail ART-001")).toBeInTheDocument();
+    // Two list loads in a row (the search hiding the article, then the cleared search): give them
+    // more than the default second under a loaded full-suite run.
+    expect(await screen.findByText("detail ART-001", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(useInventoryStore.getState().articleSearch).toBe("");
   });
 

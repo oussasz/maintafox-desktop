@@ -2527,6 +2527,7 @@
     "seaql_migrations": "sync_control",
     "secure_secret_refs": "secrets",
     "stock_balances": "derived_projection",
+    "stock_negative_reviews": "derived_projection",
     "sync_capture_baseline": "sync_control",
     "sync_capture_journal": "sync_control",
     "sync_capture_suppression": "sync_control",

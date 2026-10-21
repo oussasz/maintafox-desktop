@@ -60,8 +60,11 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-/** Minimum length of the mandatory reversal reason (audit trail). */
-const REVERSAL_REASON_MIN_LENGTH = 5;
+/**
+ * Minimum length (characters, trimmed) of the mandatory reversal reason (audit trail): the rule of
+ * a count's approval, since a reversal can reconcile a location below zero.
+ */
+const REVERSAL_REASON_MIN_LENGTH = 8;
 /** Where the count and reconciliation tolerances are set (tenant settings, Inventory section). */
 const INVENTORY_SETTINGS_PATH = "/settings?tab=general";
 /** Count-session trace: most recent posted / reversed count movements shown. */
@@ -765,7 +768,8 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                     variant="destructive"
                     className="h-11"
                     disabled={
-                      saving || sessionReversalReason.trim().length < REVERSAL_REASON_MIN_LENGTH
+                      saving ||
+                      [...sessionReversalReason.trim()].length < REVERSAL_REASON_MIN_LENGTH
                     }
                     onClick={() => setReverseConfirmOpen(true)}
                   >

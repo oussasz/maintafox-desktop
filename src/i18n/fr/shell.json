@@ -326,7 +326,11 @@
       "training_sessions": "Session de formation",
       "failure_events": "Événement de défaillance",
       "app_settings": "Paramètre"
-    }
+    },
+    "negativeStock": "{{count}} emplacement(s) de stock sous zéro après synchronisation, à rapprocher par un comptage (Stock › Contrôles).",
+    "doubleCount": "{{count}} emplacement(s) de stock compté(s) sur deux postes sans se connaître : double comptage à vérifier (Stock › Contrôles).",
+    "overReserved": "{{count}} emplacement(s) de stock avec plus de réservé que de stock (avertissement).",
+    "openNegativeStock": "Ouvrir le stock à rapprocher"
   },
   "status": {
     "dbOk": "Base de données : OK",

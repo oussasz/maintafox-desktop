@@ -38,6 +38,7 @@ import {
   listInventoryStockBalances,
 } from "@/services/inventory-service";
 import { getLookupValues } from "@/services/lookup-service";
+import { NEGATIVE_STOCK_REASON_MIN_CHARS } from "@/services/negative-stock-service";
 import { useInventoryStore } from "@/stores/inventory-store";
 import type { LookupValueOption, StockLocation } from "@shared/ipc-types";
 
@@ -273,6 +274,11 @@ export function InventoryAdjustmentDialog({
       : Number.isFinite(unitCostNumber) && unitCostNumber >= 0;
 
   const isEntry = delta > 0;
+  // An entry at a location below zero reconciles it (CMMS Advisor): the comment is its reason,
+  // required and audited (`inventory::negative_stock::check_entry_reason`).
+  const reconcilesNegative = isEntry && currentStock != null && currentStock < 0;
+  const entryReasonMissing =
+    reconcilesNegative && comment.trim().length < NEGATIVE_STOCK_REASON_MIN_CHARS;
   // Entries default to a new lot, exits to first-expired-first-out.
   const effectiveLotChoice = isEntry
     ? lotChoice === AUTO_LOT
@@ -312,7 +318,8 @@ export function InventoryAdjustmentDialog({
     (adjustType === "adjustment" || qtyNumber > 0) &&
     delta !== 0 &&
     (!needsWorkOrder || workOrderCode !== null) &&
-    (!takesUnitCost || unitCostValid);
+    (!takesUnitCost || unitCostValid) &&
+    !entryReasonMissing;
 
   /** Why "Validate" is disabled (shown under the form). */
   const blocker =
@@ -330,7 +337,11 @@ export function InventoryAdjustmentDialog({
                 ? t("adjustStock.blockers.workOrder")
                 : takesUnitCost && !unitCostValid
                   ? t("adjustStock.blockers.unitCost")
-                  : (lotBlocker ?? dateBlocker);
+                  : entryReasonMissing
+                    ? t("adjustStock.negativeLocation.blocker", {
+                        count: NEGATIVE_STOCK_REASON_MIN_CHARS,
+                      })
+                    : (lotBlocker ?? dateBlocker);
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -711,7 +722,13 @@ export function InventoryAdjustmentDialog({
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               placeholder={t("adjustStock.placeholders.comment")}
+              aria-describedby={reconcilesNegative ? "adjust-negative-hint" : undefined}
             />
+            {reconcilesNegative ? (
+              <p id="adjust-negative-hint" className={cn("text-xs", mfTone.warning.text)}>
+                {t("adjustStock.negativeLocation.hint", { count: NEGATIVE_STOCK_REASON_MIN_CHARS })}
+              </p>
+            ) : null}
           </div>
 
           {error ? (

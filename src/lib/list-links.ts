@@ -88,8 +88,14 @@ export const listLinks = {
   equipment: (f: { status?: string } = {}) => `/equipment${query([[LIST_PARAM.status, f.status]])}`,
   /** Données de référence, opened on one list (domain or module catalog code). */
   referenceCatalog: (code: string) => `/lookups${query([[LIST_PARAM.catalog, code]])}`,
-  inventory: (f: { belowReorder?: boolean } = {}) =>
-    `/inventory${query([[LIST_PARAM.stock, f.belowReorder ? "below_reorder" : undefined]])}`,
+  /** `belowReorder`: the article list filtered; `toReconcile`: the stock balances to reconcile. */
+  inventory: (f: { belowReorder?: boolean; toReconcile?: boolean } = {}) =>
+    `/inventory${query([
+      [
+        LIST_PARAM.stock,
+        f.toReconcile ? "to_reconcile" : f.belowReorder ? "below_reorder" : undefined,
+      ],
+    ])}`,
 } as const;
 
 /** Positive integer id from a query value, else null. */

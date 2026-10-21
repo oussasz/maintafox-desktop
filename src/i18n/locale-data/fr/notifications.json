@@ -186,7 +186,8 @@
     "wo_assigned": "OT affecté",
     "wo_overdue": "OT en retard",
     "safety_rule_received": "Règle de sécurité modifiée sur un autre poste",
-    "loto_forced_removal": "Cadenas retiré par un retrait forcé"
+    "loto_forced_removal": "Cadenas retiré par un retrait forcé",
+    "stock_to_reconcile": "Stock à rapprocher après synchronisation"
   },
   "messages": {
     "wo_assigned": {
@@ -299,6 +300,14 @@
     "loto_forced_removal": {
       "title": "Retrait forcé d’un cadenas : {{point}} (permis {{permit}})",
       "body": "{{authorised_by}} a autorisé {{removed_by}} à retirer le cadenas de {{worker}}, absent, le {{removed_at}} — motif : {{reason}}. Le travailleur doit en être informé (Permis de travail › retraits forcés à suivre)."
+    },
+    "stock_negative": {
+      "title": "{{code}} sous zéro à {{location}}",
+      "body": "{{title}} : {{on_hand}} en stock, sous zéro depuis le {{opened_at}}. Enregistrez un comptage pour le rapprocher."
+    },
+    "stock_double_count": {
+      "title": "{{code}} compté deux fois à {{location}}",
+      "body": "{{title}} : {{count}} comptages enregistrés sur des postes différents. Vérifiez le stock et enregistrez un nouveau comptage."
     }
   },
   "audience": {

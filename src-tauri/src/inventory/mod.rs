@@ -7,6 +7,7 @@ pub mod fx;
 pub mod issue;
 pub mod ledger;
 pub mod lots;
+pub mod negative_stock;
 pub mod periods;
 pub mod procurement;
 pub mod queries;
@@ -16,5 +17,7 @@ pub mod valuation;
 
 #[cfg(test)]
 mod benchmark_tests;
+#[cfg(test)]
+mod negative_stock_tests;
 #[cfg(test)]
 mod tests;
