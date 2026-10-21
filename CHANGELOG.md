@@ -11,6 +11,19 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.9.0] — 2026-10-21
+
+Phase 8 test installer, for internal test PCs only (Internal release ring), not for plant data.
+Release notes for users: `docs/release/notes/0.9.0.en.md` and `0.9.0.fr.md`.
+
+### Changed
+
+- Version set to the plain release version `0.9.0` in `package.json`, `src-tauri/Cargo.toml`
+  and `src-tauri/tauri.conf.json` (the release catalog accepts only MAJOR.MINOR.PATCH), so the
+  first customer release `1.0.0` is a normal update for test PCs.
+
+---
+
 ## [0.4.0-dev] — 2026-04-17
 
 Phase 4 pre-release after repository history unification: the advanced Phase 4 control-plane
