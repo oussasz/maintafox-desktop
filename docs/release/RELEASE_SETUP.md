@@ -15,7 +15,9 @@ Customers' PCs  ->  check every 2 hours, back up their data, download, verify, i
 
 ## One-time setup (about 20 minutes)
 
-You do every step yourself; nothing secret is ever shared with Claude.
+You do every step yourself; nothing secret is ever shared with Claude. Do step 6 (the two GitHub
+environments) FIRST: the key script and the secret commands below store the secrets in the
+`release` environment, which must exist already.
 
 1. **Updater key** (signs every update; the app refuses anything else).
    On your PC, in the `maintafox-desktop` folder, in PowerShell:
@@ -24,7 +26,9 @@ You do every step yourself; nothing secret is ever shared with Claude.
    ```
    It asks you for a password (choose a strong one and keep it in your password manager), creates
    the key outside the project folder, writes the public key into
-   `src-tauri\updater\maintafox-updater.pub`, and shows you two `gh secret set` commands to type.
+   `src-tauri\updater\maintafox-updater.pub`, and shows you two `gh secret set ... --env release`
+   commands to type (the key and its password go into the protected `release` environment, never
+   into the repository).
    Back up the key file and its password offline: **if they are lost, installed copies of
    Maintafox can never be updated again** (customers would have to reinstall by hand).
 2. Ask Claude to commit `src-tauri\updater\maintafox-updater.pub` (it is public).
@@ -32,7 +36,7 @@ You do every step yourself; nothing secret is ever shared with Claude.
    (the script prints it at the end). Claude does this at the next deploy when you say "deploy".
 4. **Release workflow key:** Console > Updates > Releases > Release workflow keys > Create
    ("GitHub Actions"), confirm with your authenticator code, copy the token shown once, then type
-   `gh secret set MAINTAFOX_RELEASE_PUBLISHER_TOKEN` and paste the token.
+   `gh secret set MAINTAFOX_RELEASE_PUBLISHER_TOKEN --env release` and paste the token.
 5. **Code signing certificate** (optional at first, strongly recommended before customers):
    see `docs/release/CODE_SIGNING.md`. Until then every release says "NOT CODE-SIGNED" in GitHub
    and in the console, and Windows shows a SmartScreen warning when installing.
@@ -42,14 +46,18 @@ You do every step yourself; nothing secret is ever shared with Claude.
    (GitHub > the desktop repository > Settings > Environments > New environment):
    - `release`: tick **Required reviewers** and add yourself (and only people you trust to ship to
      every customer). Tick **Prevent self-review** if a second person reviews. Under **Deployment
-     branches and tags**, choose "Selected branches and tags" and add the tag rule `v*.*.*`. Put
-     the updater key and the publisher token here (Environment secrets), not in the repository:
-     `gh secret set TAURI_SIGNING_PRIVATE_KEY --env release`, and the same for
-     `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and `MAINTAFOX_RELEASE_PUBLISHER_TOKEN`.
+     branches and tags**, choose "Selected branches and tags" and add the tag rule `v*.*.*`.
+     Create the environment now; its secrets (the updater key, its password and the publisher
+     token) are added in steps 1 and 4, always as Environment secrets (`--env release`), never in
+     the repository.
    - `release-build`: the same tag rule `v*.*.*` (reviewers are not needed). Put only the `ES_*`
      code-signing secrets here, if you have them (`gh secret set ES_USERNAME --env release-build`,
      ...). Never put the updater key or the publisher token in `release-build`.
-   - Delete the repository-level copies (`gh secret delete TAURI_SIGNING_PRIVATE_KEY`, ...).
+   - If any of these were ever stored at repository level, delete those copies (a repository
+     secret can be read by any workflow, without your approval): `gh secret delete
+     TAURI_SIGNING_PRIVATE_KEY`, `gh secret delete TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and
+     `gh secret delete MAINTAFOX_RELEASE_PUBLISHER_TOKEN`. The key script refuses to finish while
+     one is left.
    - Settings > Rules > Rulesets: add a tag ruleset for `v*` so only you can create or move release
      tags.
    From then on, each pushed tag waits in GitHub Actions for your "Approve and deploy", twice: once
