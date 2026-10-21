@@ -569,39 +569,27 @@ pub async fn run_reconciliation(
         .ok_or_else(|| AppError::ValidationFailed(vec!["Unable to create reconciliation run.".to_string()]))?;
     let run_id: i64 = run_id_row.try_get("", "id")?;
 
+    // The expected on-hand is the sum of the movements' on-hand effect, from the one table the
+    // balance itself follows (`ledger::ON_HAND_MOVEMENTS`), so the two can never drift apart.
+    let ledger_sql = format!(
+        "WITH ledger AS (
+            SELECT t.article_id, t.warehouse_id, t.location_id,
+                   SUM({}) AS ledger_expected_on_hand
+            FROM inventory_transactions t
+            GROUP BY t.article_id, t.warehouse_id, t.location_id
+         )
+         SELECT sb.article_id, sb.warehouse_id, sb.location_id,
+                CAST(sb.on_hand_qty AS REAL) AS balance_on_hand,
+                CAST(COALESCE(l.ledger_expected_on_hand, 0) AS REAL) AS ledger_expected_on_hand
+         FROM stock_balances sb
+         LEFT JOIN ledger l
+           ON l.article_id = sb.article_id
+          AND l.warehouse_id = sb.warehouse_id
+          AND l.location_id = sb.location_id",
+        crate::inventory::ledger::on_hand_delta_sql("t")
+    );
     let rows = tx
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "WITH ledger AS (
-                SELECT article_id, warehouse_id, location_id,
-                       SUM(
-                         CASE movement_type
-                           WHEN 'ADJUST' THEN quantity
-                           WHEN 'ISSUE' THEN -quantity
-                           WHEN 'RETURN' THEN quantity
-                           WHEN 'TRANSFER_OUT' THEN -quantity
-                           WHEN 'TRANSFER_IN' THEN quantity
-                           WHEN 'GR_ACCEPT' THEN quantity
-                           WHEN 'REPAIRABLE_RELEASE' THEN -quantity
-                           WHEN 'REPAIRABLE_RETURN' THEN quantity
-                           WHEN 'COUNT_ADJUST' THEN quantity
-                           WHEN 'COUNT_REVERSAL' THEN quantity
-                           ELSE 0
-                         END
-                       ) AS ledger_expected_on_hand
-                FROM inventory_transactions
-                GROUP BY article_id, warehouse_id, location_id
-             )
-             SELECT sb.article_id, sb.warehouse_id, sb.location_id,
-                    CAST(sb.on_hand_qty AS REAL) AS balance_on_hand,
-                    CAST(COALESCE(l.ledger_expected_on_hand, 0) AS REAL) AS ledger_expected_on_hand
-             FROM stock_balances sb
-             LEFT JOIN ledger l
-               ON l.article_id = sb.article_id
-              AND l.warehouse_id = sb.warehouse_id
-              AND l.location_id = sb.location_id"
-                .to_string(),
-        ))
+        .query_all(Statement::from_string(DbBackend::Sqlite, ledger_sql))
         .await?;
 
     let mut checked_rows = 0_i64;
