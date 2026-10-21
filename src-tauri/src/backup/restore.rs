@@ -143,6 +143,18 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Removes a staged restore that must not be applied any more (the update it was staged for did
+/// not install). Returns whether one was removed.
+pub fn cancel_pending_restore(live_db_path: &Path) -> AppResult<bool> {
+    let pending = pending_restore_path(live_db_path);
+    if !pending.exists() {
+        return Ok(false);
+    }
+    fs::remove_file(&pending)?;
+    tracing::warn!(event = "restore_cancelled", "staged restore removed");
+    Ok(true)
+}
+
 /// Swaps a staged restore into place. Must run before the database is opened.
 ///
 /// Returns `true` when a restore was applied. On failure the original database is put back and the

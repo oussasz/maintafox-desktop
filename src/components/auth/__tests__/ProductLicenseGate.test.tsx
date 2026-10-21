@@ -21,7 +21,10 @@ import {
   submitProductLicenseKey,
 } from "@/services/product-license-service";
 import { verifyStepUp } from "@/services/rbac-service";
+import { checkForUpdate } from "@/services/updater-service";
+import { useAppStore } from "@/store/app-store";
 import { useSessionStore } from "@/store/session-store";
+import { useUpdaterStore } from "@/stores/updater-store";
 import type { SessionInfo } from "@shared/ipc-types";
 
 // One `t` for every render, as react-i18next gives: a new function per render would re-run the
@@ -58,8 +61,17 @@ vi.mock("react-i18next", () => {
     };
     return map[key] ?? key;
   };
-  return { useTranslation: () => ({ t }) };
+  const i18n = { language: "en" };
+  return { useTranslation: () => ({ t, i18n }) };
 });
+
+vi.mock("@/services/updater-service", () => ({
+  checkForUpdate: vi.fn(),
+  installPendingUpdate: vi.fn(),
+  reinstallPreviousVersion: vi.fn(),
+  getUpdateJournal: vi.fn().mockResolvedValue(null),
+  acknowledgeUpdateNotice: vi.fn(),
+}));
 
 vi.mock("@/services/rbac-service", () => ({
   verifyStepUp: vi.fn(),
@@ -345,6 +357,75 @@ describe("ProductLicenseGate", () => {
     expect(await screen.findByText("License expired")).toBeInTheDocument();
     expect(screen.getByText("License window ended.")).toBeInTheDocument();
     expect(screen.queryByText("app content")).not.toBeInTheDocument();
+  });
+
+  it("offers the required update on the denied screen while the licence requires one, and only then", async () => {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    useAppStore.setState({ appStatus: "ready" });
+    vi.mocked(checkForUpdate).mockResolvedValue({
+      status: "available",
+      available: true,
+      current_version: "1.2.3",
+      version: "1.3.0",
+      notes: null,
+      pub_date: null,
+      kind: "upgrade",
+      mandatory: true,
+      mandatory_reason: "forced_update_floor",
+      mandatory_message: null,
+      notes_en: "EN",
+      notes_fr: "FR",
+      message: null,
+    } as never);
+    const forced = {
+      complete: true,
+      status: "denied_force_update_required",
+      pending_online_validation: false,
+      deny_message: "Update required.",
+      tenant_id: "ten_test",
+    };
+    mockedGetProductLicenseOnboardingState.mockResolvedValue(forced as never);
+    mockedGetProductLicenseDiagnostics.mockResolvedValue({
+      status: "denied_force_update_required",
+      pending_online_validation: false,
+      reconciliation: { retry_attempt: 0 },
+      diagnostics: [],
+      has_activation_claim: true,
+    } as never);
+
+    const { unmount } = renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    expect(await screen.findByTestId("forced-update-panel")).toBeInTheDocument();
+    // The mandatory offer can be installed from the licence screen; it cannot be postponed.
+    expect(
+      await screen.findByRole("button", { name: "updates.banner.installNow" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "updates.banner.dismiss" }),
+    ).not.toBeInTheDocument();
+    // The licence still blocks the app.
+    expect(screen.queryByText("app content")).not.toBeInTheDocument();
+    expect(screen.getByText("Update required.")).toBeInTheDocument();
+    unmount();
+
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      ...forced,
+      status: "denied_expired",
+    } as never);
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+    expect(await screen.findByText("License expired")).toBeInTheDocument();
+    expect(screen.queryByTestId("forced-update-panel")).not.toBeInTheDocument();
+    useUpdaterStore.setState({ lastCheckResult: null, forceRequired: false });
+    useAppStore.setState({ appStatus: "loading" });
+    vi.mocked(checkForUpdate).mockReset();
   });
 
   it("does not force-reconcile when entitlement summary fails for missing session", async () => {

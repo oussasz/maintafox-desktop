@@ -2696,3 +2696,49 @@ async fn a_concurrent_signed_out_claim_never_overwrites_a_revocation() {
     }
     db.close().await.expect("close");
 }
+
+/// Release chain: while the licence requires an update (`DeniedForceUpdateRequired`), sync stays
+/// closed but the update manifest is still asked with this PC's activation token, so the required
+/// version can be offered and installed (the only way this PC ends that denial). Any denial only
+/// the control plane ends closes the manifest too.
+#[tokio::test]
+async fn the_update_manifest_stays_reachable_while_the_licence_requires_an_update() {
+    let db = plant_with_terms(forced_update(true, "99999.0.0")).await;
+    assert_eq!(
+        stored_status(&db).await,
+        ProductLicenseActivationStatus::DeniedForceUpdateRequired
+    );
+    let token = stored_claim(&db).await.activation_token;
+    assert_eq!(
+        super::sync_activation_bearer_token(&db).await.expect("sync token"),
+        None,
+        "sync stays closed while the update is required"
+    );
+    assert_eq!(
+        super::update_manifest_bearer_token(&db).await.expect("manifest token"),
+        Some(token),
+        "the update server is still asked for the required version"
+    );
+
+    for (code, status) in CONTROL_PLANE_DENIALS {
+        let db = plant_with_terms(base_terms()).await;
+        apply_product_license_reconciliation_in(&db, SIGNED_OUT, &denial(code))
+            .await
+            .expect("denial recorded");
+        assert_eq!(stored_status(&db).await, status, "{code}");
+        assert_eq!(
+            super::update_manifest_bearer_token(&db).await.expect("manifest token"),
+            None,
+            "{code}: no update check for a licence only the control plane can end"
+        );
+    }
+
+    let db = plant_with_terms(base_terms()).await;
+    let active = super::sync_activation_bearer_token(&db).await.expect("sync token");
+    assert!(active.is_some());
+    assert_eq!(
+        super::update_manifest_bearer_token(&db).await.expect("manifest token"),
+        active,
+        "an active licence: the same token as sync"
+    );
+}

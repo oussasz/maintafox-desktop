@@ -35,6 +35,7 @@ describe("useStartupBridge", () => {
       appStatus: "loading",
       startupMessage: "",
       appVersion: "",
+      updateRecovery: null,
     });
   });
 
@@ -106,5 +107,90 @@ describe("useStartupBridge", () => {
     unmount();
 
     expect(mockUnlisten).toHaveBeenCalled();
+  });
+  it("shows the update recovery when update_rollback_required is emitted", async () => {
+    renderHook(() => useStartupBridge());
+    await waitFor(() => expect(capturedListener).not.toBeNull());
+
+    emitEvent({
+      stage: "update_rollback_required",
+      from_version: "1.1.0",
+      to_version: "1.2.0",
+      reason: "Migration failed: m20261001 added column twice",
+      backup_refusal: null,
+    });
+
+    const { appStatus, updateRecovery } = useAppStore.getState();
+    expect(appStatus).toBe("update_rollback_required");
+    expect(updateRecovery).toEqual({
+      fromVersion: "1.1.0",
+      toVersion: "1.2.0",
+      reason: "Migration failed: m20261001 added column twice",
+      backupRefusal: null,
+    });
+  });
+
+  it("recovers a missed update_rollback_required from the journal, never saying ready", async () => {
+    mockInvoke.mockImplementation(async (command) => {
+      if (command === "get_app_info") return { ...fixtures.appInfo, version: "1.2.0" };
+      if (command === "get_update_journal") {
+        return {
+          state: "rollback_required",
+          kind: "upgrade",
+          from_version: "1.1.0",
+          to_version: "1.2.0",
+          failure: "Migration failed",
+          rollback_refusal: null,
+          rollback_allowed_version: null,
+          backup_refusal: "the backup changed since it was taken (checksum mismatch)",
+          notice_acknowledged: false,
+        };
+      }
+      if (command === "health_check") return fixtures.healthCheck;
+      return null;
+    });
+
+    renderHook(() => useStartupBridge());
+
+    await waitFor(() => {
+      expect(useAppStore.getState().appStatus).toBe("update_rollback_required");
+    });
+    // Let the health_check fallback run: it must not override the recovery status.
+    await waitFor(() =>
+      expect(mockInvoke.mock.calls.some(([command]) => command === "health_check")).toBe(true),
+    );
+    await Promise.resolve();
+    expect(useAppStore.getState().appStatus).toBe("update_rollback_required");
+    expect(useAppStore.getState().updateRecovery).toEqual({
+      fromVersion: "1.1.0",
+      toVersion: "1.2.0",
+      reason: "Migration failed",
+      backupRefusal: "the backup changed since it was taken (checksum mismatch)",
+    });
+  });
+
+  it("ignores a rollback_required journal that belongs to another version", async () => {
+    mockInvoke.mockImplementation(async (command) => {
+      if (command === "get_app_info") return { ...fixtures.appInfo, version: "1.1.0" };
+      if (command === "get_update_journal") {
+        return {
+          state: "rollback_required",
+          kind: "upgrade",
+          from_version: "1.1.0",
+          to_version: "1.2.0",
+          failure: null,
+          rollback_refusal: null,
+          rollback_allowed_version: null,
+          notice_acknowledged: false,
+        };
+      }
+      if (command === "health_check") return fixtures.healthCheck;
+      return null;
+    });
+
+    renderHook(() => useStartupBridge());
+
+    await waitFor(() => expect(useAppStore.getState().appStatus).toBe("ready"));
+    expect(useAppStore.getState().updateRecovery).toBeNull();
   });
 });

@@ -27,6 +27,16 @@ pub enum StartupEvent {
     DatabaseKeyRequired {
         reason: String,
     },
+    /// The installed update could not update the database: the pre-update backup is staged and
+    /// the UI offers to reinstall `from_version` (master plan Phase 5.5).
+    UpdateRollbackRequired {
+        from_version: String,
+        to_version: String,
+        reason: String,
+        /// Set when the pre-update backup could not be verified (missing, no checksum, changed):
+        /// nothing was restored and no reinstall is offered.
+        backup_refusal: Option<String>,
+    },
 }
 
 // ── Pure helpers (unit-testable without Tauri runtime) ──────────────────────
@@ -108,6 +118,19 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Phase 1: database integrity and connection
     info!("startup: initialising database");
     let db_path = resolve_db_path(&app)?;
+    // A restore staged for a rollback whose installer never ran is cancelled first: only a restore
+    // the update journal justifies (or one an administrator staged) is ever applied.
+    match crate::updater::reconcile_staged_restore_at_startup(&app, std::path::Path::new(&db_path)) {
+        Ok(true) => warn!("startup: the rollback was not installed; its staged restore was cancelled"),
+        Ok(false) => {}
+        Err(e) => {
+            let reason = format!("The staged restore was not applied: the update journal could not be checked: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    }
     // A restore staged by `restore_from_backup` is swapped in before the database is opened.
     let restored = match crate::backup::restore::apply_pending_restore(std::path::Path::new(&db_path)) {
         Ok(restored) => restored,
@@ -142,6 +165,33 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         }
     }
 
+    // Phase 1b: the journal of an in-app update (master plan Phase 5.5).
+    let (update_journal, update_action) = match crate::updater::startup_action(&app) {
+        Ok(found) => found,
+        Err(e) => {
+            warn!("startup: update journal could not be read, update outcome unknown: {e}");
+            (None, crate::updater::journal::StartupAction::Nothing)
+        }
+    };
+    if update_action == crate::updater::journal::StartupAction::RecoveryPending {
+        // This version failed to update the database before: the database (the staged pre-update
+        // backup, swapped in above) is left untouched until the previous version is reinstalled.
+        if let Some(j) = &update_journal {
+            warn!(from = %j.from_version, to = %j.to_version, "startup: update recovery pending");
+            emit_event(
+                &app,
+                StartupEvent::UpdateRollbackRequired {
+                    from_version: j.from_version.clone(),
+                    to_version: j.to_version.clone(),
+                    reason: j.failure.clone().unwrap_or_default(),
+                    backup_refusal: j.backup_refusal.clone(),
+                },
+            );
+        }
+        window.show().ok();
+        return Ok(());
+    }
+
     // Phase 2: schema migrations
     info!("startup: running migrations");
     let app_state = app.state::<crate::state::AppState>();
@@ -165,12 +215,44 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         Err(e) => {
             let reason = format!("Migration failed: {e}");
             error!("{reason}");
-            emit_event(&app, StartupEvent::Failed { reason });
+            // Right after an in-app update: put the pre-update backup back and offer the previous
+            // version (forward-only migrations; the older version cannot open a half-migrated file).
+            let after_update = update_journal.clone().filter(|j| {
+                update_action == crate::updater::journal::StartupAction::VerifyNewVersion
+                    && j.kind == crate::updater::journal::UpdateKind::Upgrade
+            });
+            if let Some(journal) = after_update {
+                match crate::updater::on_migration_failed(&app, &app_state.db, journal, &reason).await {
+                    Ok(view) => emit_event(
+                        &app,
+                        StartupEvent::UpdateRollbackRequired {
+                            from_version: view.from_version,
+                            to_version: view.to_version,
+                            reason,
+                            backup_refusal: view.backup_refusal,
+                        },
+                    ),
+                    Err(restore_error) => {
+                        let reason = format!(
+                            "{reason}. The backup taken before the update could not be prepared: {restore_error}"
+                        );
+                        error!("{reason}");
+                        emit_event(&app, StartupEvent::Failed { reason });
+                    }
+                }
+            } else {
+                emit_event(&app, StartupEvent::Failed { reason });
+            }
             window.show().ok();
             return Err(e);
         }
     }
+    if let Err(e) = crate::updater::on_migrations_succeeded(&app, update_journal, &update_action) {
+        warn!("startup: update journal could not be closed: {e}");
+    }
 
+    // Back on the previous version after a failed update: its database is the pre-update backup.
+    let restored = restored || update_action == crate::updater::journal::StartupAction::ReturnedToPrevious;
     if restored {
         // The restored database resumes sync from a full snapshot (`forget_server_position`).
         if let Err(e) = crate::sync::transport::store::forget_server_position(&app_state.db).await {

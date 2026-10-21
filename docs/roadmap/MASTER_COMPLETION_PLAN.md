@@ -784,6 +784,47 @@ already handles).
   `BACKUP_LOCAL_RETENTION_DAYS` to the API). Checklist and rollback: vendor console
   `deploy/PHASE4_DEPLOY.md`.
 
+### Phase 5 — Release & update chain (2026-10-13)
+
+Desktop branch `claude/phase5-release-chain-e65c46` (PR into phase0/security-hardening); vendor
+console branch `claude/phase5-update-manifest` (PR #3 into phase0/security-hardening).
+
+- **5.1 Updater key:** no placeholder anywhere. The owner creates the key pair with
+  `scripts/release/setup-updater-key.ps1` (password typed by them, private key outside the repo,
+  `gh secret set` commands typed by them); the public key file `src-tauri/updater/maintafox-updater.pub`
+  is embedded by `build.rs` and injected into the plugin config at runtime. Builds without it have no
+  updater plugin and say "not set up in this build". `createUpdaterArtifacts` is on. The release
+  workflow stops with named errors when the key file or a secret is missing, and when no `.sig` is
+  produced.
+- **5.2 Release workflow** (`.github/workflows/release.yml`, tag `vX.Y.Z`): version and FR/EN notes
+  checked, NSIS installer built, Authenticode signing through `bundle.windows.signCommand`
+  (`scripts/release/sign-windows.ps1`, provider SSL.com eSigner, enabled by repository variables) or a
+  loud NOT CODE-SIGNED warning, upload + registration through the API
+  (`scripts/release/publish-release.mjs`), installer archived as a GitHub release. Branded installer:
+  `feat/brand-installer` is **not merged** into phase0/security-hardening, so releases use the current
+  bundle config until it is. Code-signing research and recommendation: `docs/release/CODE_SIGNING.md`
+  (SSL.com OV + eSigner; Azure Artifact Signing is not available to Algerian organisations).
+- **5.3 API** (vendor console, migration 016): release catalog, CI publisher keys, server-side
+  verification of every uploaded installer (size, SHA-256, updater signature against
+  `RELEASE_UPDATER_PUBLIC_KEY`), and the manifest `GET /api/v1/updates/:target/:arch/:version`
+  (rings internal<pilot<stable, staged % per device bucket, cohort pause, catalog and cohort recall,
+  force-update floor, rollback request). Synthetic release ids removed.
+- **5.4 Console:** Updates > Releases (catalog, notes, publish/widen with rollout %, recall with
+  step-up, workflow keys shown once), FR/EN.
+- **5.5 Desktop:** manifest check with the device token, re-check right before download, pre-update
+  backup (`pre_update` run), signed download with progress, `update-journal.json`. A failed migration
+  after an update stages the pre-update backup and offers to reinstall the previous signed release;
+  a recall offers the previous release (database kept when no migration ran, otherwise the backup is
+  restored once nothing is waiting to sync). Recovery screen works before sign-in. `docs/release/ROLLBACK.md`.
+- **Tests:** vendor `update-manifest.integration.mjs` (real Postgres + S3, real `tauri signer`
+  vector) green in CI; console 112 tests; desktop Rust unit tests for the journal, downgrade plan and
+  manifest parsing; frontend 1080 tests; publish script run against the local API with a real
+  `tauri signer` signature.
+- **Not verified:** a real installed build updating itself and restarting (needs the owner's key
+  and a release); code signing (no certificate yet). Presigned URLs need the public object-storage
+  endpoint (branch `claude/media-public-endpoint`, not merged), whose nginx route caps requests at
+  32 MB: raise it for release objects. **Not deployed.**
+
 ## 6. Risks and open points
 
 - **D2 departs from the PRD.** The server would use a generic current-state table instead of typed per-entity tables, so the PRD needs an update if you approve it.

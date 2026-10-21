@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { UpdateStatusDialog } from "@/components/updates/UpdateStatusDialog";
 import { type DbHealth, useDbHealth } from "@/hooks/use-db-health";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
+import { useUpdaterStore } from "@/stores/updater-store";
 
 export function StatusBar() {
   const { t } = useTranslation("shell");
@@ -10,6 +13,8 @@ export function StatusBar() {
   const syncStatus = useAppStore((s) => s.syncStatus);
   const appVersion = useAppStore((s) => s.appVersion);
   const db = useDbHealth();
+  const updateAvailable = useUpdaterStore((s) => s.lastCheckResult?.available === true);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
 
   return (
     <footer
@@ -50,8 +55,26 @@ export function StatusBar() {
       {/* Right: database state (the backend's real probe) and version. */}
       <div className="flex items-center gap-3">
         <DbIndicator db={db} />
-        {appVersion && <span>{t("status.version", { version: appVersion })}</span>}
+        {appVersion && (
+          <button
+            type="button"
+            className="flex items-center gap-1 hover:text-text-primary"
+            onClick={() => setUpdatesOpen(true)}
+            title={t("updates.status.open", { version: appVersion })}
+            aria-label={t("updates.status.open", { version: appVersion })}
+          >
+            {updateAvailable && (
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
+            )}
+            {t("status.version", { version: appVersion })}
+          </button>
+        )}
       </div>
+      <UpdateStatusDialog
+        open={updatesOpen}
+        onOpenChange={setUpdatesOpen}
+        appVersion={appVersion}
+      />
     </footer>
   );
 }

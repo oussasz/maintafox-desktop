@@ -39,6 +39,11 @@ pub fn setup_tray(app: &mut tauri::App) -> AppResult<()> {
                 }
             }
             "tray_quit" => {
+                // Not while an update is between its backup and the restart (updater SF1).
+                if crate::updater::writes_barred() {
+                    info!("Quit requested from tray during an update install: ignored");
+                    return;
+                }
                 info!("Quit requested from tray");
                 app.exit(0);
             }
