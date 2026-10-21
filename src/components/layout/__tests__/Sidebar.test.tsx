@@ -160,6 +160,14 @@ describe("Sidebar - same-window navigation", () => {
       fireEvent(link, new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 })),
     ).toBe(false);
     expect(probe.path).toBe(href.split("?")[0]);
+    // a right click with a modifier is left to the context menu: no navigation, not prevented
+    expect(
+      fireEvent(
+        other,
+        new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 2, ctrlKey: true }),
+      ),
+    ).toBe(true);
+    expect(probe.path).toBe(href.split("?")[0]);
     expect(openSpy).not.toHaveBeenCalled();
     expect(webviewWindowCtor).not.toHaveBeenCalled();
     openSpy.mockRestore();

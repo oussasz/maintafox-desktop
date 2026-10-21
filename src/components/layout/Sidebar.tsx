@@ -50,7 +50,10 @@ export function Sidebar({ items }: SidebarProps) {
   // The menu always changes page inside this window. A modifier click or a middle click on a link
   // would otherwise ask the webview for a new window; route it in place instead.
   const openInPlace = (e: MouseEvent<HTMLAnchorElement>, path: string) => {
-    if (e.button === 1 || e.ctrlKey || e.shiftKey || e.metaKey || e.altKey) {
+    // `auxclick` also fires for the right button (context menu): only the middle button counts there.
+    const wantsNewWindow =
+      e.type === "auxclick" ? e.button === 1 : e.ctrlKey || e.shiftKey || e.metaKey || e.altKey;
+    if (wantsNewWindow) {
       e.preventDefault();
       navigate(path);
     }
