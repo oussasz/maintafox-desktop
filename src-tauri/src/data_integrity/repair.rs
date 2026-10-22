@@ -52,7 +52,7 @@ async fn update_finding_waived(
         .await?;
     if aff.rows_affected() != 1 {
         return Err(AppError::ValidationFailed(vec![
-            "data_integrity_finding was modified elsewhere (stale row_version).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: data_integrity_finding was modified elsewhere (stale row_version).".into(),
         ]));
     }
     Ok(())
@@ -71,7 +71,7 @@ async fn update_finding_repaired(txn: &impl ConnectionTrait, id: i64, expected_r
         .await?;
     if aff.rows_affected() != 1 {
         return Err(AppError::ValidationFailed(vec![
-            "data_integrity_finding was modified elsewhere (stale row_version).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: data_integrity_finding was modified elsewhere (stale row_version).".into(),
         ]));
     }
     Ok(())
@@ -134,7 +134,7 @@ pub async fn waive_data_integrity_finding(
     }
     if f0.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "data_integrity_finding was modified elsewhere (stale row_version).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: data_integrity_finding was modified elsewhere (stale row_version).".into(),
         ]));
     }
     let waiver_approver = if f0.severity == "error" {
@@ -234,7 +234,7 @@ pub async fn apply_data_integrity_repair(
     }
     if f0.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "data_integrity_finding was modified elsewhere (stale row_version).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: data_integrity_finding was modified elsewhere (stale row_version).".into(),
         ]));
     }
 
