@@ -40,9 +40,9 @@ export interface DateFieldProps {
   size?: "sm" | "md";
   className?: string;
   placeholder?: string;
-  "aria-label"?: string;
-  "aria-describedby"?: string;
-  "aria-invalid"?: boolean;
+  "aria-label"?: string | undefined;
+  "aria-describedby"?: string | undefined;
+  "aria-invalid"?: boolean | undefined;
   onBlur?: () => void;
 }
 
@@ -88,8 +88,9 @@ export function DateField({
     setDraft(next);
     // Any text that already reads as a real date counts, so a form submitted with Enter (no blur)
     // carries it; an unfinished one holds no value.
+    // A date outside the bounds is passed on too and flagged, so the form can say why it refuses it.
     const iso = parseDateInput(next, language);
-    if (iso && isDateWithin(iso, min, max)) {
+    if (iso) {
       if (iso !== value) onChange(iso);
     } else if (value !== "") {
       // An unfinished or impossible date is no date, as with a native field.
@@ -99,7 +100,7 @@ export function DateField({
 
   function commitOnBlur() {
     const iso = parseDateInput(draft, language);
-    if (iso && isDateWithin(iso, min, max)) {
+    if (iso) {
       setDraft(formatIsoDateForInput(iso, language));
       if (iso !== value) onChange(iso);
     }

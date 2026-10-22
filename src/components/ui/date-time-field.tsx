@@ -47,6 +47,9 @@ export function DateTimeField({
   "aria-label": ariaLabel,
   "aria-invalid": ariaInvalid,
 }: DateTimeFieldProps) {
+  // Bounds may be given as date-times; the calendar restricts the day.
+  const minDay = min?.slice(0, 10);
+  const maxDay = max?.slice(0, 10);
   const parts = splitDateTime(value);
   // The two parts are kept apart while one of them is still empty, so a date picked first is not
   // lost before the time is typed.
@@ -82,8 +85,8 @@ export function DateTimeField({
         {...(id ? { id } : {})}
         value={date}
         onChange={changeDate}
-        min={min}
-        max={max}
+        min={minDay}
+        max={maxDay}
         isDateDisabled={isDateDisabled}
         disabledDayTitle={disabledDayTitle}
         size={size}

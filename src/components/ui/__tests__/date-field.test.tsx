@@ -55,10 +55,10 @@ describe("DateField", () => {
     expect(value()).toBe("2026-01-05");
   });
 
-  it("refuses a date outside the bounds", () => {
+  it("flags a date outside the bounds and passes it on, so the form can say why it refuses it", () => {
     render(<Harness min="2026-10-01" max="2026-10-31" />);
     fireEvent.change(box(), { target: { value: "05/11/2026" } });
-    expect(value()).toBe("");
+    expect(value()).toBe("2026-11-05");
     expect(box()).toHaveAttribute("aria-invalid", "true");
     fireEvent.change(box(), { target: { value: "05/10/2026" } });
     expect(value()).toBe("2026-10-05");
