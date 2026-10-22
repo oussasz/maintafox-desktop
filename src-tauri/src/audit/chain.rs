@@ -142,6 +142,48 @@ pub(crate) async fn reseal_before_stubs(conn: &impl ConnectionTrait, entity_sync
     Ok(())
 }
 
+/// Test helper: re-seals the last event of this device's chain as an event kept on its device in
+/// the stub era (`L2:` over its local form, with its hash-only stub), as `seal` does for an event
+/// the codec cannot encode — to stand for an event an earlier version kept on its device.
+#[cfg(test)]
+pub(crate) async fn reseal_kept_on_device(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<()> {
+    let local = local_form(conn, entity_sync_id).await?;
+    let prev = local.get("chain_prev_hash").and_then(Value::as_str).map(str::to_string);
+    let origin = local
+        .get("chain_origin")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("audit event {entity_sync_id} is not chained")))?
+        .to_string();
+    let seq = local
+        .get("chain_seq")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("audit event {entity_sync_id} is not chained")))?;
+    let digest = content_digest(&local)?;
+    let hash = stub_era_hash(prev.as_deref(), &digest);
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE audit_events SET chain_hash = ? WHERE entity_sync_id = ?",
+        [hash.clone().into(), entity_sync_id.into()],
+    ))
+    .await?;
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO audit_chain_stubs \
+         (entity_sync_id, chain_origin, chain_seq, chain_prev_hash, chain_hash, content_digest) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            crate::sync::identity::new_entity_sync_id().into(),
+            origin.into(),
+            seq.into(),
+            prev.into(),
+            hash.into(),
+            digest.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
 /// A stub's hash: a local-form prefix and a SHA-256 in lowercase hex.
 fn is_local_form_hash(hash: &str) -> bool {
     local_prefix(hash).is_some_and(|p| is_hex_digest(&hash[p.len()..]))

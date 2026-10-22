@@ -2076,6 +2076,11 @@ async fn assert_first_posting_kept(
             Vec::<String>::new(),
             "{pc}: nothing left to a person"
         );
+        let report = crate::audit::chain::verify_audit_chain(db).await.expect("verify");
+        assert!(
+            report.intact,
+            "{pc}: every audit chain verifies (B's audits reached A): {report:?}"
+        );
     }
 }
 
@@ -2697,70 +2702,111 @@ async fn a_count_posted_on_two_pcs_with_different_quantities_converges_and_is_li
     assert!(list.double_postings.is_empty(), "B: closed by the new count");
 }
 
-/// Review B1: the audit events the stock code writes are staged and travel. The "count posted
-/// twice" targets (`inventory_transactions`, `inventory_mutation_audit_links`,
-/// `inventory_count_sessions`) are sync ids sent as they are; "stock to reconcile" events name a
-/// pair of local ids (`stock_location_article`) and travel without that target. No staging error is
-/// left on the PC that wrote them.
+/// Audit events written by the stock code, and how they leave this PC (reviews 8e1d2ffd B1,
+/// bdc259be B1/S1):
+/// - a "count posted twice" event written now (targets `inventory_transactions`,
+///   `inventory_mutation_audit_links`, `inventory_count_sessions`: sync ids, sent as they are) is
+///   sealed over its sync payload and travels;
+/// - a "stock to reconcile" event (`stock_location_article`: local ids) is kept on this PC, sealed in
+///   its local form with a stub;
+/// - an event an earlier version already kept on this PC (sealed `L2:` with its stub, its capture
+///   journal row still waiting) never starts travelling, although this version could encode it.
+///
+/// Nothing is left to a person on A, and both PCs verify A's chain without a break.
 #[tokio::test]
-async fn the_stock_audit_events_are_staged_and_reach_the_other_pc() {
+async fn the_stock_audit_events_travel_or_stay_as_they_were_sealed() {
     let a = started_device_db().await;
     let b = started_device_db().await;
     let mut server = TestServer::new();
-    let targets = [
-        (
-            "inventory_transactions",
-            Some(crate::sync::identity::new_entity_sync_id()),
-        ),
-        (
-            "inventory_mutation_audit_links",
-            Some(crate::sync::identity::new_entity_sync_id()),
-        ),
-        (
-            "inventory_count_sessions",
-            Some(crate::sync::identity::new_entity_sync_id()),
-        ),
-        ("stock_location_article", None),
-    ];
-    for (target_type, target_id) in &targets {
-        crate::audit::writer::write_audit_event(
-            &a,
-            crate::audit::writer::AuditEventInput {
-                action_code: "inventory.test.audit_target".to_string(),
-                target_type: Some((*target_type).to_string()),
-                target_id: Some(target_id.clone().unwrap_or_else(|| "12:34".to_string())),
-                actor_id: None,
-                auth_context: "system".to_string(),
-                result: "success".to_string(),
-                before_hash: None,
-                after_hash: None,
-                retention_class: "standard".to_string(),
-                details_json: Some(serde_json::json!({ "summary": "test" })),
-            },
-        )
+    let write = |target_type: &'static str, target_id: String| {
+        let a = &a;
+        async move {
+            let id = crate::audit::writer::write_audit_event(
+                a,
+                crate::audit::writer::AuditEventInput {
+                    action_code: "inventory.test.audit_target".to_string(),
+                    target_type: Some(target_type.to_string()),
+                    target_id: Some(target_id),
+                    actor_id: None,
+                    auth_context: "system".to_string(),
+                    result: "success".to_string(),
+                    before_hash: None,
+                    after_hash: None,
+                    retention_class: "standard".to_string(),
+                    details_json: Some(serde_json::json!({ "summary": "test" })),
+                },
+            )
+            .await
+            .expect("audit");
+            text_of(
+                a,
+                "SELECT entity_sync_id FROM audit_events WHERE id = ?",
+                vec![id.into()],
+            )
+            .await
+        }
+    };
+    // Kept on this PC by an earlier version (the last position of the chain when resealed).
+    let kept_before = write("inventory_transactions", crate::sync::identity::new_entity_sync_id()).await;
+    crate::audit::chain::reseal_kept_on_device(&a, &kept_before)
         .await
-        .expect("audit");
+        .expect("reseal");
+    let stock_to_reconcile = write("stock_location_article", "12:34".to_string()).await;
+    let mut travelling = Vec::new();
+    for target_type in [
+        "inventory_transactions",
+        "inventory_mutation_audit_links",
+        "inventory_count_sessions",
+    ] {
+        let target = crate::sync::identity::new_entity_sync_id();
+        travelling.push((target_type, target.clone(), write(target_type, target).await));
     }
+
     sync_clean(&mut server, "A", &a).await;
     sync_clean(&mut server, "B", &b).await;
     assert_eq!(
         conflict_kinds(&a).await,
         Vec::<String>::new(),
-        "A: staged without error"
+        "A: nothing failed to stage"
     );
-    for (target_type, target_id) in &targets {
+    let on_b = |sync_id: String| {
+        let b = &b;
+        async move {
+            scalar_i64(
+                b,
+                "SELECT COUNT(*) FROM audit_events WHERE entity_sync_id = ?",
+                vec![sync_id.into()],
+            )
+            .await
+        }
+    };
+    assert_eq!(on_b(kept_before.clone()).await, 0, "an event kept before stays kept");
+    assert_eq!(on_b(stock_to_reconcile.clone()).await, 0, "local ids stay on their PC");
+    for sync_id in [&kept_before, &stock_to_reconcile] {
+        let hash = text_of(
+            &a,
+            "SELECT chain_hash FROM audit_events WHERE entity_sync_id = ?",
+            vec![sync_id.clone().into()],
+        )
+        .await;
+        assert!(hash.starts_with("L2:"), "kept, sealed in its local form: {hash}");
+    }
+    for (target_type, target, sync_id) in &travelling {
         let received = crate::sync::test_support::scalar_opt_text(
             &b,
-            "SELECT COALESCE(target_id, '<none>') FROM audit_events
-             WHERE action_code = 'inventory.test.audit_target' AND target_type = ?",
-            vec![(*target_type).into()],
+            "SELECT target_id FROM audit_events WHERE entity_sync_id = ? AND target_type = ?",
+            vec![sync_id.clone().into(), (*target_type).into()],
         )
         .await;
         assert_eq!(
             received.as_deref(),
-            Some(target_id.as_deref().unwrap_or("<none>")),
+            Some(target.as_str()),
             "B received the {target_type} event"
         );
+    }
+    for (pc, db) in [("A", &a), ("B", &b)] {
+        let report = crate::audit::chain::verify_audit_chain(db).await.expect("verify");
+        assert!(report.intact, "{pc}: A's chain verifies without a break: {report:?}");
     }
 }
 

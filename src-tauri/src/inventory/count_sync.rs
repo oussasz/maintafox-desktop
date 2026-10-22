@@ -369,8 +369,8 @@ pub(crate) async fn settle_concurrent_posting(
     if entity_type != SESSIONS && entity_type != LINES {
         return Ok(false);
     }
-    // A received version not newer than the one applied here is refused by the usual checks
-    // (`STALE_INBOUND`); it never closes this PC's change.
+    // A received version not newer than the one applied here never closes this PC's change: it is
+    // left to the usual checks (a `CONCURRENT_EDIT` for a person while this change is unsent).
     if let Some((synced, _)) = crate::sync::queries::synced_row_version(conn, entity_type, entity_sync_id).await? {
         if row_version <= synced {
             return Ok(false);
