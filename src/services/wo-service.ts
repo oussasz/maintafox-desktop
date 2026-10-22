@@ -281,6 +281,10 @@ export class CompletionBlockedError extends Error {
 }
 
 export function normalizePreflightCode(message: string): string {
+  if (message.startsWith("GATE_COMPLETE_OPEN_LABOR")) return "OPEN_LABOR";
+  if (message.startsWith("GATE_COMPLETE_TASKS_INCOMPLETE")) return "INCOMPLETE_TASKS";
+  if (message.startsWith("GATE_COMPLETE_PARTS_")) return "MISSING_PARTS";
+  if (message.startsWith("GATE_COMPLETE_OPEN_DOWNTIME")) return "OPEN_DOWNTIME";
   const lower = message.toLowerCase();
 
   if (lower.includes("open labor") || lower.includes("main-d'œuvre ouvertes")) {
