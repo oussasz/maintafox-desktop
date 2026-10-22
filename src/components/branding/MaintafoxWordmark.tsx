@@ -1,4 +1,4 @@
-import { logoColor } from "@/assets/logo";
+import { logoColor, logoWhite } from "@/assets/logo";
 import { cn } from "@/lib/utils";
 
 export type MaintafoxWordmarkSize = "sm" | "md" | "lg" | "xl";
@@ -11,7 +11,7 @@ export interface MaintafoxWordmarkProps {
   /** Horizontal alignment of the row */
   align?: "start" | "center";
   /** Visual tone: shell uses theme tokens; auth uses brand blue on light cards */
-  tone?: "shell" | "auth";
+  tone?: "shell" | "auth" | "onDark";
   /** Extra classes on the word text */
   textClassName?: string;
 }
@@ -37,7 +37,11 @@ export function MaintafoxWordmark({
 }: MaintafoxWordmarkProps) {
   const s = SIZE[size];
   const textTone =
-    tone === "auth" ? "font-bold text-text-primary" : "font-semibold text-text-primary";
+    tone === "onDark"
+      ? "font-bold text-white"
+      : tone === "auth"
+        ? "font-bold text-text-primary"
+        : "font-semibold text-text-primary";
 
   return (
     <div
@@ -48,7 +52,7 @@ export function MaintafoxWordmark({
       )}
     >
       <img
-        src={logoColor}
+        src={tone === "onDark" ? logoWhite : logoColor}
         alt={showText ? "" : "Maintafox"}
         decoding="async"
         className={cn(s.img, "shrink-0 object-contain object-left")}
