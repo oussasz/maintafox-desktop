@@ -11,13 +11,13 @@ import {
   DialogHeader,
   DialogTitle,
   FormField,
-  Input,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import { useAccessAt } from "@/hooks/use-access-at";
 import { appErrorReason } from "@/lib/app-error";
 import {
@@ -172,11 +172,10 @@ export function PermitCreateDialog({
             required
             error={expiryError}
           >
-            <Input
+            <DateTimeField
               id="permit-expires"
-              type="datetime-local"
               value={expiresAt}
-              onChange={(e) => setExpiresAt(e.target.value)}
+              onChange={(v) => setExpiresAt(v)}
             />
           </FormField>
 

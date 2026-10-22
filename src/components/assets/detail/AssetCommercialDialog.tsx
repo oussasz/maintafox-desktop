@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 
 import { EntityFormDialog, EntityFormFooter } from "@/components/entity-form";
 import { FormField } from "@/components/ui/FormField";
+import { DateField } from "@/components/ui/date-field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -152,11 +153,10 @@ export function AssetCommercialDialog({
     >
       <form id={formId} onSubmit={(e) => void submit(e)} className="grid gap-4 sm:grid-cols-2">
         <FormField name={`${formId}-purchase`} label={t("commercial.purchaseDate")}>
-          <Input
+          <DateField
             id={`${formId}-purchase`}
-            type="date"
             value={form.purchaseDate}
-            onChange={(e) => setForm((f) => ({ ...f, purchaseDate: e.target.value }))}
+            onChange={(v) => setForm((f) => ({ ...f, purchaseDate: v }))}
           />
         </FormField>
         <FormField
@@ -164,12 +164,11 @@ export function AssetCommercialDialog({
           label={t("commercial.warrantyExpiry")}
           error={warrantyError}
         >
-          <Input
+          <DateField
             id={`${formId}-warranty`}
-            type="date"
             value={form.warrantyExpiry}
             min={form.purchaseDate || undefined}
-            onChange={(e) => setForm((f) => ({ ...f, warrantyExpiry: e.target.value }))}
+            onChange={(v) => setForm((f) => ({ ...f, warrantyExpiry: v }))}
           />
         </FormField>
         <FormField
