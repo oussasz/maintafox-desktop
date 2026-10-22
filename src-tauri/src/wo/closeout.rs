@@ -812,7 +812,10 @@ pub async fn save_failure_coding(db: &DatabaseConnection, input: SaveFailureCodi
     }
     if let Some(id) = input.detection_method_id {
         if !is_value_of_domain(db, id, DOMAIN_DETECTION_METHODS).await? {
-            errors.push("GATE_CLOSEOUT_DETECTION_UNKNOWN: La méthode de détection choisie n'existe plus dans le référentiel.".to_string());
+            errors.push(
+                "GATE_CLOSEOUT_DETECTION_UNKNOWN: La méthode de détection choisie n'existe plus dans le référentiel."
+                    .to_string(),
+            );
         }
     }
     if !errors.is_empty() {
@@ -1199,7 +1202,9 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             .try_get::<Option<String>>("", "root_cause_summary")
             .map_err(|e| decode_err("root_cause_summary", e))?;
         if rcs.as_deref().is_none_or(|s| s.trim().is_empty()) {
-            preflight.add("GATE_CLOSEOUT_ROOT_CAUSE_REQUIRED: Resume de cause racine requis. (Root cause summary required.)");
+            preflight.add(
+                "GATE_CLOSEOUT_ROOT_CAUSE_REQUIRED: Resume de cause racine requis. (Root cause summary required.)",
+            );
         }
     }
 
@@ -1571,7 +1576,8 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
 pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResult<WorkOrder> {
     if input.reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "GATE_REOPEN_REASON_REQUIRED: Une raison de reouverture est obligatoire. (Reopen reason is required.)".to_string(),
+            "GATE_REOPEN_REASON_REQUIRED: Une raison de reouverture est obligatoire. (Reopen reason is required.)"
+                .to_string(),
         ]));
     }
 
@@ -1702,7 +1708,8 @@ async fn ensure_within_reopen_window(txn: &impl ConnectionTrait, wo_id: i64) -> 
         .and_then(|c| chrono::DateTime::parse_from_rfc3339(c).ok())
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "GATE_REOPEN_CLOSED_AT_UNKNOWN: The closure date of this work order is unknown; it cannot be reopened.".into(),
+                "GATE_REOPEN_CLOSED_AT_UNKNOWN: The closure date of this work order is unknown; it cannot be reopened."
+                    .into(),
             ])
         })?;
     let age_days = (chrono::Utc::now() - closed.with_timezone(&chrono::Utc)).num_seconds() as f64 / 86_400.0;
