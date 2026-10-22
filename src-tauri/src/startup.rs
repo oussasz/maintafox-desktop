@@ -384,23 +384,24 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         Err(e) => warn!("startup: retiring superseded reference lists failed (non-fatal): {e}"),
     }
 
-    // Phase 4a'': D13 upgrade / catch-up — reservations still open on closed or cancelled work
-    // orders are released (audited, system actor), with capture on so the releases reach the other
-    // devices. A work order that cannot be released yet is logged and retried at the next start.
-    match crate::inventory::reservations::release_reservations_of_ended_work_orders(&app_state.db).await {
-        Ok(report) => {
-            if report.reservations > 0 {
-                info!(
-                    work_orders = report.work_orders,
-                    reservations = report.reservations,
-                    "startup: reservations of ended work orders released (D13)"
-                );
-            }
-            for (wo_id, error) in &report.failures {
-                warn!(wo_id = *wo_id, error = %error, "startup: reservations of an ended work order not released (retried next start)");
-            }
-        }
-        Err(e) => warn!("startup: releasing reservations of ended work orders failed (non-fatal): {e}"),
+    // Phase 4a'': stock reservations, with capture on so what is written reaches the other devices:
+    // a baseline movement for reservations recorded without one, reserved stock recomputed from
+    // the ledger (`inventory::reservations`), then the D13 catch-up — reservations still open on
+    // closed or cancelled work orders released (audited, system actor). Never blocks the startup;
+    // what could not be done is logged and retried at the next start.
+    let (upkeep, upkeep_errors) = crate::inventory::reservations::startup_reservation_upkeep(&app_state.db).await;
+    info!(
+        baselines = upkeep.baselines,
+        pairs_recomputed = upkeep.pairs_recomputed,
+        work_orders = upkeep.sweep.work_orders,
+        reservations_released = upkeep.sweep.reservations,
+        "startup: stock reservations upkeep"
+    );
+    for (wo_id, error) in &upkeep.sweep.failures {
+        warn!(wo_id = *wo_id, error = %error, "startup: reservations of an ended work order not released (retried next start)");
+    }
+    for error in &upkeep_errors {
+        warn!("startup: stock reservations upkeep (non-fatal): {error}");
     }
 
     // Phase 4b: sync worker (protocol v2), background task `sync`. Closing the main window only

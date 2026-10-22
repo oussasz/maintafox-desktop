@@ -814,21 +814,185 @@ async fn an_issue_against_a_reservation_of_an_ended_work_order_is_refused() {
     assert_eq!(balance(&db, a).await, (10.0, 2.0), "nothing issued");
 }
 
-/// S1: a balance holding less reserved stock than the reservation (multi-PC drift) refuses the
-/// release with a coded refusal naming the article, the location and both quantities; nothing is
-/// clamped and the reservation stays open.
+/// A movement made on another PC arrives here: the row as the materializer writes it, then the
+/// balance hook of `sync::apply_hooks` (`ledger::apply_received_movement`). The reservation row
+/// itself is not updated (its new state from the other PC is not here yet).
+async fn receive_movement(db: &DatabaseConnection, reservation_id: i64, movement_type: &str, qty: f64, sync_id: &str) {
+    exec(
+        db,
+        "INSERT INTO inventory_transactions (entity_sync_id, article_id, warehouse_id, location_id, reservation_id,
+             movement_type, quantity, source_type, source_id, row_version)
+         SELECT ?, r.article_id, r.warehouse_id, r.location_id, r.id, ?, ?, r.source_type, r.source_id, 1
+         FROM stock_reservations r WHERE r.id = ?",
+        vec![sync_id.into(), movement_type.into(), qty.into(), reservation_id.into()],
+    )
+    .await;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT article_id, warehouse_id, location_id FROM stock_reservations WHERE id = ?",
+            [reservation_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("reservation");
+    crate::inventory::ledger::apply_received_movement(
+        db,
+        row.try_get("", "article_id").unwrap(),
+        row.try_get("", "warehouse_id").unwrap(),
+        row.try_get("", "location_id").unwrap(),
+        movement_type,
+        qty,
+    )
+    .await
+    .expect("apply received movement");
+}
+
+// ── Reserved stock is a projection of the ledger ────────────────────────────
+
+fn mv(sync_id: &str, movement_type: &str, quantity: f64) -> crate::inventory::reservations::ReservationMovement {
+    crate::inventory::reservations::ReservationMovement {
+        entity_sync_id: Some(sync_id.to_string()),
+        movement_type: movement_type.to_string(),
+        quantity,
+    }
+}
+
+/// The same movements give exactly the same reserved quantity whatever order they arrived in
+/// (summed in sync-id order: the same floating-point result, bit for bit), each reservation is held
+/// at 0 at least, its one release makes it 0, and the baseline RESERVE counts only while the
+/// reservation has no RESERVE of its own.
+#[test]
+fn the_projection_is_the_same_whatever_the_order_of_the_movements() {
+    use crate::inventory::reservations::{reservation_reserved_from_ledger, BASELINE_SEED_ENTITY, RELEASE_SEED_ENTITY};
+    let r = "resv-sync-1";
+    let movements = vec![
+        mv("m-1", "RESERVE", 0.7),
+        mv("m-2", "ISSUE", 0.1),
+        mv("m-3", "ISSUE", 0.2),
+        mv("m-4", "RETURN", 0.1),
+        mv("m-5", "ISSUE", 0.3),
+    ];
+    let expected = reservation_reserved_from_ledger(Some(r), &movements);
+    assert!((expected - 0.2).abs() < 1e-9);
+    let mut reversed = movements.clone();
+    reversed.reverse();
+    let mut rotated = movements.clone();
+    rotated.rotate_left(2);
+    for order in [reversed, rotated] {
+        assert_eq!(
+            reservation_reserved_from_ledger(Some(r), &order).to_bits(),
+            expected.to_bits(),
+            "same bits whatever the order"
+        );
+    }
+
+    // Over-issue (two PCs issued the same reserved parts): held at 0, never negative.
+    let over = vec![mv("a", "RESERVE", 2.0), mv("b", "ISSUE", 2.0), mv("c", "ISSUE", 2.0)];
+    assert_eq!(reservation_reserved_from_ledger(Some(r), &over), 0.0);
+
+    // Its one release (any quantity) makes it 0, before or after a late issue.
+    let release = crate::sync::identity::seeded_entity_sync_id(RELEASE_SEED_ENTITY, r);
+    let released = vec![
+        mv("a", "RESERVE", 5.0),
+        mv(&release, "RELEASE", 5.0),
+        mv("z", "ISSUE", 2.0),
+    ];
+    assert_eq!(reservation_reserved_from_ledger(Some(r), &released), 0.0);
+    let returned_after = vec![
+        mv("a", "RESERVE", 5.0),
+        mv(&release, "RELEASE", 3.0),
+        mv("y", "RETURN", 1.0),
+    ];
+    assert_eq!(reservation_reserved_from_ledger(Some(r), &returned_after), 0.0);
+
+    // Baseline: counted alone, ignored once the reservation's own RESERVE is there.
+    let baseline = crate::sync::identity::seeded_entity_sync_id(BASELINE_SEED_ENTITY, r);
+    assert_eq!(
+        reservation_reserved_from_ledger(Some(r), &[mv(&baseline, "RESERVE", 3.0)]),
+        3.0
+    );
+    assert_eq!(
+        reservation_reserved_from_ledger(
+            Some(r),
+            &[
+                mv(&baseline, "RESERVE", 3.0),
+                mv("own", "RESERVE", 4.0),
+                mv("i", "ISSUE", 1.0)
+            ]
+        ),
+        3.0,
+        "own RESERVE 4 − issue 1, the baseline not counted twice"
+    );
+}
+
+/// Two PCs issued the same reserved parts: the second issue arrives by sync and is applied (a
+/// physical fact, decision D12), the reservation counts 0, never below; another reservation at the
+/// same location keeps its whole quantity (the old running total let the over-issue eat it).
 #[tokio::test]
-async fn a_release_larger_than_the_reserved_balance_is_a_coded_refusal() {
+async fn an_over_issue_from_two_pcs_leaves_the_reservation_at_zero_not_negative() {
     let db = crate::db::test_db::seeded().await;
-    let a = stock_article(&db, "RESV-S1-A", 10.0).await;
+    let a = stock_article(&db, "RESV-OVER-A", 10.0).await;
+    let shared = reserve(&db, a, 2.0, "MANUAL", None).await;
+    let other = reserve(&db, a, 3.0, "MANUAL", None).await;
+    issue(&db, shared, 2.0).await;
+    assert_eq!(balance(&db, a).await, (8.0, 3.0));
+    receive_movement(&db, shared, "ISSUE", 2.0, "other-pc-issue-1").await;
+    assert_eq!(
+        balance(&db, a).await,
+        (6.0, 3.0),
+        "on hand −2, reserved: only the other reservation"
+    );
+    assert_eq!(reservation_status(&db, other).await, "active");
+}
+
+/// A late issue arriving after the reservation's release, or before it, gives the same reserved
+/// stock (0): the release closes the reservation whatever arrives later.
+#[tokio::test]
+async fn a_late_issue_after_or_before_the_release_gives_the_same_reserved_stock() {
+    let db = crate::db::test_db::seeded().await;
+    let a = stock_article(&db, "RESV-ORDER-A", 10.0).await;
+    let b = stock_article(&db, "RESV-ORDER-B", 10.0).await;
+    let late_after = reserve(&db, a, 5.0, "MANUAL", None).await;
+    let late_before = reserve(&db, b, 5.0, "MANUAL", None).await;
+    let release = |reservation_id: i64| {
+        let db = db.clone();
+        async move {
+            queries::release_stock_reservation(
+                &db,
+                InventoryReleaseReservationInput {
+                    reservation_id,
+                    notes: None,
+                },
+            )
+            .await
+            .expect("release");
+        }
+    };
+    release(late_after).await;
+    receive_movement(&db, late_after, "ISSUE", 2.0, "other-pc-issue-a").await;
+    receive_movement(&db, late_before, "ISSUE", 2.0, "other-pc-issue-b").await;
+    release(late_before).await;
+    assert_eq!(balance(&db, a).await, (8.0, 0.0));
+    assert_eq!(balance(&db, b).await, (8.0, 0.0));
+}
+
+/// A balance that drifted from the ledger no longer blocks a release: the reservation is released,
+/// its one release movement carries what its movements held, and reserved stock is recomputed
+/// from the ledger (the drift is repaired).
+#[tokio::test]
+async fn a_release_with_a_drifted_balance_is_not_refused() {
+    let db = crate::db::test_db::seeded().await;
+    let a = stock_article(&db, "RESV-DRIFT-A", 10.0).await;
     let reservation = reserve(&db, a, 3.0, "MANUAL", None).await;
+    let other = reserve(&db, a, 2.0, "MANUAL", None).await;
     exec(
         &db,
         "UPDATE stock_balances SET reserved_qty = 1, available_qty = on_hand_qty - 1 WHERE article_id = ?",
         vec![a.into()],
     )
     .await;
-    let err = queries::release_stock_reservation(
+    queries::release_stock_reservation(
         &db,
         InventoryReleaseReservationInput {
             reservation_id: reservation,
@@ -836,28 +1000,130 @@ async fn a_release_larger_than_the_reserved_balance_is_a_coded_refusal() {
         },
     )
     .await
-    .expect_err("inconsistent balance");
-    match err {
-        AppError::OrgValidationFailed(issues) => {
-            let issue = &issues[0];
-            assert_eq!(issue.code, queries::reservation_codes::RELEASE_INCONSISTENT);
-            assert_eq!(issue.params.get("article").map(String::as_str), Some("RESV-S1-A"));
-            assert_eq!(issue.params.get("location").map(String::as_str), Some("MAIN-BIN"));
-            assert_eq!(issue.params.get("reservation_qty").map(String::as_str), Some("3"));
-            assert_eq!(issue.params.get("balance_reserved_qty").map(String::as_str), Some("1"));
-        }
-        other => panic!("expected a coded refusal, got {other:?}"),
+    .expect("released despite the drifted balance");
+    assert_eq!(reservation_status(&db, reservation).await, "released");
+    assert_eq!(seeded_release_qty(&db, reservation).await, 3.0);
+    assert_eq!(
+        balance(&db, a).await,
+        (10.0, 2.0),
+        "recomputed: only the other reservation"
+    );
+    assert_eq!(reservation_status(&db, other).await, "active");
+}
+
+/// Cancelling a work order whose reservation drifted (an issue made on another PC arrived, the
+/// reservation row from that PC did not) is not blocked: the reservation is released and the
+/// audit shows the difference between the row and what the movements held.
+#[tokio::test]
+async fn cancelling_with_a_drifted_reservation_succeeds_and_audits_the_shortfall() {
+    let db = crate::db::test_db::seeded().await;
+    let actor = admin_id(&db).await;
+    let a = stock_article(&db, "RESV-SHORT-A", 10.0).await;
+    let (wo_id, rv) = wo_in_planning(&db).await;
+    let reservation = reserve(&db, a, 3.0, "WO", Some(wo_id)).await;
+    receive_movement(&db, reservation, "ISSUE", 2.0, "other-pc-issue-short").await;
+    assert_eq!(balance(&db, a).await, (8.0, 1.0));
+
+    crate::wo::queries::cancel_work_order(
+        &db,
+        WoCancelInput {
+            id: wo_id,
+            expected_row_version: rv,
+            actor_id: actor,
+            cancel_reason: "Drift".into(),
+        },
+    )
+    .await
+    .expect("cancel is not blocked");
+    assert_eq!(reservation_status(&db, reservation).await, "released");
+    assert_eq!(balance(&db, a).await, (8.0, 0.0));
+    let audit = release_audit(&db, "inventory.reservation.released_at_wo_cancel", reservation).await;
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0]["quantity_released"], 1.0);
+    assert_eq!(audit[0]["quantity_short"], 2.0);
+}
+
+/// Baseline on a database populated before it runs: an open reservation recorded without its
+/// RESERVE movement (received through the sync engine before Phase 2.4, which dropped the link)
+/// gets one seeded RESERVE for its open quantity; a reservation with its own movements, and a
+/// released one, get none. A second run writes nothing. When the reservation's own RESERVE
+/// arrives later, the baseline is no longer counted (never twice).
+#[tokio::test]
+async fn the_baseline_restores_reservations_recorded_without_movements_once() {
+    use crate::inventory::reservations::{startup_reservation_upkeep, BASELINE_SEED_ENTITY};
+    let db = crate::db::test_db::seeded().await;
+    let a = stock_article(&db, "RESV-BASE-A", 20.0).await;
+    let location_id = main_location(&db).await;
+    let normal = reserve(&db, a, 2.0, "MANUAL", None).await;
+    // Legacy rows: no RESERVE movement linked to them.
+    for (sync_id, reserved, issued, status) in [
+        ("legacy-open-resv", 4.0, 1.0, "partial"),
+        ("legacy-released-resv", 3.0, 0.0, "released"),
+    ] {
+        exec(
+            &db,
+            "INSERT INTO stock_reservations (entity_sync_id, article_id, warehouse_id, location_id, source_type,
+                 quantity_reserved, quantity_issued, status)
+             SELECT ?, ?, warehouse_id, id, 'MANUAL', ?, ?, ? FROM stock_locations WHERE id = ?",
+            vec![
+                sync_id.into(),
+                a.into(),
+                reserved.into(),
+                issued.into(),
+                status.into(),
+                location_id.into(),
+            ],
+        )
+        .await;
     }
-    assert_eq!(reservation_status(&db, reservation).await, "active");
-    assert_eq!(balance(&db, a).await.1, 1.0, "not clamped");
+    let legacy = scalar_i64(
+        &db,
+        "SELECT id FROM stock_reservations WHERE entity_sync_id = 'legacy-open-resv'",
+        vec![],
+    )
+    .await;
+    // The balance kept by increments did not know them either.
+    assert_eq!(balance(&db, a).await, (20.0, 2.0));
+
+    let (report, errors) = startup_reservation_upkeep(&db).await;
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(report.baselines, 1, "only the open legacy reservation");
+    let baseline_id = crate::sync::identity::seeded_entity_sync_id(BASELINE_SEED_ENTITY, "legacy-open-resv");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM inventory_transactions WHERE entity_sync_id = ? AND reservation_id = ?
+               AND movement_type = 'RESERVE' AND quantity = 3",
+            vec![baseline_id.into(), legacy.into()],
+        )
+        .await,
+        1,
+        "seeded RESERVE of the open quantity 4 − 1"
+    );
+    assert_eq!(balance(&db, a).await, (20.0, 5.0), "2 + the legacy 3");
+    let _ = normal;
+
+    let (again, errors) = startup_reservation_upkeep(&db).await;
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(again.baselines, 0, "idempotent");
+    assert_eq!(balance(&db, a).await, (20.0, 5.0));
+
+    // The reservation's own movements arrive after all: counted once.
+    receive_movement(&db, legacy, "RESERVE", 4.0, "late-own-reserve").await;
+    receive_movement(&db, legacy, "ISSUE", 1.0, "late-own-issue").await;
+    assert_eq!(
+        balance(&db, a).await,
+        (19.0, 5.0),
+        "own RESERVE 4 − ISSUE 1; the baseline ignored"
+    );
 }
 
 /// S2: the startup sweep on a database populated before it runs. Work orders closed or cancelled
 /// before D13 keep open reservations (both link kinds); one of those releases had already arrived
-/// from another PC (seeded movement present, reservation row still open); one work order has a
-/// balance that cannot be released (reported, left for the next start); an open work order is not
-/// touched. Each release is audited with the system actor and the reason "D13 upgrade"; a second
-/// run does nothing.
+/// from another PC (seeded movement present, reservation row still open); one reservation drifted
+/// (an issue from another PC arrived without its reservation row): released all the same, the
+/// shortfall audited; an open work order is not touched. Each release is audited with the system
+/// actor and the reason "D13 upgrade"; a second run does nothing.
 #[tokio::test]
 async fn the_d13_upgrade_releases_open_reservations_of_ended_work_orders_once() {
     use crate::inventory::reservations::{release_reservations_of_ended_work_orders, D13_UPGRADE_REASON};
@@ -932,15 +1198,11 @@ async fn the_d13_upgrade_releases_open_reservations_of_ended_work_orders_once() 
         vec![arrived.into()],
     )
     .await;
-    // Cancelled before D13 with a drifted balance: cannot be released yet.
+    // Cancelled before D13, drifted: 3 reserved here, 2 issued on another PC (the issue arrived,
+    // the reservation row from that PC did not).
     let (drifted_wo, _) = wo_in_planning(&db).await;
     let drifted = reserve(&db, d, 3.0, "WO", Some(drifted_wo)).await;
-    exec(
-        &db,
-        "UPDATE stock_balances SET reserved_qty = 1, available_qty = on_hand_qty - 1 WHERE article_id = ?",
-        vec![d.into()],
-    )
-    .await;
+    receive_movement(&db, drifted, "ISSUE", 2.0, "other-pc-issue-upg").await;
     // Still open: untouched.
     let (open_wo, _) = wo_in_planning(&db).await;
     let open = reserve(&db, a, 2.0, "WO", Some(open_wo)).await;
@@ -951,21 +1213,16 @@ async fn the_d13_upgrade_releases_open_reservations_of_ended_work_orders_once() 
     assert_eq!(balance(&db, a).await, (19.0, 5.0));
     assert_eq!(balance(&db, b).await, (20.0, 2.0));
     assert_eq!(balance(&db, c).await, (20.0, 0.0));
+    assert_eq!(balance(&db, d).await, (18.0, 1.0));
 
     let report = release_reservations_of_ended_work_orders(&db).await.expect("sweep");
-    assert_eq!(report.reservations, 3, "two of the cancelled WO and the arrived one");
-    assert_eq!(report.work_orders, 2);
-    assert_eq!(report.failures.len(), 1);
-    assert_eq!(report.failures[0].0, drifted_wo);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(report.reservations, 4);
+    assert_eq!(report.work_orders, 3);
 
-    assert_eq!(reservation_status(&db, wo_sourced).await, "released");
-    assert_eq!(reservation_status(&db, line_reservation).await, "released");
-    assert_eq!(reservation_status(&db, arrived).await, "released");
-    assert_eq!(
-        reservation_status(&db, drifted).await,
-        "active",
-        "left for the next start"
-    );
+    for reservation in [wo_sourced, line_reservation, arrived, drifted] {
+        assert_eq!(reservation_status(&db, reservation).await, "released");
+    }
     assert_eq!(reservation_status(&db, open).await, "active", "open work order");
     assert_eq!(balance(&db, a).await, (19.0, 2.0), "3 freed, the open WO keeps its 2");
     assert_eq!(balance(&db, b).await, (20.0, 0.0));
@@ -974,15 +1231,17 @@ async fn the_d13_upgrade_releases_open_reservations_of_ended_work_orders_once() 
         (20.0, 0.0),
         "the arrived release is not counted twice"
     );
+    assert_eq!(balance(&db, d).await, (18.0, 0.0));
     assert_eq!(seeded_release_count(&db, wo_sourced).await, 1);
     assert_eq!(seeded_release_qty(&db, wo_sourced).await, 3.0);
     assert_eq!(seeded_release_count(&db, line_reservation).await, 1);
     assert_eq!(release_movements(&db, arrived).await, 1, "no second movement");
 
-    for (reservation, qty, wo) in [
-        (wo_sourced, 3.0, cancelled_wo),
-        (line_reservation, 2.0, cancelled_wo),
-        (arrived, 0.0, closed_wo),
+    for (reservation, qty, short, wo) in [
+        (wo_sourced, 3.0, 0.0, cancelled_wo),
+        (line_reservation, 2.0, 0.0, cancelled_wo),
+        (arrived, 0.0, 0.0, closed_wo),
+        (drifted, 1.0, 2.0, drifted_wo),
     ] {
         let rows = db
             .query_all(Statement::from_sql_and_values(
@@ -1004,15 +1263,16 @@ async fn the_d13_upgrade_releases_open_reservations_of_ended_work_orders_once() 
             serde_json::from_str(&rows[0].try_get::<String>("", "details_json").unwrap()).unwrap();
         assert_eq!(details["reason"], D13_UPGRADE_REASON);
         assert_eq!(details["quantity_released"], qty);
+        assert_eq!(details["quantity_short"], short);
         assert_eq!(details["work_order_id"], wo);
     }
 
-    // Idempotent: a second run releases nothing more (the drifted one is still reported).
+    // Idempotent: a second run releases nothing more.
     let again = release_reservations_of_ended_work_orders(&db)
         .await
         .expect("sweep again");
     assert_eq!(again.reservations, 0);
-    assert_eq!(again.failures.len(), 1);
+    assert!(again.failures.is_empty());
     assert_eq!(
         scalar_i64(
             &db,
@@ -1020,7 +1280,7 @@ async fn the_d13_upgrade_releases_open_reservations_of_ended_work_orders_once() 
             vec![],
         )
         .await,
-        3
+        4
     );
 }
 

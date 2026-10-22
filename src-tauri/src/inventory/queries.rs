@@ -2289,6 +2289,44 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
     Ok(id_row.try_get("", "id")?)
 }
 
+/// Baseline RESERVE of a reservation created without one (`inventory::reservations`).
+pub(crate) struct BaselineMovement<'a> {
+    pub article_id: i64,
+    pub warehouse_id: i64,
+    pub location_id: i64,
+    pub reservation_id: i64,
+    pub quantity: f64,
+    pub source_type: &'a str,
+    pub source_id: Option<i64>,
+    pub source_ref: Option<&'a str>,
+    /// Seeded from the reservation, so every PC writes the same movement.
+    pub entity_sync_id: &'a str,
+}
+
+pub(crate) async fn insert_reservation_baseline_movement<C: ConnectionTrait>(
+    db: &C,
+    movement: BaselineMovement<'_>,
+) -> AppResult<i64> {
+    let sync_id = uuid::Uuid::parse_str(movement.entity_sync_id)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("baseline movement sync id: {e}")))?;
+    insert_inventory_transaction(
+        db,
+        movement.article_id,
+        movement.warehouse_id,
+        movement.location_id,
+        Some(movement.reservation_id),
+        "RESERVE",
+        movement.quantity,
+        movement.source_type,
+        movement.source_id,
+        movement.source_ref,
+        None,
+        Some("Baseline of a reservation recorded without its reservation movement"),
+        Some(sync_id),
+    )
+    .await
+}
+
 async fn load_balance(db: &DatabaseConnection, article_id: i64, location_id: i64) -> AppResult<InventoryStockBalance> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -2457,6 +2495,7 @@ pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &Invento
         None,
     )
     .await?;
+    crate::inventory::reservations::recompute_reserved_in(tx, input.article_id, input.location_id).await?;
     Ok(reservation_id)
 }
 
@@ -2606,6 +2645,7 @@ pub(crate) async fn issue_reserved_in<C: ConnectionTrait>(
         crate::inventory::lots::set_movement_lot(tx, issue_id, lot).await?;
     }
     set_movement_actor(tx, issue_id, actor_id).await?;
+    crate::inventory::reservations::recompute_reserved_in(tx, reservation.article_id, reservation.location_id).await?;
     // Parts issued to a job are valued at the location's weighted-average cost.
     let unit_cost = crate::inventory::valuation::stamp_at_average(
         tx,
@@ -2779,6 +2819,7 @@ pub async fn return_reserved_stock_as(
         .await?;
         set_movement_actor(&tx, release_id, actor_id).await?;
     }
+    crate::inventory::reservations::recompute_reserved_in(&tx, reservation.article_id, reservation.location_id).await?;
     tx.commit().await?;
     load_reservation_by_id(db, reservation.id).await
 }
@@ -2856,6 +2897,9 @@ pub(crate) struct ReservationRelease {
     /// Reserved stock freed by this call at the reservation's location: 0 when nothing was left
     /// reserved, or when the release had already arrived from another PC.
     pub quantity_released: f64,
+    /// What the reservation row still counted beyond what its movements held (movements from
+    /// several PCs drifted apart): released all the same, reported in the audit.
+    pub quantity_short: f64,
     /// The RELEASE movement written by this call.
     pub movement_id: Option<i64>,
     /// The RELEASE movement of this reservation had already been received from another PC: it
@@ -2867,9 +2911,9 @@ pub(crate) struct ReservationRelease {
 /// (`released` is terminal), so its release movement has one identity on every PC: two PCs that
 /// both release it (both close the work order, or a storekeeper releases it on one PC while the
 /// work order is closed on another) write the same movement, and the copy received from the other
-/// PC is not applied again (`inventory_transactions` is append-only: a known sync id is a no-op),
-/// so the reserved stock is lowered once. When the two PCs released different quantities (one had
-/// issued more first), each PC keeps the quantity of the release it saw first.
+/// PC is not applied again (`inventory_transactions` is append-only: a known sync id is a no-op).
+/// The reserved stock is a projection of the ledger (`inventory::reservations`): once this movement
+/// is present the reservation counts 0 on every PC, whatever quantity each PC released.
 pub(crate) async fn reservation_release_movement_sync_id<C: ConnectionTrait>(
     db: &C,
     reservation_id: i64,
@@ -2891,7 +2935,7 @@ pub(crate) async fn reservation_release_movement_sync_id<C: ConnectionTrait>(
         row.try_get("", "entity_sync_id").ok().flatten(),
     )?;
     Ok(crate::sync::identity::seeded_entity_sync_id(
-        "reservation_release",
+        crate::inventory::reservations::RELEASE_SEED_ENTITY,
         &reservation_sync_id,
     ))
 }
@@ -2914,6 +2958,7 @@ pub(crate) async fn release_reservation_in<C: ConnectionTrait>(
             reservation,
             was_open: false,
             quantity_released: 0.0,
+            quantity_short: 0.0,
             movement_id: None,
             release_received_from_sync: false,
         });
@@ -2932,43 +2977,14 @@ pub(crate) async fn release_reservation_in<C: ConnectionTrait>(
         .await?
         .is_some();
 
-    let mut quantity_released = 0.0;
-    if !release_received_from_sync {
-        let (on_hand, reserved) = get_balance_snapshot(db, reservation.article_id, reservation.location_id).await?;
-        if reserved + 1e-9 < remaining_reserved {
-            // The balance holds less reserved stock than this reservation still counts (stock
-            // movements from several PCs drifted apart). Never clamped silently: the stock must be
-            // counted, which sets the balance from the shelf.
-            return Err(crate::errors::org_validation_failed(
-                reservation_codes::RELEASE_INCONSISTENT,
-                format!(
-                    "Article {} at {}: this reservation still holds {} but the stock balance shows only {} reserved. \
-                     Count this article at this location to correct the balance, then try again.",
-                    reservation.article_code,
-                    reservation.location_code,
-                    transfer_qty_text(remaining_reserved),
-                    transfer_qty_text(reserved)
-                ),
-                crate::errors::issue_params(&[
-                    ("article", reservation.article_code.clone()),
-                    ("location", reservation.location_code.clone()),
-                    ("reservation_qty", transfer_qty_text(remaining_reserved)),
-                    ("balance_reserved_qty", transfer_qty_text(reserved)),
-                ]),
-            ));
-        }
-        upsert_balance(
-            db,
-            reservation.article_id,
-            reservation.warehouse_id,
-            reservation.location_id,
-            on_hand,
-            // Only float noise (< 1e-9) can make this negative after the check above.
-            (reserved - remaining_reserved).max(0.0),
-        )
-        .await?;
-        quantity_released = remaining_reserved;
-    }
+    // What this reservation holds in the reserved-stock projection (its ledger, not the row): the
+    // quantity freed. Less than the row's remainder when the movements drifted (several PCs); the
+    // difference is reported, never refused (`inventory::reservations`).
+    let held = if release_received_from_sync {
+        0.0
+    } else {
+        crate::inventory::reservations::reservation_held_from_ledger(db, reservation.id).await?
+    };
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE stock_reservations
@@ -2979,7 +2995,11 @@ pub(crate) async fn release_reservation_in<C: ConnectionTrait>(
         [reservation.id.into()],
     ))
     .await?;
-    let movement_id = if !release_received_from_sync && remaining_reserved > 0.0 {
+    // The one release movement of the reservation, also for 0: its presence is what makes the
+    // reservation count 0 on every PC, whatever else arrives later.
+    let movement_id = if release_received_from_sync {
+        None
+    } else {
         let seeded_id = uuid::Uuid::parse_str(&release_sync_id)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("reservation release sync id: {e}")))?;
         Some(
@@ -2990,7 +3010,7 @@ pub(crate) async fn release_reservation_in<C: ConnectionTrait>(
                 reservation.location_id,
                 Some(reservation.id),
                 "RELEASE",
-                remaining_reserved,
+                held,
                 &reservation.source_type,
                 reservation.source_id,
                 reservation.source_ref.as_deref(),
@@ -3000,14 +3020,20 @@ pub(crate) async fn release_reservation_in<C: ConnectionTrait>(
             )
             .await?,
         )
+    };
+    crate::inventory::reservations::recompute_reserved_in(db, reservation.article_id, reservation.location_id).await?;
+    let quantity_released = held;
+    let quantity_short = if release_received_from_sync {
+        0.0
     } else {
-        None
+        (remaining_reserved - held).max(0.0)
     };
     let released = load_reservation_by_id(db, reservation.id).await?;
     Ok(ReservationRelease {
         reservation: released,
         was_open: true,
         quantity_released,
+        quantity_short,
         movement_id,
         release_received_from_sync,
     })
@@ -3026,8 +3052,6 @@ pub async fn release_stock_reservation(
 
 /// Stable refusal codes of reservations (translated in `inventory:errors`).
 pub mod reservation_codes {
-    /// The balance holds less reserved stock than the reservation to release.
-    pub const RELEASE_INCONSISTENT: &str = "INV_RESERVATION_RELEASE_INCONSISTENT";
     /// An issue against a reservation of a closed or cancelled work order.
     pub const ISSUE_WO_ENDED: &str = "INV_ISSUE_WO_ENDED";
 }

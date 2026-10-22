@@ -979,6 +979,18 @@ impl SyncWorker {
                 "inbox materialized"
             );
         }
+        if result.applied > 0 {
+            // D13: a close, a cancellation or a reservation received from another PC may leave a
+            // reservation open on an ended work order; it is released now, not at the next start.
+            match crate::inventory::reservations::release_reservations_of_ended_work_orders(&self.db).await {
+                Ok(sweep) => {
+                    for (wo_id, error) in &sweep.failures {
+                        warn!(target: "maintafox::sync", wo_id = *wo_id, error = %error, "reservations of an ended work order not released");
+                    }
+                }
+                Err(e) => warn!(target: "maintafox::sync", "releasing reservations of ended work orders failed: {e}"),
+            }
+        }
         Ok(())
     }
 

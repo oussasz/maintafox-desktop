@@ -1817,7 +1817,6 @@
   },
   "errors": {
     "INV_GR_ARTICLE_MISMATCH": "La ligne de commande {{po_line}} porte sur l’article {{ordered_article}}, pas sur {{received_article}} : réceptionnez l’article commandé.",
-    "INV_RESERVATION_RELEASE_INCONSISTENT": "Article {{article}} à {{location}} : cette réservation compte encore {{reservation_qty}}, mais le solde de stock n’indique que {{balance_reserved_qty}} réservé(s). Faites un comptage de cet article à cet emplacement pour corriger le solde, puis réessayez.",
     "INV_ISSUE_WO_ENDED": "L’OT {{work_order}} est clôturé ou annulé : plus aucune pièce ({{article}}) ne peut être sortie sur sa réservation.",
     "NEGATIVE_STOCK_REASON_SHORT": "Indiquez la justification du comptage (au moins {{min}} caractères).",
     "NEGATIVE_STOCK_COUNT_INVALID": "La quantité comptée doit être supérieure ou égale à zéro.",
