@@ -470,7 +470,7 @@
       "mandatory": "Mandatory",
       "mandatoryDefault": "This update is required to keep using Maintafox.",
       "forcedNotOffered": "Your licence requires a newer version of Maintafox, but none is published for this computer yet. Contact Maintafox.",
-      "notes": "What changes",
+      "notes": "What's new",
       "installNow": "Install now",
       "dismiss": "Later",
       "dismissOutcome": "Close this message",
