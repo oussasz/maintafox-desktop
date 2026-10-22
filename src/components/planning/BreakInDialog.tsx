@@ -14,6 +14,7 @@ import {
 import { fromDateTimeLocal, toDateTimeLocal } from "@/components/planning/planning-model";
 import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Button } from "@/components/ui/button";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import {
   Dialog,
   DialogContent,
@@ -21,7 +22,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
@@ -76,7 +76,7 @@ export function BreakInDialog({
   const { t, i18n } = useTranslation("planning");
   // Approvers are user accounts: listed only with the user administration right.
   const canReadUsers = useCanReadList("users");
-  const { formatDateTime } = useFormatters();
+  const { formatDateTime, formatCurrency, formatDecimal } = useFormatters();
   const reasons = useBreakInReasons(open);
   const [commitmentId, setCommitmentId] = useState<number | null>(null);
   const [reason, setReason] = useState<string>("");
@@ -144,10 +144,10 @@ export function BreakInDialog({
       (crew ?? personnel).map((person) => {
         const cap = capacity.get(person.id);
         return cap
-          ? { ...person, label: `${person.label} — ${assigneeOptionSuffix(cap, t)}` }
+          ? { ...person, label: `${person.label} — ${assigneeOptionSuffix(cap, t, formatDecimal)}` }
           : person;
       }),
-    [crew, personnel, capacity, t],
+    [crew, personnel, capacity, t, formatDecimal],
   );
   // A new slot or technician: earlier refusals no longer apply.
   useEffect(() => {
@@ -256,20 +256,18 @@ export function BreakInDialog({
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label>{t("breakIns.start")}</Label>
-              <Input
+              <DateTimeField
                 className="h-8 text-sm"
-                type="datetime-local"
                 value={newStart}
-                onChange={(e) => setNewStart(e.target.value)}
+                onChange={(v) => setNewStart(v)}
               />
             </div>
             <div>
               <Label>{t("breakIns.end")}</Label>
-              <Input
+              <DateTimeField
                 className="h-8 text-sm"
-                type="datetime-local"
                 value={newEnd}
-                onChange={(e) => setNewEnd(e.target.value)}
+                onChange={(v) => setNewEnd(v)}
               />
             </div>
           </div>
@@ -382,7 +380,7 @@ export function BreakInDialog({
                   ? ` · ${formatPersonLabel(entry.old_assignee_name)} → ${formatPersonLabel(entry.new_assignee_name)}`
                   : null}
                 {entry.cost_impact_delta != null
-                  ? ` · Δ ${entry.cost_impact_delta.toFixed(2)}`
+                  ? ` · Δ ${formatCurrency(entry.cost_impact_delta)}`
                   : null}
               </div>
             ))}

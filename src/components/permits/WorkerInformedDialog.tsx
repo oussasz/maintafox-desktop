@@ -18,7 +18,6 @@ import {
   DialogHeader,
   DialogTitle,
   FormField,
-  Input,
   Select,
   SelectContent,
   SelectItem,
@@ -26,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import { appErrorReason } from "@/lib/app-error";
 import {
   type PermitIsolationRecord,
@@ -138,12 +138,7 @@ export function WorkerInformedDialog({
             required
             error={submitted && localInputToIso(at) == null ? t("errors.required") : undefined}
           >
-            <Input
-              id="informed-at"
-              type="datetime-local"
-              value={at}
-              onChange={(e) => setAt(e.target.value)}
-            />
+            <DateTimeField id="informed-at" value={at} onChange={(v) => setAt(v)} />
           </FormField>
           <p className="text-xs text-text-muted">{t("informed.hint")}</p>
           {error ? (

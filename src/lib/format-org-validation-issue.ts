@@ -8,6 +8,7 @@
 import type { TFunction } from "i18next";
 
 import { i18n } from "@/i18n/config";
+import { ISSUE_NAMESPACES } from "@/i18n/namespaces";
 import { localizeDateTimeParams } from "@/utils/date-params";
 import type { OrgValidationIssue } from "@shared/ipc-types";
 
@@ -16,15 +17,13 @@ export type OrgIssueLike = Pick<OrgValidationIssue, "code" | "message"> & {
 };
 
 const ISSUE_KEY_PREFIXES = ["governance.issues", "errors", "preview.issues"] as const;
-/** Asset, request, reference-data, training, reliability and inventory commands return coded issues, translated in their own namespaces; site-scope refusals (any module) in the eager `errors` namespace. */
+/**
+ * Coded issues of the other modules are translated in their own namespaces (`ISSUE_NAMESPACES`,
+ * loaded at start-up, so the text is French wherever the refusal surfaces); site-scope refusals
+ * (any module) are in the eager `errors` namespace.
+ */
 const OTHER_NAMESPACE_KEY_PREFIXES = [
-  "equipment:errors",
-  "di:errors",
-  "reference:errors",
-  "training:errors",
-  "reliability:errors",
-  "settings:errors",
-  "inventory:errors",
+  ...ISSUE_NAMESPACES.map((ns) => `${ns}:errors`),
   "errors:scope",
 ] as const;
 

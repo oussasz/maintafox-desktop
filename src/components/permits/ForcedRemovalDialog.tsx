@@ -32,6 +32,7 @@ import {
 } from "@/components/ui";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { appErrorReason } from "@/lib/app-error";
@@ -263,11 +264,10 @@ export function ForcedRemovalDialog({
                   className="grid gap-2 sm:grid-cols-[auto_1fr_2fr_auto]"
                   data-testid="forced-attempt"
                 >
-                  <Input
-                    type="datetime-local"
+                  <DateTimeField
                     aria-label={t("forced.attemptAt", { n: i + 1 })}
                     value={a.at}
-                    onChange={(e) => setAttempt(i, { at: e.target.value })}
+                    onChange={(v) => setAttempt(i, { at: v })}
                   />
                   <Select
                     value={a.method}

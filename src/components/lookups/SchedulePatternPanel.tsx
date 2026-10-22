@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { StatusChip } from "@/components/ui/status-chip";
@@ -422,12 +423,11 @@ export function ClasseHoraireEditor({
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-1.5">
               <Label htmlFor="tt-from">{t("timetable.editor.effectiveFrom")}</Label>
-              <Input
+              <DateField
                 id="tt-from"
-                type="date"
                 min={today}
                 value={effectiveFrom}
-                onChange={(e) => setEffectiveFrom(e.target.value)}
+                onChange={(v) => setEffectiveFrom(v)}
                 className="h-9"
               />
               <p className="text-xs text-text-muted">{t("timetable.editor.effectiveFromHelp")}</p>
@@ -540,11 +540,10 @@ export function ClasseHoraireEditor({
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="tt-rotation-start">{t("timetable.editor.rotationStart")}</Label>
-                  <Input
+                  <DateField
                     id="tt-rotation-start"
-                    type="date"
                     value={draft.rotationStart}
-                    onChange={(e) => setDraft((d) => ({ ...d, rotationStart: e.target.value }))}
+                    onChange={(v) => setDraft((d) => ({ ...d, rotationStart: v }))}
                     className="h-9"
                   />
                 </div>

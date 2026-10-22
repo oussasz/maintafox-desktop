@@ -253,12 +253,10 @@ function notifyInvokeFailure(cmd: string, err: unknown): void {
 
   const isMissingCommand = /Command\s+.+\s+not found/i.test(rawMsg);
   if (isMissingCommand) {
+    // The raw text names an internal command: console only, never in the toast.
+    console.warn("[invoke] command not available", cmd, rawMsg);
     pushAppToast({
-      title: i18n.t("errors:unexpectedError", {
-        defaultValue:
-          "This feature is temporarily unavailable. Please restart the app or update to the latest version.",
-      }),
-      description: rawMsg,
+      title: i18n.t("errors:unexpectedError"),
       variant: "destructive",
     });
     return;

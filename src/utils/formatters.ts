@@ -58,14 +58,52 @@ export function formatDecimal(value: number, locale: string, decimalPlaces = 2):
  * Callers must pass the tenant currency from settings — there is no hardcoded default.
  * UI components should use `useFormatters().formatCurrency` which binds Settings → Localization.
  */
-export function formatCurrency(value: number, locale: string, currency: string): string {
+export function formatCurrency(
+  value: number,
+  locale: string,
+  currency: string,
+  symbol?: string | null,
+  minorUnits = 2,
+): string {
   if (!Number.isFinite(value)) return "\u2014";
-  return new Intl.NumberFormat(toIntlLocale(locale), {
+  const unit = symbol?.trim();
+  const parts = new Intl.NumberFormat(toIntlLocale(locale), {
     style: "currency",
     currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
+    // With the reference list's own symbol ("DA") the ISO code is only a placeholder for it.
+    ...(unit ? { currencyDisplay: "code" as const } : {}),
+    minimumFractionDigits: minorUnits,
+    maximumFractionDigits: minorUnits,
+  }).formatToParts(value);
+  // The symbol sits where the language places a currency (fr: after the amount, en: before).
+  return parts.map((p) => (p.type === "currency" && unit ? unit : p.value)).join("");
+}
+
+/**
+ * A duration in hours: "3,5 h" (fr), "3.5 h" (en). Whole hours show no decimals; at most one
+ * decimal is kept.
+ */
+export function formatHours(value: number, locale: string): string {
+  if (!Number.isFinite(value)) return "\u2014";
+  return `${formatNumber(value, locale, { maximumFractionDigits: 1 })}\u00a0h`;
+}
+
+const BYTE_UNITS: Record<string, readonly string[]> = {
+  fr: ["o", "Ko", "Mo", "Go", "To"],
+  en: ["B", "KB", "MB", "GB", "TB"],
+};
+
+/** A file size: "1,5 Mo" (fr), "1.5 MB" (en); binary steps (1 024). */
+export function formatBytes(bytes: number, locale: string): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "\u2014";
+  const units = BYTE_UNITS[locale] ?? BYTE_UNITS["fr"] ?? [];
+  let n = bytes;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i += 1;
+  }
+  return `${formatNumber(n, locale, { maximumFractionDigits: i === 0 ? 0 : 1 })}\u00a0${units[i]}`;
 }
 
 /**

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { Button } from "@/components/ui/button";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import {
   Dialog,
   DialogContent,
@@ -247,16 +248,12 @@ export function AvailabilityBlockDialog({
 
           <label className="text-sm">
             <span className="mb-1 block text-text-muted">{t("availability.form.startAt")}</span>
-            <Input
-              type="datetime-local"
-              value={startAt}
-              onChange={(e) => setStartAt(e.target.value)}
-            />
+            <DateTimeField value={startAt} onChange={(v) => setStartAt(v)} />
           </label>
 
           <label className="text-sm">
             <span className="mb-1 block text-text-muted">{t("availability.form.endAt")}</span>
-            <Input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
+            <DateTimeField value={endAt} onChange={(v) => setEndAt(v)} />
           </label>
 
           {reasonHidden ? (

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -304,21 +305,15 @@ export function PmVersionFormDialog({
         <div className="grid gap-3 py-2 md:grid-cols-2">
           <div className="grid gap-1">
             <Label htmlFor="pm-version-from">{t("fields.effectiveFrom")}</Label>
-            <Input
+            <DateField
               id="pm-version-from"
-              type="date"
               value={effectiveFrom}
-              onChange={(e) => setEffectiveFrom(e.target.value)}
+              onChange={(v) => setEffectiveFrom(v)}
             />
           </div>
           <div className="grid gap-1">
             <Label htmlFor="pm-version-to">{t("fields.effectiveTo")}</Label>
-            <Input
-              id="pm-version-to"
-              type="date"
-              value={effectiveTo}
-              onChange={(e) => setEffectiveTo(e.target.value)}
-            />
+            <DateField id="pm-version-to" value={effectiveTo} onChange={(v) => setEffectiveTo(v)} />
           </div>
           {isCalendar ? (
             <>
