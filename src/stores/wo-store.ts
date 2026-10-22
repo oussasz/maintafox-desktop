@@ -9,6 +9,7 @@
 import { create } from "zustand";
 
 import { createLatestRequestGuard } from "@/lib/latest-request";
+import { isStepUpCancelledError } from "@/lib/step-up-bridge";
 import { closeWo } from "@/services/wo-closeout-service";
 import {
   CompletionBlockedError,
@@ -422,7 +423,8 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       void get().loadWos();
     } catch (err) {
       // A password request is not a failure to keep on screen (the dialog asks and retries).
-      if (!isStepUpRequiredError(err)) set({ error: toErrorMessage(err) });
+      if (!isStepUpRequiredError(err) && !isStepUpCancelledError(err))
+        set({ error: toErrorMessage(err) });
       throw err;
     } finally {
       set({ saving: false });

@@ -10,6 +10,11 @@
 /** Message of the error thrown when the user closes the step-up dialog without confirming. */
 export const STEP_UP_CANCELLED_MESSAGE = "Step-up cancelled by user";
 
+/** The user closed the password dialog: not a failure to keep on screen. */
+export function isStepUpCancelledError(err: unknown): boolean {
+  return err instanceof Error && err.message === STEP_UP_CANCELLED_MESSAGE;
+}
+
 type StepUpRequester = () => Promise<boolean>;
 
 let requester: StepUpRequester | null = null;
