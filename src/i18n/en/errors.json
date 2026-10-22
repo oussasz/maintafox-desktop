@@ -14,6 +14,7 @@
     "rateLimit": "Too many requests. Please wait.",
     "maintenance": "Service under maintenance. Try again later."
   },
+  "unexpectedError": "This feature is temporarily unavailable. Please restart the app or update to the latest version.",
   "auth": {
     "notAuthenticated": "You must be signed in to perform this action.",
     "sessionExpired": "Your session has expired. Please sign in again.",
@@ -149,7 +150,21 @@
     "GATE_INSP_SCHEDULE_INCOMPLETE": "Schedule: its recurrence is incomplete; edit and save it again.",
     "GATE_INSP_SCHEDULE_TOO_MANY_ROUNDS": "Schedule: generation stopped at 1000 rounds; shorten the look-ahead or lengthen the interval.",
     "GATE_NOTIFICATION_ACK_REQUIRED": "Acknowledge this safety notice before hiding it.",
-    "GATE_NOTIFICATION_ACK_NOT_YOURS": "This safety notice is not yours or was already acknowledged."
+    "GATE_NOTIFICATION_ACK_NOT_YOURS": "This safety notice is not yours or was already acknowledged.",
+    "GATE_CURRENCY_IN_USE": "The currency cannot be deactivated: it is still in use (stock, purchasing, budget or settlements).",
+    "GATE_CURRENCY_NOT_ACTIVE": "Currency refused: it is not active in the currency list (Reference data › Currencies). Choose an active currency.",
+    "GATE_FIN_CURRENCY_LOCKED": "Change refused: stock, receipts or postings are already valued in the plant currency. Changing it would relabel every stored amount.",
+    "GATE_HOME_PERIOD_INVALID": "Period refused: choose 7 or 30 days.",
+    "GATE_NOTIFICATION_AUDIENCE_INVALID": "Notification refused: the chosen recipient does not exist.",
+    "GATE_NOTIFICATION_CONFIG_INVALID": "Notification rule refused: a delay or a setting is out of range. Check the values entered.",
+    "GATE_NOTIFICATION_FILTER_INVALID": "Notification filter refused: a filter value is not valid.",
+    "GATE_NOTIFICATION_SNOOZE_INVALID": "Snooze refused: choose a time between one minute and 7 days from now.",
+    "GATE_PM_FOLLOW_UP_NOT_CORRECTIVE": "Work order refused: the follow-up of a preventive finding must be corrective. Choose a corrective work order type.",
+    "GATE_REF_NATURE_TAG_INVALID": "Nature refused: it is not a recognised maintenance nature (EN 13306). Choose a nature from the list.",
+    "GATE_REF_PARENT_REQUIRED": "Value refused: every value of this list must be linked to a value of the parent list.",
+    "GATE_SLA_RULE_NEEDS_SCOPE": "Rule refused: a delay rule applies to an origin and/or a criticality. Delays of a level for all requests are set in the urgency scale.",
+    "GATE_URGENCY_SCALE_INVALID": "Urgency refused: it is not a level of the urgency scale. Choose a level from the list.",
+    "GATE_WO_SUBTYPE_INVALID": "Sub-type refused: it does not exist, is inactive or does not belong to the nature of the chosen work order type."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",
