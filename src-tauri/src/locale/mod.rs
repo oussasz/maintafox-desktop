@@ -2,11 +2,14 @@
 //! Locale preference detection and persistence.
 //!
 //! Locale precedence (highest to lowest):
-//!   1. User preference in `system_config` (key: `locale.user_language`)
+//!   1. User preference in `system_config` (key: `locale.user_language`). Its value may be
+//!      [`FOLLOW_OS_LOCALE`]: the user explicitly chose "follow the Windows language", the only
+//!      case where the OS language is used.
 //!   2. Tenant default in `system_config` (key: `locale.default_language`)
 //!   3. Settings SSOT `app_settings.locale.primary_language` (tenant scope)
-//!   4. OS locale (detected at startup via `sys_locale`)
-//!   5. Hard fallback: "fr"
+//!   4. Hard default: "fr"
+//!
+//! The OS language is never a silent default: an English Windows opens a fresh install in French.
 
 use crate::errors::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -18,6 +21,8 @@ mod locale_integration_tests;
 pub const SUPPORTED_LOCALES: &[&str] = &["fr", "en"];
 pub const DEFAULT_LOCALE: &str = "fr";
 pub const FALLBACK_LOCALE: &str = "fr";
+/// Stored value of `locale.user_language` meaning "follow the Windows language" (explicit choice).
+pub const FOLLOW_OS_LOCALE: &str = "system";
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LocalePreference {
@@ -60,7 +65,8 @@ pub async fn read_locale_config(db: &DatabaseConnection, key: &str) -> AppResult
 
 /// Write a locale value to `system_config` (upsert).
 pub async fn write_locale_config(db: &DatabaseConnection, key: &str, value: &str) -> AppResult<()> {
-    if !SUPPORTED_LOCALES.contains(&value) {
+    let follow_os = key == "locale.user_language" && value == FOLLOW_OS_LOCALE;
+    if !follow_os && !SUPPORTED_LOCALES.contains(&value) {
         return Err(AppError::ValidationFailed(vec![format!(
             "Unsupported locale '{value}'. Supported: {:?}",
             SUPPORTED_LOCALES
@@ -109,6 +115,20 @@ async fn read_app_settings_primary_language(db: &DatabaseConnection) -> AppResul
     }
 }
 
+/// The language in use: the user's choice (or the OS language when they chose to follow it),
+/// else the plant default, else French. The OS language is never used unless chosen.
+pub fn pick_active_locale(user: Option<&str>, tenant: Option<&str>, os: Option<&str>) -> String {
+    let supported = |l: &&str| SUPPORTED_LOCALES.contains(l);
+    let from_user = match user {
+        Some(FOLLOW_OS_LOCALE) => os.filter(supported),
+        other => other.filter(supported),
+    };
+    from_user
+        .or_else(|| tenant.filter(supported))
+        .unwrap_or(DEFAULT_LOCALE)
+        .to_string()
+}
+
 /// Resolve the full locale preference according to the precedence chain.
 pub async fn resolve_locale_preference(db: &DatabaseConnection) -> AppResult<LocalePreference> {
     let user_locale = read_locale_config(db, "locale.user_language").await?;
@@ -119,11 +139,7 @@ pub async fn resolve_locale_preference(db: &DatabaseConnection) -> AppResult<Loc
     }
     let os_locale = detect_os_locale();
 
-    let active_locale = user_locale
-        .clone()
-        .or_else(|| tenant_locale.clone())
-        .or_else(|| os_locale.clone())
-        .unwrap_or_else(|| DEFAULT_LOCALE.to_string());
+    let active_locale = pick_active_locale(user_locale.as_deref(), tenant_locale.as_deref(), os_locale.as_deref());
 
     Ok(LocalePreference {
         active_locale,
@@ -142,6 +158,27 @@ mod tests {
     fn supported_locales_includes_fr_and_en() {
         assert!(SUPPORTED_LOCALES.contains(&"fr"));
         assert!(SUPPORTED_LOCALES.contains(&"en"));
+    }
+
+    #[test]
+    fn english_windows_does_not_win_over_the_french_default() {
+        assert_eq!(pick_active_locale(None, None, Some("en")), "fr");
+        assert_eq!(pick_active_locale(None, Some("fr"), Some("en")), "fr");
+    }
+
+    #[test]
+    fn user_then_plant_default_then_french() {
+        assert_eq!(pick_active_locale(Some("en"), Some("fr"), Some("fr")), "en");
+        assert_eq!(pick_active_locale(None, Some("en"), Some("fr")), "en");
+        assert_eq!(pick_active_locale(None, None, None), "fr");
+        assert_eq!(pick_active_locale(Some("xx"), Some("en"), None), "en");
+    }
+
+    #[test]
+    fn the_os_language_is_used_only_when_the_user_chose_to_follow_it() {
+        assert_eq!(pick_active_locale(Some(FOLLOW_OS_LOCALE), Some("fr"), Some("en")), "en");
+        assert_eq!(pick_active_locale(Some(FOLLOW_OS_LOCALE), Some("en"), None), "en");
+        assert_eq!(pick_active_locale(Some(FOLLOW_OS_LOCALE), None, None), "fr");
     }
 
     #[test]

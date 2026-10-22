@@ -36,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
@@ -83,12 +84,6 @@ function attachmentIcon(mime: string) {
   }
 }
 
-function formatBytes(bytes: number, t: (key: string) => string): string {
-  if (bytes < 1024) return `${bytes} ${t("attachment.bytes")}`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} ${t("attachment.kilobytes")}`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} ${t("attachment.megabytes")}`;
-}
-
 function groupByPhase(attachments: WoAttachment[]): Map<string, WoAttachment[]> {
   const order: Array<WoAttachmentPhase | "unset"> = [
     "before",
@@ -115,7 +110,8 @@ function groupByPhase(attachments: WoAttachment[]): Map<string, WoAttachment[]> 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPanelProps) {
-  const { t, i18n } = useTranslation("ot");
+  const { t } = useTranslation("ot");
+  const { formatBytes, formatDate } = useFormatters();
   const [attachments, setAttachments] = useState<WoAttachment[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -338,12 +334,7 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
                         {att.file_name}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {formatBytes(att.size_bytes, t)} ·{" "}
-                        {new Date(att.uploaded_at).toLocaleDateString(i18n.language, {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric",
-                        })}
+                        {formatBytes(att.size_bytes)} · {formatDate(att.uploaded_at)}
                       </p>
                       <MediaFileStateBadge
                         state={fileStates.get(att.relative_path)}

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { PermissionContext, type PermissionContextValue } from "@/contexts/PermissionContext";
 import { i18n, initI18n } from "@/i18n";
 import { installPendingUpdate } from "@/services/updater-service";
 import { useLocaleStore } from "@/stores/locale-store";
@@ -61,6 +62,19 @@ describe("UpdateBanner", () => {
   it("renders nothing without an offer, outcome or notice", () => {
     const { container } = render(<UpdateBanner />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("shows the notes in a collapsed disclosure without Markdown symbols", () => {
+    useUpdaterStore.setState({
+      lastCheckResult: makeCheck({ notes_en: "## 1.2\n\n- **Faster** search", notes_fr: null }),
+    });
+    const { container } = render(<UpdateBanner />);
+    const details = container.querySelector("details");
+    expect(details).not.toBeNull();
+    expect(details?.hasAttribute("open")).toBe(false);
+    expect(details?.textContent).not.toContain("**");
+    expect(details?.textContent).not.toContain("##");
+    expect(details?.querySelector("strong")?.textContent).toBe("Faster");
   });
 
   it("shows an optional update with notes in the UI language and a dismiss button", () => {
@@ -329,5 +343,37 @@ describe("UpdateBanner", () => {
     render(<UpdateBanner />);
     expect(screen.getByText(/none is published for this computer yet/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Install now" })).not.toBeInTheDocument();
+  });
+
+  it("offers the install only to the administrator of this PC; others read why (AU-45)", () => {
+    useUpdaterStore.setState({ lastCheckResult: makeCheck() });
+    const rights = (granted: string[]): PermissionContextValue => ({
+      permissions: [],
+      isLoading: false,
+      can: (p) => granted.includes(p),
+      canAny: (...ps) => ps.some((p) => granted.includes(p)),
+      canAll: (...ps) => ps.every((p) => granted.includes(p)),
+      refresh: async () => {},
+    });
+
+    const { unmount } = render(
+      <PermissionContext.Provider value={rights([P.OT_VIEW])}>
+        <UpdateBanner />
+      </PermissionContext.Provider>,
+    );
+    expect(screen.getByText("Version 1.2.0 is available")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Install now" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("update-admin-required")).toHaveTextContent(
+      "Only an administrator of this computer can install updates.",
+    );
+    unmount();
+
+    render(
+      <PermissionContext.Provider value={rights([P.ADM_SETTINGS])}>
+        <UpdateBanner />
+      </PermissionContext.Provider>,
+    );
+    expect(screen.getByRole("button", { name: "Install now" })).toBeInTheDocument();
+    expect(screen.queryByTestId("update-admin-required")).not.toBeInTheDocument();
   });
 });

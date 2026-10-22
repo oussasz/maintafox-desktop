@@ -12,6 +12,7 @@ import { DataTable } from "@/components/data/DataTable";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -34,6 +35,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { mfLayout } from "@/design-system/tokens";
 import type { Tone } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   createExternalCompany,
@@ -171,11 +173,10 @@ export function ExternalCompanyDialog({
             />
           </FormField>
           <FormField name="co-start" label={t("companies.contractStart")}>
-            <Input
+            <DateField
               id="co-start"
-              type="date"
               value={draft.contract_start}
-              onChange={(e) => setDraft({ ...draft, contract_start: e.target.value })}
+              onChange={(v) => setDraft({ ...draft, contract_start: v })}
             />
           </FormField>
           <FormField
@@ -183,11 +184,10 @@ export function ExternalCompanyDialog({
             label={t("companies.contractEnd")}
             error={datesValid ? undefined : t("companies.endBeforeStart")}
           >
-            <Input
+            <DateField
               id="co-end"
-              type="date"
               value={draft.contract_end}
-              onChange={(e) => setDraft({ ...draft, contract_end: e.target.value })}
+              onChange={(v) => setDraft({ ...draft, contract_end: v })}
             />
           </FormField>
           {draft.id != null ? (
@@ -267,6 +267,7 @@ export function ExternalCompanyDialog({
 
 export function ExternalCompaniesPanel() {
   const { t } = useTranslation("personnel");
+  const { formatDate } = useFormatters();
   const { can } = usePermissions();
   const [rows, setRows] = useState<ExternalCompany[]>([]);
   const [peopleByCompany, setPeopleByCompany] = useState<Map<number, number>>(new Map());
@@ -336,8 +337,8 @@ export function ExternalCompaniesPanel() {
         id: "contract",
         header: t("companies.contract"),
         cell: ({ row }) =>
-          [row.original.contract_start?.slice(0, 10), row.original.contract_end?.slice(0, 10)]
-            .map((d) => d ?? "…")
+          [row.original.contract_start, row.original.contract_end]
+            .map((d) => (d ? formatDate(d) : "…"))
             .join(" → "),
       },
       {
@@ -370,7 +371,7 @@ export function ExternalCompaniesPanel() {
         ),
       },
     ],
-    [t, can, peopleByCompany],
+    [t, can, peopleByCompany, formatDate],
   );
 
   return (

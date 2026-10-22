@@ -1081,7 +1081,13 @@
         "REVIEW": "Review",
         "INSUFFICIENT_DATA": "Insufficient data",
         "insufficientData": "Not enough cost history to recommend repair or replace.",
-        "reasons": {}
+        "reasons": {
+          "MISSING_REPAIR_COST": "Repair cost is unknown.",
+          "MISSING_REPLACEMENT_COST": "Replacement cost is unknown.",
+          "RATIO_NEAR_THRESHOLD": "The repair/replacement ratio is close to the threshold: review.",
+          "REPAIR_COST_FROM_HISTORY_AVG": "Repair cost estimated from the average of earlier repairs.",
+          "REPLACEMENT_COST_PROVISIONAL": "Replacement cost is provisional (low-confidence valuation)."
+        }
       },
       "history": {
         "repairCount": "Prior repairs",
@@ -1836,6 +1842,8 @@
     }
   },
   "errors": {
+    "INV_GR_ARTICLE_MISMATCH": "PO line {{po_line}} is for article {{ordered_article}}, not {{received_article}}: receive the article that was ordered.",
+    "INV_ISSUE_WO_ENDED": "Work order {{work_order}} is closed or cancelled: no more parts ({{article}}) can be issued against its reservation.",
     "NEGATIVE_STOCK_REASON_SHORT": "Give the reason of the count (at least {{min}} characters).",
     "NEGATIVE_STOCK_COUNT_INVALID": "The counted quantity must be zero or more.",
     "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choose the variance reason of the count.",

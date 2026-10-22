@@ -125,6 +125,11 @@
       "alt": "Photo of {{name}}",
       "loadFailed": "Photo unavailable"
     },
+    "deactivate": {
+      "title": "Deactivate this person?",
+      "description": "{{name}} will no longer be offered for new assignments. Their history is kept.",
+      "confirm": "Deactivate"
+    },
     "actions": {
       "edit": "Edit",
       "close": "Close",

@@ -129,6 +129,7 @@
     "more": "Plus d'actions"
   },
   "history": {
+    "noRightToOpen": "Vous n'avez pas le droit d'ouvrir cet élément.",
     "loadError": "Impossible de charger l'historique de cet équipement",
     "partial": "Les {{count}} événements les plus récents sont affichés ; des événements plus anciens peuvent exister.",
     "loadOlder": "Charger les plus anciens",

@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -369,12 +370,7 @@ export function RamsDataQualityPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="grid gap-1 text-xs font-medium text-text-secondary">
               {t("rams.quality.hoursDate")}
-              <Input
-                type="date"
-                className="h-10"
-                value={day}
-                onChange={(e) => setDay(e.target.value)}
-              />
+              <DateField className="h-10" value={day} onChange={(v) => setDay(v)} />
             </label>
             <label className="grid gap-1 text-xs font-medium text-text-secondary">
               {t("rams.quality.hoursValue")}

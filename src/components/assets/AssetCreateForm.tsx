@@ -30,6 +30,7 @@ import {
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { FormField } from "@/components/ui/FormField";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DateField } from "@/components/ui/date-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
@@ -489,7 +490,13 @@ export function AssetCreateForm() {
             />
           </FormField>
           <FormField name="commissioned_at" label={t("detail.fields.commissioningDate")}>
-            <Input id="commissioned_at" type="date" {...register("commissioned_at")} />
+            <DateField
+              id="commissioned_at"
+              value={watch("commissioned_at") ?? ""}
+              onChange={(v) =>
+                setValue("commissioned_at", v || null, { shouldDirty: true, shouldValidate: true })
+              }
+            />
           </FormField>
         </EntityFormSection>
 

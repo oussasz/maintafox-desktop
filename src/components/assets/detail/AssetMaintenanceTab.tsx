@@ -17,6 +17,7 @@ import { diStatusToI18nKey } from "@/components/di/status-meta";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -27,6 +28,7 @@ import {
   toneOf,
 } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useCanReadList } from "@/lib/list-access";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { getAssetMaintenanceProfile } from "@/services/asset-registry-service";
 import { listDis } from "@/services/di-service";
@@ -53,17 +55,22 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
   );
   const profile = useLoad(profileLoad, `${asset.id}:${rollUp}:${asset.row_version}`);
 
-  // Loaded separately: a failure in one list must not hide the other.
+  // Loaded separately: a failure in one list must not hide the other. Each list is asked only by
+  // a user who may read it (ot.view, di.view); otherwise its card names the missing right.
+  const canReadWos = useCanReadList("workOrders");
+  const canReadDis = useCanReadList("requests");
   const woLoad = useMemo(
-    () => () => listWos({ equipment_id: asset.id, limit: RECENT_ROWS, offset: 0 }),
-    [asset.id],
+    () =>
+      canReadWos ? () => listWos({ equipment_id: asset.id, limit: RECENT_ROWS, offset: 0 }) : null,
+    [asset.id, canReadWos],
   );
   const diLoad = useMemo(
-    () => () => listDis({ equipment_id: asset.id, limit: RECENT_ROWS, offset: 0 }),
-    [asset.id],
+    () =>
+      canReadDis ? () => listDis({ equipment_id: asset.id, limit: RECENT_ROWS, offset: 0 }) : null,
+    [asset.id, canReadDis],
   );
-  const wos = useLoad(woLoad, String(asset.id));
-  const dis = useLoad(diLoad, String(asset.id));
+  const wos = useLoad(woLoad, `${asset.id}:${canReadWos}`);
+  const dis = useLoad(diLoad, `${asset.id}:${canReadDis}`);
 
   const p = profile.data;
   const maxYear = p ? Math.max(0, ...p.cost_by_year.map((y) => y.total)) : 0;
@@ -234,7 +241,9 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
           }
           icon={Wrench}
         >
-          {wos.loading && !wos.data ? (
+          {!canReadWos ? (
+            <ListAccessNote list="workOrders" />
+          ) : wos.loading && !wos.data ? (
             <LoadingState />
           ) : wos.error || !wos.data ? (
             <ErrorState
@@ -272,7 +281,9 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
           }
           icon={ClipboardList}
         >
-          {dis.loading && !dis.data ? (
+          {!canReadDis ? (
+            <ListAccessNote list="requests" />
+          ) : dis.loading && !dis.data ? (
             <LoadingState />
           ) : dis.error || !dis.data ? (
             <ErrorState

@@ -24,6 +24,7 @@ import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { Timeline, type TimelineEntry } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
 import {
   DropdownMenu,
@@ -37,6 +38,7 @@ import { Label } from "@/components/ui/label";
 import { ReviewMark } from "@/components/ui/review-mark";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useStepUp } from "@/hooks/use-step-up";
 import { describeAppError } from "@/lib/app-error";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import {
@@ -136,6 +138,8 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
   const openCreateForm = usePersonnelStore((s) => s.openCreateForm);
   const openPersonnel = usePersonnelStore((s) => s.openPersonnel);
   const deactivate = usePersonnelStore((s) => s.deactivate);
+  const { withStepUp, StepUpDialogElement } = useStepUp();
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
 
   const p = detail.personnel;
   const statusValue = lists.option("employment_statuses", p.employment_status);
@@ -347,7 +351,7 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     className="gap-2 text-status-danger focus:text-status-danger"
-                    onClick={() => void deactivate(p.id, p.row_version)}
+                    onClick={() => setDeactivateOpen(true)}
                   >
                     <UserX className="h-3.5 w-3.5" />
                     {t("detail.actions.deactivate")}
@@ -617,6 +621,24 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
           ) : null}
         </DetailSectionCard>
       ) : null}
+
+      <ConfirmDialog
+        open={deactivateOpen}
+        onOpenChange={setDeactivateOpen}
+        title={t("detail.deactivate.title")}
+        description={t("detail.deactivate.description", { name: p.full_name })}
+        confirmLabel={t("detail.deactivate.confirm")}
+        destructive
+        onConfirm={async () => {
+          try {
+            // Needs the password again once the step-up window has passed.
+            await withStepUp(() => deactivate(p.id, p.row_version));
+          } catch {
+            // The store keeps the (translated) refusal; the dialog closes so it is visible.
+          }
+        }}
+      />
+      {StepUpDialogElement}
     </div>
   );
 }

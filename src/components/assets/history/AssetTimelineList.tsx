@@ -65,9 +65,12 @@ function eventStatus(event: AssetHistoryEvent, t: TranslateFn): string | undefin
 export function AssetTimelineList({
   events,
   onOpenRef,
+  canOpenRef = () => true,
 }: {
   events: AssetHistoryEvent[];
   onOpenRef: (ev: AssetHistoryEvent) => void;
+  /** False when the user lacks the right of the screen the event opens: shown, not clickable. */
+  canOpenRef?: (ev: AssetHistoryEvent) => boolean;
 }) {
   const { t, i18n } = useTranslation(["equipment", "ot", "di", "pm"]);
   const tr = t as unknown as TranslateFn;
@@ -78,7 +81,8 @@ export function AssetTimelineList({
         const typeLabel = t(`history.eventTypes.${event.event_type}`, {
           defaultValue: event.event_type,
         });
-        const clickable = Boolean(event.ref?.entity_type);
+        const hasRef = Boolean(event.ref?.entity_type);
+        const clickable = hasRef && canOpenRef(event);
         const metaBits: ReactNode[] = [];
         if (event.actor_label) {
           metaBits.push(
@@ -94,6 +98,14 @@ export function AssetTimelineList({
               <Clock3 className="h-3 w-3" aria-hidden />
               {Math.floor(event.duration_minutes / 60)}h
               {String(event.duration_minutes % 60).padStart(2, "0")}
+            </span>,
+          );
+        }
+
+        if (hasRef && !clickable && event.ref?.entity_code) {
+          metaBits.push(
+            <span key="ref" title={t("history.noRightToOpen")}>
+              {event.ref.entity_code}
             </span>,
           );
         }
@@ -120,7 +132,7 @@ export function AssetTimelineList({
             : undefined,
         };
       }),
-    [events, onOpenRef, t, tr],
+    [events, onOpenRef, canOpenRef, t, tr],
   );
 
   return (

@@ -71,6 +71,8 @@ export const mfAuth = {
   cardCompact:
     "w-full max-w-[480px] rounded-xl border border-surface-border bg-surface-1 p-6 shadow-[var(--mfa-shadow-card)] motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200 sm:p-8",
   cardBrandSeparator: "mb-6 flex justify-center",
+  /** Navy header band of the installer-style card (logo + product name in white). */
+  cardBrandBand: "flex items-center justify-center bg-[var(--mfa-navy)] px-6 py-4",
   title: "text-xl font-semibold tracking-tight text-text-primary",
   subtitle: "mt-1.5 text-sm leading-relaxed text-text-secondary",
   linkPrimary:

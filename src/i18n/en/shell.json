@@ -300,6 +300,7 @@
     "recordUnidentified": "(number not available)",
     "technicalDetails": "Technical details",
     "noRemoteVersion": "The server sent no version of this record",
+    "resolveNeedsRight": "You can view this conflict. Choosing a version requires the right to resolve synchronisation conflicts.",
     "recommendedShort": "recommended",
     "status": {
       "escalated": "Escalated"
@@ -503,7 +504,7 @@
       "mandatory": "Mandatory",
       "mandatoryDefault": "This update is required to keep using Maintafox.",
       "forcedNotOffered": "Your licence requires a newer version of Maintafox, but none is published for this computer yet. Contact Maintafox.",
-      "notes": "What changes",
+      "notes": "What's new",
       "installNow": "Install now",
       "dismiss": "Later",
       "dismissOutcome": "Close this message",

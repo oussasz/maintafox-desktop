@@ -11,11 +11,11 @@ use crate::activation::domain::{
     RebindMachineActivationResult, RotateActivationSecretInput, RotateActivationSecretResult,
 };
 use crate::audit;
+use crate::build_identity::KEYRING_SERVICE;
 use crate::entitlements;
 use crate::errors::{AppError, AppResult};
 use crate::license::security::{append_license_trace, register_api_exchange, LicenseTraceInput};
 
-const KEYRING_SERVICE: &str = "maintafox-desktop";
 const KEYRING_ACTIVATION_SECRET_KEY: &str = "machine-activation-binding-secret";
 const KEYRING_ACTIVATION_TOKEN_KEY: &str = "machine-activation-refresh-token";
 

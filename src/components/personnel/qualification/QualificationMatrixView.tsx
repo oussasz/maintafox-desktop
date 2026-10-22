@@ -14,6 +14,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
 import { mfTone } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { cn } from "@/lib/utils";
 import {
   type QualificationMatrix,
@@ -47,6 +48,7 @@ export function QualificationMatrixView({
   refreshKey = 0,
 }: QualificationMatrixViewProps) {
   const { t } = useTranslation("training");
+  const { formatDate } = useFormatters();
   const [matrix, setMatrix] = useState<QualificationMatrix | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -177,7 +179,7 @@ export function QualificationMatrixView({
       qualification: col.label,
       status: t(`cellStatus.${cell.status}`),
       level: cell.level ?? "",
-      expiresAt: cell.expires_at?.slice(0, 10) ?? t("sheet.noExpiry"),
+      expiresAt: cell.expires_at ? formatDate(cell.expires_at) : t("sheet.noExpiry"),
     });
   };
 

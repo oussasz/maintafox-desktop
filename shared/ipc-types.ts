@@ -2539,12 +2539,18 @@ export interface AssetPickerSuggestFilters {
   query?: string | null;
   include_decommissioned?: boolean;
   limit?: number | null;
+  /** Empty query: list the whole register when it has at most this many assets (server cap 200). */
+  full_list_max?: number | null;
 }
 
 export interface AssetPickerSuggestions {
-  /** `"recent"` | `"frequent"` | `"search"` */
+  /** `"recent"` | `"frequent"` | `"register"` | `"search"` */
   mode: string;
   items: AssetSearchResult[];
+  /** Pickable assets in the register (empty query only). */
+  total: number;
+  /** True when `items` is the whole register. */
+  complete: boolean;
 }
 
 export interface AssetSuggestion {

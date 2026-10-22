@@ -76,6 +76,7 @@ export function StepUpDialog({
       setLoading(true);
       try {
         await verifyStepUp(password);
+        setPassword("");
         setAttempts(0);
         onVerified();
       } catch {

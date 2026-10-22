@@ -226,7 +226,7 @@ export function InventoryArticleFamilyHost() {
                   onChange={(e) =>
                     setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), code: e.target.value }))
                   }
-                  className="h-7 text-sm"
+                  className="h-10 text-sm"
                   autoFocus
                 />
               </ReferenceValueTableCell>
@@ -237,7 +237,7 @@ export function InventoryArticleFamilyHost() {
                   onChange={(e) =>
                     setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), name: e.target.value }))
                   }
-                  className="h-7 text-sm"
+                  className="h-10 text-sm"
                 />
               </ReferenceValueTableCell>
               <ReferenceValueTableCell>
@@ -247,7 +247,7 @@ export function InventoryArticleFamilyHost() {
                   onChange={(e) =>
                     setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), description: e.target.value }))
                   }
-                  className="h-7 text-sm"
+                  className="h-10 text-sm"
                 />
               </ReferenceValueTableCell>
               <ReferenceValueTableCell>
@@ -289,7 +289,7 @@ export function InventoryArticleFamilyHost() {
                 <ReferenceValueTableCell>
                   {isEditing ? (
                     <Input
-                      className="h-7 bg-surface-1 text-sm"
+                      className="h-10 bg-surface-1 text-sm"
                       value={editingDraft.code}
                       onChange={(e) => setEditingDraft((s) => ({ ...s, code: e.target.value }))}
                     />
@@ -300,7 +300,7 @@ export function InventoryArticleFamilyHost() {
                 <ReferenceValueTableCell>
                   {isEditing ? (
                     <Input
-                      className="h-7 text-sm"
+                      className="h-10 text-sm"
                       value={editingDraft.name}
                       onChange={(e) => setEditingDraft((s) => ({ ...s, name: e.target.value }))}
                     />
@@ -311,7 +311,7 @@ export function InventoryArticleFamilyHost() {
                 <ReferenceValueTableCell>
                   {isEditing ? (
                     <Input
-                      className="h-7 text-sm"
+                      className="h-10 text-sm"
                       value={editingDraft.description}
                       onChange={(e) =>
                         setEditingDraft((s) => ({ ...s, description: e.target.value }))

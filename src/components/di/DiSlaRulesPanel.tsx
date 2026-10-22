@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 
 import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -35,10 +36,11 @@ interface DiSlaRulesPanelProps {
 
 // ── Local draft type (tracks unsaved edits per rule) ────────────────────────
 
+/** Hours stay as typed text so a field can be cleared while editing; checked on save. */
 interface RuleDraft {
-  target_response_hours: number;
-  target_resolution_hours: number;
-  escalation_threshold_hours: number;
+  target_response_hours: string;
+  target_resolution_hours: string;
+  escalation_threshold_hours: string;
   is_active: boolean;
   dirty: boolean;
 }
@@ -52,28 +54,30 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<number, RuleDraft>>({});
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
 
   // ── Load rules ──────────────────────────────────────────────────────────
 
   const loadRules = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await listSlaRules();
       setRules(data);
       const newDrafts: Record<number, RuleDraft> = {};
       for (const r of data) {
         newDrafts[r.id] = {
-          target_response_hours: r.target_response_hours,
-          target_resolution_hours: r.target_resolution_hours,
-          escalation_threshold_hours: r.escalation_threshold_hours,
+          target_response_hours: String(r.target_response_hours),
+          target_resolution_hours: String(r.target_resolution_hours),
+          escalation_threshold_hours: String(r.escalation_threshold_hours),
           is_active: r.is_active,
           dirty: false,
         };
       }
       setDrafts(newDrafts);
-    } catch {
-      // silently handle
+    } catch (err) {
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -99,15 +103,24 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
     async (rule: DiSlaRule) => {
       const draft = drafts[rule.id];
       if (!draft?.dirty) return;
+      const hours = [
+        draft.target_response_hours,
+        draft.target_resolution_hours,
+        draft.escalation_threshold_hours,
+      ].map((v) => (/^\d+$/.test(v.trim()) ? Number(v.trim()) : Number.NaN));
+      if (hours.some((h) => Number.isNaN(h))) {
+        setSaveError(t("sla.invalidHours"));
+        return;
+      }
       setSavingId(rule.id);
       try {
         const input: SlaRuleUpdateInput = {
           id: rule.id,
           name: rule.name,
           urgency_level: rule.urgency_level,
-          target_response_hours: draft.target_response_hours,
-          target_resolution_hours: draft.target_resolution_hours,
-          escalation_threshold_hours: draft.escalation_threshold_hours,
+          target_response_hours: hours[0] as number,
+          target_resolution_hours: hours[1] as number,
+          escalation_threshold_hours: hours[2] as number,
           is_active: draft.is_active,
           ...(rule.origin_type !== null ? { origin_type: rule.origin_type } : {}),
           ...(rule.asset_criticality_class !== null
@@ -123,7 +136,7 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
         setSavingId(null);
       }
     },
-    [drafts, loadRules],
+    [drafts, loadRules, t],
   );
 
   return (
@@ -144,7 +157,11 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
         ) : null}
 
         <div className="flex-1 overflow-auto min-h-0">
-          {loading ? (
+          {loadError != null ? (
+            <div className="p-4">
+              <ErrorState error={loadError} onRetry={() => void loadRules()} retrying={loading} />
+            </div>
+          ) : loading ? (
             <p className="text-sm text-text-muted p-4">{t("sla.loading")}</p>
           ) : rules.length === 0 ? (
             <p className="text-sm text-text-muted p-4">{t("sla.empty")}</p>
@@ -179,9 +196,7 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
                           className="w-20 h-8 text-xs"
                           value={draft.target_response_hours}
                           onChange={(e) =>
-                            updateDraft(rule.id, {
-                              target_response_hours: Number(e.target.value) || 0,
-                            })
+                            updateDraft(rule.id, { target_response_hours: e.target.value })
                           }
                         />
                       </td>
@@ -193,9 +208,7 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
                           className="w-20 h-8 text-xs"
                           value={draft.target_resolution_hours}
                           onChange={(e) =>
-                            updateDraft(rule.id, {
-                              target_resolution_hours: Number(e.target.value) || 0,
-                            })
+                            updateDraft(rule.id, { target_resolution_hours: e.target.value })
                           }
                         />
                       </td>
@@ -207,9 +220,7 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
                           className="w-20 h-8 text-xs"
                           value={draft.escalation_threshold_hours}
                           onChange={(e) =>
-                            updateDraft(rule.id, {
-                              escalation_threshold_hours: Number(e.target.value) || 0,
-                            })
+                            updateDraft(rule.id, { escalation_threshold_hours: e.target.value })
                           }
                         />
                       </td>

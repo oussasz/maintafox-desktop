@@ -15,7 +15,6 @@ use crate::activity::emitter;
 use crate::audit;
 use crate::auth::password;
 use crate::errors::{AppError, AppResult};
-use crate::inventory::queries as inventory_queries;
 use crate::reliability::advanced_rams::queries as advanced_rams_queries;
 use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 use crate::reliability::queries as reliability_queries;
@@ -1352,29 +1351,6 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         return Err(AppError::ValidationFailed(preflight.errors));
     }
 
-    // Release any remaining WO/PM reservation envelopes during closeout.
-    // This keeps inventory state aligned with closed execution context.
-    let reservation_rows = txn
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT DISTINCT reservation_id
-             FROM work_order_parts
-             WHERE work_order_id = ? AND reservation_id IS NOT NULL",
-            [input.wo_id.into()],
-        ))
-        .await?;
-    for row in reservation_rows {
-        let reservation_id: i64 = row
-            .try_get("", "reservation_id")
-            .map_err(|e| decode_err("reservation_id", e))?;
-        inventory_queries::release_stock_reservation_with_connection(
-            &txn,
-            reservation_id,
-            Some("WO closeout reservation release"),
-        )
-        .await?;
-    }
-
     // ── Compute final costs ───────────────────────────────────────────────
     let cost_row = txn
         .query_one(Statement::from_sql_and_values(
@@ -1510,6 +1486,14 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
 
     // Its schedule commitments are closed with it (`planning::lifecycle`).
     crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.wo_id).await?;
+    // D13: the stock still reserved for it is released with the close, each release audited.
+    crate::inventory::reservations::release_for_closed_wo(
+        &txn,
+        input.wo_id,
+        input.actor_id,
+        crate::inventory::reservations::WoEnd::Closed,
+    )
+    .await?;
     txn.commit().await?;
 
     crate::pm::generation_control::on_work_order_closed_for_pm(db, input.wo_id, Some(input.actor_id)).await;

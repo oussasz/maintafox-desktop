@@ -7,8 +7,8 @@
 
 import { create } from "zustand";
 
+import { appErrorReason } from "@/lib/app-error";
 import { getDiStats } from "@/services/di-stats-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { DiStatsFilter, DiStatsPayload } from "@shared/ipc-types";
 
 interface DiStatsStoreState {
@@ -37,7 +37,7 @@ export const useDiStatsStore = create<DiStatsStoreState>()((set, get) => ({
       const stats = await getDiStats(get().filter);
       set({ stats });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
     } finally {
       set({ loading: false });
     }

@@ -105,6 +105,8 @@
       "session__unlocked_with_pin": "Session unlocked with PIN",
       "session__idle_locked": "Session locked after inactivity",
       "session__expired": "Session expired",
+      "session__closed": "Session closed (session state no longer valid)",
+      "session__clock_anomaly": "Device clock behind the password date",
       "step_up__success": "Password re-check passed",
       "step_up__failure": "Password re-check failed",
       "device__trust_registered": "Device registered as trusted",

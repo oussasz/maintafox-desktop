@@ -1439,7 +1439,12 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
             },
         )
         .await?;
-        conflict_count += 1;
+        // A reservation released on two PCs is settled without a person (`inventory::reservations`).
+        if !crate::inventory::reservations::settle_double_release(&tx, &conflict.entity_type, &conflict.entity_sync_id)
+            .await?
+        {
+            conflict_count += 1;
+        }
     }
 
     let (inbound_applied_count, inbound_duplicate_count) = ingest_inbound_items(

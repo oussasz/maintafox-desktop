@@ -14,6 +14,7 @@ import { DataTable } from "@/components/data/DataTable";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,7 @@ import { Label } from "@/components/ui/label";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
 import { useFormatters } from "@/hooks/use-formatters";
+import { usePermissions } from "@/hooks/use-permissions";
 import {
   type ApprovalDocumentType,
   type CurrencyExchangeRate,
@@ -107,6 +109,11 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
   const [limitSaving, setLimitSaving] = useState(false);
   const [limitError, setLimitError] = useState<unknown>(null);
 
+  // The full role list is `list_roles` (adm.roles). Without it the table shows the roles that
+  // already have a limit (`list_procurement_approval_limits` returns their names): not asked.
+  const { can, isLoading: permissionsLoading } = usePermissions();
+  const canListRoles = can(P.ADM_ROLES);
+
   const loadLimits = useCallback(async () => {
     setLimitsLoading(true);
     setLimitsError(null);
@@ -115,6 +122,11 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
       setLimits(await listProcurementApprovalLimits());
     } catch (err) {
       setLimitsError(err);
+    }
+    if (!canListRoles) {
+      setRoles([]);
+      setLimitsLoading(false);
+      return;
     }
     try {
       const roleRows = await listRoles();
@@ -130,12 +142,15 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
     } finally {
       setLimitsLoading(false);
     }
-  }, []);
+  }, [canListRoles]);
 
   useEffect(() => {
     void loadRates();
-    void loadLimits();
-  }, [loadRates, loadLimits, reloadToken]);
+  }, [loadRates, reloadToken]);
+
+  useEffect(() => {
+    if (!permissionsLoading) void loadLimits();
+  }, [loadLimits, permissionsLoading, reloadToken]);
 
   const openRateForm = () => {
     setRateFrom("");
@@ -451,12 +466,11 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
             </div>
             <div className="space-y-1">
               <Label htmlFor="inv-fx-valid-from">{t("rules.fx.form.validFrom")}</Label>
-              <Input
+              <DateField
                 id="inv-fx-valid-from"
-                type="date"
                 className="h-11"
                 value={rateValidFrom}
-                onChange={(e) => setRateValidFrom(e.target.value)}
+                onChange={(v) => setRateValidFrom(v)}
               />
             </div>
             <div className="space-y-1">

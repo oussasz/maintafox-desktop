@@ -4,7 +4,7 @@
 import { DatabaseSync } from "node:sqlite";
 
 const DB_PATH =
-  "C:\\Users\\LENOVO\\AppData\\Roaming\\systems.maintafox.desktop\\maintafox.db";
+  "C:\\Users\\LENOVO\\AppData\\Roaming\\systems.maintafox.desktop.dev\\maintafox.db";
 
 const db = new DatabaseSync(DB_PATH);
 

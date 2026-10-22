@@ -17,9 +17,16 @@ import { listLinks } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import type { SmrpKpis, SmrpMetric } from "@/services/analytics-dashboard-service";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
-/** Change below this many percentage points reads "stable". */
-const STABLE_POINTS = 0.5;
+/**
+ * Change below this many percentage points reads "stable" — set per indicator, with its
+ * definition: a small ratio such as cost-to-RAV (a few percent a year) moves by hundredths.
+ */
+const STABLE_POINTS = {
+  default: 0.5,
+  costToRav: 0.05,
+} as const;
 
 export type SmrpDirection = "up-good" | "up-bad" | "neutral";
 
@@ -33,10 +40,11 @@ export function pointsTrend(
   current: number | null | undefined,
   previous: number | null | undefined,
   direction: SmrpDirection,
+  stablePoints: number = STABLE_POINTS.default,
 ): PointsTrend | null {
   if (current == null || previous == null) return null;
   const points = current - previous;
-  if (Math.abs(points) < STABLE_POINTS) return { points: 0, tone: null };
+  if (Math.abs(points) < stablePoints) return { points: 0, tone: null };
   if (direction === "neutral") return { points, tone: null };
   const good = direction === "up-good" ? points > 0 : points < 0;
   return { points, tone: good ? "success" : "danger" };
@@ -146,7 +154,14 @@ function SmrpTile({
   );
 }
 
-export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
+export function SmrpIndicatorsSection({
+  smrp,
+  can = () => true,
+}: {
+  smrp: SmrpKpis | null;
+  /** The user's rights: a tile opens its module only when the user may enter it. */
+  can?: (permission: PermissionName) => boolean;
+}) {
   const { t } = useTranslation("reports");
   const navigate = useNavigate();
   const woOpenRuleText = useWoOpenRuleText();
@@ -194,7 +209,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.schedule.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
-        onOpen={() => navigate("/planning")}
+        {...(can(P.PLAN_VIEW) ? { onOpen: () => navigate("/planning") } : {})}
       />,
     );
   }
@@ -236,7 +251,9 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
           formula={t(`smrp.mix.${key}.formula`)}
           unit={t("smrp.unitPercent")}
           period={period}
-          onOpen={() => navigate(listLinks.workOrders({ mix: key }))}
+          {...(can(P.OT_VIEW)
+            ? { onOpen: () => navigate(listLinks.workOrders({ mix: key })) }
+            : {})}
         />,
       );
     }
@@ -260,7 +277,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.pm.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
-        onOpen={() => navigate("/pm")}
+        {...(can(P.PM_VIEW) ? { onOpen: () => navigate("/pm") } : {})}
       />,
     );
   }
@@ -327,7 +344,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.backlog.formula")}
         unit={t("smrp.backlog.unit")}
         period={t("smrp.backlog.period")}
-        {...(backlogRule
+        {...(backlogRule && can(P.OT_VIEW)
           ? { onOpen: () => navigate(listLinks.workOrders({ scope: backlogRule.scope })) }
           : {})}
       />,
@@ -336,7 +353,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
 
   if (smrp.cost_to_rav) {
     const c = smrp.cost_to_rav;
-    const tr = pointsTrend(c.value_pct, c.previous_value_pct, "up-bad");
+    const tr = pointsTrend(c.value_pct, c.previous_value_pct, "up-bad", STABLE_POINTS.costToRav);
     tiles.push(
       <SmrpTile
         key="rav"
@@ -373,7 +390,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.rav.formula")}
         unit={t("smrp.unitPercentYear")}
         period={period}
-        onOpen={() => navigate("/equipment")}
+        {...(can(P.EQ_VIEW) ? { onOpen: () => navigate("/equipment") } : {})}
         openLabel={c.value_pct == null ? t("smrp.rav.openAssets") : t("smrp.open")}
       />,
     );

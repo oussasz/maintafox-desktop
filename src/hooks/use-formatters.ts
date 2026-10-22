@@ -18,6 +18,13 @@ import { useMemo } from "react";
 
 import { useLocaleStore } from "@/stores/locale-store";
 import {
+  formatDecimalInput,
+  parseDecimalInput,
+  type FormatDecimalInputOptions,
+  type ParseDecimalOptions,
+  type ParsedDecimal,
+} from "@/utils/decimal";
+import {
   formatDate,
   formatDateLong,
   formatDateTime,
@@ -27,6 +34,8 @@ import {
   formatDecimal,
   formatCurrency,
   formatPercent,
+  formatHours,
+  formatBytes,
 } from "@/utils/formatters";
 
 export interface Formatters {
@@ -51,6 +60,17 @@ export interface Formatters {
   formatCurrency: (value: number, currencyOverride?: string) => string;
   /** "45,5 %" (fr) or "45.5%" (en) */
   formatPercent: (value: number) => string;
+  /** A duration in hours: "3,5 h" (fr) or "3.5 h" (en) */
+  formatHours: (value: number) => string;
+  /** A file size: "1,5 Mo" (fr) or "1.5 MB" (en) */
+  formatBytes: (value: number) => string;
+  /** A stored number as the text of an entry field (language separator, no grouping). */
+  formatDecimalInput: (
+    value: number | null | undefined,
+    options?: FormatDecimalInputOptions,
+  ) => string;
+  /** What the user typed in a decimal field ("2,5" or "2.5"). */
+  parseDecimal: (raw: string, options?: ParseDecimalOptions) => ParsedDecimal;
   /** Current locale code ("fr" or "en") */
   locale: string;
   /** Active tenant ISO 4217 currency code */
@@ -60,6 +80,8 @@ export interface Formatters {
 export function useFormatters(): Formatters {
   const locale = useLocaleStore((s) => s.activeLocale);
   const currencyCode = useLocaleStore((s) => s.activeCurrencyCode);
+  const currencySymbol = useLocaleStore((s) => s.activeCurrencySymbol);
+  const currencyMinorUnits = useLocaleStore((s) => s.activeCurrencyMinorUnits);
 
   return useMemo(
     () => ({
@@ -70,11 +92,20 @@ export function useFormatters(): Formatters {
       formatRelativeTime: (v) => formatRelativeTime(v, locale),
       formatNumber: (v, opts) => formatNumber(v, locale, opts),
       formatDecimal: (v, dp) => formatDecimal(v, locale, dp),
-      formatCurrency: (v, cur) => formatCurrency(v, locale, cur ?? currencyCode),
+      // The symbol and minor units are those of the plant currency only; an override code
+      // (an FX line) shows its own ISO code.
+      formatCurrency: (v, cur) =>
+        cur && cur !== currencyCode
+          ? formatCurrency(v, locale, cur)
+          : formatCurrency(v, locale, currencyCode, currencySymbol, currencyMinorUnits),
       formatPercent: (v) => formatPercent(v, locale),
+      formatHours: (v) => formatHours(v, locale),
+      formatBytes: (v) => formatBytes(v, locale),
+      formatDecimalInput: (v, opts) => formatDecimalInput(v, locale, opts),
+      parseDecimal: (raw, opts) => parseDecimalInput(raw, opts),
       locale,
       currencyCode,
     }),
-    [locale, currencyCode],
+    [locale, currencyCode, currencySymbol, currencyMinorUnits],
   );
 }

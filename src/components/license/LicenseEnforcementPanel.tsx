@@ -22,6 +22,7 @@ import type { Tone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
+import { editionLabel } from "@/lib/edition-label";
 import {
   applyAdminLicenseAction,
   applyLicensingCompromiseResponse,
@@ -186,7 +187,9 @@ export function LicenseEnforcementPanel() {
               {status.license_edition ? (
                 <StatusChip
                   tone="neutral"
-                  label={t("license.edition", { edition: status.license_edition })}
+                  label={t("license.edition", {
+                    edition: editionLabel(status.license_edition) ?? status.license_edition,
+                  })}
                 />
               ) : null}
             </div>

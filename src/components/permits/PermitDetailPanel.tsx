@@ -23,6 +23,7 @@ import {
 } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import { StatusChip } from "@/components/ui/status-chip";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useSession } from "@/hooks/use-session";
@@ -342,12 +343,11 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             <dd className="flex items-center gap-2">
               {editingExpiry != null ? (
                 <>
-                  <Input
+                  <DateTimeField
                     aria-label={t("detail.expiresAt")}
-                    type="datetime-local"
                     className="h-8 w-auto"
                     value={editingExpiry}
-                    onChange={(e) => setEditingExpiry(e.target.value)}
+                    onChange={(v) => setEditingExpiry(v)}
                   />
                   <Button size="sm" disabled={busy} onClick={() => void handleSaveExpiry()}>
                     {t("actions.save")}
