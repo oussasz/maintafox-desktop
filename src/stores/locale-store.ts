@@ -13,7 +13,7 @@ import {
 } from "@/lib/currency";
 import { applyI18nFallbackLanguage } from "@/lib/i18n-fallback";
 import { invoke } from "@/lib/ipc-invoke";
-import { getSetting } from "@/services/settings-service";
+import { getSetting, listReferenceCurrencies } from "@/services/settings-service";
 import { toErrorMessage } from "@/utils/errors";
 import { getLocaleDirection } from "@/utils/formatters";
 import type { LocalePreference } from "@shared/ipc-types";
@@ -25,6 +25,10 @@ export interface LocaleState {
   activeLocale: string;
   /** Tenant display currency (ISO 4217), from `locale.currency_code` setting. */
   activeCurrencyCode: string;
+  /** Symbol of the tenant currency from the reference list ("DA"), null until loaded. */
+  activeCurrencySymbol: string | null;
+  /** Decimal places of the tenant currency from the reference list (default 2). */
+  activeCurrencyMinorUnits: number;
   /** Text direction for the active locale ("ltr" or "rtl"). */
   direction: "ltr" | "rtl";
   /** True while locale preference is being loaded or changed. */
@@ -52,9 +56,24 @@ function parseCurrencyFromSettingJson(json: string | undefined | null): string {
   }
 }
 
+/** Symbol and decimals of `code` from the reference currency list; none when it cannot be read. */
+async function readCurrencyDisplay(
+  code: string,
+): Promise<{ symbol: string | null; minorUnits: number }> {
+  try {
+    const row = (await listReferenceCurrencies()).find((c) => c.code === code);
+    return { symbol: row?.symbol ?? null, minorUnits: row?.minor_units ?? 2 };
+  } catch {
+    // The list needs a session: until it loads, the ISO code is shown.
+    return { symbol: null, minorUnits: 2 };
+  }
+}
+
 export const useLocaleStore = create<LocaleState>()((set) => ({
   activeLocale: DEFAULT_LOCALE,
   activeCurrencyCode: FALLBACK_CURRENCY_CODE,
+  activeCurrencySymbol: null,
+  activeCurrencyMinorUnits: 2,
   direction: "ltr",
   isLoading: true,
   error: null,
@@ -90,9 +109,12 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
         // Optional before auth; i18n keeps its configured fallbackLng.
       }
 
+      const display = await readCurrencyDisplay(currency);
       set({
         activeLocale: locale,
         activeCurrencyCode: currency,
+        activeCurrencySymbol: display.symbol,
+        activeCurrencyMinorUnits: display.minorUnits,
         direction: getLocaleDirection(locale),
         supportedLocales: pref.supported_locales,
         isLoading: false,
@@ -132,14 +154,26 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
   },
 
   setCurrencyCode: (code: string) => {
-    set({ activeCurrencyCode: normalizeCurrencyCode(code) });
+    const normalized = normalizeCurrencyCode(code);
+    set({ activeCurrencyCode: normalized });
+    void readCurrencyDisplay(normalized).then(({ symbol, minorUnits }) =>
+      set((s) =>
+        s.activeCurrencyCode === normalized
+          ? { activeCurrencySymbol: symbol, activeCurrencyMinorUnits: minorUnits }
+          : s,
+      ),
+    );
   },
 
   refreshCurrency: async () => {
     try {
       const row = await getSetting(LOCALE_CURRENCY_SETTING_KEY, "tenant");
+      const code = parseCurrencyFromSettingJson(row?.setting_value_json);
+      const { symbol, minorUnits } = await readCurrencyDisplay(code);
       set({
-        activeCurrencyCode: parseCurrencyFromSettingJson(row?.setting_value_json),
+        activeCurrencyCode: code,
+        activeCurrencySymbol: symbol,
+        activeCurrencyMinorUnits: minorUnits,
       });
     } catch (err) {
       console.warn("locale-store: failed to refresh currency", err);
