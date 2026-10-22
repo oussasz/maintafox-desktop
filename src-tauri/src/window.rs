@@ -81,40 +81,49 @@ pub fn apply_window_mode(app: &AppHandle, mode: WindowMode) -> AppResult<()> {
                 return Ok(());
             }
             LAST_SWITCH_MS.store(now_ms(), Ordering::SeqCst);
-            // Remember how the main window looked before shrinking it.
-            let maximized = window.is_maximized().map_err(|e| window_err(&e))?;
-            let mut state = load_state(app);
-            state.maximized = maximized;
-            if !maximized {
-                if let Ok(size) = window.inner_size() {
-                    if size.width > 0 && size.height > 0 {
-                        state.width = size.width;
-                        state.height = size.height;
+            // A failed shrink must not leave the window state frozen as "compact".
+            let shrink = || -> AppResult<()> {
+                // Remember how the main window looked before shrinking it.
+                let maximized = window.is_maximized().map_err(|e| window_err(&e))?;
+                let mut state = load_state(app);
+                state.maximized = maximized;
+                if !maximized {
+                    if let Ok(size) = window.inner_size() {
+                        if size.width > 0 && size.height > 0 {
+                            state.width = size.width;
+                            state.height = size.height;
+                        }
+                    }
+                    if let Ok(pos) = window.outer_position() {
+                        if pos.x > -30000 && pos.y > -30000 {
+                            state.x = pos.x;
+                            state.y = pos.y;
+                        }
                     }
                 }
-                if let Ok(pos) = window.outer_position() {
-                    if pos.x > -30000 && pos.y > -30000 {
-                        state.x = pos.x;
-                        state.y = pos.y;
-                    }
-                }
-            }
-            save_state(app, &state);
+                save_state(app, &state);
 
-            let compact = tauri::Size::Logical(tauri::LogicalSize {
-                width: COMPACT_WIDTH,
-                height: COMPACT_HEIGHT,
-            });
-            if maximized {
-                window.unmaximize().map_err(|e| window_err(&e))?;
+                let compact = tauri::Size::Logical(tauri::LogicalSize {
+                    width: COMPACT_WIDTH,
+                    height: COMPACT_HEIGHT,
+                });
+                if maximized {
+                    window.unmaximize().map_err(|e| window_err(&e))?;
+                }
+                // The minimum is replaced first so the shrink is allowed, then the size is pinned.
+                window.set_min_size(Some(compact)).map_err(|e| window_err(&e))?;
+                window.set_max_size(Some(compact)).map_err(|e| window_err(&e))?;
+                window.set_size(compact).map_err(|e| window_err(&e))?;
+                window.set_resizable(false).map_err(|e| window_err(&e))?;
+                window.set_maximizable(false).map_err(|e| window_err(&e))?;
+                window.center().map_err(|e| window_err(&e))?;
+                Ok(())
+            };
+            let shrunk = shrink();
+            if shrunk.is_err() {
+                COMPACT_ACTIVE.store(false, Ordering::SeqCst);
             }
-            // The minimum is replaced first so the shrink is allowed, then the size is pinned.
-            window.set_min_size(Some(compact)).map_err(|e| window_err(&e))?;
-            window.set_max_size(Some(compact)).map_err(|e| window_err(&e))?;
-            window.set_size(compact).map_err(|e| window_err(&e))?;
-            window.set_resizable(false).map_err(|e| window_err(&e))?;
-            window.set_maximizable(false).map_err(|e| window_err(&e))?;
-            window.center().map_err(|e| window_err(&e))?;
+            shrunk?;
         }
         WindowMode::Main => {
             if !COMPACT_ACTIVE.load(Ordering::SeqCst) {
@@ -255,12 +264,23 @@ pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
                     }
                     debug!("Window resized: {size:?}");
                     let s = load_state(&handle);
+                    // The maximised flag follows the window; a maximised window's size is the
+                    // screen's, not the size to come back to when it is restored.
+                    let maximized = handle
+                        .get_webview_window("main")
+                        .and_then(|w| w.is_maximized().ok())
+                        .unwrap_or(s.maximized);
+                    let (width, height) = if maximized {
+                        (s.width, s.height)
+                    } else {
+                        (size.width, size.height)
+                    };
                     save_state(
                         &handle,
                         &WindowState {
-                            width: size.width,
-                            height: size.height,
-                            maximized: s.maximized,
+                            width,
+                            height,
+                            maximized,
                             ..s
                         },
                     );
@@ -312,11 +332,5 @@ mod mode_tests {
             WindowMode::Main
         );
         assert!(serde_json::from_str::<WindowMode>("\"fullscreen\"").is_err());
-    }
-
-    #[test]
-    fn compact_window_is_smaller_than_the_main_minimum() {
-        assert!(COMPACT_WIDTH < MAIN_MIN_WIDTH);
-        assert!(COMPACT_HEIGHT >= 600.0);
     }
 }

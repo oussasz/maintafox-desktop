@@ -24,7 +24,7 @@ export function ActivationStepper({ current, labels, progressLabel }: Activation
 
   return (
     <div>
-      <div className="sm:hidden" aria-hidden>
+      <div className="min-[480px]:hidden" aria-hidden>
         <p className="text-xs font-medium text-text-secondary">
           <span className="font-semibold text-text-primary">
             {progressLabel ?? `${currentIndex + 1}/${total}`}
@@ -45,7 +45,10 @@ export function ActivationStepper({ current, labels, progressLabel }: Activation
         </div>
       </div>
 
-      <ol className="flex max-sm:sr-only sm:items-start" aria-label="Activation progress">
+      <ol
+        className="flex max-[479px]:sr-only min-[480px]:items-start"
+        aria-label="Activation progress"
+      >
         {STEP_ORDER.map((id, index) => {
           const done = index < currentIndex;
           const active = index === currentIndex;
