@@ -127,10 +127,12 @@ export function SetupInitialAdminPage() {
     setJoinError(null);
     try {
       await requestPlantJoin();
-      // The worker's next status (its cycle starting) is read like every other one.
-      if (mountedRef.current) setJoin("joining");
     } catch (err) {
       if (mountedRef.current) setJoinError(appErrorText(err));
+    }
+    // The backend decides what to show; the worker's next status (its cycle starting) is read
+    // again like every other one.
+    try {
       await readJoinState();
     } finally {
       if (mountedRef.current) setRetryingJoin(false);

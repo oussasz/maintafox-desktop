@@ -47,7 +47,7 @@
     "deferredInbox": "{{count}} modification(s) reçue(s) attendent des données liées ou une version plus récente de l'application. Elles seront appliquées automatiquement.",
     "resolveFailed": "Le choix n'a pas pu être appliqué : {{message}}",
     "codeClash": "Le numéro {{number}} est déjà utilisé sur cet appareil par un autre enregistrement (numéroté sur deux appareils avant les codes d'appareil, ou deux appareils partagent un code). Renuméroter donne à l'enregistrement de cet appareil un nouveau numéro de cet appareil ; l'enregistrement reçu garde {{number}}. Rien n'est renommé sans votre choix.",
-    "usernameClash": "Le même identifiant « {{username}} » a été créé sur deux PC. Gardez un compte, désactivez l'autre.",
+    "usernameClash": "Le même identifiant « {{username}} » a été créé sur deux PC. Renommez l'un des deux comptes (Utilisateurs) sur le PC qui l'a créé, puis synchronisez. Si vous avez renommé le compte de ce PC, prenez ensuite le compte reçu.",
     "renumberLocal": "Renuméroter l'enregistrement de cet appareil",
     "conflictKind": {
       "CONCURRENT_EDIT": "Modifié sur cet appareil et sur un autre appareil",

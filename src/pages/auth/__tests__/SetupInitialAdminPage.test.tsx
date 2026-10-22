@@ -5,9 +5,12 @@
  * and shows the creation form only once the backend reports that the server confirmed an empty
  * organisation (`get_activation_bootstrap_state`, `plant_join`).
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
+import type { SyncWorkerStatus } from "@shared/ipc-types";
 
 import { SetupInitialAdminPage } from "../SetupInitialAdminPage";
 
@@ -41,11 +44,38 @@ vi.mock("@/hooks/use-session", () => ({
   useSession: () => ({ isLoading: false, error: null, errorCode: null, refresh: vi.fn() }),
 }));
 
+// A real store with the shape the page reads: a test pushes worker statuses into it.
 const sync = vi.hoisted(() => ({ initialize: vi.fn(), shutdown: vi.fn() }));
-vi.mock("@/stores/sync-orchestrator-store", () => ({
-  useSyncOrchestratorStore: (sel: (s: unknown) => unknown) =>
-    sel({ worker: null, initialize: sync.initialize, shutdown: sync.shutdown }),
-}));
+vi.mock("@/stores/sync-orchestrator-store", async () => {
+  const { create } = await import("zustand");
+  return {
+    useSyncOrchestratorStore: create(() => ({
+      worker: null as unknown,
+      initialize: sync.initialize,
+      shutdown: sync.shutdown,
+    })),
+  };
+});
+
+function workerStatus(state: SyncWorkerStatus["state"]): SyncWorkerStatus {
+  return {
+    state,
+    blocker: null,
+    paused_until: null,
+    last_success_at: null,
+    last_attempt_at: null,
+    next_attempt_at: null,
+    pending_outbox_count: 0,
+    dead_letter_outbox_count: 0,
+    unresolved_conflict_count: 0,
+    media_pending_count: 0,
+    media_failed_count: 0,
+    media_download_pending_count: 0,
+    media_download_failed_count: 0,
+    consecutive_failures: 0,
+    last_error: null,
+  };
+}
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -71,6 +101,7 @@ describe("SetupInitialAdminPage: joining the plant first", () => {
     ipc.joinRefused = null;
     sync.initialize.mockClear();
     sync.shutdown.mockClear();
+    useSyncOrchestratorStore.setState({ worker: null });
   });
 
   it("asks for a pull and shows no creation form while joining", async () => {
@@ -97,10 +128,28 @@ describe("SetupInitialAdminPage: joining the plant first", () => {
     expect(screen.queryByLabelText("setupAdmin.username.label")).not.toBeInTheDocument();
     await waitFor(() => expect(ipc.calls).toContain("get_activation_bootstrap_state"));
 
+    // Retry asks the worker, then shows what the backend answers (never "joining" by itself).
     ipc.calls.length = 0;
+    ipc.plantJoin = "joining";
     fireEvent.click(retry);
-    await waitFor(() => expect(ipc.calls).toContain("request_plant_join"));
+    await waitFor(() =>
+      expect(ipc.calls).toEqual(["request_plant_join", "get_activation_bootstrap_state"]),
+    );
     expect(await screen.findByText("setupAdmin.join.title")).toBeInTheDocument();
+  });
+
+  it("reads the state again on every worker status", async () => {
+    ipc.plantJoin = "joining";
+    renderSetup();
+    expect(await screen.findByText("setupAdmin.join.title")).toBeInTheDocument();
+    await waitFor(() => expect(ipc.calls).toContain("get_activation_bootstrap_state"));
+
+    // The pull completed on an empty organisation: the worker goes idle.
+    ipc.plantJoin = "create_first_admin";
+    ipc.calls.length = 0;
+    act(() => useSyncOrchestratorStore.setState({ worker: workerStatus("idle") }));
+    expect(await screen.findByLabelText("setupAdmin.username.label")).toBeInTheDocument();
+    expect(ipc.calls).toContain("get_activation_bootstrap_state");
   });
 
   it("shows the creation form once the server confirmed an empty organisation", async () => {

@@ -166,7 +166,7 @@ describe("SyncConflictList", () => {
     );
   });
 
-  it("explains a username created on two PCs and offers no version to take", async () => {
+  it("explains a username created on two PCs and offers only to take the received account", async () => {
     inbox = [
       {
         ...conflict,
@@ -184,8 +184,11 @@ describe("SyncConflictList", () => {
     expect(await screen.findByText("sync.conflictKind.USERNAME_CLASH")).toBeInTheDocument();
     expect(screen.getByText("sync.usernameClash")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /sync\.panel\.action\.accept_/ }),
+      screen.queryByRole("button", { name: /sync\.panel\.action\.accept_local/ }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /sync\.panel\.action\.accept_remote/ }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "sync.panel.action.dismiss" })).toBeInTheDocument();
   });
 });

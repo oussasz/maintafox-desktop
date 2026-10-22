@@ -123,6 +123,13 @@ async fn record_applied(tx: &impl ConnectionTrait, item: &InboxRow) -> AppResult
     mark_inbox(tx, item.id, "applied", None, None).await?;
     crate::sync::code_clash::close_outdated_clashes(tx, &item.entity_type, &item.entity_sync_id, item.row_version)
         .await?;
+    crate::sync::username_clash::close_outdated_username_clashes(
+        tx,
+        &item.entity_type,
+        &item.entity_sync_id,
+        item.row_version,
+    )
+    .await?;
     record_synced_state(
         tx,
         &item.entity_type,

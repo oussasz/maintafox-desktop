@@ -6,8 +6,13 @@
 //! (`MATERIALIZE_ERROR`) on both PCs. Accounts made while two PCs did not share them yet can still
 //! meet (a PC offline for a while, an account created on each at once), so a received account
 //! whose username is already used here by another account becomes a `USERNAME_CLASH` conflict that
-//! names the username: a person keeps one account and disables the other. Nothing is renamed or
-//! merged automatically; there is no merge tool.
+//! names the username. Nothing is renamed or merged automatically; there is no merge tool. A
+//! disabled or deleted account keeps its username (the unique index holds it), so the remedy is a
+//! rename: one of the two accounts is renamed (Users) on the PC that created it, then both PCs
+//! sync. The renamed version reaches the other PC, passes this check and is applied; the open
+//! clash of that account there is closed by it ([`close_outdated_username_clashes`]). On the PC
+//! that renamed its own account, the other account received earlier no longer clashes and is taken
+//! from its conflict ("take the received version", which goes through this same check).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -16,6 +21,30 @@ use crate::sync::materialize::ApplyOutcome;
 
 /// Conflict type of a received account whose username is already used here by another account.
 pub const USERNAME_CLASH: &str = "USERNAME_CLASH";
+
+/// After a received version of an account was applied: its earlier `USERNAME_CLASH` conflicts
+/// still open are no longer true (it was renamed on its PC), so they are closed and their inbox
+/// rows superseded (`code_clash::close_conflicts_superseded_by`). A conflict already dismissed
+/// stays as the person left it.
+pub(crate) async fn close_outdated_username_clashes(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+    applied_row_version: i64,
+) -> AppResult<()> {
+    if entity_type != "user_accounts" {
+        return Ok(());
+    }
+    crate::sync::code_clash::close_conflicts_superseded_by(
+        conn,
+        USERNAME_CLASH,
+        entity_type,
+        entity_sync_id,
+        applied_row_version,
+        "The account was renamed on its PC; its newer version was applied.",
+    )
+    .await
+}
 
 /// Before a received account is written: `Some(USERNAME_CLASH)` when its username, trimmed and
 /// compared without case (as sign-in and account creation compare it), is used here by an account
@@ -55,7 +84,7 @@ pub(crate) async fn inbound_username_clash(
         code: USERNAME_CLASH.to_string(),
         message: format!(
             "The username '{username}' is already used on this PC by another account ({}): the same username was \
-             created on two PCs. Keep one account and disable the other.",
+             created on two PCs. Rename one of the two accounts on the PC that created it, then synchronise.",
             local_sync_id.unwrap_or_else(|| format!("local id {local_id}"))
         ),
     }))
@@ -175,6 +204,143 @@ mod tests {
             scalar_i64(
                 &db,
                 "SELECT COUNT(*) FROM sync_conflicts WHERE conflict_type = 'MATERIALIZE_ERROR'",
+                vec![]
+            )
+            .await,
+            0
+        );
+    }
+
+    /// Latest conflict of a received account: (id, row_version, status).
+    async fn conflict_of(db: &DatabaseConnection, sync_id: &str) -> (i64, i64, String) {
+        let query = |column: &str| {
+            format!("SELECT {column} FROM sync_conflicts WHERE entity_sync_id = ? ORDER BY id DESC LIMIT 1")
+        };
+        (
+            scalar_i64(db, &query("id"), vec![sync_id.into()]).await,
+            scalar_i64(db, &query("row_version"), vec![sync_id.into()]).await,
+            scalar_opt_text(db, &query("status"), vec![sync_id.into()])
+                .await
+                .expect("status"),
+        )
+    }
+
+    /// The remedy converges on both PCs. Each PC received the other's "chef" (two clashes). PC A
+    /// renames its account: the newer version reaches B, passes the check, is applied and closes
+    /// B's open clash. On A, B's "chef" no longer clashes and is taken from its conflict.
+    #[tokio::test]
+    async fn renaming_one_account_resolves_the_clash_on_both_pcs() {
+        let pc_a = started_db().await;
+        add_account(&pc_a, "acct-pc-a", "chef").await;
+        let pc_b = started_db().await;
+        add_account(&pc_b, "acct-pc-b", "chef").await;
+        receive(&pc_b, vec![sent_by(&pc_a, "acct-pc-a").await]).await;
+        receive(&pc_a, vec![sent_by(&pc_b, "acct-pc-b").await]).await;
+        assert_eq!(conflict_of(&pc_b, "acct-pc-a").await.2, "new");
+        assert_eq!(conflict_of(&pc_a, "acct-pc-b").await.2, "new");
+
+        // A renames its own account (Users); the newer version reaches B.
+        exec(
+            &pc_a,
+            "UPDATE user_accounts SET username = 'chef-a' WHERE entity_sync_id = 'acct-pc-a'",
+            vec![],
+        )
+        .await;
+        let mut renamed = sent_by(&pc_a, "acct-pc-a").await;
+        renamed.row_version = 2;
+        let result = receive(&pc_b, vec![renamed]).await;
+        assert_eq!((result.applied, result.conflicts), (1, 0), "{result:?}");
+        assert_eq!(
+            scalar_opt_text(
+                &pc_b,
+                "SELECT username FROM user_accounts WHERE entity_sync_id = 'acct-pc-a'",
+                vec![]
+            )
+            .await
+            .as_deref(),
+            Some("chef-a")
+        );
+        assert_eq!(
+            conflict_of(&pc_b, "acct-pc-a").await.2,
+            "resolved_remote",
+            "closed by the newer version"
+        );
+        assert_eq!(
+            scalar_opt_text(
+                &pc_b,
+                "SELECT apply_status FROM sync_inbox WHERE entity_sync_id = 'acct-pc-a' AND row_version = 1",
+                vec![]
+            )
+            .await
+            .as_deref(),
+            Some("superseded")
+        );
+
+        // On A, B's "chef" is taken from its conflict, through the same check.
+        let (id, version, _) = conflict_of(&pc_a, "acct-pc-b").await;
+        let admin = scalar_i64(
+            &pc_a,
+            "SELECT id FROM user_accounts WHERE entity_sync_id = 'acct-pc-a'",
+            vec![],
+        )
+        .await;
+        crate::sync::queries::resolve_sync_conflict(
+            &pc_a,
+            admin,
+            crate::sync::domain::ResolveSyncConflictInput {
+                conflict_id: id,
+                expected_row_version: version,
+                action: "accept_remote".into(),
+                resolution_note: Some("Account renamed on this PC; the other one is taken".into()),
+            },
+        )
+        .await
+        .expect("take the received account");
+        assert_eq!(
+            scalar_opt_text(
+                &pc_a,
+                "SELECT username FROM user_accounts WHERE entity_sync_id = 'acct-pc-b'",
+                vec![]
+            )
+            .await
+            .as_deref(),
+            Some("chef")
+        );
+    }
+
+    /// Taking the received account while its username is still used here is refused with the
+    /// reason, nothing written.
+    #[tokio::test]
+    async fn taking_a_still_clashing_account_is_refused() {
+        let pc_a = started_db().await;
+        add_account(&pc_a, "acct-pc-a", "chef").await;
+        let pc_b = started_db().await;
+        add_account(&pc_b, "acct-pc-b", "chef").await;
+        receive(&pc_b, vec![sent_by(&pc_a, "acct-pc-a").await]).await;
+        let (id, version, _) = conflict_of(&pc_b, "acct-pc-a").await;
+        let admin = scalar_i64(
+            &pc_b,
+            "SELECT id FROM user_accounts WHERE entity_sync_id = 'acct-pc-b'",
+            vec![],
+        )
+        .await;
+        let err = crate::sync::queries::resolve_sync_conflict(
+            &pc_b,
+            admin,
+            crate::sync::domain::ResolveSyncConflictInput {
+                conflict_id: id,
+                expected_row_version: version,
+                action: "accept_remote".into(),
+                resolution_note: Some("Trying before any rename was made".into()),
+            },
+        )
+        .await
+        .expect_err("still clashing");
+        assert!(format!("{err:?}").contains("already used"), "{err:?}");
+        assert_eq!(
+            scalar_i64(
+                &pc_b,
+                "SELECT COUNT(*) FROM user_accounts WHERE entity_sync_id = 'acct-pc-a'",
                 vec![]
             )
             .await,

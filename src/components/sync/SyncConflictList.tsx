@@ -152,13 +152,14 @@ export function SyncConflictList({
         {conflictInbox.map((c) => {
           const id = conflictRecordIdentity(c);
           const recommended = c.recommended_action;
-          // A username created on two PCs: no version to choose and no merge tool (CMMS Advisor
-          // decision); a person keeps one account, disables the other, then dismisses this.
+          // A username created on two PCs: no merge tool (CMMS Advisor decision). One account is
+          // renamed on the PC that created it; here the received account is then taken (refused,
+          // with the reason, while its username is still used here). No local version to keep.
           const primary: ConflictAction[] =
             c.conflict_type === "CODE_CLASH"
               ? ["renumber_local"]
               : c.conflict_type === "USERNAME_CLASH"
-                ? []
+                ? ["accept_remote"]
                 : ["accept_local", "accept_remote"];
           const actions: ConflictAction[] = [
             ...primary,
