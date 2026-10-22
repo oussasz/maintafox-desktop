@@ -38,6 +38,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useStepUp } from "@/hooks/use-step-up";
+import { i18n } from "@/i18n";
 import { type AppErrorDescription, describeAppError } from "@/lib/app-error";
 import {
   activatePolicy,
@@ -48,6 +49,7 @@ import {
   testPolicyDraft,
 } from "@/services/settings-service";
 import { useSettingsStore } from "@/stores/settings-store";
+import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { AppSetting, PolicySnapshot } from "@shared/ipc-types";
 
 import { policyTestText } from "./policy-test-text";
@@ -490,7 +492,9 @@ export function PolicyEditorPanel({
                   })}
                   {activeSnapshot.activated_at &&
                     ` — ${t("policy.activatedAt", {
-                      date: new Date(activeSnapshot.activated_at).toLocaleString(),
+                      date: new Date(activeSnapshot.activated_at).toLocaleString(
+                        intlLocaleForLanguage(i18n.language),
+                      ),
                     })}`}
                 </p>
               )}

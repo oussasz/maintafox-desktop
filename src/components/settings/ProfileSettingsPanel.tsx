@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { mfAlert, mfInput, mfTable } from "@/design-system/tokens";
+import { i18n } from "@/i18n";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
@@ -34,6 +35,7 @@ import {
   revokeMyDevice,
   updateMyProfile,
 } from "@/services/user-service";
+import { intlLocaleForLanguage } from "@/utils/format-date";
 import type {
   PersonnelWorkHistoryEntry,
   PersonnelWorkloadSummary,
@@ -48,7 +50,7 @@ import type {
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(undefined, {
+  return new Date(iso).toLocaleDateString(intlLocaleForLanguage(i18n.language), {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -993,7 +995,7 @@ function TrustedDevicesDialog({
   };
 
   const formatDeviceDate = (iso: string) =>
-    new Date(iso).toLocaleDateString(undefined, {
+    new Date(iso).toLocaleDateString(intlLocaleForLanguage(i18n.language), {
       year: "numeric",
       month: "short",
       day: "numeric",
