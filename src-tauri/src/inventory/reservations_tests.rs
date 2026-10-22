@@ -1873,6 +1873,17 @@ async fn a_reservation_released_on_two_pcs_is_settled_without_a_conflict() {
 
     release_on(&a, on_a).await;
     release_on(&b, on_b).await;
+    // Both releases fall in the same second in a test, so the two rows would be identical and the
+    // server would simply acknowledge B's as a duplicate. B's release is made later here, so its
+    // row and its movement really differ from A's (who/when), the case that needs settling.
+    for sql in [
+        "UPDATE stock_reservations SET released_at = '2099-01-01T00:00:00Z', updated_at = '2099-01-01T00:00:00Z' WHERE id = ?",
+        "UPDATE inventory_transactions SET performed_at = '2099-01-01T00:00:00Z' WHERE reservation_id = ? AND movement_type = 'RELEASE'",
+    ] {
+        b.execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [on_b.into()]))
+            .await
+            .expect("make B's release differ");
+    }
     server.exchange("A", &a).await;
     let report = server.exchange("B", &b).await;
     assert!(
