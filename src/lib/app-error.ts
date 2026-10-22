@@ -13,6 +13,7 @@
 import { ZodError } from "zod";
 
 import { i18n } from "@/i18n/config";
+import { STEP_UP_CANCELLED_MESSAGE } from "@/lib/step-up-bridge";
 import { formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
 import {
   extractIpcErrorCode,
@@ -44,6 +45,13 @@ export function describeAppError(err: unknown): AppErrorDescription {
   }
   const code = extractIpcErrorCode(err);
   const rawMsg = toErrorMessage(err);
+  if (rawMsg === STEP_UP_CANCELLED_MESSAGE) {
+    return {
+      title: String(i18n.t("auth:stepUp.cancelled")),
+      description: null,
+      code: "STEP_UP_CANCELLED",
+    };
+  }
 
   const i18nKey = code ? `errors:appError.${code}` : "";
   const gateCodeMatch = rawMsg.match(/(GATE_[A-Z0-9_]+)(?::[A-Za-z0-9_=,\-./]+)?/);

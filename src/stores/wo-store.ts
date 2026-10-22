@@ -24,7 +24,7 @@ import {
   startWo,
   updateWoDraft,
 } from "@/services/wo-service";
-import { toErrorMessage } from "@/utils/errors";
+import { isStepUpRequiredError, toErrorMessage } from "@/utils/errors";
 import type {
   AssetSearchResult,
   WoAssignInput,
@@ -421,7 +421,8 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      // A password request is not a failure to keep on screen (the dialog asks and retries).
+      if (!isStepUpRequiredError(err)) set({ error: toErrorMessage(err) });
       throw err;
     } finally {
       set({ saving: false });

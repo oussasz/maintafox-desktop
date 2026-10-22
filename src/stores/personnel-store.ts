@@ -12,7 +12,7 @@ import {
   listPersonnel,
   updatePersonnel,
 } from "@/services/personnel-service";
-import { toErrorMessage } from "@/utils/errors";
+import { isStepUpRequiredError, toErrorMessage } from "@/utils/errors";
 import type {
   Personnel,
   PersonnelCreateInput,
@@ -145,7 +145,7 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
       }
       await get().loadPersonnel();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      if (!isStepUpRequiredError(err)) set({ error: toErrorMessage(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -164,7 +164,7 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
       }
     } catch (err) {
       // A refusal (open work orders) is coded: shown in the user's language.
-      set({ error: appErrorText(err) });
+      if (!isStepUpRequiredError(err)) set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });

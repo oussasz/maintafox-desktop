@@ -53,4 +53,17 @@ describe("ipc-invoke step-up fallback", () => {
     mockInvoke.mockRejectedValueOnce(REFUSED);
     await expect(invoke("cancel_work_order")).rejects.toEqual(REFUSED);
   });
+
+  it("prompts only once when the backend refuses again after a verified password", async () => {
+    let asked = 0;
+    registerStepUpRequester(async () => {
+      asked += 1;
+      return true;
+    });
+    mockInvoke.mockRejectedValue(REFUSED);
+
+    await expect(invoke("cancel_work_order")).rejects.toEqual(REFUSED);
+    expect(asked).toBe(1);
+    expect(mockInvoke).toHaveBeenCalledTimes(2);
+  });
 });

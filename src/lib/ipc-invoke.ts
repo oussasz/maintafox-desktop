@@ -292,6 +292,7 @@ export async function invoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
   options?: InvokeOptions,
+  afterStepUp = false,
 ): Promise<T> {
   try {
     return await tauriInvoke<T>(cmd, args);
@@ -299,13 +300,15 @@ export async function invoke<T>(
     // A caller without its own `withStepUp` still gets the password prompt, then a retry.
     if (
       extractIpcErrorMeta(e).code === "STEP_UP_REQUIRED" &&
+      !afterStepUp &&
       !isLocalStepUpActive() &&
       hasStepUpRequester()
     ) {
       if (!(await requestGlobalStepUp())) {
         throw new Error(STEP_UP_CANCELLED_MESSAGE);
       }
-      return await invoke<T>(cmd, args, options);
+      // One retry only: a second refusal after a verified password is shown as a refusal.
+      return await invoke<T>(cmd, args, options, true);
     }
     handleAuthAndPermissionFailures(cmd, e);
     if (options?.notifyOnError !== false) {
