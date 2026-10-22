@@ -216,19 +216,52 @@ impl Serialize for AppError {
 
         let details: Option<serde_json::Value> = match self {
             Self::ValidationFailed(msgs) => Some(serde_json::Value::Array(
-                msgs.iter()
-                    .map(|m| {
-                        serde_json::json!({
-                            "message": m,
-                        })
-                    })
-                    .collect(),
+                msgs.iter().map(|m| validation_detail(m)).collect(),
             )),
             Self::OrgValidationFailed(issues) => Some(serde_json::to_value(issues).unwrap_or(serde_json::Value::Null)),
             _ => None,
         };
         state.serialize_field("details", &details)?;
         state.end()
+    }
+}
+
+/// A refusal sentence that starts with a stable rule code is sent with that code and its
+/// parameters, so the screen translates it from the code and never shows the sentence itself.
+///
+/// Forms read: `CODE`, `CODE: sentence`, `CODE:key=value,key2=value2` and
+/// `CODE:key=value: sentence`. A code is upper-case words joined by underscores (`GATE_FIN_X`,
+/// `STUDY_STALE`); anything else is an uncoded sentence and has no code.
+pub(crate) fn split_coded_refusal(raw: &str) -> Option<(String, HashMap<String, String>)> {
+    let raw = raw.trim();
+    let code_end = raw.find(|c: char| c == ':' || c.is_whitespace()).unwrap_or(raw.len());
+    let code = &raw[..code_end];
+    let is_word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+    let valid =
+        code.contains('_') && code.starts_with(|c: char| c.is_ascii_uppercase()) && code.split('_').all(is_word);
+    if !valid {
+        return None;
+    }
+    let mut params = HashMap::new();
+    if let Some(rest) = raw[code_end..].strip_prefix(':') {
+        let segment = rest.split(|c: char| c == ':' || c.is_whitespace()).next().unwrap_or("");
+        if segment.contains('=') && !segment.is_empty() {
+            for pair in segment.split(',') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    if !k.is_empty() {
+                        params.insert(k.to_string(), v.to_string());
+                    }
+                }
+            }
+        }
+    }
+    Some((code.to_string(), params))
+}
+
+fn validation_detail(raw: &str) -> serde_json::Value {
+    match split_coded_refusal(raw) {
+        Some((code, params)) => serde_json::json!({ "message": raw, "code": code, "params": params }),
+        None => serde_json::json!({ "message": raw }),
     }
 }
 
@@ -240,3 +273,58 @@ impl fmt::Display for AppValidationIssue {
 
 /// Convenience alias used by all command and service functions.
 pub type AppResult<T> = Result<T, AppError>;
+
+#[cfg(test)]
+mod coded_refusal_tests {
+    use super::*;
+
+    #[test]
+    fn a_bare_code_is_a_code() {
+        let (code, params) = split_coded_refusal("STUDY_STALE").expect("coded");
+        assert_eq!(code, "STUDY_STALE");
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn a_code_with_a_sentence_keeps_only_the_code() {
+        let (code, params) = split_coded_refusal("GATE_FIN_PERIOD_CLOSED: période clôturée").expect("coded");
+        assert_eq!(code, "GATE_FIN_PERIOD_CLOSED");
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn parameters_ride_with_the_code() {
+        let (code, params) = split_coded_refusal("GATE_CLOSEOUT_X:min_len=10,max=3: sentence").expect("coded");
+        assert_eq!(code, "GATE_CLOSEOUT_X");
+        assert_eq!(params.get("min_len").map(String::as_str), Some("10"));
+        assert_eq!(params.get("max").map(String::as_str), Some("3"));
+    }
+
+    #[test]
+    fn a_plain_sentence_has_no_code() {
+        for plain in [
+            "Heures de main-d'oeuvre requises.",
+            "Title is required",
+            "OT",
+            "WO close-out blocked",
+            "Validation failed: X_Y",
+            "",
+            "lower_case_code",
+            "_LEADING_UNDERSCORE",
+            "TRAILING_",
+        ] {
+            assert!(split_coded_refusal(plain).is_none(), "{plain:?} must have no code");
+        }
+    }
+
+    #[test]
+    fn the_ipc_detail_carries_code_and_params_and_keeps_the_text() {
+        let detail = validation_detail("GATE_X_Y:n=4: texte");
+        assert_eq!(detail["code"], "GATE_X_Y");
+        assert_eq!(detail["params"]["n"], "4");
+        assert_eq!(detail["message"], "GATE_X_Y:n=4: texte");
+        let plain = validation_detail("Title is required");
+        assert!(plain.get("code").is_none());
+        assert_eq!(plain["message"], "Title is required");
+    }
+}

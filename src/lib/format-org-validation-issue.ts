@@ -25,6 +25,8 @@ const ISSUE_KEY_PREFIXES = ["governance.issues", "errors", "preview.issues"] as 
 const OTHER_NAMESPACE_KEY_PREFIXES = [
   ...ISSUE_NAMESPACES.map((ns) => `${ns}:errors`),
   "errors:scope",
+  // GATE_* rule codes (the backend sends them with their parameters: `GATE_X:min_len=10`).
+  "errors:gateError",
 ] as const;
 
 function issueKeys(code: string, orgNs: string): string[] {
@@ -56,11 +58,18 @@ function translateIssueKey(
   return null;
 }
 
+/** The text of an issue no translation exists for: its backend sentence, but never a GATE code. */
+function untranslatedText(issue: OrgIssueLike): string {
+  return issue.code.startsWith("GATE_")
+    ? String(i18n.t("errors:generic.unexpected"))
+    : issue.message;
+}
+
 export function formatOrgValidationIssue(issue: OrgIssueLike, t: TFunction<"org">): string {
   const params = displayParams(issue.params);
   const translated = translateIssueKey(issue.code, params, (key, opts) => String(t(key, opts)));
   if (translated) return translated;
-  return issue.message;
+  return untranslatedText(issue);
 }
 
 /** Same as formatOrgValidationIssue but uses the global i18n instance (stores/toasts). */
@@ -73,7 +82,7 @@ export function formatOrgIssueWithI18n(issue: OrgIssueLike): string {
     "org:",
   );
   if (translated) return translated;
-  return issue.message;
+  return untranslatedText(issue);
 }
 
 export function formatOrgIssuesWithI18n(issues: OrgIssueLike[]): string {
