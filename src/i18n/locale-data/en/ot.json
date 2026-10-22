@@ -123,6 +123,7 @@
       "linked_work_order_id": "Linked WO no."
     },
     "approverPick": "Approver (someone other than you)",
+    "approverNoneAvailable": "No approver available: active staff with an account, other than you.",
     "approverNone": "Choose a person",
     "unknownCode": "Unlisted finding",
     "diagnosticTarget": "Diagnostic · {{domain}} · {{recordClass}}"

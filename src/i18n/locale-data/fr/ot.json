@@ -123,6 +123,7 @@
       "linked_work_order_id": "OT lié n°"
     },
     "approverPick": "Approbateur (autre que vous)",
+    "approverNoneAvailable": "Aucun approbateur disponible : personnel actif avec un compte, autre que vous.",
     "approverNone": "Choisir une personne",
     "unknownCode": "Constat non répertorié",
     "diagnosticTarget": "Diagnostic · {{domain}} · {{recordClass}}"

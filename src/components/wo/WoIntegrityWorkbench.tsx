@@ -17,7 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { mergeWoPersonOptions, useWoPeopleOptions } from "@/components/wo/use-wo-people";
+import {
+  mergeWoPersonOptions,
+  useWoPeopleOptions,
+  type WoPersonOption,
+} from "@/components/wo/use-wo-people";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
@@ -88,6 +92,12 @@ export function WoIntegrityWorkbench() {
   const { t } = useTranslation("ot");
   const { info } = useSession();
   const userId = info?.user_id ?? null;
+  // Read once for every finding row. The second person must be someone else: not the current user.
+  const people = useWoPeopleOptions();
+  const approvers = useMemo(
+    () => mergeWoPersonOptions(people.options, []).filter((o) => o.value !== String(userId)),
+    [people.options, userId],
+  );
 
   const [rows, setRows] = useState<DataIntegrityFindingRow[]>([]);
   const [contracts, setContracts] = useState<AnalyticsContractVersionRow[]>([]);
@@ -171,7 +181,13 @@ export function WoIntegrityWorkbench() {
             <p className="text-xs text-text-muted">{t("integrity.empty")}</p>
           )}
           {rows.map((r) => (
-            <FindingRow key={r.id} row={r} currentUserId={userId} onRefresh={() => void load()} />
+            <FindingRow
+              key={r.id}
+              row={r}
+              approvers={approvers}
+              approversFailed={people.failed}
+              onRefresh={() => void load()}
+            />
           ))}
         </div>
       </div>
@@ -181,11 +197,13 @@ export function WoIntegrityWorkbench() {
 
 function FindingRow({
   row,
-  currentUserId,
+  approvers,
+  approversFailed,
   onRefresh,
 }: {
   row: DataIntegrityFindingRow;
-  currentUserId: number | null;
+  approvers: WoPersonOption[];
+  approversFailed: boolean;
   onRefresh: () => void;
 }) {
   const { t } = useTranslation("ot");
@@ -194,12 +212,6 @@ function FindingRow({
   const [approverId, setApproverId] = useState("");
   const [busy, setBusy] = useState(false);
   const { formatNumber } = useFormatters();
-  const people = useWoPeopleOptions();
-  // The second person must be someone else: the current user is not offered.
-  const approvers = useMemo(
-    () => mergeWoPersonOptions(people.options, []).filter((o) => o.value !== String(currentUserId)),
-    [people.options, currentUserId],
-  );
   const tText = useCallback(
     (key: string, fallback: string) => t(key, { defaultValue: fallback }) as string,
     [t],
@@ -259,7 +271,7 @@ function FindingRow({
         <Badge variant="outline" className={`text-[10px] border-0 ${severityClass}`}>
           {tText(`integrity.severity.${row.severity}`, row.severity)}
         </Badge>
-        <span className="font-medium text-text-primary">
+        <span className="font-medium text-text-primary" title={row.finding_code}>
           {tText(`integrity.code.${row.finding_code}`, t("integrity.unknownCode"))}
         </span>
         <span className="text-text-muted">
@@ -294,6 +306,11 @@ function FindingRow({
                 ))}
               </SelectContent>
             </Select>
+            {approversFailed || approvers.length === 0 ? (
+              <span className="text-[10px] text-destructive">
+                {t("integrity.approverNoneAvailable")}
+              </span>
+            ) : null}
           </div>
         )}
         <div className="flex flex-col gap-0.5 flex-1 min-w-[160px]">
