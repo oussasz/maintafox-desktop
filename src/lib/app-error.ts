@@ -55,6 +55,7 @@ export function describeAppError(err: unknown): AppErrorDescription {
       title: String(i18n.t("auth:stepUp.cancelled")),
       description: null,
       code: "STEP_UP_CANCELLED",
+      technical: null,
     };
   }
 
