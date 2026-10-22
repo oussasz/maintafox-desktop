@@ -96,6 +96,33 @@ export function describeAppError(err: unknown): AppErrorDescription {
 }
 
 /**
+ * The translated text of the GATE code found in a backend sentence; the generic text when the
+ * code has no translation (a GATE code never reaches the user); null when there is no GATE code.
+ */
+function gateText(message: string): string | null {
+  const code = message.match(/(GATE_[A-Z0-9_]+)(?::[A-Za-z0-9_=,\-./]+)?/)?.[1];
+  if (!code) return null;
+  const key = `errors:gateError.${code}`;
+  return i18n.exists(key) ? String(i18n.t(key)) : String(i18n.t("errors:generic.unexpected"));
+}
+
+/**
+ * Every reason of a refusal as its own translated line (a close-out refusal lists several rules).
+ * Each detail is translated by its code, or by the GATE code its sentence starts with; a detail
+ * with neither keeps the backend sentence until its rule gets a code. A refusal with no details
+ * is one line, as `appErrorReason`.
+ */
+export function appErrorLines(err: unknown): string[] {
+  const details = extractIpcValidationDetails(err);
+  if (details.length === 0) return [appErrorReason(err)];
+  const lines = details.map((d) => {
+    if (d.code) return formatOrgIssuesWithI18n([d]);
+    return gateText(d.message) ?? d.message.replace(/^Validation failed:\s*/i, "");
+  });
+  return lines.filter((l) => l.trim() !== "");
+}
+
+/**
  * One line saying why an action was refused: the translated rule (coded validation details)
  * when the backend gave one, otherwise the title. For inline messages and screen-reader
  * announcements, where a generic "Validation failed." alone would hide the reason.
