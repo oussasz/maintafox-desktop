@@ -284,6 +284,23 @@ describe("locale-store", () => {
       expect(s.error).toBeNull();
     });
 
+    it("follows the Windows language only when asked, and applies what the backend resolved", async () => {
+      mockInvoke.mockResolvedValueOnce(makePref({ active_locale: "en", user_locale: "system" }));
+
+      await useLocaleStore.getState().setLocale("system");
+
+      expect(mockInvoke).toHaveBeenCalledWith("set_locale_preference", {
+        payload: { locale: "system", asTenantDefault: false },
+      });
+      expect(i18n.language).toBe("en");
+      expect(useLocaleStore.getState().activeLocale).toBe("en");
+      expect(useLocaleStore.getState().followsSystemLanguage).toBe(true);
+
+      mockInvoke.mockResolvedValueOnce(makePref({ active_locale: "fr", user_locale: "fr" }));
+      await useLocaleStore.getState().setLocale("fr");
+      expect(useLocaleStore.getState().followsSystemLanguage).toBe(false);
+    });
+
     it("passes asTenantDefault=true through", async () => {
       mockInvoke.mockResolvedValueOnce(makePref({ active_locale: "fr" }));
 

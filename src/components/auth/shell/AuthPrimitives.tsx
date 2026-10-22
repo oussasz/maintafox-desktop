@@ -1,10 +1,10 @@
-import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, Loader2, Monitor, XCircle } from "lucide-react";
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { mfAuth, mfAuthAlert } from "@/design-system/tokens";
-import { i18n } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { useLocaleStore } from "@/stores/locale-store";
+import { FOLLOW_SYSTEM_LOCALE, useLocaleStore } from "@/stores/locale-store";
 
 /* ── Buttons ────────────────────────────────────────────────────────────────── */
 
@@ -85,29 +85,30 @@ export function AuthAlert({ tone, title, children, className, role }: AuthAlertP
 
 /* ── Language switch ────────────────────────────────────────────────────────── */
 
-/** Compact segmented FR | EN control. Persists through the shared locale store. */
+/**
+ * Compact segmented FR | EN | Windows control. The choice is saved for this PC through the locale
+ * store (no sign-in needed) and applies from the first screen on the next start.
+ */
 export function AuthLocaleSwitch({ className }: { className?: string }) {
-  const { activeLocale, supportedLocales } = useLocaleStore();
+  const { activeLocale, supportedLocales, followsSystemLanguage, setLocale } = useLocaleStore();
+  const { t } = useTranslation("auth");
   return (
     <div
       role="group"
-      aria-label="Language"
+      aria-label={t("login.language.group")}
       className={cn(
         "inline-flex rounded-lg border border-surface-border bg-white p-0.5 text-xs font-semibold",
         className,
       )}
     >
       {supportedLocales.map((loc) => {
-        const active = loc === activeLocale;
+        const active = !followsSystemLanguage && loc === activeLocale;
         return (
           <button
             key={loc}
             type="button"
             aria-pressed={active}
-            onClick={() => {
-              void i18n.changeLanguage(loc);
-              useLocaleStore.setState({ activeLocale: loc });
-            }}
+            onClick={() => void setLocale(loc)}
             className={cn(
               "min-h-9 min-w-10 rounded-md px-3 py-1.5 transition-colors",
               active
@@ -119,6 +120,21 @@ export function AuthLocaleSwitch({ className }: { className?: string }) {
           </button>
         );
       })}
+      <button
+        type="button"
+        aria-pressed={followsSystemLanguage}
+        title={t("login.language.followWindows")}
+        aria-label={t("login.language.followWindows")}
+        onClick={() => void setLocale(FOLLOW_SYSTEM_LOCALE)}
+        className={cn(
+          "inline-flex min-h-9 min-w-10 items-center justify-center rounded-md px-3 py-1.5 transition-colors",
+          followsSystemLanguage
+            ? "bg-[var(--mfa-blue)] text-white"
+            : "text-text-secondary hover:bg-[var(--mfa-blue-tint)] hover:text-text-primary",
+        )}
+      >
+        <Monitor className="h-3.5 w-3.5" aria-hidden />
+      </button>
     </div>
   );
 }
