@@ -68,17 +68,27 @@ pub const RECEIVED_RULE_CATEGORY: &str = "safety_rule_received";
 /// that applies it ([`announce_forced_removal`], [`notify_received_rule_change`]).
 pub const FORCED_REMOVAL_CATEGORY: &str = "loto_forced_removal";
 
+/// Notification category of two concurrent versions of a PM plan, or of two occurrences of a plan
+/// for the same due date from two such versions (`pm::version_clash`): told to the users holding
+/// the PM planning right (`pm.edit`) on each PC that receives the second one, kept until each
+/// acknowledges it, like the other locked notices.
+pub const PM_CONCURRENT_VERSIONS_CATEGORY: &str = "pm_concurrent_versions";
+
 /// Every category of a persistent safety notice: kept for each recipient until they acknowledge it,
 /// never muted, re-routed, expired, archived or deleted before, and local to each PC. The SQL of
 /// the notification modules names them through [`safety_notice_categories_sql`].
-pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[RECEIVED_RULE_CATEGORY, FORCED_REMOVAL_CATEGORY];
+pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
+    RECEIVED_RULE_CATEGORY,
+    FORCED_REMOVAL_CATEGORY,
+    PM_CONCURRENT_VERSIONS_CATEGORY,
+];
 
 /// SQL list of [`SAFETY_NOTICE_CATEGORIES`], for the constant SQL of the notification modules
 /// (`concat!`); a test keeps both the same.
 #[macro_export]
 macro_rules! safety_notice_categories_sql {
     () => {
-        "('safety_rule_received', 'loto_forced_removal')"
+        "('safety_rule_received', 'loto_forced_removal', 'pm_concurrent_versions')"
     };
 }
 
@@ -361,6 +371,7 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
     for (category, label) in [
         (RECEIVED_RULE_CATEGORY, "Safety rule changed on another PC"),
         (FORCED_REMOVAL_CATEGORY, "Lock taken off by a forced removal"),
+        (PM_CONCURRENT_VERSIONS_CATEGORY, "Concurrent PM plan versions"),
     ] {
         ensure_category_rows(conn, category, label).await?;
     }
@@ -722,6 +733,44 @@ async fn send(
             }
         }
     }
+}
+
+/// Writes a notice of concurrent PM plan versions (`pm::version_clash`) in a savepoint of the apply
+/// of the received row. A notice that cannot be written is logged and the row still applies: a
+/// version or an occurrence is never held back by its notice (nothing is changed by either).
+pub(crate) async fn send_pm_concurrent_notice(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+    plan_sync_id: &str,
+    title: String,
+    body: String,
+    message: NotificationMessage,
+) -> AppResult<()> {
+    conn.execute_unprepared("SAVEPOINT pm_concurrent_notice").await?;
+    let route = NoticeRoute {
+        category: PM_CONCURRENT_VERSIONS_CATEGORY,
+        // Not a record with a routing context: the planners of the whole plant are told.
+        source_module: "pm_plan",
+        source_record_id: plan_sync_id.to_string(),
+        entity_type,
+        entity_sync_id,
+    };
+    match emit_notice(conn, &route, title, body, "/pm", &message).await {
+        Ok(()) => conn.execute_unprepared("RELEASE pm_concurrent_notice").await?,
+        Err(err) => {
+            conn.execute_unprepared("ROLLBACK TO pm_concurrent_notice").await?;
+            conn.execute_unprepared("RELEASE pm_concurrent_notice").await?;
+            tracing::error!(
+                entity_type,
+                entity_sync_id,
+                error = %err,
+                "concurrent PM versions: applied without its notice (notice failed)"
+            );
+            return Ok(());
+        }
+    };
+    Ok(())
 }
 
 /// Where a notice goes: its category, the record it is about (its routing context: a permit routes

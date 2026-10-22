@@ -10,6 +10,12 @@
 //! numbers. The plan's current version is the one it points to (published = current); nothing here
 //! changes it, and only that version drives scheduling (`pm::generation`).
 //!
+//! The PM planners (`pm.edit`) of each PC are told, on a locked notice they acknowledge
+//! (`settings::received_notice::PM_CONCURRENT_VERSIONS_CATEGORY`), when a received version shares
+//! its stored number with another version of the plan ([`after_received_version`]), and when a
+//! received occurrence has the same plan, asset and due date as an occurrence of another version
+//! ([`after_received_occurrence`]): both are kept, nothing is cancelled.
+//!
 //! A received version refused before this update on the unique number (an open `MATERIALIZE_ERROR`
 //! conflict with that database text) is applied again at the next synchronisation, before the rows
 //! waiting for it are retried ([`retry_refused_number_clashes`]): its conflict is closed when it
@@ -17,8 +23,10 @@
 //! conflict stays open with its real reason, and is not tried again by this pass).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
+use serde_json::json;
 
 use crate::errors::{AppError, AppResult};
+use crate::notifications::emitter::NotificationMessage;
 use crate::sync::materialize::ApplyOutcome;
 
 /// The database text of the unique number that refused a version before this update.
@@ -96,6 +104,221 @@ pub(crate) async fn retry_refused_number_clashes(db: &DatabaseConnection) -> App
         tx.commit().await?;
     }
     Ok(applied)
+}
+
+/// A version of a plan as the notice names it.
+struct NamedVersion {
+    sync_id: String,
+    shown: i64,
+    stored: i64,
+    status: String,
+    created_at: String,
+}
+
+async fn named_version(conn: &impl ConnectionTrait, version_id: i64) -> AppResult<Option<NamedVersion>> {
+    conn.query_one(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "SELECT v.entity_sync_id, n.display_no, v.version_no, v.status, v.created_at
+         FROM pm_plan_versions v JOIN pm_plan_version_numbers n ON n.id = v.id WHERE v.id = ?",
+        [version_id.into()],
+    ))
+    .await?
+    .map(|r| -> AppResult<NamedVersion> {
+        Ok(NamedVersion {
+            sync_id: r
+                .try_get::<Option<String>>("", "entity_sync_id")
+                .map_err(err)?
+                .unwrap_or_default(),
+            shown: r.try_get("", "display_no").map_err(err)?,
+            stored: r.try_get("", "version_no").map_err(err)?,
+            status: r.try_get("", "status").map_err(err)?,
+            created_at: r.try_get("", "created_at").map_err(err)?,
+        })
+    })
+    .transpose()
+}
+
+/// Code, title and sync id of a plan.
+async fn plan_names(conn: &impl ConnectionTrait, plan_id: i64) -> AppResult<(String, String, String)> {
+    let r = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT code, title, entity_sync_id FROM pm_plans WHERE id = ?",
+            [plan_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| err(format!("plan {plan_id} not found")))?;
+    Ok((
+        r.try_get("", "code").map_err(err)?,
+        r.try_get("", "title").map_err(err)?,
+        r.try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(err)?
+            .unwrap_or_default(),
+    ))
+}
+
+/// After a received version is written here (CMMS Advisor decision a): when another version of its
+/// plan carries the same stored number, the PM planners are told, naming both versions with the
+/// numbers shown, their status and creation dates (no author: none is recorded for a version).
+pub(crate) async fn after_received_version(conn: &impl ConnectionTrait, version_id: i64) -> AppResult<()> {
+    let others = conn
+        .query_all(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT o.id FROM pm_plan_versions v JOIN pm_plan_versions o
+               ON o.pm_plan_id = v.pm_plan_id AND o.version_no = v.version_no AND o.id <> v.id
+             WHERE v.id = ? ORDER BY o.entity_sync_id",
+            [version_id.into()],
+        ))
+        .await?;
+    let Some(first_other) = others.first() else {
+        return Ok(());
+    };
+    let other_id: i64 = first_other.try_get("", "id").map_err(err)?;
+    let (Some(received), Some(other)) = (
+        named_version(conn, version_id).await?,
+        named_version(conn, other_id).await?,
+    ) else {
+        return Ok(());
+    };
+    let plan_id = scalar_plan_of(conn, version_id).await?;
+    let (code, title, plan_sync_id) = plan_names(conn, plan_id).await?;
+    let (v, o) = (received.shown, other.shown);
+    let stored = received.stored;
+    crate::settings::received_notice::send_pm_concurrent_notice(
+        conn,
+        "pm_plan_versions",
+        &received.sync_id,
+        &plan_sync_id,
+        format!(
+            "Deux versions concurrentes du plan {code} — vérifier la version en vigueur / Two concurrent versions of \
+             plan {code} — check the version in force"
+        ),
+        format!(
+            "{title} : v{v} ({}, créée le {}) et v{o} ({}, créée le {}) ont été créées sur deux PC avant leur \
+             synchronisation, toutes deux numérotées {stored} ; elles sont affichées v{v} et v{o} sur chaque PC. / \
+             {title}: v{v} ({}, created {}) and v{o} ({}, created {}) were created on two PCs before they synchronised, \
+             both numbered {stored}; every PC shows them as v{v} and v{o}.",
+            received.status,
+            received.created_at,
+            other.status,
+            other.created_at,
+            received.status,
+            received.created_at,
+            other.status,
+            other.created_at,
+        ),
+        NotificationMessage::new(
+            "pm_concurrent_versions",
+            json!({
+                "plan": code,
+                "title": title,
+                "version": v,
+                "version_status": received.status,
+                "version_created_at": received.created_at,
+                "other_version": o,
+                "other_status": other.status,
+                "other_created_at": other.created_at,
+                "stored_number": stored,
+                "others": others.len(),
+            }),
+        ),
+    )
+    .await
+}
+
+async fn scalar_plan_of(conn: &impl ConnectionTrait, version_id: i64) -> AppResult<i64> {
+    conn.query_one(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "SELECT pm_plan_id FROM pm_plan_versions WHERE id = ?",
+        [version_id.into()],
+    ))
+    .await?
+    .ok_or_else(|| err(format!("version {version_id} not found")))?
+    .try_get("", "pm_plan_id")
+    .map_err(err)
+}
+
+/// After a received occurrence is written here (CMMS Advisor decision c): when another version of
+/// the same plan already has an occurrence for the same asset and due date, the PM planners are told
+/// on the same notice category, naming both with their work orders. Nothing is cancelled.
+pub(crate) async fn after_received_occurrence(conn: &impl ConnectionTrait, occurrence_id: i64) -> AppResult<()> {
+    let twin = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT o.id, o.plan_version_id AS other_version_id, ow.code AS other_wo,
+                    r.plan_version_id AS version_id, rw.code AS wo, r.pm_plan_id, r.entity_sync_id,
+                    r.due_at, r.due_basis
+             FROM pm_occurrences r
+             JOIN pm_occurrences o ON o.pm_plan_id = r.pm_plan_id AND o.id <> r.id
+                  AND o.plan_version_id <> r.plan_version_id AND o.equipment_id IS r.equipment_id
+                  AND ((r.due_at IS NOT NULL AND o.due_at = r.due_at)
+                       OR (r.due_at IS NULL AND o.due_at IS NULL AND o.due_basis = r.due_basis))
+             LEFT JOIN work_orders rw ON rw.id = r.linked_work_order_id
+             LEFT JOIN work_orders ow ON ow.id = o.linked_work_order_id
+             WHERE r.id = ? ORDER BY o.id LIMIT 1",
+            [occurrence_id.into()],
+        ))
+        .await?;
+    let Some(t) = twin else {
+        return Ok(());
+    };
+    let version_id: i64 = t.try_get("", "version_id").map_err(err)?;
+    let other_version_id: i64 = t.try_get("", "other_version_id").map_err(err)?;
+    let plan_id: i64 = t.try_get("", "pm_plan_id").map_err(err)?;
+    let occurrence_sync_id: String = t
+        .try_get::<Option<String>>("", "entity_sync_id")
+        .map_err(err)?
+        .unwrap_or_default();
+    let due_at: Option<String> = t.try_get("", "due_at").map_err(err)?;
+    let due_basis: Option<String> = t.try_get("", "due_basis").map_err(err)?;
+    let wo: Option<String> = t.try_get("", "wo").map_err(err)?;
+    let other_wo: Option<String> = t.try_get("", "other_wo").map_err(err)?;
+    let (Some(version), Some(other)) = (
+        named_version(conn, version_id).await?,
+        named_version(conn, other_version_id).await?,
+    ) else {
+        return Ok(());
+    };
+    let (code, title, plan_sync_id) = plan_names(conn, plan_id).await?;
+    let due_text = due_at
+        .clone()
+        .or_else(|| due_basis.clone())
+        .unwrap_or_else(|| "?".to_string());
+    let wo_text = |w: &Option<String>| w.clone().unwrap_or_else(|| "—".to_string());
+    let (v, o) = (version.shown, other.shown);
+    crate::settings::received_notice::send_pm_concurrent_notice(
+        conn,
+        "pm_occurrences",
+        &occurrence_sync_id,
+        &plan_sync_id,
+        format!(
+            "Deux versions concurrentes du plan {code} — échéance en double le {due_text} / Two concurrent versions \
+             of plan {code} — due date {due_text} twice"
+        ),
+        format!(
+            "{title} : les versions v{v} et v{o} ont chacune une échéance le {due_text} (OT {} et {}). Rien n'a été \
+             annulé : gardez-en une. / {title}: versions v{v} and v{o} each have an occurrence due {due_text} (work \
+             orders {} and {}). Nothing was cancelled: keep one.",
+            wo_text(&wo),
+            wo_text(&other_wo),
+            wo_text(&wo),
+            wo_text(&other_wo),
+        ),
+        NotificationMessage::new(
+            "pm_duplicate_occurrence",
+            json!({
+                "plan": code,
+                "title": title,
+                "due_at": due_at,
+                "due_basis": due_basis,
+                "version": v,
+                "other_version": o,
+                "work_order": wo,
+                "other_work_order": other_wo,
+            }),
+        ),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -213,6 +436,12 @@ mod tests {
                 reference,
                 "{name} shows the same numbers"
             );
+            // The PM planners of every PC are told when two versions share a stored number.
+            let mut stored: Vec<i64> = versions.iter().map(|(_, _, n)| *n).collect();
+            stored.sort_unstable();
+            let tie = stored.windows(2).any(|w| w[0] == w[1]);
+            let (events, _) = notices(db, "pm_concurrent_versions").await;
+            assert_eq!(events > 0, tie, "{name}: {events} notice(s)");
             // Nothing was moved: every version keeps the number its PC gave it.
             for (_, sync_id, number) in versions {
                 assert_eq!(stored_number(db, sync_id).await, Some(*number), "{name}: {sync_id}");
@@ -426,5 +655,96 @@ mod tests {
             Some("applied"),
             "the occurrence that waited for it follows"
         );
+    }
+
+    async fn notices(db: &DatabaseConnection, key: &str) -> (i64, i64) {
+        let events = scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM notification_events WHERE category_code = ? AND message_key = ?",
+            vec![
+                crate::settings::received_notice::PM_CONCURRENT_VERSIONS_CATEGORY.into(),
+                key.into(),
+            ],
+        )
+        .await;
+        let delivered = scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id
+             WHERE e.category_code = ? AND e.message_key = ?",
+            vec![
+                crate::settings::received_notice::PM_CONCURRENT_VERSIONS_CATEGORY.into(),
+                key.into(),
+            ],
+        )
+        .await;
+        (events, delivered)
+    }
+
+    #[tokio::test]
+    async fn the_planners_are_told_of_two_concurrent_versions_and_a_due_date_planned_twice() {
+        let mut server = TestServer::new();
+        let a = started_device_db().await;
+        let b = started_device_db().await;
+        let plan = RowFactory::for_device(1).create(&a, "pm_plans").await.expect("plan");
+        server.exchange("A", &a).await;
+        server.exchange("B", &b).await;
+        // Offline, each PC adds version 1, publishes it as the plan's version in force and plans the
+        // same due date with a work order.
+        let mut occurrences = Vec::new();
+        for (index, (db, version, occurrence)) in [(&a, A1, "occ-a"), (&b, B1, "occ-b")].into_iter().enumerate() {
+            add_version(db, &plan.entity_sync_id, version, 1).await;
+            let wo = RowFactory::for_device(i64::try_from(index).expect("index") + 10)
+                .create(db, "work_orders")
+                .await
+                .expect("work order");
+            exec(
+                db,
+                "INSERT INTO pm_occurrences (entity_sync_id, pm_plan_id, plan_version_id, due_basis, due_at, status,
+                                             linked_work_order_id)
+                 SELECT ?, v.pm_plan_id, v.id, 'calendar', '2026-12-01T08:00:00Z', 'generated', ?
+                 FROM pm_plan_versions v WHERE v.entity_sync_id = ?",
+                vec![occurrence.into(), wo.rowid.into(), version.into()],
+            )
+            .await;
+            occurrences.push(occurrence);
+        }
+        for (name, db) in [("A", &a), ("B", &b), ("A", &a)] {
+            let report = server.exchange(name, db).await;
+            assert_eq!(report.materialized.conflicts, 0, "{name}: {report:?}");
+        }
+        for (name, db) in [("A", &a), ("B", &b)] {
+            let (events, delivered) = notices(db, "pm_concurrent_versions").await;
+            assert_eq!(events, 1, "{name}: one notice of the two versions");
+            assert!(delivered >= 1, "{name}: delivered to the PM planners");
+            let (events, _) = notices(db, "pm_duplicate_occurrence").await;
+            assert_eq!(events, 1, "{name}: one notice of the due date planned twice");
+            // Both occurrences and their work orders are kept as they were.
+            for occurrence in &occurrences {
+                assert_eq!(
+                    scalar_opt_text(
+                        db,
+                        "SELECT status FROM pm_occurrences WHERE entity_sync_id = ? AND linked_work_order_id IS NOT NULL",
+                        vec![(*occurrence).into()],
+                    )
+                    .await
+                    .as_deref(),
+                    Some("generated"),
+                    "{name}: {occurrence}"
+                );
+            }
+        }
+        let params = scalar_opt_text(
+            &a,
+            "SELECT message_params_json FROM notification_events WHERE message_key = 'pm_duplicate_occurrence'",
+            vec![],
+        )
+        .await
+        .expect("params");
+        let params: serde_json::Value = serde_json::from_str(&params).expect("json");
+        assert!(
+            params["work_order"].is_string() && params["other_work_order"].is_string(),
+            "{params}"
+        );
+        assert_ne!(params["version"], params["other_version"], "{params}");
     }
 }

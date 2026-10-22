@@ -403,6 +403,20 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "hand-over log not found after apply"))?;
             crate::permit::handover_roles::adopt_received_roles(conn, id).await
         }
+        // Two concurrent versions of a PM plan, or an occurrence due twice: the PM planners are told
+        // (`pm::version_clash`).
+        "pm_plan_versions" if inserted => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "version not found after insert"))?;
+            crate::pm::version_clash::after_received_version(conn, id).await
+        }
+        "pm_occurrences" if inserted => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "occurrence not found after insert"))?;
+            crate::pm::version_clash::after_received_occurrence(conn, id).await
+        }
         "user_dismissals" => {
             let id = located_row_id(conn, layout, row)
                 .await?
