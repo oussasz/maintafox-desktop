@@ -1099,10 +1099,10 @@ fn first_admin_retry() -> AppError {
 /// that the organisation has no user account on the server (`sync::plant_join`, CMMS Advisor
 /// decision 2026-10-21): a new PC of an existing plant gets that plant's accounts, never a second
 /// first administrator; the creation consumes that fact. A licence without sync (a single-PC
-/// plant, `plant_join::licence_syncs`) has no plant to join and skips that condition. The checks and the account, role and
-/// scope rows are one write transaction that holds the write lock from its start
-/// (`begin_write_transaction`): two submissions at once make one administrator, the other waits
-/// and gets the coded refusal.
+/// plant, `plant_join::licence_syncs`) has no plant to join and skips that condition. The checks
+/// and the account, role and scope rows are one write transaction that holds the write lock from
+/// its start (`begin_write_transaction`): two submissions at once make one administrator, the
+/// other waits and gets the coded refusal.
 /// The password meets the plant password policy (`builtin_admin::validate_first_admin_password`);
 /// the same transaction records the "first administrator created" marker, which keeps this screen
 /// closed for good; once committed, a built-in "admin" never used is retired
