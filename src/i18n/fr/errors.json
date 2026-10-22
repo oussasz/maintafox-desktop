@@ -153,7 +153,7 @@
     "GATE_INSP_SCHEDULE_TOO_MANY_ROUNDS": "Planification : génération arrêtée à 1000 rondes ; réduisez l'avance ou allongez l'intervalle.",
     "GATE_CURRENCY_IN_USE": "La devise ne peut pas être désactivée : elle est encore utilisée (stock, achats, budget ou imputations).",
     "GATE_CURRENCY_NOT_ACTIVE": "Devise refusée : elle n'est pas active dans la liste des devises (Données de référence › Devises). Choisissez une devise active.",
-    "GATE_FIN_CURRENCY_LOCKED": "Changement refusé : du stock, des réceptions ou des écritures sont déjà valorisés dans la devise de l'usine. La modifier changerait l'unité de tous les montants enregistrés.",
+    "GATE_FIN_CURRENCY_LOCKED": "Changement refusé : du stock, des réceptions ou des écritures sont déjà valorisés dans la devise de l'entreprise. La modifier changerait la valeur de tous les montants enregistrés.",
     "GATE_HOME_PERIOD_INVALID": "Période refusée : choisissez 7 ou 30 jours.",
     "GATE_NOTIFICATION_AUDIENCE_INVALID": "Notification refusée : le destinataire choisi n'existe pas.",
     "GATE_NOTIFICATION_CONFIG_INVALID": "Règle de notification refusée : un délai ou un réglage est hors limites. Vérifiez les valeurs saisies.",

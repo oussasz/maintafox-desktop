@@ -118,7 +118,8 @@ export function initI18n(): void {
     });
   issueNamespacesPromise = ready
     .then(() => i18n.loadNamespaces([...ISSUE_NAMESPACES]))
-    .then(() => undefined);
+    .then(() => undefined)
+    .catch(() => undefined);
 }
 
 export { i18n };

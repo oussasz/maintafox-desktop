@@ -153,7 +153,7 @@
     "GATE_NOTIFICATION_ACK_NOT_YOURS": "This safety notice is not yours or was already acknowledged.",
     "GATE_CURRENCY_IN_USE": "The currency cannot be deactivated: it is still in use (stock, purchasing, budget or settlements).",
     "GATE_CURRENCY_NOT_ACTIVE": "Currency refused: it is not active in the currency list (Reference data › Currencies). Choose an active currency.",
-    "GATE_FIN_CURRENCY_LOCKED": "Change refused: stock, receipts or postings are already valued in the plant currency. Changing it would relabel every stored amount.",
+    "GATE_FIN_CURRENCY_LOCKED": "Change refused: stock, receipts or postings are already valued in the company currency. Changing it would relabel every stored amount.",
     "GATE_HOME_PERIOD_INVALID": "Period refused: choose 7 or 30 days.",
     "GATE_NOTIFICATION_AUDIENCE_INVALID": "Notification refused: the chosen recipient does not exist.",
     "GATE_NOTIFICATION_CONFIG_INVALID": "Notification rule refused: a delay or a setting is out of range. Check the values entered.",
