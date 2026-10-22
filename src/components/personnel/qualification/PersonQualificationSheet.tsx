@@ -112,8 +112,11 @@ export function PersonQualificationSheet({
   // Each part loads on its own, so one refused or failed list does not empty the other.
   const canReadCerts = useCanReadList("certificationTypes");
   const permissionsLoading = usePermissionsLoading();
+  // Recording or verifying a certification also needs the certification list (trn.view).
   const canCertify = can(P.TRN_CERTIFY) && canReadCerts;
+  // Validating a skill is `upsert_personnel_skill` (per.manage + trn.certify): no trn.view.
   const canManageSkills = can(P.PER_MANAGE);
+  const canValidateSkills = canManageSkills && can(P.TRN_CERTIFY);
   const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [certs, setCerts] = useState<PersonnelCertification[]>([]);
@@ -578,7 +581,7 @@ export function PersonQualificationSheet({
                       )}
                     </td>
                     <td className="py-1.5 text-right">
-                      {canCertify && !s.is_validated ? (
+                      {canValidateSkills && !s.is_validated ? (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -650,7 +653,7 @@ export function PersonQualificationSheet({
                 onChange={(e) => setSkillDraft({ ...skillDraft, valid_to: e.target.value })}
               />
             </FormField>
-            {canCertify ? (
+            {canValidateSkills ? (
               <label className="flex items-center gap-2 text-sm sm:col-span-3">
                 <Switch
                   checked={skillDraft.validate}

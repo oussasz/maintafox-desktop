@@ -219,7 +219,18 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, ge
     unlistenStatus = null;
     removeNetworkListeners?.();
     removeNetworkListeners = null;
-    set({ initialized: false });
+    // The next user starts without sync.view and without the previous worker status, so no
+    // background inbox refresh runs for them before the top bar has read their rights.
+    set({
+      initialized: false,
+      canViewSync: false,
+      worker: null,
+      conflictInbox: [],
+      replayHistoryCount: 0,
+      rejectedOutboxCount: 0,
+      deferredInboxCount: 0,
+      lastSummary: null,
+    });
   },
 
   runSyncNow: async () => {

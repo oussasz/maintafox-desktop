@@ -24,7 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { mfInput } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
-import { useReadableLists } from "@/lib/list-access";
+import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import {
@@ -153,8 +153,10 @@ export function PersonnelCreateDialog() {
   const canCreateUsers = can(P.ADM_USERS);
 
   // Each picker list has its own read right (organisation, personnel, training): a list the user
-  // may not read is not asked for and its picker says which right is missing. Read through a ref
-  // so the form is not reset when the rights arrive after the dialog opened.
+  // may not read is not asked for and its picker says which right is missing. Each list loads
+  // while the dialog is open once its right is known (still loading is not "not readable": the
+  // list is asked as soon as the rights arrive). One list failing leaves only that picker empty.
+  const permissionsLoading = usePermissionsLoading();
   const readable = useReadableLists([
     "orgNodes",
     "companies",
@@ -165,34 +167,66 @@ export function PersonnelCreateDialog() {
   const readableRef = useRef(readable);
   readableRef.current = readable;
 
-  const loadLookups = useCallback(async () => {
-    const may = readableRef.current;
-    // One list failing leaves only that picker empty.
-    await Promise.allSettled([
-      may.orgNodes
-        ? getOrgDesignerSnapshot().then((snap) => {
-            const nodes = snap.nodes.filter((n) => n.status === "active");
-            const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
-            setEntityNodes(
-              entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
-            );
-          })
-        : null,
-      may.companies
-        ? listExternalCompanies({}).then((ext) =>
-            setCompanies(
-              ext.filter((c) => c.is_active !== 0).map((c) => ({ id: c.id, name: c.name })),
-            ),
-          )
-        : null,
-      may.people
-        ? listPersonnel({ limit: 2000, offset: 0 }).then((personnel) =>
-            setPersonnelList(personnel.items),
-          )
-        : null,
-      may.certificationTypes ? listCertificationTypes().then(setCertTypes) : null,
-    ]);
-  }, []);
+  useEffect(() => {
+    if (!showCreateForm || !readable.orgNodes) return;
+    let stale = false;
+    getOrgDesignerSnapshot()
+      .then((snap) => {
+        if (stale) return;
+        const nodes = snap.nodes.filter((n) => n.status === "active");
+        const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
+        setEntityNodes(
+          entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.orgNodes]);
+
+  useEffect(() => {
+    if (!showCreateForm || !readable.companies) return;
+    let stale = false;
+    listExternalCompanies({})
+      .then((ext) => {
+        if (!stale) {
+          setCompanies(
+            ext.filter((c) => c.is_active !== 0).map((c) => ({ id: c.id, name: c.name })),
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.companies]);
+
+  useEffect(() => {
+    if (!showCreateForm || !readable.people) return;
+    let stale = false;
+    listPersonnel({ limit: 2000, offset: 0 })
+      .then((personnel) => {
+        if (!stale) setPersonnelList(personnel.items);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.people]);
+
+  useEffect(() => {
+    if (!showCreateForm || !readable.certificationTypes) return;
+    let stale = false;
+    listCertificationTypes()
+      .then((rows) => {
+        if (!stale) setCertTypes(rows);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.certificationTypes]);
 
   const handleEntityChange = useCallback(async (nextEntityId: number | null) => {
     setEntityId(nextEntityId);
@@ -245,11 +279,18 @@ export function PersonnelCreateDialog() {
     setLocalError(null);
   }, []);
 
+  // The form is reset and prefilled once per opening, when the rights are known (the team list of
+  // the edited person needs them); a later reload of the rights does not wipe what was typed.
+  const preparedForOpen = useRef(false);
   useEffect(() => {
-    if (!showCreateForm) return;
+    if (!showCreateForm) {
+      preparedForOpen.current = false;
+      return;
+    }
+    if (permissionsLoading || preparedForOpen.current) return;
+    preparedForOpen.current = true;
     resetForm();
     void (async () => {
-      await loadLookups();
       const editing = usePersonnelStore.getState().editingPersonnel;
       if (!editing) return;
       setFullName(editing.full_name);
@@ -273,7 +314,7 @@ export function PersonnelCreateDialog() {
       setPhone(editing.phone ?? "");
       setNotes(editing.notes ?? "");
       setEntityId(editing.primary_entity_id);
-      if (editing.primary_entity_id == null) {
+      if (editing.primary_entity_id == null || !readableRef.current.teams) {
         setCrewOptions([]);
         setTeamId(null);
         return;
@@ -294,7 +335,7 @@ export function PersonnelCreateDialog() {
         setCrewsLoading(false);
       }
     })();
-  }, [showCreateForm, resetForm, loadLookups]);
+  }, [showCreateForm, permissionsLoading, resetForm]);
 
   // Seed skills/certs when position changes
   const handlePositionChange = useCallback(
