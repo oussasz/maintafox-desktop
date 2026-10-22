@@ -964,6 +964,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // A site given to an old record without one (`org::site_assignment`).
                         ("intervention_request", "intervention_requests"),
                         ("planning_window", "planning_windows"),
+                        // A PM plan version renumbered after a sync clash (`pm::version_clash`).
+                        ("pm_plan_version", "pm_plan_versions"),
                         // Device, licence, activation, export, repair and import records stay on
                         // the device they belong to.
                         ("trusted_device", LOCAL_ROW),
