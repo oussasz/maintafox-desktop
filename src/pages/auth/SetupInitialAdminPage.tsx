@@ -14,6 +14,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { ActivationStepper } from "@/components/auth/activation/ActivationStepper";
 import { formatLicenseDate } from "@/components/auth/activation/OrganizationLicenseCard";
 import { AuthField } from "@/components/auth/shell/AuthField";
 import { AuthAlert, AuthButton } from "@/components/auth/shell/AuthPrimitives";
@@ -197,6 +198,17 @@ export function SetupInitialAdminPage() {
 
   return (
     <AuthShell width="sm">
+      <div className="mb-6">
+        <ActivationStepper
+          current="finish"
+          progressLabel={t("activation.stepOf", { current: 3, total: 3 })}
+          labels={{
+            validate: t("activation.steps.validate"),
+            activate: t("activation.steps.activate"),
+            finish: t("activation.steps.finish"),
+          }}
+        />
+      </div>
       {canCreate ? (
         <>
           <h1 className={mfAuth.title}>{t("setupAdmin.title")}</h1>

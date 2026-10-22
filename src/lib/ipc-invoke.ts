@@ -10,7 +10,12 @@ import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 import { toErrorMessage } from "@/utils/errors";
 
 /** Commands invoked during bootstrap where a toast would be noisy or misleading. */
-const SILENT_IPC_COMMANDS = new Set(["health_check", "get_app_info", "get_task_status"]);
+const SILENT_IPC_COMMANDS = new Set([
+  "health_check",
+  "get_app_info",
+  "get_task_status",
+  "set_window_mode",
+]);
 
 type AuthLockMode = "session" | "permission" | "unknown";
 
