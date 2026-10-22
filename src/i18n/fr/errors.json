@@ -235,8 +235,7 @@
     "GATE_FIN_TENANT_CURRENCY_MISSING": "La devise de l'entreprise n'est pas configurée (Paramètres › Localisation).",
     "GATE_FIN_CURRENCY_CODE_INVALID": "Ce code de devise n'est pas valide : utilisez trois lettres (par exemple EUR, DZD).",
     "GATE_INV_PERIOD_RANGE": "Le début de la période doit être antérieur ou égal à sa fin.",
-    "GATE_FIN_EXPORT_KIND": "Type d'export refusé : choisissez les réalisés comptabilisés ou les révisions approuvées.",
-    "GATE_INV_COUNT_VARIANCE_REASON": "Comptabilisation refusée : une ligne en écart doit avoir un motif d'écart."
+    "GATE_FIN_EXPORT_KIND": "Type d'export refusé : choisissez les réalisés comptabilisés ou les révisions approuvées."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "Cet enregistrement appartient à un site hors de vos rôles.",

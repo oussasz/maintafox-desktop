@@ -235,8 +235,7 @@
     "GATE_FIN_TENANT_CURRENCY_MISSING": "The company currency is not configured (Settings > Localization).",
     "GATE_FIN_CURRENCY_CODE_INVALID": "This currency code is not valid: use three letters (for example EUR, DZD).",
     "GATE_INV_PERIOD_RANGE": "The period start must be on or before its end.",
-    "GATE_FIN_EXPORT_KIND": "Export type refused: choose posted actuals or approved revisions.",
-    "GATE_INV_COUNT_VARIANCE_REASON": "Posting refused: a line with a variance must have a variance reason."
+    "GATE_FIN_EXPORT_KIND": "Export type refused: choose posted actuals or approved revisions."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",
