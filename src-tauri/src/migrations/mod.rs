@@ -235,6 +235,7 @@ mod m20261022_000252_sync_wait_reasons;
 mod m20261022_000253_pm_plan_code_clash;
 pub(crate) mod m20261022_000254_pm_version_number_not_unique;
 mod m20261022_000255_wo_permit_safety_origin;
+mod m20261022_000256_wo_task_outcome_evidence;
 mod m20261022_000257_stock_reserved_dirty;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
@@ -479,6 +480,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261022_000253_pm_plan_code_clash::Migration),
             Box::new(m20261022_000254_pm_version_number_not_unique::Migration),
             Box::new(m20261022_000255_wo_permit_safety_origin::Migration),
+            Box::new(m20261022_000256_wo_task_outcome_evidence::Migration),
             Box::new(m20261022_000257_stock_reserved_dirty::Migration),
         ]
     }
