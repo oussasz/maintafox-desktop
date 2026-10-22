@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { mfAlert, mfInput, mfTable } from "@/design-system/tokens";
+import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
@@ -46,15 +47,6 @@ import type {
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-function formatDate(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
 function formatDuration(seconds: number | null): string {
   if (seconds == null) return "—";
   const h = Math.floor(seconds / 3600);
@@ -70,6 +62,8 @@ function formatDuration(seconds: number | null): string {
  */
 export function ProfileSettingsPanel() {
   const { t } = useTranslation("admin");
+  const { formatDate: formatDay } = useFormatters();
+  const formatDate = (iso: string | null) => (iso ? formatDay(iso) : "—");
   const woOpenRuleText = useWoOpenRuleText();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -992,14 +986,7 @@ function TrustedDevicesDialog({
     }
   };
 
-  const formatDeviceDate = (iso: string) =>
-    new Date(iso).toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  const { formatDateTime: formatDeviceDate } = useFormatters();
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>

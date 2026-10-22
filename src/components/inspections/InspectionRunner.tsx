@@ -130,8 +130,8 @@ function isTyping(target: EventTarget | null): boolean {
 
 export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunnerProps) {
   const { t } = useTranslation("inspections");
-  const { can, canAny } = usePermissions();
   const { formatNumber } = useFormatters();
+  const { can, canAny } = usePermissions();
   const [runner, setRunner] = useState<InspectionRoundRunner | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [index, setIndex] = useState(0);
@@ -331,9 +331,10 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
   const warningBand = cp ? describeBand(cp.warning_min, cp.warning_max) : null;
   const bandText = (b: ReturnType<typeof describeBand>) => {
     if (b == null) return "";
-    if (b.kind === "between") return t("runner.between", { min: b.min, max: b.max });
-    if (b.kind === "below") return t("runner.below", { value: b.max });
-    return t("runner.above", { value: b.min });
+    if (b.kind === "between")
+      return t("runner.between", { min: formatNumber(b.min), max: formatNumber(b.max) });
+    if (b.kind === "below") return t("runner.below", { value: formatNumber(b.max) });
+    return t("runner.above", { value: formatNumber(b.min) });
   };
   const answerLabel = (s: ResultStatus) =>
     cp?.check_type === "boolean" && (s === "pass" || s === "fail")

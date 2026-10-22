@@ -44,11 +44,15 @@ export interface BudgetCockpitViewProps {
   onAnalyseVariance: (row: BudgetCockpitRow, cockpit: BudgetCockpit) => void;
 }
 
-/** CSV of the cockpit rows (semicolon separated, figures unformatted for spreadsheets). */
+/**
+ * CSV of the cockpit rows (semicolon separated). Figures use the app language's decimal
+ * separator without grouping (a French spreadsheet reads "200,00" as a number, "200.00" as text).
+ */
 export function cockpitCsv(
   cockpit: BudgetCockpit,
   header: string[],
   bucketLabel: (b: string) => string,
+  formatAmount: (value: number) => string,
 ): string {
   const esc = (v: string) => (/[;"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   const lines = [header.map(esc).join(";")];
@@ -58,11 +62,11 @@ export function cockpitCsv(
         r.cost_center_code,
         r.cost_center_name,
         bucketLabel(r.bucket),
-        r.budget.toFixed(2),
-        r.committed.toFixed(2),
-        r.actual.toFixed(2),
-        r.forecast.toFixed(2),
-        r.variance.toFixed(2),
+        formatAmount(r.budget),
+        formatAmount(r.committed),
+        formatAmount(r.actual),
+        formatAmount(r.forecast),
+        formatAmount(r.variance),
       ]
         .map(esc)
         .join(";"),
@@ -82,7 +86,7 @@ export function BudgetCockpitView({
   onAnalyseVariance,
 }: BudgetCockpitViewProps) {
   const { t } = useTranslation("budget");
-  const { formatCurrency, formatPercent } = useFormatters();
+  const { formatCurrency, formatPercent, formatDecimalInput } = useFormatters();
   const { can } = usePermissions();
   const [cockpit, setCockpit] = useState<BudgetCockpit | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -251,6 +255,7 @@ export function BudgetCockpitView({
         t("cockpit.col.variance"),
       ],
       bucketLabel,
+      (n) => formatDecimalInput(n, { decimals: 2, fixed: true }),
     );
     try {
       const path = await saveBlobWithDialog(

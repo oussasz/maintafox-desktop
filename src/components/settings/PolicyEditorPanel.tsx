@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useFormatters } from "@/hooks/use-formatters";
 import { useStepUp } from "@/hooks/use-step-up";
 import { type AppErrorDescription, describeAppError } from "@/lib/app-error";
 import {
@@ -162,6 +163,7 @@ export function PolicyEditorPanel({
   onToast,
 }: PolicyEditorPanelProps) {
   const { t } = useTranslation("settings");
+  const { formatDateTime } = useFormatters();
   const tText = t as unknown as (key: string, options?: Record<string, unknown>) => string;
   // Session and password policies need a recent re-authentication (the backend requires it):
   // the step-up dialog opens when it is missing, then the activation runs.
@@ -490,7 +492,7 @@ export function PolicyEditorPanel({
                   })}
                   {activeSnapshot.activated_at &&
                     ` — ${t("policy.activatedAt", {
-                      date: new Date(activeSnapshot.activated_at).toLocaleString(),
+                      date: formatDateTime(activeSnapshot.activated_at),
                     })}`}
                 </p>
               )}

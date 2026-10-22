@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { listActiveSessions, revokeSession } from "@/services/rbac-service";
@@ -47,6 +48,7 @@ function TrustBadge({ status, t }: { status: string; t: (k: string, d: string) =
 
 export function SessionVisibilityPanel() {
   const { t } = useTranslation("admin");
+  const { formatDateTime } = useFormatters();
   const { can } = usePermissions();
   // The global toast host shows them (a local useToast list was never rendered here).
   const toast = pushAppToast;
@@ -130,11 +132,7 @@ export function SessionVisibilityPanel() {
         accessorKey: "session_started_at",
         header: t("sessions.columns.sessionStart", "Started"),
         cell: ({ row }) => {
-          try {
-            return new Date(row.original.session_started_at).toLocaleString();
-          } catch {
-            return row.original.session_started_at;
-          }
+          return formatDateTime(row.original.session_started_at);
         },
       },
       {
@@ -143,11 +141,7 @@ export function SessionVisibilityPanel() {
         cell: ({ row }) => {
           const v = row.original.last_activity_at;
           if (!v) return "—";
-          try {
-            return new Date(v).toLocaleString();
-          } catch {
-            return v;
-          }
+          return formatDateTime(v);
         },
       },
       {
@@ -185,7 +179,7 @@ export function SessionVisibilityPanel() {
         },
       },
     ],
-    [t, can],
+    [t, can, formatDateTime],
   );
 
   return (
