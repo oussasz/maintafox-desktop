@@ -158,3 +158,33 @@ describe("appErrorLines", () => {
     expect(lines).toEqual(["Notes obligatoires"]);
   });
 });
+
+describe("details that carry their own code and parameters", () => {
+  it("translates a GATE detail from its code and fills its parameters", async () => {
+    await i18n.changeLanguage("fr");
+    const lines = appErrorLines({
+      code: "VALIDATION_FAILED",
+      message: "Validation failed: GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_REASON_REQUIRED:min_len=10",
+      details: [
+        {
+          code: "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_REASON_REQUIRED",
+          params: { min_len: "10" },
+          message: "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_REASON_REQUIRED:min_len=10",
+        },
+      ],
+    });
+    expect(lines).toEqual([
+      String(i18n.t("errors:gateError.GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_REASON_REQUIRED")),
+    ]);
+  });
+
+  it("never shows the code of a GATE detail that has no text", async () => {
+    await i18n.changeLanguage("fr");
+    const lines = appErrorLines({
+      code: "VALIDATION_FAILED",
+      message: "Validation failed: GATE_NO_TEXT_YET: sentence",
+      details: [{ code: "GATE_NO_TEXT_YET", params: {}, message: "GATE_NO_TEXT_YET: sentence" }],
+    });
+    expect(lines).toEqual([String(i18n.t("errors:generic.unexpected"))]);
+  });
+});
