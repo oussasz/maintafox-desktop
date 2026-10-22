@@ -281,6 +281,11 @@ pub enum SyncCommand {
     Reevaluate,
     /// The webview saw the network come back.
     NetworkOnline,
+    /// The signed-out first-start screen asks to join the plant (`request_plant_join`): run a
+    /// cycle soon, but never sooner than `network_wake_min_spacing` after the last one started,
+    /// never before a server `Retry-After`, never during a pause, and without forgetting the
+    /// failure count (unlike `RunNow`). Repeated requests therefore coalesce into one cycle.
+    JoinPlant,
 }
 
 struct HandleInner {
@@ -494,6 +499,21 @@ enum MediaFailure {
 }
 
 /// Mirrors the server's `assertTenantOwnsObjectKey`: `{env}/media/{tenant}/…`.
+/// When a plant-join request (`SyncCommand::JoinPlant`) may run the next cycle: `None` during a
+/// pause; otherwise the wake spacing after the last cycle started, and not before the server's
+/// `Retry-After` (counted from the end of the cycle that received it) has passed.
+fn join_wake_at(outcome: &CycleOutcome, started: Instant, ended: Instant, timing: &SyncTiming) -> Option<Instant> {
+    let spaced = started + timing.network_wake_min_spacing;
+    match outcome {
+        CycleOutcome::Paused { .. } => None,
+        CycleOutcome::Retry {
+            retry_after: Some(after),
+            ..
+        } => Some(spaced.max(ended + *after)),
+        _ => Some(spaced),
+    }
+}
+
 fn object_key_in_tenant(object_key: &str, tenant_id: &str) -> bool {
     let parts: Vec<&str> = object_key.split('/').collect();
     parts.len() >= 4 && parts[1] == "media" && parts[2] == tenant_id
@@ -573,7 +593,8 @@ impl SyncWorker {
                 () = cancel.cancelled() => break 'cycles,
                 result = self.cycle_once() => result,
             };
-            let mut deadline = Instant::now() + wait;
+            let cycle_ended = Instant::now();
+            let mut deadline = cycle_ended + wait;
             loop {
                 tokio::select! {
                     () = cancel.cancelled() => break 'cycles,
@@ -590,6 +611,11 @@ impl SyncWorker {
                         Some(SyncCommand::NetworkOnline) => {
                             if matches!(outcome, CycleOutcome::Offline { .. } | CycleOutcome::Retry { .. }) {
                                 deadline = deadline.min(cycle_started + self.timing.network_wake_min_spacing);
+                            }
+                        }
+                        Some(SyncCommand::JoinPlant) => {
+                            if let Some(at) = join_wake_at(&outcome, cycle_started, cycle_ended, &self.timing) {
+                                deadline = deadline.min(at);
                             }
                         }
                     },
@@ -715,6 +741,11 @@ impl SyncWorker {
             }
             store::set_paused_until(&self.db, None).await?;
         }
+        // The organisation this pull runs for, read before the activation token is: a complete pull
+        // records "the server confirmed no user accounts" for it only, and only if the activation
+        // is still the same at the end (`after_complete_pull`), so a swap of activation during the
+        // cycle can never record the fact for the wrong organisation (`plant_join`).
+        let pulled_for = crate::commands::product_license::get_activation_claim_tenant_id(&self.db).await?;
         let token = match self.access.access(&self.db).await? {
             SyncAccess::NotLicensed => {
                 return Ok(CycleOutcome::Blocked {
@@ -752,9 +783,6 @@ impl SyncWorker {
             s.next_attempt_at = None;
         });
         store::record_attempt(&self.db).await?;
-        // The organisation this pull runs for, read before any request: a complete pull records
-        // "the server confirmed no user accounts" for it only (`plant_join`).
-        let pulled_for = crate::commands::product_license::get_activation_claim_tenant_id(&self.db).await?;
 
         let mut snapshot_done = false;
         if !has_v2_checkpoint(&self.db).await? {

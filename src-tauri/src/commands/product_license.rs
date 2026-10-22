@@ -521,6 +521,12 @@ pub async fn get_activation_claim_tenant_id(db: &DatabaseConnection) -> AppResul
     Ok(record.activation_claim.as_ref().map(|claim| claim.tenant_id.clone()))
 }
 
+/// When the licence key of the current activation was entered on this PC (`submitted_at`, set by
+/// every key entry and kept by reconciliations); `None` when no key was entered.
+pub(crate) async fn activation_submitted_at(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    Ok(load_state_record_from_db(db).await?.map(|record| record.submitted_at))
+}
+
 pub async fn get_activation_claim_record(db: &DatabaseConnection) -> AppResult<Option<ProductActivationClaimRecord>> {
     let Some(record) = load_state_record_from_db(db).await? else {
         return Ok(None);
@@ -998,10 +1004,12 @@ pub(crate) async fn get_activation_bootstrap_state_in(
     })
 }
 
-/// The first-start screen joins the plant: the sync worker runs a cycle now instead of waiting for
+/// The first-start screen joins the plant: the sync worker runs a cycle soon instead of waiting for
 /// its next re-check (it reads the activation made a moment ago), and again on "Retry". Signed out,
-/// so only while this PC has no administrator: afterwards sync is run by signed-in operators
-/// (`run_sync_now`, `sync.view`).
+/// so only while this PC has no administrator (afterwards sync is run by signed-in operators:
+/// `run_sync_now`, `sync.view`), and as `SyncCommand::JoinPlant`, not `RunNow`: repeated calls
+/// coalesce, keep the failure count and never run before the wake spacing or a server
+/// `Retry-After`.
 #[tauri::command]
 pub async fn request_plant_join(state: State<'_, AppState>) -> AppResult<()> {
     if get_activation_claim_tenant_id(&state.db).await?.is_none() {
@@ -1010,7 +1018,7 @@ pub async fn request_plant_join(state: State<'_, AppState>) -> AppResult<()> {
     if plant_has_administrator(&state.db).await? {
         return Err(first_admin_exists());
     }
-    state.sync_worker.send(crate::sync::transport::SyncCommand::RunNow);
+    state.sync_worker.send(crate::sync::transport::SyncCommand::JoinPlant);
     Ok(())
 }
 

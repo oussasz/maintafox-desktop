@@ -1570,3 +1570,88 @@ async fn without_a_complete_pull_the_first_administrator_is_refused() {
     assert_eq!(outcome, CycleOutcome::Synced { more_work: true });
     assert!(!confirmed_empty(&db).await);
 }
+
+/// The first-start screen's join requests (`SyncCommand::JoinPlant`): repeated requests while
+/// offline coalesce into one early cycle and keep the failure count (unlike `RunNow`).
+#[tokio::test]
+async fn join_requests_coalesce_and_keep_the_backoff_count() {
+    let db = setup_db().await;
+    seed_checkpoint(&db, "v2.start").await;
+    let addr = {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe");
+        probe.local_addr().expect("addr")
+    };
+    let timing = SyncTiming {
+        retry_base: Duration::from_secs(60),
+        retry_max: Duration::from_secs(60),
+        ..test_timing()
+    };
+    let (worker, handle) = make_worker(&db, &format!("http://{addr}"), FixedAccess::new(TOKEN), timing);
+    let commands = handle.take_receiver().expect("receiver");
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn(worker.run(commands, cancel.clone()));
+    let mut status = handle.subscribe();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        status.wait_for(|s| s.state == SyncWorkerState::Offline),
+    )
+    .await
+    .expect("offline")
+    .expect("status channel");
+
+    for _ in 0..3 {
+        handle.send(SyncCommand::JoinPlant);
+    }
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        status.wait_for(|s| s.consecutive_failures == 2),
+    )
+    .await
+    .expect("one early cycle, failure count kept")
+    .expect("status channel");
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        handle.status().consecutive_failures,
+        2,
+        "the three requests made one cycle"
+    );
+
+    cancel.cancel();
+    let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
+}
+
+/// A join request never runs a cycle before the server's `Retry-After`.
+#[tokio::test]
+async fn a_join_request_waits_for_retry_after() {
+    let db = setup_db().await;
+    seed_checkpoint(&db, "v2.start").await;
+    let stub = start_stub(|_| Reply::Json {
+        status: 429,
+        body: json!({ "error": "rate_limited" }),
+        headers: vec![("Retry-After", "30".to_string())],
+    })
+    .await;
+    let (worker, handle) = make_worker(&db, &stub.base_url, FixedAccess::new(TOKEN), test_timing());
+    let commands = handle.take_receiver().expect("receiver");
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn(worker.run(commands, cancel.clone()));
+    let mut status = handle.subscribe();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        status.wait_for(|s| s.state == SyncWorkerState::Retrying),
+    )
+    .await
+    .expect("rate limited")
+    .expect("status channel");
+
+    handle.send(SyncCommand::JoinPlant);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        stub.requests_to("/api/v1/sync/exchange").len(),
+        1,
+        "Retry-After honoured"
+    );
+
+    cancel.cancel();
+    let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
+}

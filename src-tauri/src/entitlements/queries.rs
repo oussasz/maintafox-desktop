@@ -724,6 +724,12 @@ pub async fn licence_includes_capability(db: &DatabaseConnection, capability: &s
         .unwrap_or(true))
 }
 
+/// When the envelope in force was last verified and applied on this PC (`verified_at`, refreshed by
+/// every apply of it, `NULL` when its signature did not verify); `None` without an envelope.
+pub async fn active_envelope_verified_at(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    Ok(active_envelope(db).await?.and_then(|envelope| envelope.verified_at))
+}
+
 fn capability_from_permission(permission: &str) -> Option<&'static str> {
     // Module-level commercial capabilities. CRUD remains RBAC-owned.
     if permission.starts_with("eq.") {

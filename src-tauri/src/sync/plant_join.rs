@@ -16,10 +16,10 @@
 //! - names the organisation the pull ran for (tenant id of the activation): a fact recorded for
 //!   another organisation counts for nothing;
 //! - lives in `system_config`, which is local to this PC and never synchronised;
-//! - stops counting as soon as a user account exists here or arrives in the inbox (checked on
-//!   every read), is consumed by the creation of the first administrator ([`forget`], in the same
-//!   transaction), and is erased by a local data reset, which keeps `system_config` but wipes the
-//!   accounts and the sync checkpoint.
+//! - stops counting as soon as a user account exists here or is received (inbox or sync conflict;
+//!   checked on every read), is consumed by the creation of the first administrator ([`forget`], in
+//!   the same transaction), and is erased by a local data reset, which keeps `system_config` but
+//!   wipes the accounts and the sync checkpoint.
 //!
 //! The dev-only built-in "admin" account (seeded identity, `auth::builtin_admin`) is never counted:
 //! release builds do not create it, and in a development build every PC has it.
@@ -28,7 +28,8 @@
 //! pull will ever run, so the first administrator may be created at once ([`licence_syncs`]). That
 //! is read from the licence's capability map (the entitlement source the worker's "not licensed"
 //! comes from), never from the worker status, so a transient status cannot open the creation; a
-//! licence with sync that is suspended, revoked or expired still needs the confirmed pull.
+//! licence with sync that is suspended, revoked or expired still needs the confirmed pull, and so
+//! does a no-sync envelope older than the current activation (it may belong to an earlier one).
 
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
@@ -43,14 +44,34 @@ pub const SERVER_CONFIRMED_NO_ACCOUNTS_KEY: &str = "server_confirmed_no_user_acc
 
 /// Whether the licence includes sync, i.e. this PC belongs to a plant it must join before a first
 /// administrator is created (`entitlements::queries::licence_includes_capability`, whatever the
-/// entitlement state). `false`: a single-PC plant.
+/// entitlement state). `false`, a single-PC plant, only when the envelope in force says so and was
+/// verified and applied here at or after the current activation's key entry (same second
+/// included): envelopes carry no organisation and are not cleared when the activation changes, so
+/// an envelope left by an earlier activation must not open the creation on a PC re-activated into
+/// a plant that syncs. Every doubt (no envelope, unverified, an unreadable time, no key entry)
+/// counts as syncing: the confirmed pull is then required, which a fresh envelope lifts.
 pub async fn licence_syncs(db: &DatabaseConnection) -> AppResult<bool> {
-    crate::entitlements::queries::licence_includes_capability(db, "sync").await
+    if crate::entitlements::queries::licence_includes_capability(db, "sync").await? {
+        return Ok(true);
+    }
+    let verified_at = crate::entitlements::queries::active_envelope_verified_at(db).await?;
+    let entered_at = crate::commands::product_license::activation_submitted_at(db).await?;
+    let seconds = |at: Option<String>| {
+        at.and_then(|at| chrono::DateTime::parse_from_rfc3339(&at).ok())
+            .map(|at| at.timestamp())
+    };
+    Ok(match (seconds(verified_at), seconds(entered_at)) {
+        // `verified_at` is stored to the second; the key entry time is truncated to match.
+        (Some(verified), Some(entered)) => verified < entered,
+        _ => true,
+    })
 }
 
-/// Whether this PC holds a user account, or has received one (inbox, any status: a row waiting,
-/// refused or superseded still means the server has accounts). The dev built-in account is left
-/// out, by its seeded identity and its username together (`auth::builtin_admin`).
+/// Whether this PC holds a user account, or has received one: in the inbox (any status: a row
+/// waiting, refused or superseded still means the server has accounts) or only as a sync conflict
+/// (a received row with an invalid payload or hash is recorded in `sync_conflicts` and never
+/// reaches the inbox, `queries::ingest_inbound_items`). The dev built-in account is left out, by
+/// its seeded identity and its username together (`auth::builtin_admin`).
 async fn accounts_present(conn: &impl ConnectionTrait) -> AppResult<bool> {
     let builtin_sync_id = builtin_admin_entity_sync_id();
     let row = conn
@@ -63,9 +84,14 @@ async fn accounts_present(conn: &impl ConnectionTrait) -> AppResult<bool> {
                  OR EXISTS (
                      SELECT 1 FROM sync_inbox
                       WHERE entity_type = 'user_accounts' AND entity_sync_id <> ?
+                 )
+                 OR EXISTS (
+                     SELECT 1 FROM sync_conflicts
+                      WHERE entity_type = 'user_accounts' AND entity_sync_id <> ?
                  ) AS present",
             [
                 BUILTIN_ADMIN_USERNAME.into(),
+                builtin_sync_id.clone().into(),
                 builtin_sync_id.clone().into(),
                 builtin_sync_id.into(),
             ],
@@ -304,11 +330,15 @@ mod tests {
 
     // ── Single-PC licence (no sync): no plant to join ────────────────────────────────────────
 
-    /// An activated PC whose signed licence has these capabilities and this state; no pull yet.
+    /// A PC activated, then given a signed licence with these capabilities and this state (as a key
+    /// entry applies the envelope its claim carries); no pull yet.
     async fn licensed_pc(capabilities_json: &str, state: &str) -> sea_orm::DatabaseConnection {
         use crate::entitlements::domain::{EntitlementEnvelopeInput, ENTITLEMENT_SIGNATURE_ALG};
         use crate::entitlements::test_support::{now_rfc3339, sign_envelope};
         let db = crate::db::test_db::seeded().await;
+        crate::commands::product_license::record_activation_claim_for_tests(&db, PLANT, "fp-1", "token-1")
+            .await
+            .expect("claim");
         crate::license::security::ensure_default_licensing_trust_keys(&db)
             .await
             .expect("trust keys");
@@ -336,9 +366,6 @@ mod tests {
         crate::entitlements::queries::apply_entitlement_envelope(&db, envelope)
             .await
             .expect("envelope");
-        crate::commands::product_license::record_activation_claim_for_tests(&db, PLANT, "fp-1", "token-1")
-            .await
-            .expect("claim");
         db
     }
 
@@ -430,5 +457,81 @@ mod tests {
             );
             create_first_admin(&db).await.expect("confirmed empty");
         }
+    }
+
+    /// A no-sync envelope left from an earlier activation (verified and applied before the current
+    /// key entry) never opens the single-PC shortcut: the PC may have been re-activated into a
+    /// plant that syncs. A fresh envelope verified after the key entry does.
+    #[tokio::test]
+    async fn a_no_sync_envelope_older_than_the_activation_counts_as_syncing() {
+        let db = licensed_pc(r#"{"sync":false}"#, "active").await;
+        assert!(!licence_syncs(&db).await.expect("licence"), "fresh: single-PC");
+        db.execute(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "UPDATE entitlement_envelopes SET verified_at = '2020-01-01T00:00:00Z'",
+        ))
+        .await
+        .expect("age the envelope");
+        assert!(
+            licence_syncs(&db).await.expect("licence"),
+            "earlier activation's envelope"
+        );
+        let worker = worker_in(SyncWorkerState::Blocked, Some("not_licensed"));
+        assert_eq!(
+            join_state_of(&db, &worker).await,
+            Some(PlantJoinState::ConnectionNeeded)
+        );
+        let err = create_first_admin(&db).await.expect_err("stale envelope");
+        assert_eq!(code_of(&err), Some("FIRST_ADMIN_PLANT_JOIN_REQUIRED"), "{err:?}");
+        // Not verified at all: syncing too.
+        db.execute(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "UPDATE entitlement_envelopes SET verified_at = NULL",
+        ))
+        .await
+        .expect("unverify");
+        assert!(licence_syncs(&db).await.expect("licence"), "unverified envelope");
+    }
+
+    /// A received account recorded only as a sync conflict (invalid payload or hash: it never
+    /// reaches the inbox) still means the server has accounts.
+    #[tokio::test]
+    async fn an_account_recorded_only_as_a_sync_conflict_ends_the_fact() {
+        let db = crate::db::test_db::seeded().await;
+        assert!(record_complete_pull(&db, PLANT).await.expect("record"));
+        crate::sync::queries::apply_sync_batch(
+            &db,
+            ApplySyncBatchInput {
+                protocol_version: SYNC_PROTOCOL_VERSION_V1.to_string(),
+                server_batch_id: "b-bad".into(),
+                checkpoint_token: "ckpt-b-bad".into(),
+                acknowledged_items: vec![],
+                rejected_items: vec![],
+                inbound_items: vec![SyncInboundItemInput {
+                    entity_type: "user_accounts".into(),
+                    entity_sync_id: "acct-bad-hash".into(),
+                    operation: "upsert".into(),
+                    row_version: 1,
+                    payload_json: serde_json::json!({ "username": "chef" }).to_string(),
+                    payload_hash: Some("0".repeat(64)),
+                    ..Default::default()
+                }],
+                conflict_items: vec![],
+                policy_metadata_json: None,
+            },
+        )
+        .await
+        .expect("ingest");
+        let in_inbox = db
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM sync_inbox WHERE entity_type = 'user_accounts'",
+            ))
+            .await
+            .expect("query")
+            .map(|r| r.try_get::<i64>("", "c").expect("count"));
+        assert_eq!(in_inbox, Some(0), "an invalid row never reaches the inbox");
+        assert!(!server_confirmed_no_accounts(&db, PLANT).await.expect("fact"));
+        assert!(!record_complete_pull(&db, PLANT).await.expect("record"));
     }
 }
