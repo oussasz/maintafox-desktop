@@ -100,6 +100,11 @@ pub struct LocalSession {
     /// `None` means no step-up has been performed this session.
     #[serde(skip)]
     pub step_up_verified_at: Option<Instant>,
+    /// The account's `password_changed_at` as [`enforce_session_alive`] first read it for this
+    /// session (`None`: not read yet; `Some(None)`: the account had no date). A different stored
+    /// value later means the password changed after the session started, whatever the clocks say.
+    #[serde(skip)]
+    pub password_changed_at_seen: Option<Option<String>>,
 }
 
 impl LocalSession {
@@ -237,6 +242,7 @@ impl SessionManager {
             pin_failed_attempts: 0,
             pin_unlock_disabled: false,
             step_up_verified_at: None,
+            password_changed_at_seen: None,
         };
         self.current = Some(session);
         self.current.as_ref().unwrap()
@@ -489,11 +495,17 @@ pub async fn record_successful_login(db: &DatabaseConnection, user_id: i32) -> A
 /// Error message prefix of a command refused because the user must change their password first.
 pub const PASSWORD_CHANGE_REQUIRED: &str = "PASSWORD_CHANGE_REQUIRED";
 
-/// Clock tolerance when comparing a password change with a session start: the change may have
-/// been made on another device whose clock runs ahead. A session ends when the password changed
-/// more than this after it started. A forced change (administrator reset) does not rely on it:
-/// its flag refuses every command at once.
+/// Clock tolerance when comparing a password change with a session start, at the session's first
+/// check only (before the session has read the account's `password_changed_at`): the change may
+/// have been made on another device whose clock runs ahead. After that first check, any change of
+/// the stored value ends the session, whatever the clocks say. A forced change (administrator
+/// reset) does not rely on it: its flag refuses every command at once.
 pub const PASSWORD_CHANGE_CLOCK_TOLERANCE: TimeDelta = TimeDelta::minutes(2);
+
+/// Two readings of `password_changed_at` closer than this are the same date (a value received by
+/// sync may come back with another precision or offset). Two real password changes are never
+/// this close.
+const SAME_PASSWORD_DATE: TimeDelta = TimeDelta::seconds(1);
 
 /// What the stored rows say about an in-memory session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -502,9 +514,91 @@ pub struct StoredSessionState {
     pub must_change_password: bool,
 }
 
+/// Why [`enforce_session_alive`] ended a session. Logged and written to the audit trail, so a
+/// session closed at once (owner test of 0.9.1: "Session expirée ou absente") says why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionEndReason {
+    /// No `app_sessions` row for this session and user (fail closed).
+    NoStoredRow,
+    /// The row was closed: an administrator, a disable, a reset, a password change elsewhere.
+    Revoked,
+    AccountInactive,
+    AccountDeleted,
+    /// The row's `created_at` cannot be read: a session that cannot be dated is not trusted.
+    Undatable,
+    /// The password changed after the session started (on this device or another one).
+    PasswordChanged,
+}
+
+impl SessionEndReason {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::NoStoredRow => "no_stored_row",
+            Self::Revoked => "revoked",
+            Self::AccountInactive => "account_inactive",
+            Self::AccountDeleted => "account_deleted",
+            Self::Undatable => "undatable",
+            Self::PasswordChanged => "password_changed",
+        }
+    }
+}
+
+/// What the account's `password_changed_at` says about a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PasswordDateCheck {
+    /// No change since the session started.
+    Unchanged,
+    /// The password changed after the session started.
+    Changed,
+    /// First check of the session: the date is later than this device's clock (a clock that ran
+    /// ahead when it was written, here or on another device). It is not a change made after the
+    /// session started; it becomes the session's reference value.
+    AheadOfClock,
+}
+
 /// Parse a stored RFC 3339 instant (`app_sessions.created_at`, `password_changed_at`).
 fn parse_instant(raw: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(raw).ok().map(|t| t.with_timezone(&Utc))
+}
+
+/// Same stored `password_changed_at`: equal dates (within [`SAME_PASSWORD_DATE`]), or the same text
+/// when one of them cannot be read as a date.
+fn same_password_date(a: Option<&str>, b: Option<&str>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => match (parse_instant(a), parse_instant(b)) {
+            (Some(x), Some(y)) => (x - y).abs() < SAME_PASSWORD_DATE,
+            _ => a == b,
+        },
+        _ => false,
+    }
+}
+
+/// Did the password change after the session started?
+/// - `seen`: the value this session read at its first check (`None` when not read yet). Once
+///   read, any different stored value is a change, whatever the clocks say.
+/// - First check: the stored date is compared with the session start (with
+///   [`PASSWORD_CHANGE_CLOCK_TOLERANCE`]), except a date later than `now` (beyond the tolerance),
+///   which a clock running ahead wrote: closing every new session on it locked the account out
+///   for as long as the clock difference lasted.
+pub(crate) fn password_date_check(
+    seen: Option<Option<&str>>,
+    stored: Option<&str>,
+    session_created: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> PasswordDateCheck {
+    if let Some(seen) = seen {
+        return if same_password_date(seen, stored) {
+            PasswordDateCheck::Unchanged
+        } else {
+            PasswordDateCheck::Changed
+        };
+    }
+    match stored.and_then(parse_instant) {
+        Some(changed) if changed > now + PASSWORD_CHANGE_CLOCK_TOLERANCE => PasswordDateCheck::AheadOfClock,
+        Some(changed) if changed > session_created + PASSWORD_CHANGE_CLOCK_TOLERANCE => PasswordDateCheck::Changed,
+        _ => PasswordDateCheck::Unchanged,
+    }
 }
 
 /// The session is still alive in the database, or it is ended here and refused. Ended when:
@@ -512,7 +606,11 @@ fn parse_instant(raw: &str) -> Option<DateTime<Utc>> {
 /// - the row was closed (`app_sessions.is_revoked`: an administrator, a disable, a reset);
 /// - the account was disabled or deleted (also by a change received from another device);
 /// - the password changed after the session started (a reset or change made on any device:
-///   `password_changed_at` travels with the account) — the row is closed too.
+///   `password_changed_at` travels with the account; [`password_date_check`]) — the row is
+///   closed too.
+///
+/// Every end is logged and audited with its [`SessionEndReason`]. A password date later than this
+/// device's clock is logged and audited once per session as a clock anomaly, and does not end it.
 ///
 /// Used by `require_session!` (through [`enforce_stored_session`]) and by the change-password
 /// command, which must work while a change is required but never on an ended session.
@@ -538,9 +636,19 @@ pub async fn enforce_session_alive(
             .await?
         }
     };
-    let mut password_newer = false;
-    let ended = match &row {
-        None => true,
+    // What this session read of the password date at its first check (same session only).
+    let seen = {
+        let guard = session.read().await;
+        guard
+            .current
+            .as_ref()
+            .filter(|s| Some(s.session_db_id.as_str()) == session_db_id)
+            .and_then(|s| s.password_changed_at_seen.clone())
+    };
+    let mut password_ahead_of_clock = false;
+    let mut stored_password_date: Option<String> = None;
+    let end_reason = match &row {
+        None => Some(SessionEndReason::NoStoredRow),
         Some(r) => {
             let created = r
                 .try_get::<Option<String>>("", "session_created_at")
@@ -548,26 +656,43 @@ pub async fn enforce_session_alive(
                 .flatten()
                 .as_deref()
                 .and_then(parse_instant);
-            let changed_raw = r.try_get::<Option<String>>("", "password_changed_at").ok().flatten();
-            let changed = changed_raw.as_deref().and_then(parse_instant);
-            if changed_raw.is_some() && changed.is_none() {
+            stored_password_date = r.try_get::<Option<String>>("", "password_changed_at").ok().flatten();
+            if seen.is_none()
+                && stored_password_date
+                    .as_deref()
+                    .is_some_and(|raw| parse_instant(raw).is_none())
+            {
                 tracing::warn!(
                     user_id = user.user_id,
                     "unreadable password_changed_at: the session start is not compared with it"
                 );
             }
-            password_newer =
-                matches!((changed, created), (Some(c), Some(s)) if c > s + PASSWORD_CHANGE_CLOCK_TOLERANCE);
-            r.try_get::<i32>("", "is_active").unwrap_or(0) != 1
-                || r.try_get::<Option<String>>("", "deleted_at").ok().flatten().is_some()
-                || r.try_get::<i32>("", "is_revoked").unwrap_or(1) == 1
-                // A session row we cannot date is not trusted.
-                || created.is_none()
-                || password_newer
+            let password_check = created.map(|created| {
+                password_date_check(
+                    seen.as_ref().map(Option::as_deref),
+                    stored_password_date.as_deref(),
+                    created,
+                    Utc::now(),
+                )
+            });
+            password_ahead_of_clock = password_check == Some(PasswordDateCheck::AheadOfClock);
+            if r.try_get::<i32>("", "is_revoked").unwrap_or(1) == 1 {
+                Some(SessionEndReason::Revoked)
+            } else if r.try_get::<i32>("", "is_active").unwrap_or(0) != 1 {
+                Some(SessionEndReason::AccountInactive)
+            } else if r.try_get::<Option<String>>("", "deleted_at").ok().flatten().is_some() {
+                Some(SessionEndReason::AccountDeleted)
+            } else if created.is_none() {
+                Some(SessionEndReason::Undatable)
+            } else if password_check == Some(PasswordDateCheck::Changed) {
+                Some(SessionEndReason::PasswordChanged)
+            } else {
+                None
+            }
         }
     };
-    if ended {
-        if password_newer {
+    if let Some(reason) = end_reason {
+        if reason == SessionEndReason::PasswordChanged {
             if let Some(id) = session_db_id {
                 db.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
@@ -577,15 +702,85 @@ pub async fn enforce_session_alive(
                 .await?;
             }
         }
-        let mut guard = session.write().await;
-        if guard.current.as_ref().map(|s| s.session_db_id.as_str()) == session_db_id {
-            guard.clear_session();
+        let was_current = {
+            let mut guard = session.write().await;
+            let current = guard.current.as_ref().map(|s| s.session_db_id.as_str()) == session_db_id;
+            if current {
+                guard.clear_session();
+            }
+            current
+        };
+        tracing::warn!(
+            user_id = user.user_id,
+            session_id = session_db_id.unwrap_or("-"),
+            reason = reason.code(),
+            "session ended by the stored-state check"
+        );
+        if was_current {
+            crate::audit::emit(
+                db,
+                crate::audit::AuditEvent {
+                    event_type: crate::audit::event_type::SESSION_CLOSED,
+                    actor_id: Some(user.user_id),
+                    actor_name: Some(&user.username),
+                    entity_type: Some("app_session"),
+                    entity_id: session_db_id,
+                    summary: "Session closed by the stored-state check",
+                    detail_json: Some(serde_json::json!({ "reason": reason.code() }).to_string()),
+                    ..Default::default()
+                },
+            )
+            .await;
         }
         return Err(AppError::Auth(
             "Session fermée : le compte a été désactivé, le mot de passe a changé ou la session a été révoquée. \
              Veuillez vous reconnecter."
                 .into(),
         ));
+    }
+    if seen.is_none() {
+        // First check of this session: its reference value from now on.
+        let recorded = {
+            let mut guard = session.write().await;
+            match guard
+                .current
+                .as_mut()
+                .filter(|s| Some(s.session_db_id.as_str()) == session_db_id)
+            {
+                Some(current) => {
+                    current.password_changed_at_seen = Some(stored_password_date.clone());
+                    true
+                }
+                None => false,
+            }
+        };
+        if recorded && password_ahead_of_clock {
+            tracing::warn!(
+                user_id = user.user_id,
+                password_changed_at = stored_password_date.as_deref().unwrap_or("-"),
+                "password_changed_at is later than this device's clock: clock anomaly, the session is kept"
+            );
+            crate::audit::emit(
+                db,
+                crate::audit::AuditEvent {
+                    event_type: crate::audit::event_type::SESSION_CLOCK_ANOMALY,
+                    actor_id: Some(user.user_id),
+                    actor_name: Some(&user.username),
+                    entity_type: Some("app_session"),
+                    entity_id: session_db_id,
+                    summary: "Password date later than this device's clock; session kept",
+                    detail_json: Some(
+                        serde_json::json!({
+                            "password_changed_at": stored_password_date,
+                            "device_now": Utc::now().to_rfc3339(),
+                        })
+                        .to_string(),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await;
+        }
     }
     Ok(StoredSessionState {
         must_change_password: row
@@ -649,6 +844,7 @@ pub async fn change_password_and_rotate(
         ));
     };
     let now = Utc::now().to_rfc3339();
+    let changed_at = now.clone();
     let new_id = Uuid::new_v4().to_string();
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(
@@ -683,6 +879,8 @@ pub async fn change_password_and_rotate(
     .await?;
     tx.commit().await?;
     current.session_db_id = new_id;
+    // This session made the change: the new date is its reference, not a change after its start.
+    current.password_changed_at_seen = Some(Some(changed_at));
     if clear_forced_change {
         current.user.force_password_change = false;
         current.password_expires_in_days = None;
@@ -763,6 +961,70 @@ mod tests {
             tenant_id: "tenant-test".into(),
             token_tenant_id: "tenant-test".into(),
         }
+    }
+
+    #[test]
+    fn password_date_rule_first_check_and_later_checks() {
+        let now = Utc::now();
+        let created = now - TimeDelta::minutes(1);
+        let at = |d: DateTime<Utc>| d.to_rfc3339();
+        let past = at(now - TimeDelta::days(30));
+        let ahead = at(now + TimeDelta::days(3));
+        let after_start = at(created + TimeDelta::minutes(10));
+        // First check (nothing read yet).
+        assert_eq!(
+            password_date_check(None, None, created, now),
+            PasswordDateCheck::Unchanged
+        );
+        assert_eq!(
+            password_date_check(None, Some(&past), created, now),
+            PasswordDateCheck::Unchanged
+        );
+        assert_eq!(
+            password_date_check(None, Some("not a date"), created, now),
+            PasswordDateCheck::Unchanged
+        );
+        assert_eq!(
+            password_date_check(None, Some(&ahead), created, now),
+            PasswordDateCheck::AheadOfClock,
+            "a date later than this device's clock does not close a new session"
+        );
+        assert_eq!(
+            password_date_check(None, Some(&after_start), created, created + TimeDelta::minutes(11)),
+            PasswordDateCheck::Changed,
+            "a change after the session start, before its first check, still ends it"
+        );
+        // Later checks: any different stored value is a change, whatever the clocks.
+        assert_eq!(
+            password_date_check(Some(Some(&ahead)), Some(&ahead), created, now),
+            PasswordDateCheck::Unchanged
+        );
+        assert_eq!(
+            password_date_check(Some(Some(&ahead)), Some(&past), created, now),
+            PasswordDateCheck::Changed
+        );
+        assert_eq!(
+            password_date_check(Some(None), Some(&past), created, now),
+            PasswordDateCheck::Changed
+        );
+        assert_eq!(
+            password_date_check(Some(Some(&past)), None, created, now),
+            PasswordDateCheck::Changed
+        );
+        assert_eq!(
+            password_date_check(
+                Some(Some("2026-01-05T08:00:00Z")),
+                Some("2026-01-05T09:00:00.000+01:00"),
+                created,
+                now
+            ),
+            PasswordDateCheck::Unchanged,
+            "the same date in another format"
+        );
+        assert_eq!(
+            password_date_check(Some(Some("garbled")), Some("garbled"), created, now),
+            PasswordDateCheck::Unchanged
+        );
     }
 
     #[test]
