@@ -7,10 +7,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { PermissionContext, type PermissionContextValue } from "@/contexts/PermissionContext";
 import { usePersonnelListsStore } from "@/stores/personnel-lists-store";
 import { usePersonnelStore } from "@/stores/personnel-store";
 import type { PersonnelOption } from "@shared/ipc-types";
-import { P } from "@shared/rbac/permissions.generated";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -34,9 +35,8 @@ const svc = vi.hoisted(() => ({
   updatePersonnel: vi.fn(),
 }));
 vi.mock("@/services/personnel-service", () => svc);
-vi.mock("@/services/qualification-service", () => ({
-  listCertificationTypes: vi.fn().mockResolvedValue([]),
-}));
+const qual = vi.hoisted(() => ({ listCertificationTypes: vi.fn() }));
+vi.mock("@/services/qualification-service", () => qual);
 vi.mock("@/services/org-designer-service", () => ({
   getOrgDesignerSnapshot: vi.fn().mockResolvedValue({ nodes: [] }),
 }));
@@ -72,6 +72,7 @@ beforeEach(() => {
   svc.listExternalCompanies.mockResolvedValue([]);
   svc.listPersonnel.mockResolvedValue({ items: [], total: 0 });
   svc.listActiveTeams.mockResolvedValue([]);
+  qual.listCertificationTypes.mockResolvedValue([]);
 });
 
 describe("new position", () => {
@@ -112,5 +113,39 @@ describe("new person", () => {
     const alert = await screen.findByText(/validation\.employmentTypeRequired/);
     expect(alert).toHaveTextContent("validation.employmentStatusRequired");
     expect(svc.createPersonnel).not.toHaveBeenCalled();
+  });
+});
+
+describe("new person: lists and rights (AU-57)", () => {
+  const rights = (granted: PermissionName[], isLoading = false): PermissionContextValue => ({
+    permissions: [],
+    isLoading,
+    can: (p) => granted.includes(p),
+    canAny: (...ps) => ps.some((p) => granted.includes(p)),
+    canAll: (...ps) => ps.every((p) => granted.includes(p)),
+    refresh: async () => {},
+  });
+
+  it("asks each list once the rights are known, even when the dialog opened before", async () => {
+    usePersonnelStore.setState({ showCreateForm: true, editingPersonnel: null, error: null });
+    const { rerender } = render(
+      <PermissionContext.Provider value={rights([], true)}>
+        <PersonnelCreateDialog />
+      </PermissionContext.Provider>,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(svc.listPersonnel).not.toHaveBeenCalled();
+    expect(svc.listExternalCompanies).not.toHaveBeenCalled();
+
+    rerender(
+      <PermissionContext.Provider value={rights([P.PER_VIEW])}>
+        <PersonnelCreateDialog />
+      </PermissionContext.Provider>,
+    );
+    await waitFor(() => expect(svc.listPersonnel).toHaveBeenCalledTimes(1));
+    expect(svc.listExternalCompanies).toHaveBeenCalledTimes(1);
+    // Training list without trn.view: not asked, the picker names the missing right.
+    expect(qual.listCertificationTypes).not.toHaveBeenCalled();
+    expect(screen.getByTestId("list-access-certificationTypes")).toBeInTheDocument();
   });
 });
