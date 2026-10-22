@@ -60,33 +60,29 @@ export function parseSafeMarkdown(source: string, skipLeadingHeading = false): B
   return blocks;
 }
 
-const INLINE = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*\s][^*]*\*|_[^_\s][^_]*_)/;
+/** Bold, inline code and italic. Underscore emphasis is not read: identifiers use underscores. */
+const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|(?<![\w*])\*[^*\s][^*]*\*(?![\w*]))/;
 
 function renderInline(text: string, keyPrefix: string): ReactNode[] {
+  // split() with one capture group returns plain text at even indexes and matches at odd ones.
   return text.split(INLINE).map((part, i) => {
+    if (i % 2 === 0) return part;
     const key = `${keyPrefix}-${i}`;
-    if (part.length > 4 && (part.startsWith("**") || part.startsWith("__"))) {
+    if (part.startsWith("**")) {
       return (
         <strong key={key} className="font-semibold text-text-primary">
           {part.slice(2, -2)}
         </strong>
       );
     }
-    if (part.length > 2 && part.startsWith("`") && part.endsWith("`")) {
+    if (part.startsWith("`")) {
       return (
         <code key={key} className="rounded bg-surface-2 px-1 font-mono text-[0.9em]">
           {part.slice(1, -1)}
         </code>
       );
     }
-    if (
-      part.length > 2 &&
-      (part.startsWith("*") || part.startsWith("_")) &&
-      part.endsWith(part[0] ?? "")
-    ) {
-      return <em key={key}>{part.slice(1, -1)}</em>;
-    }
-    return part;
+    return <em key={key}>{part.slice(1, -1)}</em>;
   });
 }
 

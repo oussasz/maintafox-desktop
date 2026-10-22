@@ -28,6 +28,15 @@ describe("SafeMarkdown", () => {
     expect(parseSafeMarkdown("# Version 1.2\n\nTexte", false)).toHaveLength(2);
   });
 
+  it("leaves unclosed markers and identifiers untouched", () => {
+    for (const text of ["**Note", "a * b *", "update_notes_v2", "__init__", "2*3*4"]) {
+      const { container, unmount } = render(<SafeMarkdown source={text} />);
+      expect(container.textContent).toBe(text);
+      expect(container.querySelector("strong, em")).toBeNull();
+      unmount();
+    }
+  });
+
   it("keeps unmatched markers as plain text", () => {
     const { container } = render(<SafeMarkdown source="2 * 3 = 6 et a_b" />);
     expect(container.textContent).toBe("2 * 3 = 6 et a_b");
