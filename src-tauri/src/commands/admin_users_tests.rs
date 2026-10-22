@@ -2137,3 +2137,72 @@ async fn a_closed_session_is_audited_with_its_reason() {
     assert_eq!(closed.len(), 1, "{closed:?}");
     assert!(closed[0].contains("\"revoked\""), "{closed:?}");
 }
+
+/// Sign-in records the session's reference password date: a change made elsewhere right after
+/// sign-in (before any command) ends the session even when that date is ahead of this clock.
+#[tokio::test]
+async fn sign_in_records_the_password_date_so_an_early_change_still_ends_the_session() {
+    use crate::auth::session_manager::{enforce_stored_session, store_session_or_clear};
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "early_change").await;
+    let user = caller_for(worker, "early_change");
+    let session_id = {
+        let mut sm = state.session.write().await;
+        let id = sm
+            .create_session(caller_for(worker, "early_change"))
+            .session_db_id
+            .clone();
+        store_session_or_clear(
+            &db,
+            &mut sm,
+            i32::try_from(worker).unwrap(),
+            &id,
+            &(chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339(),
+        )
+        .await
+        .expect("sign-in stored");
+        id
+    };
+    // Changed on a device whose clock runs an hour ahead, before this session's first command.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [
+            (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339().into(),
+            worker.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+}
+
+/// Commands run at once at a session's first check (the dashboard): one reference, one audit row.
+#[tokio::test]
+async fn simultaneous_first_checks_record_one_clock_anomaly() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "busy_dashboard").await;
+    let user = caller_for(worker, "busy_dashboard");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [
+            (chrono::Utc::now() + chrono::Duration::days(2)).to_rfc3339().into(),
+            worker.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+    let session_id = open_session(&state, &db, worker, "busy_dashboard").await;
+    let check = || enforce_stored_session(&db, &state.session, &user, Some(&session_id));
+    let (a, b, c, d, e, f) = tokio::join!(check(), check(), check(), check(), check(), check());
+    for result in [a, b, c, d, e, f] {
+        result.expect("kept");
+    }
+    let anomalies = session_audit(&db, crate::audit::event_type::SESSION_CLOCK_ANOMALY, &session_id).await;
+    assert_eq!(anomalies.len(), 1, "{anomalies:?}");
+}

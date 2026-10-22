@@ -739,13 +739,15 @@ pub async fn enforce_session_alive(
         ));
     }
     if seen.is_none() {
-        // First check of this session: its reference value from now on.
+        // First check of a session that has no reference yet (sign-in records one): this value
+        // is its reference from now on. Commands run at once: only the first one sets it.
         let recorded = {
             let mut guard = session.write().await;
             match guard
                 .current
                 .as_mut()
                 .filter(|s| Some(s.session_db_id.as_str()) == session_db_id)
+                .filter(|s| s.password_changed_at_seen.is_none())
             {
                 Some(current) => {
                     current.password_changed_at_seen = Some(stored_password_date.clone());
@@ -755,31 +757,7 @@ pub async fn enforce_session_alive(
             }
         };
         if recorded && password_ahead_of_clock {
-            tracing::warn!(
-                user_id = user.user_id,
-                password_changed_at = stored_password_date.as_deref().unwrap_or("-"),
-                "password_changed_at is later than this device's clock: clock anomaly, the session is kept"
-            );
-            crate::audit::emit(
-                db,
-                crate::audit::AuditEvent {
-                    event_type: crate::audit::event_type::SESSION_CLOCK_ANOMALY,
-                    actor_id: Some(user.user_id),
-                    actor_name: Some(&user.username),
-                    entity_type: Some("app_session"),
-                    entity_id: session_db_id,
-                    summary: "Password date later than this device's clock; session kept",
-                    detail_json: Some(
-                        serde_json::json!({
-                            "password_changed_at": stored_password_date,
-                            "device_now": Utc::now().to_rfc3339(),
-                        })
-                        .to_string(),
-                    ),
-                    ..Default::default()
-                },
-            )
-            .await;
+            audit_password_date_ahead(db, user.user_id, session_db_id, stored_password_date.as_deref()).await;
         }
     }
     Ok(StoredSessionState {
@@ -913,13 +891,77 @@ pub async fn store_session_or_clear(
 ) -> AppResult<()> {
     let stored = async {
         record_successful_login(db, user_id).await?;
-        create_session_record(db, session_db_id, user_id, expires_at).await
+        create_session_record(db, session_db_id, user_id, expires_at).await?;
+        read_password_changed_at(db, user_id).await
     }
     .await;
-    if stored.is_err() {
-        manager.clear_session();
+    match stored {
+        Ok(password_changed_at) => {
+            // The session's reference for the stored-state check: any later change of the
+            // account's password date ends it, whatever the clocks ([`password_date_check`]).
+            let ahead = password_changed_at
+                .as_deref()
+                .and_then(parse_instant)
+                .is_some_and(|changed| changed > Utc::now() + PASSWORD_CHANGE_CLOCK_TOLERANCE);
+            if let Some(current) = manager.current.as_mut().filter(|s| s.session_db_id == session_db_id) {
+                current.password_changed_at_seen = Some(password_changed_at.clone());
+            }
+            if ahead {
+                audit_password_date_ahead(db, user_id, Some(session_db_id), password_changed_at.as_deref()).await;
+            }
+            Ok(())
+        }
+        Err(e) => {
+            manager.clear_session();
+            Err(e)
+        }
     }
-    stored
+}
+
+/// The account's stored `password_changed_at` (`None` when the account has no date).
+async fn read_password_changed_at(db: &DatabaseConnection, user_id: i32) -> AppResult<Option<String>> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT password_changed_at FROM user_accounts WHERE id = ?",
+            [user_id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<String>>("", "password_changed_at").ok().flatten()))
+}
+
+/// A password date later than this device's clock: logged and audited once per session (the
+/// session is kept; the date is its reference).
+async fn audit_password_date_ahead(
+    db: &DatabaseConnection,
+    user_id: i32,
+    session_db_id: Option<&str>,
+    password_changed_at: Option<&str>,
+) {
+    tracing::warn!(
+        user_id,
+        password_changed_at = password_changed_at.unwrap_or("-"),
+        "password_changed_at is later than this device's clock: clock anomaly, the session is kept"
+    );
+    crate::audit::emit(
+        db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::SESSION_CLOCK_ANOMALY,
+            actor_id: Some(user_id),
+            entity_type: Some("app_session"),
+            entity_id: session_db_id,
+            summary: "Password date later than this device's clock; session kept",
+            detail_json: Some(
+                serde_json::json!({
+                    "password_changed_at": password_changed_at,
+                    "device_now": Utc::now().to_rfc3339(),
+                })
+                .to_string(),
+            ),
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// Write an `app_sessions` row for audit purposes.
