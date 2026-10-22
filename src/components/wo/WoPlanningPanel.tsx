@@ -15,6 +15,7 @@ import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
@@ -1167,19 +1168,17 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               <>
                 <div className="space-y-1">
                   <Label>{t("planning.plannedStart")}</Label>
-                  <Input
-                    type="datetime-local"
+                  <DateTimeField
                     value={plannedStart}
-                    onChange={(e) => setPlannedStart(e.target.value)}
+                    onChange={(v) => setPlannedStart(v)}
                     disabled={allFieldsDisabled}
                   />
                 </div>
                 <div className="space-y-1">
                   <Label>{t("planning.plannedEnd")}</Label>
-                  <Input
-                    type="datetime-local"
+                  <DateTimeField
                     value={plannedEnd}
-                    onChange={(e) => setPlannedEnd(e.target.value)}
+                    onChange={(v) => setPlannedEnd(v)}
                     disabled={allFieldsDisabled}
                   />
                 </div>

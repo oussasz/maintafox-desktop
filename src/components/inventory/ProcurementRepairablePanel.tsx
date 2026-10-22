@@ -52,6 +52,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -2942,22 +2943,20 @@ export const ProcurementRepairablePanel = forwardRef<
                       <Label htmlFor="inv-event-from" className="text-xs">
                         {t("procurement.lifecycle.filters.from")}
                       </Label>
-                      <Input
+                      <DateField
                         id="inv-event-from"
-                        type="date"
                         value={eventFromDate}
-                        onChange={(e) => setEventFromDate(e.target.value)}
+                        onChange={(v) => setEventFromDate(v)}
                       />
                     </div>
                     <div className="space-y-1">
                       <Label htmlFor="inv-event-to" className="text-xs">
                         {t("procurement.lifecycle.filters.to")}
                       </Label>
-                      <Input
+                      <DateField
                         id="inv-event-to"
-                        type="date"
                         value={eventToDate}
-                        onChange={(e) => setEventToDate(e.target.value)}
+                        onChange={(v) => setEventToDate(v)}
                       />
                     </div>
                   </div>
@@ -3839,11 +3838,10 @@ export const ProcurementRepairablePanel = forwardRef<
               <Label htmlFor="inv-price-from">
                 {t("procurement.suppliers.prices.fields.validFrom")}
               </Label>
-              <Input
+              <DateField
                 id="inv-price-from"
-                type="date"
                 value={priceFormValidFrom}
-                onChange={(e) => setPriceFormValidFrom(e.target.value)}
+                onChange={(v) => setPriceFormValidFrom(v)}
               />
             </div>
           </div>

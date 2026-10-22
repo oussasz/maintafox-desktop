@@ -56,6 +56,8 @@ const COMMON_TOP_KEYS = [
   "partNecessity",
   // Dismiss button of the app-wide messages (src/components/shell/AppToastHost.tsx).
   "toast",
+  // Date and time fields (src/components/ui/date-field.tsx, time-input.tsx, month-calendar.tsx).
+  "dateField",
 ];
 const AUTH_TOP_KEYS = [
   "activation",

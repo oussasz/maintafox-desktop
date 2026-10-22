@@ -12,6 +12,7 @@ import { DataTable } from "@/components/data/DataTable";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -171,11 +172,10 @@ export function ExternalCompanyDialog({
             />
           </FormField>
           <FormField name="co-start" label={t("companies.contractStart")}>
-            <Input
+            <DateField
               id="co-start"
-              type="date"
               value={draft.contract_start}
-              onChange={(e) => setDraft({ ...draft, contract_start: e.target.value })}
+              onChange={(v) => setDraft({ ...draft, contract_start: v })}
             />
           </FormField>
           <FormField
@@ -183,11 +183,10 @@ export function ExternalCompanyDialog({
             label={t("companies.contractEnd")}
             error={datesValid ? undefined : t("companies.endBeforeStart")}
           >
-            <Input
+            <DateField
               id="co-end"
-              type="date"
               value={draft.contract_end}
-              onChange={(e) => setDraft({ ...draft, contract_end: e.target.value })}
+              onChange={(v) => setDraft({ ...draft, contract_end: v })}
             />
           </FormField>
           {draft.id != null ? (

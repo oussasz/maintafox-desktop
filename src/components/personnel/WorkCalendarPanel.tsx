@@ -12,6 +12,7 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -234,11 +235,10 @@ export function WorkCalendarPanel({ entities }: WorkCalendarPanelProps) {
           {draft ? (
             <div className="grid gap-3">
               <FormField name="holiday-date" label={t("holidays.date")} required>
-                <Input
+                <DateField
                   id="holiday-date"
-                  type="date"
                   value={draft.date}
-                  onChange={(e) => setDraft({ ...draft, date: e.target.value })}
+                  onChange={(v) => setDraft({ ...draft, date: v })}
                 />
               </FormField>
               <FormField name="holiday-label" label={t("holidays.labelFr")} required>

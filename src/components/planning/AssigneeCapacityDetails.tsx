@@ -1,6 +1,7 @@
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
+import { useFormatters } from "@/hooks/use-formatters";
 import type { AssigneeCapacity } from "@shared/ipc-types";
 
 type AssigneeCapacityDetailsProps = {
@@ -22,6 +23,7 @@ export function AssigneeCapacityDetails({
   assigned,
 }: AssigneeCapacityDetailsProps) {
   const { t, i18n } = useTranslation("planning");
+  const { formatDecimal } = useFormatters();
   const others = crewSize != null && crewSize > 1 ? crewSize - (assigned ? 1 : 0) : 0;
   return (
     <div className="mt-1 space-y-1">
@@ -40,7 +42,7 @@ export function AssigneeCapacityDetails({
                 ? `${d.shift_start}–${d.shift_end}`
                 : t(`assignee.reasons.${d.reason}`, { defaultValue: d.reason })}
               {" · "}
-              {t("assignee.hoursLeft", { hours: d.remaining_hours.toFixed(1) })}
+              {t("assignee.hoursLeft", { hours: formatDecimal(d.remaining_hours, 1) })}
             </li>
           ))}
         </ul>
@@ -81,7 +83,11 @@ function dayLabel(day: string, locale: string): string {
 }
 
 /** The picker line: hours left each day ("2.0 / 8.0 h left · 08:00–16:00"), or why not working. */
-export function assigneeOptionSuffix(cap: AssigneeCapacity, t: TFunction<"planning">): string {
+export function assigneeOptionSuffix(
+  cap: AssigneeCapacity,
+  t: TFunction<"planning">,
+  formatDecimal: (value: number, decimals?: number) => string,
+): string {
   if (cap.issues.includes("PLANNING_ASSIGNEE_NOT_WORKING") || cap.slot_working_hours <= 0) {
     const off = cap.days.find((d) => d.reason !== "working");
     return t("assignee.notWorking", {
@@ -89,7 +95,7 @@ export function assigneeOptionSuffix(cap: AssigneeCapacity, t: TFunction<"planni
     });
   }
   const hours = t("assignee.hoursLeft", {
-    hours: cap.days.map((d) => d.remaining_hours.toFixed(1)).join(" / "),
+    hours: cap.days.map((d) => formatDecimal(d.remaining_hours, 1)).join(" / "),
   });
   const shift = cap.days.find((d) => d.shift_start && d.shift_end);
   return shift ? `${hours} · ${shift.shift_start}–${shift.shift_end}` : hours;

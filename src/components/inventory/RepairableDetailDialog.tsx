@@ -16,6 +16,7 @@ import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineStepState } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -584,10 +585,9 @@ export function RepairableDetailDialog({
                       </div>
                       <div className="space-y-1">
                         <Label>{t("procurement.repairableDetail.fields.warrantyUntil")}</Label>
-                        <Input
-                          type="date"
+                        <DateField
                           value={closeWarrantyUntil}
-                          onChange={(e) => setCloseWarrantyUntil(e.target.value)}
+                          onChange={(v) => setCloseWarrantyUntil(v)}
                         />
                       </div>
                       <div className="flex items-center gap-2 sm:col-span-2">

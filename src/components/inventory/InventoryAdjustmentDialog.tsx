@@ -6,6 +6,7 @@ import { StockImpactPreview } from "@/components/inventory/StockImpactPreview";
 import { WorkOrderReferencePicker } from "@/components/inventory/WorkOrderReferencePicker";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -667,12 +668,11 @@ export function InventoryAdjustmentDialog({
                         ? t("adjustStock.lots.expiry")
                         : t("adjustStock.lots.expiryOptional")}
                     </label>
-                    <Input
+                    <DateField
                       id="adjust-lot-expiry"
-                      type="date"
                       className="h-11"
                       value={lotExpiry}
-                      onChange={(e) => setLotExpiry(e.target.value)}
+                      onChange={(v) => setLotExpiry(v)}
                     />
                   </div>
                 </div>
@@ -684,13 +684,12 @@ export function InventoryAdjustmentDialog({
             <label className="text-xs text-text-muted" htmlFor="adjust-posting-date">
               {t("adjustStock.postingDate.label")}
             </label>
-            <Input
+            <DateField
               id="adjust-posting-date"
-              type="date"
               className="h-11"
               max={todayIso()}
               value={postingDate}
-              onChange={(e) => setPostingDate(e.target.value)}
+              onChange={(v) => setPostingDate(v)}
               aria-describedby="adjust-posting-date-hint"
             />
             <p id="adjust-posting-date-hint" className="text-xs text-text-muted">
