@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import {
@@ -72,6 +73,7 @@ export function TeamDetailWorkspace({
   initialTab,
 }: TeamDetailWorkspaceProps) {
   const { t } = useTranslation("personnel");
+  const { formatDecimal, formatDate, formatPercent } = useFormatters();
   const [team, setTeam] = useState<TeamSummary | null>(null);
   const [members, setMembers] = useState<TeamMemberRow[]>([]);
   const [skills, setSkills] = useState<SkillMatrixRow[]>([]);
@@ -282,17 +284,19 @@ export function TeamDetailWorkspace({
       {
         accessorKey: "work_date",
         header: t("crews.detail.workDate"),
-        cell: ({ row }) => <span className="font-mono text-xs">{row.original.work_date}</span>,
+        cell: ({ row }) => (
+          <span className="font-mono text-xs">{formatDate(row.original.work_date)}</span>
+        ),
       },
       {
         accessorKey: "available_hours",
         header: t("crews.detail.availableHours"),
-        cell: ({ row }) => row.original.available_hours.toFixed(1),
+        cell: ({ row }) => formatDecimal(row.original.available_hours, 1),
       },
       {
         accessorKey: "committed_hours",
         header: t("crews.detail.committedHours"),
-        cell: ({ row }) => row.original.committed_hours.toFixed(1),
+        cell: ({ row }) => formatDecimal(row.original.committed_hours, 1),
       },
       {
         accessorKey: "utilization_ratio",
@@ -300,10 +304,10 @@ export function TeamDetailWorkspace({
         cell: ({ row }) =>
           row.original.utilization_ratio == null
             ? "—"
-            : `${Math.round(row.original.utilization_ratio * 100)}%`,
+            : formatPercent(Math.round(row.original.utilization_ratio * 100)),
       },
     ],
-    [t],
+    [t, formatDecimal, formatDate, formatPercent],
   );
 
   return (

@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   type QualificationMatrix,
@@ -50,6 +51,7 @@ export interface ExpiryRenewalPanelProps {
 
 export function ExpiryRenewalPanel({ refreshKey = 0, onPlanSession }: ExpiryRenewalPanelProps) {
   const { t } = useTranslation("training");
+  const { formatDate } = useFormatters();
   const { can } = usePermissions();
   const [matrix, setMatrix] = useState<QualificationMatrix | null>(null);
   const [loading, setLoading] = useState(true);
@@ -188,7 +190,7 @@ export function ExpiryRenewalPanel({ refreshKey = 0, onPlanSession }: ExpiryRene
                     </span>
                   </span>
                   <span className="tabular-nums text-text-secondary">
-                    {r.expires_at?.slice(0, 10) ?? "—"}
+                    {r.expires_at ? formatDate(r.expires_at) : "—"}
                   </span>
                   <StatusChip
                     label={dueLabel(r)}
