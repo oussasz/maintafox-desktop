@@ -370,6 +370,7 @@ pub fn run() {
         commands::sync::list_inbox_items,
         commands::sync::get_sync_state_summary,
         commands::sync::list_sync_conflicts,
+        commands::sync::list_waiting_inbox_rows,
         commands::sync::resolve_sync_conflict,
         commands::sync::replay_sync_failures,
         commands::sync::list_sync_replay_runs,

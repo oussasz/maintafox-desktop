@@ -284,6 +284,12 @@ pub struct SyncConflictRecord {
     /// Version of the server/inbound row involved, when known.
     #[serde(default)]
     pub inbound_row_version: Option<i64>,
+    /// The error or rule text recorded when the conflict was found (technical details).
+    #[serde(default)]
+    pub detail_message: Option<String>,
+    /// That text as a plain, coded reason, for a row the database refused (`sync::apply_reason`).
+    #[serde(default)]
+    pub reason: Option<crate::sync::apply_reason::ConflictReason>,
     pub created_at: String,
     pub updated_at: String,
 }

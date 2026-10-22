@@ -9,6 +9,7 @@ pub mod queries;
 pub mod reason_catalog;
 pub mod schedule;
 pub mod scheduler;
+pub mod version_clash;
 pub mod wo_content;
 
 #[cfg(test)]

@@ -186,6 +186,9 @@ pub async fn materialize_inbox(
         total.skipped += r.skipped;
         total.errors.extend(r.errors);
     };
+    // PM plan versions refused before two versions could share a number are applied again first,
+    // so the rows waiting for them follow in this run (`pm::version_clash`).
+    total.applied += crate::pm::version_clash::retry_refused_number_clashes(db).await?;
     // Rows arriving while this runs are taken by the next round; every round moves its rows out
     // of `pending`, so this ends.
     let started = std::time::Instant::now();
@@ -422,14 +425,26 @@ async fn materialize_pass(
     Ok(result)
 }
 
+/// The received row a deferred row waits for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WaitsFor {
+    pub(crate) entity_type: String,
+    pub(crate) sync_id: String,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum ApplyOutcome {
     /// Written to the domain table.
     Applied,
     /// Already current locally; nothing to write.
     Unchanged,
-    /// Cannot be applied yet; kept for a later run.
-    Deferred { code: String, message: String },
+    /// Cannot be applied yet; kept for a later run. `waits_for`: the one row it waits for, when
+    /// known (a parent not applied here yet), shown in the sync centre with the row.
+    Deferred {
+        code: String,
+        message: String,
+        waits_for: Option<WaitsFor>,
+    },
     /// Needs a person.
     Conflict { code: String, message: String },
 }
@@ -484,16 +499,27 @@ async fn apply_inbox_row<C: ConnectionTrait + TransactionTrait>(db: &C, item: &I
     // Nothing from the attempt is kept; record why the row was not applied.
     let tx = db.begin().await?;
     match &outcome {
-        ApplyOutcome::Deferred { code, message } => {
+        ApplyOutcome::Deferred {
+            code,
+            message,
+            waits_for,
+        } => {
             tx.execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
                 "UPDATE sync_inbox
                  SET apply_status = 'deferred', rejection_code = ?, rejection_message = ?,
+                     waits_for_entity_type = ?, waits_for_sync_id = ?,
                      attempt_count = attempt_count + 1,
                      last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
                      updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
                  WHERE id = ?",
-                [code.as_str().into(), message.as_str().into(), item.id.into()],
+                [
+                    code.as_str().into(),
+                    message.as_str().into(),
+                    waits_for.as_ref().map(|w| w.entity_type.clone()).into(),
+                    waits_for.as_ref().map(|w| w.sync_id.clone()).into(),
+                    item.id.into(),
+                ],
             ))
             .await?;
         }
@@ -516,6 +542,7 @@ async fn apply_inbox_row<C: ConnectionTrait + TransactionTrait>(db: &C, item: &I
                     checkpoint_token: Some(item.checkpoint_token.clone()),
                     local_row_version: local.as_ref().map(|l| l.row_version),
                     inbound_row_version: Some(item.row_version),
+                    detail_message: Some(message.clone()),
                 },
             )
             .await?;
@@ -576,12 +603,14 @@ async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> App
         return Ok(ApplyOutcome::Deferred {
             code: DEFER_UNKNOWN_ENTITY_TYPE.into(),
             message: format!("entity type '{}' is not known by this version", item.entity_type),
+            waits_for: None,
         });
     };
     if !def.has_materializer {
         return Ok(ApplyOutcome::Deferred {
             code: DEFER_NO_MATERIALIZER.into(),
             message: format!("'{}' rows are not applied by this version yet", item.entity_type),
+            waits_for: None,
         });
     }
     if let Some(outcome) = concurrency_check(conn, def, item).await? {
@@ -683,6 +712,8 @@ async fn mark_inbox(
          SET apply_status = ?,
              rejection_code = ?,
              rejection_message = ?,
+             waits_for_entity_type = NULL,
+             waits_for_sync_id = NULL,
              last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ?",

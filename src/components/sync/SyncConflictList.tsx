@@ -24,6 +24,7 @@ import type { ResolveSyncConflictInput, SyncConflictRecord } from "@shared/ipc-t
 
 import {
   CONFLICT_REASON_MIN,
+  KNOWN_APPLY_REASONS,
   KNOWN_CONFLICT_KINDS,
   KNOWN_SYNC_ENTITY_TYPES,
   clashingNumber,
@@ -172,7 +173,12 @@ export function SyncConflictList({
               className="rounded-md border border-surface-border bg-surface-1 p-3 text-sm text-text-primary"
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <p className="font-medium">{kindOf(c)}</p>
+                <p className="font-medium">
+                  {kindOf(c)}
+                  <span className="ms-2 text-xs font-normal text-text-muted">
+                    {t("sync.conflictNumber", { id: c.id })}
+                  </span>
+                </p>
                 {c.status === "escalated" ? (
                   <StatusChip label={t("sync.status.escalated")} tone="attention" />
                 ) : null}
@@ -198,6 +204,19 @@ export function SyncConflictList({
                   {t("sync.codeClash", { number: clashingNumber(c) ?? t("sync.versionUnknown") })}
                 </p>
               ) : null}
+              {c.reason ? (
+                <p className="mt-1 text-xs text-text-primary">
+                  {t(
+                    `sync.applyReason.${KNOWN_APPLY_REASONS.has(c.reason.code) ? c.reason.code : "TECHNICAL"}`,
+                    { record: entityOf(c), fields: c.reason.columns.join(", ") },
+                  )}
+                  {c.reason.rule ? (
+                    <span className="block text-text-secondary">
+                      {t("sync.applyReason.rule", { rule: c.reason.rule })}
+                    </span>
+                  ) : null}
+                </p>
+              ) : null}
               {c.conflict_type === "USERNAME_CLASH" ? (
                 <p className="mt-1 text-xs text-text-primary">
                   {t("sync.usernameClash", {
@@ -212,6 +231,11 @@ export function SyncConflictList({
                 <p className="mt-1 break-all font-mono">
                   {c.entity_type} · {c.entity_sync_id} · {c.conflict_type}
                 </p>
+                {c.detail_message ? (
+                  <p className="mt-1 break-all font-mono">
+                    {t("sync.applyReason.recordedText", { message: c.detail_message })}
+                  </p>
+                ) : null}
               </details>
               {errorById[c.id] ? (
                 <p className="mt-2 text-xs text-tone-danger-fg" role="alert">
