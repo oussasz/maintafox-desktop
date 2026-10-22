@@ -18,6 +18,7 @@ import {
   formatIsoDateForInput,
   isDateWithin,
   parseDateInput,
+  splitFieldClasses,
 } from "@/lib/date-input";
 import { cn } from "@/lib/utils";
 
@@ -108,9 +109,10 @@ export function DateField({
   }
 
   const label = ariaLabel ?? t("dateField.pickDate");
+  const classes = splitFieldClasses(className);
 
   return (
-    <div className={cn("relative", className)}>
+    <div className={cn("relative", classes.wrapper)}>
       <Input
         id={id}
         name={name}
@@ -129,6 +131,7 @@ export function DateField({
           "min-w-0 pr-9 tabular-nums",
           compact && "h-8 text-sm",
           invalid && "border-destructive focus-visible:ring-destructive",
+          classes.input,
         )}
         onChange={(e) => onText(e.target.value)}
         onBlur={commitOnBlur}
