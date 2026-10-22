@@ -239,6 +239,26 @@ describe("ArchiveExplorer", () => {
     });
   });
 
+  it("opens a module in the tree when it is clicked", async () => {
+    renderExplorer();
+    await screen.findByText("WO-1001");
+    const tree = screen.getByTestId("archive-folder-tree");
+    const node = within(tree).getByText("module.wo").closest("details") as HTMLDetailsElement;
+    expect(node.open).toBe(false);
+    fireEvent.click(within(tree).getByText("module.wo"));
+    await waitFor(() => expect(node.open).toBe(true));
+  });
+
+  it("selects every record of the shown page with the header checkbox", async () => {
+    renderExplorer();
+    await screen.findByText("WO-1001");
+    expect(screen.queryByText("bulk.selected")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "explorer.selectAll" }));
+    expect(await screen.findByText("bulk.selected")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "explorer.selectAll" }));
+    await waitFor(() => expect(screen.queryByText("bulk.selected")).not.toBeInTheDocument());
+  });
+
   it("names records by business code and never shows a bare database id", async () => {
     renderExplorer();
     expect(await screen.findByText("WO-1001")).toBeInTheDocument();
