@@ -150,6 +150,9 @@ describe("WoKanbanView", () => {
     expect(await screen.findByTestId("wo-kanban-archive-pointer")).toHaveTextContent(
       enOt.kanban.archiveOnlyNotice,
     );
+    expect(woSvc.listWos).not.toHaveBeenCalled();
+    // A mixed filter still loads the active lanes it asks for, and none of the archived ones.
+    expect(woLanes(["closed", "ready"]).flatMap((l) => l.statuses)).toEqual(["ready"]);
   });
 
   it("does not offer drag-and-drop and says where status changes happen", async () => {
