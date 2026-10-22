@@ -3,7 +3,7 @@
  * steps — data, life (Weibull), FMECA, RCM decision, system model, decisions.
  */
 import { ArrowLeft, ClipboardCheck } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
@@ -65,27 +65,43 @@ function StudyDateField({
   onCommit: (value: string) => boolean;
 }) {
   const [value, setValue] = useState(saved);
-  useEffect(() => setValue(saved), [saved]);
+  // Remounting the field is how a refused date goes back to the saved one on screen.
+  const [resets, setResets] = useState(0);
+  const committed = useRef(saved);
+  useEffect(() => {
+    committed.current = saved;
+    setValue(saved);
+  }, [saved]);
+
+  const refuse = () => {
+    setValue(saved);
+    setResets((n) => n + 1);
+  };
+  /** Saves a finished date once; a date already sent (typed, then field left) is not sent twice. */
+  const commit = (v: string) => {
+    if (!v || v === committed.current) return;
+    if (onCommit(v)) committed.current = v;
+    else refuse();
+  };
+
   return (
     <DateField
+      key={resets}
       className={cn(RAMS_SELECT_CLASS, "min-w-0")}
       value={value}
       onChange={(v) => {
         setValue(v);
         // A finished date (typed in full or picked in the calendar) is saved at once; a short
         // year is read when the field is left.
-        if (v && v !== saved && !onCommit(v)) setValue(saved);
+        commit(v);
       }}
       disabled={disabled}
       aria-label={label}
       aria-invalid={invalid || undefined}
       aria-describedby={describedBy}
       onBlur={() => {
-        if (!value || value === saved) {
-          setValue(saved);
-          return;
-        }
-        if (!onCommit(value)) setValue(saved);
+        if (!value) refuse();
+        else commit(value);
       }}
     />
   );
