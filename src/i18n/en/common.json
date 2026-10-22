@@ -199,6 +199,15 @@
     "scanHint": "Focus here and scan with a USB reader, then press Enter",
     "clear": "Clear selection"
   },
+  "dateField": {
+    "pickDate": "Pick a date",
+    "prevMonth": "Previous month",
+    "nextMonth": "Next month",
+    "invalid": "Not a valid date",
+    "invalidTime": "Not a valid time (hh:mm, 24 h)",
+    "timeLabel": "Time",
+    "timePlaceholder": "hh:mm"
+  },
   "kanban": {
     "emptyColumn": "—",
     "boardLabel": "Board",

@@ -69,9 +69,12 @@ export function ErrorState({
       </p>
       <p className="max-w-md text-sm text-text-secondary">{described.title}</p>
       {described.description ? (
+        <p className="max-w-md text-sm text-text-secondary">{described.description}</p>
+      ) : null}
+      {described.technical ? (
         <details className="max-w-md text-xs text-text-muted">
           <summary className="cursor-pointer select-none">{t("ds.state.technicalDetails")}</summary>
-          <p className="mt-1 whitespace-pre-wrap break-words text-start">{described.description}</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-start">{described.technical}</p>
         </details>
       ) : null}
       {onRetry ? (

@@ -13,6 +13,7 @@ import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -282,24 +283,22 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
             <Label htmlFor="audit-filter-date-from" className="text-xs text-text-muted">
               {t("filters.dateFrom")}
             </Label>
-            <Input
+            <DateField
               id="audit-filter-date-from"
-              type="date"
               className="h-10"
               value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
+              onChange={(v) => setDateFrom(v)}
             />
           </div>
           <div className="space-y-1">
             <Label htmlFor="audit-filter-date-to" className="text-xs text-text-muted">
               {t("filters.dateTo")}
             </Label>
-            <Input
+            <DateField
               id="audit-filter-date-to"
-              type="date"
               className="h-10"
               value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
+              onChange={(v) => setDateTo(v)}
             />
           </div>
         </div>

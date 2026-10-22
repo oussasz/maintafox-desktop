@@ -17,6 +17,7 @@
   "permission": {
     "cannotGrantOwnRole": "Vous ne pouvez pas vous donner un rôle à vous-même : un autre administrateur doit le faire."
   },
+  "unexpectedError": "Cette fonction est momentanément indisponible. Redémarrez l'application ou installez la dernière version.",
   "auth": {
     "notAuthenticated": "Vous devez \u00eatre connect\u00e9 pour effectuer cette action.",
     "sessionExpired": "Votre session a expir\u00e9. Reconnectez-vous.",
@@ -152,7 +153,21 @@
     "GATE_INSP_SCHEDULE_METER_INACTIVE": "Planification : le compteur est inconnu ou inactif, aucune ronde ne peut être générée.",
     "GATE_INSP_SCHEDULE_TEMPLATE_NOT_PUBLISHED": "Planification : la check-list est inactive ou n'a pas de version publiée.",
     "GATE_INSP_SCHEDULE_INCOMPLETE": "Planification : sa récurrence est incomplète ; modifiez-la et enregistrez-la de nouveau.",
-    "GATE_INSP_SCHEDULE_TOO_MANY_ROUNDS": "Planification : génération arrêtée à 1000 rondes ; réduisez l'avance ou allongez l'intervalle."
+    "GATE_INSP_SCHEDULE_TOO_MANY_ROUNDS": "Planification : génération arrêtée à 1000 rondes ; réduisez l'avance ou allongez l'intervalle.",
+    "GATE_CURRENCY_IN_USE": "La devise ne peut pas être désactivée : elle est encore utilisée (stock, achats, budget ou imputations).",
+    "GATE_CURRENCY_NOT_ACTIVE": "Devise refusée : elle n'est pas active dans la liste des devises (Données de référence › Devises). Choisissez une devise active.",
+    "GATE_FIN_CURRENCY_LOCKED": "Changement refusé : du stock, des réceptions ou des écritures sont déjà valorisés dans la devise de l'entreprise. La modifier changerait la valeur de tous les montants enregistrés.",
+    "GATE_HOME_PERIOD_INVALID": "Période refusée : choisissez 7 ou 30 jours.",
+    "GATE_NOTIFICATION_AUDIENCE_INVALID": "Notification refusée : le destinataire choisi n'existe pas.",
+    "GATE_NOTIFICATION_CONFIG_INVALID": "Règle de notification refusée : un délai ou un réglage est hors limites. Vérifiez les valeurs saisies.",
+    "GATE_NOTIFICATION_FILTER_INVALID": "Filtre de notifications refusé : une valeur du filtre n'est pas valide.",
+    "GATE_NOTIFICATION_SNOOZE_INVALID": "Report refusé : choisissez une heure située entre une minute et 7 jours à partir de maintenant.",
+    "GATE_PM_FOLLOW_UP_NOT_CORRECTIVE": "Ordre de travail refusé : la suite d'un constat préventif doit être de nature corrective. Choisissez un type d'OT correctif.",
+    "GATE_REF_NATURE_TAG_INVALID": "Nature refusée : ce n'est pas une nature de maintenance reconnue (norme EN 13306). Choisissez une nature de la liste.",
+    "GATE_REF_PARENT_REQUIRED": "Valeur refusée : chaque valeur de cette liste doit être rattachée à une valeur de la liste parente.",
+    "GATE_SLA_RULE_NEEDS_SCOPE": "Règle refusée : une règle de délai s'applique à une origine et/ou à une criticité. Les délais d'un niveau pour toutes les demandes se règlent dans l'échelle d'urgence.",
+    "GATE_URGENCY_SCALE_INVALID": "Urgence refusée : ce n'est pas un niveau de l'échelle d'urgence. Choisissez un niveau de la liste.",
+    "GATE_WO_SUBTYPE_INVALID": "Sous-type refusé : il n'existe pas, est inactif ou n'appartient pas à la nature du type d'OT choisi."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "Cet enregistrement appartient à un site hors de vos rôles.",

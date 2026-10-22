@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { StatusChip } from "@/components/ui/status-chip";
@@ -399,15 +400,11 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
               <div className="grid grid-cols-2 gap-2">
                 <label className="flex flex-col gap-1 text-xs text-text-muted">
                   {t("explorer.dateFrom")}
-                  <Input
-                    type="date"
-                    value={dateFrom}
-                    onChange={(e) => setDateFrom(e.target.value)}
-                  />
+                  <DateField value={dateFrom} onChange={(v) => setDateFrom(v)} />
                 </label>
                 <label className="flex flex-col gap-1 text-xs text-text-muted">
                   {t("explorer.dateTo")}
-                  <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+                  <DateField value={dateTo} onChange={(v) => setDateTo(v)} />
                 </label>
               </div>
               <div className="flex gap-2">

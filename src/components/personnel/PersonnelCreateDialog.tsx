@@ -10,6 +10,7 @@ import { PositionCombobox } from "@/components/personnel/PositionCombobox";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -771,22 +772,20 @@ export function PersonnelCreateDialog() {
                     <Label htmlFor="per-contract-start">
                       {t("field.contractStart", "Contract start")}
                     </Label>
-                    <Input
+                    <DateField
                       id="per-contract-start"
-                      type="date"
                       value={contractStart}
-                      onChange={(e) => setContractStart(e.target.value)}
+                      onChange={(v) => setContractStart(v)}
                     />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="per-contract-end">
                       {t("field.contractEnd", "Contract end")}
                     </Label>
-                    <Input
+                    <DateField
                       id="per-contract-end"
-                      type="date"
                       value={contractEnd}
-                      onChange={(e) => setContractEnd(e.target.value)}
+                      onChange={(v) => setContractEnd(v)}
                     />
                   </div>
                 </div>
@@ -876,12 +875,7 @@ export function PersonnelCreateDialog() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="per-hire-date">{t("field.hireDate")}</Label>
-                <Input
-                  id="per-hire-date"
-                  type="date"
-                  value={hireDate}
-                  onChange={(e) => setHireDate(e.target.value)}
-                />
+                <DateField id="per-hire-date" value={hireDate} onChange={(v) => setHireDate(v)} />
               </div>
             </div>
 

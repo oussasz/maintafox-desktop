@@ -55,7 +55,7 @@ export function DashboardWorkloadChart({ refreshSignal = 0 }: { refreshSignal?: 
 
 function WorkloadBody({ chart }: { chart: Chart }) {
   const { t } = useTranslation("dashboard");
-  const { formatDate } = useFormatters();
+  const { formatDate, formatNumber } = useFormatters();
   const [containerRef, containerSize] = useContainerSize<HTMLDivElement>();
   const xAxisRef = useRef<SVGGElement | null>(null);
   const yAxisRef = useRef<SVGGElement | null>(null);
@@ -91,8 +91,8 @@ function WorkloadBody({ chart }: { chart: Chart }) {
       )
       .selectAll("text")
       .attr("class", "fill-current text-[10px]");
-    renderYAxis(yAxisRef.current, yScale);
-  }, [xScale, yScale, innerHeight, days, tickEvery, formatDate]);
+    renderYAxis(yAxisRef.current, yScale, { integers: true, format: formatNumber });
+  }, [xScale, yScale, innerHeight, days, tickEvery, formatDate, formatNumber]);
 
   const hasData = days.some((d) => total(d) > 0);
 

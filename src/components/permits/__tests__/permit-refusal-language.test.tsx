@@ -1,13 +1,13 @@
 /**
  * A permit refusal is shown in the user's language from the first permit screen opened, through
  * the app's real translation path (i18n, appErrorReason): the refusal texts live in a namespace
- * loaded on demand, and the permit screens load it themselves.
+ * that is loaded at start-up, whatever screen the refusal comes from.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { PermitTypesHost } from "@/components/lookups/adapters/PermitTypesHost";
-import { i18n, initI18n } from "@/i18n";
+import { i18n, initI18n, issueNamespacesReady } from "@/i18n";
 import type { PermitTypeRecord } from "@/services/permit-service";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -57,12 +57,13 @@ describe("permit refusals in French", () => {
   beforeAll(async () => {
     initI18n();
     await i18n.changeLanguage("fr");
+    await issueNamespacesReady();
     await i18n.loadNamespaces("permits");
   });
 
   it("shows the server's coded refusal in French on a cold start", async () => {
-    // Nothing has loaded the refusal texts yet: the permit screen must do it.
-    expect(i18n.hasResourceBundle("fr", "training")).toBe(false);
+    // The refusal texts were loaded at start-up, before any permit screen opened.
+    expect(i18n.hasResourceBundle("fr", "training")).toBe(true);
     svc.listPermitTypes.mockResolvedValue([HOT_WORK]);
     svc.upsertPermitType.mockRejectedValue({
       code: "VALIDATION_FAILED",

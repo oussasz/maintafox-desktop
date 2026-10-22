@@ -59,6 +59,7 @@ import {
 import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DateField } from "@/components/ui/date-field";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,7 +67,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
@@ -836,12 +836,11 @@ export function PlanningPage() {
                 *
               </span>
             </Label>
-            <Input
+            <DateField
               id="planning-date-from"
               className="h-8 w-[150px] text-sm"
-              type="date"
               value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
+              onChange={(v) => setDateFrom(v)}
             />
           </div>
           <div className="space-y-1">
@@ -851,12 +850,11 @@ export function PlanningPage() {
                 *
               </span>
             </Label>
-            <Input
+            <DateField
               id="planning-date-to"
               className="h-8 w-[150px] text-sm"
-              type="date"
               value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
+              onChange={(v) => setDateTo(v)}
             />
           </div>
           <div className="flex flex-wrap gap-1 pb-0.5">

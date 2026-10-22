@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
+import { TimeInput } from "@/components/ui/time-input";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePmStore } from "@/stores/pm-store";
 import { P } from "@shared/rbac/permissions.generated";
@@ -148,12 +149,11 @@ export function PmAutopilotStrip() {
                 </div>
               ) : (
                 <>
-                  <Input
+                  <TimeInput
                     id="pm-autopilot-time"
-                    type="time"
                     className="h-10"
                     value={dailyTime ?? "00:00"}
-                    onChange={(e) => setDailyTime(e.target.value || "00:00")}
+                    onChange={(v) => setDailyTime(v || "00:00")}
                   />
                   <p className="text-xs text-text-muted">{t("autopilot.runTimeHint")}</p>
                 </>

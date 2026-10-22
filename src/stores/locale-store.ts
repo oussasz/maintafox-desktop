@@ -13,7 +13,7 @@ import {
 } from "@/lib/currency";
 import { applyI18nFallbackLanguage } from "@/lib/i18n-fallback";
 import { invoke } from "@/lib/ipc-invoke";
-import { getSetting } from "@/services/settings-service";
+import { getSetting, listReferenceCurrencies } from "@/services/settings-service";
 import { toErrorMessage } from "@/utils/errors";
 import { getLocaleDirection } from "@/utils/formatters";
 import type { LocalePreference } from "@shared/ipc-types";
@@ -30,6 +30,10 @@ export interface LocaleState {
   followsSystemLanguage: boolean;
   /** Tenant display currency (ISO 4217), from `locale.currency_code` setting. */
   activeCurrencyCode: string;
+  /** Symbol of the tenant currency from the reference list ("DA"), null until loaded. */
+  activeCurrencySymbol: string | null;
+  /** Decimal places of the tenant currency from the reference list (default 2). */
+  activeCurrencyMinorUnits: number;
   /** Text direction for the active locale ("ltr" or "rtl"). */
   direction: "ltr" | "rtl";
   /** True while locale preference is being loaded or changed. */
@@ -60,10 +64,25 @@ function parseCurrencyFromSettingJson(json: string | undefined | null): string {
   }
 }
 
+/** Symbol and decimals of `code` from the reference currency list; none when it cannot be read. */
+async function readCurrencyDisplay(
+  code: string,
+): Promise<{ symbol: string | null; minorUnits: number } | null> {
+  try {
+    const row = (await listReferenceCurrencies()).find((c) => c.code === code);
+    return { symbol: row?.symbol ?? null, minorUnits: row?.minor_units ?? 2 };
+  } catch {
+    // The list needs a session: until it loads (or if it cannot be read), what is shown stays.
+    return null;
+  }
+}
+
 export const useLocaleStore = create<LocaleState>()((set) => ({
   activeLocale: DEFAULT_LOCALE,
   followsSystemLanguage: false,
   activeCurrencyCode: FALLBACK_CURRENCY_CODE,
+  activeCurrencySymbol: null,
+  activeCurrencyMinorUnits: 2,
   direction: "ltr",
   isLoading: true,
   error: null,
@@ -99,6 +118,8 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
         // Optional before auth; i18n keeps its configured fallbackLng.
       }
 
+      // The symbol and decimals of the currency need a session: `refreshCurrency` (run by the
+      // shell once signed in) loads them.
       set({
         activeLocale: locale,
         followsSystemLanguage: pref.user_locale === FOLLOW_SYSTEM_LOCALE,
@@ -145,14 +166,40 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
   },
 
   setCurrencyCode: (code: string) => {
-    set({ activeCurrencyCode: normalizeCurrencyCode(code) });
+    const normalized = normalizeCurrencyCode(code);
+    // The previous currency's symbol and decimals must not be shown with the new code.
+    set({
+      activeCurrencyCode: normalized,
+      activeCurrencySymbol: null,
+      activeCurrencyMinorUnits: 2,
+    });
+    void readCurrencyDisplay(normalized).then((display) =>
+      set((s) =>
+        display && s.activeCurrencyCode === normalized
+          ? { activeCurrencySymbol: display.symbol, activeCurrencyMinorUnits: display.minorUnits }
+          : s,
+      ),
+    );
   },
 
   refreshCurrency: async () => {
     try {
       const row = await getSetting(LOCALE_CURRENCY_SETTING_KEY, "tenant");
-      set({
-        activeCurrencyCode: parseCurrencyFromSettingJson(row?.setting_value_json),
+      const code = parseCurrencyFromSettingJson(row?.setting_value_json);
+      const display = await readCurrencyDisplay(code);
+      set((s) => {
+        // Another currency than before gets no symbol of the old one; the same currency with
+        // an unreadable list keeps what was shown.
+        const same = code === s.activeCurrencyCode;
+        return {
+          activeCurrencyCode: code,
+          activeCurrencySymbol: display ? display.symbol : same ? s.activeCurrencySymbol : null,
+          activeCurrencyMinorUnits: display
+            ? display.minorUnits
+            : same
+              ? s.activeCurrencyMinorUnits
+              : 2,
+        };
       });
     } catch (err) {
       console.warn("locale-store: failed to refresh currency", err);
