@@ -10,6 +10,7 @@ import {
   parseDateInput,
   parseTimeInput,
   splitDateTime,
+  splitFieldClasses,
 } from "../date-input";
 
 describe("date input text", () => {
@@ -68,5 +69,16 @@ describe("24-hour time text", () => {
     expect(splitDateTime("")).toEqual({ date: "", time: "" });
     expect(joinDateTime("2026-10-25", "08:30")).toBe("2026-10-25T08:30");
     expect(joinDateTime("2026-10-25", "")).toBe("");
+  });
+});
+
+describe("splitFieldClasses", () => {
+  it("sends layout classes to the wrapper and the rest to the input", () => {
+    expect(splitFieldClasses("h-11 w-44 text-sm sm:w-56 mt-2 font-mono")).toEqual({
+      wrapper: "w-44 sm:w-56 mt-2",
+      input: "h-11 text-sm font-mono",
+    });
+    expect(splitFieldClasses(undefined)).toEqual({ wrapper: "", input: "" });
+    expect(splitFieldClasses("min-w-0 flex-1")).toEqual({ wrapper: "min-w-0 flex-1", input: "" });
   });
 });
