@@ -26,6 +26,15 @@ vi.mock("@/services/auth-service", () => ({
   forceChangePassword: vi.fn(),
 }));
 
+/** Events the test marks as made by the user (jsdom only dispatches untrusted events). */
+const trusted = vi.hoisted(() => new WeakSet<Event>());
+vi.mock("@/lib/trusted-input", () => ({ isTrustedInput: (e: Event) => trusted.has(e) }));
+
+function userInput(event: Event): void {
+  trusted.add(event);
+  window.dispatchEvent(event);
+}
+
 vi.mock("@/lib/ipc-invoke", () => ({
   confirmSessionAfterSilentFailure: svc.confirmSessionAfterSilentFailure,
 }));
@@ -125,7 +134,7 @@ describe("useIdleLock", () => {
     renderHook(() => useIdleLock());
 
     await act(async () => {
-      window.dispatchEvent(new Event("pointermove"));
+      userInput(new Event("pointermove"));
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(svc.touchSession).toHaveBeenCalledTimes(1);
@@ -133,7 +142,7 @@ describe("useIdleLock", () => {
     // Busy typing for 10 s: no further report inside the interval.
     await act(async () => {
       for (let i = 0; i < 10; i += 1) {
-        window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" }));
+        userInput(new KeyboardEvent("keydown", { key: "a" }));
         await vi.advanceTimersByTimeAsync(1_000);
       }
     });
@@ -157,7 +166,7 @@ describe("useIdleLock", () => {
     // Input every 50 s for 5 minutes (2.5 idle timeouts).
     for (let i = 0; i < 6; i += 1) {
       await act(async () => {
-        window.dispatchEvent(new Event("pointerdown"));
+        userInput(new Event("pointerdown"));
         await vi.advanceTimersByTimeAsync(50_000);
       });
     }
@@ -176,7 +185,7 @@ describe("useIdleLock", () => {
     svc.touchSession.mockRejectedValue(refusal);
     renderHook(() => useIdleLock());
     await act(async () => {
-      window.dispatchEvent(new Event("pointerdown"));
+      userInput(new Event("pointerdown"));
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(svc.confirmSessionAfterSilentFailure).toHaveBeenCalledWith(refusal);
@@ -188,10 +197,25 @@ describe("useIdleLock", () => {
       .applySessionInfo(session({ is_authenticated: false, is_locked: true }));
     renderHook(() => useIdleLock());
     await act(async () => {
-      window.dispatchEvent(new Event("pointerdown"));
+      userInput(new Event("pointerdown"));
       await vi.advanceTimersByTimeAsync(IDLE_MS * 2);
     });
     expect(svc.touchSession).not.toHaveBeenCalled();
     expect(svc.getSessionInfo).not.toHaveBeenCalled();
+  });
+
+  it("ignores events dispatched by a script", async () => {
+    renderHook(() => useIdleLock());
+    await act(async () => {
+      window.dispatchEvent(new Event("pointerdown"));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" }));
+      await vi.advanceTimersByTimeAsync(THROTTLE_MS * 2);
+    });
+    expect(svc.touchSession).not.toHaveBeenCalled();
+    // The idle lock still comes on time.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IDLE_MS);
+    });
+    expect(useSessionStore.getState().info?.is_locked).toBe(true);
   });
 });

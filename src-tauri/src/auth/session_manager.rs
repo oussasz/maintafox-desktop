@@ -120,13 +120,13 @@ impl LocalSession {
     }
 
     /// Once the idle deadline has passed the lock is recorded, so it holds until an unlock
-    /// (password or PIN) whatever happens to the clock afterwards. The PIN attempts start afresh
-    /// with each new lock.
+    /// (password or PIN) whatever happens to the clock afterwards. The PIN attempts are NOT reset
+    /// here: wrong PINs may already have been tried against this lock (the PIN unlock reads the
+    /// time-based lock without recording it), and recording the lock later must not give more
+    /// tries. They start afresh at each unlock (`SessionManager::unlock_session`).
     fn latch_idle_lock(&mut self) {
         if !self.is_locked && self.is_idle_locked() {
             self.is_locked = true;
-            self.pin_failed_attempts = 0;
-            self.pin_unlock_disabled = false;
         }
     }
 
@@ -1234,19 +1234,25 @@ mod tests {
     }
 
     #[test]
-    fn the_idle_lock_resets_pin_attempts_once() {
+    fn recording_the_idle_lock_keeps_the_pin_attempts() {
+        // Wrong PINs tried against the time-based lock before anything recorded it.
         let mut mgr = session_idle_for(11);
         {
             let s = mgr.current.as_mut().unwrap();
-            s.pin_failed_attempts = 2;
+            s.pin_failed_attempts = 3;
+            s.pin_unlock_disabled = true;
         }
         assert!(mgr.require_active_user().is_err());
-        assert_eq!(mgr.current.as_ref().unwrap().pin_failed_attempts, 0, "a new lock");
-        // While locked, PIN failures are kept (not reset by later checks).
-        mgr.current.as_mut().unwrap().pin_failed_attempts = 2;
-        assert!(mgr.require_active_user().is_err());
         assert!(mgr.record_activity().is_err());
-        assert_eq!(mgr.current.as_ref().unwrap().pin_failed_attempts, 2);
+        let s = mgr.current.as_ref().unwrap();
+        assert!(s.is_locked);
+        assert_eq!(s.pin_failed_attempts, 3, "no new PIN tries");
+        assert!(s.pin_unlock_disabled, "PIN unlock stays disabled");
+        // The unlock (password) starts them afresh.
+        assert!(mgr.unlock_session());
+        let s = mgr.current.as_ref().unwrap();
+        assert_eq!(s.pin_failed_attempts, 0);
+        assert!(!s.pin_unlock_disabled);
     }
 
     #[test]

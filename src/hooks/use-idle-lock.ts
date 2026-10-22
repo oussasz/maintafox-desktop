@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
 import { confirmSessionAfterSilentFailure } from "@/lib/ipc-invoke";
+import { isTrustedInput } from "@/lib/trusted-input";
 import { getSessionInfo, touchSession } from "@/services/auth-service";
 import { useSessionStore } from "@/store/session-store";
 
@@ -62,7 +63,9 @@ export function useIdleLock(): void {
         });
     };
 
-    const onInput = () => {
+    const onInput = (event: Event) => {
+      // Events dispatched by a script are not the user working.
+      if (!isTrustedInput(event)) return;
       const since = Date.now() - lastSentAt;
       if (since >= throttleMs) {
         if (trailing !== null) {

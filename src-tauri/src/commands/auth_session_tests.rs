@@ -329,3 +329,47 @@ async fn a_right_password_resets_the_failure_count() {
     unlock(&state, PASSWORD).await.expect("right password");
     assert_eq!(failed_attempts(&db, id).await, 0);
 }
+
+// ── Review follow-up: recording the idle lock gives no new PIN tries ──────────
+
+async fn set_user_pin(db: &DatabaseConnection, user_id: i32, pin_value: &str) {
+    let hash = pin::hash_pin(pin_value).expect("pin hash");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET pin_hash = ? WHERE id = ?",
+        [hash.into(), user_id.into()],
+    ))
+    .await
+    .expect("set pin");
+}
+
+async fn pin_unlock(state: &AppState, pin_value: &str) -> AppResult<session_manager::SessionInfo> {
+    unlock_session_with_pin_impl(state, PinUnlockInput { pin: pin_value.into() }).await
+}
+
+#[tokio::test]
+async fn a_protected_call_after_three_wrong_pins_does_not_give_more_pin_tries() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let id = technician(&db, "pin_tech").await;
+    sign_in(&state, id, "pin_tech").await;
+    set_user_pin(&db, id, "4321").await;
+    // Locked by time only: nothing has recorded the lock yet.
+    set_last_activity(&state, 45).await;
+    assert!(!state.session.read().await.current.as_ref().unwrap().is_locked);
+
+    assert!(matches!(pin_unlock(&state, "1111").await, Err(AppError::Auth(_))));
+    assert!(matches!(pin_unlock(&state, "2222").await, Err(AppError::Auth(_))));
+    assert!(matches!(pin_unlock(&state, "3333").await, Err(AppError::PinDisabled)));
+
+    // A background poll records the lock.
+    assert!(matches!(
+        protected_command(&state).await.unwrap_err(),
+        AppError::SessionLocked(_)
+    ));
+    assert!(state.session.read().await.current.as_ref().unwrap().is_locked);
+
+    // PIN unlock stays disabled, even with the right PIN: the password is required.
+    assert!(matches!(pin_unlock(&state, "4321").await, Err(AppError::PinDisabled)));
+    unlock(&state, PASSWORD).await.expect("password unlock");
+}

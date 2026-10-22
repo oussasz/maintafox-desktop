@@ -853,6 +853,13 @@ pub async fn unlock_session_with_pin(
     payload: PinUnlockInput,
     state: State<'_, AppState>,
 ) -> AppResult<session_manager::SessionInfo> {
+    unlock_session_with_pin_impl(state.inner(), payload).await
+}
+
+pub(crate) async fn unlock_session_with_pin_impl(
+    state: &AppState,
+    payload: PinUnlockInput,
+) -> AppResult<session_manager::SessionInfo> {
     let pin_value = payload.pin.trim().to_string();
     pin::validate_pin_format(&pin_value)?;
 
