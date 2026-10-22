@@ -31,6 +31,7 @@ Maintafox Desktop. It is intended for supervisor review and regression checking.
 
 - Persisted file: `{app_data_dir}/window_state.json`
 - Current Windows location: `%APPDATA%\systems.maintafox.desktop\window_state.json`
+- Development builds (`tauri dev`) use their own folder, `%APPDATA%\systems.maintafox.desktop.dev\` (`src-tauri/src/build_identity.rs`), so they never share data with an installed version.
 - Persisted fields: `width`, `height`, `x`, `y`, `maximized`
 - Save triggers: window move and resize events
 - Restore point: Tauri setup hook before the window is shown to the user

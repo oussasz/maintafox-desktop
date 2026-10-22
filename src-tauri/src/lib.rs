@@ -23,6 +23,7 @@ pub mod audit;
 pub mod auth;
 pub mod background;
 pub mod backup;
+pub mod build_identity;
 pub mod commands;
 pub mod data_integrity;
 pub mod db;
@@ -89,6 +90,8 @@ pub fn run() {
 
     // The updater plugin exists only in builds with the owner's updater public key (Phase 5.1).
     let mut context = tauri::generate_context!();
+    // Development builds get their own identifier, so their data never mixes with an installed version.
+    build_identity::apply(&mut context);
     updater::add_plugin_config(&mut context);
     updater::register_plugin(
         tauri::Builder::default()
