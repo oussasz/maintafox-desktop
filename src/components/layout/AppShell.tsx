@@ -9,6 +9,7 @@ import { ForcedRemovalAcknowledgementGate } from "@/components/permits/ForcedRem
 import { AppToastHost } from "@/components/shell/AppToastHost";
 import { DatabaseRecoveryScreen } from "@/components/startup/DatabaseRecoveryScreen";
 import { UpdateBanner } from "@/components/updates/UpdateBanner";
+import { mfAuth } from "@/design-system/tokens";
 import { useUpdateScheduler } from "@/hooks/use-updater";
 import { invokeSilent } from "@/lib/ipc-invoke";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
@@ -110,10 +111,7 @@ export function AppShell({ children }: AppShellProps) {
 
   if (appStatus === "error") {
     return (
-      <div
-        className="flex h-screen flex-col items-center justify-center
-                   bg-surface-0 gap-4 px-8 text-center"
-      >
+      <div className={mfAuth.startupShell}>
         <p className="text-lg font-semibold text-text-danger">{t("startup.errorTitle")}</p>
         <p className="text-sm text-text-secondary max-w-md">{startupMsg}</p>
         <button className="btn-primary mt-2" onClick={() => window.location.reload()}>

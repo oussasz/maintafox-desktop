@@ -2,6 +2,7 @@ import { KeyRound, Loader2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { mfAuth } from "@/design-system/tokens";
 import { describeAppError } from "@/lib/app-error";
 import { recoverDatabaseKey } from "@/services/database-security-service";
 
@@ -36,7 +37,7 @@ export function DatabaseRecoveryScreen({ reason }: DatabaseRecoveryScreenProps) 
   };
 
   return (
-    <div className="flex h-screen flex-col items-center justify-center gap-4 bg-surface-0 px-8 text-center">
+    <div className={mfAuth.startupShell}>
       <KeyRound className="h-10 w-10 text-primary" aria-hidden />
       <p className="text-lg font-semibold">{t("startup.dbRecovery.title")}</p>
       <p className="max-w-md text-sm text-text-secondary">{t("startup.dbRecovery.body")}</p>

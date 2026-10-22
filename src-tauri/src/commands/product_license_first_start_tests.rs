@@ -123,6 +123,41 @@ async fn the_first_administrator_is_created_once() {
     assert_eq!(code_of(&again), Some("FIRST_ADMIN_ALREADY_EXISTS"), "{again:?}");
 }
 
+/// Owner test of 0.9.0: the first administrator chose their password on the first-start screen,
+/// so the sign-in that follows does not ask them to change it. The account is not marked for a
+/// forced change and its password date is recorded, so the sign-in's expiry check does not read
+/// a password never set (which would force the change anyway).
+#[tokio::test]
+async fn the_first_administrator_is_not_asked_to_change_the_password_they_chose() {
+    let db = activated_plant_with_admin().await;
+    let row = sea_orm::ConnectionTrait::query_one(
+        &db,
+        sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            "SELECT id, force_password_change, password_changed_at FROM user_accounts WHERE username = 'chef'"
+                .to_string(),
+        ),
+    )
+    .await
+    .expect("query")
+    .expect("the first administrator");
+    assert_eq!(row.try_get::<i32>("", "force_password_change").expect("flag"), 0);
+    assert!(row
+        .try_get::<Option<String>>("", "password_changed_at")
+        .expect("date")
+        .is_some());
+
+    let user_id: i32 = row.try_get("", "id").expect("id");
+    let policy = crate::auth::password_policy::PasswordPolicy::shipped();
+    assert!(policy.max_age_days > 0, "the expiry check must really run");
+    assert_eq!(
+        crate::auth::password_policy::check_password_expiry(&db, user_id, &policy)
+            .await
+            .expect("expiry"),
+        crate::auth::password_policy::PasswordExpiryStatus::Valid
+    );
+}
+
 #[tokio::test]
 async fn a_signed_out_reconciliation_only_refreshes_the_stored_licence() {
     let db = plant_with_terms(base_terms()).await;

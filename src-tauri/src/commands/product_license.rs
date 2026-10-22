@@ -1183,18 +1183,24 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
             .map(std::string::ToString::to_string)
             .unwrap_or_else(|| "Administrator".to_string());
 
+        // The administrator chose this password on this screen, so it is not a password set by
+        // someone else: no forced change at the first sign-in (`force_password_change = 0`), and
+        // its date is recorded (`password_changed_at`), else the sign-in reads a password never
+        // set and forces the change anyway (`password_policy::PasswordExpiryStatus::NeverSet`).
+        // Accounts an administrator creates keep their forced change (`admin_users`).
         txn.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             r"INSERT INTO user_accounts
                 (entity_sync_id, username, display_name, identity_mode, password_hash,
-                 is_active, is_admin, force_password_change, failed_login_attempts,
+                 is_active, is_admin, force_password_change, password_changed_at, failed_login_attempts,
                  created_at, updated_at, row_version)
-             VALUES (?, ?, ?, 'local', ?, 1, 1, 1, 0, ?, ?, 1)",
+             VALUES (?, ?, ?, 'local', ?, 1, 1, 0, ?, 0, ?, ?, 1)",
             vec![
                 entity_sync_id.clone().into(),
                 username.to_string().into(),
                 display_name.into(),
                 password_hash.into(),
+                Utc::now().to_rfc3339().into(),
                 now.clone().into(),
                 now.into(),
             ],
