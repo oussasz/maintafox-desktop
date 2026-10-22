@@ -55,6 +55,26 @@ async fn ensure_lookup_code_active<C: ConnectionTrait>(db: &C, domain_key: &str,
     Ok(())
 }
 
+/// Stable refusal codes of a goods receipt (translated in `inventory:errors`).
+pub mod gr_codes {
+    pub const ARTICLE_MISMATCH: &str = "INV_GR_ARTICLE_MISMATCH";
+}
+
+/// An article as the storekeeper knows it (its code), or its id when the article is unknown.
+async fn article_code_or_id<C: ConnectionTrait>(db: &C, article_id: i64) -> AppResult<String> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT article_code FROM articles WHERE id = ?",
+            [article_id.into()],
+        ))
+        .await?;
+    Ok(match row {
+        Some(row) => row.try_get::<String>("", "article_code")?,
+        None => article_id.to_string(),
+    })
+}
+
 async fn ensure_article_active<C: ConnectionTrait>(db: &C, article_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -970,6 +990,40 @@ pub async fn receive_purchase_order_goods(
                 "accepted_qty + rejected_qty must equal received_qty.".to_string(),
             ]));
         }
+        let po_line_row = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT article_id, ordered_qty, received_qty, unit_price, demand_source_type, demand_source_id,
+                        demand_source_ref
+                 FROM purchase_order_lines
+                 WHERE id = ? AND purchase_order_id = ?",
+                [line.po_line_id.into(), input.purchase_order_id.into()],
+            ))
+            .await?;
+        let Some(po_line_row) = po_line_row else {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "PO line {} does not belong to purchase order {}.",
+                line.po_line_id, input.purchase_order_id
+            )]));
+        };
+        // The article received is the one ordered on the PO line: the screen's article only
+        // confirms it. A different article would put stock, lots and the receipt line on an
+        // article nobody ordered.
+        let po_line_article_id: i64 = po_line_row.try_get("", "article_id")?;
+        if line.article_id != po_line_article_id {
+            return Err(crate::errors::org_validation_failed(
+                gr_codes::ARTICLE_MISMATCH,
+                format!(
+                    "PO line {} is for article {po_line_article_id}, not article {}: receive the article ordered.",
+                    line.po_line_id, line.article_id
+                ),
+                crate::errors::issue_params(&[
+                    ("po_line", line.po_line_id.to_string()),
+                    ("ordered_article", article_code_or_id(&tx, po_line_article_id).await?),
+                    ("received_article", article_code_or_id(&tx, line.article_id).await?),
+                ]),
+            ));
+        }
         ensure_article_active(&tx, line.article_id).await?;
         let warehouse_id = ensure_location_active(&tx, line.location_id).await?;
         // Quantities entered in a supplier / purchase unit are converted to the stock unit; the PO,
@@ -986,21 +1040,6 @@ pub async fn receive_purchase_order_goods(
         let received_qty = received.stock_quantity;
         let accepted_qty = crate::inventory::unit_conversions::round_stock_quantity(received_qty - rejected_qty);
 
-        let po_line_row = tx
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT ordered_qty, received_qty, unit_price, demand_source_type, demand_source_id, demand_source_ref
-                 FROM purchase_order_lines
-                 WHERE id = ? AND purchase_order_id = ?",
-                [line.po_line_id.into(), input.purchase_order_id.into()],
-            ))
-            .await?;
-        let Some(po_line_row) = po_line_row else {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "PO line {} does not belong to purchase order {}.",
-                line.po_line_id, input.purchase_order_id
-            )]));
-        };
         let ordered_qty: f64 = po_line_row.try_get("", "ordered_qty")?;
         // Agreed PO price: values the accepted quantity and feeds the weighted-average cost.
         let po_unit_price: Option<f64> = po_line_row.try_get("", "unit_price").ok().flatten();

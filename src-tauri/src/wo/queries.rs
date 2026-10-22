@@ -1166,6 +1166,14 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
         })?;
     // Its schedule commitments are closed with it (`planning::lifecycle`).
     crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.id).await?;
+    // D13: the stock still reserved for it is released with the cancellation, each release audited.
+    crate::inventory::reservations::release_for_closed_wo(
+        &txn,
+        input.id,
+        input.actor_id,
+        crate::inventory::reservations::WoEnd::Cancelled,
+    )
+    .await?;
     txn.commit().await?;
     Ok(wo)
 }

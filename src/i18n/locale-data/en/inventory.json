@@ -1816,6 +1816,7 @@
     }
   },
   "errors": {
+    "INV_GR_ARTICLE_MISMATCH": "PO line {{po_line}} is for article {{ordered_article}}, not {{received_article}}: receive the article that was ordered.",
     "NEGATIVE_STOCK_REASON_SHORT": "Give the reason of the count (at least {{min}} characters).",
     "NEGATIVE_STOCK_COUNT_INVALID": "The counted quantity must be zero or more.",
     "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choose the variance reason of the count.",
