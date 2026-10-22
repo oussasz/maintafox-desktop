@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
+import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
 import { describeAppError } from "@/lib/app-error";
 import { useWoStore } from "@/stores/wo-store";
 import type { WorkOrder } from "@shared/ipc-types";
@@ -33,6 +34,7 @@ interface WoCancelDialogProps {
 export function WoCancelDialog({ wo, open, onOpenChange }: WoCancelDialogProps) {
   const { t } = useTranslation("ot");
   const { info } = useSession();
+  const { withStepUp, StepUpDialogElement } = useStepUp();
   const cancelWorkOrder = useWoStore((s) => s.cancelWorkOrder);
   const saving = useWoStore((s) => s.saving);
 
@@ -48,6 +50,7 @@ export function WoCancelDialog({ wo, open, onOpenChange }: WoCancelDialogProps) 
 
   const handleSubmit = useCallback(async () => {
     if (!wo || !info?.user_id) return;
+    const actorId = info.user_id;
     const trimmed = reason.trim();
     if (!trimmed) {
       setError(t("cancel.reasonRequired"));
@@ -55,17 +58,20 @@ export function WoCancelDialog({ wo, open, onOpenChange }: WoCancelDialogProps) 
     }
     setError(null);
     try {
-      await cancelWorkOrder({
-        id: wo.id,
-        actor_id: info.user_id,
-        expected_row_version: wo.row_version,
-        cancel_reason: trimmed,
-      });
+      // Cancelling a started or completed WO asks for the password again (step-up).
+      await withStepUp(() =>
+        cancelWorkOrder({
+          id: wo.id,
+          actor_id: actorId,
+          expected_row_version: wo.row_version,
+          cancel_reason: trimmed,
+        }),
+      );
       onOpenChange(false);
     } catch (err) {
-      setError(describeAppError(err).title);
+      if (!isStepUpCancelled(err)) setError(describeAppError(err).title);
     }
-  }, [wo, info?.user_id, reason, cancelWorkOrder, onOpenChange, t]);
+  }, [wo, info?.user_id, reason, cancelWorkOrder, withStepUp, onOpenChange, t]);
 
   if (!wo) return null;
 
@@ -124,6 +130,7 @@ export function WoCancelDialog({ wo, open, onOpenChange }: WoCancelDialogProps) 
           </Button>
         </div>
       </DialogContent>
+      {StepUpDialogElement}
     </Dialog>
   );
 }

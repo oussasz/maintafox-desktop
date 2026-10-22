@@ -125,6 +125,11 @@
       "alt": "Photo de {{name}}",
       "loadFailed": "Photo indisponible"
     },
+    "deactivate": {
+      "title": "Désactiver ce collaborateur ?",
+      "description": "{{name}} ne sera plus proposé pour de nouvelles affectations. Son historique est conservé.",
+      "confirm": "Désactiver"
+    },
     "actions": {
       "edit": "Modifier",
       "close": "Fermer",

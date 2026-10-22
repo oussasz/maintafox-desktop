@@ -16,6 +16,7 @@ import { ZodError } from "zod";
 
 import { i18n } from "@/i18n/config";
 import { formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
+import { STEP_UP_CANCELLED_MESSAGE } from "@/lib/step-up-bridge";
 import {
   extractIpcErrorCode,
   extractIpcValidationDetails,
@@ -49,6 +50,14 @@ export function describeAppError(err: unknown): AppErrorDescription {
   }
   const code = extractIpcErrorCode(err);
   const rawMsg = toErrorMessage(err);
+  if (rawMsg === STEP_UP_CANCELLED_MESSAGE) {
+    return {
+      title: String(i18n.t("auth:stepUp.cancelled")),
+      description: null,
+      code: "STEP_UP_CANCELLED",
+      technical: null,
+    };
+  }
 
   // A refused right: the translated refusal, never the server's own (English, technical) text.
   // The rights have no readable names in the locale data, so the generic reason is given.

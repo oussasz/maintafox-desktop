@@ -1,10 +1,10 @@
 import { type ReactElement, useCallback, useRef, useState } from "react";
 
 import { StepUpDialog } from "@/components/auth/StepUpDialog";
+import { STEP_UP_CANCELLED_MESSAGE, trackLocalStepUp } from "@/lib/step-up-bridge";
 import { isStepUpRequiredError } from "@/utils/errors";
 
-/** Message of the error `withStepUp` rejects with when the user closes the step-up dialog. */
-export const STEP_UP_CANCELLED_MESSAGE = "Step-up cancelled by user";
+export { STEP_UP_CANCELLED_MESSAGE };
 
 /** The user closed the step-up dialog (nothing was sent): no refusal to show. */
 export function isStepUpCancelled(err: unknown): boolean {
@@ -37,7 +37,8 @@ export function useStepUp(): UseStepUpReturn {
   const withStepUp = useCallback(<T,>(action: () => Promise<T>): Promise<T> => {
     return new Promise<T>((resolve, reject) => {
       // Try the action directly first
-      action()
+      // While this wrapper runs, `invoke` leaves the refusal to this hook's own dialog.
+      trackLocalStepUp(action)
         .then(resolve)
         .catch((err: unknown) => {
           if (isStepUpRequiredError(err)) {
@@ -62,7 +63,8 @@ export function useStepUp(): UseStepUpReturn {
     pendingRef.current = null;
 
     // Retry the action after successful step-up
-    pending.action().then(pending.resolve).catch(pending.reject);
+    // Tracked like the first attempt: a second refusal rejects instead of asking again.
+    trackLocalStepUp(pending.action).then(pending.resolve).catch(pending.reject);
   }, []);
 
   const handleCancel = useCallback(() => {
