@@ -137,4 +137,24 @@ describe("appErrorLines", () => {
       String(i18n.t("errors:appError.PERMISSION_DENIED")),
     ]);
   });
+
+  it("never shows a GATE code, even one with no translation", async () => {
+    await i18n.changeLanguage("fr");
+    const lines = appErrorLines({
+      code: "VALIDATION_FAILED",
+      message: "Validation failed: x",
+      details: [{ message: "GATE_NOT_YET_TRANSLATED:min_len=3 (reason)" }],
+    });
+    expect(lines).toEqual([String(i18n.t("errors:generic.unexpected"))]);
+  });
+
+  it("keeps the backend sentence of an uncoded detail (prefix removed) and drops empty ones", async () => {
+    await i18n.changeLanguage("fr");
+    const lines = appErrorLines({
+      code: "VALIDATION_FAILED",
+      message: "Validation failed: a; b",
+      details: [{ message: "Validation failed: Notes obligatoires" }, { message: "   " }],
+    });
+    expect(lines).toEqual(["Notes obligatoires"]);
+  });
 });

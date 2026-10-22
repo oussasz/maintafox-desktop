@@ -1,3 +1,4 @@
+import { appErrorLines } from "@/lib/app-error";
 import { invoke } from "@/lib/ipc-invoke";
 import { notifyWoCostChanged } from "@/lib/wo-cost-events";
 import type {
@@ -75,28 +76,9 @@ export class WoBlockingError extends Error {
   }
 }
 
+/** The reasons of a refused completion, one translated line each (read from the error's `details`). */
 function toBlockingErrors(error: unknown): string[] {
-  if (typeof error === "string") {
-    return [error];
-  }
-
-  if (error && typeof error === "object") {
-    const maybe = error as Record<string, unknown>;
-
-    if (Array.isArray(maybe["blockingErrors"])) {
-      return maybe["blockingErrors"].filter((x): x is string => typeof x === "string");
-    }
-
-    if (Array.isArray(maybe["errors"])) {
-      return maybe["errors"].filter((x): x is string => typeof x === "string");
-    }
-
-    if (typeof maybe["message"] === "string") {
-      return [maybe["message"]];
-    }
-  }
-
-  return ["Unknown completion blocking error."];
+  return appErrorLines(error);
 }
 
 function maybeWrapBlockingError(error: unknown): never {

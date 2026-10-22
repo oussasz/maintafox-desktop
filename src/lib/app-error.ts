@@ -83,12 +83,15 @@ export function describeAppError(err: unknown): AppErrorDescription {
   return { title, description, code, technical };
 }
 
-/** The translated text of a GATE code found in a backend sentence, or null when there is none. */
+/**
+ * The translated text of the GATE code found in a backend sentence; the generic text when the
+ * code has no translation (a GATE code never reaches the user); null when there is no GATE code.
+ */
 function gateText(message: string): string | null {
   const code = message.match(/(GATE_[A-Z0-9_]+)(?::[A-Za-z0-9_=,\-./]+)?/)?.[1];
   if (!code) return null;
   const key = `errors:gateError.${code}`;
-  return i18n.exists(key) ? String(i18n.t(key)) : null;
+  return i18n.exists(key) ? String(i18n.t(key)) : String(i18n.t("errors:generic.unexpected"));
 }
 
 /**
