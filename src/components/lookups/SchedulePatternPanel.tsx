@@ -478,7 +478,7 @@ export function ClasseHoraireEditor({
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="h-7 text-xs"
+                  className="h-10 text-xs"
                   onClick={() => setDraft(templateDraft(id, draft.rotationStart))}
                 >
                   {t(`timetable.editor.template.${id}`)}
@@ -581,7 +581,7 @@ export function ClasseHoraireEditor({
                           value={d.shift_start}
                           disabled={d.is_rest_day}
                           aria-label={t("timetable.editor.startOf", { day: label })}
-                          className="h-8 w-[7.5rem]"
+                          className="h-10 w-[7.5rem]"
                           onChange={(v) => patchDay({ ...d, shift_start: v })}
                         />
                       </td>
@@ -590,7 +590,7 @@ export function ClasseHoraireEditor({
                           value={d.shift_end}
                           disabled={d.is_rest_day}
                           aria-label={t("timetable.editor.endOf", { day: label })}
-                          className="h-8 w-[7.5rem]"
+                          className="h-10 w-[7.5rem]"
                           onChange={(v) => patchDay({ ...d, shift_end: v })}
                         />
                       </td>
@@ -602,7 +602,7 @@ export function ClasseHoraireEditor({
                           value={d.break_minutes}
                           disabled={d.is_rest_day}
                           aria-label={t("timetable.editor.breakOf", { day: label })}
-                          className="h-8 w-20"
+                          className="h-10 w-20"
                           onChange={(e) => {
                             const n = Number(e.target.value);
                             patchDay({

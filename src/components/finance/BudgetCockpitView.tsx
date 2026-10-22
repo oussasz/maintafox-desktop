@@ -217,7 +217,7 @@ export function BudgetCockpitView({
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-7 text-xs"
+                  className="h-10 text-xs"
                   onClick={(e) => {
                     e.stopPropagation();
                     analyseRef.current(r, cockpit);
@@ -319,7 +319,7 @@ export function BudgetCockpitView({
             <Button
               size="sm"
               variant="outline"
-              className="h-7 text-xs"
+              className="h-10 text-xs"
               onClick={() => onNavigate("settlements")}
             >
               {t("cockpit.notice.openPending")}

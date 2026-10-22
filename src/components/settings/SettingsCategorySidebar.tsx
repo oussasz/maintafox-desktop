@@ -90,7 +90,7 @@ export function SettingsCategorySidebar({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t("sidebar.search")}
-          className="h-8 pl-8 text-xs"
+          className="h-10 pl-8 text-xs"
         />
       </div>
       <div className="space-y-1">
