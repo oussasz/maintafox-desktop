@@ -324,12 +324,12 @@ mod coded_refusal_tests {
         let (code, params) = split_coded_refusal("  READINESS_DENY:MISSING_EXPOSURE  ").expect("coded");
         assert_eq!(code, "READINESS_DENY");
         assert!(params.is_empty());
-        let (_, params) = split_coded_refusal("GATE_FIN_X:k=a=b").expect("coded");
+        let (_, params) = split_coded_refusal("GATE_FIN_MONTH_INVALID:k=a=b").expect("coded");
         assert_eq!(params.get("k").map(String::as_str), Some("a=b"));
-        let (_, params) = split_coded_refusal("GATE_FIN_X:=v,n=1").expect("coded");
+        let (_, params) = split_coded_refusal("GATE_FIN_MONTH_INVALID:=v,n=1").expect("coded");
         assert_eq!(params.len(), 1);
-        let (code, _) = split_coded_refusal("GATE_FIN_X: période clôturée").expect("coded");
-        assert_eq!(code, "GATE_FIN_X");
+        let (code, _) = split_coded_refusal("GATE_FIN_MONTH_INVALID: période clôturée").expect("coded");
+        assert_eq!(code, "GATE_FIN_MONTH_INVALID");
     }
 
     #[test]
