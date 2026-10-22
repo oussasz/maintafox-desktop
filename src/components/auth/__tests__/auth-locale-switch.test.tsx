@@ -8,11 +8,11 @@ import { mockInvoke } from "@/test/mocks/tauri";
 
 beforeAll(async () => {
   initI18n();
-  await i18n.changeLanguage("fr");
+  await i18n.changeLanguage("en");
 });
 
 beforeEach(async () => {
-  await i18n.changeLanguage("fr");
+  await i18n.changeLanguage("en");
   vi.clearAllMocks();
   useLocaleStore.setState({
     activeLocale: "fr",
@@ -44,10 +44,10 @@ describe("AuthLocaleSwitch", () => {
     mockInvoke.mockResolvedValueOnce(pref("en", "system"));
     render(<AuthLocaleSwitch />);
     expect(screen.getByRole("button", { name: "FR" })).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(screen.getByRole("button", { name: "Suivre la langue de Windows" }));
+    fireEvent.click(screen.getByRole("button", { name: "Follow the Windows language" }));
     await waitFor(() => expect(useLocaleStore.getState().followsSystemLanguage).toBe(true));
     expect(screen.getByRole("button", { name: "FR" })).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("button", { name: "Suivre la langue de Windows" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Follow the Windows language" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
