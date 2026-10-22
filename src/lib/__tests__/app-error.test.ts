@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { i18n } from "@/i18n/config";
-import { appErrorReason, describeAppError } from "@/lib/app-error";
+import { appErrorLines, appErrorReason, describeAppError } from "@/lib/app-error";
 
 describe("describeAppError", () => {
   it("shows a plain message, not the raw schema dump, when a response has an unexpected format", () => {
@@ -106,5 +106,35 @@ describe("one path for every refusal", () => {
     });
     expect(described.title).toBe(String(i18n.t("errors:gateError.GATE_SLA_RULE_NEEDS_SCOPE")));
     expect(described.title).not.toContain("GATE_");
+  });
+});
+
+describe("appErrorLines", () => {
+  it("gives each reason of a refusal as its own translated line", async () => {
+    await i18n.changeLanguage("fr");
+    const err = {
+      code: "VALIDATION_FAILED",
+      message: "Validation failed: two reasons",
+      details: [
+        {
+          message:
+            "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_REASON_REQUIRED:min_len=10 (reason required)",
+        },
+        { code: "PLANNING_WEEK_FROZEN", message: "The week is frozen" },
+      ],
+    };
+    const lines = appErrorLines(err);
+    expect(lines).toEqual([
+      String(i18n.t("errors:gateError.GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_REASON_REQUIRED")),
+      String(i18n.t("training:errors.PLANNING_WEEK_FROZEN")),
+    ]);
+    for (const line of lines) expect(line).not.toContain("GATE_");
+  });
+
+  it("is one line when the refusal has no details", async () => {
+    await i18n.changeLanguage("fr");
+    expect(appErrorLines({ code: "PERMISSION_DENIED", message: "Permission denied" })).toEqual([
+      String(i18n.t("errors:appError.PERMISSION_DENIED")),
+    ]);
   });
 });

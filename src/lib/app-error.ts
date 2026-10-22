@@ -83,6 +83,30 @@ export function describeAppError(err: unknown): AppErrorDescription {
   return { title, description, code, technical };
 }
 
+/** The translated text of a GATE code found in a backend sentence, or null when there is none. */
+function gateText(message: string): string | null {
+  const code = message.match(/(GATE_[A-Z0-9_]+)(?::[A-Za-z0-9_=,\-./]+)?/)?.[1];
+  if (!code) return null;
+  const key = `errors:gateError.${code}`;
+  return i18n.exists(key) ? String(i18n.t(key)) : null;
+}
+
+/**
+ * Every reason of a refusal as its own translated line (a close-out refusal lists several rules).
+ * Each detail is translated by its code, or by the GATE code its sentence starts with; a detail
+ * with neither keeps the backend sentence until its rule gets a code. A refusal with no details
+ * is one line, as `appErrorReason`.
+ */
+export function appErrorLines(err: unknown): string[] {
+  const details = extractIpcValidationDetails(err);
+  if (details.length === 0) return [appErrorReason(err)];
+  const lines = details.map((d) => {
+    if (d.code) return formatOrgIssuesWithI18n([d]);
+    return gateText(d.message) ?? d.message.replace(/^Validation failed:\s*/i, "");
+  });
+  return lines.filter((l) => l.trim() !== "");
+}
+
 /**
  * One line saying why an action was refused: the translated rule (coded validation details)
  * when the backend gave one, otherwise the title. For inline messages and screen-reader
