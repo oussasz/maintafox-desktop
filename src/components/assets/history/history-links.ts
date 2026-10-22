@@ -8,6 +8,7 @@ export interface HistoryLinkTarget {
   permission: PermissionName | null;
 }
 
+// Keep in step with the `PermissionRoute` gates of the modules in `src/router.tsx`.
 const ROUTE_RIGHTS: [prefix: string, permission: PermissionName][] = [
   ["/work-orders", P.OT_VIEW],
   ["/requests", P.DI_VIEW],

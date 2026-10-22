@@ -102,7 +102,7 @@ import { P } from "@shared/rbac/permissions.generated";
 
 import { WoAddExecutionPartDialog } from "./WoAddExecutionPartDialog";
 import { mergeLaborPeople, useWoLaborPeople } from "./use-wo-labor-people";
-import { woActionFailureText } from "./wo-action-error";
+import { woActionFailureText } from "./wo-action-error";
 
 export interface WoExecutionControlsHandle {
   openHoldForm: () => void;

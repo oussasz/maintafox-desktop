@@ -120,8 +120,9 @@ export function AssetHistoryView({ assetId }: { assetId: number }) {
     if (path) navigate(path);
   };
   const canOpenRef = (ev: AssetHistoryEvent) => {
-    const { permission } = historyLinkTarget(ev);
-    return permission === null || can(permission);
+    const { path, permission } = historyLinkTarget(ev);
+    // No screen to open, or one the user may not enter: not a link.
+    return path !== null && (permission === null || can(permission));
   };
 
   if (loading && events.length === 0) {
