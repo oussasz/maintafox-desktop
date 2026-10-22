@@ -1,4 +1,4 @@
-import { Lock, ShieldAlert } from "lucide-react";
+import { Lock } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -11,7 +11,8 @@ import { cn } from "@/lib/utils";
 import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 
 /**
- * Full-screen lock surface for centralized auth/permission recovery.
+ * Full-screen lock surface for a lost session (sign in again). A refused permission never opens
+ * it: that is one toast with the reason (`ipc-invoke`), the app stays usable.
  *
  * Mount under the main shell so it can cover the workspace without unmounting routes
  * (preserving in-memory form state).
@@ -45,9 +46,6 @@ export function AuthLockLayer() {
   }, [clearLock, isOpen, location.pathname]);
 
   const title = useMemo(() => {
-    if (mode === "permission") {
-      return t("interceptor.permission.title");
-    }
     if (mode === "session") {
       return t("interceptor.session.title");
     }
@@ -55,9 +53,6 @@ export function AuthLockLayer() {
   }, [mode, t]);
 
   const message = useMemo(() => {
-    if (mode === "permission") {
-      return t("interceptor.permission.message");
-    }
     if (mode === "session") {
       return t("interceptor.session.message");
     }
@@ -123,14 +118,7 @@ export function AuthLockLayer() {
         </div>
 
         <div className="mb-4 flex items-start gap-3">
-          {mode === "permission" ? (
-            <ShieldAlert
-              className="mt-0.5 h-5 w-5 text-[var(--mfa-orange-dark)]"
-              aria-hidden="true"
-            />
-          ) : (
-            <Lock className="mt-0.5 h-5 w-5 text-primary" aria-hidden="true" />
-          )}
+          <Lock className="mt-0.5 h-5 w-5 text-primary" aria-hidden="true" />
           <div className="min-w-0">
             <h1 id="auth-lock-title" className="text-lg font-semibold text-text-primary">
               {title}

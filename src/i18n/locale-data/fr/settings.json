@@ -252,14 +252,16 @@
     "profile": "Mon profil",
     "notifications": "Notifications",
     "general": "Général",
-    "security": "Sécurité & Logs",
+    "security": "Sécurité",
     "backup": "Sauvegarde & Ops",
     "integrations": "Système & Sync",
+    "activity": "Journal d'activité",
     "profileHint": "Informations du compte, mot de passe, PIN, appareils de confiance et historique de session.",
     "notificationsHint": "Boîte de réception, accusés, reports et préférences par catégorie.",
     "generalHint": "Langue, devise et exercice fiscal, ordres de travail, fiabilité, en-tête des documents imprimés. Chaque paramètre montre sa valeur livrée, qui peut le modifier et son historique.",
-    "securityHint": "Politique mot de passe, session, journal d'activité et audit.",
-    "integrationsHint": "État de sync, licence, connexions et diagnostics."
+    "securityHint": "Politique mot de passe et session.",
+    "integrationsHint": "État de sync, licence, connexions et diagnostics.",
+    "activityHint": "Ce qui a été fait dans l'application, par qui et quand, et le journal d'audit."
   },
   "backupOps": {
     "title": "Opérations de sauvegarde",

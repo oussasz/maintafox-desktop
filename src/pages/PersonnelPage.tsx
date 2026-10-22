@@ -121,6 +121,8 @@ export function PersonnelPage() {
   const lists = usePersonnelLists();
   // The position filter is offered only to users who may read positions (per.position.view).
   const canViewPositions = can(P.PER_POSITION_VIEW);
+  // The Analyses tab is three per.report reports: no tab without that right.
+  const canViewReports = can(P.PER_REPORT);
   const [positions, setPositions] = useState<{ id: number; code: string; name: string }[]>([]);
   const [entityNodes, setEntityNodes] = useState<OrgDesignerNodeRow[]>([]);
   const [lookupError, setLookupError] = useState<unknown>(null);
@@ -513,7 +515,9 @@ export function PersonnelPage() {
                 <TabsTrigger value="teams">{t("tabs.teams")}</TabsTrigger>
                 <TabsTrigger value="companies">{t("tabs.companies")}</TabsTrigger>
                 <TabsTrigger value="calendar">{t("tabs.calendar")}</TabsTrigger>
-                <TabsTrigger value="analytics">{t("tabs.analytics")}</TabsTrigger>
+                {canViewReports ? (
+                  <TabsTrigger value="analytics">{t("tabs.analytics")}</TabsTrigger>
+                ) : null}
               </TabsList>
 
               <TabsContent
@@ -658,11 +662,13 @@ export function PersonnelPage() {
                 />
               </TabsContent>
 
-              <TabsContent value="analytics" className="mt-4">
-                <div className="flex flex-col gap-4">
-                  <WorkforceReportPanel />
-                </div>
-              </TabsContent>
+              {canViewReports ? (
+                <TabsContent value="analytics" className="mt-4">
+                  <div className="flex flex-col gap-4">
+                    <WorkforceReportPanel />
+                  </div>
+                </TabsContent>
+              ) : null}
             </Tabs>
           </div>
         </div>

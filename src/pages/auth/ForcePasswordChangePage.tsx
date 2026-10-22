@@ -25,6 +25,7 @@ const MIN_LENGTH = 8;
 export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageProps) {
   const { t } = useTranslation("auth");
   const sessionUserId = useSessionStore((s) => s.info?.user_id ?? null);
+  const signOut = useSessionStore((s) => s.logout);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [fieldError, setFieldError] = useState<{ field: "new" | "confirm"; text: string } | null>(
@@ -111,6 +112,10 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
 
         <AuthButton type="submit" loading={loading} disabled={loading}>
           {loading ? t("login.form.submitting") : t("session.forcePasswordChange.submit")}
+        </AuthButton>
+        {/* Wrong account or shared PC: leave without choosing a password. */}
+        <AuthButton variant="ghost" disabled={loading} onClick={() => void signOut()}>
+          {t("session.forcePasswordChange.signOut")}
         </AuthButton>
       </form>
     </AuthShell>
