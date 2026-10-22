@@ -1113,6 +1113,8 @@
     },
     "decisions": {
       "title": "Decision log",
+      "applyNeedsPmEdit": "Applying requires the right to edit preventive plans.",
+      "applyNeedsWoCreate": "Applying requires the right to create work orders.",
       "hint": "Each recommendation with its evidence, its approval, what it created in maintenance and its measured effect on MTBF.",
       "emptyTitle": "No decisions",
       "emptyBody": "Record a decision from the step 2 note or with the “Record a decision” button.",

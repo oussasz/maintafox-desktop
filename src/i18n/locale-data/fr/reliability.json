@@ -1113,6 +1113,8 @@
     },
     "decisions": {
       "title": "Journal des décisions",
+      "applyNeedsPmEdit": "Appliquer demande le droit de modifier les plans préventifs.",
+      "applyNeedsWoCreate": "Appliquer demande le droit de créer des ordres de travail.",
       "hint": "Chaque recommandation avec ses preuves, son approbation, ce qu'elle a créé dans la maintenance et son effet mesuré sur le MTBF.",
       "emptyTitle": "Aucune décision",
       "emptyBody": "Enregistrez une décision depuis la note de l'étape 2 ou avec le bouton « Enregistrer une décision ».",

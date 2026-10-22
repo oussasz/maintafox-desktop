@@ -36,6 +36,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { TimeInput } from "@/components/ui/time-input";
 import { mfCard } from "@/design-system/tokens";
 import { mfTone } from "@/design-system/tone";
+import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import {
   type ScheduleClassVersion,
@@ -49,6 +50,7 @@ import {
 } from "@/services/workforce-service";
 import { formatOrgIpcError } from "@/utils/errors";
 import type { ReferenceValue } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 function todayIso(): string {
   const d = new Date();
@@ -122,19 +124,25 @@ export function ClasseHoraireEditor({
     [i18n.language],
   );
 
+  // The site rest days are `list_site_work_weeks`, which the server opens to per.view only: the
+  // timetable is read without them for other users (no refused call, no error in place of it).
+  const { can, isLoading: permissionsLoading } = usePermissions();
+  const canReadSiteWeeks = can(P.PER_VIEW);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [rows, weeks] = await Promise.all([
-        listScheduleClassVersions(value.id),
-        listSiteWorkWeeks(),
-      ]);
+      const rows = await listScheduleClassVersions(value.id);
       setVersions(rows);
-      const allSites = weeks
-        .filter((w) => w.entity_id == null && w.effective_from <= today)
-        .sort((a, b) => a.effective_from.localeCompare(b.effective_from));
-      setSiteRestDays(allSites.at(-1)?.weekend_days ?? []);
+      let restDays: number[] = [];
+      if (canReadSiteWeeks) {
+        const allSites = (await listSiteWorkWeeks())
+          .filter((w) => w.entity_id == null && w.effective_from <= today)
+          .sort((a, b) => a.effective_from.localeCompare(b.effective_from));
+        restDays = allSites.at(-1)?.weekend_days ?? [];
+      }
+      setSiteRestDays(restDays);
       const current = versionOn(rows, today) ?? rows.at(-1);
       if (current) {
         setDraft(draftFrom(current));
@@ -145,11 +153,11 @@ export function ClasseHoraireEditor({
     } finally {
       setLoading(false);
     }
-  }, [today, value.id]);
+  }, [today, value.id, canReadSiteWeeks]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!permissionsLoading) void load();
+  }, [load, permissionsLoading]);
 
   const utilisationValue = utilisation.trim() === "" ? null : Number(utilisation);
   const issue = validateTimetable(draft, utilisationValue);

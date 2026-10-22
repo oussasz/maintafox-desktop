@@ -18,9 +18,11 @@ import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
 import { useFormatters } from "@/hooks/use-formatters";
+import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type { ResolveSyncConflictInput, SyncConflictRecord } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import {
   CONFLICT_REASON_MIN,
@@ -58,6 +60,8 @@ export function SyncConflictList({
   const { t } = useTranslation("shell");
   const reasonId = useId();
   const { formatDateTime } = useFormatters();
+  // Choosing a version is `resolve_sync_conflict` (sync.resolve): without it the list is read-only.
+  const canResolve = usePermissions().can(P.SYNC_RESOLVE);
   const conflictInbox = useSyncOrchestratorStore((s) => s.conflictInbox);
   const refreshInbox = useSyncOrchestratorStore((s) => s.refreshInbox);
   const resolveConflictAction = useSyncOrchestratorStore((s) => s.resolveConflictAction);
@@ -242,37 +246,43 @@ export function SyncConflictList({
                   {t("sync.resolveFailed", { message: errorById[c.id] })}
                 </p>
               ) : null}
-              <div className="mt-3 flex flex-wrap gap-2">
-                {actions.map((action) => {
-                  const isRecommended = action === recommended;
-                  const disabled =
-                    busyId === c.id ||
-                    (action === "accept_remote" && c.inbound_payload_json === null);
-                  return (
-                    <Button
-                      key={action}
-                      type="button"
-                      variant={
-                        isRecommended ? "default" : action === "dismiss" ? "ghost" : "outline"
-                      }
-                      className="h-10"
-                      disabled={disabled}
-                      title={
-                        action === "accept_remote" && c.inbound_payload_json === null
-                          ? t("sync.noRemoteVersion")
-                          : undefined
-                      }
-                      onClick={() => choose(c, action)}
-                    >
-                      {actionLabel(action)}
-                      {isRecommended ? (
-                        <span className="sr-only"> — {t("sync.recommendedShort")}</span>
-                      ) : null}
-                    </Button>
-                  );
-                })}
-              </div>
-              {KNOWN_ACTIONS.has(recommended) ? (
+              {canResolve ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {actions.map((action) => {
+                    const isRecommended = action === recommended;
+                    const disabled =
+                      busyId === c.id ||
+                      (action === "accept_remote" && c.inbound_payload_json === null);
+                    return (
+                      <Button
+                        key={action}
+                        type="button"
+                        variant={
+                          isRecommended ? "default" : action === "dismiss" ? "ghost" : "outline"
+                        }
+                        className="h-10"
+                        disabled={disabled}
+                        title={
+                          action === "accept_remote" && c.inbound_payload_json === null
+                            ? t("sync.noRemoteVersion")
+                            : undefined
+                        }
+                        onClick={() => choose(c, action)}
+                      >
+                        {actionLabel(action)}
+                        {isRecommended ? (
+                          <span className="sr-only"> — {t("sync.recommendedShort")}</span>
+                        ) : null}
+                      </Button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-3 text-xs text-text-muted" role="note">
+                  {t("sync.resolveNeedsRight")}
+                </p>
+              )}
+              {canResolve && KNOWN_ACTIONS.has(recommended) ? (
                 <p className="mt-1 text-xs text-text-muted">
                   {t("sync.panel.recommended", { action: actionLabel(recommended) })}
                 </p>
