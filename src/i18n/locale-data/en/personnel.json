@@ -154,11 +154,28 @@
       "pendingDi": "Pending DI",
       "di30d": "DI last 30 days"
     },
+    "workHistory": {
+      "module": { "wo": "WO", "di": "Request" },
+      "role": {
+        "primary_responsible": "Primary responsible",
+        "intervener": "Intervener",
+        "submitter": "Submitter",
+        "reviewer": "Reviewer",
+        "participant": "Participant"
+      }
+    },
+    "authorizationType": {
+      "permit_issuer": "Permit issuer",
+      "isolation_authority": "Isolation authority",
+      "inspector": "Inspector",
+      "warehouse_signoff": "Warehouse sign-off"
+    },
     "rates": {
       "effectiveFrom": "Effective from",
       "labor": "Labor rate",
       "overtime": "Overtime rate",
       "source": "Source",
+      "sourceType": { "manual": "Entered manually" },
       "active": "Active",
       "empty": "No rate cards yet. Add an hourly labor rate to enable Planning and WO labor cost.",
       "addTitle": "Add rate card",
@@ -206,15 +223,29 @@
       "editKeepsCurrent": "The current photo is kept. Choose an image to replace it.",
       "label": "Profile photo",
       "hint": "Pick a photo (JPEG/PNG, max 5 MB)",
-      "error": "Photo upload failed"
+      "error": "Photo upload failed",
+      "empty": "No photo yet",
+      "add": "Add photo",
+      "primary": "Primary",
+      "remove": "Remove"
+    },
+    "supervisor": {
+      "placeholder": "Search supervisor…"
+    },
+    "notes": {
+      "placeholder": "Additional notes…"
     },
     "skill": {
+      "placeholder": "Select skill…",
+      "empty": "No skills added. Selecting a position will pre-fill from its requirement profile.",
       "add": "Add skill",
       "remove": "Remove",
       "proficiency": "Proficiency",
       "fromPosition": "Pre-filled from position requirements"
     },
     "cert": {
+      "placeholder": "Select certification…",
+      "empty": "No certifications added.",
       "add": "Add certification",
       "remove": "Remove",
       "issuedAt": "Issued",
@@ -224,6 +255,8 @@
       "fromPosition": "Pre-filled from position requirements"
     },
     "account": {
+      "label": "Create MaintaFox account",
+      "hint": "Opens the user creation dialog after saving.",
       "checkbox": "Create a MaintaFox user account for this person",
       "locked": "This person's account will be linked to the record you just created"
     },
@@ -396,7 +429,8 @@
       "active": "Active",
       "category": "Category",
       "code": "Code",
-      "name": "Name"
+      "name": "Name",
+      "namePlaceholder": "e.g. Senior Maintenance Technician"
     },
     "section": {
       "certs": "Required certifications",

@@ -15,6 +15,7 @@ import {
   EntityDetailHeader,
   EntityDetailViewSwitcher,
 } from "@/components/detail";
+import { knownDiStatusKey } from "@/components/di/status-meta";
 import { PersonScheduleExceptions } from "@/components/personnel/PersonScheduleExceptions";
 import { PersonnelPortrait } from "@/components/personnel/PersonnelPortrait";
 import { PersonCapacityDays } from "@/components/personnel/TeamCapacityDays";
@@ -50,6 +51,7 @@ import {
   listPersonnelWorkHistory,
 } from "@/services/personnel-service";
 import { usePersonnelStore } from "@/stores/personnel-store";
+import { statusToI18nKey } from "@/utils/wo-status";
 import type {
   PersonnelAssignmentHistoryEntry,
   PersonnelAvailabilityBlock,
@@ -76,12 +78,13 @@ export interface PersonnelDetailWorkspaceProps {
   detail: PersonnelDetailPayload;
 }
 
-function fmt(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return iso.slice(0, 10);
-}
+type Translate = (key: string, options?: Record<string, unknown>) => string;
 
-function toAssignmentEntry(h: PersonnelAssignmentHistoryEntry): TimelineEntry {
+function toAssignmentEntry(
+  h: PersonnelAssignmentHistoryEntry,
+  t: Translate,
+  fmt: (iso: string | null | undefined) => string,
+): TimelineEntry {
   const titleParts: string[] = [];
   if (h.entity_name) titleParts.push(h.entity_name);
   if (h.team_name) titleParts.push(h.team_name);
@@ -96,18 +99,33 @@ function toAssignmentEntry(h: PersonnelAssignmentHistoryEntry): TimelineEntry {
     timestamp: h.started_at,
     title: titleParts.join(" · ") || "—",
     subtitle: h.schedule_name ?? undefined,
-    description: h.reason ?? (h.ended_at ? `Until ${fmt(h.ended_at)}` : "Current"),
+    description:
+      h.reason ??
+      (h.ended_at
+        ? `${t("detail.assignment.to")} ${fmt(h.ended_at)}`
+        : t("detail.assignment.current")),
     badges,
     icon: h.team_id ? <Users className="h-3.5 w-3.5" /> : <Building2 className="h-3.5 w-3.5" />,
   };
 }
 
-function toWorkHistoryEntry(h: PersonnelWorkHistoryEntry): TimelineEntry {
+export function toWorkHistoryEntry(h: PersonnelWorkHistoryEntry, t: Translate): TimelineEntry {
+  const known = (key: string, fallback: string) => t(key, { defaultValue: fallback });
+  // Work orders and requests keep their own status vocabulary.
+  const status = !h.status_code
+    ? "—"
+    : h.source_module === "wo"
+      ? t(`ot:status.${statusToI18nKey(h.status_code)}`)
+      : (() => {
+          const key = knownDiStatusKey(h.status_code);
+          // An unknown code is shown as it is, never relabelled "new".
+          return key ? t(`di:status.${key}`) : h.status_code;
+        })();
   return {
     id: `${h.source_module}-${h.record_id}-${h.role_code}`,
     timestamp: h.happened_at,
-    title: `${h.source_module.toUpperCase()} ${h.record_code ?? h.record_id}`,
-    subtitle: `${h.role_code} · ${h.status_code ?? "—"}`,
+    title: `${known(`detail.workHistory.module.${h.source_module}`, h.source_module)} ${h.record_code ?? h.record_id}`,
+    subtitle: `${known(`detail.workHistory.role.${h.role_code}`, h.role_code)} · ${status}`,
   };
 }
 
@@ -127,11 +145,16 @@ function pickActiveRateCard(cards: PersonnelRateCard[]): PersonnelRateCard | nul
 type TabDataKey = "teams" | "availability" | "history" | "assignment" | "workload";
 
 export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspaceProps) {
-  const { t } = useTranslation("personnel");
+  const { t } = useTranslation(["personnel", "ot", "di"]);
+  const tx = t as unknown as Translate;
   // Employment statuses and absence types come from the plant's lists (Données de référence).
   const lists = usePersonnelLists();
   const woOpenRuleText = useWoOpenRuleText();
-  const { formatCurrency } = useFormatters();
+  const { formatCurrency, formatDate } = useFormatters();
+  const fmt = useCallback(
+    (iso: string | null | undefined): string => (iso ? formatDate(iso) : "—"),
+    [formatDate],
+  );
   const { can } = usePermissions();
   const canManage = can(P.PER_MANAGE);
   const closePersonnel = usePersonnelStore((s) => s.closePersonnel);
@@ -268,13 +291,13 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
   );
 
   const assignmentEntries = useMemo<TimelineEntry[]>(
-    () => assignmentHistory.map(toAssignmentEntry),
-    [assignmentHistory],
+    () => assignmentHistory.map((h) => toAssignmentEntry(h, tx, fmt)),
+    [assignmentHistory, tx, fmt],
   );
 
   const workEntries = useMemo<TimelineEntry[]>(
-    () => workHistory.map(toWorkHistoryEntry),
-    [workHistory],
+    () => workHistory.map((h) => toWorkHistoryEntry(h, tx)),
+    [workHistory, tx],
   );
 
   const isExternal = p.employment_origin === "external";
@@ -384,7 +407,10 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
           <DetailFieldRow label={t("field.team")} value={p.team_name} />
           <DetailFieldRow label={t("field.schedule")} value={p.schedule_name} />
           <DetailFieldRow label={t("field.supervisor")} value={p.supervisor_name} />
-          <DetailFieldRow label={t("field.employmentOrigin")} value={p.employment_origin} />
+          <DetailFieldRow
+            label={t("field.employmentOrigin")}
+            value={p.employment_origin ? t(`employmentOrigin.${p.employment_origin}`) : null}
+          />
           <DetailFieldRow
             label={t("field.employmentStatus")}
             value={
@@ -494,7 +520,10 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
                     {t("detail.rates.overtime")}: {formatCurrency(rc.overtime_rate)}
                   </div>
                   <div className="text-[11px] text-text-muted">
-                    {t("detail.rates.source")}: {rc.source_type}
+                    {t("detail.rates.source")}:{" "}
+                    {t(`detail.rates.sourceType.${rc.source_type}`, {
+                      defaultValue: rc.source_type,
+                    })}
                   </div>
                 </div>
               );
@@ -552,7 +581,11 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
           ) : null}
           {(detail.authorizations ?? []).map((a) => (
             <div key={a.id} className="rounded border border-surface-border p-2">
-              {a.authorization_type} · {a.valid_from} → {a.valid_to ?? "—"}
+              {/* Fixed codes: the permit and isolation rules branch on them (backend AuthorizationType). */}
+              {t(`detail.authorizationType.${a.authorization_type}`, {
+                defaultValue: a.authorization_type,
+              })}{" "}
+              · {fmt(a.valid_from)} → {a.valid_to ? fmt(a.valid_to) : "—"}
             </div>
           ))}
         </DetailSectionCard>
