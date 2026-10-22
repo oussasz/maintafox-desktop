@@ -63,7 +63,8 @@ export function useStepUp(): UseStepUpReturn {
     pendingRef.current = null;
 
     // Retry the action after successful step-up
-    pending.action().then(pending.resolve).catch(pending.reject);
+    // Tracked like the first attempt: a second refusal rejects instead of asking again.
+    trackLocalStepUp(pending.action).then(pending.resolve).catch(pending.reject);
   }, []);
 
   const handleCancel = useCallback(() => {

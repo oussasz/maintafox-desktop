@@ -112,7 +112,7 @@ export async function getMyAccessAt(orgNodeId: number): Promise<string[] | null>
 
 /**
  * Verify the user's password for a dangerous-action step-up.
- * On success, the backend records a 120-second verification window.
+ * On success, the backend opens the verification window set by the step-up policy.
  * Throws on wrong password (AUTH_ERROR) or no session (AUTH_ERROR).
  */
 export async function verifyStepUp(password: string): Promise<StepUpResponse> {
