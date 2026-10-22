@@ -5970,6 +5970,44 @@ async fn the_safety_origin_is_never_removed_by_sync() {
     );
 }
 
+/// A request on the equipment of site 1, flagged "sécurité"; its sync id.
+async fn request_flagged_safety(db: &DatabaseConnection) -> String {
+    let asset = insert_equipment(db, "EQ-SYNC-SO-DI").await;
+    let symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+        .await
+        .expect("symptom")
+        .expect("seeded symptom");
+    let di = crate::di::queries::create_intervention_request(
+        db,
+        crate::di::queries::DiCreateInput {
+            equipment_id: asset,
+            org_node_id: 1,
+            title: "Fuite".into(),
+            description: "Fuite sur la pompe".into(),
+            origin_type: "operator".into(),
+            request_type: "repair".into(),
+            symptom_code_id: Some(symptom),
+            impact_level: "unknown".into(),
+            production_impact: false,
+            safety_flag: true,
+            environmental_flag: false,
+            quality_flag: false,
+            reported_urgency: "normal".into(),
+            observed_at: None,
+            source_inspection_anomaly_id: None,
+            submitter_id: APPLIER,
+        },
+    )
+    .await
+    .expect("request");
+    text(
+        db,
+        &format!("SELECT entity_sync_id FROM intervention_requests WHERE id = {}", di.id),
+    )
+    .await
+    .expect("request sync id")
+}
+
 /// A work order new here, converted from a safety request on a PC without migration 255: judged with
 /// the safety flag of its request here, and it gets that origin when applied.
 #[tokio::test]
@@ -5977,24 +6015,13 @@ async fn a_new_work_order_from_an_older_pc_takes_the_safety_origin_of_its_reques
     let db = setup().await;
     let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-3").await;
     let template = wire(&db, "work_orders", &wo_sync).await;
-    let di = crate::sync::test_support::RowFactory::new()
-        .create(&db, "intervention_requests")
-        .await
-        .expect("request");
-    exec(
-        &db,
-        &format!(
-            "UPDATE intervention_requests SET safety_flag = 1 WHERE id = {}",
-            di.rowid
-        ),
-    )
-    .await;
+    let di = request_flagged_safety(&db).await;
     let new_row = |code: &str, requires: i64| {
         let mut p = with(
             template.clone(),
             &[
                 ("code", json!(code)),
-                ("source_di_sync_id", json!(di.entity_sync_id.clone())),
+                ("source_di_sync_id", json!(di.clone())),
                 ("requires_permit", json!(requires)),
             ],
         );

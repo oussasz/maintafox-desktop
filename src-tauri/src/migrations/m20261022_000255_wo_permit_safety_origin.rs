@@ -61,9 +61,7 @@ impl MigrationTrait for Migration {
 
 #[cfg(test)]
 mod tests {
-    use sea_orm_migration::MigratorTrait;
-
-    use crate::sync::test_support::{exec, scalar_i64, started_db_before_migration, RowFactory};
+    use crate::sync::test_support::{exec, scalar_i64, started_db, RowFactory};
 
     async fn origin(db: &sea_orm::DatabaseConnection, wo_id: i64) -> i64 {
         scalar_i64(
@@ -74,9 +72,23 @@ mod tests {
         .await
     }
 
+    /// The column is there with its safe default, and the backfill (run by the migration on the work
+    /// orders that existed before it: reset here to that state) marks only the work orders of a
+    /// request flagged "sécurité". The generic row factory needs the current schema, so the rows are
+    /// made on it and set back to "not marked" first.
     #[tokio::test]
     async fn existing_work_orders_of_a_safety_request_are_marked_and_no_others() {
-        let db = started_db_before_migration("m20261022_000255_wo_permit_safety_origin").await;
+        let db = started_db().await;
+        assert_eq!(
+            scalar_i64(
+                &db,
+                "SELECT COUNT(*) FROM pragma_table_info('work_orders')                   WHERE name = 'permit_from_safety_di' AND \"notnull\" = 1 AND dflt_value = '0'",
+                vec![],
+            )
+            .await,
+            1,
+            "column added, NOT NULL DEFAULT 0"
+        );
         let mut factory = RowFactory::new();
         // From a request flagged "sécurité".
         let from_safety = factory.create(&db, "work_orders").await.expect("wo").rowid;
@@ -110,9 +122,10 @@ mod tests {
             vec![manual.into()],
         )
         .await;
+        exec(&db, "UPDATE work_orders SET permit_from_safety_di = 0", vec![]).await;
         let requires_before = scalar_i64(&db, "SELECT SUM(requires_permit) FROM work_orders", vec![]).await;
 
-        crate::migrations::Migrator::up(&db, None).await.expect("migration 255");
+        exec(&db, super::BACKFILL_SQL, vec![]).await;
 
         assert_eq!(origin(&db, from_safety).await, 1, "from a safety request");
         assert_eq!(origin(&db, from_plain).await, 0, "from a request without the flag");
