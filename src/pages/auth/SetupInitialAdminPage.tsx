@@ -23,6 +23,7 @@ import { useProductLicenseGateRefresh } from "@/contexts/product-license-gate-co
 import { mfAuth, mfAuthAlert } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { appErrorText, describeAppError } from "@/lib/app-error";
+import { editionLabel } from "@/lib/edition-label";
 import { cn } from "@/lib/utils";
 import {
   type ActivationLicenseMetadata,
@@ -225,7 +226,7 @@ export function SetupInitialAdminPage() {
       {showLicenseMeta ? (
         <dl className={cn("mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5", mfAuthAlert.info)}>
           <dt className="font-medium">{t("login.licenseDetails.tier")}</dt>
-          <dd>{licenseMeta?.license_tier ?? na}</dd>
+          <dd>{editionLabel(licenseMeta?.license_tier) ?? na}</dd>
           <dt className="font-medium">{t("login.licenseDetails.slotLimit")}</dt>
           <dd>{licenseMeta?.device_limit ?? na}</dd>
           <dt className="font-medium">{t("login.licenseDetails.expiry")}</dt>

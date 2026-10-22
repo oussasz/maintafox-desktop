@@ -18,7 +18,7 @@ import { mfAuth } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { useStepUp } from "@/hooks/use-step-up";
 import { appErrorText } from "@/lib/app-error";
-import { cn } from "@/lib/utils";
+import { editionLabel } from "@/lib/edition-label";
 import { ForcePasswordChangePage } from "@/pages/auth/ForcePasswordChangePage";
 import { LockScreen } from "@/pages/auth/LockScreen";
 import { getAppInfo } from "@/services/app.service";
@@ -124,7 +124,6 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
   /** The version read from the running app; unset while unknown (never the placeholder above). */
   const [runningAppVersion, setRunningAppVersion] = useState<string | undefined>(undefined);
   const [error, setError] = useState<UserFacingActivationError | null>(null);
-  const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [reconciling, setReconciling] = useState(false);
@@ -423,7 +422,6 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     if (!key.trim()) return;
     setSubmitting(true);
     setError(null);
-    setShowErrorDetails(false);
     setWarning(null);
     try {
       const trimmed = key.trim();
@@ -460,7 +458,6 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     if (!pendingMarkToken) return;
     setSubmitting(true);
     setError(null);
-    setShowErrorDetails(false);
     try {
       await markActivationTenantInitialized(pendingMarkToken);
       setPendingMarkToken(null);
@@ -486,7 +483,6 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     }
     setSubmitting(true);
     setError(null);
-    setShowErrorDetails(false);
     setWarning(null);
     setStepUpRetry(null);
     setPendingMarkToken(null);
@@ -752,6 +748,14 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     t("activation.fields.notSpecified");
 
   const techRows = [
+    ...(error != null
+      ? [
+          { label: t("activation.diag.referenceCode"), value: error.referenceCode },
+          ...(error.technicalDetails?.trim()
+            ? [{ label: t("activation.diag.errorDetails"), value: error.technicalDetails }]
+            : []),
+        ]
+      : []),
     { label: t("activation.diag.status"), value: state?.status ?? "uninitialized" },
     { label: t("activation.diag.online"), value: isOnline ? "yes" : "no" },
     {
@@ -804,25 +808,6 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
             defaultValue: error.message,
           })}
         </p>
-        <p className="text-xs text-text-secondary">
-          {t("activation.diag.referenceCode")}:{" "}
-          <span className="font-mono text-text-primary">{error.referenceCode}</span>
-        </p>
-        <button
-          type="button"
-          aria-expanded={showErrorDetails}
-          className={cn("text-xs", mfAuth.linkPrimary)}
-          onClick={() => setShowErrorDetails((v) => !v)}
-        >
-          {showErrorDetails
-            ? t("activation.hideTechnicalDetails")
-            : t("activation.showTechnicalDetails")}
-        </button>
-        {showErrorDetails ? (
-          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-surface-0/70 p-2 font-mono text-xs text-text-secondary">
-            {error.technicalDetails}
-          </pre>
-        ) : null}
       </AuthAlert>
     ) : null;
 
@@ -830,6 +815,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     <ActivationTechnicalDetails
       summaryLabel={t("activation.technicalDetails")}
       rows={techRows}
+      defaultOpen={error != null}
       copyLabel={t("activation.copyDetails")}
       copiedLabel={t("activation.copied")}
     />
@@ -928,11 +914,12 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
               fields={{
                 companyName,
                 tenantSlug: pendingPreview?.tenant_slug ?? null,
-                licensePlan:
+                licensePlan: editionLabel(
                   pendingPreview?.edition ??
-                  pendingPreview?.license_plan ??
-                  pendingPreview?.license_tier ??
-                  null,
+                    pendingPreview?.license_plan ??
+                    pendingPreview?.license_tier ??
+                    null,
+                ),
                 licenseStatus: pendingPreview?.license_status ?? "active",
                 channel: pendingPreview?.update_channel ?? null,
                 expiresAt: pendingPreview?.expires_at ?? null,
@@ -995,7 +982,6 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
                   setPendingPreview(null);
                   setPendingMarkToken(null);
                   setError(null);
-                  setShowErrorDetails(false);
                 }}
               >
                 {t("activation.changeKey")}
