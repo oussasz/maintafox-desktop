@@ -593,38 +593,49 @@ pub async fn set_wo_permit_requirement(
     Ok(wo)
 }
 
-/// Clear the permit flag a plant rule set when the work order was converted from a request.
-/// Needs the permit-issue right (`ptw.issue`) — editing the work order is not enough — and a
-/// reason of 10 characters or more; recorded on the work order and in its audit trail.
+/// Clear the permit flag a plant rule set when the work order was converted from a request, or the
+/// permit requirement carried from a request flagged "sécurité" (migration 255). Needs the
+/// permit-issue right (`ptw.issue`) — editing the work order is not enough — and a reason of 10
+/// characters or more; recorded on the work order and in its audit trail.
 #[tauri::command]
 pub async fn clear_wo_permit_rule_flag(
     input: crate::wo::workflow::actions::permit_requirement::WoPermitRuleClearInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    // A safety gate: clearing a permit requirement set by a plant rule stays plant-wide (the
-    // action itself re-checks the plant-wide right in its transaction).
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::PTW_ISSUE,
-        PermissionScope::Global
-    );
+    // A safety gate: `ptw.issue` at the work order's site (plant-wide for a work order without a
+    // site), with the entitlement and licence checks. The action re-checks, in its transaction,
+    // the right its origin needs: plant-wide for a plant rule (a site role does not lift a plant
+    // rule), at the work order's site for a safety request (CMMS Advisor decision D1).
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::PTW_ISSUE, input.wo_id).await?;
     let actor_id = i64::from(user.user_id);
     let reason = input.reason.trim().to_string();
     let wo =
         crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await?;
+    let origin = if wo.permit_rule_code.is_some() {
+        "rule"
+    } else {
+        "safety_request"
+    };
     audit::record_wo_change_event(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
             action: "permit_rule_flag_cleared".into(),
             actor_id: Some(actor_id),
-            summary: Some("Exigence de permis (règle) levée".into()),
+            summary: Some(
+                if wo.permit_rule_code.is_some() {
+                    "Exigence de permis (règle) levée"
+                } else {
+                    "Exigence de permis (demande sécurité) levée"
+                }
+                .into(),
+            ),
             details_json: Some(
                 serde_json::json!({
                     "requires_permit": false,
                     "rule": wo.permit_rule_code,
+                    "origin": origin,
                     "reason": reason,
                 })
                 .to_string(),

@@ -451,6 +451,9 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_orders", "permit_rule_code", "NULL"),
     ("work_orders", "permit_rule_permit_type", "NULL"),
     ("work_orders", "permit_rule_cleared_at", "NULL"),
+    // Nor a permit requirement from a request flagged "sécurité" (migration 255, judged on arrival
+    // the same way).
+    ("work_orders", "permit_from_safety_di", "0"),
     // A generic record carries no assigned-site trace (written once by an administrator on a record
     // without a site and judged on arrival, `org::site_assignment::inbound_site_assignment_check`).
     ("work_orders", "site_assigned_by_id", "NULL"),

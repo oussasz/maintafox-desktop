@@ -153,7 +153,7 @@ const WO_COLS: &str = "\
     wo.service_cost_input, wo.reopen_count, wo.last_closed_at, \
     wo.requires_permit, \
     wo.permit_rule_code, wo.permit_rule_permit_type, wo.permit_rule_cleared_by_id, \
-    wo.permit_rule_cleared_at, wo.permit_rule_clear_reason, \
+    wo.permit_rule_cleared_at, wo.permit_rule_clear_reason, wo.permit_from_safety_di, \
     wo.entity_sync_id, wo.closeout_validation_profile_id, wo.closeout_validation_passed, \
     wo.no_downtime_attestation, wo.no_downtime_attestation_reason, \
     wo.row_version, wo.created_at, wo.updated_at";

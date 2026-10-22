@@ -170,6 +170,10 @@ pub struct WorkOrder {
     pub permit_rule_cleared_at: Option<String>,
     #[serde(default)]
     pub permit_rule_clear_reason: Option<String>,
+    /// The permit requirement came from the request it was converted from, flagged "sécurité"
+    /// (migration 255): cleared like a rule flag, never by the general edit.
+    #[serde(default)]
+    pub permit_from_safety_di: bool,
     pub entity_sync_id: Option<String>,
     pub closeout_validation_profile_id: Option<i64>,
     pub closeout_validation_passed: bool,
@@ -558,6 +562,10 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         permit_rule_clear_reason: row
             .try_get::<Option<String>>("", "permit_rule_clear_reason")
             .map_err(|e| decode_err("permit_rule_clear_reason", e))?,
+        permit_from_safety_di: row
+            .try_get::<i64>("", "permit_from_safety_di")
+            .map_err(|e| decode_err("permit_from_safety_di", e))?
+            != 0,
         entity_sync_id: row
             .try_get::<Option<String>>("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
