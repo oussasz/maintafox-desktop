@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next";
 
 import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
-import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfTone, toneOf } from "@/design-system/tone";
 import { cn } from "@/lib/utils";
@@ -70,22 +70,11 @@ function RangePicker({
     <div className="flex flex-wrap items-end gap-2 text-sm">
       <label className="space-y-1">
         <span className="block text-text-muted">{t("capacityDays.from")}</span>
-        <Input
-          type="date"
-          className="h-9 w-40"
-          value={from}
-          onChange={(e) => onChange(e.target.value, to)}
-        />
+        <DateField className="h-9 w-40" value={from} onChange={(v) => onChange(v, to)} />
       </label>
       <label className="space-y-1">
         <span className="block text-text-muted">{t("capacityDays.to")}</span>
-        <Input
-          type="date"
-          className="h-9 w-40"
-          value={to}
-          min={from}
-          onChange={(e) => onChange(from, e.target.value)}
-        />
+        <DateField className="h-9 w-40" value={to} min={from} onChange={(v) => onChange(from, v)} />
       </label>
       {tooLong || to < from ? (
         <p className={cn("pb-2", mfTone.danger.text)} role="alert">

@@ -14,6 +14,7 @@ import {
 import { fromDateTimeLocal, toDateTimeLocal } from "@/components/planning/planning-model";
 import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Button } from "@/components/ui/button";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import {
   Dialog,
   DialogContent,
@@ -21,7 +22,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
@@ -256,20 +256,18 @@ export function BreakInDialog({
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label>{t("breakIns.start")}</Label>
-              <Input
+              <DateTimeField
                 className="h-8 text-sm"
-                type="datetime-local"
                 value={newStart}
-                onChange={(e) => setNewStart(e.target.value)}
+                onChange={(v) => setNewStart(v)}
               />
             </div>
             <div>
               <Label>{t("breakIns.end")}</Label>
-              <Input
+              <DateTimeField
                 className="h-8 text-sm"
-                type="datetime-local"
                 value={newEnd}
-                onChange={(e) => setNewEnd(e.target.value)}
+                onChange={(v) => setNewEnd(v)}
               />
             </div>
           </div>

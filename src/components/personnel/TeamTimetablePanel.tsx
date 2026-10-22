@@ -12,7 +12,7 @@ import { useTranslation } from "react-i18next";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
-import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import {
   Select,
   SelectContent,
@@ -275,12 +275,11 @@ export function TeamTimetablePanel({
             </Select>
           </FormField>
           <FormField name="team-class-from" label={t("timetable.editor.effectiveFrom")}>
-            <Input
+            <DateField
               id="team-class-from"
-              type="date"
               min={today}
               value={from}
-              onChange={(e) => setFrom(e.target.value)}
+              onChange={(v) => setFrom(v)}
               className="h-9"
             />
           </FormField>

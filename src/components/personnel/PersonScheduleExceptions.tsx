@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -313,22 +314,20 @@ export function PersonScheduleExceptions({ personnelId }: { personnelId: number 
               </FormField>
               <div className="grid grid-cols-2 gap-3">
                 <FormField name="exception-from" label={t("timetable.exceptions.from")} required>
-                  <Input
+                  <DateField
                     id="exception-from"
-                    type="date"
                     min={today}
                     disabled={draft.started}
                     value={draft.from}
-                    onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+                    onChange={(v) => setDraft({ ...draft, from: v })}
                   />
                 </FormField>
                 <FormField name="exception-to" label={t("timetable.exceptions.to")}>
-                  <Input
+                  <DateField
                     id="exception-to"
-                    type="date"
                     min={draft.started ? today : draft.from}
                     value={draft.to}
-                    onChange={(e) => setDraft({ ...draft, to: e.target.value })}
+                    onChange={(v) => setDraft({ ...draft, to: v })}
                   />
                 </FormField>
               </div>

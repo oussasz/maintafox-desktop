@@ -16,8 +16,10 @@ import {
 } from "@/components/ui/dialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
+import { i18n } from "@/i18n";
 import { listActiveSessions, revokeSession } from "@/services/rbac-service";
 import { pushAppToast } from "@/store/app-toast-store";
+import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { SessionSummary } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -131,7 +133,9 @@ export function SessionVisibilityPanel() {
         header: t("sessions.columns.sessionStart", "Started"),
         cell: ({ row }) => {
           try {
-            return new Date(row.original.session_started_at).toLocaleString();
+            return new Date(row.original.session_started_at).toLocaleString(
+              intlLocaleForLanguage(i18n.language),
+            );
           } catch {
             return row.original.session_started_at;
           }
@@ -144,7 +148,7 @@ export function SessionVisibilityPanel() {
           const v = row.original.last_activity_at;
           if (!v) return "—";
           try {
-            return new Date(v).toLocaleString();
+            return new Date(v).toLocaleString(intlLocaleForLanguage(i18n.language));
           } catch {
             return v;
           }

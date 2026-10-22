@@ -14,6 +14,7 @@ import { DataTable } from "@/components/data/DataTable";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -451,12 +452,11 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
             </div>
             <div className="space-y-1">
               <Label htmlFor="inv-fx-valid-from">{t("rules.fx.form.validFrom")}</Label>
-              <Input
+              <DateField
                 id="inv-fx-valid-from"
-                type="date"
                 className="h-11"
                 value={rateValidFrom}
-                onChange={(e) => setRateValidFrom(e.target.value)}
+                onChange={(v) => setRateValidFrom(v)}
               />
             </div>
             <div className="space-y-1">
