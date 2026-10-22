@@ -238,6 +238,17 @@ describe("InventoryControlsPanel", () => {
     expect(mocks.approveInventoryCountLine).toHaveBeenCalledTimes(1);
   });
 
+  it("approves the count only once every variance is approved", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "submitted" })]);
+    mocks.listInventoryCountLines.mockResolvedValue([countLine()]);
+
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Submitted)");
+    await screen.findByText("A-21");
+    expect(screen.getByRole("button", { name: "Approve count" })).toBeDisabled();
+  });
+
   it("shows the reviewer's name, never a raw user id", async () => {
     mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "approved" })]);
     mocks.listInventoryCountLines.mockResolvedValue([

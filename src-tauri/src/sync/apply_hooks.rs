@@ -3,8 +3,12 @@
 //! The generic materializer writes the replicated columns. Some tables also feed data that each
 //! device derives for itself; those derivations run here, in the same transaction as the apply:
 //! - `inventory_transactions`: a received movement changes `stock_balances` of its location
-//!   (`inventory::ledger`), never refused; a location left below zero gets its one review item
-//!   "négatif — à rapprocher", closed again by a count or a later entry (`inventory::negative_stock`);
+//!   (`inventory::ledger`), never refused for its quantity; a location left below zero gets its
+//!   one review item "négatif — à rapprocher", closed again by a count or a later entry
+//!   (`inventory::negative_stock`);
+//!   before the apply, a count movement this PC already holds under another sync id (the same
+//!   session posted on two PCs by older versions) is a `COUNT_ALREADY_POSTED` conflict, so the
+//!   stock moves once (`inventory::controls::inbound_count_movement_check`);
 //! - `org_nodes`: `ancestor_path` / `depth` (paths of local ids) are recomputed for the node and
 //!   its subtree;
 //! - `user_dismissals`: `scope_key` (`<issue_code>:<local equipment id>`) is rebuilt;
@@ -124,6 +128,18 @@ pub(crate) async fn before_upsert_checked(
                 code: AUDIT_STUB_REFUSED.into(),
                 message,
             }));
+    }
+    // `inventory_transactions`: a count posted on two PCs by versions that gave its movement a
+    // random id is applied once (`inventory::controls::inbound_count_movement_check`).
+    if layout.def.entity_type == "inventory_transactions" {
+        if let Some(message) =
+            crate::inventory::controls::inbound_count_movement_check(conn, entity_sync_id, payload).await?
+        {
+            return Ok(Some(ApplyOutcome::Conflict {
+                code: crate::inventory::controls::COUNT_ALREADY_POSTED.into(),
+                message,
+            }));
+        }
     }
     // `user_accounts`: a username already used here by another account is a coded conflict, not a
     // failed insert (`sync::username_clash::inbound_username_clash`).

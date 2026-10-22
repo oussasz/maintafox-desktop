@@ -1821,6 +1821,9 @@
     "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choose the variance reason of the count.",
     "NEGATIVE_STOCK_NOT_OPEN": "This location's stock is no longer below zero: nothing to reconcile. Refresh the list.",
     "NEGATIVE_STOCK_ENTRY_REASON_SHORT": "This location is below zero: an entry here reconciles it and needs a reason in the comment (at least {{min}} characters).",
-    "COUNT_SESSION_STALE_SNAPSHOT": "A count was posted for this article and location since this session was opened: cancel this session and count again in a new session."
+    "COUNT_SESSION_STALE_SNAPSHOT": "A count was posted for this article and location since this session was opened: cancel this session and count again in a new session.",
+    "COUNT_SESSION_STATUS_POSTING_ONLY": "A count is posted or reversed only with “Post variances to stock” or “Reverse posting”: the stock moves with them.",
+    "COUNT_LINE_NOT_APPROVED": "{{lines}} counted line(s) with a variance still need a reviewer's approval before the count is approved.",
+    "COUNT_ALREADY_POSTED": "Count {{session}} has already moved the stock of this article at this location (posted or reversed on another PC): refresh the session; nothing was moved twice."
   }
 }

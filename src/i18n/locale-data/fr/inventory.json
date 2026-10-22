@@ -1821,6 +1821,9 @@
     "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choisissez le motif d'écart du comptage.",
     "NEGATIVE_STOCK_NOT_OPEN": "Le stock de cet emplacement n'est plus sous zéro : rien à rapprocher. Actualisez la liste.",
     "NEGATIVE_STOCK_ENTRY_REASON_SHORT": "Cet emplacement est sous zéro : une entrée ici le rapproche et demande une justification dans le commentaire (au moins {{min}} caractères).",
-    "COUNT_SESSION_STALE_SNAPSHOT": "Un comptage a été validé sur cet article et cet emplacement depuis l'ouverture de cette session : annulez cette session et recomptez dans une nouvelle session."
+    "COUNT_SESSION_STALE_SNAPSHOT": "Un comptage a été validé sur cet article et cet emplacement depuis l'ouverture de cette session : annulez cette session et recomptez dans une nouvelle session.",
+    "COUNT_SESSION_STATUS_POSTING_ONLY": "Un inventaire est passé en stock ou contre-passé uniquement par « Passer les écarts en stock » ou « Contre-passer » : le stock bouge avec eux.",
+    "COUNT_LINE_NOT_APPROVED": "{{lines}} ligne(s) comptée(s) avec écart attendent encore l'approbation d'un vérificateur avant d'approuver l'inventaire.",
+    "COUNT_ALREADY_POSTED": "L'inventaire {{session}} a déjà mouvementé le stock de cet article à cet emplacement (passé en stock ou contre-passé sur un autre PC) : actualisez la session ; rien n'a été mouvementé deux fois."
   }
 }

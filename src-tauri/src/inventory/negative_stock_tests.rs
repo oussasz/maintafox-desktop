@@ -1832,3 +1832,384 @@ async fn a_double_count_closed_by_a_reversal_leaves_the_negative_item_open() {
         assert_eq!((open[0].article_id, open[0].location_id), (art, loc), "{pc}");
     }
 }
+
+// ── One count posted on two PCs (AU-100) ────────────────────────────────────────────────────
+
+/// Submits a session from [`enter_count`], approves its variance and the count (not posted).
+async fn approve_count(
+    db: &DatabaseConnection,
+    user: i32,
+    (session, line): (
+        crate::inventory::domain::InventoryCountSession,
+        crate::inventory::domain::InventoryCountLine,
+    ),
+) -> crate::inventory::domain::InventoryCountSession {
+    use crate::inventory::controls;
+    let session = controls::transition_count_session(db, move_to(&session, "submitted", user))
+        .await
+        .expect("submitted");
+    controls::approve_count_line(
+        db,
+        crate::inventory::domain::ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: i64::from(user),
+            reviewer_evidence: "Bac vérifié au comptage".into(),
+        },
+    )
+    .await
+    .expect("approve line");
+    controls::transition_count_session(db, move_to(&session, "approved", user))
+        .await
+        .expect("approved")
+}
+
+/// The count session of `db` with this sync id, as it stands now.
+async fn session_by_sync_id(db: &DatabaseConnection, sync_id: &str) -> crate::inventory::domain::InventoryCountSession {
+    let id = scalar_i64(
+        db,
+        "SELECT id FROM inventory_count_sessions WHERE entity_sync_id = ?",
+        vec![sync_id.into()],
+    )
+    .await;
+    crate::inventory::controls::list_count_sessions(db)
+        .await
+        .expect("sessions")
+        .into_iter()
+        .find(|s| s.id == id)
+        .expect("session")
+}
+
+async fn text_of(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) -> String {
+    crate::sync::test_support::scalar_opt_text(db, sql, values)
+        .await
+        .unwrap_or_else(|| panic!("{sql}: no text"))
+}
+
+/// `(movements, distinct sync ids)` of a movement type of a count session on `db`.
+async fn count_movements(db: &DatabaseConnection, session_sync_id: &str, movement_type: &str) -> (i64, i64) {
+    let sql = |what: &str| {
+        format!(
+            "SELECT {what} FROM inventory_transactions t JOIN inventory_count_sessions s ON s.id = t.source_id
+             WHERE t.source_type = 'COUNT_SESSION' AND s.entity_sync_id = ? AND t.movement_type = ?"
+        )
+    };
+    (
+        scalar_i64(db, &sql("COUNT(*)"), vec![session_sync_id.into(), movement_type.into()]).await,
+        scalar_i64(
+            db,
+            &sql("COUNT(DISTINCT t.entity_sync_id)"),
+            vec![session_sync_id.into(), movement_type.into()],
+        )
+        .await,
+    )
+}
+
+/// The sync id of the one movement of a type of a count session on `db`.
+async fn movement_sync_id(db: &DatabaseConnection, session_sync_id: &str, movement_type: &str) -> String {
+    text_of(
+        db,
+        "SELECT t.entity_sync_id FROM inventory_transactions t JOIN inventory_count_sessions s ON s.id = t.source_id
+         WHERE t.source_type = 'COUNT_SESSION' AND s.entity_sync_id = ? AND t.movement_type = ?",
+        vec![session_sync_id.into(), movement_type.into()],
+    )
+    .await
+}
+
+/// Audit links of a movement on `db`.
+async fn audit_links(db: &DatabaseConnection, movement_sync_id: &str) -> i64 {
+    scalar_i64(
+        db,
+        "SELECT COUNT(*) FROM inventory_mutation_audit_links l JOIN inventory_transactions t ON t.id = l.transaction_id
+         WHERE t.entity_sync_id = ?",
+        vec![movement_sync_id.into()],
+    )
+    .await
+}
+
+/// One exchange where conflicts on the count session and its line are expected (the same record
+/// changed on two PCs); nothing may fail to apply.
+async fn sync_applied(server: &mut TestServer, device: &str, db: &DatabaseConnection) {
+    let report = server.exchange(device, db).await;
+    assert!(
+        report.materialized.errors.is_empty(),
+        "{device}: {:?}",
+        report.materialized.errors
+    );
+}
+
+/// Stock 10 known to A and B, and a count of 7 (variance −3) entered and approved on A, received by
+/// B: the same approved session on both PCs.
+struct ApprovedOnBoth {
+    a: DatabaseConnection,
+    b: DatabaseConnection,
+    server: TestServer,
+    /// The counting user of A and of B (local ids).
+    users: (i32, i32),
+    /// `(article, location)` local ids on A and on B.
+    pair_a: (i64, i64),
+    pair_b: (i64, i64),
+    session_sync_id: String,
+}
+
+async fn approved_on_both() -> ApprovedOnBoth {
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    let user_a = user_with(&a, "au100counta", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let user_b = user_with(&b, "au100countb", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let pair_a = (article.rowid, location.rowid);
+    let entered = enter_count(&a, user_a, pair_a.0, pair_a.1, 7.0).await;
+    let session = approve_count(&a, user_a, entered).await;
+    let session_sync_id = text_of(
+        &a,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![session.id.into()],
+    )
+    .await;
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    let pair_b = local_pair(&b, &article, &location).await;
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        10_000,
+        "B holds the 10 units"
+    );
+    assert_eq!(
+        session_by_sync_id(&b, &session_sync_id).await.status,
+        "approved",
+        "B holds the approved session"
+    );
+    ApprovedOnBoth {
+        a,
+        b,
+        server,
+        users: (user_a, user_b),
+        pair_a,
+        pair_b,
+        session_sync_id,
+    }
+}
+
+async fn post_on(db: &DatabaseConnection, user: i32, session_sync_id: &str) {
+    let session = session_by_sync_id(db, session_sync_id).await;
+    crate::inventory::controls::post_count_session(
+        db,
+        crate::inventory::domain::PostInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            actor_id: Some(i64::from(user)),
+        },
+    )
+    .await
+    .expect("posted");
+}
+
+async fn reverse_on(db: &DatabaseConnection, user: i32, session_sync_id: &str) {
+    let session = session_by_sync_id(db, session_sync_id).await;
+    crate::inventory::controls::reverse_count_session(
+        db,
+        crate::inventory::domain::ReverseInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            reason: "Feuille de comptage erronée".into(),
+            actor_id: Some(i64::from(user)),
+        },
+    )
+    .await
+    .expect("reversed");
+}
+
+/// AU-100: the same approved count posted on two PCs before either synchronised. Its movement has
+/// the same seeded id on both (`count_adjust` of the session, article and location sync ids), so
+/// each PC receives the other's as a replay: the stock moves once (10 → 7) on both, with one
+/// movement and one audit link.
+#[tokio::test]
+async fn a_count_posted_on_two_pcs_moves_the_stock_once() {
+    let ApprovedOnBoth {
+        a,
+        b,
+        mut server,
+        users,
+        pair_a,
+        pair_b,
+        session_sync_id,
+    } = approved_on_both().await;
+    post_on(&a, users.0, &session_sync_id).await;
+    post_on(&b, users.1, &session_sync_id).await;
+
+    let ids = text_of(
+        &a,
+        "SELECT (SELECT entity_sync_id FROM articles WHERE id = ?) || ':' ||
+                (SELECT entity_sync_id FROM stock_locations WHERE id = ?)",
+        vec![pair_a.0.into(), pair_a.1.into()],
+    )
+    .await;
+    let expected = crate::sync::identity::seeded_entity_sync_id("count_adjust", &format!("{session_sync_id}:{ids}"));
+    let on_a = movement_sync_id(&a, &session_sync_id, "COUNT_ADJUST").await;
+    let on_b = movement_sync_id(&b, &session_sync_id, "COUNT_ADJUST").await;
+    assert_eq!(on_a, expected, "A: the seeded id");
+    assert_eq!(on_b, expected, "B: the same id");
+
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    sync_applied(&mut server, "A", &a).await;
+    for (pc, db, (art, loc)) in [("A", &a, pair_a), ("B", &b, pair_b)] {
+        assert_eq!(on_hand_milli(db, art, loc).await, 7_000, "{pc}: corrected once");
+        assert_eq!(
+            count_movements(db, &session_sync_id, "COUNT_ADJUST").await,
+            (1, 1),
+            "{pc}: one movement"
+        );
+        assert_eq!(audit_links(db, &expected).await, 1, "{pc}: one audit link");
+    }
+}
+
+/// AU-100: the same posted count reversed on two PCs before either synchronised: one
+/// `count_reversal` movement with the same seeded id on both, so the stock goes back once (7 → 10).
+#[tokio::test]
+async fn a_count_reversed_on_two_pcs_moves_the_stock_back_once() {
+    let ApprovedOnBoth {
+        a,
+        b,
+        mut server,
+        users,
+        pair_a,
+        pair_b,
+        session_sync_id,
+    } = approved_on_both().await;
+    post_on(&a, users.0, &session_sync_id).await;
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        7_000,
+        "B: the posting arrived"
+    );
+
+    reverse_on(&a, users.0, &session_sync_id).await;
+    reverse_on(&b, users.1, &session_sync_id).await;
+    let on_a = movement_sync_id(&a, &session_sync_id, "COUNT_REVERSAL").await;
+    assert_eq!(on_a, movement_sync_id(&b, &session_sync_id, "COUNT_REVERSAL").await);
+    assert_ne!(
+        on_a,
+        movement_sync_id(&a, &session_sync_id, "COUNT_ADJUST").await,
+        "a reversal has its own id"
+    );
+
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    sync_applied(&mut server, "A", &a).await;
+    for (pc, db, (art, loc)) in [("A", &a, pair_a), ("B", &b, pair_b)] {
+        assert_eq!(on_hand_milli(db, art, loc).await, 10_000, "{pc}: back once");
+        assert_eq!(
+            count_movements(db, &session_sync_id, "COUNT_REVERSAL").await,
+            (1, 1),
+            "{pc}: one reversal"
+        );
+        assert_eq!(
+            count_movements(db, &session_sync_id, "COUNT_ADJUST").await,
+            (1, 1),
+            "{pc}: one posting"
+        );
+    }
+}
+
+/// AU-100 fallback: a count movement from a PC of an older version (random sync id) for a count this
+/// PC already holds is refused as `COUNT_ALREADY_POSTED` and the stock stays; the same movement
+/// replayed with its own id is a no-op; a movement of another session of the same article and
+/// location is applied, and that session can then no longer be posted here (refused, the stock
+/// moves once).
+#[tokio::test]
+async fn a_count_movement_received_twice_under_another_id_is_refused() {
+    use crate::inventory::controls;
+    use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let user = user_with(&db, "au100inbound", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art, loc) = (article.rowid, location.rowid);
+    let entered = enter_count(&db, user, art, loc, 7.0).await;
+    let session = approve_count(&db, user, entered).await;
+    let session_sync_id = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![session.id.into()],
+    )
+    .await;
+    post_on(&db, user, &session_sync_id).await;
+    assert_eq!(on_hand_milli(&db, art, loc).await, 7_000);
+    let held = movement_sync_id(&db, &session_sync_id, "COUNT_ADJUST").await;
+    // The row as the wire carries it (references by sync id).
+    let payload = crate::sync::test_support::current_payload(&db, "inventory_transactions", &held, &Default::default())
+        .await
+        .expect("payload")
+        .expect("row");
+    assert_eq!(
+        payload.get("source_sync_id").and_then(|v| v.as_str()),
+        Some(session_sync_id.as_str()),
+        "the session travels as source_sync_id"
+    );
+    let json = serde_json::Value::Object(payload.clone()).to_string();
+
+    // The same count posted on a PC of an older version: a random id.
+    let random_id = crate::sync::identity::new_entity_sync_id();
+    let outcome = apply_inbound_payload(&db, "inventory_transactions", &random_id, "upsert", 1, &json)
+        .await
+        .expect("apply");
+    assert!(
+        matches!(&outcome, ApplyOutcome::Conflict { code, .. } if code == controls::COUNT_ALREADY_POSTED),
+        "{outcome:?}"
+    );
+    assert_eq!(on_hand_milli(&db, art, loc).await, 7_000, "the stock moved once");
+    assert_eq!(count_movements(&db, &session_sync_id, "COUNT_ADJUST").await, (1, 1));
+
+    // This version's movement received again (same id): a replay, no-op.
+    let replay = apply_inbound_payload(&db, "inventory_transactions", &held, "upsert", 1, &json)
+        .await
+        .expect("replay");
+    assert!(matches!(replay, ApplyOutcome::Unchanged), "{replay:?}");
+    assert_eq!(on_hand_milli(&db, art, loc).await, 7_000);
+
+    // Another session of the same article and location, approved here but not posted: a movement of
+    // that session from another PC is not this count, so it is applied.
+    let other = approve_count(&db, user, enter_count(&db, user, art, loc, 5.0).await).await;
+    let other_sync_id = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![other.id.into()],
+    )
+    .await;
+    let mut for_other = payload;
+    for_other.insert("source_sync_id".into(), other_sync_id.clone().into());
+    for_other.insert("quantity".into(), serde_json::json!(-2.0));
+    let applied = apply_inbound_payload(
+        &db,
+        "inventory_transactions",
+        &crate::sync::identity::new_entity_sync_id(),
+        "upsert",
+        1,
+        &serde_json::Value::Object(for_other).to_string(),
+    )
+    .await
+    .expect("apply other");
+    assert!(matches!(applied, ApplyOutcome::Applied), "{applied:?}");
+    assert_eq!(on_hand_milli(&db, art, loc).await, 5_000, "another count is applied");
+
+    // That session's count already moved the stock here: posting it again is refused.
+    let refused = controls::post_count_session(
+        &db,
+        crate::inventory::domain::PostInventoryCountSessionInput {
+            session_id: other.id,
+            expected_row_version: other.row_version,
+            actor_id: Some(i64::from(user)),
+        },
+    )
+    .await
+    .expect_err("already posted on another PC");
+    assert_eq!(refusal_code(refused), controls::COUNT_ALREADY_POSTED);
+    assert_eq!(on_hand_milli(&db, art, loc).await, 5_000, "nothing moved twice");
+    assert_eq!(count_movements(&db, &other_sync_id, "COUNT_ADJUST").await, (1, 1));
+}
