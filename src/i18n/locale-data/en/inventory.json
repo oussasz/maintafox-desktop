@@ -1061,7 +1061,13 @@
         "REVIEW": "Review",
         "INSUFFICIENT_DATA": "Insufficient data",
         "insufficientData": "Not enough cost history to recommend repair or replace.",
-        "reasons": {}
+        "reasons": {
+          "MISSING_REPAIR_COST": "Repair cost is unknown.",
+          "MISSING_REPLACEMENT_COST": "Replacement cost is unknown.",
+          "RATIO_NEAR_THRESHOLD": "The repair/replacement ratio is close to the threshold: review.",
+          "REPAIR_COST_FROM_HISTORY_AVG": "Repair cost estimated from the average of earlier repairs.",
+          "REPLACEMENT_COST_PROVISIONAL": "Replacement cost is provisional (low-confidence valuation)."
+        }
       },
       "history": {
         "repairCount": "Prior repairs",
