@@ -109,7 +109,7 @@ export function OverviewMetricCards(props: {
     const rounded = Math.abs(pct) >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10;
     const sign = rounded > 0 ? "+" : "";
     return {
-      label: `${sign}${formatNumber(rounded)} %`,
+      label: `${sign}${formatNumber(rounded)} %`,
       sense: senseForDelta(cell.value - cell.previous_value, direction),
     };
   };
