@@ -19,6 +19,7 @@ import { mfAuth, mfAuthAlert } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
 import { describeAppError } from "@/lib/app-error";
+import { editionLabel } from "@/lib/edition-label";
 import { cn } from "@/lib/utils";
 import {
   type ActivationLicenseMetadata,
@@ -166,7 +167,7 @@ export function LoginPage() {
 
   const licenseSummary = [
     licenseMeta?.company_display_name ?? licenseMeta?.tenant_id ?? null,
-    licenseMeta?.license_tier ?? null,
+    editionLabel(licenseMeta?.license_tier),
   ]
     .filter((part): part is string => Boolean(part && part.trim()))
     .join(" · ");
@@ -200,7 +201,7 @@ export function LoginPage() {
       {showLicenseMeta ? (
         <dl className={cn("mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5", mfAuthAlert.info)}>
           <dt className="font-medium">{t("login.licenseDetails.tier")}</dt>
-          <dd>{licenseMeta?.license_tier ?? t("login.licenseDetails.na")}</dd>
+          <dd>{editionLabel(licenseMeta?.license_tier) ?? t("login.licenseDetails.na")}</dd>
           <dt className="font-medium">{t("login.licenseDetails.slotLimit")}</dt>
           <dd>{licenseMeta?.device_limit ?? t("login.licenseDetails.na")}</dd>
           <dt className="font-medium">{t("login.licenseDetails.expiry")}</dt>
