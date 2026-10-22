@@ -25,6 +25,8 @@ pub mod username_clash;
 pub mod waiting;
 
 #[cfg(test)]
+mod audit_targets_tests;
+#[cfg(test)]
 mod convergence_tests;
 #[cfg(test)]
 mod foundation_tests;

@@ -2892,3 +2892,69 @@ async fn an_unreadable_posted_twice_audit_never_breaks_the_list_or_a_count() {
     let again = enter_count(&db, user, art, loc, 7.0).await;
     post_count(&db, user, again).await;
 }
+
+/// Review N1 (8e1d2ffd): the same session posted on two PCs with different counted quantities
+/// (7 on A, 6 on B), then reversed on B while B's line conflict is still open (B's line still says
+/// −4, the movement kept on every PC says −3): the reversal undoes the movement as the ledger holds
+/// it (+3), so both PCs go back to 10, with one reversal of the same content.
+#[tokio::test]
+async fn a_divergent_count_reversed_on_the_pc_that_lost_goes_back_once() {
+    let ApprovedOnBoth {
+        a,
+        b,
+        mut server,
+        users,
+        pair_a,
+        pair_b,
+        session_sync_id,
+    } = approved_on_both().await;
+    exec(
+        &b,
+        "UPDATE inventory_count_lines SET counted_qty = 6, variance_qty = -4
+         WHERE session_id = (SELECT id FROM inventory_count_sessions WHERE entity_sync_id = ?)",
+        vec![session_sync_id.clone().into()],
+    )
+    .await;
+    post_on(&a, users.0, &session_sync_id).await;
+    post_on(&b, users.1, &session_sync_id).await;
+    for (pc, db) in [("A", &a), ("B", &b), ("A", &a), ("B", &b), ("A", &a)] {
+        sync_applied(&mut server, pc, db).await;
+    }
+    for (pc, db, (art, loc)) in [("A", &a, pair_a), ("B", &b, pair_b)] {
+        assert_eq!(
+            on_hand_milli(db, art, loc).await,
+            7_000,
+            "{pc}: converged on A's posting"
+        );
+    }
+    assert!(
+        !conflict_kinds(&b).await.is_empty(),
+        "B's line conflict is still open when B reverses"
+    );
+
+    reverse_on(&b, users.1, &session_sync_id).await;
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        10_000,
+        "B: the movement is undone as the ledger holds it (+3), not by B's line (+4)"
+    );
+    let reversal = movement_sync_id(&b, &session_sync_id, "COUNT_REVERSAL").await;
+    sync_applied(&mut server, "B", &b).await;
+    sync_applied(&mut server, "A", &a).await;
+    for (pc, db, (art, loc)) in [("A", &a, pair_a), ("B", &b, pair_b)] {
+        assert_eq!(on_hand_milli(db, art, loc).await, 10_000, "{pc}: back once");
+        assert_eq!(
+            count_movements(db, &session_sync_id, "COUNT_REVERSAL").await,
+            (1, 1),
+            "{pc}: one reversal"
+        );
+        assert_eq!(
+            wire_row(db, "inventory_transactions", &reversal)
+                .await
+                .get("quantity")
+                .and_then(|q| q.as_f64()),
+            Some(3.0),
+            "{pc}: the reversal undoes the kept movement"
+        );
+    }
+}
