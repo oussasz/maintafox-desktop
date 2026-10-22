@@ -179,8 +179,8 @@ pub async fn materialize_inbox(
         total.skipped += r.skipped;
         total.errors.extend(r.errors);
     };
-    // PM plan versions refused before the renumbering rule are applied again under it first, so
-    // the rows waiting for them follow in this run (`pm::version_clash`).
+    // PM plan versions refused before two versions could share a number are applied again first,
+    // so the rows waiting for them follow in this run (`pm::version_clash`).
     total.applied += crate::pm::version_clash::retry_refused_number_clashes(db).await?;
     // Rows arriving while this runs are taken by the next round; every round moves its rows out
     // of `pending`, so this ends.
@@ -733,14 +733,6 @@ pub(crate) async fn apply_inbound_payload(
 ) -> AppResult<ApplyOutcome> {
     if crate::sync::row_spec::row_spec(entity_type).is_some() {
         let layout = crate::sync::row_layout::layout(conn, entity_type).await?;
-        // A PM plan version numbered alike on two PCs: one of them takes the next free number
-        // (`pm::version_clash`); a version held here that moves is a change sent like an edit.
-        let settled = if entity_type == "pm_plan_versions" {
-            crate::pm::version_clash::settle_inbound(conn, entity_sync_id, operation, payload_json).await?
-        } else {
-            None
-        };
-        let payload_json = settled.as_deref().unwrap_or(payload_json);
         crate::sync::capture::begin_suppression(conn).await?;
         let applied = crate::sync::row_codec::apply_row(conn, &layout, entity_sync_id, operation, payload_json).await;
         crate::sync::capture::end_suppression(conn).await?;
