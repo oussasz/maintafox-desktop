@@ -542,12 +542,13 @@ pub(crate) async fn recompute_reserved_in<C: ConnectionTrait>(
     Ok(reserved)
 }
 
-/// End of a materialize pass: every pair marked since (by the triggers of migration 257, in the
-/// transactions that wrote its reservations or their movements) recomputed once, and its mark
-/// removed, in one transaction. Returns the number of pairs.
-pub(crate) async fn recompute_dirty_reserved(db: &DatabaseConnection) -> AppResult<usize> {
-    let txn = db.begin().await?;
-    let pairs = txn
+/// Every pair marked (by the triggers of migration 257, in the transactions that wrote its
+/// reservations or their movements) recomputed once and its mark removed, inside the caller's
+/// transaction: the sync pass before it commits, a conflict choice (`sync::conflicts`). Reserved
+/// stock and the writes that changed it commit together, so no one sees a figure in between.
+/// Returns the number of pairs.
+pub(crate) async fn recompute_dirty_reserved_in<C: ConnectionTrait>(conn: &C) -> AppResult<usize> {
+    let pairs = conn
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT article_id, location_id FROM stock_reserved_dirty".to_string(),
@@ -556,15 +557,35 @@ pub(crate) async fn recompute_dirty_reserved(db: &DatabaseConnection) -> AppResu
     for row in &pairs {
         let article_id: i64 = row.try_get("", "article_id")?;
         let location_id: i64 = row.try_get("", "location_id")?;
-        recompute_reserved_in(&txn, article_id, location_id).await?;
+        recompute_reserved_in(conn, article_id, location_id).await?;
+        conn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM stock_reserved_dirty WHERE article_id = ? AND location_id = ?",
+            [article_id.into(), location_id.into()],
+        ))
+        .await?;
     }
-    txn.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "DELETE FROM stock_reserved_dirty".to_string(),
-    ))
-    .await?;
-    txn.commit().await?;
     Ok(pairs.len())
+}
+
+/// Safety net, in its own transaction: marks left by a write path that did not recompute (an
+/// interrupted pass, a failed recompute). Run after every materialize pass and every sync cycle,
+/// also when nothing was received; nothing is written when there is no mark.
+pub(crate) async fn recompute_dirty_reserved(db: &DatabaseConnection) -> AppResult<usize> {
+    let any = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT 1 AS present FROM stock_reserved_dirty LIMIT 1".to_string(),
+        ))
+        .await?
+        .is_some();
+    if !any {
+        return Ok(0);
+    }
+    let txn = db.begin().await?;
+    let pairs = recompute_dirty_reserved_in(&txn).await?;
+    txn.commit().await?;
+    Ok(pairs)
 }
 
 /// Startup: recompute reserved stock of every article and location that has reservations or a
@@ -707,11 +728,11 @@ pub(crate) async fn settle_double_release<C: ConnectionTrait>(
     }
     if !settled {
         if let Err(e) = conn.execute_unprepared("ROLLBACK TO reservation_double_release").await {
-            tracing::warn!(entity_type, entity_sync_id, error = %e, "double release attempt not rolled back");
+            tracing::error!(entity_type, entity_sync_id, error = %e, "double release attempt not rolled back");
         }
     }
     if let Err(e) = conn.execute_unprepared("RELEASE reservation_double_release").await {
-        tracing::warn!(entity_type, entity_sync_id, error = %e, "double release savepoint not released");
+        tracing::error!(entity_type, entity_sync_id, error = %e, "double release savepoint not released");
         return Ok(false);
     }
     Ok(settled)

@@ -1,11 +1,11 @@
 //! Migration 257 — reserved stock recomputed once per sync pass (`inventory::reservations`).
 //!
 //! Reserved stock is a projection of the reservation rows and their movements. Triggers mark the
-//! article and location of every reservation row written and every reservation movement inserted
-//! in `stock_reserved_dirty`, in the writing transaction (rows and movements applied by sync
-//! included); at the end of each materialize pass every marked pair is recomputed once and its
-//! mark removed. A mark left by an interrupted pass is taken by the next pass or the startup
-//! recompute. The table is local to the PC (never synchronised).
+//! article and location of every reservation row written or deleted and every reservation movement
+//! inserted in `stock_reserved_dirty`, in the writing transaction (rows and movements applied by
+//! sync included). Every marked pair is recomputed once and its mark removed in the transaction of
+//! the sync pass before it commits, or of a conflict choice; marks left otherwise are taken after
+//! every pass and sync cycle, and at startup. The table is local to the PC (never synchronised).
 //!
 //! The index on reservations by article, location and status serves the per-pair projection,
 //! which reads only the open reservations of the pair.
@@ -58,6 +58,14 @@ impl MigrationTrait for Migration {
                  INSERT OR IGNORE INTO stock_reserved_dirty (article_id, location_id)
                  VALUES (OLD.article_id, OLD.location_id);
              END",
+            // No local code deletes a reservation; a delete received by sync (or a cascade) still
+            // takes its share out of the reserved stock.
+            "CREATE TRIGGER IF NOT EXISTS stock_reserved_dirty_reservation_delete
+             AFTER DELETE ON stock_reservations
+             BEGIN
+                 INSERT OR IGNORE INTO stock_reserved_dirty (article_id, location_id)
+                 VALUES (OLD.article_id, OLD.location_id);
+             END",
         ] {
             db.execute(Statement::from_string(DatabaseBackend::Sqlite, sql.to_string()))
                 .await?;
@@ -71,6 +79,7 @@ impl MigrationTrait for Migration {
             "DROP TRIGGER IF EXISTS stock_reserved_dirty_movement",
             "DROP TRIGGER IF EXISTS stock_reserved_dirty_reservation_insert",
             "DROP TRIGGER IF EXISTS stock_reserved_dirty_reservation_update",
+            "DROP TRIGGER IF EXISTS stock_reserved_dirty_reservation_delete",
             "DROP INDEX IF EXISTS idx_stock_reservations_pair_status",
             "DROP TABLE IF EXISTS stock_reserved_dirty",
         ] {

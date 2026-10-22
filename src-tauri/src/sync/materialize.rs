@@ -294,8 +294,8 @@ async fn materialize_selection(
     let result = crate::sync::row_codec::REF_CACHE
         .scope(Default::default(), materialize_pass(db, selection, limit))
         .await;
-    // Reserved stock of the pairs whose reservations or movements this pass wrote, once per pair
-    // (`inventory::reservations`). A failure keeps the marks for the next pass or the next start.
+    // Safety net: marks the pass could not take (`inventory::reservations`); nothing is written when
+    // there is none. A failure keeps the marks for the next pass, cycle or start.
     if let Err(e) = crate::inventory::reservations::recompute_dirty_reserved(db).await {
         tracing::warn!(target: "maintafox::sync", "reserved stock recompute after apply failed: {e}");
     }
@@ -420,6 +420,11 @@ async fn materialize_pass(
             break;
         }
         queue = waiting_for_parent;
+    }
+    // Reserved stock of the pairs this pass wrote, once per pair, committed with the pass
+    // (`inventory::reservations`). A failure keeps the marks for the safety net below.
+    if let Err(e) = crate::inventory::reservations::recompute_dirty_reserved_in(&pass).await {
+        tracing::warn!(target: "maintafox::sync", "reserved stock recompute in the pass failed: {e}");
     }
     pass.commit().await?;
 

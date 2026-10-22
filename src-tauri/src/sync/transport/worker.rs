@@ -979,6 +979,11 @@ impl SyncWorker {
                 "inbox materialized"
             );
         }
+        // Reserved stock marks left by a write outside a pass (`inventory::reservations`), every cycle,
+        // also when nothing was received; no write when there is no mark.
+        if let Err(e) = crate::inventory::reservations::recompute_dirty_reserved(&self.db).await {
+            warn!(target: "maintafox::sync", "reserved stock recompute failed: {e}");
+        }
         // D13: a close, a cancellation or a reservation received from another PC may leave a
         // reservation open on an ended work order; it is released now, not at the next start. Run
         // every cycle (it reads the open reservations only), also when the cycle only settled

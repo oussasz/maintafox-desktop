@@ -1938,3 +1938,70 @@ async fn a_release_against_a_different_change_stays_a_conflict() {
         0
     );
 }
+
+// ── Received movements and reserved stock ───────────────────────────────────
+
+/// A reservation movement received without its link (legacy data) moves on-hand stock only:
+/// reserved stock is the projection, which does not count unlinked movements.
+#[tokio::test]
+async fn an_unlinked_received_issue_leaves_reserved_stock_unchanged() {
+    let db = crate::db::test_db::seeded().await;
+    let a = stock_article(&db, "RESV-UNLINKED-A", 10.0).await;
+    let _held = reserve(&db, a, 3.0, "MANUAL", None).await;
+    assert_eq!(balance(&db, a).await, (10.0, 3.0));
+    unlinked_movement(&db, a, "ISSUE", 2.0, "unlinked-received-issue").await;
+    let location_id = main_location(&db).await;
+    let warehouse_id = scalar_i64(
+        &db,
+        "SELECT warehouse_id FROM stock_locations WHERE id = ?",
+        vec![location_id.into()],
+    )
+    .await;
+    crate::inventory::ledger::apply_received_movement(&db, a, warehouse_id, location_id, "ISSUE", 2.0)
+        .await
+        .expect("apply");
+    crate::inventory::reservations::recompute_dirty_reserved(&db)
+        .await
+        .expect("pass end");
+    assert_eq!(balance(&db, a).await, (8.0, 3.0), "on hand −2, reserved untouched");
+}
+
+/// Through the real sync path (exchange, inbox, materialize pass): B's reserved stock follows A's
+/// reservation and issue, recomputed in the pass that applied them, and no mark is left after it.
+#[tokio::test]
+async fn received_reservations_are_recomputed_in_the_sync_pass() {
+    let a = crate::sync::test_support::started_device_db().await;
+    let b = crate::sync::test_support::started_device_db().await;
+    let mut server = crate::sync::test_support::TestServer::new();
+    let (on_a, _on_b, article_b) = shared_reservation(&mut server, &a, &b).await;
+    let reserved_on_b = |db: DatabaseConnection| async move {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT on_hand_qty, reserved_qty FROM stock_balances WHERE article_id = ?",
+            [article_b.into()],
+        ))
+        .await
+        .expect("query")
+        .map(|r| {
+            (
+                r.try_get::<f64>("", "on_hand_qty").expect("on hand"),
+                r.try_get::<f64>("", "reserved_qty").expect("reserved"),
+            )
+        })
+    };
+    assert_eq!(reserved_on_b(b.clone()).await, Some((10.0, 5.0)));
+    issue(&a, on_a, 2.0).await;
+    server.exchange("A", &a).await;
+    let report = server.exchange("B", &b).await;
+    assert!(
+        report.materialized.errors.is_empty(),
+        "{:?}",
+        report.materialized.errors
+    );
+    assert_eq!(reserved_on_b(b.clone()).await, Some((8.0, 3.0)));
+    assert_eq!(
+        scalar_i64(&b, "SELECT COUNT(*) FROM stock_reserved_dirty", vec![]).await,
+        0,
+        "recomputed in the pass"
+    );
+}
