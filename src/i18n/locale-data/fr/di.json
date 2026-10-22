@@ -283,6 +283,7 @@
     "title": "Règles SLA",
     "description": "Configurez les délais de réponse et de résolution pour chaque niveau d'urgence.",
     "scaleHint": "Les délais d'un niveau pour toutes les demandes se règlent dans l'échelle d'urgence (Données de référence). Les règles ci-dessous sont les exceptions par origine ou criticité d'équipement.",
+    "invalidHours": "Indiquez des heures entières (0 ou plus) dans les trois champs.",
     "loading": "Chargement des règles…",
     "empty": "Aucune règle SLA configurée.",
     "columns": {

@@ -49,9 +49,11 @@ const RestoreTestResultSchema = z.object({
  * Requires: active session + adm.settings + recent step-up.
  */
 export async function runManualBackup(targetPath: string): Promise<BackupRunResult> {
-  const raw = await invoke<unknown>("run_manual_backup", {
-    payload: { target_path: targetPath },
-  });
+  const raw = await invoke<unknown>(
+    "run_manual_backup",
+    { payload: { target_path: targetPath } },
+    { notifyOnError: false },
+  );
   return BackupRunResultSchema.parse(raw) as BackupRunResult;
 }
 
@@ -60,7 +62,7 @@ export async function runManualBackup(targetPath: string): Promise<BackupRunResu
  * Requires: active session + adm.settings.
  */
 export async function listBackupRuns(limit?: number): Promise<BackupRunRecord[]> {
-  const raw = await invoke<unknown>("list_backup_runs", { limit });
+  const raw = await invoke<unknown>("list_backup_runs", { limit }, { notifyOnError: false });
   return z.array(BackupRunRecordSchema).parse(raw) as BackupRunRecord[];
 }
 
@@ -69,9 +71,11 @@ export async function listBackupRuns(limit?: number): Promise<BackupRunRecord[]>
  * Requires: active session + adm.settings.
  */
 export async function validateBackupFile(backupPath: string): Promise<RestoreTestResult> {
-  const raw = await invoke<unknown>("validate_backup_file", {
-    backupPath,
-  });
+  const raw = await invoke<unknown>(
+    "validate_backup_file",
+    { backupPath },
+    { notifyOnError: false },
+  );
   return RestoreTestResultSchema.parse(raw) as RestoreTestResult;
 }
 
@@ -82,7 +86,7 @@ export async function validateBackupFile(backupPath: string): Promise<RestoreTes
  * Requires: active session + adm.settings + step-up.
  */
 export async function restoreFromBackup(backupPath: string): Promise<void> {
-  await invoke<void>("restore_from_backup", { backupPath });
+  await invoke<void>("restore_from_backup", { backupPath }, { notifyOnError: false });
 }
 
 /**
@@ -91,7 +95,9 @@ export async function restoreFromBackup(backupPath: string): Promise<void> {
  * Requires: active session + adm.settings + step-up + typed confirmation phrase.
  */
 export async function factoryReset(confirmationPhrase: string): Promise<void> {
-  await invoke<void>("factory_reset", {
-    payload: { confirmation_phrase: confirmationPhrase },
-  });
+  await invoke<void>(
+    "factory_reset",
+    { payload: { confirmation_phrase: confirmationPhrase } },
+    { notifyOnError: false },
+  );
 }

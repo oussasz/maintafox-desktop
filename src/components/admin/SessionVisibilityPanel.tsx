@@ -14,11 +14,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
+import { i18n } from "@/i18n";
 import { listActiveSessions, revokeSession } from "@/services/rbac-service";
 import { pushAppToast } from "@/store/app-toast-store";
+import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { SessionSummary } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -48,7 +49,6 @@ function TrustBadge({ status, t }: { status: string; t: (k: string, d: string) =
 
 export function SessionVisibilityPanel() {
   const { t } = useTranslation("admin");
-  const { formatDateTime } = useFormatters();
   const { can } = usePermissions();
   // The global toast host shows them (a local useToast list was never rendered here).
   const toast = pushAppToast;
@@ -132,7 +132,13 @@ export function SessionVisibilityPanel() {
         accessorKey: "session_started_at",
         header: t("sessions.columns.sessionStart", "Started"),
         cell: ({ row }) => {
-          return formatDateTime(row.original.session_started_at);
+          try {
+            return new Date(row.original.session_started_at).toLocaleString(
+              intlLocaleForLanguage(i18n.language),
+            );
+          } catch {
+            return row.original.session_started_at;
+          }
         },
       },
       {
@@ -141,7 +147,11 @@ export function SessionVisibilityPanel() {
         cell: ({ row }) => {
           const v = row.original.last_activity_at;
           if (!v) return "—";
-          return formatDateTime(v);
+          try {
+            return new Date(v).toLocaleString(intlLocaleForLanguage(i18n.language));
+          } catch {
+            return v;
+          }
         },
       },
       {
@@ -179,7 +189,7 @@ export function SessionVisibilityPanel() {
         },
       },
     ],
-    [t, can, formatDateTime],
+    [t, can],
   );
 
   return (

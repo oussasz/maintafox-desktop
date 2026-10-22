@@ -50,7 +50,8 @@ export interface FormatDecimalInputOptions {
 export function roundDecimal(value: number, decimals: number): number {
   const text = String(value);
   if (text.includes("e")) return Math.round(value * 10 ** decimals) / 10 ** decimals;
-  return Number(Math.round(Number(text + "e" + decimals)) + "e-" + decimals);
+  const rounded = Number(Math.round(Number(text + "e" + decimals)) + "e-" + decimals);
+  return rounded === 0 ? 0 : rounded;
 }
 
 /** A stored number as the text of an entry field: app-language separator, no grouping, no exponent. */

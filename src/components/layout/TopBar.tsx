@@ -21,12 +21,13 @@ import { OPEN_SYNC_CENTER_EVENT } from "@/components/notifications/notification-
 import { CommandPalette } from "@/components/shell/CommandPalette";
 import { SyncCenterModal } from "@/components/sync/SyncCenterModal";
 import { useDeviceTrustStatus } from "@/hooks/use-device-trust-status";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import { isBlockingGateActive } from "@/lib/blocking-gate";
-import { logout as authLogout } from "@/services/auth-service";
 import { useAppStore } from "@/store/app-store";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type { DeviceTrustStatus } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function TopBar() {
   const { t } = useTranslation("shell");
@@ -35,13 +36,22 @@ export function TopBar() {
   const syncErrorMessage = syncStatus.errorMessage;
   const isOnline = useAppStore((s) => s.isOnline);
   const displayName = useAppStore((s) => s.currentUserDisplayName);
-  const { info: sessionInfo } = useSession();
+  const { info: sessionInfo, logout: sessionLogout } = useSession();
   const deviceTrust = useDeviceTrustStatus();
 
   const navigate = useNavigate();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [syncCenterOpen, setSyncCenterOpen] = useState(false);
+  // The sync centre lists conflicts and history (`sync.view`): without it there is no button, and
+  // the store does not refresh that list in the background either.
+  const { can, isLoading: permissionsLoading } = usePermissions();
+  // During a reload the last known rights stay in the context: the store keeps its answer meanwhile.
+  const canViewSync = can(P.SYNC_VIEW);
+  const setCanViewSync = useSyncOrchestratorStore((s) => s.setCanViewSync);
+  useEffect(() => {
+    if (!permissionsLoading) setCanViewSync(canViewSync);
+  }, [canViewSync, permissionsLoading, setCanViewSync]);
   const syncConflicts = useSyncOrchestratorStore((s) => s.conflictInbox.length);
   const rejectedOutbox = useSyncOrchestratorStore((s) => s.rejectedOutboxCount);
   const syncNeedsAttention = syncConflicts > 0 || rejectedOutbox > 0;
@@ -49,10 +59,11 @@ export function TopBar() {
 
   // A synchronisation-conflict notification opens the sync center (`notification-links`).
   useEffect(() => {
+    if (!canViewSync) return;
     const open = () => setSyncCenterOpen(true);
     window.addEventListener(OPEN_SYNC_CENTER_EVENT, open);
     return () => window.removeEventListener(OPEN_SYNC_CENTER_EVENT, open);
-  }, []);
+  }, [canViewSync]);
 
   // Ctrl+K / ⌘K global shortcut for command palette
   useEffect(() => {
@@ -84,11 +95,12 @@ export function TopBar() {
   const handleLogout = useCallback(async () => {
     setUserMenuOpen(false);
     try {
-      await authLogout();
+      // The session store also clears the permission cache and the session state.
+      await sessionLogout();
     } finally {
       navigate("/login", { replace: true });
     }
-  }, [navigate]);
+  }, [navigate, sessionLogout]);
 
   return (
     <header
@@ -136,21 +148,25 @@ export function TopBar() {
           errorMessage={syncErrorMessage}
         />
 
-        <button
-          type="button"
-          onClick={() => setSyncCenterOpen(true)}
-          title={t("sync.syncCenter")}
-          className={`btn-ghost relative px-2 py-1.5 ${syncNeedsAttention ? "text-status-danger" : ""}`}
-          aria-label={t("sync.syncCenter")}
-        >
-          <Cloud
-            className={`h-4 w-4 ${syncNeedsAttention ? "animate-pulse drop-shadow-[0_0_6px_rgba(239,68,68,0.85)]" : ""}`}
-          />
-          {syncNeedsAttention ? (
-            <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-status-danger ring-2 ring-surface-1" />
-          ) : null}
-        </button>
-        <SyncCenterModal open={syncCenterOpen} onOpenChange={setSyncCenterOpen} />
+        {canViewSync ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setSyncCenterOpen(true)}
+              title={t("sync.syncCenter")}
+              className={`btn-ghost relative px-2 py-1.5 ${syncNeedsAttention ? "text-status-danger" : ""}`}
+              aria-label={t("sync.syncCenter")}
+            >
+              <Cloud
+                className={`h-4 w-4 ${syncNeedsAttention ? "animate-pulse drop-shadow-[0_0_6px_rgba(239,68,68,0.85)]" : ""}`}
+              />
+              {syncNeedsAttention ? (
+                <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-status-danger ring-2 ring-surface-1" />
+              ) : null}
+            </button>
+            <SyncCenterModal open={syncCenterOpen} onOpenChange={setSyncCenterOpen} />
+          </>
+        ) : null}
 
         {/* Notification bell */}
         <NotificationBell />
@@ -324,10 +340,10 @@ function SyncIndicator({
     return (
       <span
         className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-muted"
-        title="Sync scheduled"
+        title={t("sync.indicator.scheduled")}
       >
         <Clock className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">Scheduled</span>
+        <span className="hidden sm:inline">{t("sync.indicator.scheduled")}</span>
       </span>
     );
   }

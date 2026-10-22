@@ -205,7 +205,9 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   const pendingCandidate = pendingCandidateSet(domainSets);
   const otherCandidate =
     pendingCandidate && pendingCandidate.id !== setId ? pendingCandidate : null;
-  const canImport = canCreateValue && setStatus === "draft";
+  // A CSV import stages (ref.manage) then validates and applies (ref.publish): offered only to
+  // who can finish it, never left half-way at "Valider".
+  const canImport = canCreateValue && can(P.REF_PUBLISH) && setStatus === "draft";
 
   const [page, setPage] = useState(0);
   const [creatingDraft, setCreatingDraft] = useState(false);

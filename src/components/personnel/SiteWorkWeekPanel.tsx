@@ -12,6 +12,7 @@ import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +21,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -211,12 +211,11 @@ export function SiteWorkWeekPanel({ entities }: { entities: { id: number; name: 
                 </Select>
               </FormField>
               <FormField name="site-week-from" label={t("timetable.editor.effectiveFrom")} required>
-                <Input
+                <DateField
                   id="site-week-from"
-                  type="date"
                   min={today}
                   value={draft.from}
-                  onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+                  onChange={(v) => setDraft({ ...draft, from: v })}
                 />
               </FormField>
               <fieldset className="space-y-1.5">

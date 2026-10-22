@@ -6,7 +6,7 @@ import { DocumentHeaderEditor } from "@/components/editor/DocumentHeaderEditor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import {
   isDocumentHeaderHtmlEmpty,
   sanitizeDocumentHeaderHtml,
@@ -106,7 +106,7 @@ export function DocumentHeaderSettingsPanel({
       console.error("[DocumentHeaderSettingsPanel] logo upload failed:", err);
       onToast({
         title: t("documentHeader.logoUploadError"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {
@@ -124,7 +124,7 @@ export function DocumentHeaderSettingsPanel({
       console.error("[DocumentHeaderSettingsPanel] logo clear failed:", err);
       onToast({
         title: t("documentHeader.logoClearError"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {
@@ -156,7 +156,7 @@ export function DocumentHeaderSettingsPanel({
       console.error("[DocumentHeaderSettingsPanel] save failed:", err);
       onToast({
         title: t("documentHeader.saveError"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {

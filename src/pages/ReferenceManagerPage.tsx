@@ -8,7 +8,7 @@
  */
 
 import { Database } from "lucide-react";
-import { useCallback, useEffect } from "react";
+import { type ReactNode, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 
@@ -35,10 +35,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
 import { toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
+import { type ReadableList, useCanReadList } from "@/lib/list-access";
 import { LIST_PARAM, textParam, withoutParams } from "@/lib/list-links";
 import { createDraftReferenceSet } from "@/services/reference-service";
 import {
@@ -49,14 +51,30 @@ import {
   PERMIT_TYPES_DOMAIN_ID,
   URGENCY_SCALE_DOMAIN_ID,
   WORK_ORDER_STATUSES_DOMAIN_ID,
+  syntheticCatalogReadList,
   useReferenceManagerStore,
 } from "@/stores/reference-manager-store";
 import { refreshUrgencyScale } from "@/stores/urgency-scale-store";
 import { refreshWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { P } from "@shared/rbac/permissions.generated";
 
+/**
+ * A module's live table opens only for who may read it (that module's right): otherwise the pane
+ * says which right is missing and the module's commands are not called.
+ */
+function ModuleListGate({ list, children }: { list: ReadableList; children: ReactNode }) {
+  const canRead = useCanReadList(list);
+  return canRead ? <>{children}</> : <ListAccessNote list={list} className="p-4" />;
+}
+
 /** Right pane for the live tables of other modules shown in the tree (no versions). */
-function SyntheticDomainHost({ domainId }: { domainId: number }) {
+export function SyntheticDomainHost({ domainId }: { domainId: number }) {
+  const list = syntheticCatalogReadList(domainId);
+  const host = syntheticHost(domainId);
+  return list ? <ModuleListGate list={list}>{host}</ModuleListGate> : host;
+}
+
+function syntheticHost(domainId: number): ReactNode {
   switch (domainId) {
     case INVENTORY_ARTICLE_FAMILY_DOMAIN_ID:
       return <InventoryArticleFamilyHost />;

@@ -38,7 +38,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
-import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import {
   RESOURCE_TIMELINE_BLOCK_LEGEND_STATES,
   RESOURCE_TIMELINE_STATE_CLASS,
@@ -580,19 +580,13 @@ export const AvailabilityCalendar = forwardRef<
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-text-muted">{t("availability.from")}</span>
-        <Input
-          type="date"
+        <DateField
           className="h-8 w-auto text-sm"
           value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
+          onChange={(v) => setDateFrom(v)}
         />
         <span className="text-xs text-text-muted">{t("availability.to")}</span>
-        <Input
-          type="date"
-          className="h-8 w-auto text-sm"
-          value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-        />
+        <DateField className="h-8 w-auto text-sm" value={dateTo} onChange={(v) => setDateTo(v)} />
         {AVAILABILITY_HORIZON_PRESETS.map((days) => (
           <Button
             key={days}

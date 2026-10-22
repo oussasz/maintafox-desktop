@@ -1,5 +1,5 @@
 import { Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { EntityFormImageUploader } from "@/components/entity-form/EntityFormImageUploader";
@@ -10,6 +10,7 @@ import { PositionCombobox } from "@/components/personnel/PositionCombobox";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -19,10 +20,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import { Textarea } from "@/components/ui/textarea";
 import { mfInput } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
+import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import {
@@ -150,30 +153,85 @@ export function PersonnelCreateDialog() {
   const isExternal = employmentOrigin === "external";
   const canCreateUsers = can(P.ADM_USERS);
 
-  const loadLookups = useCallback(async () => {
-    try {
-      const [snap, ext, personnel, certList] = await Promise.all([
-        getOrgDesignerSnapshot(),
-        listExternalCompanies({}),
-        listPersonnel({ limit: 2000, offset: 0 }),
-        listCertificationTypes(),
-      ]);
-      const nodes = snap.nodes.filter((n) => n.status === "active");
-      const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
-      setEntityNodes(
-        entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
-      );
-      setCompanies(ext.filter((c) => c.is_active !== 0).map((c) => ({ id: c.id, name: c.name })));
-      setPersonnelList(personnel.items);
-      setCertTypes(certList);
-    } catch {
-      // partial failures are OK — just leave empty lists
-    }
-  }, []);
+  // Each picker list has its own read right (organisation, personnel, training): a list the user
+  // may not read is not asked for and its picker says which right is missing. Each list loads
+  // while the dialog is open once its right is known (still loading is not "not readable": the
+  // list is asked as soon as the rights arrive). One list failing leaves only that picker empty.
+  const permissionsLoading = usePermissionsLoading();
+  const readable = useReadableLists([
+    "orgNodes",
+    "companies",
+    "people",
+    "teams",
+    "certificationTypes",
+  ]);
+  const readableRef = useRef(readable);
+  readableRef.current = readable;
+
+  useEffect(() => {
+    if (!showCreateForm || !readable.orgNodes) return;
+    let stale = false;
+    getOrgDesignerSnapshot()
+      .then((snap) => {
+        if (stale) return;
+        const nodes = snap.nodes.filter((n) => n.status === "active");
+        const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
+        setEntityNodes(
+          entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.orgNodes]);
+
+  useEffect(() => {
+    if (!showCreateForm || !readable.companies) return;
+    let stale = false;
+    listExternalCompanies({})
+      .then((ext) => {
+        if (!stale) {
+          setCompanies(
+            ext.filter((c) => c.is_active !== 0).map((c) => ({ id: c.id, name: c.name })),
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.companies]);
+
+  useEffect(() => {
+    if (!showCreateForm || !readable.people) return;
+    let stale = false;
+    listPersonnel({ limit: 2000, offset: 0 })
+      .then((personnel) => {
+        if (!stale) setPersonnelList(personnel.items);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.people]);
+
+  useEffect(() => {
+    if (!showCreateForm || !readable.certificationTypes) return;
+    let stale = false;
+    listCertificationTypes()
+      .then((rows) => {
+        if (!stale) setCertTypes(rows);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.certificationTypes]);
 
   const handleEntityChange = useCallback(async (nextEntityId: number | null) => {
     setEntityId(nextEntityId);
-    if (nextEntityId == null) {
+    if (nextEntityId == null || !readableRef.current.teams) {
       setTeamId(null);
       setCrewOptions([]);
       return;
@@ -222,11 +280,18 @@ export function PersonnelCreateDialog() {
     setLocalError(null);
   }, []);
 
+  // The form is reset and prefilled once per opening, when the rights are known (the team list of
+  // the edited person needs them); a later reload of the rights does not wipe what was typed.
+  const preparedForOpen = useRef(false);
   useEffect(() => {
-    if (!showCreateForm) return;
+    if (!showCreateForm) {
+      preparedForOpen.current = false;
+      return;
+    }
+    if (permissionsLoading || preparedForOpen.current) return;
+    preparedForOpen.current = true;
     resetForm();
     void (async () => {
-      await loadLookups();
       const editing = usePersonnelStore.getState().editingPersonnel;
       if (!editing) return;
       setFullName(editing.full_name);
@@ -250,7 +315,7 @@ export function PersonnelCreateDialog() {
       setPhone(editing.phone ?? "");
       setNotes(editing.notes ?? "");
       setEntityId(editing.primary_entity_id);
-      if (editing.primary_entity_id == null) {
+      if (editing.primary_entity_id == null || !readableRef.current.teams) {
         setCrewOptions([]);
         setTeamId(null);
         return;
@@ -271,7 +336,7 @@ export function PersonnelCreateDialog() {
         setCrewsLoading(false);
       }
     })();
-  }, [showCreateForm, resetForm, loadLookups]);
+  }, [showCreateForm, permissionsLoading, resetForm]);
 
   // Seed skills/certs when position changes
   const handlePositionChange = useCallback(
@@ -690,6 +755,7 @@ export function PersonnelCreateDialog() {
                       </option>
                     ))}
                   </select>
+                  {!readable.companies ? <ListAccessNote list="companies" /> : null}
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="space-y-1.5">
@@ -706,22 +772,20 @@ export function PersonnelCreateDialog() {
                     <Label htmlFor="per-contract-start">
                       {t("field.contractStart", "Contract start")}
                     </Label>
-                    <Input
+                    <DateField
                       id="per-contract-start"
-                      type="date"
                       value={contractStart}
-                      onChange={(e) => setContractStart(e.target.value)}
+                      onChange={(v) => setContractStart(v)}
                     />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="per-contract-end">
                       {t("field.contractEnd", "Contract end")}
                     </Label>
-                    <Input
+                    <DateField
                       id="per-contract-end"
-                      type="date"
                       value={contractEnd}
-                      onChange={(e) => setContractEnd(e.target.value)}
+                      onChange={(v) => setContractEnd(v)}
                     />
                   </div>
                 </div>
@@ -750,6 +814,7 @@ export function PersonnelCreateDialog() {
                     </option>
                   ))}
                 </select>
+                {!readable.orgNodes ? <ListAccessNote list="orgNodes" /> : null}
               </div>
               <div className="space-y-1.5">
                 <Label>{t("field.team")} *</Label>
@@ -766,7 +831,8 @@ export function PersonnelCreateDialog() {
                     </option>
                   ))}
                 </select>
-                {entityId != null && !crewsLoading && crewOptions.length === 0 ? (
+                {!readable.teams ? <ListAccessNote list="teams" /> : null}
+                {readable.teams && entityId != null && !crewsLoading && crewOptions.length === 0 ? (
                   <p className="text-xs text-destructive">{t("validation.noCrewsForEntity")}</p>
                 ) : null}
               </div>
@@ -793,6 +859,7 @@ export function PersonnelCreateDialog() {
                   onChange={setSupervisorId}
                   placeholder={t("create.supervisor.placeholder", "Search supervisor…")}
                 />
+                {!readable.people ? <ListAccessNote list="people" /> : null}
               </div>
             </div>
 
@@ -808,12 +875,7 @@ export function PersonnelCreateDialog() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="per-hire-date">{t("field.hireDate")}</Label>
-                <Input
-                  id="per-hire-date"
-                  type="date"
-                  value={hireDate}
-                  onChange={(e) => setHireDate(e.target.value)}
-                />
+                <DateField id="per-hire-date" value={hireDate} onChange={(v) => setHireDate(v)} />
               </div>
             </div>
 
@@ -910,18 +972,22 @@ export function PersonnelCreateDialog() {
                 {/* ── Certifications ───────────────────────────────────────── */}
                 <div className="flex items-center justify-between">
                   <SectionLabel>{t("create.section.certs", "Certifications")}</SectionLabel>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-4 h-9 gap-1 text-xs"
-                    onClick={addCert}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    {t("create.cert.add", "Add certification")}
-                  </Button>
+                  {readable.certificationTypes ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-4 h-9 gap-1 text-xs"
+                      onClick={addCert}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      {t("create.cert.add", "Add certification")}
+                    </Button>
+                  ) : null}
                 </div>
-                {certs.length === 0 ? (
+                {!readable.certificationTypes ? (
+                  <ListAccessNote list="certificationTypes" />
+                ) : certs.length === 0 ? (
                   <p className="text-xs text-text-muted">
                     {t("create.cert.empty", "No certifications added.")}
                   </p>

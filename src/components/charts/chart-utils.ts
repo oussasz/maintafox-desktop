@@ -87,10 +87,30 @@ export function renderXAxis(
   sel.selectAll("text").attr("class", "fill-current text-[10px]");
 }
 
-export function renderYAxis(gRef: SVGGElement | null, scale: d3.AxisScale<d3.NumberValue>): void {
+export interface YAxisOptions {
+  /** Only whole-number ticks (counts: no "0,5 work orders"). */
+  integers?: boolean;
+  /** Tick text in the app language (a `useFormatters().formatNumber`); default is the raw number. */
+  format?: (value: number) => string;
+}
+
+export function renderYAxis(
+  gRef: SVGGElement | null,
+  scale: d3.AxisScale<d3.NumberValue>,
+  options: YAxisOptions = {},
+): void {
   if (!gRef) return;
   const sel = d3.select(gRef);
-  sel.call(d3.axisLeft(scale) as never);
+  const axis = d3.axisLeft(scale);
+  if (options.integers) {
+    const ticks = (scale as d3.ScaleLinear<number, number>).ticks().filter(Number.isInteger);
+    axis.tickValues(ticks);
+  }
+  if (options.format) {
+    const format = options.format;
+    axis.tickFormat((v) => format(Number(v)));
+  }
+  sel.call(axis as never);
   sel.selectAll("text").attr("class", "fill-current text-[10px]");
 }
 

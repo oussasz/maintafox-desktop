@@ -36,7 +36,12 @@
     "costCentres": "Reading cost centres requires the finance view right.",
     "orgNodes": "Reading the organisation (sites, areas) requires the organisation view right.",
     "users": "Reading user accounts requires the user administration right.",
-    "woTypes": "Reading work-order types requires the work-order view, work-order creation or reference data view right."
+    "woTypes": "Reading work-order types requires the work-order view, work-order creation or reference data view right.",
+    "workOrders": "Reading work orders requires the work order view right.",
+    "requests": "Reading work requests requires the work request view right.",
+    "certificationTypes": "Reading certifications requires the training view right.",
+    "stockCatalogs": "Reading article families and VAT categories requires the stock view right.",
+    "fmecaScales": "Reading FMECA scales requires the reliability view right."
   },
   "app": {
     "name": "Maintafox",
@@ -193,6 +198,15 @@
     "scan": "Scan QR",
     "scanHint": "Focus here and scan with a USB reader, then press Enter",
     "clear": "Clear selection"
+  },
+  "dateField": {
+    "pickDate": "Pick a date",
+    "prevMonth": "Previous month",
+    "nextMonth": "Next month",
+    "invalid": "Not a valid date",
+    "invalidTime": "Not a valid time (hh:mm, 24 h)",
+    "timeLabel": "Time",
+    "timePlaceholder": "hh:mm"
   },
   "kanban": {
     "emptyColumn": "—",

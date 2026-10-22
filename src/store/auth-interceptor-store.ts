@@ -2,7 +2,8 @@ import { create } from "zustand";
 
 import type { SessionInfo } from "@shared/ipc-types";
 
-export type AuthSessionLockMode = "session" | "permission" | "unknown";
+/** `session`: the session is lost (sign in again); `unknown`: no lock open (idle value). */
+export type AuthSessionLockMode = "session" | "unknown";
 
 export interface LastAuthFailure {
   atMs: number;
@@ -23,9 +24,8 @@ export interface AuthInterceptorState {
 }
 
 /**
- * Global auth/authorization "interceptor" surface.
- *
- * Unlike toast spam, this is a single modal/lock screen that the user can resolve safely.
+ * Global "session lost" interceptor: a single lock screen the user resolves by signing in again.
+ * Permission refusals do not come here (one toast with the reason, see `ipc-invoke`).
  */
 export const useAuthInterceptorStore = create<AuthInterceptorState>((set, get) => ({
   isLockOpen: false,
@@ -48,10 +48,9 @@ export const useAuthInterceptorStore = create<AuthInterceptorState>((set, get) =
     failure: LastAuthFailure;
   }): void => {
     const s = get();
-    // If we're already in a stricter/known mode, keep it unless the new one is "session"
-    // (auth/session issues should take precedence over generic permission lock).
+    // Already open: keep the mode unless a session loss replaces an unknown one.
     if (s.isLockOpen) {
-      const shouldUpgrade = mode === "session" && (s.mode === "permission" || s.mode === "unknown");
+      const shouldUpgrade = mode === "session" && s.mode === "unknown";
       if (!shouldUpgrade) {
         set({ lastFailure: failure });
         return;

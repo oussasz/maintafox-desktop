@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import {
   Dialog,
   DialogContent,
@@ -286,11 +287,10 @@ export function WoCompletionDialog({ wo }: WoCompletionDialogProps) {
 
             <div className="space-y-1">
               <Label htmlFor="wo-complete-end">{t("completion.endDate")}</Label>
-              <Input
+              <DateTimeField
                 id="wo-complete-end"
-                type="datetime-local"
                 value={actualEnd}
-                onChange={(e) => setActualEnd(e.target.value)}
+                onChange={(v) => setActualEnd(v)}
               />
             </div>
             <div className="space-y-1">

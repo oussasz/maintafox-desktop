@@ -16,8 +16,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { mfAlert, mfInput, mfTable } from "@/design-system/tokens";
-import { useFormatters } from "@/hooks/use-formatters";
-import { describeAppError } from "@/lib/app-error";
+import { i18n } from "@/i18n";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { clearPin, setPin } from "@/services/auth-service";
@@ -35,6 +35,7 @@ import {
   revokeMyDevice,
   updateMyProfile,
 } from "@/services/user-service";
+import { intlLocaleForLanguage } from "@/utils/format-date";
 import type {
   PersonnelWorkHistoryEntry,
   PersonnelWorkloadSummary,
@@ -46,6 +47,15 @@ import type {
 } from "@shared/ipc-types";
 
 // ── helpers ───────────────────────────────────────────────────────────────
+
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString(intlLocaleForLanguage(i18n.language), {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
 
 function formatDuration(seconds: number | null): string {
   if (seconds == null) return "—";
@@ -62,8 +72,6 @@ function formatDuration(seconds: number | null): string {
  */
 export function ProfileSettingsPanel() {
   const { t } = useTranslation("admin");
-  const { formatDate: formatDay } = useFormatters();
-  const formatDate = (iso: string | null) => (iso ? formatDay(iso) : "—");
   const woOpenRuleText = useWoOpenRuleText();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -135,7 +143,7 @@ export function ProfileSettingsPanel() {
         setSelectedSkillRef(null);
       }
     } catch (err) {
-      const msg = describeAppError(err).title;
+      const msg = appErrorReason(err);
       setLoadError(msg);
       setProfile(null);
     } finally {
@@ -157,7 +165,7 @@ export function ProfileSettingsPanel() {
       setEditing(false);
       setToast({ type: "success", message: t("profile.saveSuccess", "Changes saved.") });
     } catch (err) {
-      const msg = describeAppError(err).title;
+      const msg = appErrorReason(err);
       setToast({ type: "error", message: msg });
     } finally {
       setSaving(false);
@@ -180,7 +188,7 @@ export function ProfileSettingsPanel() {
       });
       setMySkills(refreshed);
     } catch (err) {
-      const msg = describeAppError(err).title;
+      const msg = appErrorReason(err);
       setToast({ type: "error", message: msg });
     } finally {
       setDeclaringSkill(false);
@@ -887,7 +895,7 @@ export function PinRemoveDialog({
       onRemoved();
     } catch (err) {
       // The backend refuses a wrong password: it belongs to this field.
-      setFieldError(describeAppError(err).title);
+      setFieldError(appErrorReason(err));
     } finally {
       setSubmitting(false);
     }
@@ -986,7 +994,14 @@ function TrustedDevicesDialog({
     }
   };
 
-  const { formatDateTime: formatDeviceDate } = useFormatters();
+  const formatDeviceDate = (iso: string) =>
+    new Date(iso).toLocaleDateString(intlLocaleForLanguage(i18n.language), {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>

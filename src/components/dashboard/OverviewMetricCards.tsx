@@ -7,7 +7,7 @@ import {
   type VisualMetricTrendSense,
 } from "@/components/metrics/VisualMetricCard";
 import { Button } from "@/components/ui/button";
-import { useFormatters } from "@/hooks/use-formatters";
+import { useFormatters, type Formatters } from "@/hooks/use-formatters";
 import type { OverviewKpiCell, OverviewKpisPayload } from "@shared/ipc-types";
 import {
   OVERVIEW_KPI_REGISTRY_BY_KEY,
@@ -36,17 +36,19 @@ function senseForDelta(
 
 function formatCellValue(
   cell: OverviewKpiCell,
-  formatCurrency: (amount: number) => string,
+  f: Pick<Formatters, "formatCurrency" | "formatDecimal" | "formatNumber">,
 ): string {
   switch (cell.value_kind) {
     case "currency":
-      return formatCurrency(cell.value);
+      return f.formatCurrency(cell.value);
     case "percent":
-      return `${cell.value.toFixed(1)}`;
+      return f.formatDecimal(cell.value, 1);
     case "hours":
-      return cell.value >= 100 ? Math.round(cell.value).toLocaleString() : cell.value.toFixed(1);
+      return cell.value >= 100
+        ? f.formatNumber(Math.round(cell.value), { maximumFractionDigits: 0 })
+        : f.formatDecimal(cell.value, 1);
     default:
-      return Math.round(cell.value).toLocaleString();
+      return f.formatNumber(Math.round(cell.value), { maximumFractionDigits: 0 });
   }
 }
 
@@ -56,7 +58,8 @@ export function OverviewMetricCards(props: {
 }) {
   const { t } = useTranslation("dashboard");
   const navigate = useNavigate();
-  const { formatCurrency } = useFormatters();
+  const formatters = useFormatters();
+  const { formatNumber } = formatters;
   const [expanded, setExpanded] = useState(false);
 
   const cellByKey = useMemo(() => {
@@ -92,7 +95,7 @@ export function OverviewMetricCards(props: {
     const sign = rounded > 0 ? "+" : "";
     const direction = cell.trend_sense as "up-good" | "up-bad" | "neutral";
     return {
-      label: `${sign}${rounded}%`,
+      label: `${sign}${formatNumber(rounded)} %`,
       sense: senseForDelta(cell.value - cell.previous_value, direction),
     };
   };
@@ -124,7 +127,7 @@ export function OverviewMetricCards(props: {
               key={entry.id}
               title={t(reg.labelKey as never)}
               context={t(reg.contextKey as never)}
-              value={available ? formatCellValue(cell, formatCurrency) : "—"}
+              value={available ? formatCellValue(cell, formatters) : "—"}
               available={available}
               unavailableLabel="—"
               vizKind={reg.vizKind}

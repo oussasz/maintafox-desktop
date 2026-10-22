@@ -21,8 +21,13 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+const rights = vi.hoisted(() => ({ can: (_p: string): boolean => true }));
 vi.mock("@/hooks/use-permissions", () => ({
-  usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
+  usePermissions: () => ({
+    can: (p: string) => rights.can(p),
+    canAny: (...ps: string[]) => ps.some((p) => rights.can(p)),
+    isLoading: false,
+  }),
 }));
 
 vi.mock("@/lib/session-ready", () => ({ isSessionActiveForBackgroundWork: () => true }));
@@ -69,6 +74,7 @@ const DATA: AnalyticsExecutiveDashboardWithSmrp = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  rights.can = () => true;
   useSessionStore.setState({
     info: { is_authenticated: true, is_locked: false, is_admin: true } as never,
   });
@@ -90,6 +96,13 @@ function ListLocation() {
 }
 
 describe("AnalyticsDashboardsPage", () => {
+  it("shows only the tiles whose figure the user may read (no bare dash)", async () => {
+    rights.can = (p) => p !== P.DI_VIEW;
+    renderPage();
+    expect(await screen.findByText("kpi.openWos")).toBeInTheDocument();
+    expect(screen.queryByText("kpi.openDis")).not.toBeInTheDocument();
+  });
+
   it("names the open-OT rule on the tile and opens the list on the same rule (not yet closed)", async () => {
     render(
       <MemoryRouter initialEntries={["/analytics"]}>

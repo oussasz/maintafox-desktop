@@ -29,8 +29,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useStepUp } from "@/hooks/use-step-up";
-import { describeAppError } from "@/lib/app-error";
+import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
+import { appErrorReason } from "@/lib/app-error";
 import { listPersonnel } from "@/services/personnel-service";
 import { createUser, listAssignableRoles, listAssignableScopeNodes } from "@/services/rbac-service";
 import { pushAppToast } from "@/store/app-toast-store";
@@ -257,10 +257,9 @@ export function CreateUserDialog({
       setRoleIdStr("");
       setScope(PLANT_SCOPE);
     } catch (err) {
-      const msg = describeAppError(err).title;
-      if (!msg.includes("Step-up cancelled")) {
+      if (!isStepUpCancelled(err)) {
         toast({
-          title: msg || t("users.create.error"),
+          title: appErrorReason(err) || t("users.create.error"),
           variant: "destructive",
         });
       }

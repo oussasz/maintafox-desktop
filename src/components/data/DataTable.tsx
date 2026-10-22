@@ -42,6 +42,8 @@ export interface DataTableProps<TData, TValue> {
   isLoading?: boolean;
   /** Number of skeleton rows to display when loading (default: 5) */
   skeletonRows?: number;
+  /** Replaces the default "no results" row text (e.g. a message that says why it is empty) */
+  emptyMessage?: string;
   /** Additional className for the outer wrapper */
   className?: string;
 }
@@ -102,6 +104,7 @@ export function DataTable<TData, TValue>({
   isRowSelected,
   isLoading = false,
   skeletonRows = 5,
+  emptyMessage,
   className,
 }: DataTableProps<TData, TValue>) {
   const { t } = useTranslation("common");
@@ -200,7 +203,7 @@ export function DataTable<TData, TValue>({
             ) : (
               <TableRow>
                 <TableCell colSpan={columns.length} className="h-24 text-center text-text-muted">
-                  {t("label.noResults")}
+                  {emptyMessage ?? t("label.noResults")}
                 </TableCell>
               </TableRow>
             )}

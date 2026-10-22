@@ -15,6 +15,7 @@ import {
 import { useFormatters } from "@/hooks/use-formatters";
 import enCommon from "@/i18n/en/common.json";
 import enInventory from "@/i18n/locale-data/en/inventory.json";
+import { formatIsoDateForInput } from "@/lib/date-input";
 import type * as InventoryService from "@/services/inventory-service";
 
 type InventoryServiceModule = typeof InventoryService;
@@ -155,8 +156,12 @@ describe("InventoryValuationPanel", () => {
     await screen.findByText("Amina Haddad");
     fireEvent.click(screen.getByRole("button", { name: "Close a period" }));
     const dialog = await screen.findByRole("dialog", { name: "Close a valuation period" });
-    expect(within(dialog).getByLabelText("First day")).toHaveValue("2026-09-01");
-    expect(within(dialog).getByLabelText("Last day")).toHaveValue("2026-09-30");
+    expect(within(dialog).getByLabelText("First day")).toHaveValue(
+      formatIsoDateForInput("2026-09-01", "en"),
+    );
+    expect(within(dialog).getByLabelText("Last day")).toHaveValue(
+      formatIsoDateForInput("2026-09-30", "en"),
+    );
     fireEvent.change(within(dialog).getByLabelText("Notes"), { target: { value: "Month end" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Close period" }));
     await waitFor(() =>

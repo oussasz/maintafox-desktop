@@ -12,6 +12,7 @@ import { TeamDetailWorkspace } from "@/components/personnel/TeamDetailWorkspace"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -428,21 +429,11 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-sm">
             <span className="mb-1 block text-text-muted">{t("availability.from")}</span>
-            <Input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-44"
-            />
+            <DateField value={dateFrom} onChange={(v) => setDateFrom(v)} className="w-44" />
           </label>
           <label className="text-sm">
             <span className="mb-1 block text-text-muted">{t("availability.to")}</span>
-            <Input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="w-44"
-            />
+            <DateField value={dateTo} onChange={(v) => setDateTo(v)} className="w-44" />
           </label>
         </div>
 

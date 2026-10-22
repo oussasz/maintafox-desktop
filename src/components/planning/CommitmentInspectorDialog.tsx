@@ -56,7 +56,7 @@ export function CommitmentInspectorDialog({
   onEndCommitment,
 }: CommitmentInspectorDialogProps) {
   const { t, i18n } = useTranslation("planning");
-  const { formatDateTime } = useFormatters();
+  const { formatDateTime, formatCurrency } = useFormatters();
   const [ending, setEnding] = useState<"released" | "cancelled" | null>(null);
   const [endReason, setEndReason] = useState("");
   const [endBusy, setEndBusy] = useState(false);
@@ -205,7 +205,7 @@ export function CommitmentInspectorDialog({
                 </div>
                 <div className="text-text-primary">
                   {commitment.estimated_labor_cost != null
-                    ? commitment.estimated_labor_cost.toFixed(2)
+                    ? formatCurrency(commitment.estimated_labor_cost)
                     : "—"}
                   {commitment.cost_variance_warning ? (
                     <Badge variant="destructive" className="ml-2">
