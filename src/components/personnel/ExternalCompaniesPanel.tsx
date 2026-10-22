@@ -34,6 +34,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { mfLayout } from "@/design-system/tokens";
 import type { Tone } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   createExternalCompany,
@@ -267,6 +268,7 @@ export function ExternalCompanyDialog({
 
 export function ExternalCompaniesPanel() {
   const { t } = useTranslation("personnel");
+  const { formatDate } = useFormatters();
   const { can } = usePermissions();
   const [rows, setRows] = useState<ExternalCompany[]>([]);
   const [peopleByCompany, setPeopleByCompany] = useState<Map<number, number>>(new Map());
@@ -336,8 +338,8 @@ export function ExternalCompaniesPanel() {
         id: "contract",
         header: t("companies.contract"),
         cell: ({ row }) =>
-          [row.original.contract_start?.slice(0, 10), row.original.contract_end?.slice(0, 10)]
-            .map((d) => d ?? "…")
+          [row.original.contract_start, row.original.contract_end]
+            .map((d) => (d ? formatDate(d) : "…"))
             .join(" → "),
       },
       {
@@ -370,7 +372,7 @@ export function ExternalCompaniesPanel() {
         ),
       },
     ],
-    [t, can, peopleByCompany],
+    [t, can, peopleByCompany, formatDate],
   );
 
   return (
