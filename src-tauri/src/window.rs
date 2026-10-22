@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 use tracing::{debug, warn};
 
@@ -24,6 +26,145 @@ impl Default for WindowState {
             maximized: false,
         }
     }
+}
+
+/// Size (logical pixels) of the compact window shown while licence activation, administrator
+/// setup and sign-in are on screen.
+pub const COMPACT_WIDTH: f64 = 560.0;
+pub const COMPACT_HEIGHT: f64 = 640.0;
+/// Minimum size of the main window (the same as `tauri.conf.json`).
+const MAIN_MIN_WIDTH: f64 = 1024.0;
+const MAIN_MIN_HEIGHT: f64 = 600.0;
+
+/// True while the compact window is shown: its size and position are never saved as the main
+/// window's remembered state.
+static COMPACT_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Milliseconds since the epoch of the last switch; resize/move events right after a switch are
+/// the switch's own echo and are not saved either.
+static LAST_SWITCH_MS: AtomicU64 = AtomicU64::new(0);
+const SWITCH_SETTLE_MS: u64 = 600;
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// Whether resize/move events should currently be remembered as the main window's state.
+fn persisting_state() -> bool {
+    !COMPACT_ACTIVE.load(Ordering::SeqCst)
+        && now_ms().saturating_sub(LAST_SWITCH_MS.load(Ordering::SeqCst)) > SWITCH_SETTLE_MS
+}
+
+/// Window shape requested by the front end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowMode {
+    /// Fixed-size, centred installer-style window (activation, administrator setup, sign-in).
+    Compact,
+    /// The normal main window at its remembered size.
+    Main,
+}
+
+fn window_err(e: &tauri::Error) -> crate::errors::AppError {
+    crate::errors::AppError::Internal(anyhow::anyhow!("{e}"))
+}
+
+/// Switches the main window between its compact and normal shapes.
+pub fn apply_window_mode(app: &AppHandle, mode: WindowMode) -> AppResult<()> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    match mode {
+        WindowMode::Compact => {
+            if COMPACT_ACTIVE.swap(true, Ordering::SeqCst) {
+                return Ok(());
+            }
+            LAST_SWITCH_MS.store(now_ms(), Ordering::SeqCst);
+            // Remember how the main window looked before shrinking it.
+            let maximized = window.is_maximized().map_err(|e| window_err(&e))?;
+            let mut state = load_state(app);
+            state.maximized = maximized;
+            if !maximized {
+                if let Ok(size) = window.inner_size() {
+                    if size.width > 0 && size.height > 0 {
+                        state.width = size.width;
+                        state.height = size.height;
+                    }
+                }
+                if let Ok(pos) = window.outer_position() {
+                    if pos.x > -30000 && pos.y > -30000 {
+                        state.x = pos.x;
+                        state.y = pos.y;
+                    }
+                }
+            }
+            save_state(app, &state);
+
+            let compact = tauri::Size::Logical(tauri::LogicalSize {
+                width: COMPACT_WIDTH,
+                height: COMPACT_HEIGHT,
+            });
+            if maximized {
+                window.unmaximize().map_err(|e| window_err(&e))?;
+            }
+            // The minimum is replaced first so the shrink is allowed, then the size is pinned.
+            window.set_min_size(Some(compact)).map_err(|e| window_err(&e))?;
+            window.set_max_size(Some(compact)).map_err(|e| window_err(&e))?;
+            window.set_size(compact).map_err(|e| window_err(&e))?;
+            window.set_resizable(false).map_err(|e| window_err(&e))?;
+            window.set_maximizable(false).map_err(|e| window_err(&e))?;
+            window.center().map_err(|e| window_err(&e))?;
+        }
+        WindowMode::Main => {
+            if !COMPACT_ACTIVE.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+            LAST_SWITCH_MS.store(now_ms(), Ordering::SeqCst);
+            let mut state = load_state(app);
+            if state.width == 0 || state.height == 0 || state.x <= -30000 || state.y <= -30000 {
+                state = WindowState::default();
+            }
+            window.set_resizable(true).map_err(|e| window_err(&e))?;
+            window.set_maximizable(true).map_err(|e| window_err(&e))?;
+            window.set_max_size(None::<tauri::Size>).map_err(|e| window_err(&e))?;
+            window
+                .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize {
+                    width: MAIN_MIN_WIDTH,
+                    height: MAIN_MIN_HEIGHT,
+                })))
+                .map_err(|e| window_err(&e))?;
+            window
+                .set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                    width: state.width,
+                    height: state.height,
+                }))
+                .map_err(|e| window_err(&e))?;
+            if state.x != 0 || state.y != 0 {
+                window
+                    .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+                        x: state.x,
+                        y: state.y,
+                    }))
+                    .map_err(|e| window_err(&e))?;
+            } else {
+                window.center().map_err(|e| window_err(&e))?;
+            }
+            if state.maximized {
+                window.maximize().map_err(|e| window_err(&e))?;
+            }
+            COMPACT_ACTIVE.store(false, Ordering::SeqCst);
+        }
+    }
+    Ok(())
+}
+
+/// IPC: the pre-login screens ask for the compact window, the signed-in app for the main one.
+/// Needs no session (the screens that call it are shown before sign-in) and changes only the
+/// window's size and position.
+#[tauri::command]
+pub fn set_window_mode(app: AppHandle, mode: WindowMode) -> AppResult<()> {
+    apply_window_mode(&app, mode)
 }
 
 fn state_path(app: &AppHandle) -> AppResult<PathBuf> {
@@ -109,7 +250,7 @@ pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
             match event {
                 tauri::WindowEvent::Resized(size) => {
                     // Ignore minimized dimensions (Windows reports 0×0 when minimized)
-                    if size.width == 0 || size.height == 0 {
+                    if size.width == 0 || size.height == 0 || !persisting_state() {
                         return;
                     }
                     debug!("Window resized: {size:?}");
@@ -126,7 +267,7 @@ pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
                 }
                 tauri::WindowEvent::Moved(pos) => {
                     // Ignore minimized position (Windows uses -32000,-32000)
-                    if pos.x <= -30000 || pos.y <= -30000 {
+                    if pos.x <= -30000 || pos.y <= -30000 || !persisting_state() {
                         return;
                     }
                     debug!("Window moved: {pos:?}");
@@ -154,4 +295,28 @@ pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod mode_tests {
+    use super::*;
+
+    #[test]
+    fn window_mode_reads_only_the_two_known_shapes() {
+        assert_eq!(
+            serde_json::from_str::<WindowMode>("\"compact\"").unwrap(),
+            WindowMode::Compact
+        );
+        assert_eq!(
+            serde_json::from_str::<WindowMode>("\"main\"").unwrap(),
+            WindowMode::Main
+        );
+        assert!(serde_json::from_str::<WindowMode>("\"fullscreen\"").is_err());
+    }
+
+    #[test]
+    fn compact_window_is_smaller_than_the_main_minimum() {
+        assert!(COMPACT_WIDTH < MAIN_MIN_WIDTH);
+        assert!(COMPACT_HEIGHT >= 600.0);
+    }
 }
