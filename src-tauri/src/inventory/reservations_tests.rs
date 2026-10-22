@@ -1942,12 +1942,17 @@ async fn a_release_against_a_different_change_stays_a_conflict() {
 // ── Received movements and reserved stock ───────────────────────────────────
 
 /// A reservation movement received without its link (legacy data) moves on-hand stock only:
-/// reserved stock is the projection, which does not count unlinked movements.
+/// reserved stock is the projection, which does not count unlinked movements. Observed right after
+/// the apply, with no mark left by the setup and no recompute: a running total would show 1.
 #[tokio::test]
 async fn an_unlinked_received_issue_leaves_reserved_stock_unchanged() {
     let db = crate::db::test_db::seeded().await;
     let a = stock_article(&db, "RESV-UNLINKED-A", 10.0).await;
     let _held = reserve(&db, a, 3.0, "MANUAL", None).await;
+    // The marks the setup left are taken now, so nothing recomputes the pair afterwards.
+    crate::inventory::reservations::recompute_dirty_reserved(&db)
+        .await
+        .expect("clear the setup marks");
     assert_eq!(balance(&db, a).await, (10.0, 3.0));
     unlinked_movement(&db, a, "ISSUE", 2.0, "unlinked-received-issue").await;
     let location_id = main_location(&db).await;
@@ -1960,25 +1965,54 @@ async fn an_unlinked_received_issue_leaves_reserved_stock_unchanged() {
     crate::inventory::ledger::apply_received_movement(&db, a, warehouse_id, location_id, "ISSUE", 2.0)
         .await
         .expect("apply");
-    crate::inventory::reservations::recompute_dirty_reserved(&db)
-        .await
-        .expect("pass end");
     assert_eq!(balance(&db, a).await, (8.0, 3.0), "on hand −2, reserved untouched");
+    assert_eq!(
+        scalar_i64(&db, "SELECT COUNT(*) FROM stock_reserved_dirty", vec![]).await,
+        0,
+        "an unlinked movement marks nothing: nothing to correct later"
+    );
 }
 
-/// Through the real sync path (exchange, inbox, materialize pass): B's reserved stock follows A's
-/// reservation and issue, recomputed in the pass that applied them, and no mark is left after it.
+/// Through the real sync path (exchange, inbox, materialize pass), every reserved figure the pass
+/// writes is right: B over-issued the shared reservation (5) while A issued it too; B also holds
+/// another reservation of 3. A probe records every value written to B's balance during B's sync.
+/// Applying A's issue as a running total would write 3 − 5 = −2 (the over-issue eating the other
+/// reservation, even below 0) before any later recompute; the projection, recomputed in the pass
+/// before it commits, only ever shows 3. No mark is left after the pass.
 #[tokio::test]
 async fn received_reservations_are_recomputed_in_the_sync_pass() {
     let a = crate::sync::test_support::started_device_db().await;
     let b = crate::sync::test_support::started_device_db().await;
     let mut server = crate::sync::test_support::TestServer::new();
-    let (on_a, _on_b, article_b) = shared_reservation(&mut server, &a, &b).await;
+    let (on_a, on_b, article_b) = shared_reservation(&mut server, &a, &b).await;
+    let location_b = scalar_i64(
+        &b,
+        "SELECT location_id FROM stock_reservations WHERE id = ?",
+        vec![on_b.into()],
+    )
+    .await;
+    queries::reserve_stock(
+        &b,
+        InventoryReserveInput {
+            article_id: article_b,
+            location_id: location_b,
+            quantity: 3.0,
+            source_type: "MANUAL".into(),
+            source_id: None,
+            source_ref: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("other reservation on B");
+    // Both PCs issue the whole shared reservation offline (D12 over-issue).
+    issue(&a, on_a, 5.0).await;
+    issue(&b, on_b, 5.0).await;
     let reserved_on_b = |db: DatabaseConnection| async move {
         db.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT on_hand_qty, reserved_qty FROM stock_balances WHERE article_id = ?",
-            [article_b.into()],
+            "SELECT on_hand_qty, reserved_qty FROM stock_balances WHERE article_id = ? AND location_id = ?",
+            [article_b.into(), location_b.into()],
         ))
         .await
         .expect("query")
@@ -1989,16 +2023,38 @@ async fn received_reservations_are_recomputed_in_the_sync_pass() {
             )
         })
     };
-    assert_eq!(reserved_on_b(b.clone()).await, Some((10.0, 5.0)));
-    issue(&a, on_a, 2.0).await;
+    assert_eq!(reserved_on_b(b.clone()).await, Some((5.0, 3.0)));
+
+    // Probe: every reserved figure written to B's balance from now on.
+    for sql in [
+        "CREATE TABLE test_reserved_probe (reserved_qty REAL NOT NULL)".to_string(),
+        format!(
+            "CREATE TRIGGER test_reserved_probe_balance AFTER UPDATE ON stock_balances
+             WHEN NEW.article_id = {article_b} AND NEW.location_id = {location_b}
+             BEGIN INSERT INTO test_reserved_probe (reserved_qty) VALUES (NEW.reserved_qty); END"
+        ),
+    ] {
+        exec(&b, &sql, vec![]).await;
+    }
     server.exchange("A", &a).await;
-    let report = server.exchange("B", &b).await;
+    server.exchange("B", &b).await;
+
+    let written: Vec<f64> = b
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT reserved_qty FROM test_reserved_probe".to_string(),
+        ))
+        .await
+        .expect("probe")
+        .iter()
+        .map(|r| r.try_get::<f64>("", "reserved_qty").expect("value"))
+        .collect();
+    assert!(!written.is_empty(), "A's issue was applied on B");
     assert!(
-        report.materialized.errors.is_empty(),
-        "{:?}",
-        report.materialized.errors
+        written.iter().all(|v| (v - 3.0).abs() < 1e-9),
+        "every reserved figure written during the sync is the projection (3): {written:?}"
     );
-    assert_eq!(reserved_on_b(b.clone()).await, Some((8.0, 3.0)));
+    assert_eq!(reserved_on_b(b.clone()).await, Some((0.0, 3.0)), "on hand 10 − 5 − 5");
     assert_eq!(
         scalar_i64(&b, "SELECT COUNT(*) FROM stock_reserved_dirty", vec![]).await,
         0,
