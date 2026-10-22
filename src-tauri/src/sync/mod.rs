@@ -12,6 +12,7 @@ pub mod domain;
 pub mod identity;
 pub mod materialize;
 pub mod media;
+pub mod plant_join;
 pub mod queries;
 pub mod registry;
 pub(crate) mod row_codec;
@@ -20,6 +21,7 @@ pub mod row_spec;
 pub mod row_state;
 pub mod seeded_identity;
 pub mod transport;
+pub mod username_clash;
 pub mod waiting;
 
 #[cfg(test)]

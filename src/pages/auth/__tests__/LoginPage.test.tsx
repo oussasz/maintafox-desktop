@@ -81,7 +81,7 @@ describe("LoginPage: first administrator", () => {
   });
 
   it("offers the first-start screen when the activated PC has no administrator", async () => {
-    ipc.bootstrap = { tenant_id: "tenant-plant", has_tenant_admin: false };
+    ipc.bootstrap = { tenant_id: "tenant-plant", has_tenant_admin: false, plant_join: "joining" };
     renderLogin();
     const cta = await screen.findByRole("button", { name: "login.firstAdmin.cta" });
     expect(screen.getByText("login.firstAdmin.message")).toBeInTheDocument();
@@ -94,7 +94,16 @@ describe("LoginPage: first administrator", () => {
   });
 
   it("offers nothing once an administrator exists", async () => {
-    ipc.bootstrap = { tenant_id: "tenant-plant", has_tenant_admin: true };
+    ipc.bootstrap = { tenant_id: "tenant-plant", has_tenant_admin: true, plant_join: "sign_in" };
+    renderLogin();
+    await formReady();
+    await waitFor(() => expect(ipc.calls).toContain("get_activation_bootstrap_state"));
+    expect(screen.queryByTestId("login-first-admin")).not.toBeInTheDocument();
+  });
+
+  it("offers nothing once accounts have arrived from the plant", async () => {
+    // Joined: the plant's accounts are here, none of them an administrator on this PC yet.
+    ipc.bootstrap = { tenant_id: "tenant-plant", has_tenant_admin: false, plant_join: "sign_in" };
     renderLogin();
     await formReady();
     await waitFor(() => expect(ipc.calls).toContain("get_activation_bootstrap_state"));
@@ -102,7 +111,7 @@ describe("LoginPage: first administrator", () => {
   });
 
   it("offers nothing without an organisation, or when the state cannot be read", async () => {
-    ipc.bootstrap = { tenant_id: null, has_tenant_admin: false };
+    ipc.bootstrap = { tenant_id: null, has_tenant_admin: false, plant_join: null };
     const { unmount } = renderLogin();
     await formReady();
     await waitFor(() => expect(ipc.calls).toContain("get_activation_bootstrap_state"));

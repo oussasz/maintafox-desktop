@@ -14,6 +14,8 @@
 //! 5. Media received from other devices (`sync_media_downloads`) is downloaded at the end of a
 //!    cycle that synced: presigned GET, streamed to a temporary file, size and SHA-256 checked,
 //!    then moved into place; failures are retried per file with backoff and never block sync.
+//! 6. A cycle whose exchanges reached the server head records whether the organisation has user
+//!    accounts on the server: the first administrator of a new PC waits for that (`plant_join`).
 //!
 //! Failures: no connection → `offline`, retried with backoff and woken by the webview `online`
 //! event; 5xx / interrupted → retried with the same key and counted as a delivery attempt
@@ -279,6 +281,11 @@ pub enum SyncCommand {
     Reevaluate,
     /// The webview saw the network come back.
     NetworkOnline,
+    /// The signed-out first-start screen asks to join the plant (`request_plant_join`): run a
+    /// cycle soon, but never sooner than `network_wake_min_spacing` after the last one started,
+    /// never before a server `Retry-After`, never during a pause, and without forgetting the
+    /// failure count (unlike `RunNow`). Repeated requests therefore coalesce into one cycle.
+    JoinPlant,
 }
 
 struct HandleInner {
@@ -491,6 +498,21 @@ enum MediaFailure {
     Permanent(String),
 }
 
+/// When a plant-join request (`SyncCommand::JoinPlant`) may run the next cycle: `None` during a
+/// pause; otherwise the wake spacing after the last cycle started, and not before the server's
+/// `Retry-After` (counted from the end of the cycle that received it) has passed.
+fn join_wake_at(outcome: &CycleOutcome, started: Instant, ended: Instant, timing: &SyncTiming) -> Option<Instant> {
+    let spaced = started + timing.network_wake_min_spacing;
+    match outcome {
+        CycleOutcome::Paused { .. } => None,
+        CycleOutcome::Retry {
+            retry_after: Some(after),
+            ..
+        } => Some(spaced.max(ended + *after)),
+        _ => Some(spaced),
+    }
+}
+
 /// Mirrors the server's `assertTenantOwnsObjectKey`: `{env}/media/{tenant}/…`.
 fn object_key_in_tenant(object_key: &str, tenant_id: &str) -> bool {
     let parts: Vec<&str> = object_key.split('/').collect();
@@ -571,7 +593,8 @@ impl SyncWorker {
                 () = cancel.cancelled() => break 'cycles,
                 result = self.cycle_once() => result,
             };
-            let mut deadline = Instant::now() + wait;
+            let cycle_ended = Instant::now();
+            let mut deadline = cycle_ended + wait;
             loop {
                 tokio::select! {
                     () = cancel.cancelled() => break 'cycles,
@@ -588,6 +611,11 @@ impl SyncWorker {
                         Some(SyncCommand::NetworkOnline) => {
                             if matches!(outcome, CycleOutcome::Offline { .. } | CycleOutcome::Retry { .. }) {
                                 deadline = deadline.min(cycle_started + self.timing.network_wake_min_spacing);
+                            }
+                        }
+                        Some(SyncCommand::JoinPlant) => {
+                            if let Some(at) = join_wake_at(&outcome, cycle_started, cycle_ended, &self.timing) {
+                                deadline = deadline.min(at);
                             }
                         }
                     },
@@ -713,6 +741,11 @@ impl SyncWorker {
             }
             store::set_paused_until(&self.db, None).await?;
         }
+        // The organisation this pull runs for, read before the activation token is: a complete pull
+        // records "the server confirmed no user accounts" for it only, and only if the activation
+        // is still the same at the end (`after_complete_pull`), so a swap of activation during the
+        // cycle can never record the fact for the wrong organisation (`plant_join`).
+        let pulled_for = crate::commands::product_license::get_activation_claim_tenant_id(&self.db).await?;
         let token = match self.access.access(&self.db).await? {
             SyncAccess::NotLicensed => {
                 return Ok(CycleOutcome::Blocked {
@@ -770,10 +803,30 @@ impl SyncWorker {
                 Step::Stop(outcome) => return Ok(outcome),
             }
         }
+        if !more_work {
+            self.after_complete_pull(pulled_for.as_deref()).await?;
+        }
         let more_downloads = self.download_pending_media(&token).await?;
         Ok(CycleOutcome::Synced {
             more_work: more_work || more_downloads,
         })
+    }
+
+    /// The exchanges of this cycle reached the server head (`Step::Done`: `has_more` false and the
+    /// outbox drained, every received row materialized): this PC now holds everything the server
+    /// has for its organisation, which is the only time "the server has no user accounts" can be
+    /// told apart from "not received yet" (`plant_join::record_complete_pull`). Nothing is recorded
+    /// when the activation changed during the cycle: the pull ran for another organisation.
+    async fn after_complete_pull(&self, pulled_for: Option<&str>) -> AppResult<()> {
+        let Some(tenant_id) = pulled_for else {
+            return Ok(());
+        };
+        let current = crate::commands::product_license::get_activation_claim_tenant_id(&self.db).await?;
+        if current.as_deref() != Some(tenant_id) {
+            return Ok(());
+        }
+        crate::sync::plant_join::record_complete_pull(&self.db, tenant_id).await?;
+        Ok(())
     }
 
     /// Scope `all` snapshot; stores the delta checkpoint on its last page. `Some(outcome)` stops the

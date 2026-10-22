@@ -601,10 +601,25 @@ export async function markActivationTenantInitialized(
   return ActivationTenantStatusSchema.parse(raw);
 }
 
+/**
+ * What the first-start screen of an activated PC shows (`sync::plant_join`): sign in, create the
+ * first administrator (a complete pull confirmed the organisation has no account), joining the
+ * plant (the pull is running), or a connection is needed (the pull cannot run or failed).
+ */
+export const PlantJoinStateSchema = z.enum([
+  "sign_in",
+  "create_first_admin",
+  "joining",
+  "connection_needed",
+]);
+export type PlantJoinState = z.infer<typeof PlantJoinStateSchema>;
+
 const ActivationBootstrapStateSchema = z.object({
   tenant_id: z.string().nullable().optional(),
   company_display_name: z.string().nullable().optional(),
   has_tenant_admin: z.boolean(),
+  /** `null` when this PC is not activated. */
+  plant_join: PlantJoinStateSchema.nullable(),
 });
 
 const ActivationLicenseMetadataSchema = z.object({
@@ -638,6 +653,14 @@ export async function bootstrapInitialTenantAdmin(input: {
   display_name?: string;
 }): Promise<void> {
   await invoke<void>("bootstrap_initial_tenant_admin", { input });
+}
+
+/**
+ * The first-start screen joins the plant: the sync worker runs now (and again on "Retry") instead
+ * of waiting for its next check. Refused once this PC has an administrator.
+ */
+export async function requestPlantJoin(): Promise<void> {
+  await invoke<void>("request_plant_join");
 }
 
 /**

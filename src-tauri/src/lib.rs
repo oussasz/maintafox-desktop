@@ -273,6 +273,7 @@ pub fn run() {
         commands::product_license::get_product_activation_token,
         commands::product_license::get_activation_bootstrap_state,
         commands::product_license::bootstrap_initial_tenant_admin,
+        commands::product_license::request_plant_join,
         auth::builtin_admin::get_builtin_admin_warning,
         auth::last_admin::get_single_administrator_warning,
         auth::recovery_code::redeem_admin_recovery_code,

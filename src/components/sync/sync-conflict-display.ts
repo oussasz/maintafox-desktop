@@ -66,6 +66,8 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "OUTBOX_DEAD_LETTER",
   "AUTHORITY_MISMATCH",
   "CODE_CLASH",
+  // An account received with a username already used here (`sync::username_clash`).
+  "USERNAME_CLASH",
   // Rules re-checked on a received row (`sync::apply_hooks`): safety, four-eyes, site rules.
   "APPEND_ONLY_DELETE",
   // An audit chain stub for this PC's own chain, or malformed (`audit::chain`).
@@ -267,4 +269,10 @@ export function clashingNumber(c: SyncConflictRecord): string | null {
   if (!payload) return null;
   const value = payload["code"] ?? payload["employee_code"];
   return typeof value === "string" ? value : null;
+}
+
+/** The username a received account carries — for USERNAME_CLASH. */
+export function clashingUsername(c: SyncConflictRecord): string | null {
+  const value = parsePayload(c.inbound_payload_json)?.["username"];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }

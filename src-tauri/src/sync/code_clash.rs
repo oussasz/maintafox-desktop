@@ -185,16 +185,44 @@ pub(crate) async fn close_outdated_clashes(
     if numbered_table(entity_type).is_none() {
         return Ok(());
     }
-    // Usually there is none: look them up first (a small table) so a received numbered row costs
-    // one indexed read, never a scan of the inbox.
+    close_conflicts_superseded_by(
+        conn,
+        CODE_CLASH,
+        entity_type,
+        entity_sync_id,
+        applied_row_version,
+        "The record was renumbered on its device; its newer version was applied.",
+    )
+    .await
+}
+
+/// Closes the open `conflict_type` conflicts of a record older than the version just applied here
+/// (`resolved_remote`, `newer_version_applied`, with `note`) and supersedes their inbox rows. Used
+/// for the clashes a newer version removes: a number (`CODE_CLASH`), a username
+/// (`sync::username_clash`). No data is changed.
+pub(crate) async fn close_conflicts_superseded_by(
+    conn: &impl ConnectionTrait,
+    conflict_type: &str,
+    entity_type: &str,
+    entity_sync_id: &str,
+    applied_row_version: i64,
+    note: &str,
+) -> AppResult<()> {
+    // Usually there is none: look them up first (a small table) so a received row costs one
+    // indexed read, never a scan of the inbox.
     let rows = conn
         .query_all(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "SELECT id, linked_inbox_id FROM sync_conflicts
-             WHERE conflict_type = 'CODE_CLASH' AND entity_type = ? AND entity_sync_id = ?
+             WHERE conflict_type = ? AND entity_type = ? AND entity_sync_id = ?
                AND inbound_row_version < ?
                AND status NOT IN ('resolved_local', 'resolved_remote', 'merged', 'dismissed')",
-            [entity_type.into(), entity_sync_id.into(), applied_row_version.into()],
+            [
+                conflict_type.into(),
+                entity_type.into(),
+                entity_sync_id.into(),
+                applied_row_version.into(),
+            ],
         ))
         .await?;
     for row in rows {
@@ -217,11 +245,11 @@ pub(crate) async fn close_outdated_clashes(
             DatabaseBackend::Sqlite,
             "UPDATE sync_conflicts
              SET status = 'resolved_remote', resolution_action = 'newer_version_applied',
-                 resolution_note = 'The record was renumbered on its device; its newer version was applied.',
+                 resolution_note = ?,
                  resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), row_version = row_version + 1,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE id = ?",
-            [conflict_id.into()],
+            [note.into(), conflict_id.into()],
         ))
         .await?;
     }
