@@ -170,7 +170,7 @@ export function MonthCalendar({
                 year: "numeric",
               })}
               onPointerDown={(e) => {
-                if (!selectable || e.button !== 0) return;
+                if (!selectable || e.button > 0) return;
                 e.preventDefault();
                 e.stopPropagation();
                 onSelect(cell.iso);
