@@ -45,6 +45,16 @@ export function describeAppError(err: unknown): AppErrorDescription {
   const code = extractIpcErrorCode(err);
   const rawMsg = toErrorMessage(err);
 
+  // A refused right: the translated refusal, never the server's own (English, technical) text.
+  // The rights have no readable names in the locale data, so the generic reason is given.
+  if (code === "PERMISSION_DENIED") {
+    return {
+      title: String(i18n.t("errors:appError.PERMISSION_DENIED")),
+      description: String(i18n.t("errors:generic.forbidden")),
+      code,
+    };
+  }
+
   const i18nKey = code ? `errors:appError.${code}` : "";
   const gateCodeMatch = rawMsg.match(/(GATE_[A-Z0-9_]+)(?::[A-Za-z0-9_=,\-./]+)?/);
   const gateCode = gateCodeMatch?.[1] ?? "";
