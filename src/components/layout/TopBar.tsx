@@ -23,7 +23,6 @@ import { SyncCenterModal } from "@/components/sync/SyncCenterModal";
 import { useDeviceTrustStatus } from "@/hooks/use-device-trust-status";
 import { useSession } from "@/hooks/use-session";
 import { isBlockingGateActive } from "@/lib/blocking-gate";
-import { logout as authLogout } from "@/services/auth-service";
 import { useAppStore } from "@/store/app-store";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type { DeviceTrustStatus } from "@shared/ipc-types";
@@ -35,7 +34,7 @@ export function TopBar() {
   const syncErrorMessage = syncStatus.errorMessage;
   const isOnline = useAppStore((s) => s.isOnline);
   const displayName = useAppStore((s) => s.currentUserDisplayName);
-  const { info: sessionInfo } = useSession();
+  const { info: sessionInfo, logout: sessionLogout } = useSession();
   const deviceTrust = useDeviceTrustStatus();
 
   const navigate = useNavigate();
@@ -84,11 +83,12 @@ export function TopBar() {
   const handleLogout = useCallback(async () => {
     setUserMenuOpen(false);
     try {
-      await authLogout();
+      // The session store also clears the permission cache and the session state.
+      await sessionLogout();
     } finally {
       navigate("/login", { replace: true });
     }
-  }, [navigate]);
+  }, [navigate, sessionLogout]);
 
   return (
     <header
@@ -324,10 +324,10 @@ function SyncIndicator({
     return (
       <span
         className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-muted"
-        title="Sync scheduled"
+        title={t("sync.indicator.scheduled")}
       >
         <Clock className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">Scheduled</span>
+        <span className="hidden sm:inline">{t("sync.indicator.scheduled")}</span>
       </span>
     );
   }
