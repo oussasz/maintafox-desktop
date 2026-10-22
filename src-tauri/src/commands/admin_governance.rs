@@ -241,23 +241,30 @@ pub(crate) async fn record_blocked_admin_action<T>(
         AppError::NotFound { .. } => "not_found",
         _ => "validation_failed",
     };
-    // The admin ledger is for administrators' actions. A refusal of someone holding no
-    // administration permission at all goes to the security journal instead (no ledger spam).
-    if !holds_any_admin_permission(db, actor_id).await {
-        let target = target_user_id.map(|id| id.to_string());
-        crate::audit::emit(
-            db,
-            crate::audit::AuditEvent {
-                event_type: crate::audit::event_type::PERMISSION_DENIED,
-                actor_id: i32::try_from(actor_id).ok(),
-                entity_type: target.as_ref().map(|_| "user_account"),
-                entity_id: target.as_deref(),
-                summary: "Administration action refused (no administration permission)",
-                detail_json: Some(serde_json::json!({ "action": action, "error": message }).to_string()),
-                ..Default::default()
+    // Every refusal keeps the backend's own text in the security journal (who was refused which
+    // action and why); the administration ledger below keeps only the code of the refusal.
+    let target = target_user_id.map(|id| id.to_string());
+    let admin = holds_any_admin_permission(db, actor_id).await;
+    crate::audit::emit(
+        db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::PERMISSION_DENIED,
+            actor_id: i32::try_from(actor_id).ok(),
+            entity_type: target.as_ref().map(|_| "user_account"),
+            entity_id: target.as_deref(),
+            summary: if admin {
+                "Administration action refused"
+            } else {
+                "Administration action refused (no administration permission)"
             },
-        )
-        .await;
+            detail_json: Some(serde_json::json!({ "action": action, "error": message }).to_string()),
+            ..Default::default()
+        },
+    )
+    .await;
+    // The admin ledger is for administrators' actions. A refusal of someone holding no
+    // administration permission at all stays out of it (no ledger spam).
+    if !admin {
         return;
     }
     let record = AdminEventRecord {
