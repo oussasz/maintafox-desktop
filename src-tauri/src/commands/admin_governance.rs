@@ -233,6 +233,14 @@ pub(crate) async fn record_blocked_admin_action<T>(
     if message.chars().count() > 500 {
         message = message.chars().take(500).collect();
     }
+    // What the administration journal stores: a code for the kind of refusal. The screen writes the
+    // sentence in the user's language; the backend's own text (which can name values and rules)
+    // stays out of the ledger. The security journal below keeps the full text in its detail.
+    let refusal_code = match err {
+        AppError::PermissionDenied(_) | AppError::Permission { .. } => "permission_denied",
+        AppError::NotFound { .. } => "not_found",
+        _ => "validation_failed",
+    };
     // The admin ledger is for administrators' actions. A refusal of someone holding no
     // administration permission at all goes to the security journal instead (no ledger spam).
     if !holds_any_admin_permission(db, actor_id).await {
@@ -256,7 +264,7 @@ pub(crate) async fn record_blocked_admin_action<T>(
         action,
         target_user_id,
         target_role_id,
-        summary: Some(message),
+        summary: Some(refusal_code.to_string()),
         ..Default::default()
     };
     if let Err(e) = write_admin_event(db, actor_id, &record, APPLY_RESULT_BLOCKED).await {

@@ -467,6 +467,19 @@ async fn refused_admin_actions_are_ledgered_as_blocked() {
         1,
         "a missing step-up is a prompt, not a refusal"
     );
+    // The ledger keeps a code for the kind of refusal, never the backend's own sentence.
+    let summary: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT summary FROM admin_change_events WHERE action = 'user_deactivated' AND apply_result = 'blocked'",
+            [],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "summary")
+        .unwrap();
+    assert_eq!(summary, "validation_failed");
 }
 
 #[tokio::test]
