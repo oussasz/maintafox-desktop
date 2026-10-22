@@ -113,6 +113,12 @@ interface SyncOrchestratorState {
   /** Received changes waiting for related data or a newer app version (retried automatically). */
   deferredInboxCount: number;
   lastSummary: SyncStateSummary | null;
+  /**
+   * The signed-in user holds `sync.view` (set by the top bar from the permission context; the store
+   * has none). Until it is true the inbox is not refreshed on worker status changes: the refresh
+   * runs without the user asking, and the server would refuse it.
+   */
+  canViewSync: boolean;
 
   initialize: () => void;
   shutdown: () => void;
@@ -123,6 +129,7 @@ interface SyncOrchestratorState {
   resolveConflictAction: (input: ResolveSyncConflictInput) => Promise<void>;
   refreshInbox: () => Promise<void>;
   exportDiagnostics: () => SyncDiagnosticsExport;
+  setCanViewSync: (allowed: boolean) => void;
 }
 
 let unlistenStatus: UnlistenFn | null = null;
@@ -139,8 +146,9 @@ function applyWorkerStatus(next: SyncWorkerStatus) {
   if (next.blocker === "activation_refused" && previous?.blocker !== "activation_refused") {
     requestLicenseRecheck(`sync_${next.last_error?.code ?? "activation_refused"}`);
   }
-  // Conflicts or dead letters changed: refresh the Sync Center list.
+  // Conflicts or dead letters changed: refresh the Sync Center list (only for who may read it).
   if (
+    useSyncOrchestratorStore.getState().canViewSync &&
     previous &&
     (previous.unresolved_conflict_count !== next.unresolved_conflict_count ||
       previous.dead_letter_outbox_count !== next.dead_letter_outbox_count)
@@ -161,6 +169,7 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, ge
   rejectedOutboxCount: 0,
   deferredInboxCount: 0,
   lastSummary: null,
+  canViewSync: false,
 
   initialize: () => {
     if (get().initialized) return;
@@ -294,6 +303,23 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, ge
       deferredInboxCount: summary.deferred_inbox_count,
       lastSummary: summary,
     });
+  },
+
+  setCanViewSync: (allowed) => {
+    if (get().canViewSync === allowed) return;
+    // Losing the right (another user signed in) drops what the previous one could read.
+    set(
+      allowed
+        ? { canViewSync: true }
+        : {
+            canViewSync: false,
+            conflictInbox: [],
+            replayHistoryCount: 0,
+            rejectedOutboxCount: 0,
+            deferredInboxCount: 0,
+            lastSummary: null,
+          },
+    );
   },
 
   exportDiagnostics: () => {

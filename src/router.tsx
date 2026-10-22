@@ -327,7 +327,9 @@ const routes: RouteObject[] = [
                     ],
                   },
                   {
-                    element: <PermissionRoute anyOf={[P.ADM_USERS, P.ADM_ROLES]} />,
+                    element: (
+                      <PermissionRoute anyOf={[P.ADM_USERS, P.ADM_ROLES, P.ADM_PERMISSIONS]} />
+                    ),
                     children: [{ path: "admin", element: <AdminPage /> }],
                   },
                   {

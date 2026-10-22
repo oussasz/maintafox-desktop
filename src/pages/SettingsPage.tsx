@@ -423,7 +423,10 @@ export function SettingsPage() {
                         {t("tabs.integrationsHint")}
                       </p>
                       <SyncFeedbackPanel />
-                      <LicenseEnforcementPanel />
+                      {/* `get_license_enforcement_state` asks for lic.view. */}
+                      <PermissionGate permission={P.LIC_VIEW}>
+                        <LicenseEnforcementPanel />
+                      </PermissionGate>
                       <ConnectionProfilesPanel onToast={onToast} />
                       <DiagnosticsPanel />
                     </section>

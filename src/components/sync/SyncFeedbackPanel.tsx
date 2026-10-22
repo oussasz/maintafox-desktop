@@ -2,6 +2,7 @@ import { Download, LifeBuoy, Play, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PermissionGate } from "@/components/PermissionGate";
 import { SupportBundleDialog } from "@/components/SupportBundleDialog";
 import { SyncConflictList } from "@/components/sync/SyncConflictList";
 import { SyncWorkerStatusCard } from "@/components/sync/SyncWorkerStatusCard";
@@ -11,6 +12,7 @@ import { isExportCancelled } from "@/export/types";
 import { describeAppError } from "@/lib/app-error";
 import { pushAppToast } from "@/store/app-toast-store";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
+import { P } from "@shared/rbac/permissions.generated";
 
 /** Settings → sync diagnostics: worker status, recovery actions and the conflict list. */
 export function SyncFeedbackPanel() {
@@ -98,15 +100,18 @@ export function SyncFeedbackPanel() {
 
       <SyncWorkerStatusCard />
 
-      <div className="rounded-md border border-surface-border bg-surface-0 p-3">
-        <h3 className="mb-2 flex items-center gap-2 text-sm font-medium text-text-primary">
-          <ShieldAlert className="h-4 w-4 text-tone-warning-fg" aria-hidden />
-          {t("sync.panel.conflictsTitle")}
-        </h3>
-        <div className="max-h-[28rem] overflow-auto">
-          <SyncConflictList showTriageActions />
+      {/* The conflict list is `list_sync_conflicts` (sync.view). */}
+      <PermissionGate permission={P.SYNC_VIEW}>
+        <div className="rounded-md border border-surface-border bg-surface-0 p-3">
+          <h3 className="mb-2 flex items-center gap-2 text-sm font-medium text-text-primary">
+            <ShieldAlert className="h-4 w-4 text-tone-warning-fg" aria-hidden />
+            {t("sync.panel.conflictsTitle")}
+          </h3>
+          <div className="max-h-[28rem] overflow-auto">
+            <SyncConflictList showTriageActions />
+          </div>
         </div>
-      </div>
+      </PermissionGate>
 
       <SupportBundleDialog open={supportOpen} onClose={() => setSupportOpen(false)} />
     </section>

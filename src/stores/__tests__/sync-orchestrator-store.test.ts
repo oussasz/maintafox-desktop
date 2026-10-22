@@ -516,6 +516,7 @@ describe("worker status side effects", () => {
 
   it("refreshes the inbox when conflict or dead-letter counts change", async () => {
     await initAndSettle();
+    useSyncOrchestratorStore.getState().setCanViewSync(true);
     const conflicts = [makeConflict()];
     primeInbox(conflicts);
 
@@ -536,11 +537,24 @@ describe("worker status side effects", () => {
 
   it("swallows a failing background inbox refresh", async () => {
     await initAndSettle();
+    useSyncOrchestratorStore.getState().setCanViewSync(true);
     mockListConflicts.mockRejectedValue(new Error("boom"));
     emit(makeWorker());
     emit(makeWorker({ unresolved_conflict_count: 2 }));
     await vi.waitFor(() => expect(mockListConflicts).toHaveBeenCalled());
     expect(useSyncOrchestratorStore.getState().actionError).toBeNull();
+  });
+
+  it("does not read the inbox in the background without sync.view, and drops it on losing it (AU-45)", async () => {
+    await initAndSettle();
+    emit(makeWorker());
+    emit(makeWorker({ unresolved_conflict_count: 4 }));
+    await Promise.resolve();
+    expect(mockListConflicts).not.toHaveBeenCalled();
+
+    useSyncOrchestratorStore.setState({ canViewSync: true, conflictInbox: [makeConflict()] });
+    useSyncOrchestratorStore.getState().setCanViewSync(false);
+    expect(useSyncOrchestratorStore.getState().conflictInbox).toEqual([]);
   });
 });
 

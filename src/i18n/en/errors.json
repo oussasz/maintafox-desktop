@@ -14,6 +14,9 @@
     "rateLimit": "Too many requests. Please wait.",
     "maintenance": "Service under maintenance. Try again later."
   },
+  "permission": {
+    "cannotGrantOwnRole": "You cannot give a role to your own account: another administrator must do it."
+  },
   "auth": {
     "notAuthenticated": "You must be signed in to perform this action.",
     "sessionExpired": "Your session has expired. Please sign in again.",
