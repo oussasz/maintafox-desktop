@@ -648,13 +648,7 @@ async fn a_return_after_the_work_order_ended_goes_to_free_stock_not_back_to_the_
     assert_eq!(balance(&db, a).await, (5.0, 0.0));
     assert_eq!(reservation_status(&db, consumed).await, "consumed");
 
-    // The work order is closed / cancelled: returns are free stock, for both states.
-    exec(
-        &db,
-        "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'closed') WHERE id = ?",
-        vec![wo_id.into()],
-    )
-    .await;
+    // The work order is cancelled: returns are free stock, for both states.
     for (reservation, qty) in [(consumed, 2.0), (partial, 1.0)] {
         let before = balance(&db, a).await;
         let after_return = queries::return_reserved_stock(
@@ -691,6 +685,342 @@ async fn a_return_after_the_work_order_ended_goes_to_free_stock_not_back_to_the_
     assert!(
         reserved_from_ledger.abs() < 1e-9,
         "the ledger replays to 0 reserved, got {reserved_from_ledger}"
+    );
+}
+
+/// A work order that ended before D13 (status set directly, nothing released then).
+async fn end_wo_without_release(db: &DatabaseConnection, wo_id: i64, code: &str) {
+    exec(
+        db,
+        "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = ?) WHERE id = ?",
+        vec![code.into(), wo_id.into()],
+    )
+    .await;
+}
+
+async fn seeded_release_count(db: &DatabaseConnection, reservation_id: i64) -> i64 {
+    let reservation_sync = scalar_text(
+        db,
+        "SELECT entity_sync_id FROM stock_reservations WHERE id = ?",
+        vec![reservation_id.into()],
+    )
+    .await;
+    scalar_i64(
+        db,
+        "SELECT COUNT(*) FROM inventory_transactions WHERE entity_sync_id = ?",
+        vec![crate::sync::identity::seeded_entity_sync_id("reservation_release", &reservation_sync).into()],
+    )
+    .await
+}
+
+async fn seeded_release_qty(db: &DatabaseConnection, reservation_id: i64) -> f64 {
+    let reservation_sync = scalar_text(
+        db,
+        "SELECT entity_sync_id FROM stock_reservations WHERE id = ?",
+        vec![reservation_id.into()],
+    )
+    .await;
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT quantity FROM inventory_transactions WHERE entity_sync_id = ?",
+        [crate::sync::identity::seeded_entity_sync_id("reservation_release", &reservation_sync).into()],
+    ))
+    .await
+    .expect("query")
+    .expect("seeded release")
+    .try_get("", "quantity")
+    .expect("quantity")
+}
+
+/// B1: a reservation still open on a work order cancelled before D13 (4 reserved, 1 issued). A
+/// return of 1 first releases its unissued 3 (the reservation's seeded RELEASE, audited), then
+/// puts the returned part in free stock: reserved 0, on hand +1, one seeded RELEASE(3) and the
+/// return's own RELEASE(1).
+#[tokio::test]
+async fn a_return_on_a_still_open_reservation_of_an_ended_work_order_frees_its_remainder_first() {
+    let db = crate::db::test_db::seeded().await;
+    let actor = admin_id(&db).await;
+    let a = stock_article(&db, "RESV-B1-A", 10.0).await;
+    let (wo_id, _rv) = wo_in_planning(&db).await;
+    let reservation = reserve(&db, a, 4.0, "WO", Some(wo_id)).await;
+    issue(&db, reservation, 1.0).await;
+    assert_eq!(balance(&db, a).await, (9.0, 3.0));
+    end_wo_without_release(&db, wo_id, "cancelled").await;
+    assert_eq!(
+        reservation_status(&db, reservation).await,
+        "partial",
+        "legacy: still open"
+    );
+
+    let returned = queries::return_reserved_stock_as(
+        &db,
+        InventoryReturnInput {
+            reservation_id: reservation,
+            quantity: 1.0,
+            notes: None,
+        },
+        Some(actor),
+    )
+    .await
+    .expect("return");
+    assert_eq!(returned.status, "released");
+    assert_eq!(
+        balance(&db, a).await,
+        (10.0, 0.0),
+        "remainder freed, returned part on the shelf"
+    );
+    assert_eq!(seeded_release_count(&db, reservation).await, 1);
+    assert_eq!(seeded_release_qty(&db, reservation).await, 3.0);
+    assert_eq!(
+        release_movements(&db, reservation).await,
+        2,
+        "seeded RELEASE(3) + the return's RELEASE(1)"
+    );
+    let audit = release_audit(
+        &db,
+        "inventory.reservation.released_at_return_after_wo_end",
+        reservation,
+    )
+    .await;
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0]["actor_id"], actor);
+    assert_eq!(audit[0]["quantity_released"], 3.0);
+    assert_eq!(audit[0]["work_order_id"], wo_id);
+}
+
+/// S2: an issue against a reservation still open on a closed or cancelled work order is refused
+/// with INV_ISSUE_WO_ENDED and moves nothing.
+#[tokio::test]
+async fn an_issue_against_a_reservation_of_an_ended_work_order_is_refused() {
+    let db = crate::db::test_db::seeded().await;
+    let a = stock_article(&db, "RESV-ISS-A", 10.0).await;
+    let (wo_id, _rv) = wo_in_planning(&db).await;
+    let reservation = reserve(&db, a, 2.0, "WO", Some(wo_id)).await;
+    end_wo_without_release(&db, wo_id, "closed").await;
+    let err = queries::issue_reserved_stock(
+        &db,
+        InventoryIssueInput {
+            reservation_id: reservation,
+            quantity: 1.0,
+            source_type: None,
+            source_id: None,
+            source_ref: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect_err("closed work order");
+    assert_eq!(refusal_code(err), queries::reservation_codes::ISSUE_WO_ENDED);
+    assert_eq!(balance(&db, a).await, (10.0, 2.0), "nothing issued");
+}
+
+/// S1: a balance holding less reserved stock than the reservation (multi-PC drift) refuses the
+/// release with a coded refusal naming the article, the location and both quantities; nothing is
+/// clamped and the reservation stays open.
+#[tokio::test]
+async fn a_release_larger_than_the_reserved_balance_is_a_coded_refusal() {
+    let db = crate::db::test_db::seeded().await;
+    let a = stock_article(&db, "RESV-S1-A", 10.0).await;
+    let reservation = reserve(&db, a, 3.0, "MANUAL", None).await;
+    exec(
+        &db,
+        "UPDATE stock_balances SET reserved_qty = 1, available_qty = on_hand_qty - 1 WHERE article_id = ?",
+        vec![a.into()],
+    )
+    .await;
+    let err = queries::release_stock_reservation(
+        &db,
+        InventoryReleaseReservationInput {
+            reservation_id: reservation,
+            notes: None,
+        },
+    )
+    .await
+    .expect_err("inconsistent balance");
+    match err {
+        AppError::OrgValidationFailed(issues) => {
+            let issue = &issues[0];
+            assert_eq!(issue.code, queries::reservation_codes::RELEASE_INCONSISTENT);
+            assert_eq!(issue.params.get("article").map(String::as_str), Some("RESV-S1-A"));
+            assert_eq!(issue.params.get("location").map(String::as_str), Some("MAIN-BIN"));
+            assert_eq!(issue.params.get("reservation_qty").map(String::as_str), Some("3"));
+            assert_eq!(issue.params.get("balance_reserved_qty").map(String::as_str), Some("1"));
+        }
+        other => panic!("expected a coded refusal, got {other:?}"),
+    }
+    assert_eq!(reservation_status(&db, reservation).await, "active");
+    assert_eq!(balance(&db, a).await.1, 1.0, "not clamped");
+}
+
+/// S2: the startup sweep on a database populated before it runs. Work orders closed or cancelled
+/// before D13 keep open reservations (both link kinds); one of those releases had already arrived
+/// from another PC (seeded movement present, reservation row still open); one work order has a
+/// balance that cannot be released (reported, left for the next start); an open work order is not
+/// touched. Each release is audited with the system actor and the reason "D13 upgrade"; a second
+/// run does nothing.
+#[tokio::test]
+async fn the_d13_upgrade_releases_open_reservations_of_ended_work_orders_once() {
+    use crate::inventory::reservations::{release_reservations_of_ended_work_orders, D13_UPGRADE_REASON};
+    let db = crate::db::test_db::seeded().await;
+    let a = stock_article(&db, "RESV-UPG-A", 20.0).await;
+    let b = stock_article(&db, "RESV-UPG-B", 20.0).await;
+    let c = stock_article(&db, "RESV-UPG-C", 20.0).await;
+    let d = stock_article(&db, "RESV-UPG-D", 20.0).await;
+    let location_id = main_location(&db).await;
+
+    // Cancelled before D13: a WO-sourced partial reservation and a planned-line reservation.
+    let (cancelled_wo, _) = wo_in_planning(&db).await;
+    let wo_sourced = reserve(&db, a, 4.0, "WO", Some(cancelled_wo)).await;
+    issue(&db, wo_sourced, 1.0).await;
+    let line = parts::add_planned_part(
+        &db,
+        AddPartInput {
+            wo_id: cancelled_wo,
+            article_id: Some(b),
+            article_ref: None,
+            quantity_planned: 2.0,
+            unit_cost: Some(5.0),
+            stock_location_id: Some(location_id),
+            auto_reserve: Some(true),
+            notes: None,
+            origin: None,
+            is_required: true,
+        },
+    )
+    .await
+    .expect("planned part");
+    let line_reservation = line.reservation_id.expect("reserved");
+    // Closed before D13: a store reservation linked through a part line only, whose release
+    // already arrived from another PC (seeded movement here, reservation row still active).
+    let (closed_wo, _) = wo_in_planning(&db).await;
+    let arrived = reserve(&db, c, 5.0, "MANUAL", None).await;
+    let ref_line = parts::add_planned_part(
+        &db,
+        AddPartInput {
+            wo_id: closed_wo,
+            article_id: None,
+            article_ref: Some("REF-UPG".into()),
+            quantity_planned: 1.0,
+            unit_cost: Some(1.0),
+            stock_location_id: None,
+            auto_reserve: Some(false),
+            notes: None,
+            origin: None,
+            is_required: false,
+        },
+    )
+    .await
+    .expect("reference line");
+    exec(
+        &db,
+        "UPDATE work_order_parts SET reservation_id = ? WHERE id = ?",
+        vec![arrived.into(), ref_line.id.into()],
+    )
+    .await;
+    queries::release_stock_reservation(
+        &db,
+        InventoryReleaseReservationInput {
+            reservation_id: arrived,
+            notes: None,
+        },
+    )
+    .await
+    .expect("stands for the release received from another PC");
+    exec(
+        &db,
+        "UPDATE stock_reservations SET status = 'active', released_at = NULL WHERE id = ?",
+        vec![arrived.into()],
+    )
+    .await;
+    // Cancelled before D13 with a drifted balance: cannot be released yet.
+    let (drifted_wo, _) = wo_in_planning(&db).await;
+    let drifted = reserve(&db, d, 3.0, "WO", Some(drifted_wo)).await;
+    exec(
+        &db,
+        "UPDATE stock_balances SET reserved_qty = 1, available_qty = on_hand_qty - 1 WHERE article_id = ?",
+        vec![d.into()],
+    )
+    .await;
+    // Still open: untouched.
+    let (open_wo, _) = wo_in_planning(&db).await;
+    let open = reserve(&db, a, 2.0, "WO", Some(open_wo)).await;
+
+    end_wo_without_release(&db, cancelled_wo, "cancelled").await;
+    end_wo_without_release(&db, closed_wo, "closed").await;
+    end_wo_without_release(&db, drifted_wo, "cancelled").await;
+    assert_eq!(balance(&db, a).await, (19.0, 5.0));
+    assert_eq!(balance(&db, b).await, (20.0, 2.0));
+    assert_eq!(balance(&db, c).await, (20.0, 0.0));
+
+    let report = release_reservations_of_ended_work_orders(&db).await.expect("sweep");
+    assert_eq!(report.reservations, 3, "two of the cancelled WO and the arrived one");
+    assert_eq!(report.work_orders, 2);
+    assert_eq!(report.failures.len(), 1);
+    assert_eq!(report.failures[0].0, drifted_wo);
+
+    assert_eq!(reservation_status(&db, wo_sourced).await, "released");
+    assert_eq!(reservation_status(&db, line_reservation).await, "released");
+    assert_eq!(reservation_status(&db, arrived).await, "released");
+    assert_eq!(
+        reservation_status(&db, drifted).await,
+        "active",
+        "left for the next start"
+    );
+    assert_eq!(reservation_status(&db, open).await, "active", "open work order");
+    assert_eq!(balance(&db, a).await, (19.0, 2.0), "3 freed, the open WO keeps its 2");
+    assert_eq!(balance(&db, b).await, (20.0, 0.0));
+    assert_eq!(
+        balance(&db, c).await,
+        (20.0, 0.0),
+        "the arrived release is not counted twice"
+    );
+    assert_eq!(seeded_release_count(&db, wo_sourced).await, 1);
+    assert_eq!(seeded_release_qty(&db, wo_sourced).await, 3.0);
+    assert_eq!(seeded_release_count(&db, line_reservation).await, 1);
+    assert_eq!(release_movements(&db, arrived).await, 1, "no second movement");
+
+    for (reservation, qty, wo) in [
+        (wo_sourced, 3.0, cancelled_wo),
+        (line_reservation, 2.0, cancelled_wo),
+        (arrived, 0.0, closed_wo),
+    ] {
+        let rows = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT actor_id, auth_context, details_json FROM audit_events \
+                 WHERE action_code = 'inventory.reservation.released_d13_upgrade' AND target_id = ?",
+                [reservation.to_string().into()],
+            ))
+            .await
+            .expect("audit");
+        assert_eq!(rows.len(), 1, "one audit event per release");
+        assert_eq!(
+            rows[0].try_get::<Option<i64>>("", "actor_id").unwrap(),
+            None,
+            "system actor"
+        );
+        assert_eq!(rows[0].try_get::<String>("", "auth_context").unwrap(), "system");
+        let details: serde_json::Value =
+            serde_json::from_str(&rows[0].try_get::<String>("", "details_json").unwrap()).unwrap();
+        assert_eq!(details["reason"], D13_UPGRADE_REASON);
+        assert_eq!(details["quantity_released"], qty);
+        assert_eq!(details["work_order_id"], wo);
+    }
+
+    // Idempotent: a second run releases nothing more (the drifted one is still reported).
+    let again = release_reservations_of_ended_work_orders(&db)
+        .await
+        .expect("sweep again");
+    assert_eq!(again.reservations, 0);
+    assert_eq!(again.failures.len(), 1);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'inventory.reservation.released_d13_upgrade'",
+            vec![],
+        )
+        .await,
+        3
     );
 }
 

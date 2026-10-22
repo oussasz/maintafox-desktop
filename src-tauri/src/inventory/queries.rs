@@ -2517,6 +2517,28 @@ pub(crate) async fn issue_reserved_in<C: ConnectionTrait>(
             "Reservation already released.".to_string()
         ]));
     }
+    // D13: a work order that is closed or cancelled takes no more parts, also through a
+    // reservation still open on it (ended before D13, or made on another PC meanwhile).
+    if let Some((wo_id, _)) =
+        crate::inventory::reservations::ended_work_order_of_reservation(tx, reservation.id).await?
+    {
+        let wo_code = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT code FROM work_orders WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await?
+            .and_then(|row| row.try_get::<String>("", "code").ok())
+            .unwrap_or_else(|| wo_id.to_string());
+        return Err(crate::errors::org_validation_failed(
+            reservation_codes::ISSUE_WO_ENDED,
+            format!(
+                "Work order {wo_code} is closed or cancelled: no more parts can be issued against its reservation."
+            ),
+            crate::errors::issue_params(&[("work_order", wo_code), ("article", reservation.article_code.clone())]),
+        ));
+    }
     let remaining_reserved = reservation.quantity_reserved - reservation.quantity_issued;
     if remaining_reserved + 1e-9 < quantity {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -2617,6 +2639,15 @@ pub async fn return_reserved_stock(
     db: &DatabaseConnection,
     input: InventoryReturnInput,
 ) -> AppResult<StockReservation> {
+    return_reserved_stock_as(db, input, None).await
+}
+
+/// Return of issued parts against a reservation, made by `actor_id`.
+pub async fn return_reserved_stock_as(
+    db: &DatabaseConnection,
+    input: InventoryReturnInput,
+    actor_id: Option<i64>,
+) -> AppResult<StockReservation> {
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "quantity must be greater than 0.".to_string()
@@ -2634,8 +2665,19 @@ pub async fn return_reserved_stock(
     // D13: nothing stays reserved for a released reservation or for a work order that is closed
     // or cancelled. Parts returned against it go back to free stock (on hand rises, reserved does
     // not) and the reservation is released; otherwise they are reserved again for the job.
-    let to_free_stock = reservation.status == "released"
-        || crate::inventory::reservations::reservation_work_order_ended(&tx, reservation.id).await?;
+    let ended = crate::inventory::reservations::ended_work_order_of_reservation(&tx, reservation.id).await?;
+    let reservation = match ended {
+        // Still open on an ended work order (ended before D13, or a reservation this PC made
+        // while another closed the work order): its unissued remainder is released first, with
+        // the reservation's one release movement, then the return goes to free stock.
+        Some((wo_id, end)) if matches!(reservation.status.as_str(), "active" | "partial") => {
+            crate::inventory::reservations::release_before_return_after_end(&tx, reservation.id, wo_id, end, actor_id)
+                .await?;
+            load_reservation_by_id(&tx, reservation.id).await?
+        }
+        _ => reservation,
+    };
+    let to_free_stock = reservation.status == "released" || ended.is_some();
 
     let (on_hand, reserved) = get_balance_snapshot(&tx, reservation.article_id, reservation.location_id).await?;
     let next_issued = reservation.quantity_issued - input.quantity;
@@ -2703,6 +2745,7 @@ pub async fn return_reserved_stock(
         if let Some(lot) = lot_id {
             crate::inventory::lots::set_movement_lot(&tx, return_id, lot).await?;
         }
+        set_movement_actor(&tx, return_id, actor_id).await?;
         // Returned parts come back at the average they left at (the average is unchanged).
         crate::inventory::valuation::stamp_at_average(
             &tx,
@@ -2718,7 +2761,7 @@ pub async fn return_reserved_stock(
         // PCs that receive it; this RELEASE of the same quantity takes the reserved part back off,
         // so every PC ends with the parts in free stock. It is this return's own release (random
         // sync id), not the one-time release of the reservation.
-        insert_inventory_transaction(
+        let release_id = insert_inventory_transaction(
             &tx,
             reservation.article_id,
             reservation.warehouse_id,
@@ -2734,6 +2777,7 @@ pub async fn return_reserved_stock(
             None,
         )
         .await?;
+        set_movement_actor(&tx, release_id, actor_id).await?;
     }
     tx.commit().await?;
     load_reservation_by_id(db, reservation.id).await
@@ -2891,10 +2935,27 @@ pub(crate) async fn release_reservation_in<C: ConnectionTrait>(
     let mut quantity_released = 0.0;
     if !release_received_from_sync {
         let (on_hand, reserved) = get_balance_snapshot(db, reservation.article_id, reservation.location_id).await?;
-        if reserved < remaining_reserved {
-            return Err(AppError::ValidationFailed(vec![
-                "Inconsistent reservation state for release.".to_string(),
-            ]));
+        if reserved + 1e-9 < remaining_reserved {
+            // The balance holds less reserved stock than this reservation still counts (stock
+            // movements from several PCs drifted apart). Never clamped silently: the stock must be
+            // counted, which sets the balance from the shelf.
+            return Err(crate::errors::org_validation_failed(
+                reservation_codes::RELEASE_INCONSISTENT,
+                format!(
+                    "Article {} at {}: this reservation still holds {} but the stock balance shows only {} reserved. \
+                     Count this article at this location to correct the balance, then try again.",
+                    reservation.article_code,
+                    reservation.location_code,
+                    transfer_qty_text(remaining_reserved),
+                    transfer_qty_text(reserved)
+                ),
+                crate::errors::issue_params(&[
+                    ("article", reservation.article_code.clone()),
+                    ("location", reservation.location_code.clone()),
+                    ("reservation_qty", transfer_qty_text(remaining_reserved)),
+                    ("balance_reserved_qty", transfer_qty_text(reserved)),
+                ]),
+            ));
         }
         upsert_balance(
             db,
@@ -2902,7 +2963,8 @@ pub(crate) async fn release_reservation_in<C: ConnectionTrait>(
             reservation.warehouse_id,
             reservation.location_id,
             on_hand,
-            reserved - remaining_reserved,
+            // Only float noise (< 1e-9) can make this negative after the check above.
+            (reserved - remaining_reserved).max(0.0),
         )
         .await?;
         quantity_released = remaining_reserved;
@@ -2960,6 +3022,14 @@ pub async fn release_stock_reservation(
         release_stock_reservation_with_connection(&tx, input.reservation_id, input.notes.as_deref()).await?;
     tx.commit().await?;
     Ok(released)
+}
+
+/// Stable refusal codes of reservations (translated in `inventory:errors`).
+pub mod reservation_codes {
+    /// The balance holds less reserved stock than the reservation to release.
+    pub const RELEASE_INCONSISTENT: &str = "INV_RESERVATION_RELEASE_INCONSISTENT";
+    /// An issue against a reservation of a closed or cancelled work order.
+    pub const ISSUE_WO_ENDED: &str = "INV_ISSUE_WO_ENDED";
 }
 
 /// Stable refusal codes of a store-to-store transfer (translated in `training:errors`).
