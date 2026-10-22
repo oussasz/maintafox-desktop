@@ -447,6 +447,19 @@ pub async fn apply_entitlement_envelope(
     if let Some((row_id, existing_hash)) = existing_same_id {
         if existing_hash != payload_hash {
             update_envelope_row(&tx, row_id, &input, &payload_hash, &verification_result).await?;
+        } else if verified {
+            // The same envelope verified again (a key entered again after a local data reset):
+            // its verification time moves forward, so a single-PC licence is not taken for one
+            // left from an earlier activation (`sync::plant_join::licence_syncs` compares it with
+            // the key entry).
+            tx.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "UPDATE entitlement_envelopes
+                    SET verified_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), verification_result = ?
+                  WHERE id = ?",
+                [verification_result.clone().into(), row_id.into()],
+            ))
+            .await?;
         }
         active_row_id = row_id;
     } else if verified && soft_refresh {

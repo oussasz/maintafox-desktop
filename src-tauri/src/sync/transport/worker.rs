@@ -498,7 +498,6 @@ enum MediaFailure {
     Permanent(String),
 }
 
-/// Mirrors the server's `assertTenantOwnsObjectKey`: `{env}/media/{tenant}/…`.
 /// When a plant-join request (`SyncCommand::JoinPlant`) may run the next cycle: `None` during a
 /// pause; otherwise the wake spacing after the last cycle started, and not before the server's
 /// `Retry-After` (counted from the end of the cycle that received it) has passed.
@@ -514,6 +513,7 @@ fn join_wake_at(outcome: &CycleOutcome, started: Instant, ended: Instant, timing
     }
 }
 
+/// Mirrors the server's `assertTenantOwnsObjectKey`: `{env}/media/{tenant}/…`.
 fn object_key_in_tenant(object_key: &str, tenant_id: &str) -> bool {
     let parts: Vec<&str> = object_key.split('/').collect();
     parts.len() >= 4 && parts[1] == "media" && parts[2] == tenant_id

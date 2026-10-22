@@ -332,16 +332,10 @@ mod tests {
 
     /// A PC activated, then given a signed licence with these capabilities and this state (as a key
     /// entry applies the envelope its claim carries); no pull yet.
-    async fn licensed_pc(capabilities_json: &str, state: &str) -> sea_orm::DatabaseConnection {
+    /// A signed test envelope of this plant's licence.
+    fn plant_envelope(capabilities_json: &str, state: &str) -> crate::entitlements::domain::EntitlementEnvelopeInput {
         use crate::entitlements::domain::{EntitlementEnvelopeInput, ENTITLEMENT_SIGNATURE_ALG};
         use crate::entitlements::test_support::{now_rfc3339, sign_envelope};
-        let db = crate::db::test_db::seeded().await;
-        crate::commands::product_license::record_activation_claim_for_tests(&db, PLANT, "fp-1", "token-1")
-            .await
-            .expect("claim");
-        crate::license::security::ensure_default_licensing_trust_keys(&db)
-            .await
-            .expect("trust keys");
         let mut envelope = EntitlementEnvelopeInput {
             envelope_id: "env-plant-join".into(),
             previous_envelope_id: None,
@@ -363,6 +357,23 @@ mod tests {
             signature: String::new(),
         };
         envelope.signature = sign_envelope(&envelope);
+        envelope
+    }
+
+    async fn licensed_pc(capabilities_json: &str, state: &str) -> sea_orm::DatabaseConnection {
+        licensed_pc_with(plant_envelope(capabilities_json, state)).await
+    }
+
+    async fn licensed_pc_with(
+        envelope: crate::entitlements::domain::EntitlementEnvelopeInput,
+    ) -> sea_orm::DatabaseConnection {
+        let db = crate::db::test_db::seeded().await;
+        crate::commands::product_license::record_activation_claim_for_tests(&db, PLANT, "fp-1", "token-1")
+            .await
+            .expect("claim");
+        crate::license::security::ensure_default_licensing_trust_keys(&db)
+            .await
+            .expect("trust keys");
         crate::entitlements::queries::apply_entitlement_envelope(&db, envelope)
             .await
             .expect("envelope");
@@ -491,6 +502,26 @@ mod tests {
         .await
         .expect("unverify");
         assert!(licence_syncs(&db).await.expect("licence"), "unverified envelope");
+    }
+
+    /// The same no-sync envelope verified again (the key entered again after a local data reset)
+    /// is fresh: its verification time moves forward, so a single-PC plant is not sent to
+    /// "connection needed" for ever.
+    #[tokio::test]
+    async fn the_same_no_sync_envelope_verified_again_is_fresh() {
+        let envelope = plant_envelope(r#"{"sync":false}"#, "active");
+        let db = licensed_pc_with(envelope.clone()).await;
+        db.execute(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "UPDATE entitlement_envelopes SET verified_at = '2020-01-01T00:00:00Z'",
+        ))
+        .await
+        .expect("age the envelope");
+        assert!(licence_syncs(&db).await.expect("licence"), "aged: syncing");
+        crate::entitlements::queries::apply_entitlement_envelope(&db, envelope)
+            .await
+            .expect("same envelope again");
+        assert!(!licence_syncs(&db).await.expect("licence"), "verified again: single-PC");
     }
 
     /// A received account recorded only as a sync conflict (invalid payload or hash: it never
