@@ -414,7 +414,7 @@ pub async fn post_count_session(
         if line.variance_qty.abs() > f64::EPSILON {
             if line.variance_reason_code.is_none() {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Line {} has variance but no variance reason.",
+                    "GATE_INV_COUNT_VARIANCE_REASON: Line {} has variance but no variance reason.",
                     line.id
                 )]));
             }
@@ -571,7 +571,7 @@ pub async fn reverse_count_session(
     // which closes its item as an adjustment (`inventory::negative_stock`).
     if input.reason.trim().chars().count() < crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS {
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_INV_REVERSAL_REASON: Reversal reason must be explicit (at least {} characters).",
+            "GATE_INV_REVERSAL_REASON:min={0}: Reversal reason must be explicit (at least {0} characters).",
             crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS
         )]));
     }

@@ -122,7 +122,8 @@ pub async fn issue_stock_with_source(
             let (code, status) = work_order_code(&tx, work_order_id).await?;
             if !PARTS_OPEN_WO_STATUSES.contains(&status.as_str()) {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "GATE_INV_WO_NOT_OPEN: Work order {code} is not open for parts (status: {status})."
+                    "GATE_INV_WO_NOT_OPEN:wo={code},status={}: Work order {code} is not open for parts (status: {status}).",
+                    crate::wo::workflow::state_machine::status_i18n_key(&status)
                 )]));
             }
             let reservation_id = queries::reserve_stock_in(

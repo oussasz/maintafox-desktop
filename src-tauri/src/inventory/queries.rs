@@ -2215,7 +2215,7 @@ async fn upsert_balance<C: ConnectionTrait>(
             if on_hand_qty < 0.0 || reserved_qty < 0.0 {
                 "GATE_INV_NEGATIVE_STOCK: Stock balances cannot be negative.".to_string()
             } else {
-                "available_qty cannot be negative.".to_string()
+                "GATE_INV_NEGATIVE_STOCK: available_qty cannot be negative.".to_string()
             },
         ]));
     }
@@ -2407,7 +2407,7 @@ pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &Invento
     let available = on_hand - reserved;
     if available < input.quantity {
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_INV_INSUFFICIENT_STOCK: Insufficient available stock for reservation (available: {available})."
+            "GATE_INV_INSUFFICIENT_STOCK:available={available}: Insufficient available stock for reservation (available: {available})."
         )]));
     }
 
@@ -2529,7 +2529,7 @@ pub(crate) async fn issue_reserved_in<C: ConnectionTrait>(
     let remaining_reserved = reservation.quantity_reserved - reservation.quantity_issued;
     if remaining_reserved + 1e-9 < quantity {
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_INV_ISSUE_OVER_RESERVED: Issue exceeds reserved remainder ({remaining_reserved})."
+            "GATE_INV_ISSUE_OVER_RESERVED:reserved={remaining_reserved}: Issue exceeds reserved remainder ({remaining_reserved})."
         )]));
     }
 
