@@ -203,8 +203,8 @@ describe("a GATE refusal's title uses the parameters the backend sent", () => {
         },
       ],
     });
-    expect(described.title).toContain("draft");
-    expect(described.title).toContain("closed");
+    expect(described.title).toContain("Brouillon");
+    expect(described.title).toContain("Clôturée");
     expect(described.title).not.toContain("{{");
   });
 });
