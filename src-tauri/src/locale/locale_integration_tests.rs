@@ -38,7 +38,10 @@ mod tests {
         assert!(pref.supported_locales.contains(&"fr".to_string()));
         assert!(pref.supported_locales.contains(&"en".to_string()));
 
-        // No user/tenant preference set yet → should use OS locale or fallback
+        // Nothing chosen: French, whatever the Windows language is.
+        assert_eq!(pref.active_locale, "fr");
+
+        // No user/tenant preference set yet → the French default (the OS language is not used)
         assert!(pref.user_locale.is_none(), "user_locale should be None initially");
         assert!(pref.tenant_locale.is_none(), "tenant_locale should be None initially");
 
@@ -166,5 +169,23 @@ mod tests {
         assert_eq!(pref.active_locale, "fr", "user preference must override tenant default");
         assert_eq!(pref.user_locale, Some("fr".to_string()));
         assert_eq!(pref.tenant_locale, Some("en".to_string()));
+    }
+
+    /// V4 — "Follow Windows" is accepted for the user's own preference only.
+    #[tokio::test]
+    async fn v4_follow_windows_is_a_user_choice_only() {
+        let db = setup_db().await;
+        write_locale_config(&db, "locale.user_language", "system")
+            .await
+            .expect("follow windows is a valid user choice");
+        let pref = resolve_locale_preference(&db).await.expect("resolve");
+        assert_eq!(pref.user_locale, Some("system".to_string()));
+        assert_eq!(
+            pref.active_locale,
+            pref.os_locale.clone().unwrap_or_else(|| "fr".to_string())
+        );
+        assert!(write_locale_config(&db, "locale.default_language", "system")
+            .await
+            .is_err());
     }
 }
