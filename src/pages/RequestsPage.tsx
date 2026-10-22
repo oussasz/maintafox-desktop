@@ -76,6 +76,7 @@ import {
 } from "@/lib/list-links";
 import { getAssetByIdSilent } from "@/services/asset-service";
 import { triageSubmittedDi } from "@/services/di-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
@@ -168,7 +169,6 @@ export function RequestsPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   // A requester without a review role lands on their own requests.
   const defaultQueue: DiQueueSelection =
@@ -558,20 +558,20 @@ export function RequestsPage() {
 
   const triageOne = useCallback(
     async (di: InterventionRequest) => {
-      setActionError(null);
       try {
         await triageSubmittedDi({ di_id: di.id, expected_row_version: di.row_version });
         void loadDis();
-      } catch (err) {
-        setActionError(describeAppError(err).title);
+      } catch {
+        // The IPC layer already shows the failure as a toast.
       }
     },
     [loadDis],
   );
 
   const printOne = useCallback((di: InterventionRequest) => {
-    setActionError(null);
-    printDiFiche(di).catch((err: unknown) => setActionError(describeAppError(err).title));
+    printDiFiche(di).catch((err: unknown) =>
+      pushAppToast({ title: describeAppError(err).title, variant: "destructive" }),
+    );
   }, []);
 
   // ── Columns ─────────────────────────────────────────────────────────────
@@ -804,13 +804,6 @@ export function RequestsPage() {
       {recordView && showListError ? (
         <div className="p-4">
           <ErrorState error={listError} onRetry={() => void loadDis()} retrying={loading} />
-        </div>
-      ) : null}
-      {actionError ? (
-        <div className="px-4 pt-3">
-          <p role="alert" className="text-sm text-tone-danger-fg">
-            {actionError}
-          </p>
         </div>
       ) : null}
       {recordView && canBulkTriage && (selectedCount > 0 || bulkMessage) ? (

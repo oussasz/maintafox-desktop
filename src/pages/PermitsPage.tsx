@@ -540,14 +540,12 @@ export function PermitsPage() {
             pageSize={20}
             isLoading={loading && permits.length === 0}
             skeletonRows={6}
+            emptyMessage={
+              search.trim() || statusFilter || typeFilter ? t("list.noMatch") : t("list.empty")
+            }
             onRowClick={(row) => setSelectedId(row.id)}
             isRowSelected={(row) => row.id === selectedId}
           />
-          {!loading && permits.length === 0 ? (
-            <p className="text-sm text-text-muted">
-              {search.trim() || statusFilter || typeFilter ? t("list.noMatch") : t("list.empty")}
-            </p>
-          ) : null}
         </div>
       )}
 
