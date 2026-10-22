@@ -990,8 +990,6 @@
     "columnOpen": "Open",
     "columnExecuting": "Executing",
     "columnCompleted": "Completed",
-    "columnClosed": "Closed",
-    "columnCancelled": "Cancelled",
     "emptyDraft": "No draft work orders",
     "emptyPlanning": "No work orders in planning",
     "emptyReady": "No work orders ready to start",
@@ -1003,6 +1001,7 @@
     "unassigned": "Unassigned",
     "loadMore": "Load more ({{count}} remaining)",
     "statusFromDetailHint": "Click a card to open the work order: status changes are made from its detail, where each step checks its conditions (permit, parts, reasons).",
+    "archiveOnlyNotice": "Closed and cancelled work orders have no lane: they are in the Archive section below the board.",
     "transitionNotAllowed": "Cannot move \"{{code}}\" from \"{{from}}\" to {{to}}. Transition not allowed."
   },
   "print": {

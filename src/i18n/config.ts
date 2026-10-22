@@ -106,6 +106,13 @@ export function initI18n(): void {
       // fr-DZ → fr, en-US → en
       load: "languageOnly",
     });
+
+  // The page language follows the app language (spell-check, hyphenation, native date pickers).
+  const syncDocumentLanguage = (lng: string) => {
+    if (typeof document !== "undefined") document.documentElement.lang = lng.split("-")[0] ?? lng;
+  };
+  i18n.on("languageChanged", syncDocumentLanguage);
+  syncDocumentLanguage(DEFAULT_LOCALE);
 }
 
 export { i18n };

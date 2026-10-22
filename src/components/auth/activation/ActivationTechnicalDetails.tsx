@@ -1,5 +1,5 @@
 import { Check, ChevronDown, Copy } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -12,7 +12,7 @@ type ActivationTechnicalDetailsProps = {
   copiedLabel?: string;
 };
 
-/** Collapsible diagnostics. Closed by default so the main task stays uncluttered. */
+/** Collapsible diagnostics. Closed by default so the main task stays uncluttered; opens by itself when `defaultOpen` turns true. */
 export function ActivationTechnicalDetails({
   summaryLabel,
   rows,
@@ -23,6 +23,11 @@ export function ActivationTechnicalDetails({
   const panelId = useId();
   const [open, setOpen] = useState(defaultOpen);
   const [copied, setCopied] = useState(false);
+
+  // An error appearing after first render opens the panel; the user can still close it.
+  useEffect(() => {
+    if (defaultOpen) setOpen(true);
+  }, [defaultOpen]);
 
   const copyRows = async () => {
     try {

@@ -63,6 +63,19 @@ describe("UpdateBanner", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it("shows the notes in a collapsed disclosure without Markdown symbols", () => {
+    useUpdaterStore.setState({
+      lastCheckResult: makeCheck({ notes_en: "## 1.2\n\n- **Faster** search", notes_fr: null }),
+    });
+    const { container } = render(<UpdateBanner />);
+    const details = container.querySelector("details");
+    expect(details).not.toBeNull();
+    expect(details?.hasAttribute("open")).toBe(false);
+    expect(details?.textContent).not.toContain("**");
+    expect(details?.textContent).not.toContain("##");
+    expect(details?.querySelector("strong")?.textContent).toBe("Faster");
+  });
+
   it("shows an optional update with notes in the UI language and a dismiss button", () => {
     useUpdaterStore.setState({ lastCheckResult: makeCheck() });
 

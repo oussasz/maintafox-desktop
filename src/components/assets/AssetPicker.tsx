@@ -139,6 +139,15 @@ function findExactCodeMatch(items: AssetSearchResult[], query: string): AssetSea
 /** Search page size of the picker (the list states when more assets match). */
 const SEARCH_LIMIT = 20;
 
+/**
+ * Up to this many pickable assets the picker lists the whole register when the field is empty
+ * (scrollable); above it, a few suggestions and a hint to type. The server caps it at 200.
+ */
+export const ASSET_PICKER_FULL_LIST_MAX = 50;
+
+/** Suggestions listed for an empty field when the register is larger than the full-list limit. */
+const SUGGEST_LIMIT = 15;
+
 /** Text to search for: a scanned label's asset code, else what was typed. */
 function searchTextOf(q: string): string | null {
   const scan = parseAssetScan(q);
@@ -156,6 +165,8 @@ export interface AssetPickerProps {
   autoFocus?: boolean;
   id?: string;
   className?: string;
+  /** `sm` matches compact dialogs (`h-8`) so the picker lines up with their other fields. */
+  size?: "sm" | "md";
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -168,7 +179,9 @@ export function AssetPicker({
   autoFocus = false,
   id,
   className,
+  size = "md",
 }: AssetPickerProps) {
+  const compact = size === "sm";
   const { t } = useTranslation("common");
   const canReadAssets = useCanReadList("assets");
   const listId = useId();
@@ -179,7 +192,10 @@ export function AssetPicker({
 
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<AssetSearchResult[]>([]);
-  const [mode, setMode] = useState<"recent" | "frequent" | "search" | null>(null);
+  const [mode, setMode] = useState<"recent" | "frequent" | "register" | "search" | null>(null);
+  /** Suggestions of an empty field: the whole register is listed / the register is empty. */
+  const [listsAll, setListsAll] = useState(false);
+  const [registerEmpty, setRegisterEmpty] = useState(false);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -197,6 +213,8 @@ export function AssetPicker({
       // A label of the former id format: never resolved to a possibly wrong asset.
       setItems([]);
       setTotal(null);
+      setListsAll(false);
+      setRegisterEmpty(false);
       setMode("search");
       setLegacyLabel(true);
       setLoading(false);
@@ -207,16 +225,23 @@ export function AssetPicker({
       const trimmed = text.trim();
       if (!trimmed) {
         const res = await suggestPickerAssets({
-          limit: 15,
+          limit: SUGGEST_LIMIT,
           include_decommissioned: false,
+          full_list_max: ASSET_PICKER_FULL_LIST_MAX,
         });
         if (gen !== requestGen.current) return;
         setItems(res.items);
-        setTotal(null);
-        setMode(res.mode === "frequent" ? "frequent" : "recent");
+        setTotal(res.total);
+        setListsAll(res.complete);
+        setRegisterEmpty(res.total === 0);
+        setMode(
+          res.mode === "frequent" ? "frequent" : res.mode === "register" ? "register" : "recent",
+        );
         setActiveIndex(0);
         return;
       }
+      setListsAll(false);
+      setRegisterEmpty(false);
       const page = await searchAssetsPage({
         query: trimmed,
         limit: SEARCH_LIMIT,
@@ -396,14 +421,17 @@ export function AssetPicker({
     el?.scrollIntoView({ block: "nearest" });
   }, [activeIndex, open]);
 
-  const groupLabel =
-    mode === "recent"
+  const groupLabel = listsAll
+    ? t("assetPicker.all")
+    : mode === "recent"
       ? t("assetPicker.recent")
       : mode === "frequent"
         ? t("assetPicker.frequent")
-        : mode === "search"
-          ? t("assetPicker.results")
-          : null;
+        : mode === "register"
+          ? t("assetPicker.register")
+          : mode === "search"
+            ? t("assetPicker.results")
+            : null;
 
   if (value) {
     return (
@@ -449,7 +477,12 @@ export function AssetPicker({
   if (!canReadAssets) {
     return (
       <div className={cn("space-y-1", className)}>
-        <Input id={id} disabled placeholder={t("assetPicker.searchPlaceholder")} />
+        <Input
+          id={id}
+          disabled
+          placeholder={t("assetPicker.searchPlaceholder")}
+          className={compact ? "h-8 text-sm" : undefined}
+        />
         <ListAccessNote list="assets" />
       </div>
     );
@@ -459,7 +492,12 @@ export function AssetPicker({
     <div className={cn("relative space-y-1", className)} ref={rootRef}>
       <div className="flex gap-2">
         <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted pointer-events-none" />
+          <Search
+            className={cn(
+              "absolute left-2.5 h-4 w-4 text-text-muted pointer-events-none",
+              compact ? "top-2" : "top-2.5",
+            )}
+          />
           <Input
             ref={inputRef}
             id={id}
@@ -470,7 +508,7 @@ export function AssetPicker({
             aria-activedescendant={
               open && items[activeIndex] ? `${listId}-opt-${activeIndex}` : undefined
             }
-            className="pl-9 pr-9"
+            className={cn("pl-9 pr-9", compact && "h-8 text-sm")}
             placeholder={scanMode ? t("assetPicker.scanHint") : t("assetPicker.searchPlaceholder")}
             value={query}
             disabled={disabled}
@@ -480,13 +518,19 @@ export function AssetPicker({
             onKeyDown={handleKeyDown}
           />
           {loading && (
-            <Loader2 className="absolute right-2.5 top-2.5 h-4 w-4 animate-spin text-text-muted" />
+            <Loader2
+              className={cn(
+                "absolute right-2.5 h-4 w-4 animate-spin text-text-muted",
+                compact ? "top-2" : "top-2.5",
+              )}
+            />
           )}
         </div>
         <Button
           type="button"
           variant="outline"
           size="icon"
+          className={compact ? "h-8 w-8" : undefined}
           disabled={disabled}
           title={t("assetPicker.scan")}
           aria-label={t("assetPicker.scan")}
@@ -520,7 +564,7 @@ export function AssetPicker({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-9"
+                className={compact ? "h-8" : "h-9"}
                 onMouseDown={(ev) => ev.preventDefault()}
                 onClick={() => void loadSuggestions(query)}
               >
@@ -533,7 +577,11 @@ export function AssetPicker({
             </p>
           ) : items.length === 0 && !loading ? (
             <p className="px-3 py-3 text-sm text-text-muted">
-              {query.trim() ? t("assetPicker.empty") : t("assetPicker.emptySuggestions")}
+              {query.trim()
+                ? t("assetPicker.empty")
+                : registerEmpty
+                  ? t("assetPicker.emptyRegister")
+                  : t("assetPicker.emptySuggestions")}
             </p>
           ) : null}
           {items.map((asset, index) => (
@@ -576,7 +624,9 @@ export function AssetPicker({
           ))}
           {total != null && total > items.length ? (
             <p className="border-t border-surface-border px-3 py-2 text-xs text-text-muted">
-              {t("assetPicker.more", { shown: items.length, total })}
+              {mode === "search"
+                ? t("assetPicker.more", { shown: items.length, total })
+                : t("assetPicker.typeToSearch", { total })}
             </p>
           ) : null}
         </div>

@@ -29,7 +29,8 @@ impl ReportLocale {
     }
 
     /// The app language when the caller does not pass one (scheduled runs): user preference,
-    /// then tenant default, then OS (`crate::locale::resolve_locale_preference`).
+    /// then tenant default, then French; the OS language only when the user chose to follow it
+    /// (`crate::locale::resolve_locale_preference`).
     pub async fn resolve(db: &DatabaseConnection, requested: Option<&str>) -> Self {
         if let Some(code) = requested.filter(|c| !c.trim().is_empty()) {
             return Self::from_code(code);

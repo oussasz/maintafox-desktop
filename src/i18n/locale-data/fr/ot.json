@@ -990,8 +990,6 @@
     "columnOpen": "Ouvert",
     "columnExecuting": "En exécution",
     "columnCompleted": "Terminé",
-    "columnClosed": "Fermé",
-    "columnCancelled": "Annulé",
     "emptyDraft": "Aucun brouillon",
     "emptyPlanning": "Aucun OT en planification",
     "emptyReady": "Aucun OT prêt à démarrer",
@@ -1003,6 +1001,7 @@
     "unassigned": "Non assigné",
     "loadMore": "Charger plus ({{count}} restants)",
     "statusFromDetailHint": "Cliquez sur une carte pour ouvrir l'OT : les changements de statut se font depuis sa fiche, où chaque étape vérifie ses conditions (permis, pièces, motifs).",
+    "archiveOnlyNotice": "Les OT fermés et annulés n'ont pas de colonne : ils se trouvent dans la section Archive, sous le tableau.",
     "transitionNotAllowed": "Impossible de déplacer \"{{code}}\" de \"{{from}}\" vers {{to}}. Transition non permise."
   },
   "print": {

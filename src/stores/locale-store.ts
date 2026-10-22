@@ -18,11 +18,16 @@ import { toErrorMessage } from "@/utils/errors";
 import { getLocaleDirection } from "@/utils/formatters";
 import type { LocalePreference } from "@shared/ipc-types";
 
+/** Stored choice meaning "follow the Windows language" (see the backend `FOLLOW_OS_LOCALE`). */
+export const FOLLOW_SYSTEM_LOCALE = "system";
+
 const FALLBACK_LANGUAGE_SETTING_KEY = "locale.fallback_language";
 
 export interface LocaleState {
   /** Current active locale code ("fr" | "en"). */
   activeLocale: string;
+  /** True when the user explicitly chose to follow the Windows language. */
+  followsSystemLanguage: boolean;
   /** Tenant display currency (ISO 4217), from `locale.currency_code` setting. */
   activeCurrencyCode: string;
   /** Symbol of the tenant currency from the reference list ("DA"), null until loaded. */
@@ -39,7 +44,10 @@ export interface LocaleState {
   supportedLocales: string[];
   /** Read locale preference from backend, update i18next; load currency setting. */
   initialize: () => Promise<void>;
-  /** Switch locale, persist via backend, update i18next. */
+  /**
+   * Switch locale, persist via backend, update i18next. `FOLLOW_SYSTEM_LOCALE` stores the choice
+   * to follow the Windows language. Works before sign-in (kept for this PC).
+   */
   setLocale: (locale: string, asTenantDefault?: boolean) => Promise<void>;
   /** Apply currency from Settings (in-memory); persistence is via setSetting. */
   setCurrencyCode: (code: string) => void;
@@ -71,6 +79,7 @@ async function readCurrencyDisplay(
 
 export const useLocaleStore = create<LocaleState>()((set) => ({
   activeLocale: DEFAULT_LOCALE,
+  followsSystemLanguage: false,
   activeCurrencyCode: FALLBACK_CURRENCY_CODE,
   activeCurrencySymbol: null,
   activeCurrencyMinorUnits: 2,
@@ -112,6 +121,7 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
       const display = await readCurrencyDisplay(currency);
       set({
         activeLocale: locale,
+        followsSystemLanguage: pref.user_locale === FOLLOW_SYSTEM_LOCALE,
         activeCurrencyCode: currency,
         activeCurrencySymbol: display.symbol,
         activeCurrencyMinorUnits: display.minorUnits,
@@ -135,13 +145,16 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
   setLocale: async (locale: string, asTenantDefault?: boolean) => {
     try {
       set({ isLoading: true, error: null });
-      await invoke<LocalePreference>("set_locale_preference", {
+      const pref = await invoke<LocalePreference>("set_locale_preference", {
         payload: { locale, asTenantDefault: asTenantDefault ?? false },
       });
-      await i18n.changeLanguage(locale);
+      const follows = locale === FOLLOW_SYSTEM_LOCALE;
+      const active = follows ? pref.active_locale : locale;
+      await i18n.changeLanguage(active);
       set({
-        activeLocale: locale,
-        direction: getLocaleDirection(locale),
+        activeLocale: active,
+        followsSystemLanguage: follows,
+        direction: getLocaleDirection(active),
         isLoading: false,
       });
     } catch (err) {

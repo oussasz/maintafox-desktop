@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SafeMarkdown } from "@/components/ui/safe-markdown";
 import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
 import { useUpdater } from "@/hooks/use-updater";
 import { cn } from "@/lib/utils";
@@ -203,10 +204,12 @@ export function UpdateBanner({ embedded = false }: { embedded?: boolean } = {}) 
             <p className="whitespace-pre-line text-text-secondary">{result.mandatory_message}</p>
           ) : null}
           {notes ? (
-            <div>
-              <p className="text-xs font-medium text-text-secondary">{t("updates.banner.notes")}</p>
-              <p className="whitespace-pre-line text-text-secondary">{notes}</p>
-            </div>
+            <details className="rounded-md border border-surface-border bg-surface-0/60 px-2 py-1">
+              <summary className="cursor-pointer select-none text-xs font-medium text-text-secondary hover:text-text-primary">
+                {t("updates.banner.notes")}
+              </summary>
+              <SafeMarkdown source={notes} skipLeadingHeading className="mt-1.5" />
+            </details>
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={() => setConfirmOpen(true)}>
