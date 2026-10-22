@@ -264,7 +264,7 @@ export function ReferenceCombobox({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={placeholder || t("combobox.searchPlaceholder")}
-            className="mb-2 h-8 text-sm"
+            className="mb-2 h-10 text-sm"
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 setOpen(false);

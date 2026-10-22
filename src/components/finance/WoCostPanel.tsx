@@ -172,7 +172,7 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 gap-1 text-xs"
+                className="h-10 gap-1 text-xs"
                 onClick={() => setEstimateOpen(true)}
               >
                 <PencilLine className="h-3.5 w-3.5" aria-hidden />
