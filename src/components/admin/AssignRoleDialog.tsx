@@ -9,6 +9,7 @@ import {
   scopeChoiceToInput,
 } from "@/components/admin/ScopeNodeSelect";
 import { Button } from "@/components/ui/button";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +18,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -144,21 +144,11 @@ export function AssignRoleDialog({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="assign-from">{t("console.assign.validFrom")}</Label>
-              <Input
-                id="assign-from"
-                type="date"
-                value={validFrom}
-                onChange={(e) => setValidFrom(e.target.value)}
-              />
+              <DateField id="assign-from" value={validFrom} onChange={(v) => setValidFrom(v)} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="assign-to">{t("console.assign.validTo")}</Label>
-              <Input
-                id="assign-to"
-                type="date"
-                value={validTo}
-                onChange={(e) => setValidTo(e.target.value)}
-              />
+              <DateField id="assign-to" value={validTo} onChange={(v) => setValidTo(v)} />
             </div>
           </div>
           <p className="text-xs text-text-secondary">{t("console.assign.validityHint")}</p>

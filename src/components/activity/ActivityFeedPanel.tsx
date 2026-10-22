@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
@@ -424,24 +425,22 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
             <Label htmlFor="activity-filter-date-from" className="text-xs text-text-muted">
               {t("filters.dateFrom")}
             </Label>
-            <Input
+            <DateField
               id="activity-filter-date-from"
-              type="date"
               className="h-10"
               value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
+              onChange={(v) => setDateFrom(v)}
             />
           </div>
           <div className="space-y-1">
             <Label htmlFor="activity-filter-date-to" className="text-xs text-text-muted">
               {t("filters.dateTo")}
             </Label>
-            <Input
+            <DateField
               id="activity-filter-date-to"
-              type="date"
               className="h-10"
               value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
+              onChange={(v) => setDateTo(v)}
             />
           </div>
           <details className="md:col-span-1">
