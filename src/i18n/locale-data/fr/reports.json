@@ -66,6 +66,7 @@
       "loadError": "Les indicateurs du tableau de bord n’ont pas pu être chargés",
       "trend": {
         "stable": "Stable vs période précédente",
+        "points": "{{change}} pts vs période précédente",
         "vsPrevious": "{{change}} vs période précédente"
       },
       "context": {

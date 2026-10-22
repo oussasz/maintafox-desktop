@@ -66,6 +66,7 @@
       "loadError": "The dashboard figures could not be loaded",
       "trend": {
         "stable": "Stable vs previous period",
+        "points": "{{change}} pts vs previous period",
         "vsPrevious": "{{change}} vs previous period"
       },
       "context": {

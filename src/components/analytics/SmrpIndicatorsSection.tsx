@@ -18,8 +18,14 @@ import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import type { SmrpKpis, SmrpMetric } from "@/services/analytics-dashboard-service";
 
-/** Change below this many percentage points reads "stable". */
-const STABLE_POINTS = 0.5;
+/**
+ * Change below this many percentage points reads "stable" — set per indicator, with its
+ * definition: a small ratio such as cost-to-RAV (a few percent a year) moves by hundredths.
+ */
+const STABLE_POINTS = {
+  default: 0.5,
+  costToRav: 0.05,
+} as const;
 
 export type SmrpDirection = "up-good" | "up-bad" | "neutral";
 
@@ -33,10 +39,11 @@ export function pointsTrend(
   current: number | null | undefined,
   previous: number | null | undefined,
   direction: SmrpDirection,
+  stablePoints: number = STABLE_POINTS.default,
 ): PointsTrend | null {
   if (current == null || previous == null) return null;
   const points = current - previous;
-  if (Math.abs(points) < STABLE_POINTS) return { points: 0, tone: null };
+  if (Math.abs(points) < stablePoints) return { points: 0, tone: null };
   if (direction === "neutral") return { points, tone: null };
   const good = direction === "up-good" ? points > 0 : points < 0;
   return { points, tone: good ? "success" : "danger" };
@@ -336,7 +343,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
 
   if (smrp.cost_to_rav) {
     const c = smrp.cost_to_rav;
-    const tr = pointsTrend(c.value_pct, c.previous_value_pct, "up-bad");
+    const tr = pointsTrend(c.value_pct, c.previous_value_pct, "up-bad", STABLE_POINTS.costToRav);
     tiles.push(
       <SmrpTile
         key="rav"

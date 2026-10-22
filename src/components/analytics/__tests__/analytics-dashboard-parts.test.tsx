@@ -40,6 +40,22 @@ describe("periodTrend", () => {
     expect(periodTrend(kpi(100.2, 100), "up-bad")).toEqual({ percent: 0, sense: "neutral" });
   });
 
+  it("reports a ratio KPI in percentage points, with its own stable threshold", () => {
+    // 0.95 -> 0.96 is +1 point, not "+1.05 %".
+    expect(periodTrend(kpi(0.96, 0.95), "up-good", { stablePoints: 0.1 })).toMatchObject({
+      points: expect.closeTo(1, 5),
+      sense: "up-good",
+    });
+    expect(periodTrend(kpi(0.9505, 0.95), "up-good", { stablePoints: 0.1 })).toEqual({
+      percent: 0,
+      points: 0,
+      sense: "neutral",
+    });
+    expect(periodTrend(kpi(0.9, 0.95), "up-good", { stablePoints: 0.1 })).toMatchObject({
+      sense: "up-bad",
+    });
+  });
+
   it("colours the change by whether a rise is good or bad", () => {
     expect(periodTrend(kpi(120, 100), "up-good")).toMatchObject({ sense: "up-good" });
     expect(periodTrend(kpi(120, 100), "up-bad")).toMatchObject({ sense: "up-bad" });

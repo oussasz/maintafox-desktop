@@ -201,6 +201,13 @@ export function AnalyticsDashboardsPage() {
   }, [orgRows]);
 
   const trendLabel = (trend: KpiTrend) => {
+    if (trend.points !== undefined) {
+      if (trend.points === 0) return t("hub.dashboards.trend.stable");
+      const shown = Math.round(trend.points * 10) / 10;
+      return t("hub.dashboards.trend.points", {
+        change: `${shown > 0 ? "+" : ""}${formatDecimal(shown, 1)}`,
+      });
+    }
     if (trend.percent === 0) return t("hub.dashboards.trend.stable");
     const rounded =
       Math.abs(trend.percent) >= 10
@@ -351,7 +358,7 @@ export function AnalyticsDashboardsPage() {
                   context: horizonText,
                   value: ratio(data?.avg_availability.value),
                   available: data?.avg_availability.available ?? false,
-                  trend: periodTrend(data?.avg_availability, "up-good"),
+                  trend: periodTrend(data?.avg_availability, "up-good", { stablePoints: 0.1 }),
                   onOpen: openRamsDashboard,
                 })}
                 {renderKpi({
@@ -359,7 +366,7 @@ export function AnalyticsDashboardsPage() {
                   context: horizonText,
                   value: ratio(data?.avg_data_quality.value),
                   available: data?.avg_data_quality.available ?? false,
-                  trend: periodTrend(data?.avg_data_quality, "up-good"),
+                  trend: periodTrend(data?.avg_data_quality, "up-good", { stablePoints: 0.5 }),
                   onOpen: openRamsEvidence,
                 })}
                 {renderKpi({

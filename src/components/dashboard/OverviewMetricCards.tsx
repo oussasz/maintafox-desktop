@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { useFormatters, type Formatters } from "@/hooks/use-formatters";
 import type { OverviewKpiCell, OverviewKpisPayload } from "@shared/ipc-types";
 import {
+  DEFAULT_KPI_STABLE_BELOW,
   OVERVIEW_KPI_REGISTRY_BY_KEY,
   isOverviewKpiAccent,
   isOverviewKpiSemanticKey,
@@ -84,18 +85,31 @@ export function OverviewMetricCards(props: {
 
   const formatTrend = (
     cell: OverviewKpiCell,
+    reg: { stableBelow?: number },
   ): { label: string; sense: VisualMetricTrendSense } | undefined => {
     if (cell.baseline_available === false) return undefined;
+    const direction = cell.trend_sense as "up-good" | "up-bad" | "neutral";
+    const stableBelow = reg.stableBelow ?? DEFAULT_KPI_STABLE_BELOW;
+    // A percentage is compared in points ("+8 pts"), never as "+10 %" of a percentage.
+    if (cell.value_kind === "percent") {
+      const points = cell.value - cell.previous_value;
+      if (!Number.isFinite(points)) return undefined;
+      if (Math.abs(points) < stableBelow) return { label: t("kpi.stable"), sense: "neutral" };
+      const shown = Math.round(points * 10) / 10;
+      return {
+        label: t("kpi.points", { change: `${shown > 0 ? "+" : ""}${formatNumber(shown)}` }),
+        sense: senseForDelta(points, direction),
+      };
+    }
     const pct = trendPercent(cell.value, cell.previous_value);
     if (pct === null) return undefined;
-    if (Math.abs(pct) < 0.5) {
+    if (Math.abs(pct) < stableBelow) {
       return { label: t("kpi.stable"), sense: "neutral" };
     }
     const rounded = Math.abs(pct) >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10;
     const sign = rounded > 0 ? "+" : "";
-    const direction = cell.trend_sense as "up-good" | "up-bad" | "neutral";
     return {
-      label: `${sign}${formatNumber(rounded)} %`,
+      label: `${sign}${formatNumber(rounded)} %`,
       sense: senseForDelta(cell.value - cell.previous_value, direction),
     };
   };
@@ -114,7 +128,7 @@ export function OverviewMetricCards(props: {
           if (!reg || !cell) return null;
 
           const available = cell.available;
-          const trend = available ? formatTrend(cell) : undefined;
+          const trend = available ? formatTrend(cell, reg) : undefined;
           const unit =
             cell.value_kind === "percent"
               ? t("overviewKpi.unit.percent")
