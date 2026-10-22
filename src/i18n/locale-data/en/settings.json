@@ -55,6 +55,7 @@
     "device": "Device"
   },
   "keys": {
+    "notifications.expiry_days": "Notification retention period",
     "locale.primary_language": "Primary Language",
     "locale.fallback_language": "Fallback Language",
     "locale.date_format": "Date Format",
@@ -115,6 +116,8 @@
     }
   },
   "auditLog": {
+    "technicalSetting": "Technical setting",
+    "changed": "Value changed",
     "title": "Change Log",
     "empty": "No changes recorded",
     "summary": "Summary",

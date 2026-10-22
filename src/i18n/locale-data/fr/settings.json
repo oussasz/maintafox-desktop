@@ -55,6 +55,7 @@
     "device": "Appareil"
   },
   "keys": {
+    "notifications.expiry_days": "Durée de conservation des notifications",
     "locale.primary_language": "Langue principale",
     "locale.fallback_language": "Langue de secours",
     "locale.date_format": "Format de date",
@@ -115,6 +116,8 @@
     }
   },
   "auditLog": {
+    "technicalSetting": "Paramètre technique",
+    "changed": "Valeur modifiée",
     "title": "Journal des modifications",
     "empty": "Aucune modification enregistrée",
     "summary": "Résumé",

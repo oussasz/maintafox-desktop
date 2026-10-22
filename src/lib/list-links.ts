@@ -28,6 +28,9 @@ export interface WoListLinkFilter {
   type?: string;
   /** Every type whose nature belongs to this mix. */
   mix?: WorkMix;
+  /** Only work completed in this window (ISO instants), with `mix`: the SMRP indicator's own population. */
+  completedFrom?: string;
+  completedTo?: string;
 }
 
 export interface DiListLinkFilter {
@@ -52,6 +55,8 @@ export const LIST_PARAM = {
   stock: "stock",
   type: "type",
   mix: "mix",
+  completedFrom: "completedFrom",
+  completedTo: "completedTo",
   waiting: "waiting",
   catalog: "catalog",
 } as const;
@@ -74,6 +79,8 @@ export const listLinks = {
       [LIST_PARAM.equipment, f.equipmentId],
       [LIST_PARAM.type, f.type],
       [LIST_PARAM.mix, f.mix],
+      [LIST_PARAM.completedFrom, f.completedFrom],
+      [LIST_PARAM.completedTo, f.completedTo],
     ])}`,
   requests: (f: DiListLinkFilter = {}) =>
     `/requests${query([
@@ -130,6 +137,12 @@ export function withoutParams(params: URLSearchParams, ...keys: string[]): URLSe
   const next = new URLSearchParams(params);
   for (const k of keys) next.delete(k);
   return next;
+}
+
+/** An ISO instant from a query value, else null. */
+export function instantParam(raw: string | null): string | null {
+  const v = raw?.trim();
+  return v && !Number.isNaN(Date.parse(v)) ? v : null;
 }
 
 export function mixParam(raw: string | null): WorkMix | null {

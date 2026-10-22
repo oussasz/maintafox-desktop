@@ -63,6 +63,15 @@ function isAdmSettingsTab(tab: SettingsTabId): boolean {
   return SETTINGS_TABS.find((entry) => entry.id === tab)?.requiresAdmSettings === true;
 }
 
+/** Sentences the app writes itself when a change carries no reason (English, not for display). */
+function isGeneratedSummary(summary: string): boolean {
+  return (
+    /^Setting '.+' updated via IPC$/.test(summary) ||
+    summary === "Notification retention changed" ||
+    summary === "tenant activation bootstrap updated"
+  );
+}
+
 export function SettingsPage() {
   const { t } = useTranslation("settings");
   const tAny = t as unknown as (key: string, options?: Record<string, unknown>) => string;
@@ -460,8 +469,20 @@ export function SettingsPage() {
                           : null;
                       return {
                         id: String(evt.id),
-                        title: def ? tAny(`keys.${def.key}`) : evt.setting_key_or_domain,
-                        description: valueChange ?? evt.change_summary,
+                        // A key without a catalogue entry gets its own label when one exists, else
+                        // a plain "technical setting"; never the raw key.
+                        title: def
+                          ? tAny(`keys.${def.key}`)
+                          : tAny(`keys.${evt.setting_key_or_domain}`, {
+                              defaultValue: t("auditLog.technicalSetting"),
+                            }),
+                        // Only a reason a person wrote is shown; the English sentences the app writes
+                        // itself are replaced by a plain line.
+                        description:
+                          valueChange ??
+                          (evt.change_summary && !isGeneratedSummary(evt.change_summary)
+                            ? evt.change_summary
+                            : t("auditLog.changed")),
                         timestamp: evt.changed_at,
                         ...(evt.changed_by_name ? { actor: evt.changed_by_name } : {}),
                         ...(evt.required_step_up

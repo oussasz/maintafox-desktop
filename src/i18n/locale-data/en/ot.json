@@ -107,6 +107,8 @@
       "scopeNotClosed": "Not yet closed",
       "scopeOverdue": "Overdue (open, planned end passed)",
       "mix": "Work mix",
+      "completed": "Completed in the period",
+      "completedValue": "{{from}} to {{to}}",
       "mixValue": {
         "planned": "Planned (preventive and improvement)",
         "reactive": "Reactive (corrective)",
