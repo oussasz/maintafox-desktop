@@ -45,10 +45,22 @@ enum ReleaseCause {
     Upgrade(WoEnd),
     /// A return was made against a reservation of an ended work order.
     ReturnAfterEnd(WoEnd),
+    /// Sweep after a sync pass: the work order was ended on another PC, or a reservation for it
+    /// arrived after it ended.
+    CatchUpAfterSync(WoEnd),
 }
 
 /// Reason recorded on the releases made by the startup sweep.
 pub(crate) const D13_UPGRADE_REASON: &str = "D13 upgrade";
+/// Reason recorded on the releases made by the sweep after a sync pass.
+pub(crate) const D13_AFTER_SYNC_REASON: &str = "D13 catch-up after sync";
+
+/// Where the sweep of ended work orders runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SweepOrigin {
+    Startup,
+    AfterSync,
+}
 
 impl ReleaseCause {
     fn audit_action(self) -> &'static str {
@@ -57,6 +69,7 @@ impl ReleaseCause {
             Self::WorkOrderEnded(WoEnd::Cancelled) => "inventory.reservation.released_at_wo_cancel",
             Self::Upgrade(_) => "inventory.reservation.released_d13_upgrade",
             Self::ReturnAfterEnd(_) => "inventory.reservation.released_at_return_after_wo_end",
+            Self::CatchUpAfterSync(_) => "inventory.reservation.released_after_sync",
         }
     }
 
@@ -67,12 +80,16 @@ impl ReleaseCause {
             Self::WorkOrderEnded(WoEnd::Cancelled) => "Reservation released at work order cancellation",
             Self::Upgrade(_) => "D13 upgrade: reservation of an ended work order released",
             Self::ReturnAfterEnd(_) => "Reservation of an ended work order released at a return",
+            Self::CatchUpAfterSync(_) => "Reservation of a work order ended on another PC released after sync",
         }
     }
 
     fn wo_end(self) -> WoEnd {
         match self {
-            Self::WorkOrderEnded(end) | Self::Upgrade(end) | Self::ReturnAfterEnd(end) => end,
+            Self::WorkOrderEnded(end)
+            | Self::Upgrade(end)
+            | Self::ReturnAfterEnd(end)
+            | Self::CatchUpAfterSync(end) => end,
         }
     }
 }
@@ -117,6 +134,7 @@ async fn release_and_audit<C: ConnectionTrait>(
     let r = &release.reservation;
     let reason = match cause {
         ReleaseCause::Upgrade(_) => Some(D13_UPGRADE_REASON),
+        ReleaseCause::CatchUpAfterSync(_) => Some(D13_AFTER_SYNC_REASON),
         _ => None,
     };
     crate::audit::writer::write_audit_event_in(
@@ -260,6 +278,7 @@ pub(crate) struct EndedWoSweepReport {
 /// balance inconsistent with the reservation) is reported and left for the next start.
 pub(crate) async fn release_reservations_of_ended_work_orders(
     db: &DatabaseConnection,
+    origin: SweepOrigin,
 ) -> AppResult<EndedWoSweepReport> {
     let wo_sources = crate::finance::wo_costing::WO_SOURCE_TYPES_SQL;
     let rows = db
@@ -287,7 +306,11 @@ pub(crate) async fn release_reservations_of_ended_work_orders(
             continue;
         };
         let txn = db.begin().await?;
-        match release_all_of_work_order(&txn, wo_id, ReleaseCause::Upgrade(end), None).await {
+        let cause = match origin {
+            SweepOrigin::Startup => ReleaseCause::Upgrade(end),
+            SweepOrigin::AfterSync => ReleaseCause::CatchUpAfterSync(end),
+        };
+        match release_all_of_work_order(&txn, wo_id, cause, None).await {
             Ok(released) => {
                 txn.commit().await?;
                 if !released.is_empty() {
@@ -304,30 +327,34 @@ pub(crate) async fn release_reservations_of_ended_work_orders(
     Ok(report)
 }
 
-// ── Reserved stock: a projection of the synchronised ledger ─────────────────
+// ── Reserved stock: a projection of the reservations and their movements ────
 //
-// `stock_balances.reserved_qty` of an article at a location is computed from the movements of its
-// reservations, never kept by increments alone, so every PC with the same movements shows the
-// same reserved stock whatever the order they arrived in:
+// `stock_balances.reserved_qty` of an article at a location is computed from synchronised data
+// only — the reservation rows and the movement ledger — never kept as a running total, so every
+// PC holding the same rows and movements shows the same reserved stock, whatever order they
+// arrived in. Per reservation:
 //
-//   reserved = Σ over the location's reservations of max(0, RESERVE + RETURN − ISSUE − RELEASE)
+// - 0 when its row is released, or when its one release movement (seeded id,
+//   [`RELEASE_SEED_ENTITY`]) is in the ledger;
+// - otherwise `row remaining` = max(0, quantity_reserved − quantity_issued) of the row, and
+//   `own` = what its movements hold (RESERVE + RETURN − ISSUE − RELEASE linked to it) when it has
+//   a RESERVE movement of its own, else the row remaining (a reservation recorded by the sync
+//   engine before Phase 2.4, which dropped the movements' link);
+// - contribution = max(0, min(own, row remaining)).
 //
-// - a reservation whose one release movement (seeded id, [`RELEASE_SEED_ENTITY`]) is in the
-//   ledger counts 0: it is released, whatever else arrived;
-// - each reservation is held at 0 at least (CMMS Advisor decision D12: an over-issue arriving by
-//   sync is applied as a physical fact, reserved stock never goes below zero);
-// - the baseline RESERVE of an older reservation ([`BASELINE_SEED_ENTITY`]) counts only while the
-//   reservation has no RESERVE movement of its own (see [`baseline_reservations_without_ledger`]).
+// The row bounds the ledger: a legacy issue or release whose link was dropped cannot keep stock
+// reserved for ever (the row says consumed or released), an over-issue arriving by sync never takes
+// a reservation below 0 (CMMS Advisor decision D12). The ledger bounds the row: an issue arrived
+// before the row's own update already counts. While two PCs hold different versions of a row (a
+// sync conflict open), each uses its own; once the conflict is resolved the rows, and so the
+// figures, are the same.
 //
-// Movements are summed in sync-id order so the floating-point result is the same on every PC.
+// Only open rows with something left (status active/partial, issued < reserved) can contribute, so
+// only those are read (index on article, location, status). Movements are summed in sync-id order
+// so the floating-point result is the same on every PC.
 
 /// Seed entity of the one RELEASE movement of a reservation (`seeded_entity_sync_id`).
 pub(crate) const RELEASE_SEED_ENTITY: &str = "reservation_release";
-/// Seed entity of the baseline RESERVE movement of a reservation created without one.
-pub(crate) const BASELINE_SEED_ENTITY: &str = "reservation_reserve_baseline";
-
-/// Movement types with a reserved-stock effect.
-pub(crate) const RESERVATION_MOVEMENTS: [&str; 4] = ["RESERVE", "ISSUE", "RETURN", "RELEASE"];
 
 /// One movement of a reservation, as the projection reads it.
 #[derive(Debug, Clone, PartialEq)]
@@ -337,42 +364,25 @@ pub(crate) struct ReservationMovement {
     pub quantity: f64,
 }
 
-/// Signed reserved effect of the reservation's movements (no floor, no release rule), with the
-/// baseline RESERVE counted only when the reservation has no RESERVE of its own.
-fn ledger_net(reservation_sync_id: Option<&str>, movements: &[ReservationMovement]) -> f64 {
-    let baseline_id =
-        reservation_sync_id.map(|s| crate::sync::identity::seeded_entity_sync_id(BASELINE_SEED_ENTITY, s));
-    let is_baseline = |m: &ReservationMovement| {
-        m.movement_type == "RESERVE" && baseline_id.is_some() && m.entity_sync_id.as_deref() == baseline_id.as_deref()
-    };
-    let has_own_reserve = movements
-        .iter()
-        .any(|m| m.movement_type == "RESERVE" && !is_baseline(m));
-    let mut ordered: Vec<&ReservationMovement> = movements
-        .iter()
-        .filter(|m| !(has_own_reserve && is_baseline(m)))
-        .collect();
-    ordered.sort_by(|a, b| {
-        a.entity_sync_id
-            .cmp(&b.entity_sync_id)
-            .then(a.movement_type.cmp(&b.movement_type))
-            .then(a.quantity.total_cmp(&b.quantity))
-    });
-    ordered.iter().fold(0.0, |acc, m| {
-        acc + match m.movement_type.as_str() {
-            "RESERVE" | "RETURN" => m.quantity,
-            "ISSUE" | "RELEASE" => -m.quantity,
-            _ => 0.0,
-        }
-    })
+/// The reservation row, as the projection reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ReservationRowState {
+    pub entity_sync_id: Option<String>,
+    pub status: String,
+    pub quantity_reserved: f64,
+    pub quantity_issued: f64,
 }
 
-/// Reserved stock one reservation holds, from its movements (see the rules above).
-pub(crate) fn reservation_reserved_from_ledger(
-    reservation_sync_id: Option<&str>,
-    movements: &[ReservationMovement],
-) -> f64 {
-    if let Some(sync_id) = reservation_sync_id {
+/// Reserved stock one reservation holds (see the rules above).
+pub(crate) fn reservation_reserved(row: &ReservationRowState, movements: &[ReservationMovement]) -> f64 {
+    if !matches!(row.status.as_str(), "active" | "partial") {
+        return 0.0;
+    }
+    let row_remaining = (row.quantity_reserved - row.quantity_issued).max(0.0);
+    if row_remaining <= 0.0 {
+        return 0.0;
+    }
+    if let Some(sync_id) = row.entity_sync_id.as_deref() {
         let release_id = crate::sync::identity::seeded_entity_sync_id(RELEASE_SEED_ENTITY, sync_id);
         if movements
             .iter()
@@ -381,132 +391,185 @@ pub(crate) fn reservation_reserved_from_ledger(
             return 0.0;
         }
     }
-    ledger_net(reservation_sync_id, movements).max(0.0)
+    let own = if movements.iter().any(|m| m.movement_type == "RESERVE") {
+        let mut ordered: Vec<&ReservationMovement> = movements.iter().collect();
+        ordered.sort_by(|a, b| {
+            a.entity_sync_id
+                .cmp(&b.entity_sync_id)
+                .then(a.movement_type.cmp(&b.movement_type))
+                .then(a.quantity.total_cmp(&b.quantity))
+        });
+        ordered.iter().fold(0.0, |acc, m| {
+            acc + match m.movement_type.as_str() {
+                "RESERVE" | "RETURN" => m.quantity,
+                "ISSUE" | "RELEASE" => -m.quantity,
+                _ => 0.0,
+            }
+        })
+    } else {
+        row_remaining
+    };
+    own.min(row_remaining).max(0.0)
 }
 
-/// Movements of the reservations of an article at a location, grouped by reservation (ordered by
-/// the reservation's sync id).
-async fn reservation_movements_at<C: ConnectionTrait>(
+/// The reservation's movements with a reserved-stock effect (indexed by reservation).
+async fn movements_of_reservation<C: ConnectionTrait>(
     conn: &C,
-    article_id: i64,
-    location_id: i64,
-) -> AppResult<Vec<(Option<String>, Vec<ReservationMovement>)>> {
+    reservation_id: i64,
+) -> AppResult<Vec<ReservationMovement>> {
     let rows = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT r.id AS reservation_id, r.entity_sync_id AS reservation_sync_id,
-                    t.entity_sync_id AS movement_sync_id, t.movement_type, t.quantity
-             FROM stock_reservations r
-             JOIN inventory_transactions t ON t.reservation_id = r.id
-             WHERE r.article_id = ? AND r.location_id = ?
-               AND t.movement_type IN ('RESERVE', 'ISSUE', 'RETURN', 'RELEASE')
-             ORDER BY r.entity_sync_id, r.id",
-            [article_id.into(), location_id.into()],
-        ))
-        .await?;
-    let mut grouped: Vec<(i64, Option<String>, Vec<ReservationMovement>)> = Vec::new();
-    for row in rows {
-        let reservation_id: i64 = row.try_get("", "reservation_id")?;
-        let movement = ReservationMovement {
-            entity_sync_id: row.try_get("", "movement_sync_id")?,
-            movement_type: row.try_get("", "movement_type")?,
-            quantity: row.try_get("", "quantity")?,
-        };
-        match grouped.last_mut() {
-            Some((id, _, list)) if *id == reservation_id => list.push(movement),
-            _ => grouped.push((reservation_id, row.try_get("", "reservation_sync_id")?, vec![movement])),
-        }
-    }
-    Ok(grouped.into_iter().map(|(_, sync_id, list)| (sync_id, list)).collect())
-}
-
-/// Reserved stock one reservation holds in the projection (its own movements).
-pub(crate) async fn reservation_held_from_ledger<C: ConnectionTrait>(conn: &C, reservation_id: i64) -> AppResult<f64> {
-    let rows = conn
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT r.entity_sync_id AS reservation_sync_id, t.entity_sync_id AS movement_sync_id,
-                    t.movement_type, t.quantity
-             FROM stock_reservations r
-             JOIN inventory_transactions t ON t.reservation_id = r.id
-             WHERE r.id = ? AND t.movement_type IN ('RESERVE', 'ISSUE', 'RETURN', 'RELEASE')",
+            "SELECT entity_sync_id, movement_type, quantity FROM inventory_transactions
+             WHERE reservation_id = ? AND movement_type IN ('RESERVE', 'ISSUE', 'RETURN', 'RELEASE')",
             [reservation_id.into()],
         ))
         .await?;
-    let mut reservation_sync_id: Option<String> = None;
     let mut movements = Vec::with_capacity(rows.len());
     for row in rows {
-        reservation_sync_id = row.try_get("", "reservation_sync_id")?;
         movements.push(ReservationMovement {
-            entity_sync_id: row.try_get("", "movement_sync_id")?,
+            entity_sync_id: row.try_get("", "entity_sync_id")?,
             movement_type: row.try_get("", "movement_type")?,
             quantity: row.try_get("", "quantity")?,
         });
     }
-    Ok(reservation_reserved_from_ledger(
-        reservation_sync_id.as_deref(),
-        &movements,
-    ))
+    Ok(movements)
 }
 
-/// Reserved stock of an article at a location from the ledger (the projection, not stored).
-pub(crate) async fn reserved_from_ledger<C: ConnectionTrait>(
+fn row_state(row: &sea_orm::QueryResult) -> AppResult<ReservationRowState> {
+    Ok(ReservationRowState {
+        entity_sync_id: row.try_get("", "entity_sync_id")?,
+        status: row.try_get("", "status")?,
+        quantity_reserved: row.try_get("", "quantity_reserved")?,
+        quantity_issued: row.try_get("", "quantity_issued")?,
+    })
+}
+
+/// Reserved stock one reservation holds in the projection (what its release frees).
+pub(crate) async fn reservation_held<C: ConnectionTrait>(conn: &C, reservation_id: i64) -> AppResult<f64> {
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id, status, quantity_reserved, quantity_issued
+             FROM stock_reservations WHERE id = ?",
+            [reservation_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(0.0);
+    };
+    let state = row_state(&row)?;
+    let movements = movements_of_reservation(conn, reservation_id).await?;
+    Ok(reservation_reserved(&state, &movements))
+}
+
+/// Reserved stock of an article at a location (the projection, not stored).
+pub(crate) async fn reserved_projection<C: ConnectionTrait>(
     conn: &C,
     article_id: i64,
     location_id: i64,
 ) -> AppResult<f64> {
-    Ok(reservation_movements_at(conn, article_id, location_id)
-        .await?
-        .iter()
-        .fold(0.0, |acc, (sync_id, movements)| {
-            acc + reservation_reserved_from_ledger(sync_id.as_deref(), movements)
-        }))
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, entity_sync_id, status, quantity_reserved, quantity_issued
+             FROM stock_reservations
+             WHERE article_id = ? AND location_id = ? AND status IN ('active', 'partial')
+               AND quantity_reserved > quantity_issued
+             ORDER BY entity_sync_id, id",
+            [article_id.into(), location_id.into()],
+        ))
+        .await?;
+    let mut reserved = 0.0;
+    for row in &rows {
+        let reservation_id: i64 = row.try_get("", "id")?;
+        let state = row_state(row)?;
+        let movements = movements_of_reservation(conn, reservation_id).await?;
+        reserved += reservation_reserved(&state, &movements);
+    }
+    Ok(reserved)
 }
 
-/// Writes the projection into `stock_balances` (reserved and available; on hand is not touched).
-/// Called after every local command that moves reserved stock and after every movement received
-/// by sync. Returns the reserved quantity.
+/// Writes the projection into `stock_balances` (reserved and available; on hand is not touched),
+/// only when it changed. Called after every local command that moves reserved stock and, for
+/// rows and movements received by sync, once per pair at the end of the materialize pass
+/// ([`recompute_dirty_reserved`]). Returns the reserved quantity.
 pub(crate) async fn recompute_reserved_in<C: ConnectionTrait>(
     conn: &C,
     article_id: i64,
     location_id: i64,
 ) -> AppResult<f64> {
-    let reserved = reserved_from_ledger(conn, article_id, location_id).await?;
+    let reserved = reserved_projection(conn, article_id, location_id).await?;
     let existing = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT 1 AS present FROM stock_balances WHERE article_id = ? AND location_id = ?",
+            "SELECT reserved_qty, available_qty, on_hand_qty FROM stock_balances
+             WHERE article_id = ? AND location_id = ?",
             [article_id.into(), location_id.into()],
         ))
-        .await?
-        .is_some();
-    if existing {
-        conn.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE stock_balances
-             SET reserved_qty = ?, available_qty = on_hand_qty - ?,
-                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-             WHERE article_id = ? AND location_id = ?",
-            [reserved.into(), reserved.into(), article_id.into(), location_id.into()],
-        ))
         .await?;
-    } else if reserved > 0.0 {
-        // No balance row yet (only reservation movements here): created with nothing on hand.
-        conn.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO stock_balances
-                 (article_id, warehouse_id, location_id, on_hand_qty, reserved_qty, available_qty, updated_at)
-             SELECT ?, sl.warehouse_id, sl.id, 0, ?, -?, strftime('%Y-%m-%dT%H:%M:%SZ','now')
-             FROM stock_locations sl WHERE sl.id = ?",
-            [article_id.into(), reserved.into(), reserved.into(), location_id.into()],
-        ))
-        .await?;
+    match existing {
+        Some(row) => {
+            let current: f64 = row.try_get("", "reserved_qty")?;
+            let available: f64 = row.try_get("", "available_qty")?;
+            let on_hand: f64 = row.try_get("", "on_hand_qty")?;
+            if current.to_bits() != reserved.to_bits() || available.to_bits() != (on_hand - reserved).to_bits() {
+                conn.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE stock_balances
+                     SET reserved_qty = ?, available_qty = on_hand_qty - ?,
+                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                     WHERE article_id = ? AND location_id = ?",
+                    [reserved.into(), reserved.into(), article_id.into(), location_id.into()],
+                ))
+                .await?;
+            }
+        }
+        None if reserved > 0.0 => {
+            // No balance row yet (reservations only): created with nothing on hand.
+            conn.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO stock_balances
+                     (article_id, warehouse_id, location_id, on_hand_qty, reserved_qty, available_qty, updated_at)
+                 SELECT ?, sl.warehouse_id, sl.id, 0, ?, -?, strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                 FROM stock_locations sl WHERE sl.id = ?",
+                [article_id.into(), reserved.into(), reserved.into(), location_id.into()],
+            ))
+            .await?;
+        }
+        None => {}
     }
     Ok(reserved)
 }
 
+/// End of a materialize pass: every pair marked since (by the triggers of migration 257, in the
+/// transactions that wrote its reservations or their movements) recomputed once, and its mark
+/// removed, in one transaction. Returns the number of pairs.
+pub(crate) async fn recompute_dirty_reserved(db: &DatabaseConnection) -> AppResult<usize> {
+    let txn = db.begin().await?;
+    let pairs = txn
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT article_id, location_id FROM stock_reserved_dirty".to_string(),
+        ))
+        .await?;
+    for row in &pairs {
+        let article_id: i64 = row.try_get("", "article_id")?;
+        let location_id: i64 = row.try_get("", "location_id")?;
+        recompute_reserved_in(&txn, article_id, location_id).await?;
+    }
+    txn.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "DELETE FROM stock_reserved_dirty".to_string(),
+    ))
+    .await?;
+    txn.commit().await?;
+    Ok(pairs.len())
+}
+
 /// Startup: recompute reserved stock of every article and location that has reservations or a
-/// reserved balance (repairs balances kept by increments before the projection).
+/// reserved balance (repairs balances kept as running totals before the projection), and clear
+/// the marks. Returns the number of pairs.
 pub(crate) async fn recompute_all_reserved(db: &DatabaseConnection) -> AppResult<usize> {
     let pairs = db
         .query_all(Statement::from_string(
@@ -523,124 +586,36 @@ pub(crate) async fn recompute_all_reserved(db: &DatabaseConnection) -> AppResult
         let location_id: i64 = row.try_get("", "location_id")?;
         recompute_reserved_in(&txn, article_id, location_id).await?;
     }
+    txn.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "DELETE FROM stock_reserved_dirty".to_string(),
+    ))
+    .await?;
     txn.commit().await?;
     Ok(pairs.len())
-}
-
-/// Baseline for reservations that are open but have no RESERVE movement of their own (a sync
-/// engine before Phase 2.4 applied received movements without their reservation link, so such a
-/// reservation would count nothing in the projection). One RESERVE is written per reservation,
-/// with a sync id seeded from the reservation (every PC writes the same one; the copy received
-/// second is not applied), for its open quantity (`quantity_reserved − quantity_issued`) less what
-/// its linked movements already count.
-///
-/// If the reservation's own RESERVE only arrives later (pulled after this ran), the projection
-/// ignores the baseline from then on, so it is never counted twice. Runs at startup with sync
-/// capture on. Returns the number of baseline movements written.
-pub(crate) async fn baseline_reservations_without_ledger(db: &DatabaseConnection) -> AppResult<usize> {
-    let rows = db
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT r.id, r.entity_sync_id, r.article_id, r.warehouse_id, r.location_id, r.source_type,
-                    r.source_id, r.source_ref, r.quantity_reserved, r.quantity_issued
-             FROM stock_reservations r
-             WHERE r.status IN ('active', 'partial')
-               AND NOT EXISTS (SELECT 1 FROM inventory_transactions t
-                               WHERE t.reservation_id = r.id AND t.movement_type = 'RESERVE')
-             ORDER BY r.id"
-                .to_string(),
-        ))
-        .await?;
-    let mut written = 0;
-    for row in rows {
-        let reservation_id: i64 = row.try_get("", "id")?;
-        let sync_id = crate::sync::identity::require_entity_sync_id(
-            "stock_reservations",
-            reservation_id,
-            row.try_get("", "entity_sync_id")?,
-        )?;
-        let baseline_id = crate::sync::identity::seeded_entity_sync_id(BASELINE_SEED_ENTITY, &sync_id);
-        let article_id: i64 = row.try_get("", "article_id")?;
-        let location_id: i64 = row.try_get("", "location_id")?;
-        let txn = db.begin().await?;
-        let present = txn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT 1 AS present FROM inventory_transactions WHERE entity_sync_id = ?",
-                [baseline_id.clone().into()],
-            ))
-            .await?
-            .is_some();
-        if !present {
-            let mut movements = Vec::new();
-            for m in txn
-                .query_all(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT entity_sync_id, movement_type, quantity FROM inventory_transactions
-                     WHERE reservation_id = ? AND movement_type IN ('ISSUE', 'RETURN', 'RELEASE')",
-                    [reservation_id.into()],
-                ))
-                .await?
-            {
-                movements.push(ReservationMovement {
-                    entity_sync_id: m.try_get("", "entity_sync_id")?,
-                    movement_type: m.try_get("", "movement_type")?,
-                    quantity: m.try_get("", "quantity")?,
-                });
-            }
-            let reserved: f64 = row.try_get("", "quantity_reserved")?;
-            let issued: f64 = row.try_get("", "quantity_issued")?;
-            let quantity = (reserved - issued).max(0.0) - ledger_net(Some(&sync_id), &movements);
-            if quantity > 1e-9 {
-                let source_type: String = row.try_get("", "source_type")?;
-                let source_ref: Option<String> = row.try_get("", "source_ref")?;
-                crate::inventory::queries::insert_reservation_baseline_movement(
-                    &txn,
-                    crate::inventory::queries::BaselineMovement {
-                        article_id,
-                        warehouse_id: row.try_get("", "warehouse_id")?,
-                        location_id,
-                        reservation_id,
-                        quantity,
-                        source_type: &source_type,
-                        source_id: row.try_get("", "source_id")?,
-                        source_ref: source_ref.as_deref(),
-                        entity_sync_id: &baseline_id,
-                    },
-                )
-                .await?;
-                recompute_reserved_in(&txn, article_id, location_id).await?;
-                written += 1;
-            }
-        }
-        txn.commit().await?;
-    }
-    Ok(written)
 }
 
 /// What the startup upkeep of reservations did.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ReservationUpkeepReport {
-    pub baselines: usize,
     pub pairs_recomputed: usize,
+    pub recompute_ms: u64,
     pub sweep: EndedWoSweepReport,
 }
 
-/// Startup, with sync capture on: baseline of older reservations, reserved stock recomputed from
-/// the ledger everywhere, then the D13 sweep of ended work orders. Each step runs even when an
-/// earlier one failed; the errors are returned for the log.
+/// Startup, with sync capture on: reserved stock recomputed everywhere, then the D13 sweep of
+/// ended work orders. Each step runs even when the other failed; the errors are returned for the
+/// log.
 pub(crate) async fn startup_reservation_upkeep(db: &DatabaseConnection) -> (ReservationUpkeepReport, Vec<String>) {
     let mut report = ReservationUpkeepReport::default();
     let mut errors = Vec::new();
-    match baseline_reservations_without_ledger(db).await {
-        Ok(n) => report.baselines = n,
-        Err(e) => errors.push(format!("reservation baseline: {e}")),
-    }
+    let started = std::time::Instant::now();
     match recompute_all_reserved(db).await {
         Ok(n) => report.pairs_recomputed = n,
         Err(e) => errors.push(format!("reserved stock recompute: {e}")),
     }
-    match release_reservations_of_ended_work_orders(db).await {
+    report.recompute_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    match release_reservations_of_ended_work_orders(db, SweepOrigin::Startup).await {
         Ok(sweep) => report.sweep = sweep,
         Err(e) => errors.push(format!("D13 sweep: {e}")),
     }
@@ -650,8 +625,8 @@ pub(crate) async fn startup_reservation_upkeep(db: &DatabaseConnection) -> (Rese
 // ── A reservation released on two PCs ──────────────────────────────────────
 //
 // Two PCs that both release the same reservation each change its row and each write its one
-// RELEASE movement (same seeded sync id). The stock is right on both (reserved stock is the
-// ledger projection: the release counts once), but the second PC to synchronise meets a conflict
+// RELEASE movement (same seeded sync id). The stock is right on both (a released reservation
+// counts 0 in the reserved-stock projection), but the second PC to synchronise meets a conflict
 // on the row, and on the movement (two creates of the same sync id). When the two versions are
 // both "released" and differ only in who/when, the server's version is adopted (first push wins)
 // and this PC's release is audited (`inventory.reservation.released_twice`); no one has to
@@ -659,8 +634,8 @@ pub(crate) async fn startup_reservation_upkeep(db: &DatabaseConnection) -> (Rese
 //
 // May differ on the reservation row: `released_at`, `updated_at`, `row_version` and
 // `quantity_issued`. The issued quantity may legitimately differ (one PC issued more before
-// releasing); the converged value is the server's. Reserved stock does not depend on it (ledger
-// projection), and a return checks the issued quantity of the ledger as well
+// releasing); the converged value is the server's. A released reservation counts 0 whatever its
+// issued quantity, and a return checks the issued quantity of the ledger as well
 // (`queries::return_reserved_stock_as`), so nothing issued here is lost.
 // May differ on the release movement: everything but its type, reservation, article, warehouse
 // and location (quantity, time, actor, note): its presence alone counts.
@@ -708,9 +683,11 @@ fn same_seeded_release(entity_sync_id: &str, local: &Payload, server: &Payload) 
 /// Settles the open conflict of `entity_type`/`entity_sync_id` when it is a reservation released
 /// on two PCs (see above): the server's version is taken (`sync::conflicts::take_remote_version`),
 /// the entity's open conflicts are closed and, for the reservation row, this PC's release is
-/// audited. Returns true when settled; false leaves the conflict for a person. A failure while
-/// taking the server's version is rolled back to before the attempt and leaves the conflict.
-/// Called where conflicts are recorded (server answer, inbound apply), in their transaction.
+/// audited. Returns true when settled; false leaves the conflict for a person.
+///
+/// Called where conflicts are recorded (server answer, inbound apply), in their transaction. The
+/// whole attempt runs in a savepoint and never fails the caller: any error rolls the attempt back,
+/// is logged, and leaves the conflict for a person, so a sync answer is never refused for it.
 pub(crate) async fn settle_double_release<C: ConnectionTrait>(
     conn: &C,
     entity_type: &str,
@@ -719,6 +696,32 @@ pub(crate) async fn settle_double_release<C: ConnectionTrait>(
     if entity_type != "stock_reservations" && entity_type != "inventory_transactions" {
         return Ok(false);
     }
+    if let Err(e) = conn.execute_unprepared("SAVEPOINT reservation_double_release").await {
+        tracing::warn!(entity_type, entity_sync_id, error = %e, "double release not settled");
+        return Ok(false);
+    }
+    let attempt = settle_double_release_in_savepoint(conn, entity_type, entity_sync_id).await;
+    let settled = matches!(attempt, Ok(true));
+    if let Err(e) = &attempt {
+        tracing::warn!(entity_type, entity_sync_id, error = %e, "double release not settled; left for a person");
+    }
+    if !settled {
+        if let Err(e) = conn.execute_unprepared("ROLLBACK TO reservation_double_release").await {
+            tracing::warn!(entity_type, entity_sync_id, error = %e, "double release attempt not rolled back");
+        }
+    }
+    if let Err(e) = conn.execute_unprepared("RELEASE reservation_double_release").await {
+        tracing::warn!(entity_type, entity_sync_id, error = %e, "double release savepoint not released");
+        return Ok(false);
+    }
+    Ok(settled)
+}
+
+async fn settle_double_release_in_savepoint<C: ConnectionTrait>(
+    conn: &C,
+    entity_type: &str,
+    entity_sync_id: &str,
+) -> AppResult<bool> {
     let Some(row) = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -751,16 +754,7 @@ pub(crate) async fn settle_double_release<C: ConnectionTrait>(
         return Ok(false);
     }
 
-    conn.execute_unprepared("SAVEPOINT reservation_double_release").await?;
-    if crate::sync::conflicts::take_remote_version(conn, &conflict)
-        .await
-        .is_err()
-    {
-        conn.execute_unprepared("ROLLBACK TO reservation_double_release")
-            .await?;
-        conn.execute_unprepared("RELEASE reservation_double_release").await?;
-        return Ok(false);
-    }
+    crate::sync::conflicts::take_remote_version(conn, &conflict).await?;
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE sync_conflicts
@@ -823,6 +817,5 @@ pub(crate) async fn settle_double_release<C: ConnectionTrait>(
         )
         .await?;
     }
-    conn.execute_unprepared("RELEASE reservation_double_release").await?;
     Ok(true)
 }

@@ -291,9 +291,15 @@ async fn materialize_selection(
     selection: Selection<'_>,
     limit: i64,
 ) -> AppResult<MaterializeInboxResult> {
-    crate::sync::row_codec::REF_CACHE
+    let result = crate::sync::row_codec::REF_CACHE
         .scope(Default::default(), materialize_pass(db, selection, limit))
-        .await
+        .await;
+    // Reserved stock of the pairs whose reservations or movements this pass wrote, once per pair
+    // (`inventory::reservations`). A failure keeps the marks for the next pass or the next start.
+    if let Err(e) = crate::inventory::reservations::recompute_dirty_reserved(db).await {
+        tracing::warn!(target: "maintafox::sync", "reserved stock recompute after apply failed: {e}");
+    }
+    result
 }
 
 async fn materialize_pass(

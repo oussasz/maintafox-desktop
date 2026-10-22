@@ -814,9 +814,10 @@ async fn an_issue_against_a_reservation_of_an_ended_work_order_is_refused() {
     assert_eq!(balance(&db, a).await, (10.0, 2.0), "nothing issued");
 }
 
-/// A movement made on another PC arrives here: the row as the materializer writes it, then the
-/// balance hook of `sync::apply_hooks` (`ledger::apply_received_movement`). The reservation row
-/// itself is not updated (its new state from the other PC is not here yet).
+/// A movement made on another PC arrives here: the row as the materializer writes it, the balance
+/// hook of `sync::apply_hooks` (`ledger::apply_received_movement`), then the end of the
+/// materialize pass (reserved stock of the marked pairs recomputed). The reservation row itself
+/// is not updated (its new state from the other PC is not here yet).
 async fn receive_movement(db: &DatabaseConnection, reservation_id: i64, movement_type: &str, qty: f64, sync_id: &str) {
     exec(
         db,
@@ -846,9 +847,12 @@ async fn receive_movement(db: &DatabaseConnection, reservation_id: i64, movement
     )
     .await
     .expect("apply received movement");
+    crate::inventory::reservations::recompute_dirty_reserved(db)
+        .await
+        .expect("end of the pass");
 }
 
-// ── Reserved stock is a projection of the ledger ────────────────────────────
+// ── Reserved stock is a projection of the reservations and their movements ──
 
 fn mv(sync_id: &str, movement_type: &str, quantity: f64) -> crate::inventory::reservations::ReservationMovement {
     crate::inventory::reservations::ReservationMovement {
@@ -858,14 +862,24 @@ fn mv(sync_id: &str, movement_type: &str, quantity: f64) -> crate::inventory::re
     }
 }
 
-/// The same movements give exactly the same reserved quantity whatever order they arrived in
-/// (summed in sync-id order: the same floating-point result, bit for bit), each reservation is held
-/// at 0 at least, its one release makes it 0, and the baseline RESERVE counts only while the
-/// reservation has no RESERVE of its own.
+fn row(sync_id: &str, status: &str, reserved: f64, issued: f64) -> crate::inventory::reservations::ReservationRowState {
+    crate::inventory::reservations::ReservationRowState {
+        entity_sync_id: Some(sync_id.to_string()),
+        status: status.to_string(),
+        quantity_reserved: reserved,
+        quantity_issued: issued,
+    }
+}
+
+/// The same row and movements give exactly the same reserved quantity whatever order the
+/// movements arrived in (summed in sync-id order: bit for bit); the row bounds the movements and
+/// the movements bound the row; a released row or the one release movement makes it 0; never
+/// below 0.
 #[test]
 fn the_projection_is_the_same_whatever_the_order_of_the_movements() {
-    use crate::inventory::reservations::{reservation_reserved_from_ledger, BASELINE_SEED_ENTITY, RELEASE_SEED_ENTITY};
+    use crate::inventory::reservations::{reservation_reserved, RELEASE_SEED_ENTITY};
     let r = "resv-sync-1";
+    let open = row(r, "partial", 0.7, 0.4);
     let movements = vec![
         mv("m-1", "RESERVE", 0.7),
         mv("m-2", "ISSUE", 0.1),
@@ -873,7 +887,7 @@ fn the_projection_is_the_same_whatever_the_order_of_the_movements() {
         mv("m-4", "RETURN", 0.1),
         mv("m-5", "ISSUE", 0.3),
     ];
-    let expected = reservation_reserved_from_ledger(Some(r), &movements);
+    let expected = reservation_reserved(&open, &movements);
     assert!((expected - 0.2).abs() < 1e-9);
     let mut reversed = movements.clone();
     reversed.reverse();
@@ -881,49 +895,90 @@ fn the_projection_is_the_same_whatever_the_order_of_the_movements() {
     rotated.rotate_left(2);
     for order in [reversed, rotated] {
         assert_eq!(
-            reservation_reserved_from_ledger(Some(r), &order).to_bits(),
+            reservation_reserved(&open, &order).to_bits(),
             expected.to_bits(),
             "same bits whatever the order"
         );
     }
 
-    // Over-issue (two PCs issued the same reserved parts): held at 0, never negative.
+    // Over-issue (two PCs issued the same reserved parts): 0, never negative.
     let over = vec![mv("a", "RESERVE", 2.0), mv("b", "ISSUE", 2.0), mv("c", "ISSUE", 2.0)];
-    assert_eq!(reservation_reserved_from_ledger(Some(r), &over), 0.0);
+    assert_eq!(reservation_reserved(&row(r, "partial", 2.0, 1.0), &over), 0.0);
 
-    // Its one release (any quantity) makes it 0, before or after a late issue.
+    // The one release (any quantity) makes it 0, as does a released row.
     let release = crate::sync::identity::seeded_entity_sync_id(RELEASE_SEED_ENTITY, r);
     let released = vec![
-        mv("a", "RESERVE", 5.0),
-        mv(&release, "RELEASE", 5.0),
-        mv("z", "ISSUE", 2.0),
-    ];
-    assert_eq!(reservation_reserved_from_ledger(Some(r), &released), 0.0);
-    let returned_after = vec![
         mv("a", "RESERVE", 5.0),
         mv(&release, "RELEASE", 3.0),
         mv("y", "RETURN", 1.0),
     ];
-    assert_eq!(reservation_reserved_from_ledger(Some(r), &returned_after), 0.0);
-
-    // Baseline: counted alone, ignored once the reservation's own RESERVE is there.
-    let baseline = crate::sync::identity::seeded_entity_sync_id(BASELINE_SEED_ENTITY, r);
+    assert_eq!(reservation_reserved(&row(r, "active", 5.0, 0.0), &released), 0.0);
     assert_eq!(
-        reservation_reserved_from_ledger(Some(r), &[mv(&baseline, "RESERVE", 3.0)]),
+        reservation_reserved(&row(r, "released", 5.0, 0.0), &[mv("a", "RESERVE", 5.0)]),
+        0.0
+    );
+
+    // An issue arrived before its row's update counts already; a row update arrived before the
+    // issue counts already: the same figure once both are here.
+    let reserve_and_issue = vec![mv("a", "RESERVE", 5.0), mv("b", "ISSUE", 2.0)];
+    assert_eq!(
+        reservation_reserved(&row(r, "active", 5.0, 0.0), &reserve_and_issue),
         3.0
     );
     assert_eq!(
-        reservation_reserved_from_ledger(
-            Some(r),
-            &[
-                mv(&baseline, "RESERVE", 3.0),
-                mv("own", "RESERVE", 4.0),
-                mv("i", "ISSUE", 1.0)
-            ]
-        ),
-        3.0,
-        "own RESERVE 4 − issue 1, the baseline not counted twice"
+        reservation_reserved(&row(r, "partial", 5.0, 2.0), &[mv("a", "RESERVE", 5.0)]),
+        3.0
     );
+    assert_eq!(
+        reservation_reserved(&row(r, "partial", 5.0, 2.0), &reserve_and_issue),
+        3.0
+    );
+
+    // No RESERVE of its own (legacy): the row's remainder.
+    assert_eq!(reservation_reserved(&row(r, "partial", 4.0, 1.0), &[]), 3.0);
+    // Own RESERVE, an issue whose link was dropped (legacy): bounded by the row.
+    assert_eq!(
+        reservation_reserved(&row(r, "partial", 4.0, 1.0), &[mv("a", "RESERVE", 4.0)]),
+        3.0
+    );
+    assert_eq!(
+        reservation_reserved(&row(r, "consumed", 4.0, 4.0), &[mv("a", "RESERVE", 4.0)]),
+        0.0
+    );
+}
+
+/// One recompute per pair per pass: several reservation movements and row writes at one article
+/// and location mark the pair once; the end of the pass recomputes it once and clears the mark.
+#[tokio::test]
+async fn reservation_writes_mark_their_pair_once_and_the_pass_recomputes_it_once() {
+    let db = crate::db::test_db::seeded().await;
+    let a = stock_article(&db, "RESV-DIRTY-A", 10.0).await;
+    crate::inventory::reservations::recompute_dirty_reserved(&db)
+        .await
+        .expect("clear");
+    let first = reserve(&db, a, 2.0, "MANUAL", None).await;
+    let second = reserve(&db, a, 3.0, "MANUAL", None).await;
+    issue(&db, first, 1.0).await;
+    let _ = second;
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM stock_reserved_dirty WHERE article_id = ?",
+            vec![a.into()],
+        )
+        .await,
+        1,
+        "one mark for the pair"
+    );
+    let pairs = crate::inventory::reservations::recompute_dirty_reserved(&db)
+        .await
+        .expect("pass end");
+    assert_eq!(pairs, 1);
+    assert_eq!(
+        scalar_i64(&db, "SELECT COUNT(*) FROM stock_reserved_dirty", vec![]).await,
+        0
+    );
+    assert_eq!(balance(&db, a).await, (9.0, 4.0));
 }
 
 /// Two PCs issued the same reserved parts: the second issue arrives by sync and is applied (a
@@ -1043,78 +1098,232 @@ async fn cancelling_with_a_drifted_reservation_succeeds_and_audits_the_shortfall
     assert_eq!(audit[0]["quantity_short"], 2.0);
 }
 
-/// Baseline on a database populated before it runs: an open reservation recorded without its
-/// RESERVE movement (received through the sync engine before Phase 2.4, which dropped the link)
-/// gets one seeded RESERVE for its open quantity; a reservation with its own movements, and a
-/// released one, get none. A second run writes nothing. When the reservation's own RESERVE
-/// arrives later, the baseline is no longer counted (never twice).
-#[tokio::test]
-async fn the_baseline_restores_reservations_recorded_without_movements_once() {
-    use crate::inventory::reservations::{startup_reservation_upkeep, BASELINE_SEED_ENTITY};
-    let db = crate::db::test_db::seeded().await;
-    let a = stock_article(&db, "RESV-BASE-A", 20.0).await;
-    let location_id = main_location(&db).await;
-    let normal = reserve(&db, a, 2.0, "MANUAL", None).await;
-    // Legacy rows: no RESERVE movement linked to them.
-    for (sync_id, reserved, issued, status) in [
-        ("legacy-open-resv", 4.0, 1.0, "partial"),
-        ("legacy-released-resv", 3.0, 0.0, "released"),
-    ] {
-        exec(
-            &db,
-            "INSERT INTO stock_reservations (entity_sync_id, article_id, warehouse_id, location_id, source_type,
-                 quantity_reserved, quantity_issued, status)
-             SELECT ?, ?, warehouse_id, id, 'MANUAL', ?, ?, ? FROM stock_locations WHERE id = ?",
-            vec![
-                sync_id.into(),
-                a.into(),
-                reserved.into(),
-                issued.into(),
-                status.into(),
-                location_id.into(),
-            ],
-        )
-        .await;
-    }
-    let legacy = scalar_i64(
-        &db,
-        "SELECT id FROM stock_reservations WHERE entity_sync_id = 'legacy-open-resv'",
-        vec![],
+/// A reservation row inserted as the sync engine before Phase 2.4 left it: no movement linked.
+async fn legacy_reservation(
+    db: &DatabaseConnection,
+    sync_id: &str,
+    article_id: i64,
+    reserved: f64,
+    issued: f64,
+    status: &str,
+) -> i64 {
+    let location_id = main_location(db).await;
+    exec(
+        db,
+        "INSERT INTO stock_reservations (entity_sync_id, article_id, warehouse_id, location_id, source_type,
+             quantity_reserved, quantity_issued, status)
+         SELECT ?, ?, warehouse_id, id, 'MANUAL', ?, ?, ? FROM stock_locations WHERE id = ?",
+        vec![
+            sync_id.into(),
+            article_id.into(),
+            reserved.into(),
+            issued.into(),
+            status.into(),
+            location_id.into(),
+        ],
     )
     .await;
-    // The balance kept by increments did not know them either.
-    assert_eq!(balance(&db, a).await, (20.0, 2.0));
+    scalar_i64(
+        db,
+        "SELECT id FROM stock_reservations WHERE entity_sync_id = ?",
+        vec![sync_id.into()],
+    )
+    .await
+}
 
-    let (report, errors) = startup_reservation_upkeep(&db).await;
+/// A movement inserted without its reservation link (legacy), with its on-hand effect.
+async fn unlinked_movement(db: &DatabaseConnection, article_id: i64, movement_type: &str, qty: f64, sync_id: &str) {
+    let location_id = main_location(db).await;
+    exec(
+        db,
+        "INSERT INTO inventory_transactions (entity_sync_id, article_id, warehouse_id, location_id, reservation_id,
+             movement_type, quantity, source_type, row_version)
+         SELECT ?, ?, warehouse_id, id, NULL, ?, ?, 'MANUAL', 1 FROM stock_locations WHERE id = ?",
+        vec![
+            sync_id.into(),
+            article_id.into(),
+            movement_type.into(),
+            qty.into(),
+            location_id.into(),
+        ],
+    )
+    .await;
+}
+
+/// Legacy reservation with no movement: it counts its row's remainder (nothing synchronised is
+/// written for it); when its own movements arrive after all, the figure stays the same (never
+/// counted twice).
+#[tokio::test]
+async fn a_legacy_reservation_without_movements_counts_its_row_remainder() {
+    let db = crate::db::test_db::seeded().await;
+    let a = stock_article(&db, "RESV-LEG-A", 20.0).await;
+    let _normal = reserve(&db, a, 2.0, "MANUAL", None).await;
+    let legacy = legacy_reservation(&db, "legacy-open-resv", a, 4.0, 1.0, "partial").await;
+    let _released = legacy_reservation(&db, "legacy-released-resv", a, 3.0, 0.0, "released").await;
+    let movements_before = scalar_i64(&db, "SELECT COUNT(*) FROM inventory_transactions", vec![]).await;
+
+    let (report, errors) = crate::inventory::reservations::startup_reservation_upkeep(&db).await;
     assert!(errors.is_empty(), "{errors:?}");
-    assert_eq!(report.baselines, 1, "only the open legacy reservation");
-    let baseline_id = crate::sync::identity::seeded_entity_sync_id(BASELINE_SEED_ENTITY, "legacy-open-resv");
+    assert!(report.pairs_recomputed >= 1);
+    assert_eq!(balance(&db, a).await, (20.0, 5.0), "2 + the legacy 4 − 1");
     assert_eq!(
-        scalar_i64(
-            &db,
-            "SELECT COUNT(*) FROM inventory_transactions WHERE entity_sync_id = ? AND reservation_id = ?
-               AND movement_type = 'RESERVE' AND quantity = 3",
-            vec![baseline_id.into(), legacy.into()],
-        )
-        .await,
-        1,
-        "seeded RESERVE of the open quantity 4 − 1"
+        scalar_i64(&db, "SELECT COUNT(*) FROM inventory_transactions", vec![]).await,
+        movements_before,
+        "no movement written for legacy data"
     );
-    assert_eq!(balance(&db, a).await, (20.0, 5.0), "2 + the legacy 3");
-    let _ = normal;
 
-    let (again, errors) = startup_reservation_upkeep(&db).await;
-    assert!(errors.is_empty(), "{errors:?}");
-    assert_eq!(again.baselines, 0, "idempotent");
-    assert_eq!(balance(&db, a).await, (20.0, 5.0));
-
-    // The reservation's own movements arrive after all: counted once.
     receive_movement(&db, legacy, "RESERVE", 4.0, "late-own-reserve").await;
     receive_movement(&db, legacy, "ISSUE", 1.0, "late-own-issue").await;
     assert_eq!(
         balance(&db, a).await,
         (19.0, 5.0),
-        "own RESERVE 4 − ISSUE 1; the baseline ignored"
+        "own RESERVE 4 − ISSUE 1 = the row's 3"
+    );
+}
+
+/// Legacy reservation whose RESERVE is linked but whose issues arrived unlinked: the row bounds
+/// it — consumed counts 0 (not reserved for ever), partial counts the row's remainder.
+#[tokio::test]
+async fn a_legacy_unlinked_issue_does_not_keep_stock_reserved() {
+    let db = crate::db::test_db::seeded().await;
+    let a = stock_article(&db, "RESV-LEG-B", 20.0).await;
+    let consumed = legacy_reservation(&db, "legacy-consumed-resv", a, 4.0, 0.0, "active").await;
+    let partial = legacy_reservation(&db, "legacy-partial-resv", a, 4.0, 0.0, "active").await;
+    receive_movement(&db, consumed, "RESERVE", 4.0, "legacy-consumed-reserve").await;
+    receive_movement(&db, partial, "RESERVE", 4.0, "legacy-partial-reserve").await;
+    // The issues arrived without their link; the rows from the issuing PC say what was issued.
+    unlinked_movement(&db, a, "ISSUE", 4.0, "legacy-unlinked-issue-1").await;
+    unlinked_movement(&db, a, "ISSUE", 1.0, "legacy-unlinked-issue-2").await;
+    exec(
+        &db,
+        "UPDATE stock_reservations SET quantity_issued = 4, status = 'consumed' WHERE id = ?",
+        vec![consumed.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE stock_reservations SET quantity_issued = 1, status = 'partial' WHERE id = ?",
+        vec![partial.into()],
+    )
+    .await;
+    crate::inventory::reservations::recompute_all_reserved(&db)
+        .await
+        .expect("recompute");
+    assert_eq!(balance(&db, a).await.1, 3.0, "consumed 0 + partial 4 − 1");
+}
+
+/// Two PCs holding different versions of a legacy reservation row (a sync conflict open) show
+/// different figures; once the conflict is resolved (the same row on both) they show the same.
+#[tokio::test]
+async fn two_pcs_with_different_legacy_rows_converge_once_the_rows_do() {
+    let a_db = crate::db::test_db::seeded().await;
+    let b_db = crate::db::test_db::seeded().await;
+    let mut ids = Vec::new();
+    for (db, issued) in [(&a_db, 1.0), (&b_db, 3.0)] {
+        let article = stock_article(db, "RESV-LEG-C", 20.0).await;
+        let id = legacy_reservation(db, "legacy-conflict-resv", article, 4.0, issued, "partial").await;
+        crate::inventory::reservations::recompute_all_reserved(db)
+            .await
+            .expect("recompute");
+        ids.push((article, id));
+    }
+    assert_eq!(balance(&a_db, ids[0].0).await.1, 3.0);
+    assert_eq!(
+        balance(&b_db, ids[1].0).await.1,
+        1.0,
+        "each PC its own row while the conflict is open"
+    );
+
+    // Resolved: A takes B's version of the row.
+    exec(
+        &a_db,
+        "UPDATE stock_reservations SET quantity_issued = 3 WHERE id = ?",
+        vec![ids[0].1.into()],
+    )
+    .await;
+    crate::inventory::reservations::recompute_dirty_reserved(&a_db)
+        .await
+        .expect("pass end");
+    assert_eq!(balance(&a_db, ids[0].0).await.1, 1.0);
+    assert_eq!(balance(&b_db, ids[1].0).await.1, 1.0, "the same figure on both");
+}
+
+/// A settle attempt that fails (the server's version cannot be applied here) leaves the conflict
+/// for a person and never fails the transaction that carries it: the rest of the sync answer
+/// commits.
+#[tokio::test]
+async fn a_failed_settle_leaves_the_conflict_and_does_not_abort_the_batch() {
+    let db = crate::db::test_db::seeded().await;
+    let local = serde_json::json!({
+        "entity_sync_id": "resv-unknown",
+        "status": "released",
+        "article_sync_id": "no-such-article",
+        "released_at": "2026-10-22T08:00:00Z",
+    });
+    let mut server = local.clone();
+    server["released_at"] = "2026-10-22T07:00:00Z".into();
+    let txn = db.begin().await.expect("begin");
+    crate::sync::queries::record_sync_conflict(
+        &txn,
+        crate::sync::queries::NewSyncConflict {
+            source_scope: "outbox",
+            source_batch_id: Some("batch-settle-fail".into()),
+            linked_outbox_id: None,
+            linked_inbox_id: None,
+            entity_type: "stock_reservations".into(),
+            entity_sync_id: "resv-unknown".into(),
+            operation: "upsert".into(),
+            conflict_type: "SERVER_CONFLICT".into(),
+            local_payload_json: Some(local.to_string()),
+            inbound_payload_json: Some(server.to_string()),
+            checkpoint_token: Some("t".into()),
+            local_row_version: Some(2),
+            inbound_row_version: Some(2),
+            detail_message: None,
+        },
+    )
+    .await
+    .expect("conflict");
+    let settled = crate::inventory::reservations::settle_double_release(&txn, "stock_reservations", "resv-unknown")
+        .await
+        .expect("never an error");
+    assert!(!settled);
+    // The rest of the answer goes on in the same transaction and commits.
+    txn.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO stock_reserved_dirty (article_id, location_id) VALUES (-1, -1)".to_string(),
+    ))
+    .await
+    .expect("later write in the batch");
+    txn.commit().await.expect("commit");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_conflicts WHERE entity_sync_id = 'resv-unknown'
+               AND status IN ('new', 'triaged', 'escalated')",
+            vec![],
+        )
+        .await,
+        1,
+        "left for a person"
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM stock_reserved_dirty WHERE article_id = -1",
+            vec![]
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'inventory.reservation.released_twice'",
+            vec![],
+        )
+        .await,
+        0
     );
 }
 
@@ -1215,7 +1424,9 @@ async fn the_d13_upgrade_releases_open_reservations_of_ended_work_orders_once() 
     assert_eq!(balance(&db, c).await, (20.0, 0.0));
     assert_eq!(balance(&db, d).await, (18.0, 1.0));
 
-    let report = release_reservations_of_ended_work_orders(&db).await.expect("sweep");
+    let report = release_reservations_of_ended_work_orders(&db, crate::inventory::reservations::SweepOrigin::Startup)
+        .await
+        .expect("sweep");
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert_eq!(report.reservations, 4);
     assert_eq!(report.work_orders, 3);
@@ -1268,7 +1479,7 @@ async fn the_d13_upgrade_releases_open_reservations_of_ended_work_orders_once() 
     }
 
     // Idempotent: a second run releases nothing more.
-    let again = release_reservations_of_ended_work_orders(&db)
+    let again = release_reservations_of_ended_work_orders(&db, crate::inventory::reservations::SweepOrigin::Startup)
         .await
         .expect("sweep again");
     assert_eq!(again.reservations, 0);

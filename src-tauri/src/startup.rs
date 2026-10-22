@@ -385,14 +385,14 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     }
 
     // Phase 4a'': stock reservations, with capture on so what is written reaches the other devices:
-    // a baseline movement for reservations recorded without one, reserved stock recomputed from
-    // the ledger (`inventory::reservations`), then the D13 catch-up — reservations still open on
+    // reserved stock recomputed from the reservations and their movements
+    // (`inventory::reservations`), then the D13 catch-up — reservations still open on
     // closed or cancelled work orders released (audited, system actor). Never blocks the startup;
     // what could not be done is logged and retried at the next start.
     let (upkeep, upkeep_errors) = crate::inventory::reservations::startup_reservation_upkeep(&app_state.db).await;
     info!(
-        baselines = upkeep.baselines,
         pairs_recomputed = upkeep.pairs_recomputed,
+        recompute_ms = upkeep.recompute_ms,
         work_orders = upkeep.sweep.work_orders,
         reservations_released = upkeep.sweep.reservations,
         "startup: stock reservations upkeep"

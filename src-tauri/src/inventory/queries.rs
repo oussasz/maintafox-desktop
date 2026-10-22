@@ -2289,44 +2289,6 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
     Ok(id_row.try_get("", "id")?)
 }
 
-/// Baseline RESERVE of a reservation created without one (`inventory::reservations`).
-pub(crate) struct BaselineMovement<'a> {
-    pub article_id: i64,
-    pub warehouse_id: i64,
-    pub location_id: i64,
-    pub reservation_id: i64,
-    pub quantity: f64,
-    pub source_type: &'a str,
-    pub source_id: Option<i64>,
-    pub source_ref: Option<&'a str>,
-    /// Seeded from the reservation, so every PC writes the same movement.
-    pub entity_sync_id: &'a str,
-}
-
-pub(crate) async fn insert_reservation_baseline_movement<C: ConnectionTrait>(
-    db: &C,
-    movement: BaselineMovement<'_>,
-) -> AppResult<i64> {
-    let sync_id = uuid::Uuid::parse_str(movement.entity_sync_id)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("baseline movement sync id: {e}")))?;
-    insert_inventory_transaction(
-        db,
-        movement.article_id,
-        movement.warehouse_id,
-        movement.location_id,
-        Some(movement.reservation_id),
-        "RESERVE",
-        movement.quantity,
-        movement.source_type,
-        movement.source_id,
-        movement.source_ref,
-        None,
-        Some("Baseline of a reservation recorded without its reservation movement"),
-        Some(sync_id),
-    )
-    .await
-}
-
 async fn load_balance(db: &DatabaseConnection, article_id: i64, location_id: i64) -> AppResult<InventoryStockBalance> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -2586,7 +2548,10 @@ pub(crate) async fn issue_reserved_in<C: ConnectionTrait>(
     }
 
     let (on_hand, reserved) = get_balance_snapshot(tx, reservation.article_id, reservation.location_id).await?;
-    if on_hand + 1e-9 < quantity || reserved + 1e-9 < quantity {
+    // What this reservation itself holds (not the location's whole reserved stock, which other
+    // reservations make up): `inventory::reservations`.
+    let held = crate::inventory::reservations::reservation_held(tx, reservation.id).await?;
+    if on_hand + 1e-9 < quantity || held + 1e-9 < quantity {
         return Err(AppError::ValidationFailed(vec![
             "Insufficient on-hand/reserved quantity for issue.".to_string(),
         ]));
@@ -2993,13 +2958,13 @@ pub(crate) async fn release_reservation_in<C: ConnectionTrait>(
         .await?
         .is_some();
 
-    // What this reservation holds in the reserved-stock projection (its ledger, not the row): the
-    // quantity freed. Less than the row's remainder when the movements drifted (several PCs); the
-    // difference is reported, never refused (`inventory::reservations`).
+    // What this reservation holds in the reserved-stock projection: the quantity freed. Less than
+    // the row's remainder when its movements say less (an issue made on another PC arrived before
+    // that PC's row); the difference is reported, never refused (`inventory::reservations`).
     let held = if release_received_from_sync {
         0.0
     } else {
-        crate::inventory::reservations::reservation_held_from_ledger(db, reservation.id).await?
+        crate::inventory::reservations::reservation_held(db, reservation.id).await?
     };
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

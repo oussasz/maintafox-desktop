@@ -99,12 +99,6 @@ pub async fn apply_received_movement(
         ],
     ))
     .await?;
-    // Reserved stock is a projection of the reservations' movements, not a running total: it is
-    // recomputed from the ledger, so the same movements give the same reserved stock on every PC
-    // whatever order they arrive in (`inventory::reservations`).
-    if crate::inventory::reservations::RESERVATION_MOVEMENTS.contains(&movement_type) {
-        crate::inventory::reservations::recompute_reserved_in(conn, article_id, location_id).await?;
-    }
     Ok(())
 }
 
