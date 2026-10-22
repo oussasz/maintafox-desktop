@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { PermissionGate } from "@/components/PermissionGate";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useFormatters } from "@/hooks/use-formatters";
@@ -120,13 +121,12 @@ export function TeamOvertimeCeilingPanel({
                 <tr key={rule.id} className="border-t border-surface-border">
                   <td className="py-1.5">{formatDate(rule.effective_start)}</td>
                   <td className="py-1.5">
-                    <Input
-                      type="date"
+                    <DateField
                       aria-label={t("overtimeCeiling.to")}
                       className="h-8 w-40"
                       min={rule.effective_start}
                       value={editing.end}
-                      onChange={(e) => setEditing({ ...editing, end: e.target.value })}
+                      onChange={(v) => setEditing({ ...editing, end: v })}
                     />
                   </td>
                   <td className="py-1.5 text-right">
@@ -215,23 +215,21 @@ export function TeamOvertimeCeilingPanel({
         <div className="flex flex-wrap items-end gap-2 border-t border-surface-border pt-3">
           <div>
             <Label htmlFor={`overtime-start-${teamId}`}>{t("overtimeCeiling.from")}</Label>
-            <Input
+            <DateField
               id={`overtime-start-${teamId}`}
-              type="date"
               className="h-8 w-40"
               value={draft.start}
-              onChange={(e) => setDraft({ ...draft, start: e.target.value })}
+              onChange={(v) => setDraft({ ...draft, start: v })}
             />
           </div>
           <div>
             <Label htmlFor={`overtime-end-${teamId}`}>{t("overtimeCeiling.toOptional")}</Label>
-            <Input
+            <DateField
               id={`overtime-end-${teamId}`}
-              type="date"
               className="h-8 w-40"
               min={draft.start}
               value={draft.end}
-              onChange={(e) => setDraft({ ...draft, end: e.target.value })}
+              onChange={(v) => setDraft({ ...draft, end: v })}
             />
           </div>
           <div>

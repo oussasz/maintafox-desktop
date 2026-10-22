@@ -27,6 +27,7 @@ import {
 } from "@/components/reliability/study/rams-ui";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -43,6 +44,47 @@ import { P } from "@shared/rbac/permissions.generated";
 
 export const STUDY_STEPS = ["data", "life", "fmeca", "rcm", "system", "decisions"] as const;
 export type StudyStep = (typeof STUDY_STEPS)[number];
+
+/**
+ * A period date of the study: typed or picked, then saved when the field is left. `onCommit`
+ * returns false to refuse the date; the field then shows the saved one again.
+ */
+function StudyDateField({
+  saved,
+  disabled,
+  label,
+  invalid,
+  describedBy,
+  onCommit,
+}: {
+  saved: string;
+  disabled: boolean;
+  label: string;
+  invalid: boolean;
+  describedBy: string | undefined;
+  onCommit: (value: string) => boolean;
+}) {
+  const [value, setValue] = useState(saved);
+  useEffect(() => setValue(saved), [saved]);
+  return (
+    <DateField
+      className={cn(RAMS_SELECT_CLASS, "min-w-0")}
+      value={value}
+      onChange={setValue}
+      disabled={disabled}
+      aria-label={label}
+      aria-invalid={invalid}
+      aria-describedby={describedBy}
+      onBlur={() => {
+        if (!value || value === saved) {
+          setValue(saved);
+          return;
+        }
+        if (!onCommit(value)) setValue(saved);
+      }}
+    />
+  );
+}
 
 export function RamsStudyPage() {
   const { t } = useTranslation("reliability");
@@ -182,48 +224,40 @@ export function RamsStudyPage() {
             </span>
             <label className="flex items-center gap-1.5">
               <span className="sr-only">{t("rams.study.periodStart")}</span>
-              <input
-                type="date"
-                className={cn(RAMS_SELECT_CLASS, "min-w-0")}
-                defaultValue={isoDay(study.period_start)}
+              <StudyDateField
                 key={`s-${study.row_version}`}
+                saved={isoDay(study.period_start)}
                 disabled={!editable || saving}
-                aria-label={t("rams.study.periodStart")}
-                aria-invalid={dateError != null}
-                aria-describedby={dateError ? "rams-period-error" : undefined}
-                onBlur={(e) => {
-                  const v = e.target.value;
-                  if (!v || v === isoDay(study.period_start)) return;
+                label={t("rams.study.periodStart")}
+                invalid={dateError != null}
+                describedBy={dateError ? "rams-period-error" : undefined}
+                onCommit={(v) => {
                   // The period must start before it ends: refused here, not saved.
                   if (v > isoDay(study.period_end)) {
                     setDateError(t("rams.study.periodOrder"));
-                    e.target.value = isoDay(study.period_start);
-                    return;
+                    return false;
                   }
                   setDateError(null);
                   void updateScope({ period_start: dayToIso(v, false) });
+                  return true;
                 }}
               />
               <span aria-hidden>–</span>
-              <input
-                type="date"
-                className={cn(RAMS_SELECT_CLASS, "min-w-0")}
-                defaultValue={isoDay(study.period_end)}
+              <StudyDateField
                 key={`e-${study.row_version}`}
+                saved={isoDay(study.period_end)}
                 disabled={!editable || saving}
-                aria-label={t("rams.study.periodEnd")}
-                aria-invalid={dateError != null}
-                aria-describedby={dateError ? "rams-period-error" : undefined}
-                onBlur={(e) => {
-                  const v = e.target.value;
-                  if (!v || v === isoDay(study.period_end)) return;
+                label={t("rams.study.periodEnd")}
+                invalid={dateError != null}
+                describedBy={dateError ? "rams-period-error" : undefined}
+                onCommit={(v) => {
                   if (v < isoDay(study.period_start)) {
                     setDateError(t("rams.study.periodOrder"));
-                    e.target.value = isoDay(study.period_end);
-                    return;
+                    return false;
                   }
                   setDateError(null);
                   void updateScope({ period_end: dayToIso(v, true) });
+                  return true;
                 }}
               />
             </label>

@@ -11,6 +11,7 @@ import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -427,11 +428,10 @@ export function PersonQualificationSheet({
               </Select>
             </FormField>
             <FormField name={`cert-issued-${personnelId}`} label={t("col.issued")} required>
-              <Input
+              <DateField
                 id={`cert-issued-${personnelId}`}
-                type="date"
                 value={certDraft.issued_at}
-                onChange={(e) => setIssued(e.target.value)}
+                onChange={(v) => setIssued(v)}
               />
             </FormField>
             <FormField
@@ -444,11 +444,10 @@ export function PersonQualificationSheet({
                   : undefined
               }
             >
-              <Input
+              <DateField
                 id={`cert-expires-${personnelId}`}
-                type="date"
                 value={certDraft.expires_at}
-                onChange={(e) => setCertDraft({ ...certDraft, expires_at: e.target.value })}
+                onChange={(v) => setCertDraft({ ...certDraft, expires_at: v })}
               />
             </FormField>
             <FormField name={`cert-body-${personnelId}`} label={t("col.issuingBody")}>
@@ -621,11 +620,10 @@ export function PersonQualificationSheet({
               </Select>
             </FormField>
             <FormField name={`skill-valid-${personnelId}`} label={t("col.validTo")}>
-              <Input
+              <DateField
                 id={`skill-valid-${personnelId}`}
-                type="date"
                 value={skillDraft.valid_to}
-                onChange={(e) => setSkillDraft({ ...skillDraft, valid_to: e.target.value })}
+                onChange={(v) => setSkillDraft({ ...skillDraft, valid_to: v })}
               />
             </FormField>
             {canCertify ? (
