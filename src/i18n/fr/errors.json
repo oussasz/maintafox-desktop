@@ -104,6 +104,7 @@
     "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_MUST_DIFFER": "Clôture bloquée : le signataire de dérogation doit être différent de l'utilisateur qui clôture.",
     "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_ROLE_INVALID": "Clôture bloquée : le signataire de dérogation doit avoir un rôle Superviseur/Admin.",
     "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_AUTH_FAILED": "Clôture bloquée : la ré-authentification du signataire de dérogation a échoué.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_LOCKED": "Clôture bloquée : le compte du signataire de dérogation est verrouillé après trop de mots de passe erronés. Réessayez plus tard ou choisissez un autre signataire.",
     "GATE_RUNTIME_EXPOSURE_SOURCE_NOT_ALLOWED_IN_PRODUCTION": "Écriture d'exposition bloquée : la source RAMS injectée est interdite en mode production activé.",
     "GATE_FIN_FISCAL_START_MISSING": "Le mois de début de l'exercice n'est pas configuré : renseignez-le dans Paramètres › Localisation.",
     "GATE_FIN_MONTH_INVALID": "Le mois doit être compris entre 1 et 12.",

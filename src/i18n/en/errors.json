@@ -102,6 +102,7 @@
     "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_MUST_DIFFER": "Closeout blocked: override signer must be different from the user performing closeout.",
     "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_ROLE_INVALID": "Closeout blocked: override signer must hold Supervisor/Admin privileges.",
     "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_AUTH_FAILED": "Closeout blocked: override signer re-authentication failed.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_LOCKED": "Closeout blocked: the override signer's account is locked after too many wrong passwords. Try again later or choose another signer.",
     "GATE_RUNTIME_EXPOSURE_SOURCE_NOT_ALLOWED_IN_PRODUCTION": "Runtime exposure write blocked: injected RAMS source is forbidden in activated production mode.",
     "GATE_FIN_FISCAL_START_MISSING": "The fiscal-year start month is not configured: set it in Settings › Localization.",
     "GATE_FIN_MONTH_INVALID": "The month must be between 1 and 12.",

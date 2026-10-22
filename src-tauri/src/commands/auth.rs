@@ -563,26 +563,59 @@ pub(crate) async fn verify_password_in_session(
     password_input: &str,
     failure_summary: &'static str,
 ) -> AppResult<()> {
+    let pw_hash = session_manager::find_active_user(&state.db, &user.username)
+        .await?
+        .and_then(|r| r.5)
+        .ok_or_else(|| AppError::Auth("Mot de passe incorrect.".into()))?;
+
+    let audit = WrongPasswordAudit {
+        event_type: crate::audit::event_type::STEP_UP_FAILURE,
+        summary: failure_summary,
+    };
+    if check_session_password(state, user, session_db_id, password_input, &pw_hash, audit).await? {
+        Ok(())
+    } else {
+        Err(AppError::Auth("Mot de passe incorrect.".into()))
+    }
+}
+
+/// The audit entry written for a wrong password by [`check_session_password`].
+pub(crate) struct WrongPasswordAudit {
+    pub event_type: &'static str,
+    pub summary: &'static str,
+}
+
+/// The signed-in user's password, checked against `stored_hash` under the sign-in account lockout
+/// (every password check made inside a session uses it: unlock, step-up, PIN set/clear, password
+/// change):
+/// - account locked out → the session ends (see [`end_session_after_lockout`]), `ACCOUNT_LOCKED`;
+/// - wrong password → counted (`lockout::record_failed_attempt`), logged and audited; if that
+///   locks the account, the session ends and `ACCOUNT_LOCKED`, otherwise `Ok(false)`, and the
+///   caller refuses with its own message;
+/// - right password → the count is reset, `Ok(true)`.
+pub(crate) async fn check_session_password(
+    state: &AppState,
+    user: &session_manager::AuthenticatedUser,
+    session_db_id: &str,
+    password_input: &str,
+    stored_hash: &str,
+    audit: WrongPasswordAudit,
+) -> AppResult<bool> {
     if let Err(locked @ AppError::AccountLocked { .. }) = lockout::check_lockout(&state.db, user.user_id).await {
         end_session_after_lockout(state, user, session_db_id).await;
         return Err(locked);
     }
     let lockout_policy = lockout::LockoutPolicy::load(&state.db).await;
 
-    let pw_hash = session_manager::find_active_user(&state.db, &user.username)
-        .await?
-        .and_then(|r| r.5)
-        .ok_or_else(|| AppError::Auth("Mot de passe incorrect.".into()))?;
-
-    if !password::verify_password(password_input, &pw_hash)? {
+    if !password::verify_password(password_input, stored_hash)? {
         lockout::record_failed_attempt(&state.db, user.user_id, &lockout_policy).await?;
-        warn!(username = %user.username, summary = failure_summary, "session_password_check::wrong_password");
+        warn!(username = %user.username, summary = audit.summary, "session_password_check::wrong_password");
         crate::audit::emit(
             &state.db,
             crate::audit::AuditEvent {
-                event_type: crate::audit::event_type::STEP_UP_FAILURE,
+                event_type: audit.event_type,
                 actor_id: Some(user.user_id),
-                summary: failure_summary,
+                summary: audit.summary,
                 ..Default::default()
             },
         )
@@ -591,10 +624,23 @@ pub(crate) async fn verify_password_in_session(
             end_session_after_lockout(state, user, session_db_id).await;
             return Err(locked);
         }
-        return Err(AppError::Auth("Mot de passe incorrect.".into()));
+        return Ok(false);
     }
 
-    lockout::clear_failed_attempts(&state.db, user.user_id).await
+    lockout::clear_failed_attempts(&state.db, user.user_id).await?;
+    Ok(true)
+}
+
+/// The stored session id of the current session (after `require_session!`).
+pub(crate) async fn current_session_db_id(state: &AppState) -> AppResult<String> {
+    state
+        .session
+        .read()
+        .await
+        .current
+        .as_ref()
+        .map(|s| s.session_db_id.clone())
+        .ok_or_else(|| session_manager::RequireSessionFailure::MissingOrExpired.into_app_error())
 }
 
 /// The account is locked out after password failures made inside the session: the session ends
@@ -669,7 +715,12 @@ pub struct PinUnlockInput {
 /// Requires current password verification.
 #[tauri::command]
 pub async fn set_pin(payload: SetPinInput, state: State<'_, AppState>) -> AppResult<()> {
+    set_pin_impl(state.inner(), payload).await
+}
+
+pub(crate) async fn set_pin_impl(state: &AppState, payload: SetPinInput) -> AppResult<()> {
     let user = require_session!(state);
+    let session_db_id = current_session_db_id(state).await?;
 
     let user_record = session_manager::find_active_user(&state.db, &user.username).await?;
     let pw_hash = match user_record.and_then(|r| r.5) {
@@ -681,8 +732,12 @@ pub async fn set_pin(payload: SetPinInput, state: State<'_, AppState>) -> AppRes
         }
     };
 
-    let password_ok = password::verify_password(&payload.current_password, &pw_hash)?;
-    if !password_ok {
+    // The password under the sign-in lockout (too many wrong ones end the session).
+    let audit = WrongPasswordAudit {
+        event_type: crate::audit::event_type::STEP_UP_FAILURE,
+        summary: "PIN setup refused: wrong password",
+    };
+    if !check_session_password(state, &user, &session_db_id, &payload.current_password, &pw_hash, audit).await? {
         return Err(AppError::Auth("Mot de passe incorrect.".into()));
     }
 
@@ -728,7 +783,12 @@ pub async fn set_pin(payload: SetPinInput, state: State<'_, AppState>) -> AppRes
 /// Requires current password verification.
 #[tauri::command]
 pub async fn clear_pin(payload: ClearPinInput, state: State<'_, AppState>) -> AppResult<()> {
+    clear_pin_impl(state.inner(), payload).await
+}
+
+pub(crate) async fn clear_pin_impl(state: &AppState, payload: ClearPinInput) -> AppResult<()> {
     let user = require_session!(state);
+    let session_db_id = current_session_db_id(state).await?;
 
     let user_record = session_manager::find_active_user(&state.db, &user.username).await?;
     let pw_hash = match user_record.and_then(|r| r.5) {
@@ -740,8 +800,12 @@ pub async fn clear_pin(payload: ClearPinInput, state: State<'_, AppState>) -> Ap
         }
     };
 
-    let password_ok = password::verify_password(&payload.current_password, &pw_hash)?;
-    if !password_ok {
+    // The password under the sign-in lockout (too many wrong ones end the session).
+    let audit = WrongPasswordAudit {
+        event_type: crate::audit::event_type::STEP_UP_FAILURE,
+        summary: "PIN removal refused: wrong password",
+    };
+    if !check_session_password(state, &user, &session_db_id, &payload.current_password, &pw_hash, audit).await? {
         return Err(AppError::Auth("Mot de passe incorrect.".into()));
     }
 

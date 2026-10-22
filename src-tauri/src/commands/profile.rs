@@ -274,19 +274,22 @@ pub(crate) async fn change_password_impl(state: &AppState, payload: ChangePasswo
         .5
         .ok_or_else(|| AppError::Auth("Aucun mot de passe local configuré.".into()))?;
 
-    // Verify current password
-    let ok = password::verify_password(&payload.current_password, &stored_hash)?;
+    // Verify current password, under the sign-in lockout (too many wrong ones end the session).
+    let session_db_id = crate::commands::auth::current_session_db_id(state).await?;
+    let audit = crate::commands::auth::WrongPasswordAudit {
+        event_type: "user.password_change_failed",
+        summary: "Password change failed — wrong current password",
+    };
+    let ok = crate::commands::auth::check_session_password(
+        state,
+        &user,
+        &session_db_id,
+        &payload.current_password,
+        &stored_hash,
+        audit,
+    )
+    .await?;
     if !ok {
-        crate::audit::emit(
-            &state.db,
-            crate::audit::AuditEvent {
-                event_type: "user.password_change_failed",
-                actor_id: Some(user.user_id),
-                summary: "Password change failed — wrong current password",
-                ..Default::default()
-            },
-        )
-        .await;
         return Err(AppError::Auth("Le mot de passe actuel est incorrect.".into()));
     }
 

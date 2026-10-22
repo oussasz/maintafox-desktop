@@ -110,14 +110,7 @@ pub async fn verify_step_up(payload: StepUpRequest, state: State<'_, AppState>) 
 /// too many wrong passwords lock the account and end the session (`ACCOUNT_LOCKED`).
 pub(crate) async fn verify_step_up_impl(state: &AppState, payload: StepUpRequest) -> AppResult<StepUpResponse> {
     let user = require_session!(state);
-    let session_db_id = state
-        .session
-        .read()
-        .await
-        .current
-        .as_ref()
-        .map(|s| s.session_db_id.clone())
-        .ok_or_else(|| session_manager::RequireSessionFailure::MissingOrExpired.into_app_error())?;
+    let session_db_id = crate::commands::auth::current_session_db_id(state).await?;
 
     crate::commands::auth::verify_password_in_session(
         state,

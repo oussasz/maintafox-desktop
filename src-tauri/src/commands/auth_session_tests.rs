@@ -373,3 +373,82 @@ async fn a_protected_call_after_three_wrong_pins_does_not_give_more_pin_tries() 
     assert!(matches!(pin_unlock(&state, "4321").await, Err(AppError::PinDisabled)));
     unlock(&state, PASSWORD).await.expect("password unlock");
 }
+
+// ── Every password check inside a session counts toward the lockout ───────────
+
+async fn set_pin_with(state: &AppState, password: &str) -> AppResult<()> {
+    set_pin_impl(
+        state,
+        SetPinInput {
+            current_password: password.into(),
+            new_pin: "2468".into(),
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn wrong_passwords_when_setting_the_pin_lock_the_account_and_end_the_session() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let id = technician(&db, "pin_setup").await;
+    let session_id = sign_in(&state, id, "pin_setup").await;
+    let max = max_attempts(&db).await;
+
+    // A right password resets the count.
+    for _ in 1..max {
+        assert!(matches!(
+            set_pin_with(&state, "wrong-password").await,
+            Err(AppError::Auth(_))
+        ));
+    }
+    set_pin_with(&state, PASSWORD).await.expect("right password");
+    assert_eq!(failed_attempts(&db, id).await, 0);
+
+    for attempt in 1..max {
+        let refused = set_pin_with(&state, "wrong-password").await.unwrap_err();
+        assert!(matches!(refused, AppError::Auth(_)), "attempt {attempt}: {refused:?}");
+    }
+    let refused = set_pin_with(&state, "wrong-password").await.unwrap_err();
+    assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
+    assert!(state.session.read().await.current.is_none(), "the session ended");
+    assert!(session_revoked(&db, &session_id).await);
+
+    // Removing the PIN from a session still open meanwhile is refused too.
+    sign_in(&state, id, "pin_setup").await;
+    let refused = clear_pin_impl(
+        &state,
+        ClearPinInput {
+            current_password: PASSWORD.into(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
+    assert!(state.session.read().await.current.is_none());
+}
+
+#[tokio::test]
+async fn wrong_current_passwords_at_password_change_lock_the_account() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let id = technician(&db, "pw_change").await;
+    sign_in(&state, id, "pw_change").await;
+    let max = max_attempts(&db).await;
+    let change = |current: &'static str| crate::commands::profile::ChangePasswordPayload {
+        current_password: current.into(),
+        new_password: "Nouveau-Mot-2026!".into(),
+    };
+
+    for attempt in 1..max {
+        let refused = crate::commands::profile::change_password_impl(&state, change("wrong-password"))
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, AppError::Auth(_)), "attempt {attempt}: {refused:?}");
+    }
+    let refused = crate::commands::profile::change_password_impl(&state, change("wrong-password"))
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
+    assert!(state.session.read().await.current.is_none(), "the session ended");
+}
