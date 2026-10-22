@@ -48,13 +48,13 @@ import {
 } from "@/components/notifications/notification-text";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -584,22 +584,20 @@ export function NotificationInbox({
             </label>
             <label className="flex flex-col gap-1 text-xs text-text-muted">
               {t("filters.from")}
-              <Input
-                type="date"
+              <DateField
                 className="h-9 w-40"
                 value={filters.from}
                 max={filters.to || undefined}
-                onChange={(e) => setFilter({ from: e.target.value })}
+                onChange={(v) => setFilter({ from: v })}
               />
             </label>
             <label className="flex flex-col gap-1 text-xs text-text-muted">
               {t("filters.to")}
-              <Input
-                type="date"
+              <DateField
                 className="h-9 w-40"
                 value={filters.to}
                 min={filters.from || undefined}
-                onChange={(e) => setFilter({ to: e.target.value })}
+                onChange={(v) => setFilter({ to: v })}
               />
             </label>
             {filtered ? (

@@ -88,6 +88,44 @@
     "repair.swapDowntime": "Swap segment start/end (negative duration)",
     "repair.closeAtStart": "Close segment at start time",
     "repair.trimOverlap": "Trim first segment end to remove overlap",
+    "severity": { "error": "Error", "warning": "Warning" },
+    "code": {
+      "FK_ORPHAN_FAILURE_MODE": "Failure mode not found",
+      "WO_DOWNTIME_NEGATIVE_DURATION": "Downtime with negative duration",
+      "WO_DOWNTIME_UNCLOSED": "Downtime not closed",
+      "WO_DOWNTIME_SUM_EXCEEDS_WINDOW": "Downtime longer than the work order",
+      "WO_DOWNTIME_OVERLAP": "Overlapping downtime",
+      "PERMIT_SITE_NOT_EQUIPMENT_SITE": "Permit site differs from the equipment site"
+    },
+    "domain": {
+      "failure_coding": "Failure coding",
+      "downtime": "Downtime",
+      "wo_closeout": "Work order close-out",
+      "permit_site": "Permit site"
+    },
+    "recordClass": {
+      "wo_failure_details": "Failure detail",
+      "work_order_downtime_segments": "Downtime segment",
+      "work_orders": "Work order",
+      "work_permits": "Work permit"
+    },
+    "detail": {
+      "work_order_id": "WO no.",
+      "failure_mode_id": "Failure mode no.",
+      "segment_id": "Segment no.",
+      "segment_id_a": "Segment A no.",
+      "segment_id_b": "Segment B no.",
+      "segment_sum_hours": "Total downtime (h)",
+      "window_hours": "Work order duration (h)",
+      "permit_code": "Permit",
+      "status": "Permit status",
+      "equipment_code": "Equipment",
+      "linked_work_order_id": "Linked WO no."
+    },
+    "approverPick": "Approver (someone other than you)",
+    "approverNoneAvailable": "No approver available: active staff with an account, other than you.",
+    "approverNone": "Choose a person",
+    "unknownCode": "Unlisted finding",
     "diagnosticTarget": "Diagnostic · {{domain}} · {{recordClass}}"
   },
   "list": {
@@ -185,6 +223,7 @@
     "completed": "Completed",
     "closed": "Closed",
     "cancelled": "Cancelled",
+    "unknown": "Unknown status",
     "awaitingApproval": "Awaiting approval",
     "planned": "Planned",
     "released": "Released",

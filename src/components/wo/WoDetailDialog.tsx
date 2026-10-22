@@ -621,7 +621,12 @@ function FooterActions({
 
       {s === "planning" && can(P.OT_EDIT) && (
         <>
-          {needsApproval && (
+          {needsApproval && !can(P.OT_APPROVE) && (
+            <Badge variant="outline" className="text-xs">
+              {t("status.awaitingApproval")}
+            </Badge>
+          )}
+          {needsApproval && can(P.OT_APPROVE) && (
             <Button
               size="sm"
               variant="outline"

@@ -11,6 +11,7 @@ import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -29,6 +30,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
 import { toneOf } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { listPersonnelSkillReferenceValues } from "@/services/personnel-service";
@@ -105,6 +107,7 @@ export function PersonQualificationSheet({
   onChanged,
 }: PersonQualificationSheetProps) {
   const { t } = useTranslation("training");
+  const { formatDate } = useFormatters();
   const { can } = usePermissions();
   const canCertify = can(P.TRN_CERTIFY);
   const canManageSkills = can(P.PER_MANAGE);
@@ -350,9 +353,11 @@ export function PersonQualificationSheet({
                   <td className="py-1.5 pr-2">
                     {c.certification_type_name ?? c.certification_type_code}
                   </td>
-                  <td className="py-1.5 pr-2 tabular-nums">{c.issued_at?.slice(0, 10) ?? "—"}</td>
                   <td className="py-1.5 pr-2 tabular-nums">
-                    {c.expires_at?.slice(0, 10) ?? t("sheet.noExpiry")}
+                    {c.issued_at ? formatDate(c.issued_at) : "—"}
+                  </td>
+                  <td className="py-1.5 pr-2 tabular-nums">
+                    {c.expires_at ? formatDate(c.expires_at) : t("sheet.noExpiry")}
                   </td>
                   <td className="py-1.5 pr-2">{c.issuing_body ?? "—"}</td>
                   <td className="py-1.5 pr-2">
@@ -427,11 +432,10 @@ export function PersonQualificationSheet({
               </Select>
             </FormField>
             <FormField name={`cert-issued-${personnelId}`} label={t("col.issued")} required>
-              <Input
+              <DateField
                 id={`cert-issued-${personnelId}`}
-                type="date"
                 value={certDraft.issued_at}
-                onChange={(e) => setIssued(e.target.value)}
+                onChange={(v) => setIssued(v)}
               />
             </FormField>
             <FormField
@@ -444,11 +448,10 @@ export function PersonQualificationSheet({
                   : undefined
               }
             >
-              <Input
+              <DateField
                 id={`cert-expires-${personnelId}`}
-                type="date"
                 value={certDraft.expires_at}
-                onChange={(e) => setCertDraft({ ...certDraft, expires_at: e.target.value })}
+                onChange={(v) => setCertDraft({ ...certDraft, expires_at: v })}
               />
             </FormField>
             <FormField name={`cert-body-${personnelId}`} label={t("col.issuingBody")}>
@@ -544,7 +547,7 @@ export function PersonQualificationSheet({
                             ? {
                                 title: t("skillStatus.validatedBy", {
                                   name: s.verified_by_name,
-                                  date: s.verified_at?.slice(0, 10) ?? "",
+                                  date: s.verified_at ? formatDate(s.verified_at) : "",
                                 }),
                               }
                             : {})}
@@ -621,11 +624,10 @@ export function PersonQualificationSheet({
               </Select>
             </FormField>
             <FormField name={`skill-valid-${personnelId}`} label={t("col.validTo")}>
-              <Input
+              <DateField
                 id={`skill-valid-${personnelId}`}
-                type="date"
                 value={skillDraft.valid_to}
-                onChange={(e) => setSkillDraft({ ...skillDraft, valid_to: e.target.value })}
+                onChange={(v) => setSkillDraft({ ...skillDraft, valid_to: v })}
               />
             </FormField>
             {canCertify ? (

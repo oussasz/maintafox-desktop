@@ -15,6 +15,7 @@ import { DataTable } from "@/components/data/DataTable";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -23,7 +24,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -352,13 +352,12 @@ export function InventoryValuationPanel({ reloadToken = 0 }: InventoryValuationP
             </div>
             <div className="space-y-1">
               <Label htmlFor="inv-valuation-asat">{t("valuation.asAt.label")}</Label>
-              <Input
+              <DateField
                 id="inv-valuation-asat"
-                type="date"
                 className="h-11 w-44"
                 max={today}
                 value={asAt}
-                onChange={(e) => setAsAt(e.target.value)}
+                onChange={(v) => setAsAt(v)}
               />
             </div>
           </div>
@@ -461,22 +460,20 @@ export function InventoryValuationPanel({ reloadToken = 0 }: InventoryValuationP
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="inv-close-start">{t("valuation.close.start")}</Label>
-              <Input
+              <DateField
                 id="inv-close-start"
-                type="date"
                 className="h-11"
                 value={closeStart}
-                onChange={(e) => setCloseStart(e.target.value)}
+                onChange={(v) => setCloseStart(v)}
               />
             </div>
             <div className="space-y-1">
               <Label htmlFor="inv-close-end">{t("valuation.close.end")}</Label>
-              <Input
+              <DateField
                 id="inv-close-end"
-                type="date"
                 className="h-11"
                 value={closeEnd}
-                onChange={(e) => setCloseEnd(e.target.value)}
+                onChange={(v) => setCloseEnd(v)}
               />
             </div>
             <div className="space-y-1 sm:col-span-2">
