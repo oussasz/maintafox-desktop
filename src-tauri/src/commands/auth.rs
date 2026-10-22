@@ -384,30 +384,43 @@ pub async fn get_session_info(state: State<'_, AppState>) -> AppResult<session_m
     Ok(state.session.read().await.session_info())
 }
 
-/// Heartbeat: update in-memory + DB `last_activity_at` for the current session.
-/// The frontend calls this periodically so the presence query sees fresh activity.
+/// The user worked in the app: the shell sends this on real keyboard/mouse/touch input (at most
+/// about once a minute), never on a timer. It is the only call that keeps the session from
+/// idle-locking (in memory, and `app_sessions.last_activity_at` for presence). A session already
+/// past its idle deadline is refused with `SESSION_LOCKED` and stays locked until unlocked.
+/// Returns the session info, so the shell knows the new idle deadline.
 #[tauri::command]
-pub async fn touch_session(state: State<'_, AppState>) -> AppResult<()> {
-    let session_db_id = {
+pub async fn touch_session(state: State<'_, AppState>) -> AppResult<session_manager::SessionInfo> {
+    touch_session_impl(state.inner()).await
+}
+
+pub(crate) async fn touch_session_impl(state: &AppState) -> AppResult<session_manager::SessionInfo> {
+    let (session_db_id, info) = {
         let mut guard = state.session.write().await;
-        guard.touch();
-        match &guard.current {
-            Some(s) => s.session_db_id.clone(),
-            None => return Ok(()),
-        }
+        guard
+            .record_activity()
+            .map_err(session_manager::RequireSessionFailure::into_app_error)?;
+        let Some(current) = guard.current.as_ref() else {
+            return Err(session_manager::RequireSessionFailure::MissingOrExpired.into_app_error());
+        };
+        (current.session_db_id.clone(), guard.session_info())
     };
 
     let now = chrono::Utc::now().to_rfc3339();
-    let _ = state
+    if let Err(e) = state
         .db
         .execute(sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Sqlite,
             "UPDATE app_sessions SET last_activity_at = ? WHERE id = ?",
             [now.into(), session_db_id.into()],
         ))
-        .await;
+        .await
+    {
+        // Presence only: the in-memory activity (the idle lock) is already recorded.
+        warn!(error = %e, "touch_session::stored_activity_not_written");
+    }
 
-    Ok(())
+    Ok(info)
 }
 
 // ── Device trust IPC commands ─────────────────────────────────────────────────
@@ -482,6 +495,13 @@ pub struct UnlockSessionRequest {
 pub async fn unlock_session(
     payload: UnlockSessionRequest,
     state: State<'_, AppState>,
+) -> AppResult<session_manager::SessionInfo> {
+    unlock_session_impl(state.inner(), payload).await
+}
+
+pub(crate) async fn unlock_session_impl(
+    state: &AppState,
+    payload: UnlockSessionRequest,
 ) -> AppResult<session_manager::SessionInfo> {
     // Read session to get the user — even locked sessions have a user
     let user = {
@@ -998,6 +1018,10 @@ pub(crate) async fn query_password_recovery_contacts(
 
     Ok(contacts)
 }
+
+#[cfg(test)]
+#[path = "auth_session_tests.rs"]
+mod auth_session_tests;
 
 #[cfg(test)]
 mod password_recovery_contacts_tests {

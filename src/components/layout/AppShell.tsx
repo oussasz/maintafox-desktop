@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AdminRecoveryNotice } from "@/components/auth/AdminRecoveryNotice";
@@ -10,9 +10,8 @@ import { AppToastHost } from "@/components/shell/AppToastHost";
 import { DatabaseRecoveryScreen } from "@/components/startup/DatabaseRecoveryScreen";
 import { UpdateBanner } from "@/components/updates/UpdateBanner";
 import { mfAuth } from "@/design-system/tokens";
+import { useIdleLock } from "@/hooks/use-idle-lock";
 import { useUpdateScheduler } from "@/hooks/use-updater";
-import { invokeSilent } from "@/lib/ipc-invoke";
-import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { cn } from "@/lib/utils";
 import { defaultNavItems } from "@/navigation/nav-registry";
 import { useAppStore } from "@/store/app-store";
@@ -23,9 +22,6 @@ import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import { Sidebar } from "./Sidebar";
 import { StatusBar } from "./StatusBar";
 import { TopBar } from "./TopBar";
-
-/** Keep idle-lock from firing during passive UI time (backend idle = 30 min). */
-const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 
 interface AppShellProps {
   children: ReactNode;
@@ -72,23 +68,9 @@ export function AppShell({ children }: AppShellProps) {
     void refreshCurrency();
   }, [sessionAuthenticated, sessionLocked, refreshCurrency]);
 
-  // Shell-level activity heartbeat — covers idle UI with no authenticated IPC.
-  useEffect(() => {
-    if (!sessionAuthenticated || sessionLocked) {
-      return;
-    }
-
-    const touch = () => {
-      if (!isSessionActiveForBackgroundWork()) {
-        return;
-      }
-      void invokeSilent("touch_session").catch(() => {});
-    };
-
-    touch();
-    const id = window.setInterval(touch, SESSION_TOUCH_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, [sessionAuthenticated, sessionLocked]);
+  // Idle lock: real keyboard/mouse input keeps the session open; with none for the idle timeout
+  // the lock screen shows, whatever background polls run.
+  useIdleLock();
 
   if (appStatus === "loading") {
     return (
