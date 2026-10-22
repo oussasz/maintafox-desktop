@@ -21,7 +21,7 @@ pub fn normalize_currency_code(value: &str) -> AppResult<String> {
     let code = value.trim().to_uppercase();
     if code.len() != 3 || !code.chars().all(|c| c.is_ascii_uppercase()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Currency code '{}' is not an ISO 4217 code (three letters, e.g. EUR).",
+            "GATE_FIN_CURRENCY_CODE_INVALID: Currency code '{}' is not an ISO 4217 code (three letters, e.g. EUR).",
             value.trim()
         )]));
     }
@@ -92,7 +92,8 @@ pub async fn tenant_currency<C: ConnectionTrait>(db: &C) -> AppResult<String> {
     let raw: Option<String> = row.and_then(|r| r.try_get("", "setting_value_json").ok());
     let Some(raw) = raw else {
         return Err(AppError::ValidationFailed(vec![
-            "The tenant currency is not configured (Settings › Localization).".to_string(),
+            "GATE_FIN_TENANT_CURRENCY_MISSING: The tenant currency is not configured (Settings › Localization)."
+                .to_string(),
         ]));
     };
     let parsed: String = serde_json::from_str(&raw).unwrap_or(raw);
@@ -218,7 +219,7 @@ pub async fn create_rate(
     }
     if !input.rate.is_finite() || input.rate <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "The rate must be greater than 0.".to_string()
+            "GATE_FIN_RATE_POSITIVE: The rate must be greater than 0.".to_string(),
         ]));
     }
     parse_iso_date(&input.valid_from, "valid_from")?;

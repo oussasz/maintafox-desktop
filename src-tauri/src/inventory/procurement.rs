@@ -72,7 +72,7 @@ async fn ensure_article_active<C: ConnectionTrait>(db: &C, article_id: i64) -> A
     let is_active: i64 = row.try_get("", "is_active")?;
     if is_active == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Stock mutation rejected: article is inactive.".to_string(),
+            "GATE_INV_ARTICLE_INACTIVE: Stock mutation rejected: article is inactive.".to_string(),
         ]));
     }
     Ok(())
@@ -99,7 +99,7 @@ async fn ensure_location_active<C: ConnectionTrait>(db: &C, location_id: i64) ->
     let warehouse_active: i64 = row.try_get("", "warehouse_active")?;
     if location_active == 0 || warehouse_active == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Stock mutation rejected: location or warehouse is inactive.".to_string(),
+            "GATE_INV_LOCATION_INACTIVE: Stock mutation rejected: location or warehouse is inactive.".to_string(),
         ]));
     }
     Ok(row.try_get("", "warehouse_id")?)
@@ -122,13 +122,13 @@ async fn ensure_supplier_active<C: ConnectionTrait>(db: &C, supplier_id: i64) ->
     let is_active: i64 = row.try_get("", "is_active")?;
     if is_active == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Selected supplier is inactive.".to_string()
+            "GATE_SUPPLIER_INACTIVE: Selected supplier is inactive.".to_string(),
         ]));
     }
     let status_code: String = row.try_get("", "status_code")?;
     if status_code == "BLOCKED" {
         return Err(AppError::ValidationFailed(vec![
-            "Selected supplier is BLOCKED and cannot be used on purchase orders.".to_string(),
+            "GATE_SUPPLIER_BLOCKED: Selected supplier is BLOCKED and cannot be used on purchase orders.".to_string(),
         ]));
     }
     Ok(())
@@ -215,7 +215,7 @@ async fn upsert_balance<C: ConnectionTrait>(
         (on_hand_qty, reserved_qty),
     ) {
         return Err(AppError::ValidationFailed(vec![
-            "Stock invariants violated (negative on-hand/reserved/available).".to_string(),
+            "GATE_INV_NEGATIVE_STOCK: Stock invariants violated (negative on-hand/reserved/available).".to_string(),
         ]));
     }
     db.execute(Statement::from_sql_and_values(
@@ -335,7 +335,7 @@ pub async fn create_procurement_requisition(
 ) -> AppResult<ProcurementRequisition> {
     if input.requested_qty <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "requested_qty must be greater than zero.".to_string(),
+            "GATE_INV_QTY_POSITIVE: requested_qty must be greater than zero.".to_string(),
         ]));
     }
     ensure_lookup_code_active(db, PROC_STATUS_DOMAIN, "DRAFT").await?;
@@ -453,7 +453,7 @@ pub async fn transition_procurement_requisition(
     let row_version: i64 = row.try_get("", "row_version")?;
     if row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Requisition row_version mismatch.".to_string()
+            "GATE_RECORD_CHANGED_ELSEWHERE: Requisition row_version mismatch.".to_string(),
         ]));
     }
     guard_transition(
@@ -477,7 +477,7 @@ pub async fn transition_procurement_requisition(
         let reason = input.reason.as_deref().map(str::trim).unwrap_or("");
         if reason.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "Rejection reason is required.".to_string()
+                "GATE_PROC_REJECTION_REASON: Rejection reason is required.".to_string(),
             ]));
         }
     }
@@ -592,7 +592,7 @@ pub async fn create_purchase_order_from_requisition(
     let req = get_procurement_requisition(db, input.requisition_id).await?;
     if req.status != "APPROVED" {
         return Err(AppError::ValidationFailed(vec![
-            "Requisition must be APPROVED before creating a PO.".to_string(),
+            "GATE_REQ_NOT_APPROVED: Requisition must be APPROVED before creating a PO.".to_string(),
         ]));
     }
     // PO currency: chosen currency, else the supplier's, else the tenant currency (stored NULL).
@@ -804,7 +804,7 @@ pub async fn transition_purchase_order(
     let row_version: i64 = row.try_get("", "row_version")?;
     if row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Purchase order row_version mismatch.".to_string()
+            "GATE_RECORD_CHANGED_ELSEWHERE: Purchase order row_version mismatch.".to_string(),
         ]));
     }
     guard_transition(
@@ -895,7 +895,7 @@ pub async fn receive_purchase_order_goods(
     let po = get_purchase_order(db, input.purchase_order_id).await?;
     if po.status != "APPROVED" && po.status != "PARTIALLY_RECEIVED" {
         return Err(AppError::ValidationFailed(vec![
-            "PO must be APPROVED or PARTIALLY_RECEIVED before receiving goods.".to_string(),
+            "GATE_PO_NOT_RECEIVABLE: PO must be APPROVED or PARTIALLY_RECEIVED before receiving goods.".to_string(),
         ]));
     }
     let posting_date = crate::inventory::periods::resolve_posting_date(db, input.posting_date.as_deref()).await?;
@@ -909,7 +909,7 @@ pub async fn receive_purchase_order_goods(
         (Some(_), Some(rate)) => {
             if !rate.is_finite() || rate <= 0.0 {
                 return Err(AppError::ValidationFailed(vec![
-                    "The exchange rate must be greater than 0.".to_string(),
+                    "GATE_FIN_RATE_POSITIVE: The exchange rate must be greater than 0.".to_string(),
                 ]));
             }
             (rate, crate::inventory::fx::RATE_SOURCE_ENTERED)
@@ -1007,7 +1007,7 @@ pub async fn receive_purchase_order_goods(
         let current_received_qty: f64 = po_line_row.try_get("", "received_qty")?;
         if current_received_qty + received_qty > ordered_qty + 1e-6 {
             return Err(AppError::ValidationFailed(vec![
-                "Receiving quantity exceeds ordered quantity.".to_string(),
+                "GATE_INV_RECEIVE_OVER_ORDERED: Receiving quantity exceeds ordered quantity.".to_string(),
             ]));
         }
 
@@ -1112,7 +1112,7 @@ pub async fn receive_purchase_order_goods(
                 for lot in &lots {
                     if lot.quantity <= 0.0 {
                         return Err(AppError::ValidationFailed(vec![
-                            "Each lot quantity must be greater than 0.".to_string(),
+                            "GATE_INV_QTY_POSITIVE: Each lot quantity must be greater than 0.".to_string(),
                         ]));
                     }
                     if tracking.serial && (lot.quantity - 1.0).abs() > 1e-9 {
@@ -1137,7 +1137,8 @@ pub async fn receive_purchase_order_goods(
             } else {
                 if line.lots.as_ref().is_some_and(|l| !l.is_empty()) {
                     return Err(AppError::ValidationFailed(vec![
-                        "This article is not lot-tracked; receive it without lots.".to_string(),
+                        "GATE_INV_NOT_LOT_TRACKED: This article is not lot-tracked; receive it without lots."
+                            .to_string(),
                     ]));
                 }
                 portions.push((None, accepted_qty));
@@ -1330,7 +1331,7 @@ pub async fn create_repairable_order(
 ) -> AppResult<RepairableOrder> {
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "Repairable quantity must be greater than zero.".to_string(),
+            "GATE_INV_QTY_POSITIVE: Repairable quantity must be greater than zero.".to_string(),
         ]));
     }
     ensure_lookup_code_active(db, REPAIRABLE_STATUS_DOMAIN, "REQUESTED").await?;
@@ -1412,7 +1413,7 @@ pub async fn transition_repairable_order(
     let row_version: i64 = row.try_get("", "row_version")?;
     if row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Repairable order row_version mismatch.".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Repairable order row_version mismatch.".to_string(),
         ]));
     }
     guard_transition(
@@ -1450,7 +1451,7 @@ pub async fn transition_repairable_order(
         let before = get_balance_snapshot(&tx, article_id, warehouse_id, source_location_id).await?;
         if before.on_hand - before.reserved < quantity {
             return Err(AppError::ValidationFailed(vec![
-                "Insufficient available stock to release repairable.".to_string(),
+                "GATE_INV_INSUFFICIENT_STOCK: Insufficient available stock to release repairable.".to_string(),
             ]));
         }
         upsert_balance(
@@ -1478,10 +1479,11 @@ pub async fn transition_repairable_order(
         .await?;
     }
     if input.next_status == "RETURNED_FROM_REPAIR" {
-        let target_location_id = input
-            .return_location_id
-            .or(current_return_location_id)
-            .ok_or_else(|| AppError::ValidationFailed(vec!["return_location_id is required on return.".to_string()]))?;
+        let target_location_id = input.return_location_id.or(current_return_location_id).ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_RETURN_LOCATION_REQUIRED: return_location_id is required on return.".to_string(),
+            ])
+        })?;
         let warehouse_id = ensure_location_active(&tx, target_location_id).await?;
         let before = get_balance_snapshot(&tx, article_id, warehouse_id, target_location_id).await?;
         upsert_balance(
@@ -1545,14 +1547,16 @@ pub async fn transition_repairable_order(
     if input.next_status == "SCRAPPED" && current_status == "RETURNED_FROM_REPAIR" {
         let target_location_id = input.return_location_id.or(current_return_location_id).ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "return_location_id is required to scrap a returned repairable.".to_string()
+                "GATE_INV_RETURN_LOCATION_REQUIRED: return_location_id is required to scrap a returned repairable."
+                    .to_string(),
             ])
         })?;
         let warehouse_id = ensure_location_active(&tx, target_location_id).await?;
         let before = get_balance_snapshot(&tx, article_id, warehouse_id, target_location_id).await?;
         if before.on_hand < quantity {
             return Err(AppError::ValidationFailed(vec![
-                "Insufficient on-hand stock at return location to scrap repairable.".to_string(),
+                "GATE_INV_INSUFFICIENT_STOCK: Insufficient on-hand stock at return location to scrap repairable."
+                    .to_string(),
             ]));
         }
         upsert_balance(
@@ -2475,7 +2479,7 @@ async fn validate_requisition_lines<C: ConnectionTrait>(
     for line in lines {
         if !line.requested_qty.is_finite() || line.requested_qty <= 0.0 {
             return Err(AppError::ValidationFailed(vec![
-                "Every line needs a quantity greater than zero.".to_string(),
+                "GATE_INV_QTY_POSITIVE: Every line needs a quantity greater than zero.".to_string(),
             ]));
         }
         if let Some(cost) = line.estimated_unit_cost {
@@ -2601,12 +2605,12 @@ pub async fn replace_requisition_lines(
     let req = get_procurement_requisition(db, input.requisition_id).await?;
     if req.status != "DRAFT" {
         return Err(AppError::ValidationFailed(vec![
-            "Lines can only be changed while the requisition is a draft.".to_string(),
+            "GATE_REQ_DRAFT_ONLY: Lines can only be changed while the requisition is a draft.".to_string(),
         ]));
     }
     if req.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Requisition row_version mismatch.".to_string()
+            "GATE_RECORD_CHANGED_ELSEWHERE: Requisition row_version mismatch.".to_string(),
         ]));
     }
     validate_requisition_lines(db, &input.lines).await?;
@@ -2649,7 +2653,7 @@ pub async fn set_purchase_order_line_price(
     if let Some(price) = unit_price {
         if !price.is_finite() || price < 0.0 {
             return Err(AppError::ValidationFailed(vec![
-                "The unit price must be 0 or more.".to_string()
+                "GATE_INV_PRICE_NEGATIVE: The unit price must be 0 or more.".to_string(),
             ]));
         }
     }
@@ -2669,7 +2673,7 @@ pub async fn set_purchase_order_line_price(
     let status: String = row.try_get("", "status")?;
     if status != "DRAFT" {
         return Err(AppError::ValidationFailed(vec![
-            "Prices can only be changed while the purchase order is a draft.".to_string(),
+            "GATE_PO_DRAFT_ONLY: Prices can only be changed while the purchase order is a draft.".to_string(),
         ]));
     }
     db.execute(Statement::from_sql_and_values(

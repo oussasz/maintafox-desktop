@@ -58,7 +58,7 @@ pub async fn issue_stock_with_source(
 ) -> AppResult<IssueOutcome> {
     if !request.quantity.is_finite() || request.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "The issued quantity must be greater than 0.".to_string(),
+            "GATE_INV_QTY_POSITIVE: The issued quantity must be greater than 0.".to_string(),
         ]));
     }
     let converted = crate::inventory::unit_conversions::to_stock_quantity(
@@ -71,7 +71,7 @@ pub async fn issue_stock_with_source(
     let stock_quantity = converted.stock_quantity;
     if stock_quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "The issued quantity must be greater than 0.".to_string(),
+            "GATE_INV_QTY_POSITIVE: The issued quantity must be greater than 0.".to_string(),
         ]));
     }
     let tracking = lots::article_tracking(db, request.article_id).await?;
@@ -122,7 +122,7 @@ pub async fn issue_stock_with_source(
             let (code, status) = work_order_code(&tx, work_order_id).await?;
             if !PARTS_OPEN_WO_STATUSES.contains(&status.as_str()) {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Work order {code} is not open for parts (status: {status})."
+                    "GATE_INV_WO_NOT_OPEN: Work order {code} is not open for parts (status: {status})."
                 )]));
             }
             let reservation_id = queries::reserve_stock_in(
@@ -157,7 +157,7 @@ pub async fn issue_stock_with_source(
     } else {
         if request.lot_id.is_some() {
             return Err(AppError::ValidationFailed(vec![
-                "This article is not lot-tracked; issue it without a lot.".to_string(),
+                "GATE_INV_NOT_LOT_TRACKED: This article is not lot-tracked; issue it without a lot.".to_string(),
             ]));
         }
         vec![(None, stock_quantity)]

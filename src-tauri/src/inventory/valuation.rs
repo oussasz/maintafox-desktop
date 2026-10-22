@@ -195,7 +195,7 @@ pub const COST_SOURCE_MOVING_AVG: &str = "MOVING_AVG";
 pub fn validate_unit_cost(unit_cost: f64) -> AppResult<()> {
     if !unit_cost.is_finite() || unit_cost < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "unit_cost must be a number greater than or equal to 0.".to_string(),
+            "GATE_INV_PRICE_NEGATIVE: unit_cost must be a number greater than or equal to 0.".to_string(),
         ]));
     }
     Ok(())
