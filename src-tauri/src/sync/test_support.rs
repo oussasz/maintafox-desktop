@@ -62,7 +62,25 @@ pub(crate) async fn started_file_db(path: &std::path::Path) -> DatabaseConnectio
 }
 
 async fn prepare_started(db: &DatabaseConnection) {
-    crate::migrations::Migrator::up(db, None).await.expect("migrations");
+    prepare_started_up_to(db, None).await;
+}
+
+/// A database as the startup of an earlier version leaves it: every migration registered before
+/// the one named `migration` (looked up by name, so later migrations do not shift it), then the
+/// startup seeders and capture. For upgrade tests (run the rest with `Migrator::up(db, None)`).
+pub(crate) async fn started_db_before_migration(migration: &str) -> DatabaseConnection {
+    use sea_orm_migration::MigrationName;
+    let db = crate::db::test_db::empty_memory_db().await;
+    let steps = crate::migrations::Migrator::migrations()
+        .iter()
+        .position(|m| m.name() == migration)
+        .unwrap_or_else(|| panic!("migration {migration} is not registered"));
+    prepare_started_up_to(&db, Some(u32::try_from(steps).expect("steps"))).await;
+    db
+}
+
+async fn prepare_started_up_to(db: &DatabaseConnection, steps: Option<u32>) {
+    crate::migrations::Migrator::up(db, steps).await.expect("migrations");
     crate::db::seeder::seed_system_data(db).await.expect("system seed");
     crate::wo::types::ensure_work_order_type_catalog(db)
         .await
