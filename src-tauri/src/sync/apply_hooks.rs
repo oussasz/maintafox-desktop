@@ -35,7 +35,11 @@
 //!   again on the received state; a failed rule is a conflict, a permit type or status not applied
 //!   yet makes the row wait (`permit::sync_check`);
 //!   A work order whose permit flag set by a plant rule is cleared names who cleared it (holding the
-//!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`);
+//!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`); so
+//!   does one whose requirement came from a request flagged "sécurité" (`permit_from_safety_di`,
+//!   migration 255: the right at its site), and that origin is never turned off by a received row;
+//! - `work_orders`: after the insert of a work order new here, its source request flagged
+//!   "sécurité" gives it that origin when the sending PC had no such column (`after_upsert`);
 //! - `permit_types`: a change of the three-person lock-removal setting, or a switch-off of the
 //!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
 //!   here), when and why; the shipped LOTO type's isolation rule is never switched off
@@ -428,6 +432,25 @@ pub(crate) async fn after_upsert(
                 .await?
                 .ok_or_else(|| hook_err(layout.table(), "occurrence not found after insert"))?;
             crate::pm::version_clash::after_received_occurrence(conn, id).await
+        }
+        // A work order new here, from a request flagged "sécurité", carries that origin of its permit
+        // requirement (migration 255) even when the PC that sent it had no such column (it was then
+        // judged with that origin, `permit::sync_check::inbound_permit_rule_check`). Only ever set,
+        // never cleared: the protected side.
+        "work_orders" if inserted => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "work order not found after insert"))?;
+            conn.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "UPDATE work_orders SET permit_from_safety_di = 1 \
+                  WHERE id = ? AND permit_from_safety_di = 0 AND EXISTS ( \
+                    SELECT 1 FROM intervention_requests ir \
+                     WHERE ir.id = work_orders.source_di_id AND ir.safety_flag = 1)",
+                [id.into()],
+            ))
+            .await?;
+            Ok(())
         }
         "user_dismissals" => {
             let id = located_row_id(conn, layout, row)

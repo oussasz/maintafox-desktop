@@ -2309,17 +2309,26 @@ async fn wo_children(
     children(conn, table, "work_orders", col, key, wo_sync).await
 }
 
-/// Re-check of the permit flag a plant rule set on a work order (`wo::workflow::actions::
-/// permit_requirement`): a received work order whose rule-set flag is cleared (`requires_permit` 0,
-/// `permit_rule_code` set) says who cleared it, when and why (10 characters or more), before its
-/// execution started, and that person holds the permit-issue right here. A person not applied here
-/// yet makes it wait. A state already held here (same clearing) passes. A different complete clearing
-/// received over one recorded here is judged the same way; a removed or partial one is refused.
+/// Re-check of a protected permit requirement of a work order (`wo::workflow::actions::
+/// permit_requirement`): the flag a plant rule set (`permit_rule_code`), or the requirement carried
+/// from a request flagged "sécurité" (`permit_from_safety_di`, migration 255). A received work order
+/// whose protected requirement is cleared (`requires_permit` 0) says who cleared it, when and why (10
+/// characters or more), before its execution started, and that person holds the permit-issue right
+/// here (plant-wide for a rule, at the work order's site for a safety request:
+/// `permit_requirement::may_clear_protected_requirement`). A person not applied here yet makes it
+/// wait. A state already held here (same clearing) passes. A different complete clearing received
+/// over one recorded here is judged the same way; a removed or partial one is refused.
+///
+/// Both origins are written once, at conversion: a received row that blanks or changes the rule, or
+/// turns the safety origin off, is refused. A work order new here sent by a PC without migration 255
+/// (no `permit_from_safety_di` in the row) is judged with the safety flag of its source request here,
+/// and gets that origin when it is applied (`sync::apply_hooks::after_upsert`).
 pub(crate) async fn inbound_permit_rule_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
+    use crate::wo::workflow::actions::permit_requirement::{self as requirement, ProtectedOrigin};
     let local = local_wire(conn, "work_orders", entity_sync_id).await?;
     let wo = overlay(local.as_ref(), received);
     let code = field(&wo, "code").unwrap_or(entity_sync_id).to_string();
@@ -2339,9 +2348,37 @@ pub(crate) async fn inbound_permit_rule_check(
             );
         }
     }
-    if field(&wo, "permit_rule_code").is_none() {
-        return Ok(None);
+    // The safety origin is written once too: never turned off by a received row (a row without the
+    // field keeps the value held here).
+    if local.as_ref().is_some_and(|l| flag(l, SAFETY_ORIGIN)) && !flag(&wo, SAFETY_ORIGIN) {
+        return conflict(
+            "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
+            format!(
+                "work order {code}: the safety request its permit requirement comes from cannot be removed by \
+                 synchronisation"
+            ),
+        );
     }
+    let mut safety_origin = flag(&wo, SAFETY_ORIGIN);
+    if !safety_origin && local.is_none() && !received.contains_key(SAFETY_ORIGIN) {
+        match source_request_is_safety(conn, &wo).await? {
+            Some(flagged) => safety_origin = flagged,
+            None => {
+                return wait(format!(
+                    "work order {code}: the request it was converted from is not applied yet"
+                ))
+            }
+        }
+    }
+    let origin = match field(&wo, "permit_rule_code") {
+        Some(rule) => ProtectedOrigin::Rule(rule.to_string()),
+        None if safety_origin => ProtectedOrigin::SafetyRequest,
+        None => return Ok(None),
+    };
+    let required_by = match origin {
+        ProtectedOrigin::Rule(_) => "a plant rule",
+        ProtectedOrigin::SafetyRequest => "a request flagged as a safety concern",
+    };
     let clearing = |p: &Payload| {
         [
             field(p, "permit_rule_cleared_by_sync_id").map(str::to_string),
@@ -2365,11 +2402,14 @@ pub(crate) async fn inbound_permit_rule_check(
     {
         return conflict(
             "WO_PERMIT_RULE_CLEAR_INVALID",
-            format!("work order {code}: the clearing of its rule permit flag recorded here cannot be removed or partly rewritten"),
+            format!(
+                "work order {code}: the clearing of its permit requirement (required by {required_by}) recorded \
+                 here cannot be removed or partly rewritten"
+            ),
         );
     }
     if !clearing_changed {
-        // Still flagged: the flag is in force (the start gate judges it).
+        // Still required: the requirement is in force (the start gate judges it).
         if flag(&wo, "requires_permit") {
             return Ok(None);
         }
@@ -2383,7 +2423,7 @@ pub(crate) async fn inbound_permit_rule_check(
                 return conflict(
                     "WO_PERMIT_RULE_CLEAR_INVALID",
                     format!(
-                        "work order {code}: the permit required by a plant rule was cleared after its execution \
+                        "work order {code}: the permit required by {required_by} was cleared after its execution \
                          started (the received start is before the clearing recorded here)"
                     ),
                 );
@@ -2394,11 +2434,11 @@ pub(crate) async fn inbound_permit_rule_check(
     let invalid = |why: &str| {
         conflict(
             "WO_PERMIT_RULE_CLEAR_INVALID",
-            format!("work order {code}: the permit required by a plant rule was cleared {why}"),
+            format!("work order {code}: the permit required by {required_by} was cleared {why}"),
         )
     };
     let reason_ok = field(&wo, "permit_rule_clear_reason")
-        .is_some_and(|r| r.chars().count() >= crate::wo::workflow::actions::permit_requirement::MIN_CLEAR_REASON_CHARS);
+        .is_some_and(|r| r.chars().count() >= requirement::MIN_CLEAR_REASON_CHARS);
     let Some(cleared_at) = time(&wo, "permit_rule_cleared_at") else {
         return invalid("without the time it was cleared");
     };
@@ -2428,35 +2468,62 @@ pub(crate) async fn inbound_permit_rule_check(
     let Some(clearer_sync) = field(&wo, "permit_rule_cleared_by_sync_id") else {
         return invalid("without saying who cleared it");
     };
-    let Some(clearer) = conn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM user_accounts WHERE entity_sync_id = ?",
-            [clearer_sync.into()],
-        ))
-        .await?
-        .map(|r| r.try_get::<i64>("", "id").map_err(sync_err))
-        .transpose()?
-    else {
+    let Some(clearer) = local_user(conn, clearer_sync).await? else {
         return wait(format!(
-            "work order {code}: the person who cleared its permit flag is not applied yet"
+            "work order {code}: the person who cleared its permit requirement is not applied yet"
         ));
     };
-    if !crate::settings::site::holds_tenant_right(conn, clearer, crate::rbac::permissions::PTW_ISSUE).await? {
+    // The work order's site here (its org node, `entity_id`, sent as `entity_sync_id`).
+    let site_sync = field(&wo, "entity_sync_id");
+    let site = match site_sync {
+        Some(node) => local_id(conn, "org_nodes", node).await?,
+        None => None,
+    };
+    if !requirement::may_clear_protected_requirement(conn, clearer, &origin, site).await? {
+        if origin == ProtectedOrigin::SafetyRequest && site.is_none() {
+            if let Some(node) = site_sync {
+                return wait(format!("work order {code}: its site {node} is not applied yet"));
+            }
+        }
         // The right is held on the PC that cleared it before the clearing, so its rows come before
         // this one: while some are still waiting here, wait; otherwise refuse (never applied without
         // the right).
         if rights_may_still_arrive(conn, clearer_sync, crate::rbac::permissions::PTW_ISSUE).await? {
             return wait(format!(
-                "work order {code}: the rights of the person who cleared its permit flag are still arriving"
+                "work order {code}: the rights of the person who cleared its permit requirement are still arriving"
             ));
         }
+        let right_where = match origin {
+            ProtectedOrigin::Rule(_) => "the permit-issue right here",
+            ProtectedOrigin::SafetyRequest => "the permit-issue right at its site here",
+        };
         return conflict(
             "WO_PERMIT_RULE_CLEAR_UNAUTHORISED",
-            format!("work order {code}: the permit required by a plant rule was cleared by someone without the permit-issue right here"),
+            format!(
+                "work order {code}: the permit required by {required_by} was cleared by someone without {right_where}"
+            ),
         );
     }
     Ok(None)
+}
+
+/// The column that records a permit requirement carried from a request flagged "sécurité".
+const SAFETY_ORIGIN: &str = "permit_from_safety_di";
+
+/// Whether the source request of a received work order (`source_di_sync_id`) is flagged "sécurité"
+/// here: `Some(false)` when it has none, `None` when it is not applied here yet.
+async fn source_request_is_safety(conn: &impl ConnectionTrait, wo: &Payload) -> AppResult<Option<bool>> {
+    let Some(di_sync) = field(wo, "source_di_sync_id") else {
+        return Ok(Some(false));
+    };
+    conn.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT safety_flag FROM intervention_requests WHERE entity_sync_id = ?",
+        [di_sync.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<i64>("", "safety_flag").map(|f| f != 0).map_err(sync_err))
+    .transpose()
 }
 
 /// Whether rows that could give `user_sync_id` the right `permission` are still waiting in the inbox

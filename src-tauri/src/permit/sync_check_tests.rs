@@ -5762,3 +5762,260 @@ async fn a_removal_verified_before_the_update_is_held_for_review_and_the_lock_st
     let err = set_status(&db, &wp, "closed").await.expect_err("lock still fitted");
     assert!(format!("{err:?}").contains("PERMIT_REMOVAL_PENDING"), "{err:?}");
 }
+
+// ── A permit requirement carried from a request flagged "sécurité" (migration 255, AU-01, D1) ──
+
+/// An account holding `ptw.issue` on the org node `site` only (a permanent role); its sync id.
+async fn site_permit_issuer(db: &DatabaseConnection, username: &str, site: i64) -> String {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+             force_password_change, created_at, updated_at) VALUES ('{username}-sync', '{username}', '{username}', \
+             'local', 1, 0, 0, datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+    let user: i64 = text(
+        db,
+        &format!("SELECT CAST(id AS TEXT) FROM user_accounts WHERE username = '{username}'"),
+    )
+    .await
+    .expect("user")
+    .parse()
+    .expect("id");
+    let role =
+        crate::auth::scope_tests::role(db, &format!("SO {username}"), &[crate::rbac::permissions::PTW_ISSUE]).await;
+    crate::auth::scope_tests::assign(db, i32::try_from(user).expect("id"), role, "org_node", Some(site)).await;
+    format!("{username}-sync")
+}
+
+/// A work order whose permit requirement comes from a safety request, as this PC holds it, and its
+/// sync id.
+async fn safety_origin_wo(db: &DatabaseConnection, equipment_code: &str) -> (i64, String) {
+    let asset = insert_equipment(db, equipment_code).await;
+    let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+    exec(
+        db,
+        &format!("UPDATE work_orders SET permit_from_safety_di = 1, requires_permit = 1 WHERE id = {wo_id}"),
+    )
+    .await;
+    let wo_sync = text(
+        db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    (wo_id, wo_sync)
+}
+
+async fn requires_permit(db: &DatabaseConnection, wo_id: i64) -> Option<String> {
+    text(
+        db,
+        &format!("SELECT CAST(requires_permit AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+}
+
+/// A received work order that clears a requirement carried from a safety request says who cleared
+/// it (with the permit-issue right at its site here), when and why — as a plant rule's flag.
+#[tokio::test]
+async fn a_cleared_safety_request_requirement_is_rechecked() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-1").await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+    assert_eq!(
+        held.get("permit_from_safety_di"),
+        Some(&json!(1)),
+        "the origin travels with the row"
+    );
+    let cleared = |by: Value, at: Value, reason: Value| {
+        with(
+            held.clone(),
+            &[
+                ("requires_permit", json!(0)),
+                ("permit_rule_cleared_by_sync_id", by),
+                ("permit_rule_cleared_at", at),
+                ("permit_rule_clear_reason", reason),
+            ],
+        )
+    };
+    let reason = json!("Inspection visuelle seulement");
+    let admin = json!(user_sync(&db, APPLIER).await);
+
+    // Cleared by the general edit of another PC: no who, when or why.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(held.clone(), &[("requires_permit", json!(0))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    for (what, payload) in [
+        ("no reason", cleared(admin.clone(), json!(now()), Value::Null)),
+        ("short reason", cleared(admin.clone(), json!(now()), json!("court"))),
+        ("no time", cleared(admin.clone(), Value::Null, reason.clone())),
+        ("no person", cleared(Value::Null, json!(now()), reason.clone())),
+    ] {
+        let outcome = apply(&db, "work_orders", &wo_sync, &payload).await;
+        assert_eq!(
+            code(&outcome),
+            Some("WO_PERMIT_RULE_CLEAR_INVALID"),
+            "{what}: {outcome:?}"
+        );
+    }
+    // Someone without the permit-issue right; someone holding it at another site only.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!(user_sync(&db, VERIFIER).await), json!(now()), reason.clone()),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    exec(
+        &db,
+        "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, \
+         updated_at, structure_model_id) VALUES (2, 'so-node-2', 'SO-SITE-2', 'Site 2', 1, 'active', \
+         datetime('now'), datetime('now'), 1)",
+    )
+    .await;
+    let elsewhere = site_permit_issuer(&db, "so_issuer_2", 2).await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!(elsewhere), json!(now()), reason.clone()),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    // A person not applied here yet: waits.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!("user-not-here"), json!(now()), reason.clone()),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    assert_eq!(
+        requires_permit(&db, wo_id).await.as_deref(),
+        Some("1"),
+        "nothing applied"
+    );
+
+    // The permit-issue right at the work order's site, who / when / why: applied.
+    let issuer = site_permit_issuer(&db, "so_issuer_1", 1).await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!(issuer), json!(now()), reason.clone()),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(requires_permit(&db, wo_id).await.as_deref(), Some("0"));
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(permit_from_safety_di AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "the origin stays on record"
+    );
+}
+
+/// The safety origin is never turned off by a received row; a row without the column (a PC without
+/// migration 255) keeps the value held here, so its general-edit clearing is refused too.
+#[tokio::test]
+async fn the_safety_origin_is_never_removed_by_sync() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-2").await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+
+    for payload in [
+        with(held.clone(), &[("permit_from_safety_di", json!(0))]),
+        with(
+            held.clone(),
+            &[("permit_from_safety_di", json!(0)), ("requires_permit", json!(0))],
+        ),
+        with(held.clone(), &[("permit_from_safety_di", Value::Null)]),
+    ] {
+        let outcome = apply(&db, "work_orders", &wo_sync, &payload).await;
+        assert_eq!(code(&outcome), Some("WO_PERMIT_SAFETY_ORIGIN_CHANGED"), "{outcome:?}");
+    }
+
+    let mut old_pc = with(held.clone(), &[("requires_permit", json!(0))]);
+    old_pc.remove("permit_from_safety_di");
+    let outcome = apply(&db, "work_orders", &wo_sync, &old_pc).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    assert_eq!(requires_permit(&db, wo_id).await.as_deref(), Some("1"));
+
+    // A row of that PC that leaves the requirement alone is applied, and the origin is kept.
+    let mut old_pc = with(held, &[("title", json!("Replace breaker (updated)"))]);
+    old_pc.remove("permit_from_safety_di");
+    let outcome = apply(&db, "work_orders", &wo_sync, &old_pc).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(permit_from_safety_di AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
+
+/// A work order new here, converted from a safety request on a PC without migration 255: judged with
+/// the safety flag of its request here, and it gets that origin when applied.
+#[tokio::test]
+async fn a_new_work_order_from_an_older_pc_takes_the_safety_origin_of_its_request() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-3").await;
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    let di = crate::sync::test_support::RowFactory::new()
+        .create(&db, "intervention_requests")
+        .await
+        .expect("request");
+    exec(
+        &db,
+        &format!(
+            "UPDATE intervention_requests SET safety_flag = 1 WHERE id = {}",
+            di.rowid
+        ),
+    )
+    .await;
+    let new_row = |code: &str, requires: i64| {
+        let mut p = with(
+            template.clone(),
+            &[
+                ("code", json!(code)),
+                ("source_di_sync_id", json!(di.entity_sync_id.clone())),
+                ("requires_permit", json!(requires)),
+            ],
+        );
+        p.remove("permit_from_safety_di");
+        p
+    };
+
+    // Already cleared there by the general edit: refused, never applied silently.
+    let outcome = apply(&db, "work_orders", "wo-older-pc-cleared", &new_row("OT-OLD-PC-1", 0)).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+
+    // Still required: applied, and protected here.
+    let outcome = apply(&db, "work_orders", "wo-older-pc-flagged", &new_row("OT-OLD-PC-2", 1)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(permit_from_safety_di AS TEXT) FROM work_orders WHERE entity_sync_id = 'wo-older-pc-flagged'"
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
