@@ -15,7 +15,7 @@ import {
   EntityDetailHeader,
   EntityDetailViewSwitcher,
 } from "@/components/detail";
-import { diStatusToI18nKey } from "@/components/di/status-meta";
+import { knownDiStatusKey } from "@/components/di/status-meta";
 import { PersonScheduleExceptions } from "@/components/personnel/PersonScheduleExceptions";
 import { PersonnelPortrait } from "@/components/personnel/PersonnelPortrait";
 import { PersonCapacityDays } from "@/components/personnel/TeamCapacityDays";
@@ -114,7 +114,11 @@ export function toWorkHistoryEntry(h: PersonnelWorkHistoryEntry, t: Translate): 
     ? "—"
     : h.source_module === "wo"
       ? t(`ot:status.${statusToI18nKey(h.status_code)}`)
-      : t(`di:status.${diStatusToI18nKey(h.status_code)}`);
+      : (() => {
+          const key = knownDiStatusKey(h.status_code);
+          // An unknown code is shown as it is, never relabelled "new".
+          return key ? t(`di:status.${key}`) : h.status_code;
+        })();
   return {
     id: `${h.source_module}-${h.record_id}-${h.role_code}`,
     timestamp: h.happened_at,

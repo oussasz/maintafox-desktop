@@ -28,6 +28,11 @@ describe("work history labels", () => {
     expect(back.subtitle).toContain("di:status.needsClarification");
   });
 
+  it("shows a request status this version does not know as it is, not as 'new'", () => {
+    const e = toWorkHistoryEntry(entry({ status_code: "some_future_status" }), t);
+    expect(e.subtitle).toBe("detail.workHistory.role.submitter · some_future_status");
+  });
+
   it("uses the work-order status vocabulary for a work order", () => {
     const e = toWorkHistoryEntry(
       entry({ source_module: "wo", role_code: "intervener", status_code: "in_progress" }),
