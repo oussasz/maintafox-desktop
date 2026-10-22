@@ -646,3 +646,183 @@ pub(crate) async fn startup_reservation_upkeep(db: &DatabaseConnection) -> (Rese
     }
     (report, errors)
 }
+
+// ── A reservation released on two PCs ──────────────────────────────────────
+//
+// Two PCs that both release the same reservation each change its row and each write its one
+// RELEASE movement (same seeded sync id). The stock is right on both (reserved stock is the
+// ledger projection: the release counts once), but the second PC to synchronise meets a conflict
+// on the row, and on the movement (two creates of the same sync id). When the two versions are
+// both "released" and differ only in who/when, the server's version is adopted (first push wins)
+// and this PC's release is audited (`inventory.reservation.released_twice`); no one has to
+// decide. Any other difference stays a conflict for a person.
+//
+// May differ on the reservation row: `released_at`, `updated_at`, `row_version` and
+// `quantity_issued`. The issued quantity may legitimately differ (one PC issued more before
+// releasing); the converged value is the server's. Reserved stock does not depend on it (ledger
+// projection), and a return checks the issued quantity of the ledger as well
+// (`queries::return_reserved_stock_as`), so nothing issued here is lost.
+// May differ on the release movement: everything but its type, reservation, article, warehouse
+// and location (quantity, time, actor, note): its presence alone counts.
+
+/// Audit action of a release made here that another PC had already sent.
+pub(crate) const RELEASED_TWICE_ACTION: &str = "inventory.reservation.released_twice";
+
+const ROW_MAY_DIFFER: [&str; 4] = ["released_at", "updated_at", "row_version", "quantity_issued"];
+const RELEASE_MUST_MATCH: [&str; 5] = [
+    "movement_type",
+    "reservation_sync_id",
+    "article_sync_id",
+    "warehouse_sync_id",
+    "location_sync_id",
+];
+
+type Payload = serde_json::Map<String, serde_json::Value>;
+
+fn both_released_rows(local: &Payload, server: &Payload) -> bool {
+    let released = |p: &Payload| p.get("status").and_then(serde_json::Value::as_str) == Some("released");
+    if !released(local) || !released(server) {
+        return false;
+    }
+    let keys: std::collections::BTreeSet<&String> = local.keys().chain(server.keys()).collect();
+    keys.into_iter()
+        .filter(|k| !ROW_MAY_DIFFER.contains(&k.as_str()))
+        .all(|k| local.get(k) == server.get(k))
+}
+
+fn same_seeded_release(entity_sync_id: &str, local: &Payload, server: &Payload) -> bool {
+    let is_release = |p: &Payload| p.get("movement_type").and_then(serde_json::Value::as_str) == Some("RELEASE");
+    if !is_release(local) || !is_release(server) {
+        return false;
+    }
+    if !RELEASE_MUST_MATCH.iter().all(|k| local.get(*k) == server.get(*k)) {
+        return false;
+    }
+    // Only the reservation's one release (seeded id): another movement keeps its conflict.
+    local
+        .get("reservation_sync_id")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|r| crate::sync::identity::seeded_entity_sync_id(RELEASE_SEED_ENTITY, r) == entity_sync_id)
+}
+
+/// Settles the open conflict of `entity_type`/`entity_sync_id` when it is a reservation released
+/// on two PCs (see above): the server's version is taken (`sync::conflicts::take_remote_version`),
+/// the entity's open conflicts are closed and, for the reservation row, this PC's release is
+/// audited. Returns true when settled; false leaves the conflict for a person. A failure while
+/// taking the server's version is rolled back to before the attempt and leaves the conflict.
+/// Called where conflicts are recorded (server answer, inbound apply), in their transaction.
+pub(crate) async fn settle_double_release<C: ConnectionTrait>(
+    conn: &C,
+    entity_type: &str,
+    entity_sync_id: &str,
+) -> AppResult<bool> {
+    if entity_type != "stock_reservations" && entity_type != "inventory_transactions" {
+        return Ok(false);
+    }
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT {} FROM sync_conflicts
+                 WHERE entity_type = ? AND entity_sync_id = ? AND status IN ('new', 'triaged', 'escalated')
+                 ORDER BY id DESC LIMIT 1",
+                crate::sync::queries::CONFLICT_COLUMNS
+            ),
+            [entity_type.into(), entity_sync_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(false);
+    };
+    let conflict = crate::sync::queries::to_sync_conflict(&row)?;
+    let parse = |json: &Option<String>| json.as_deref().and_then(|j| serde_json::from_str::<Payload>(j).ok());
+    let (Some(local), Some(server)) = (
+        parse(&conflict.local_payload_json),
+        parse(&conflict.inbound_payload_json),
+    ) else {
+        return Ok(false);
+    };
+    let settles = if entity_type == "stock_reservations" {
+        both_released_rows(&local, &server)
+    } else {
+        same_seeded_release(entity_sync_id, &local, &server)
+    };
+    if !settles {
+        return Ok(false);
+    }
+
+    conn.execute_unprepared("SAVEPOINT reservation_double_release").await?;
+    if crate::sync::conflicts::take_remote_version(conn, &conflict)
+        .await
+        .is_err()
+    {
+        conn.execute_unprepared("ROLLBACK TO reservation_double_release")
+            .await?;
+        conn.execute_unprepared("RELEASE reservation_double_release").await?;
+        return Ok(false);
+    }
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE sync_conflicts
+         SET status = 'resolved_remote', resolution_action = 'auto_double_release',
+             resolution_note = 'Released on two PCs: the version sent first is kept.',
+             resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+             row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         WHERE entity_type = ? AND entity_sync_id = ? AND status IN ('new', 'triaged', 'escalated')",
+        [entity_type.into(), entity_sync_id.into()],
+    ))
+    .await?;
+    if entity_type == "stock_reservations" {
+        let reservation_id: Option<i64> = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM stock_reservations WHERE entity_sync_id = ?",
+                [entity_sync_id.into()],
+            ))
+            .await?
+            .map(|r| r.try_get::<i64>("", "id"))
+            .transpose()?;
+        // Who released it here, when known (the D13 releases are audited with their actor).
+        let released_here_by: Option<i64> = match reservation_id {
+            Some(id) => conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT actor_id FROM audit_events
+                     WHERE target_type = 'stock_reservation' AND target_id = ?
+                       AND action_code LIKE 'inventory.reservation.released%' AND action_code <> ?
+                     ORDER BY id DESC LIMIT 1",
+                    [id.to_string().into(), RELEASED_TWICE_ACTION.into()],
+                ))
+                .await?
+                .and_then(|r| r.try_get::<Option<i64>>("", "actor_id").ok().flatten()),
+            None => None,
+        };
+        crate::audit::writer::write_audit_event_in(
+            conn,
+            crate::audit::writer::AuditEventInput {
+                action_code: RELEASED_TWICE_ACTION.to_string(),
+                target_type: Some("stock_reservation".to_string()),
+                target_id: reservation_id.map(|id| id.to_string()),
+                actor_id: None,
+                auth_context: "system".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "standard".to_string(),
+                details_json: Some(serde_json::json!({
+                    "summary": "Reservation released on this PC after another PC had released it: the version sent first is kept",
+                    "reservation_sync_id": entity_sync_id,
+                    "released_here_at": local.get("released_at"),
+                    "released_here_by": released_here_by,
+                    "quantity_issued_here": local.get("quantity_issued"),
+                    "kept_released_at": server.get("released_at"),
+                    "kept_quantity_issued": server.get("quantity_issued"),
+                    "conflict_type": conflict.conflict_type,
+                })),
+            },
+        )
+        .await?;
+    }
+    conn.execute_unprepared("RELEASE reservation_double_release").await?;
+    Ok(true)
+}

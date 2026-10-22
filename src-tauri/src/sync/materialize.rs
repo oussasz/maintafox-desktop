@@ -546,6 +546,8 @@ async fn apply_inbox_row<C: ConnectionTrait + TransactionTrait>(db: &C, item: &I
                 },
             )
             .await?;
+            // A reservation released on two PCs is settled without a person (`inventory::reservations`).
+            crate::inventory::reservations::settle_double_release(&tx, &item.entity_type, &item.entity_sync_id).await?;
         }
         ApplyOutcome::Applied | ApplyOutcome::Unchanged => {}
     }

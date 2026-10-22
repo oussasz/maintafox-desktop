@@ -1542,3 +1542,188 @@ async fn a_goods_receipt_for_another_article_than_ordered_is_refused() {
         .expect("the ordered article is received");
     assert_eq!(balance(&db, ordered).await.0, 4.0);
 }
+
+// ── A reservation released on two PCs ───────────────────────────────────────
+
+/// Two PCs sharing one reservation (5 reserved), synchronised. Returns (A's reservation id, B's
+/// reservation id, B's article id).
+async fn shared_reservation(
+    server: &mut crate::sync::test_support::TestServer,
+    a: &DatabaseConnection,
+    b: &DatabaseConnection,
+) -> (i64, i64, i64) {
+    let mut factory = crate::sync::test_support::RowFactory::new();
+    let article = factory.create(a, "articles").await.expect("article");
+    let location = factory.create(a, "stock_locations").await.expect("location");
+    exec(
+        a,
+        "UPDATE articles SET requires_serial_tracking = 0, requires_batch_tracking = 0,
+                requires_expiration = 0, is_critical_spare = 0, is_active = 1 WHERE id = ?",
+        vec![article.rowid.into()],
+    )
+    .await;
+    exec(
+        a,
+        "UPDATE stock_locations SET is_active = 1 WHERE id = ?",
+        vec![location.rowid.into()],
+    )
+    .await;
+    exec(
+        a,
+        "UPDATE warehouses SET is_active = 1 WHERE id = (SELECT warehouse_id FROM stock_locations WHERE id = ?)",
+        vec![location.rowid.into()],
+    )
+    .await;
+    queries::adjust_stock(
+        a,
+        InventoryStockAdjustInput {
+            article_id: article.rowid,
+            location_id: location.rowid,
+            delta_qty: 10.0,
+            reason_code: None,
+            notes: Some("stock in".into()),
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("stock in");
+    let on_a = queries::reserve_stock(
+        a,
+        InventoryReserveInput {
+            article_id: article.rowid,
+            location_id: location.rowid,
+            quantity: 5.0,
+            source_type: "MANUAL".into(),
+            source_id: None,
+            source_ref: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("reserve")
+    .id;
+    server.exchange("A", a).await;
+    server.exchange("B", b).await;
+    let sync_id = scalar_text(
+        a,
+        "SELECT entity_sync_id FROM stock_reservations WHERE id = ?",
+        vec![on_a.into()],
+    )
+    .await;
+    let on_b = scalar_i64(
+        b,
+        "SELECT id FROM stock_reservations WHERE entity_sync_id = ?",
+        vec![sync_id.into()],
+    )
+    .await;
+    let article_b = scalar_i64(
+        b,
+        "SELECT id FROM articles WHERE entity_sync_id = ?",
+        vec![article.entity_sync_id.clone().into()],
+    )
+    .await;
+    (on_a, on_b, article_b)
+}
+
+async fn open_conflicts(db: &DatabaseConnection) -> i64 {
+    scalar_i64(
+        db,
+        "SELECT COUNT(*) FROM sync_conflicts
+         WHERE entity_type IN ('stock_reservations', 'inventory_transactions')
+           AND status IN ('new', 'triaged', 'escalated')",
+        vec![],
+    )
+    .await
+}
+
+async fn release_on(db: &DatabaseConnection, reservation_id: i64) {
+    queries::release_stock_reservation(
+        db,
+        InventoryReleaseReservationInput {
+            reservation_id,
+            notes: None,
+        },
+    )
+    .await
+    .expect("release");
+}
+
+/// Both PCs release the same reservation offline; A synchronises first. B's row and its release
+/// movement meet the server's: both released, differing only in who/when, so B takes the
+/// server's version without a person, audits its own release once, and reserved stock is 0 on
+/// both.
+#[tokio::test]
+async fn a_reservation_released_on_two_pcs_is_settled_without_a_conflict() {
+    use crate::inventory::reservations::RELEASED_TWICE_ACTION;
+    let a = crate::sync::test_support::started_device_db().await;
+    let b = crate::sync::test_support::started_device_db().await;
+    let mut server = crate::sync::test_support::TestServer::new();
+    let (on_a, on_b, article_b) = shared_reservation(&mut server, &a, &b).await;
+
+    release_on(&a, on_a).await;
+    release_on(&b, on_b).await;
+    server.exchange("A", &a).await;
+    let report = server.exchange("B", &b).await;
+    assert!(
+        report.materialized.errors.is_empty(),
+        "{:?}",
+        report.materialized.errors
+    );
+
+    assert_eq!(open_conflicts(&b).await, 0, "settled without a person");
+    assert_eq!(reservation_status(&b, on_b).await, "released");
+    let twice = |db: DatabaseConnection| async move {
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = ?",
+            vec![RELEASED_TWICE_ACTION.into()],
+        )
+        .await
+    };
+    assert_eq!(twice(b.clone()).await, 1, "B's release audited once");
+    assert_eq!(twice(a.clone()).await, 0, "A sent first: nothing to settle");
+    let reserved_b: f64 = b
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT reserved_qty FROM stock_balances WHERE article_id = ?",
+            [article_b.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("balance")
+        .try_get("", "reserved_qty")
+        .expect("reserved");
+    assert_eq!(reserved_b, 0.0);
+
+    // Nothing is left to send or to settle on either side.
+    server.exchange("A", &a).await;
+    server.exchange("B", &b).await;
+    assert_eq!(open_conflicts(&a).await, 0);
+    assert_eq!(open_conflicts(&b).await, 0);
+}
+
+/// A real difference stays a conflict: A released the reservation while B issued from it (B's
+/// row is "partial", not released).
+#[tokio::test]
+async fn a_release_against_a_different_change_stays_a_conflict() {
+    let a = crate::sync::test_support::started_device_db().await;
+    let b = crate::sync::test_support::started_device_db().await;
+    let mut server = crate::sync::test_support::TestServer::new();
+    let (on_a, on_b, _) = shared_reservation(&mut server, &a, &b).await;
+
+    release_on(&a, on_a).await;
+    issue(&b, on_b, 1.0).await;
+    server.exchange("A", &a).await;
+    server.exchange("B", &b).await;
+
+    assert!(open_conflicts(&b).await >= 1, "left for a person");
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'inventory.reservation.released_twice'",
+            vec![],
+        )
+        .await,
+        0
+    );
+}

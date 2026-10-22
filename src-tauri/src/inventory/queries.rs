@@ -2697,7 +2697,22 @@ pub async fn return_reserved_stock_as(
     let reservation = load_reservation_by_id(&tx, input.reservation_id).await?;
     ensure_reservation_invariants(&reservation)?;
     ensure_active_mutation_context(&tx, reservation.article_id, reservation.location_id).await?;
-    if reservation.quantity_issued < input.quantity {
+    // Issued quantity: the row's, or the ledger's when it holds more. When two PCs released the
+    // same reservation the row converges on the version sent first, which may not count an issue
+    // made here; that issue's movement is still in the ledger (`inventory::reservations`).
+    let ledger_issued: f64 = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(SUM(CASE movement_type WHEN 'ISSUE' THEN quantity ELSE -quantity END), 0.0) AS issued
+             FROM inventory_transactions WHERE reservation_id = ? AND movement_type IN ('ISSUE', 'RETURN')",
+            [reservation.id.into()],
+        ))
+        .await?
+        .map(|row| row.try_get::<f64>("", "issued"))
+        .transpose()?
+        .unwrap_or(0.0);
+    let issued = reservation.quantity_issued.max(ledger_issued);
+    if issued + 1e-9 < input.quantity {
         return Err(AppError::ValidationFailed(vec![
             "Return quantity exceeds issued quantity.".to_string(),
         ]));
@@ -2720,7 +2735,8 @@ pub async fn return_reserved_stock_as(
     let to_free_stock = reservation.status == "released" || ended.is_some();
 
     let (on_hand, reserved) = get_balance_snapshot(&tx, reservation.article_id, reservation.location_id).await?;
-    let next_issued = reservation.quantity_issued - input.quantity;
+    // Never above the quantity reserved (the reservation's invariant).
+    let next_issued = (issued - input.quantity).clamp(0.0, reservation.quantity_reserved);
     let next_status = if to_free_stock {
         "released"
     } else if next_issued == 0.0 {
