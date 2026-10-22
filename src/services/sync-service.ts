@@ -19,6 +19,7 @@ import type {
   SyncRepairPreviewInput,
   SyncReplayRun,
   SyncStateSummary,
+  SyncWaitingInboxReport,
   SyncWorkerStatus,
   MediaFileState,
 } from "@shared/ipc-types";
@@ -117,8 +118,47 @@ const SyncConflictRecordSchema = z.object({
   row_version: z.number(),
   local_row_version: z.number().nullable(),
   inbound_row_version: z.number().nullable(),
+  detail_message: z.string().nullable().optional().default(null),
+  reason: z
+    .object({
+      code: z.string(),
+      table: z.string().nullable(),
+      columns: z.array(z.string()),
+      rule: z.string().nullable(),
+    })
+    .nullable()
+    .optional()
+    .default(null),
   created_at: z.string(),
   updated_at: z.string(),
+});
+
+const SyncWaitTargetSchema = z.object({
+  state: z.string(),
+  conflict_id: z.number().nullable(),
+  entity_type: z.string().nullable(),
+  entity_sync_id: z.string().nullable(),
+  reason_code: z.string().nullable(),
+});
+
+const SyncWaitingInboxReportSchema = z.object({
+  total: z.number(),
+  groups: z.array(z.object({ target: SyncWaitTargetSchema, count: z.number() })),
+  rows: z.array(
+    z.object({
+      inbox_id: z.number(),
+      entity_type: z.string(),
+      entity_sync_id: z.string(),
+      payload_json: z.string(),
+      reason_code: z.string().nullable(),
+      detail_message: z.string().nullable(),
+      waits_for_entity_type: z.string().nullable(),
+      waits_for_sync_id: z.string().nullable(),
+      target: SyncWaitTargetSchema,
+      attempt_count: z.number(),
+      last_attempt_at: z.string().nullable(),
+    }),
+  ),
 });
 
 const SyncReplayRunSchema = z.object({
@@ -249,6 +289,16 @@ export async function listInboxItems(
     return z.array(SyncInboxItemSchema).parse(result) as SyncInboxItem[];
   } catch (err) {
     throw formatDecodeError("list_inbox_items", err);
+  }
+}
+
+/** The received rows that wait, each with what it waits for, counted by it (`sync::waiting`). */
+export async function listWaitingInboxRows(limit?: number): Promise<SyncWaitingInboxReport> {
+  try {
+    const result = await invoke<unknown>("list_waiting_inbox_rows", { limit: limit ?? null });
+    return SyncWaitingInboxReportSchema.parse(result) as SyncWaitingInboxReport;
+  } catch (err) {
+    throw formatDecodeError("list_waiting_inbox_rows", err);
   }
 }
 

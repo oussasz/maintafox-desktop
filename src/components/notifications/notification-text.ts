@@ -48,6 +48,9 @@ export const MESSAGE_KEYS = [
   "three_person_received_off",
   // A lock taken off by a forced removal (permit close-right holders of the site).
   "loto_forced_removal",
+  // Two concurrent versions of a PM plan, or a due date planned twice by them (PM planners).
+  "pm_concurrent_versions",
+  "pm_duplicate_occurrence",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;
