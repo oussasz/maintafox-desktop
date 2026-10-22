@@ -12,6 +12,7 @@
  *  - a response that fails schema validation (ZodError) gets a plain message; the technical
  *    detail goes to the console, never on screen.
  */
+import type { TOptions } from "i18next";
 import { ZodError } from "zod";
 
 import { i18n } from "@/i18n/config";
@@ -75,7 +76,7 @@ export function describeAppError(err: unknown): AppErrorDescription {
   const gateParams = details.find((d) => d.code === gateCode)?.params ?? {};
   const title =
     gateI18nKey && i18n.exists(gateI18nKey)
-      ? String(i18n.t(gateI18nKey, gateParams))
+      ? String(i18n.t(gateI18nKey, gateParams as TOptions))
       : gateCode
         ? codeTitle || String(i18n.t("errors:generic.unexpected"))
         : codeTitle || fallback || String(i18n.t("errors:generic.unexpected"));
