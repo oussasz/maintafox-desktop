@@ -40,6 +40,10 @@ export const LIST_READ_RIGHT = {
   requests: P.DI_VIEW,
   /** `list_certification_types`, `list_personnel_certifications` */
   certificationTypes: P.TRN_VIEW,
+  /** `list_inventory_families`, `list_inventory_tax_categories` (Données de référence) */
+  stockCatalogs: P.INV_VIEW,
+  /** `get_reliability_rating_scales` (Données de référence) */
+  fmecaScales: P.RAM_VIEW,
   /** `list_work_order_types`: reference view, work-order view or work-order creation. */
   woTypes: [P.REF_VIEW, P.OT_VIEW, P.OT_CREATE],
 } as const satisfies Record<string, PermissionName | readonly PermissionName[]>;
