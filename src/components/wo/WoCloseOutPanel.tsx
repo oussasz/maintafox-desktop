@@ -120,6 +120,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const { info } = useSession();
   // Reopen is offered from the user's rights at this work order's site.
   const { can } = useWoAccess(wo);
+  // Closing needs its own right (`ot.close`), on top of the edit right.
+  const canClose = canEdit && can(P.OT_CLOSE);
   // Reopen still asks for the password; verification and close are confirmed in a dialog.
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const [confirmAction, setConfirmAction] = useState<"verify" | "close" | null>(null);
@@ -362,7 +364,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
 
   const handleClose = useCallback(() => {
     const actorId = info?.user_id;
-    if (!canEdit || !actorId) return;
+    if (!canClose || !actorId) return;
     setClosing(true);
     setBlockingErrors([]);
     setCloseError(null);
@@ -391,7 +393,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
       })
       .finally(() => setClosing(false));
   }, [
-    canEdit,
+    canClose,
     currentWo,
     info,
     onClosed,
@@ -854,7 +856,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         )}
 
         {/* 4c — Closure */}
-        {CLOSEABLE_STATUSES.has(statusCode) && (
+        {CLOSEABLE_STATUSES.has(statusCode) && canClose && (
           <div className="space-y-4 rounded-md border border-surface-border p-4">
             <h4 className="text-sm font-medium text-text-primary">{t("closeout.closureTitle")}</h4>
             <p className="text-sm text-muted-foreground">{t("closeout.closureWarning")}</p>

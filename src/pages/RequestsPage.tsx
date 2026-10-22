@@ -77,6 +77,7 @@ import {
 import { getAssetByIdSilent } from "@/services/asset-service";
 import { triageSubmittedDi } from "@/services/di-service";
 import { useDiReviewStore } from "@/stores/di-review-store";
+import { useDiStatsStore } from "@/stores/di-stats-store";
 import { useDiStore } from "@/stores/di-store";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { DiQueue, InterventionRequest } from "@shared/ipc-types";
@@ -130,6 +131,7 @@ export function RequestsPage() {
   const activeDi = useDiStore((s) => s.activeDi);
   const queueCounts = useDiStore((s) => s.queueCounts);
   const loadDis = useDiStore((s) => s.loadDis);
+  const loadDiStats = useDiStatsStore((s) => s.loadStats);
   const loadMoreDis = useDiStore((s) => s.loadMoreDis);
   const loadQueueCounts = useDiStore((s) => s.loadQueueCounts);
   const openDi = useDiStore((s) => s.openDi);
@@ -769,17 +771,26 @@ export function RequestsPage() {
             </Button>
           </PermissionGate>
           <ViewToggle value={view} options={viewOptions} onChange={switchView} />
-          <FilterToggleButton
-            open={showFilters}
-            onToggle={toggleFilters}
-            activeCount={activeFilterCount}
-          />
+          {recordView ? (
+            <FilterToggleButton
+              open={showFilters}
+              onToggle={toggleFilters}
+              activeCount={activeFilterCount}
+            />
+          ) : null}
           {canManageSla && (
             <Button variant="outline" className="h-11" onClick={() => setSlaOpen(true)}>
               {t("sla.title")}
             </Button>
           )}
-          <RefreshButton onRefresh={() => void loadDis()} loading={loading} />
+          <RefreshButton
+            onRefresh={() => {
+              // The dashboard reads its own figures: reload those, not the hidden list.
+              if (view === "dashboard") void loadDiStats();
+              else void loadDis();
+            }}
+            loading={loading}
+          />
         </>
       }
       filterBar={
