@@ -516,6 +516,8 @@
     "diScreen": "Trier les demandes d'intervention en entrée (soumission → file de revue)"
   },
   "review": {
+    "conversionSuccess": "Demande convertie en ordre de travail.",
+    "conversionFailed": "La conversion en ordre de travail a échoué.",
     "view": "Voir le détail",
     "returnAction": "Renvoyer",
     "approvalTitle": "Approuver & Convertir en OT",

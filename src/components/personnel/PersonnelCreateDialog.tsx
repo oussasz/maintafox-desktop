@@ -648,10 +648,7 @@ export function PersonnelCreateDialog() {
                       onChange={() => setEmploymentOrigin(origin)}
                       className="h-4 w-4"
                     />
-                    {t(
-                      `employmentOrigin.${origin}`,
-                      origin === "internal" ? "Internal" : "External",
-                    )}
+                    {t(`employmentOrigin.${origin}`)}
                   </label>
                 ))}
               </div>
@@ -791,7 +788,7 @@ export function PersonnelCreateDialog() {
                   items={personnelList}
                   value={supervisorId}
                   onChange={setSupervisorId}
-                  placeholder={t("create.supervisor.placeholder", "Search supervisor…")}
+                  placeholder={t("create.supervisor.placeholder")}
                 />
               </div>
             </div>
@@ -825,15 +822,11 @@ export function PersonnelCreateDialog() {
               onPickFiles={pickSinglePhoto}
               uploading={photoUploading}
               maxItems={1}
-              emptyLabel={
-                isEdit
-                  ? t("create.photo.editKeepsCurrent")
-                  : t("create.photo.empty", "No photo yet")
-              }
+              emptyLabel={isEdit ? t("create.photo.editKeepsCurrent") : t("create.photo.empty")}
               hintLabel={t("create.photo.hint", "Click to select a profile photo (PNG, JPG, WEBP)")}
-              addLabel={t("create.photo.add", "Add photo")}
-              primaryLabel={t("create.photo.primary", "Primary")}
-              removeLabel={t("create.photo.remove", "Remove")}
+              addLabel={t("create.photo.add")}
+              primaryLabel={t("create.photo.primary")}
+              removeLabel={t("create.photo.remove")}
             />
 
             {isEdit ? (
@@ -862,12 +855,7 @@ export function PersonnelCreateDialog() {
                   </Button>
                 </div>
                 {skills.length === 0 ? (
-                  <p className="text-xs text-text-muted">
-                    {t(
-                      "create.skill.empty",
-                      "No skills added. Selecting a position will pre-fill from its requirement profile.",
-                    )}
-                  </p>
+                  <p className="text-xs text-text-muted">{t("create.skill.empty")}</p>
                 ) : (
                   <div className="space-y-2">
                     {skills.map((skill) => (
@@ -878,7 +866,7 @@ export function PersonnelCreateDialog() {
                             valueMode="id"
                             value={skill.refValueIdStr}
                             onChange={(val) => updateSkillRef(skill.key, val)}
-                            placeholder={t("create.skill.placeholder", "Select skill…")}
+                            placeholder={t("create.skill.placeholder")}
                           />
                         </div>
                         <select
@@ -922,9 +910,7 @@ export function PersonnelCreateDialog() {
                   </Button>
                 </div>
                 {certs.length === 0 ? (
-                  <p className="text-xs text-text-muted">
-                    {t("create.cert.empty", "No certifications added.")}
-                  </p>
+                  <p className="text-xs text-text-muted">{t("create.cert.empty")}</p>
                 ) : (
                   <div className="space-y-2">
                     {certs.map((cert) => (
@@ -934,9 +920,7 @@ export function PersonnelCreateDialog() {
                           value={cert.certTypeId ?? ""}
                           onChange={(e) => updateCertType(cert.key, e.target.value)}
                         >
-                          <option value="">
-                            {t("create.cert.placeholder", "Select certification…")}
-                          </option>
+                          <option value="">{t("create.cert.placeholder")}</option>
                           {certTypes.map((ct) => (
                             <option key={ct.id} value={ct.id}>
                               {ct.code} — {ct.name}
@@ -1032,11 +1016,9 @@ export function PersonnelCreateDialog() {
                       htmlFor="per-create-account"
                       className="cursor-pointer text-sm font-medium"
                     >
-                      {t("create.account.label", "Create MaintaFox account")}
+                      {t("create.account.label")}
                     </label>
-                    <p className="mt-0.5 text-xs text-text-secondary">
-                      {t("create.account.hint", "Opens the user creation dialog after saving.")}
-                    </p>
+                    <p className="mt-0.5 text-xs text-text-secondary">{t("create.account.hint")}</p>
                   </div>
                 </div>
               </>
@@ -1049,7 +1031,7 @@ export function PersonnelCreateDialog() {
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
-              placeholder={t("create.notes.placeholder", "Additional notes…")}
+              placeholder={t("create.notes.placeholder")}
             />
           </div>
 
