@@ -49,6 +49,12 @@ import {
   DASHBOARD_KPI_KEYS,
   RELIABILITY_RAM_EVIDENCE_HASH,
 } from "@shared/kpi-definitions";
+import {
+  DEFAULT_KPI_STABLE_BELOW,
+  OVERVIEW_KPI_REGISTRY_BY_KEY,
+  OVERVIEW_KPI_SEMANTIC_KEYS,
+  type OverviewKpiSemanticKey,
+} from "@shared/overview-kpi-registry";
 import { P } from "@shared/rbac/permissions.generated";
 
 type Horizon = 7 | 30 | 90;
@@ -200,7 +206,19 @@ export function AnalyticsDashboardsPage() {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [orgRows]);
 
+  /** The "stable" threshold of a percentage KPI, set with its definition in the KPI registry. */
+  const stableOf = (key: OverviewKpiSemanticKey) => ({
+    stablePoints: OVERVIEW_KPI_REGISTRY_BY_KEY.get(key)?.stableBelow ?? DEFAULT_KPI_STABLE_BELOW,
+  });
+
   const trendLabel = (trend: KpiTrend) => {
+    if (trend.points !== undefined) {
+      if (trend.points === 0) return t("hub.dashboards.trend.stable");
+      const shown = Math.round(trend.points * 10) / 10;
+      return t("hub.dashboards.trend.points", {
+        change: `${shown > 0 ? "+" : ""}${formatDecimal(shown, 1)}`,
+      });
+    }
     if (trend.percent === 0) return t("hub.dashboards.trend.stable");
     const rounded =
       Math.abs(trend.percent) >= 10
@@ -355,7 +373,11 @@ export function AnalyticsDashboardsPage() {
                   context: horizonText,
                   value: ratio(data?.avg_availability.value),
                   available: data?.avg_availability.available ?? false,
-                  trend: periodTrend(data?.avg_availability, "up-good"),
+                  trend: periodTrend(
+                    data?.avg_availability,
+                    "up-good",
+                    stableOf(OVERVIEW_KPI_SEMANTIC_KEYS.AVAILABILITY),
+                  ),
                   onOpen: openRamsDashboard,
                 })}
                 {renderKpi({
@@ -363,7 +385,11 @@ export function AnalyticsDashboardsPage() {
                   context: horizonText,
                   value: ratio(data?.avg_data_quality.value),
                   available: data?.avg_data_quality.available ?? false,
-                  trend: periodTrend(data?.avg_data_quality, "up-good"),
+                  trend: periodTrend(
+                    data?.avg_data_quality,
+                    "up-good",
+                    stableOf(OVERVIEW_KPI_SEMANTIC_KEYS.DATA_QUALITY),
+                  ),
                   onOpen: openRamsEvidence,
                 })}
                 {renderKpi({

@@ -70,6 +70,13 @@ function renderSection(smrp: SmrpKpis | null = SMRP) {
   );
 }
 
+describe("pointsTrend thresholds", () => {
+  it("reads a small move stable by default but shows it when the indicator has a finer threshold", () => {
+    expect(pointsTrend(1.23, 1.2, "up-bad")).toEqual({ points: 0, tone: null });
+    expect(pointsTrend(1.23, 1.2, "up-bad", 0.01)).toMatchObject({ tone: "danger" });
+  });
+});
+
 describe("pointsTrend", () => {
   it("compares percentages in points and colours by direction", () => {
     expect(pointsTrend(44.4, 60, "up-good")).toMatchObject({ tone: "danger" });
