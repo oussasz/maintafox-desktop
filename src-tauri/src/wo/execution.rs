@@ -132,7 +132,7 @@ fn decode_err(field: &str, e: sea_orm::DbErr) -> AppError {
 fn check_concurrency(rows_affected: u64) -> AppResult<()> {
     if rows_affected == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .to_string(),
         ]));
@@ -409,7 +409,7 @@ async fn hold_wo(
             .map_err(|e| decode_err("delay_reason code", e))?,
         None => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Code de délai introuvable (delay_reason_id={}).",
+                "GATE_WO_DELAY_REASON_UNKNOWN: Code de délai introuvable (delay_reason_id={}).",
                 input.delay_reason_id
             )]))
         }
@@ -869,10 +869,10 @@ pub async fn complete_wo_mechanically(db: &DatabaseConnection, input: WoMechComp
         .filter(|g| g.required && !g.passed)
         .map(|g| match g.code.as_str() {
             "OPEN_LABOR" => {
-                "Les entrées de main-d'œuvre ouvertes doivent être clôturées avant la complétion. (Open labor entries must be closed first.)".into()
+                "GATE_COMPLETE_OPEN_LABOR: Les entrées de main-d'œuvre ouvertes doivent être clôturées avant la complétion. (Open labor entries must be closed first.)".into()
             }
             "TASKS" => format!(
-                "Tâches obligatoires non terminées{}. (Mandatory tasks incomplete.)",
+                "GATE_COMPLETE_TASKS_INCOMPLETE: Tâches obligatoires non terminées{}. (Mandatory tasks incomplete.)",
                 g.detail
                     .as_ref()
                     .map(|d| format!(" : {d}"))
@@ -884,26 +884,26 @@ pub async fn complete_wo_mechanically(db: &DatabaseConnection, input: WoMechComp
                     .unwrap_or("")
                     .contains("pending disposition")
                 {
-                    "Toutes les pièces planifiées doivent être marquées Utilisée ou Non utilisée avant complétion. \
+                    "GATE_COMPLETE_PARTS_UNDISPOSED: Toutes les pièces planifiées doivent être marquées Utilisée ou Non utilisée avant complétion. \
 (All planned parts must be marked Used or Not used before completion.)".into()
                 } else {
-                    "Réels des pièces non confirmés. Ajoutez une pièce consommée ou marquez « aucune pièce utilisée ». \
+                    "GATE_COMPLETE_PARTS_UNCONFIRMED: Réels des pièces non confirmés. Ajoutez une pièce consommée ou marquez « aucune pièce utilisée ». \
 (Parts actuals not confirmed. Add a consumed part or mark none used.)".into()
                 }
             }
             "OPEN_DOWNTIME" => {
-                "Les segments de temps d'arrêt ouverts doivent être clôturés avant la complétion. (Open downtime segments must be closed before completion.)".into()
+                "GATE_COMPLETE_OPEN_DOWNTIME: Les segments de temps d'arrêt ouverts doivent être clôturés avant la complétion. (Open downtime segments must be closed before completion.)".into()
             }
             "SYMPTOM" => {
-                "Symptôme requis avant complétion mécanique (RAMS data quality).".into()
+                "GATE_COMPLETE_SYMPTOM_REQUIRED: Symptôme requis avant complétion mécanique (RAMS data quality).".into()
             }
             "FAILURE_MODE" => {
-                "Mode de défaillance requis avant complétion mécanique (RAMS data quality).".into()
+                "GATE_COMPLETE_FAILURE_MODE_REQUIRED: Mode de défaillance requis avant complétion mécanique (RAMS data quality).".into()
             }
             "ROOT_CAUSE" => {
-                "Résumé de cause racine requis avant complétion mécanique.".into()
+                "GATE_COMPLETE_ROOT_CAUSE_REQUIRED: Résumé de cause racine requis avant complétion mécanique.".into()
             }
-            other => format!("Completion gate failed: {other}"),
+            other => format!("GATE_COMPLETE_GATE_FAILED:gate={other}: Completion gate failed: {other}"),
         })
         .collect();
 

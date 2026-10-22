@@ -56,6 +56,7 @@ export const MODULE_NAMESPACES = {
  */
 export const ISSUE_NAMESPACES = [
   "org",
+  "ot",
   "equipment",
   "di",
   "reference",
