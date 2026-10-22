@@ -186,6 +186,7 @@ export function WoIntegrityWorkbench() {
               row={r}
               approvers={approvers}
               approversFailed={people.failed}
+              approversLoading={people.loading}
               onRefresh={() => void load()}
             />
           ))}
@@ -199,11 +200,13 @@ function FindingRow({
   row,
   approvers,
   approversFailed,
+  approversLoading,
   onRefresh,
 }: {
   row: DataIntegrityFindingRow;
   approvers: WoPersonOption[];
   approversFailed: boolean;
+  approversLoading: boolean;
   onRefresh: () => void;
 }) {
   const { t } = useTranslation("ot");
@@ -306,7 +309,7 @@ function FindingRow({
                 ))}
               </SelectContent>
             </Select>
-            {approversFailed || approvers.length === 0 ? (
+            {!approversLoading && (approversFailed || approvers.length === 0) ? (
               <span className="text-[10px] text-destructive">
                 {t("integrity.approverNoneAvailable")}
               </span>
