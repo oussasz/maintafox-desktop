@@ -150,7 +150,7 @@ mod tests {
     use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
     use sea_orm_migration::MigratorTrait;
 
-    use crate::sync::test_support::{exec, scalar_i64, started_db_before_last_migrations, RowFactory};
+    use crate::sync::test_support::{exec, scalar_i64, started_db_before_migration, RowFactory};
 
     async fn strings(db: &DatabaseConnection, sql: &str) -> Vec<String> {
         db.query_all(Statement::from_string(DatabaseBackend::Sqlite, sql.to_string()))
@@ -209,7 +209,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_upgraded_database_keeps_every_version_its_ids_its_links_and_its_guards() {
-        let db = started_db_before_last_migrations(1).await;
+        let db = started_db_before_migration("m20261022_000254_pm_version_number_not_unique").await;
         assert_eq!(
             strings(&db, "SELECT sql FROM sqlite_master WHERE name = 'pm_plan_versions'")
                 .await

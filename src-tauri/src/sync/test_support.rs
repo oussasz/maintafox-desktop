@@ -65,12 +65,16 @@ async fn prepare_started(db: &DatabaseConnection) {
     prepare_started_up_to(db, None).await;
 }
 
-/// A database as the startup of an earlier version leaves it: every migration but the last
-/// `skip_last` ones, then the startup seeders and capture. For upgrade tests (run the rest with
-/// `Migrator::up(db, None)`).
-pub(crate) async fn started_db_before_last_migrations(skip_last: usize) -> DatabaseConnection {
+/// A database as the startup of an earlier version leaves it: every migration registered before
+/// the one named `migration` (looked up by name, so later migrations do not shift it), then the
+/// startup seeders and capture. For upgrade tests (run the rest with `Migrator::up(db, None)`).
+pub(crate) async fn started_db_before_migration(migration: &str) -> DatabaseConnection {
+    use sea_orm_migration::MigrationName;
     let db = crate::db::test_db::empty_memory_db().await;
-    let steps = crate::migrations::Migrator::migrations().len() - skip_last;
+    let steps = crate::migrations::Migrator::migrations()
+        .iter()
+        .position(|m| m.name() == migration)
+        .unwrap_or_else(|| panic!("migration {migration} is not registered"));
     prepare_started_up_to(&db, Some(u32::try_from(steps).expect("steps"))).await;
     db
 }
