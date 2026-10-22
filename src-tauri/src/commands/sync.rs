@@ -61,6 +61,23 @@ pub async fn list_inbox_items(
     queries::list_inbox_items(&state.db, apply_status, limit).await
 }
 
+/// The received rows that wait, each with what it waits for, and every waiting row counted by
+/// that (`sync::waiting`).
+#[tauri::command]
+pub async fn list_waiting_inbox_rows(
+    limit: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::sync::waiting::WaitingInboxReport> {
+    let user = require_session!(state);
+    require_permission_allowing_system_admin!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_VIEW,
+        PermissionScope::Global
+    );
+    crate::sync::waiting::list_waiting_inbox_rows(&state.db, limit).await
+}
+
 #[tauri::command]
 pub async fn get_sync_state_summary(state: State<'_, AppState>) -> AppResult<SyncStateSummary> {
     let user = require_session!(state);

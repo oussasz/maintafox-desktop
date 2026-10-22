@@ -150,6 +150,7 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
     "daily_digest",
     "safety_rule_received",
     "loto_forced_removal",
+    "pm_concurrent_versions",
 ];
 
 /// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
@@ -167,6 +168,8 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
 pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     ("safety_rule_received", "permission:adm.settings"),
     ("loto_forced_removal", "permission:ptw.close"),
+    // Two concurrent versions of a PM plan (`pm::version_clash`): the PM planners.
+    ("pm_concurrent_versions", "permission:pm.edit"),
 ];
 
 /// The fixed audience of an [`ALWAYS_DELIVERED`] category.
