@@ -519,6 +519,7 @@
     "SITE_SETTING_NOT_A_SITE": "This organisation node is not a planning site (its type cannot own work).",
     "SITE_SETTING_UNKNOWN": "Unknown site rule.",
     "FIRST_ADMIN_ALREADY_EXISTS": "An administrator already exists for this organisation: sign in with that account.",
+    "FIRST_ADMIN_PLANT_JOIN_REQUIRED": "This PC has not joined your plant yet: it must synchronise once to check whether your organisation already has accounts. Connect it to the network, then retry.",
     "LICENSE_RECONCILE_ADMIN_REQUIRED": "This licence change needs an administrator: sign in as an administrator; the licence screen then asks you to confirm your identity and applies the change.",
     "LICENSE_EXTENSION_ADMIN_REQUIRED": "This licence update extends the licence terms or lifts a denial (expiry, devices, edition, entitlements): sign in as an administrator; the licence screen then asks you to confirm your identity and applies the update.",
     "LICENSE_CLAIM_INVALID": "The licence data received is incomplete or malformed (organisation, licence, machine or activation token): nothing was changed.",

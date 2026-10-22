@@ -26,6 +26,7 @@ import {
   getProductLicenseOnboardingState,
   previewProductActivation,
   requestLicenseRecheck,
+  requestPlantJoin,
   resetLocalTenantRuntimeData,
   resetProductLicenseActivation,
   serializeClaimJsonForDesktop,
@@ -359,18 +360,38 @@ describe("onboarding state payload", () => {
 
 describe("bootstrap state and licence metadata", () => {
   it("reads the bootstrap state, with the tenant fields optional", async () => {
-    ipc.invoke.mockResolvedValueOnce({ has_tenant_admin: false });
-    expect(await getActivationBootstrapState()).toEqual({ has_tenant_admin: false });
+    ipc.invoke.mockResolvedValueOnce({ has_tenant_admin: false, plant_join: null });
+    expect(await getActivationBootstrapState()).toEqual({
+      has_tenant_admin: false,
+      plant_join: null,
+    });
     ipc.invoke.mockResolvedValueOnce({
       tenant_id: "t-test",
       company_display_name: null,
       has_tenant_admin: true,
+      plant_join: "sign_in",
     });
     expect(await getActivationBootstrapState()).toMatchObject({
       tenant_id: "t-test",
       has_tenant_admin: true,
     });
     expect(ipc.invoke).toHaveBeenCalledWith("get_activation_bootstrap_state");
+  });
+
+  it("reads where the PC stands in joining its plant, and asks the worker to join", async () => {
+    for (const plant_join of ["sign_in", "create_first_admin", "joining", "connection_needed"]) {
+      ipc.invoke.mockResolvedValueOnce({
+        tenant_id: "t-test",
+        has_tenant_admin: false,
+        plant_join,
+      });
+      expect(await getActivationBootstrapState()).toMatchObject({ plant_join });
+    }
+    ipc.invoke.mockResolvedValueOnce({ tenant_id: "t-test", has_tenant_admin: false });
+    await expect(getActivationBootstrapState()).rejects.toThrow(/plant_join/);
+    ipc.invoke.mockResolvedValueOnce(null);
+    await requestPlantJoin();
+    expect(ipc.invoke).toHaveBeenCalledWith("request_plant_join");
   });
 
   it("rejects a bootstrap state without the administrator flag", async () => {

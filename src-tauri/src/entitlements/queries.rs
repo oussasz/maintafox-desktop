@@ -447,6 +447,19 @@ pub async fn apply_entitlement_envelope(
     if let Some((row_id, existing_hash)) = existing_same_id {
         if existing_hash != payload_hash {
             update_envelope_row(&tx, row_id, &input, &payload_hash, &verification_result).await?;
+        } else if verified {
+            // The same envelope verified again (a key entered again after a local data reset):
+            // its verification time moves forward, so a single-PC licence is not taken for one
+            // left from an earlier activation (`sync::plant_join::licence_syncs` compares it with
+            // the key entry).
+            tx.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "UPDATE entitlement_envelopes
+                    SET verified_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), verification_result = ?
+                  WHERE id = ?",
+                [verification_result.clone().into(), row_id.into()],
+            ))
+            .await?;
         }
         active_row_id = row_id;
     } else if verified && soft_refresh {
@@ -709,6 +722,25 @@ pub async fn check_entitlement_capability(
         effective_state: summary.effective_state,
         envelope_id: summary.envelope_id,
     })
+}
+
+/// Whether the licence itself includes `capability`: the capability map of the active signed
+/// envelope, the map [`check_entitlement_capability`] reads (a capability it does not list is
+/// included), whatever the entitlement state. `check_entitlement_capability` also refuses every
+/// capability while the entitlement is suspended, revoked or expired; this answers what the
+/// licence is, not whether it may be used right now.
+pub async fn licence_includes_capability(db: &DatabaseConnection, capability: &str) -> AppResult<bool> {
+    let summary = get_entitlement_summary(db).await?;
+    Ok(parse_json_map(&summary.capability_map_json)
+        .get(capability)
+        .copied()
+        .unwrap_or(true))
+}
+
+/// When the envelope in force was last verified and applied on this PC (`verified_at`, refreshed by
+/// every apply of it, `NULL` when its signature did not verify); `None` without an envelope.
+pub async fn active_envelope_verified_at(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    Ok(active_envelope(db).await?.and_then(|envelope| envelope.verified_at))
 }
 
 fn capability_from_permission(permission: &str) -> Option<&'static str> {

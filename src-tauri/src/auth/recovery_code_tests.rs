@@ -113,6 +113,7 @@ async fn activated_pc() -> DatabaseConnection {
 /// Activated PC whose first administrator "chef" was created at first start.
 async fn administered_pc() -> DatabaseConnection {
     let db = activated_pc().await;
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     bootstrap_initial_tenant_admin_in(
         &db,
         BootstrapInitialAdminInput {
