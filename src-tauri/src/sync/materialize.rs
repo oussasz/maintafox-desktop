@@ -613,6 +613,17 @@ async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> App
             waits_for: None,
         });
     }
+    // The same stock count posted on two PCs: when the received session or line is the same posting
+    // as this PC's unsent one, that one is closed and audited and the received version is applied
+    // (it reached the server first; `inventory::count_sync`). Done here, not in
+    // `concurrency_check`, which also serves a side-effect-free admissibility check.
+    crate::inventory::count_sync::settle_concurrent_posting(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
+        &item.payload_json,
+    )
+    .await?;
     if let Some(outcome) = concurrency_check(conn, def, item).await? {
         return Ok(outcome);
     }
@@ -659,17 +670,7 @@ async fn concurrency_check(
         // History rows are only inserted; the materializer skips rows that already exist.
         return Ok(None);
     }
-    // The same stock count posted on two PCs: the version that reached the server first is kept,
-    // this PC's unsent one is closed and audited (`inventory::count_sync`).
-    let settled = !unsent.is_empty()
-        && crate::inventory::count_sync::settle_concurrent_posting(
-            conn,
-            &item.entity_type,
-            &item.entity_sync_id,
-            &item.payload_json,
-        )
-        .await?;
-    if let Some(local) = unsent.last().filter(|_| !settled) {
+    if let Some(local) = unsent.last() {
         let base = local
             .base_row_version
             .map_or_else(|| "a new row".to_string(), |v| format!("version {v}"));

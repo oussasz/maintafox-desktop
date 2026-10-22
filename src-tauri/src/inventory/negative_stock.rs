@@ -197,7 +197,7 @@ pub struct DoubleCountReview {
     pub available_qty: f64,
 }
 
-/// One movement of a count posted twice.
+/// One movement of a count posted twice, or one version of a divergent count.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DoublePostedMovement {
     pub movement_sync_id: String,
@@ -205,7 +205,16 @@ pub struct DoublePostedMovement {
     pub posted_by: Option<String>,
     pub posted_at: String,
     pub quantity: f64,
+    /// The PC that posted it, when known: the stock ledger does not record it; the audit of a
+    /// divergent count does, for the version that was replaced.
+    pub device_code: Option<String>,
 }
+
+/// A count posted twice by older versions (two movements in the ledger).
+pub const DOUBLE_POSTING_POSTED_TWICE: &str = "posted_twice";
+/// A count posted on two PCs with different quantities: the first pushed is kept everywhere
+/// (`inventory::count_sync`), the other is in its audit.
+pub const DOUBLE_POSTING_DIVERGENT: &str = "divergent";
 
 /// "Comptage passé deux fois — à vérifier" (CMMS Advisor decision (a), AU-100): one count of a
 /// session, article and location whose movement is in the ledger more than once (`COUNT_ADJUST`,
@@ -213,8 +222,16 @@ pub struct DoublePostedMovement {
 /// corrected once per movement. Found from the synchronised ledger alone (the same on every PC that
 /// holds the same movements); closed only by a later count of that article and location made on a
 /// PC that held every one of those movements ([`count_mark`] names them, [`resolve_by_count`]).
+///
+/// "Comptage divergent — à vérifier" (kind [`DOUBLE_POSTING_DIVERGENT`]): the same count posted on
+/// two PCs whose lines differed in quantity (`inventory::count_sync`): one movement is kept on every
+/// PC and the stock follows it, the other version is in the audit event `inventory.count.posted_twice`
+/// (`quantity_differs`). Listed from that event — on the PC whose version was replaced, then on every
+/// PC it reaches — and closed the same way, by a new count made where that movement was held.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DoublePostedCountReview {
+    /// [`DOUBLE_POSTING_POSTED_TWICE`] or [`DOUBLE_POSTING_DIVERGENT`].
+    pub kind: String,
     pub article_id: i64,
     pub article_code: String,
     pub article_name: String,
@@ -224,11 +241,13 @@ pub struct DoublePostedCountReview {
     pub session_code: String,
     /// `COUNT_ADJUST` (posted twice) or `COUNT_REVERSAL` (reversed twice).
     pub movement_type: String,
-    /// Oldest first (time posted, then sync id).
+    /// Posted twice: the movements, oldest first (time posted, then sync id). Divergent: the version
+    /// kept first, then the versions replaced.
     pub movements: Vec<DoublePostedMovement>,
-    /// The count's correction (one movement).
+    /// The count's correction (one movement; divergent: the version kept).
     pub variance_qty: f64,
-    /// What the stock moved beyond that correction (the other movements together).
+    /// Posted twice: what the stock moved beyond that correction (the other movements together).
+    /// Divergent: how far the replaced version was from the kept one (replaced minus kept).
     pub excess_qty: f64,
     /// The count that closed it (listed with the closed items).
     pub closed_by: Option<ReconciliationCount>,
@@ -785,16 +804,37 @@ pub(crate) async fn double_count_pairs(
 /// than once (same type), as SQL over `inventory_transactions` filtered by article and location.
 const DOUBLE_POSTED_GROUPS: &str = "SELECT source_id, movement_type FROM inventory_transactions
      WHERE source_type = 'COUNT_SESSION' AND movement_type IN ('COUNT_ADJUST', 'COUNT_REVERSAL')
-       AND source_id IS NOT NULL AND article_id = ? AND location_id = ?
+       AND source_id IS NOT NULL AND entity_sync_id IS NOT NULL AND article_id = ? AND location_id = ?
      GROUP BY source_id, movement_type HAVING COUNT(*) > 1";
 
-/// Sync ids of every movement of the counts of an article and location posted more than once, held
-/// here (sorted).
+/// Audit events of a count whose quantity differed between two PCs (`inventory::count_sync`),
+/// with the kept movement, for an article and location.
+const DIVERGENT_AUDITS: &str = "SELECT ae.target_id AS movement_sync_id, ae.details_json, t.source_id,
+            t.movement_type, t.quantity, t.performed_at, ua.display_name, ua.username, cs.session_code,
+            cs.created_at
+     FROM audit_events ae
+     JOIN inventory_transactions t ON t.entity_sync_id = ae.target_id
+     JOIN inventory_count_sessions cs ON cs.id = t.source_id
+     LEFT JOIN user_accounts ua ON ua.id = t.performed_by_id
+     WHERE ae.action_code = 'inventory.count.posted_twice' AND ae.target_type = 'inventory_transactions'
+       AND json_extract(ae.details_json, '$.quantity_differs') = 1
+       AND t.article_id = ? AND t.location_id = ?
+     ORDER BY cs.created_at, ae.target_id, ae.id";
+
+/// Sync ids of every movement held here of the counts of an article and location posted more than
+/// once, and of those whose quantity differed between two PCs (sorted, distinct).
 async fn double_posted_movement_ids(
     conn: &impl ConnectionTrait,
     article_id: i64,
     location_id: i64,
 ) -> AppResult<Vec<String>> {
+    let divergent = conn
+        .query_all(sqlite(DIVERGENT_AUDITS, vec![article_id.into(), location_id.into()]))
+        .await?;
+    let mut ids: Vec<String> = divergent
+        .iter()
+        .map(|r| -> AppResult<String> { Ok(r.try_get::<String>("", "movement_sync_id")?) })
+        .collect::<AppResult<_>>()?;
     let rows = conn
         .query_all(sqlite(
             &format!(
@@ -812,13 +852,18 @@ async fn double_posted_movement_ids(
             ],
         ))
         .await?;
-    rows.iter()
-        .map(|r| -> AppResult<String> { Ok(r.try_get::<String>("", "entity_sync_id")?) })
-        .collect()
+    for row in &rows {
+        ids.push(row.try_get::<String>("", "entity_sync_id")?);
+    }
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
-/// One count of an article and location posted twice, and the count that closed it, if any.
+/// One count of an article and location posted twice (or divergent), and the count that closed it,
+/// if any.
 struct DoublePosting {
+    kind: &'static str,
     session_code: String,
     movement_type: String,
     movements: Vec<DoublePostedMovement>,
@@ -826,9 +871,10 @@ struct DoublePosting {
 }
 
 /// The counts of an article and location posted more than once (one per session and movement
-/// type), oldest session first. Closed by a count of the pair whose session is not reversed and
-/// that knows every one of their movements: a count entered on a PC holding them all ([`count_mark`]
-/// names them), directly or through the counts it follows.
+/// type), oldest session first, then the divergent ones (one per movement, from their audit
+/// events). Closed by a count of the pair whose session is not reversed and that knows every one of
+/// their movements: a count entered on a PC holding them all ([`count_mark`] names them), directly
+/// or through the counts it follows.
 async fn double_postings_of(
     conn: &impl ConnectionTrait,
     article_id: i64,
@@ -844,12 +890,26 @@ async fn double_postings_of(
             vec![article_id.into(), location_id.into()],
         ))
         .await?;
-    if groups.is_empty() {
+    let divergent = conn
+        .query_all(sqlite(DIVERGENT_AUDITS, vec![article_id.into(), location_id.into()]))
+        .await?;
+    if groups.is_empty() && divergent.is_empty() {
         return Ok(Vec::new());
     }
     let nodes = count_nodes(conn, article_id, location_id).await?;
     let known = known_by(&nodes);
-    let mut out = Vec::with_capacity(groups.len());
+    let closer = |ids: &[&str]| -> Option<ReconciliationCount> {
+        nodes
+            .iter()
+            .find(|z| {
+                !z.reversed
+                    && known
+                        .get(z.count.count_sync_id.as_str())
+                        .is_some_and(|k| ids.iter().all(|id| k.contains(id)))
+            })
+            .map(|z| z.count.clone())
+    };
+    let mut out = Vec::with_capacity(groups.len() + divergent.len());
     for group in &groups {
         let session_id: i64 = group.try_get("", "source_id")?;
         let movement_type: String = group.try_get("", "movement_type")?;
@@ -876,26 +936,64 @@ async fn double_postings_of(
             movements.push(DoublePostedMovement {
                 movement_sync_id: row.try_get("", "entity_sync_id")?,
                 posted_by: display.filter(|d| !d.trim().is_empty()).or(username),
-                posted_at: row.try_get::<Option<String>>("", "performed_at")?.unwrap_or_default(),
+                posted_at: row.try_get("", "performed_at")?,
                 quantity: row.try_get("", "quantity")?,
+                device_code: None,
             });
         }
-        let closed_by = nodes
-            .iter()
-            .find(|z| {
-                !z.reversed
-                    && known
-                        .get(z.count.count_sync_id.as_str())
-                        .is_some_and(|k| movements.iter().all(|m| k.contains(m.movement_sync_id.as_str())))
-            })
-            .map(|z| z.count.clone());
+        let ids: Vec<&str> = movements.iter().map(|m| m.movement_sync_id.as_str()).collect();
+        let closed_by = closer(&ids);
         out.push(DoublePosting {
+            kind: DOUBLE_POSTING_POSTED_TWICE,
             session_code: group.try_get("", "session_code")?,
             movement_type,
             movements,
             closed_by,
         });
     }
+    // Divergent counts: one item per movement, the version kept first, then each replaced version
+    // named by its audit event (several when more than two PCs posted it).
+    let mut divergent_items: Vec<DoublePosting> = Vec::new();
+    for row in &divergent {
+        let movement_sync_id: String = row.try_get("", "movement_sync_id")?;
+        let details: serde_json::Value = serde_json::from_str(&row.try_get::<String>("", "details_json")?)
+            .map_err(|e| AppError::SyncError(format!("count audit details: {e}")))?;
+        let replaced = &details["this_pc_posting"];
+        let replaced_version = DoublePostedMovement {
+            movement_sync_id: movement_sync_id.clone(),
+            posted_by: replaced["posted_by"].as_str().map(str::to_string),
+            posted_at: replaced["posted_at"].as_str().unwrap_or_default().to_string(),
+            quantity: replaced["quantity"]
+                .as_f64()
+                .ok_or_else(|| AppError::SyncError(format!("count audit of {movement_sync_id} has no quantity")))?,
+            device_code: details["device_code"].as_str().map(str::to_string),
+        };
+        if let Some(item) = divergent_items.iter_mut().find(|d| {
+            d.movements
+                .first()
+                .is_some_and(|m| m.movement_sync_id == movement_sync_id)
+        }) {
+            item.movements.push(replaced_version);
+            continue;
+        }
+        let display: Option<String> = row.try_get("", "display_name")?;
+        let username: Option<String> = row.try_get("", "username")?;
+        let kept = DoublePostedMovement {
+            movement_sync_id: movement_sync_id.clone(),
+            posted_by: display.filter(|d| !d.trim().is_empty()).or(username),
+            posted_at: row.try_get("", "performed_at")?,
+            quantity: row.try_get("", "quantity")?,
+            device_code: None,
+        };
+        divergent_items.push(DoublePosting {
+            kind: DOUBLE_POSTING_DIVERGENT,
+            session_code: row.try_get("", "session_code")?,
+            movement_type: row.try_get("", "movement_type")?,
+            movements: vec![kept, replaced_version],
+            closed_by: closer(&[movement_sync_id.as_str()]),
+        });
+    }
+    out.extend(divergent_items);
     Ok(out)
 }
 
@@ -911,15 +1009,20 @@ pub(crate) async fn double_posting_open(
         .any(|d| d.closed_by.is_none()))
 }
 
-/// Every article and location with a count posted more than once (open or closed).
+/// Every article and location with a count posted more than once or divergent (open or closed).
 async fn double_posting_pairs(conn: &impl ConnectionTrait) -> AppResult<Vec<(i64, i64)>> {
     let rows = conn
         .query_all(sqlite(
             "SELECT DISTINCT article_id, location_id FROM (
                 SELECT article_id, location_id FROM inventory_transactions
                 WHERE source_type = 'COUNT_SESSION' AND movement_type IN ('COUNT_ADJUST', 'COUNT_REVERSAL')
-                  AND source_id IS NOT NULL
-                GROUP BY source_id, article_id, location_id, movement_type HAVING COUNT(*) > 1)
+                  AND source_id IS NOT NULL AND entity_sync_id IS NOT NULL
+                GROUP BY source_id, article_id, location_id, movement_type HAVING COUNT(*) > 1
+                UNION
+                SELECT t.article_id, t.location_id FROM audit_events ae
+                JOIN inventory_transactions t ON t.entity_sync_id = ae.target_id
+                WHERE ae.action_code = 'inventory.count.posted_twice' AND ae.target_type = 'inventory_transactions'
+                  AND json_extract(ae.details_json, '$.quantity_differs') = 1)
              ORDER BY article_id, location_id",
             vec![],
         ))
@@ -1075,8 +1178,13 @@ pub async fn list_reviews(db: &DatabaseConnection, include_closed: bool) -> AppR
                 continue;
             }
             let variance_qty = posting.movements.first().map_or(0.0, |m| m.quantity);
-            let excess_qty: f64 = posting.movements.iter().skip(1).map(|m| m.quantity).sum();
+            let excess_qty: f64 = if posting.kind == DOUBLE_POSTING_DIVERGENT {
+                posting.movements.get(1).map_or(0.0, |m| m.quantity - variance_qty)
+            } else {
+                posting.movements.iter().skip(1).map(|m| m.quantity).sum()
+            };
             let review = DoublePostedCountReview {
+                kind: posting.kind.to_string(),
                 article_id,
                 article_code: row.try_get("", "article_code")?,
                 article_name: row.try_get("", "article_name")?,

@@ -2,25 +2,37 @@
 //!
 //! A count movement and its audit link carry a seeded sync id (`controls::count_movement_sync_id`,
 //! `controls::count_audit_link_sync_id`): the same on every PC for the same session, article and
-//! location, so the stock moves once. The two PCs still wrote their own rows (who posted it, when,
-//! the reversal reason they typed) for the movement, its audit link, the count session and its
+//! location. The two PCs still wrote their own rows (who posted it, when, the reason, and — when
+//! their lines differed — the quantity) for the movement, its audit link, the count session and its
 //! line. One version of the posting is kept on every PC — the one the server received first:
 //! - the second PC's push is answered with a server conflict; when the server row is the same count
-//!   (movement, link: [`same_seeded_count`]) or the same posting (session, line: [`same_posting`])
-//!   the outbox entry is closed here with no item for a person ([`settle_count_server_conflict`],
-//!   called from `sync::queries`);
+//!   (movement, link: [`seeded_count_local`]) or the same posting (session, line: [`same_posting`])
+//!   the outbox entry is closed here with no item for a person, and any conflict already opened for
+//!   it is closed ([`settle_count_server_conflict`], called from `sync::queries`);
 //! - a session or line received while this PC still has its own unsent posting of it is settled the
-//!   same way ([`settle_concurrent_posting`], called from `sync::materialize`);
+//!   same way ([`settle_concurrent_posting`], called from `sync::materialize::evaluate_and_apply`);
 //! - the server's version then replaces this PC's rows: a session or line as an ordinary update, a
 //!   movement or link through [`adopt_first_posted`] (`sync::row_codec` through `sync::apply_hooks`;
-//!   append-only rows are otherwise never rewritten). The stock is not touched: the movement was
-//!   already applied here once.
+//!   append-only rows are otherwise never rewritten). A movement whose quantity differs from this
+//!   PC's moves this PC's stock by the difference in the same transaction, so every PC holds the
+//!   same ledger and the same stock.
 //!
-//! This PC's posting (who, when, the PC, its reason) is kept in an audit event
-//! [`AUDIT_POSTED_TWICE`] for the session, the movement and the audit link. Any other difference
-//! stays a conflict for a person. A count posted twice by older versions (two random ids) is applied
-//! like any movement — the ledger stays the same on every PC — and is listed "comptage passé deux
-//! fois — à vérifier" (`negative_stock::DoublePostedCountReview`).
+//! This PC's posting (who, when, the PC, its reason and quantity) is kept in an audit event
+//! [`AUDIT_POSTED_TWICE`] for the session, the movement and the audit link; the event is
+//! synchronised. Rows that are identical on both PCs need nothing: the server acknowledges the second
+//! push as a duplicate.
+//!
+//! What stays for a person: a count line that differs (counted quantity, variance, reason, approval)
+//! remains a sync conflict on the PC whose push lost — that PC holds the line and the person who
+//! resolves it. The movement and its audit link are settled even then (they carry the variance
+//! reason and the reviewer's evidence copied from the line: the kept version keeps the first PC's;
+//! the audit says `line_differs`). A count whose quantity differed is listed "comptage divergent —
+//! à vérifier" (`negative_stock`), from its audit event: on that PC first, then on every PC the event
+//! reaches; the stock itself is already the same everywhere. It is closed by a new count.
+//!
+//! A count posted twice by older versions (two random ids) is applied like any movement — the
+//! ledger stays the same on every PC — and is listed "comptage passé deux fois — à vérifier"
+//! (`negative_stock::DoublePostedCountReview`).
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde_json::{Map, Value};
@@ -46,6 +58,10 @@ const SESSION_ATTRIBUTION: &[&str] = &[
 ];
 /// Line fields that only date the change.
 const LINE_ATTRIBUTION: &[&str] = &["updated_at"];
+/// Movement fields copied from the count line (a difference there is also a line difference).
+const MOVEMENT_LINE_FIELDS: &[&str] = &["reason", "quantity"];
+/// Audit-link fields copied from the count line.
+const LINK_LINE_FIELDS: &[&str] = &["reviewer_sync_id", "reviewer_evidence"];
 
 /// Audit action of a count posting superseded by the same posting made first on another PC.
 pub const AUDIT_POSTED_TWICE: &str = "inventory.count.posted_twice";
@@ -55,6 +71,39 @@ const QTY_TOLERANCE: f64 = 1e-9;
 
 fn text<'a>(payload: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
     payload.get(key).and_then(Value::as_str)
+}
+
+fn qty(payload: &Map<String, Value>) -> Option<f64> {
+    payload.get("quantity").and_then(Value::as_f64)
+}
+
+/// Two wire values mean the same: a missing key is null; numbers compare as numbers (`-3` and
+/// `-3.0`), within [`QTY_TOLERANCE`].
+fn same_value(a: Option<&Value>, b: Option<&Value>) -> bool {
+    let a = a.filter(|v| !v.is_null());
+    let b = b.filter(|v| !v.is_null());
+    match (a, b) {
+        (None, None) => true,
+        (Some(Value::Number(x)), Some(Value::Number(y))) => match (x.as_f64(), y.as_f64()) {
+            (Some(x), Some(y)) => (x - y).abs() <= QTY_TOLERANCE,
+            _ => x == y,
+        },
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// Keys whose meaning differs between two wire versions of a row ([`same_value`]), sorted.
+fn differing_keys<'a>(a: &'a Map<String, Value>, b: &'a Map<String, Value>) -> Vec<&'a str> {
+    let mut keys: Vec<&str> = a
+        .keys()
+        .chain(b.keys())
+        .map(String::as_str)
+        .filter(|k| !same_value(a.get(*k), b.get(*k)))
+        .collect();
+    keys.sort_unstable();
+    keys.dedup();
+    keys
 }
 
 /// This PC's row of an entity, as the wire carries it (references by sync id).
@@ -93,24 +142,12 @@ fn same_texts(a: &Map<String, Value>, b: &Map<String, Value>, keys: &[&str]) -> 
     keys.iter().all(|k| text(a, k).is_some() && text(a, k) == text(b, k))
 }
 
-/// Keys whose values differ between two wire versions of a row.
-fn differing_keys<'a>(a: &'a Map<String, Value>, b: &'a Map<String, Value>) -> Vec<&'a str> {
-    let mut keys: Vec<&str> = a
-        .keys()
-        .chain(b.keys())
-        .map(String::as_str)
-        .filter(|k| a.get(*k) != b.get(*k))
-        .collect();
-    keys.sort_unstable();
-    keys.dedup();
-    keys
-}
-
 /// This PC's row (wire form) when `entity_sync_id` is a seeded count id held here and `other` (the
 /// server's or a received version of that row) is the same count: same movement type, session,
-/// article, location and quantity for a movement; the same movement and count line for its audit
-/// link. `None` otherwise.
-pub(crate) async fn same_seeded_count(
+/// article and location for a movement (its quantity may differ when the two PCs' lines differed:
+/// the first pushed is kept and the stock follows it, [`adopt_first_posted`]); the same movement and
+/// count line for its audit link. `None` otherwise.
+pub(crate) async fn seeded_count_local(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
@@ -121,10 +158,10 @@ pub(crate) async fn same_seeded_count(
             let Some(local) = local_payload(conn, MOVEMENTS, entity_sync_id).await? else {
                 return Ok(None);
             };
-            if !is_seeded_count_movement(entity_sync_id, &local) {
+            if !is_seeded_count_movement(entity_sync_id, &local) || qty(other).is_none() {
                 return Ok(None);
             }
-            let same_keys = same_texts(
+            let same = same_texts(
                 &local,
                 other,
                 &[
@@ -135,9 +172,7 @@ pub(crate) async fn same_seeded_count(
                     "location_sync_id",
                 ],
             );
-            let qty = |p: &Map<String, Value>| p.get("quantity").and_then(Value::as_f64);
-            let same_qty = matches!((qty(&local), qty(other)), (Some(a), Some(b)) if (a - b).abs() <= QTY_TOLERANCE);
-            Ok((same_keys && same_qty).then_some(local))
+            Ok(same.then_some(local))
         }
         AUDIT_LINKS => {
             let Some(local) = local_payload(conn, AUDIT_LINKS, entity_sync_id).await? else {
@@ -221,17 +256,33 @@ enum OutboxScope<'a> {
     Unsent(&'a str, &'a str),
 }
 
-/// Closes outbox entries (`superseded`, coded [`COUNT_ALREADY_POSTED`]).
+/// Closes outbox entries (`superseded`, coded [`COUNT_ALREADY_POSTED`]) and the conflicts still
+/// open for them (`resolved_remote`): the version kept is the one the server received first.
 async fn close_outbox(conn: &impl ConnectionTrait, scope: OutboxScope<'_>, message: String) -> AppResult<()> {
-    let (filter, mut values): (&str, Vec<sea_orm::Value>) = match scope {
+    let (filter, values): (&str, Vec<sea_orm::Value>) = match scope {
         OutboxScope::One(id) => ("id = ?", vec![id.into()]),
         OutboxScope::Unsent(entity_type, entity_sync_id) => (
             "entity_type = ? AND entity_sync_id = ? AND status IN ('pending', 'in_flight', 'conflict')",
             vec![entity_type.into(), entity_sync_id.into()],
         ),
     };
-    let mut all: Vec<sea_orm::Value> = vec![COUNT_ALREADY_POSTED.into(), message.into()];
-    all.append(&mut values);
+    let mut conflict_values: Vec<sea_orm::Value> = vec![message.clone().into()];
+    conflict_values.extend(values.iter().cloned());
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        &format!(
+            "UPDATE sync_conflicts
+             SET status = 'resolved_remote', resolution_action = 'same_count_kept', resolution_note = ?,
+                 resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), row_version = row_version + 1,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             WHERE status IN ('new', 'triaged', 'escalated')
+               AND linked_outbox_id IN (SELECT id FROM sync_outbox WHERE {filter})"
+        ),
+        conflict_values,
+    ))
+    .await?;
+    let mut outbox_values: Vec<sea_orm::Value> = vec![COUNT_ALREADY_POSTED.into(), message.into()];
+    outbox_values.extend(values);
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         &format!(
@@ -240,17 +291,18 @@ async fn close_outbox(conn: &impl ConnectionTrait, scope: OutboxScope<'_>, messa
                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE {filter}"
         ),
-        all,
+        outbox_values,
     ))
     .await?;
     Ok(())
 }
 
 /// A server conflict on a row of a count pushed by this PC — its movement, audit link, session or
-/// line — when the server holds the same count posted first on another PC ([`same_seeded_count`],
+/// line — when the server holds the same count posted first on another PC ([`seeded_count_local`],
 /// [`same_posting`]): the outbox entry is closed (`superseded`, coded [`COUNT_ALREADY_POSTED`]) and
 /// no conflict is recorded. The server's version is applied here when it arrives (first push wins).
-/// A session's own posting is audited now, before it is replaced. `true` when settled.
+/// A session's own posting is audited now, before it is replaced (when it differs at all).
+/// `true` when settled.
 pub(crate) async fn settle_count_server_conflict(
     conn: &impl ConnectionTrait,
     conflict: &crate::sync::domain::SyncServerConflictInput,
@@ -269,7 +321,7 @@ pub(crate) async fn settle_count_server_conflict(
     let (entity_type, entity_sync_id) = (conflict.entity_type.as_str(), conflict.entity_sync_id.as_str());
     match entity_type {
         MOVEMENTS | AUDIT_LINKS => {
-            if same_seeded_count(conn, entity_type, entity_sync_id, &server)
+            if seeded_count_local(conn, entity_type, entity_sync_id, &server)
                 .await?
                 .is_none()
             {
@@ -280,7 +332,7 @@ pub(crate) async fn settle_count_server_conflict(
             let Some(local) = same_posting(conn, entity_type, entity_sync_id, &server).await? else {
                 return Ok(false);
             };
-            if entity_type == SESSIONS {
+            if entity_type == SESSIONS && !differing_keys(&local, &server).is_empty() {
                 write_posted_twice_audit(conn, entity_type, entity_sync_id, &local, &server).await?;
             }
         }
@@ -291,7 +343,7 @@ pub(crate) async fn settle_count_server_conflict(
             conn,
             OutboxScope::One(outbox_id),
             format!(
-                "The same count was posted first on another PC (server version {}): the stock moved once; the server's version is kept.",
+                "The same count was posted first on another PC (server version {}): its version is kept here.",
                 conflict.server_row_version
             ),
         )
@@ -301,9 +353,11 @@ pub(crate) async fn settle_count_server_conflict(
 }
 
 /// A received count session or line while this PC still has an unsent change of it
-/// (`sync::materialize`, instead of a `CONCURRENT_EDIT`): when it is the same posting
-/// ([`same_posting`]) this PC's change is closed (`superseded`) and the received version is applied
-/// (it reached the server first); a session's own posting is audited first. `true` when settled.
+/// (`sync::materialize::evaluate_and_apply`, before its concurrency check): when it is the same
+/// posting ([`same_posting`]) and differs at all, this PC's unsent change is closed (`superseded`)
+/// and the received version is then applied (it reached the server first); a session's own posting
+/// is audited first. A received row identical to this PC's is left to the usual checks. `true`
+/// when settled.
 pub(crate) async fn settle_concurrent_posting(
     conn: &impl ConnectionTrait,
     entity_type: &str,
@@ -313,19 +367,34 @@ pub(crate) async fn settle_concurrent_posting(
     if entity_type != SESSIONS && entity_type != LINES {
         return Ok(false);
     }
+    let unsent = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS unsent FROM sync_outbox
+             WHERE entity_type = ? AND entity_sync_id = ? AND status IN ('pending', 'in_flight', 'conflict')
+             LIMIT 1",
+            [entity_type.into(), entity_sync_id.into()],
+        ))
+        .await?;
+    if unsent.is_none() {
+        return Ok(false);
+    }
     let Ok(received) = serde_json::from_str::<Map<String, Value>>(payload_json) else {
         return Ok(false);
     };
     let Some(local) = same_posting(conn, entity_type, entity_sync_id, &received).await? else {
         return Ok(false);
     };
+    if differing_keys(&local, &received).is_empty() {
+        return Ok(false);
+    }
     if entity_type == SESSIONS {
         write_posted_twice_audit(conn, entity_type, entity_sync_id, &local, &received).await?;
     }
     close_outbox(
         conn,
         OutboxScope::Unsent(entity_type, entity_sync_id),
-        "The same count was posted on another PC and reached the server first: its version is kept.".to_string(),
+        "The same count was posted on another PC and reached the server first: its version is kept here.".to_string(),
     )
     .await?;
     Ok(true)
@@ -354,7 +423,7 @@ async fn version_details(conn: &impl ConnectionTrait, entity_type: &str, p: &Map
             "posted_by_sync_id": text(p, "performed_by_sync_id"),
             "posted_at": text(p, "performed_at"),
             "reason": text(p, "reason"),
-            "quantity": p.get("quantity"),
+            "quantity": qty(p),
         }),
         SESSIONS => serde_json::json!({
             "status": text(p, "status"),
@@ -376,14 +445,24 @@ async fn version_details(conn: &impl ConnectionTrait, entity_type: &str, p: &Map
 }
 
 /// Audit event [`AUDIT_POSTED_TWICE`] for one row of a count posted on two PCs: this PC's version
-/// (who posted or reversed it, when, its reason), the version kept, and this PC.
+/// (who posted or reversed it, when, its reason and quantity), the version kept, this PC, and
+/// whether the count lines differed (`line_differs`) or the quantity did (`quantity_differs`, read
+/// by `negative_stock` to list the count as divergent). Returns the event's id.
 async fn write_posted_twice_audit(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
     local: &Map<String, Value>,
     kept: &Map<String, Value>,
-) -> AppResult<()> {
+) -> AppResult<i64> {
+    let differing = differing_keys(local, kept);
+    let line_fields: &[&str] = match entity_type {
+        MOVEMENTS => MOVEMENT_LINE_FIELDS,
+        AUDIT_LINKS => LINK_LINE_FIELDS,
+        _ => &[],
+    };
+    let line_differs = differing.iter().any(|k| line_fields.contains(k));
+    let quantity_differs = entity_type == MOVEMENTS && differing.contains(&"quantity");
     let replica_id = crate::sync::queries::local_replica_id(conn).await?;
     crate::audit::writer::write_audit_event_in(
         conn,
@@ -398,7 +477,7 @@ async fn write_posted_twice_audit(
             after_hash: None,
             retention_class: "standard".to_string(),
             details_json: Some(serde_json::json!({
-                "summary": "The same stock count was posted on two PCs: the stock moved once; the version received first by the server is kept and this PC's posting is recorded here",
+                "summary": "The same stock count was posted on two PCs: the version received first by the server is kept on every PC and this PC's posting is recorded here",
                 "count_session_sync_id": match entity_type {
                     SESSIONS => Some(entity_sync_id),
                     MOVEMENTS => text(local, "source_sync_id"),
@@ -410,6 +489,8 @@ async fn write_posted_twice_audit(
                     _ => None,
                 },
                 "movement_type": text(local, "movement_type"),
+                "line_differs": line_differs,
+                "quantity_differs": quantity_differs,
                 "device_code": crate::sync::device_code::device_code_for(&replica_id),
                 "replica_id": replica_id,
                 "this_pc_posting": version_details(conn, entity_type, local).await?,
@@ -417,28 +498,64 @@ async fn write_posted_twice_audit(
             })),
         },
     )
-    .await?;
-    Ok(())
+    .await
 }
 
 /// A received count movement or audit link that this PC already holds under the same seeded id,
-/// for the same count, with other content (this PC posted the same count too and its push lost):
-/// `true` tells the caller to write the received content over this PC's row (the version the server
-/// received first is kept on every PC). This PC's own posting is audited ([`AUDIT_POSTED_TWICE`]).
-/// The stock is not touched: an existing movement is never applied again
-/// (`sync::apply_hooks::after_upsert` runs for inserts only).
+/// for the same count ([`seeded_count_local`]), with content that differs in meaning (this PC posted
+/// the same count too and its push lost): `true` tells the caller to write the received content over
+/// this PC's row, so the version the server received first is the one every PC holds.
+///
+/// A movement whose quantity differs (the two PCs' count lines differed) moves this PC's stock by
+/// the difference here, in the same transaction, and the location's negative-stock item is brought
+/// in line: every PC then holds the same ledger and the same stock. This PC's own posting is audited
+/// ([`AUDIT_POSTED_TWICE`]) and the event is queued for synchronisation (this apply runs with capture
+/// suppressed).
 pub(crate) async fn adopt_first_posted(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
     inbound: &Map<String, Value>,
 ) -> AppResult<bool> {
-    let Some(local) = same_seeded_count(conn, entity_type, entity_sync_id, inbound).await? else {
+    let Some(local) = seeded_count_local(conn, entity_type, entity_sync_id, inbound).await? else {
         return Ok(false);
     };
-    if local == *inbound {
+    if differing_keys(&local, inbound).is_empty() {
         return Ok(false);
     }
-    write_posted_twice_audit(conn, entity_type, entity_sync_id, &local, inbound).await?;
+    if entity_type == MOVEMENTS {
+        let (Some(local_qty), Some(kept_qty)) = (qty(&local), qty(inbound)) else {
+            return Ok(false);
+        };
+        let delta = kept_qty - local_qty;
+        if delta.abs() > QTY_TOLERANCE {
+            let row = conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT article_id, warehouse_id, location_id, movement_type FROM inventory_transactions
+                     WHERE entity_sync_id = ?",
+                    [entity_sync_id.into()],
+                ))
+                .await?
+                .ok_or_else(|| {
+                    crate::errors::AppError::SyncError(format!("count movement {entity_sync_id} vanished"))
+                })?;
+            let (article_id, location_id): (i64, i64) =
+                (row.try_get("", "article_id")?, row.try_get("", "location_id")?);
+            let movement_type: String = row.try_get("", "movement_type")?;
+            crate::inventory::ledger::apply_received_movement(
+                conn,
+                article_id,
+                row.try_get("", "warehouse_id")?,
+                location_id,
+                &movement_type,
+                delta,
+            )
+            .await?;
+            crate::inventory::negative_stock::reconcile_pair_in(conn, article_id, location_id).await?;
+        }
+    }
+    let audit_id = write_posted_twice_audit(conn, entity_type, entity_sync_id, &local, inbound).await?;
+    crate::sync::capture::capture_row_change(conn, "audit_events", audit_id).await?;
     Ok(true)
 }

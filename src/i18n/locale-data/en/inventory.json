@@ -57,14 +57,24 @@
       }
     },
     "doublePosting": {
-      "flag": "Count posted twice — to verify",
       "list": "Counts posted twice",
-      "explain": {
-        "COUNT_ADJUST": "Count {{session}} was posted to stock more than once (the same count on two PCs, older version): beyond the count's correction of {{variance}}, the stock moved {{excess}} more (now {{onHand}} on hand). Check the stock and record a new count.",
-        "COUNT_REVERSAL": "The reversal of count {{session}} was posted more than once (on two PCs, older version): beyond the reversal of {{variance}}, the stock moved {{excess}} more (now {{onHand}} on hand). Check the stock and record a new count."
-      },
       "movementLine": "{{who}}, {{date}}: {{quantity}} (the stock ledger does not record the PC)",
-      "closedByCount": "closed by count {{session}} ({{who}}, {{date}})"
+      "closedByCount": "closed by count {{session}} ({{who}}, {{date}})",
+      "flagKind": {
+        "posted_twice": "Count posted twice — to verify",
+        "divergent": "Divergent count — to verify"
+      },
+      "movementLineDevice": "{{who}} on PC {{device}}, {{date}}: {{quantity}}",
+      "explainKind": {
+        "posted_twice": {
+          "COUNT_ADJUST": "Count {{session}} was posted to stock more than once (the same count on two PCs, older version): beyond the count's correction of {{variance}}, the stock moved {{excess}} more (now {{onHand}} on hand). Check the stock and record a new count.",
+          "COUNT_REVERSAL": "The reversal of count {{session}} was posted more than once (on two PCs, older version): beyond the reversal of {{variance}}, the stock moved {{excess}} more (now {{onHand}} on hand). Check the stock and record a new count."
+        },
+        "divergent": {
+          "COUNT_ADJUST": "Count {{session}} was posted on two PCs with different quantities: the version that reached the server first ({{variance}}) is kept on every PC and the stock follows it; the other differed by {{excess}} (now {{onHand}} on hand). Its count line is a sync conflict on the PC whose version was replaced. Check the stock and record a new count.",
+          "COUNT_REVERSAL": "The reversal of count {{session}} was posted on two PCs with different quantities: the version that reached the server first ({{variance}}) is kept on every PC and the stock follows it; the other differed by {{excess}} (now {{onHand}} on hand). Check the stock and record a new count."
+        }
+      }
     },
     "label": "Negative stock",
     "hint": "To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",

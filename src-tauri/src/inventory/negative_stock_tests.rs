@@ -1938,12 +1938,14 @@ async fn sync_applied(server: &mut TestServer, device: &str, db: &DatabaseConnec
     );
 }
 
-/// `entity type:conflict type` of every sync conflict recorded on `db`, sorted.
+/// `entity type:conflict type` of every sync conflict still open for a person on `db`, sorted.
 async fn conflict_kinds(db: &DatabaseConnection) -> Vec<String> {
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
     db.query_all(Statement::from_string(
         DbBackend::Sqlite,
-        "SELECT entity_type || ':' || conflict_type AS kind FROM sync_conflicts ORDER BY kind".to_string(),
+        "SELECT entity_type || ':' || conflict_type AS kind FROM sync_conflicts
+         WHERE status IN ('new', 'triaged', 'escalated') ORDER BY kind"
+            .to_string(),
     ))
     .await
     .expect("conflicts")
@@ -1974,17 +1976,23 @@ async fn posted_twice_audits(db: &DatabaseConnection, target: &str) -> i64 {
     .await
 }
 
-/// After the same count was posted (or reversed) on A first and B second, and both synchronised:
-/// B keeps A's version of the movement (and of its audit link), of the count session and of its
-/// line; its own posting is audited (movement, link, session); its pushes of them are closed; no
-/// conflict is left for a person on either PC.
-async fn assert_first_posting_kept(
+/// One row of a count posted (or reversed) on both PCs, compared before they synchronise.
+struct PostedRow {
+    entity_type: &'static str,
+    sync_id: String,
+    /// B's version differs from A's (otherwise the server acknowledges B's push as a duplicate).
+    differs: bool,
+}
+
+/// The movement, audit link (when any), session and line of a count posted on A and B, each with
+/// whether B's version differs from A's. Taken after both postings, before any exchange.
+async fn posted_rows(
     a: &DatabaseConnection,
     b: &DatabaseConnection,
     session: &str,
     movement: &str,
     link: Option<&str>,
-) {
+) -> Vec<PostedRow> {
     let line = text_of(
         a,
         "SELECT cl.entity_sync_id FROM inventory_count_lines cl
@@ -1992,28 +2000,63 @@ async fn assert_first_posting_kept(
         vec![session.into()],
     )
     .await;
-    let mut rows = vec![
-        ("inventory_transactions", movement.to_string(), 1),
-        ("inventory_count_sessions", session.to_string(), 1),
-        // A line names no poster: replaced without an audit of its own (the session's names them).
-        ("inventory_count_lines", line, 0),
+    let mut ids = vec![
+        ("inventory_transactions", movement.to_string()),
+        ("inventory_count_sessions", session.to_string()),
+        ("inventory_count_lines", line),
     ];
     if let Some(link) = link {
-        rows.push(("inventory_mutation_audit_links", link.to_string(), 1));
+        ids.push(("inventory_mutation_audit_links", link.to_string()));
     }
-    for (entity_type, sync_id, audits) in rows {
-        let sync_id = sync_id.as_str();
+    let mut rows = Vec::new();
+    for (entity_type, sync_id) in ids {
+        let differs = wire_row(a, entity_type, &sync_id).await != wire_row(b, entity_type, &sync_id).await;
+        rows.push(PostedRow {
+            entity_type,
+            sync_id,
+            differs,
+        });
+    }
+    rows
+}
+
+/// After the same count was posted (or reversed) on A first and B second and both synchronised
+/// (then once more each, so B's audits reach A): B holds A's version of every row. A row that was
+/// identical on both was acknowledged as a duplicate (no audit). A row that differed was settled:
+/// B's push is closed (`superseded`, `COUNT_ALREADY_POSTED`) and B's own version is audited — for
+/// the movement, the link and the session; a line names no poster — and the audit reaches A. No
+/// conflict is left for a person on either PC.
+async fn assert_first_posting_kept(
+    server: &mut TestServer,
+    a: &DatabaseConnection,
+    b: &DatabaseConnection,
+    rows: &[PostedRow],
+) {
+    sync_applied(server, "B", b).await;
+    sync_applied(server, "A", a).await;
+    for row in rows {
+        let (entity_type, sync_id) = (row.entity_type, row.sync_id.as_str());
         assert_eq!(
             wire_row(b, entity_type, sync_id).await,
             wire_row(a, entity_type, sync_id).await,
             "B holds A's {entity_type}"
         );
+        let audits = i64::from(row.differs && entity_type != "inventory_count_lines");
         assert_eq!(
             posted_twice_audits(b, sync_id).await,
             audits,
             "B audits its own {entity_type}"
         );
-        assert_eq!(posted_twice_audits(a, sync_id).await, 0, "A's version was kept");
+        assert_eq!(
+            posted_twice_audits(a, sync_id).await,
+            audits,
+            "B's audit of {entity_type} reached A"
+        );
+        let expected = if row.differs {
+            "superseded:COUNT_ALREADY_POSTED"
+        } else {
+            "acked:"
+        };
         assert_eq!(
             crate::sync::test_support::scalar_opt_text(
                 b,
@@ -2023,8 +2066,8 @@ async fn assert_first_posting_kept(
             )
             .await
             .as_deref(),
-            Some("superseded:COUNT_ALREADY_POSTED"),
-            "B's push of its {entity_type} is closed"
+            Some(expected),
+            "B's push of its {entity_type}"
         );
     }
     for (pc, db) in [("A", a), ("B", b)] {
@@ -2150,6 +2193,31 @@ async fn a_count_posted_on_two_pcs_moves_the_stock_once() {
     let on_b = movement_sync_id(&b, &session_sync_id, "COUNT_ADJUST").await;
     assert_eq!(on_a, expected, "A: the seeded id");
     assert_eq!(on_b, expected, "B: the same id");
+    // B posted at another time: every row differs from A's (the movement and the session also by
+    // who posted them), so each is settled rather than acknowledged as a duplicate.
+    let link = crate::inventory::controls::count_audit_link_sync_id(&expected);
+    for sql in [
+        "UPDATE inventory_transactions SET performed_at = '2026-10-01T10:00:00Z' WHERE entity_sync_id = ?",
+        "UPDATE inventory_mutation_audit_links SET created_at = '2026-10-01T10:00:00Z' WHERE entity_sync_id = ?",
+    ] {
+        let id = if sql.contains("audit_links") { &link } else { &expected };
+        exec(&b, sql, vec![id.clone().into()]).await;
+    }
+    exec(
+        &b,
+        "UPDATE inventory_count_sessions SET posted_at = '2026-10-01T10:00:00Z' WHERE entity_sync_id = ?",
+        vec![session_sync_id.clone().into()],
+    )
+    .await;
+    exec(
+        &b,
+        "UPDATE inventory_count_lines SET updated_at = '2026-10-01T10:00:00Z'
+         WHERE session_id = (SELECT id FROM inventory_count_sessions WHERE entity_sync_id = ?)",
+        vec![session_sync_id.clone().into()],
+    )
+    .await;
+    let rows = posted_rows(&a, &b, &session_sync_id, &expected, Some(&link)).await;
+    assert!(rows.iter().all(|r| r.differs), "every row differs");
 
     sync_applied(&mut server, "A", &a).await;
     sync_applied(&mut server, "B", &b).await;
@@ -2163,8 +2231,7 @@ async fn a_count_posted_on_two_pcs_moves_the_stock_once() {
         );
         assert_eq!(audit_links(db, &expected).await, 1, "{pc}: one audit link");
     }
-    let link = crate::inventory::controls::count_audit_link_sync_id(&expected);
-    assert_first_posting_kept(&a, &b, &session_sync_id, &expected, Some(&link)).await;
+    assert_first_posting_kept(&mut server, &a, &b, &rows).await;
 }
 
 /// AU-100: the same posted count reversed on two PCs before either synchronised: one
@@ -2198,6 +2265,9 @@ async fn a_count_reversed_on_two_pcs_moves_the_stock_back_once() {
         movement_sync_id(&a, &session_sync_id, "COUNT_ADJUST").await,
         "a reversal has its own id"
     );
+    // As it comes: the movement and the session name each PC's user (they differ); the line may be
+    // identical on both (acknowledged as a duplicate) or not (settled) — both are checked.
+    let rows = posted_rows(&a, &b, &session_sync_id, &on_a, None).await;
 
     sync_applied(&mut server, "A", &a).await;
     sync_applied(&mut server, "B", &b).await;
@@ -2215,7 +2285,7 @@ async fn a_count_reversed_on_two_pcs_moves_the_stock_back_once() {
             "{pc}: one posting"
         );
     }
-    assert_first_posting_kept(&a, &b, &session_sync_id, &on_a, None).await;
+    assert_first_posting_kept(&mut server, &a, &b, &rows).await;
 }
 
 /// AU-100, mixed versions: a count movement from a PC of an older version (random sync id) for a
@@ -2520,4 +2590,109 @@ async fn a_count_posted_on_two_pcs_with_different_lines_leaves_the_line_to_a_per
         kinds.iter().all(|k| k.starts_with("inventory_count_lines:")),
         "B: only the line: {kinds:?}"
     );
+}
+
+/// AU-100, review S3: the same session posted on two PCs whose lines counted different quantities
+/// (7 on A, 6 on B: variances −3 and −4). The movement A pushed first is kept on both and B's stock
+/// is corrected by the difference, so both hold the same ledger and the same stock (7); B's own
+/// posting is audited (both quantities) and the count is listed "comptage divergent — à vérifier"
+/// (on B, then on A once the audit arrives); the line stays a conflict for a person on B; a new
+/// count closes the item.
+#[tokio::test]
+async fn a_count_posted_on_two_pcs_with_different_quantities_converges_and_is_listed() {
+    let ApprovedOnBoth {
+        a,
+        b,
+        mut server,
+        users,
+        pair_a,
+        pair_b,
+        session_sync_id,
+    } = approved_on_both().await;
+    exec(
+        &b,
+        "UPDATE inventory_count_lines SET counted_qty = 6, variance_qty = -4
+         WHERE session_id = (SELECT id FROM inventory_count_sessions WHERE entity_sync_id = ?)",
+        vec![session_sync_id.clone().into()],
+    )
+    .await;
+    post_on(&a, users.0, &session_sync_id).await;
+    post_on(&b, users.1, &session_sync_id).await;
+    assert_eq!(on_hand_milli(&a, pair_a.0, pair_a.1).await, 7_000);
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 6_000);
+    let movement = movement_sync_id(&a, &session_sync_id, "COUNT_ADJUST").await;
+
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    sync_applied(&mut server, "A", &a).await;
+    for (pc, db, (art, loc)) in [("A", &a, pair_a), ("B", &b, pair_b)] {
+        assert_eq!(
+            on_hand_milli(db, art, loc).await,
+            7_000,
+            "{pc}: the stock A posted first"
+        );
+        assert_eq!(
+            count_movements(db, &session_sync_id, "COUNT_ADJUST").await,
+            (1, 1),
+            "{pc}: one movement"
+        );
+        assert_eq!(
+            wire_row(db, "inventory_transactions", &movement)
+                .await
+                .get("quantity")
+                .and_then(|q| q.as_f64()),
+            Some(-3.0),
+            "{pc}: the same movement content"
+        );
+        let list = negative_stock::list_reviews(db, false).await.expect("list");
+        let divergent: Vec<_> = list
+            .double_postings
+            .iter()
+            .filter(|d| d.kind == negative_stock::DOUBLE_POSTING_DIVERGENT)
+            .collect();
+        assert_eq!(divergent.len(), 1, "{pc}: one divergent count");
+        let item = divergent[0];
+        assert_eq!((item.article_id, item.location_id), (art, loc), "{pc}");
+        let quantities: Vec<f64> = item.movements.iter().map(|m| m.quantity).collect();
+        assert_eq!(quantities, vec![-3.0, -4.0], "{pc}: the kept version, then B's");
+        assert!(item.movements[1].device_code.is_some(), "{pc}: B's PC is named");
+        assert!((item.excess_qty + 1.0).abs() < 1e-9, "{pc}: B's version differed by -1");
+    }
+    assert_eq!(posted_twice_audits(&b, &movement).await, 1, "B's posting is audited");
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = ? AND target_id = ?
+             AND json_extract(details_json, '$.this_pc_posting.quantity') = -4
+             AND json_extract(details_json, '$.kept_posting.quantity') = -3",
+            vec![
+                crate::inventory::count_sync::AUDIT_POSTED_TWICE.into(),
+                movement.clone().into()
+            ],
+        )
+        .await,
+        1,
+        "both quantities are in the audit"
+    );
+    assert_eq!(conflict_kinds(&a).await, Vec::<String>::new(), "A pushed first");
+    let kinds = conflict_kinds(&b).await;
+    assert!(!kinds.is_empty(), "B: the line is left to a person");
+    assert!(
+        kinds.iter().all(|k| k.starts_with("inventory_count_lines:")),
+        "B: only the line: {kinds:?}"
+    );
+
+    // A new count on B (reason of at least 8 characters) closes it.
+    let counter_b = user_with(&b, "au100divergent", &[crate::rbac::permissions::INV_MANAGE]).await;
+    negative_stock::resolve_by_count(
+        &b,
+        counter_b,
+        resolution(pair_b.0, pair_b.1, 7.0, "Recompté après comptage divergent"),
+    )
+    .await
+    .expect("a new count");
+    let list = negative_stock::list_reviews(&b, false).await.expect("list");
+    assert!(list.double_postings.is_empty(), "B: closed by the new count");
 }

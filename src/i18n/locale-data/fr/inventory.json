@@ -57,14 +57,24 @@
       }
     },
     "doublePosting": {
-      "flag": "Comptage passé deux fois — à vérifier",
       "list": "Comptages passés deux fois",
-      "explain": {
-        "COUNT_ADJUST": "L'inventaire {{session}} a été passé en stock plus d'une fois (le même inventaire sur deux postes, ancienne version) : au-delà de sa correction de {{variance}}, le stock a bougé de {{excess}} en plus (actuellement {{onHand}} en stock). Vérifiez le stock et enregistrez un nouveau comptage.",
-        "COUNT_REVERSAL": "La contre-passation de l'inventaire {{session}} a été passée plus d'une fois (sur deux postes, ancienne version) : au-delà de la contre-passation de {{variance}}, le stock a bougé de {{excess}} en plus (actuellement {{onHand}} en stock). Vérifiez le stock et enregistrez un nouveau comptage."
-      },
       "movementLine": "{{who}}, {{date}} : {{quantity}} (le journal de stock n'enregistre pas le poste)",
-      "closedByCount": "clos par le comptage {{session}} ({{who}}, {{date}})"
+      "closedByCount": "clos par le comptage {{session}} ({{who}}, {{date}})",
+      "flagKind": {
+        "posted_twice": "Comptage passé deux fois — à vérifier",
+        "divergent": "Comptage divergent — à vérifier"
+      },
+      "movementLineDevice": "{{who}} sur le poste {{device}}, {{date}} : {{quantity}}",
+      "explainKind": {
+        "posted_twice": {
+          "COUNT_ADJUST": "L'inventaire {{session}} a été passé en stock plus d'une fois (le même inventaire sur deux postes, ancienne version) : au-delà de sa correction de {{variance}}, le stock a bougé de {{excess}} en plus (actuellement {{onHand}} en stock). Vérifiez le stock et enregistrez un nouveau comptage.",
+          "COUNT_REVERSAL": "La contre-passation de l'inventaire {{session}} a été passée plus d'une fois (sur deux postes, ancienne version) : au-delà de la contre-passation de {{variance}}, le stock a bougé de {{excess}} en plus (actuellement {{onHand}} en stock). Vérifiez le stock et enregistrez un nouveau comptage."
+        },
+        "divergent": {
+          "COUNT_ADJUST": "L'inventaire {{session}} a été passé en stock sur deux postes avec des quantités différentes : la version arrivée la première au serveur ({{variance}}) est gardée sur tous les postes et le stock la suit ; l'autre différait de {{excess}} (actuellement {{onHand}} en stock). Sa ligne de comptage est un conflit de synchronisation sur le poste dont la version a été remplacée. Vérifiez le stock et enregistrez un nouveau comptage.",
+          "COUNT_REVERSAL": "La contre-passation de l'inventaire {{session}} a été passée sur deux postes avec des quantités différentes : la version arrivée la première au serveur ({{variance}}) est gardée sur tous les postes et le stock la suit ; l'autre différait de {{excess}} (actuellement {{onHand}} en stock). Vérifiez le stock et enregistrez un nouveau comptage."
+        }
+      }
     },
     "label": "Stock négatif",
     "hint": "À corriger : un autre poste a peut-être enregistré un mouvement. Enregistrez un comptage dans « Stock à rapprocher » (Stock › Contrôles).",

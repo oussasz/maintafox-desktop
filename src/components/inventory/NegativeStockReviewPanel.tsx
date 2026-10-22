@@ -118,11 +118,17 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
     });
 
   const movementLine = (m: DoublePostedMovement) =>
-    t("negativeStock.doublePosting.movementLine", {
-      who: m.posted_by ?? t("negativeStock.doubleCount.unknownUser"),
-      date: m.posted_at ? formatDateTime(m.posted_at) : "—",
-      quantity: qty(m.quantity),
-    });
+    t(
+      m.device_code
+        ? "negativeStock.doublePosting.movementLineDevice"
+        : "negativeStock.doublePosting.movementLine",
+      {
+        who: m.posted_by ?? t("negativeStock.doubleCount.unknownUser"),
+        device: m.device_code ?? "",
+        date: m.posted_at ? formatDateTime(m.posted_at) : "—",
+        quantity: qty(m.quantity),
+      },
+    );
 
   const openCount = (item: CountTarget) => {
     setCounting(item);
@@ -285,7 +291,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusChip
-                    label={t("negativeStock.doublePosting.flag")}
+                    label={t(`negativeStock.doublePosting.flagKind.${item.kind}`)}
                     tone="warning"
                     icon={AlertTriangle}
                   />
@@ -297,7 +303,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-text-muted">
-                  {t(`negativeStock.doublePosting.explain.${item.movement_type}`, {
+                  {t(`negativeStock.doublePosting.explainKind.${item.kind}.${item.movement_type}`, {
                     session: item.session_code,
                     variance: qty(item.variance_qty),
                     excess: qty(item.excess_qty),
@@ -305,8 +311,8 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                   })}
                 </p>
                 <ul className="mt-1 list-disc ps-5 text-xs text-text-secondary">
-                  {item.movements.map((m) => (
-                    <li key={m.movement_sync_id}>{movementLine(m)}</li>
+                  {item.movements.map((m, i) => (
+                    <li key={`${m.movement_sync_id}-${i}`}>{movementLine(m)}</li>
                   ))}
                 </ul>
               </div>
@@ -383,7 +389,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
               <span className="font-medium text-text-secondary">
                 {item.article_code} — {item.warehouse_code}/{item.location_code}
               </span>{" "}
-              · {t("negativeStock.doublePosting.flag")} ·{" "}
+              · {t(`negativeStock.doublePosting.flagKind.${item.kind}`)} ·{" "}
               {t("negativeStock.doublePosting.closedByCount", {
                 session: item.closed_by?.session_code ?? "—",
                 who: item.closed_by?.counted_by ?? t("negativeStock.doubleCount.unknownUser"),

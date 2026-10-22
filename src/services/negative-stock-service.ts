@@ -102,6 +102,8 @@ export const DoublePostedMovementSchema = z.object({
   posted_by: z.string().nullable(),
   posted_at: z.string(),
   quantity: z.number(),
+  /** The PC that posted it, when known (the audit of a divergent count names it). */
+  device_code: z.string().nullable(),
 });
 export type DoublePostedMovement = z.infer<typeof DoublePostedMovementSchema>;
 
@@ -111,6 +113,8 @@ export type DoublePostedMovement = z.infer<typeof DoublePostedMovementSchema>;
  * by older versions). Closed only by a new count of that article and location.
  */
 export const DoublePostedCountReviewSchema = z.object({
+  /** `posted_twice`: two movements in the ledger; `divergent`: posted on two PCs with different quantities. */
+  kind: z.enum(["posted_twice", "divergent"]),
   article_id: z.number(),
   article_code: z.string(),
   article_name: z.string(),
