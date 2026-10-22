@@ -757,7 +757,7 @@ pub async fn enforce_session_alive(
             }
         };
         if recorded && password_ahead_of_clock {
-            audit_password_date_ahead(db, user.user_id, session_db_id, stored_password_date.as_deref()).await;
+            audit_password_date_ahead(db, user, session_db_id, stored_password_date.as_deref()).await;
         }
     }
     Ok(StoredSessionState {
@@ -903,11 +903,15 @@ pub async fn store_session_or_clear(
                 .as_deref()
                 .and_then(parse_instant)
                 .is_some_and(|changed| changed > Utc::now() + PASSWORD_CHANGE_CLOCK_TOLERANCE);
+            let mut signed_in = None;
             if let Some(current) = manager.current.as_mut().filter(|s| s.session_db_id == session_db_id) {
                 current.password_changed_at_seen = Some(password_changed_at.clone());
+                signed_in = Some(current.user.clone());
             }
-            if ahead {
-                audit_password_date_ahead(db, user_id, Some(session_db_id), password_changed_at.as_deref()).await;
+            // Written while the caller holds the session lock (sign-in is not usable before it
+            // returns); the audit only uses the database, and only when the date is ahead.
+            if let (true, Some(user)) = (ahead, signed_in) {
+                audit_password_date_ahead(db, &user, Some(session_db_id), password_changed_at.as_deref()).await;
             }
             Ok(())
         }
@@ -934,12 +938,12 @@ async fn read_password_changed_at(db: &DatabaseConnection, user_id: i32) -> AppR
 /// session is kept; the date is its reference).
 async fn audit_password_date_ahead(
     db: &DatabaseConnection,
-    user_id: i32,
+    user: &AuthenticatedUser,
     session_db_id: Option<&str>,
     password_changed_at: Option<&str>,
 ) {
     tracing::warn!(
-        user_id,
+        user_id = user.user_id,
         password_changed_at = password_changed_at.unwrap_or("-"),
         "password_changed_at is later than this device's clock: clock anomaly, the session is kept"
     );
@@ -947,7 +951,8 @@ async fn audit_password_date_ahead(
         db,
         crate::audit::AuditEvent {
             event_type: crate::audit::event_type::SESSION_CLOCK_ANOMALY,
-            actor_id: Some(user_id),
+            actor_id: Some(user.user_id),
+            actor_name: Some(&user.username),
             entity_type: Some("app_session"),
             entity_id: session_db_id,
             summary: "Password date later than this device's clock; session kept",
