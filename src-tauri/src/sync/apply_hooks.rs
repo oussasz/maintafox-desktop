@@ -88,6 +88,7 @@ pub(crate) fn before_upsert(
             None | Some(serde_json::Value::Null) => Some(ApplyOutcome::Deferred {
                 code: DEFER_MISSING_FIELD.into(),
                 message: "hold_kind missing: sent by an older app version; waiting for an update of that device".into(),
+                waits_for: None,
             }),
             Some(serde_json::Value::String(k)) if crate::wo::lifecycle::HoldKind::try_from_str(k).is_some() => None,
             Some(other) => Some(ApplyOutcome::Conflict {
@@ -153,6 +154,7 @@ pub(crate) async fn before_upsert_checked(
                 InboundDecisionVerdict::Defer(message) => ApplyOutcome::Deferred {
                     code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
                     message,
+                    waits_for: None,
                 },
                 InboundDecisionVerdict::Conflict(message) => ApplyOutcome::Conflict {
                     code: "DECISION_SELF_APPROVAL".into(),
@@ -259,6 +261,7 @@ pub(crate) async fn before_upsert_checked(
             InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
                 code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
                 message,
+                waits_for: None,
             },
             InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
                 code: code.into(),
@@ -370,6 +373,7 @@ pub(crate) async fn before_delete_checked(
         crate::settings::site::InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
             code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
             message,
+            waits_for: None,
         },
         crate::settings::site::InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
             code: code.into(),
@@ -410,6 +414,20 @@ pub(crate) async fn after_upsert(
                 .await?
                 .ok_or_else(|| hook_err(layout.table(), "hand-over log not found after apply"))?;
             crate::permit::handover_roles::adopt_received_roles(conn, id).await
+        }
+        // Two concurrent versions of a PM plan, or an occurrence due twice: the PM planners are told
+        // (`pm::version_clash`).
+        "pm_plan_versions" if inserted => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "version not found after insert"))?;
+            crate::pm::version_clash::after_received_version(conn, id).await
+        }
+        "pm_occurrences" if inserted => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "occurrence not found after insert"))?;
+            crate::pm::version_clash::after_received_occurrence(conn, id).await
         }
         "user_dismissals" => {
             let id = located_row_id(conn, layout, row)

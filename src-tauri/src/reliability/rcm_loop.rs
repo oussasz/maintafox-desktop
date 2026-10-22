@@ -215,7 +215,7 @@ pub struct RcmDecisionLogic {
 
 const LOGIC_SELECT: &str = "SELECT d.id, d.row_version, d.selected_tactic, d.consequence_category, d.justification, \
      d.recommended_tactic, d.decision_inputs_json, d.decision_path_json, d.linked_pm_plan_id, \
-     d.linked_pm_plan_version_id, p.code AS pm_plan_code, v.version_no AS pm_version_no, \
+     d.linked_pm_plan_version_id, p.code AS pm_plan_code, (SELECT n.display_no FROM pm_plan_version_numbers n WHERE n.id = v.id) AS pm_version_no, \
      d.linked_work_order_id, wo.code AS work_order_code \
      FROM rcm_decisions d \
      LEFT JOIN pm_plan_versions v ON v.id = d.linked_pm_plan_version_id \
@@ -489,7 +489,7 @@ pub async fn create_pm_revision_from_source(
             DbBackend::Sqlite,
             "SELECT trigger_definition_json, task_package_json, required_parts_json, required_skills_json, \
              required_tools_json, estimated_duration_hours, planned_crew_size, estimated_labor_cost, estimated_parts_cost, \
-             estimated_service_cost FROM pm_plan_versions WHERE pm_plan_id = ? ORDER BY version_no DESC LIMIT 1",
+             estimated_service_cost FROM pm_plan_versions WHERE pm_plan_id = ? ORDER BY version_no DESC, entity_sync_id DESC LIMIT 1",
             [input.pm_plan_id.into()],
         ))
         .await?

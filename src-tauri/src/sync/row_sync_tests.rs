@@ -712,6 +712,7 @@ async fn tenant_wide_assignment_with_tenant_id_reaches_other_devices() {
             checkpoint_token: None,
             local_row_version: None,
             inbound_row_version: None,
+            detail_message: None,
         },
     )
     .await

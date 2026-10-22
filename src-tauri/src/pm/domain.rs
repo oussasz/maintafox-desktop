@@ -39,6 +39,8 @@ pub struct PmPlan {
 pub struct PmPlanVersion {
     pub id: i64,
     pub pm_plan_id: i64,
+    /// The number shown (`pm_plan_version_numbers`, migration 254): the stored number, unless two
+    /// PCs numbered two versions alike, then distinct and the same on every PC.
     pub version_no: i64,
     pub status: String,
     pub effective_from: String,
