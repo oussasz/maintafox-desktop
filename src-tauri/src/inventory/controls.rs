@@ -723,11 +723,26 @@ pub async fn reverse_count_session(
     let lines = list_count_lines(db, input.session_id).await?;
     let tx = db.begin().await?;
     for line in lines {
-        if line.posted_transaction_id.is_none() || line.variance_qty.abs() <= f64::EPSILON {
+        let Some(posted_transaction_id) = line.posted_transaction_id else {
+            continue;
+        };
+        // What the posting moved, as the ledger holds it: when the same count was posted on two PCs
+        // with different lines, the movement kept on every PC can differ from this PC's line until
+        // its line conflict is resolved (`inventory::count_sync`); the reversal undoes the movement.
+        let posted_qty: f64 = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT quantity FROM inventory_transactions WHERE id = ?",
+                [posted_transaction_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::ValidationFailed(vec![format!("Line {} has no posted movement.", line.id)]))?
+            .try_get("", "quantity")?;
+        if posted_qty.abs() <= f64::EPSILON {
             continue;
         }
         let (_, current_qty) = get_balance(&tx, line.article_id, line.location_id).await?;
-        let next_qty = current_qty - line.variance_qty;
+        let next_qty = current_qty - posted_qty;
         // A reversal never takes stock below zero, but one that raises a location already below
         // zero is accepted even if it stays there (CMMS Advisor): its item stays open until the
         // stock is zero or more, and it is audited.
@@ -745,7 +760,7 @@ pub async fn reverse_count_session(
             line.article_id,
             line.warehouse_id,
             line.location_id,
-            -line.variance_qty,
+            -posted_qty,
             "COUNT_REVERSAL",
             input.session_id,
             &session.session_code,

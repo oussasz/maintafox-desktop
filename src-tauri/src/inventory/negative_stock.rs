@@ -227,7 +227,9 @@ pub const DOUBLE_POSTING_DIVERGENT: &str = "divergent";
 /// two PCs whose lines differed in quantity (`inventory::count_sync`): one movement is kept on every
 /// PC and the stock follows it, the other version is in the audit event `inventory.count.posted_twice`
 /// (`quantity_differs`). Listed from that event — on the PC whose version was replaced, then on every
-/// PC it reaches — and closed the same way, by a new count made where that movement was held.
+/// PC it reaches — and closed the same way, by a new count made where that movement was held. Audit
+/// rows are accepted from every PC: an edited or forged one can only add such an item (closed by a
+/// recount), never move stock; one this version cannot read is left out.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DoublePostedCountReview {
     /// [`DOUBLE_POSTING_POSTED_TWICE`] or [`DOUBLE_POSTING_DIVERGENT`].
@@ -808,7 +810,9 @@ const DOUBLE_POSTED_GROUPS: &str = "SELECT source_id, movement_type FROM invento
      GROUP BY source_id, movement_type HAVING COUNT(*) > 1";
 
 /// Audit events of a count whose quantity differed between two PCs (`inventory::count_sync`),
-/// with the kept movement, for an article and location.
+/// with the kept movement, for an article and location. Audit rows arrive from every PC: a row whose
+/// details are not valid JSON is never parsed (`CASE`, so `json_extract` cannot fail the query), and
+/// only count movements of a count session are joined.
 const DIVERGENT_AUDITS: &str = "SELECT ae.target_id AS movement_sync_id, ae.details_json, t.source_id,
             t.movement_type, t.quantity, t.performed_at, ua.display_name, ua.username, cs.session_code,
             cs.created_at
@@ -817,9 +821,10 @@ const DIVERGENT_AUDITS: &str = "SELECT ae.target_id AS movement_sync_id, ae.deta
      JOIN inventory_count_sessions cs ON cs.id = t.source_id
      LEFT JOIN user_accounts ua ON ua.id = t.performed_by_id
      WHERE ae.action_code = 'inventory.count.posted_twice' AND ae.target_type = 'inventory_transactions'
-       AND json_extract(ae.details_json, '$.quantity_differs') = 1
+       AND (CASE WHEN json_valid(ae.details_json) THEN json_extract(ae.details_json, '$.quantity_differs') END) = 1
+       AND t.source_type = 'COUNT_SESSION' AND t.movement_type IN ('COUNT_ADJUST', 'COUNT_REVERSAL')
        AND t.article_id = ? AND t.location_id = ?
-     ORDER BY cs.created_at, ae.target_id, ae.id";
+     ORDER BY cs.created_at, ae.target_id, ae.happened_at, ae.entity_sync_id";
 
 /// Sync ids of every movement held here of the counts of an article and location posted more than
 /// once, and of those whose quantity differed between two PCs (sorted, distinct).
@@ -956,16 +961,28 @@ async fn double_postings_of(
     let mut divergent_items: Vec<DoublePosting> = Vec::new();
     for row in &divergent {
         let movement_sync_id: String = row.try_get("", "movement_sync_id")?;
-        let details: serde_json::Value = serde_json::from_str(&row.try_get::<String>("", "details_json")?)
-            .map_err(|e| AppError::SyncError(format!("count audit details: {e}")))?;
-        let replaced = &details["this_pc_posting"];
+        // An audit row this version cannot read (another detail shape, a damaged row received by
+        // sync) is left out of the list, never allowed to break it (or a count's mark).
+        let details: Option<serde_json::Value> = row
+            .try_get::<Option<String>>("", "details_json")?
+            .and_then(|json| serde_json::from_str(&json).ok());
+        let replaced = details.as_ref().map(|d| &d["this_pc_posting"]);
+        let (Some(details), Some(replaced), Some(replaced_qty)) = (
+            details.as_ref(),
+            replaced,
+            replaced.and_then(|r| r["quantity"].as_f64()),
+        ) else {
+            tracing::warn!(
+                movement_sync_id = %movement_sync_id,
+                "negative_stock: unreadable divergent count audit skipped"
+            );
+            continue;
+        };
         let replaced_version = DoublePostedMovement {
             movement_sync_id: movement_sync_id.clone(),
             posted_by: replaced["posted_by"].as_str().map(str::to_string),
             posted_at: replaced["posted_at"].as_str().unwrap_or_default().to_string(),
-            quantity: replaced["quantity"]
-                .as_f64()
-                .ok_or_else(|| AppError::SyncError(format!("count audit of {movement_sync_id} has no quantity")))?,
+            quantity: replaced_qty,
             device_code: details["device_code"].as_str().map(str::to_string),
         };
         if let Some(item) = divergent_items.iter_mut().find(|d| {
@@ -1022,7 +1039,9 @@ async fn double_posting_pairs(conn: &impl ConnectionTrait) -> AppResult<Vec<(i64
                 SELECT t.article_id, t.location_id FROM audit_events ae
                 JOIN inventory_transactions t ON t.entity_sync_id = ae.target_id
                 WHERE ae.action_code = 'inventory.count.posted_twice' AND ae.target_type = 'inventory_transactions'
-                  AND json_extract(ae.details_json, '$.quantity_differs') = 1)
+                  AND (CASE WHEN json_valid(ae.details_json)
+                       THEN json_extract(ae.details_json, '$.quantity_differs') END) = 1
+                  AND t.source_type = 'COUNT_SESSION' AND t.movement_type IN ('COUNT_ADJUST', 'COUNT_REVERSAL'))
              ORDER BY article_id, location_id",
             vec![],
         ))

@@ -2696,3 +2696,153 @@ async fn a_count_posted_on_two_pcs_with_different_quantities_converges_and_is_li
     let list = negative_stock::list_reviews(&b, false).await.expect("list");
     assert!(list.double_postings.is_empty(), "B: closed by the new count");
 }
+
+/// Review B1: the audit events the stock code writes are staged and travel. The "count posted
+/// twice" targets (`inventory_transactions`, `inventory_mutation_audit_links`,
+/// `inventory_count_sessions`) are sync ids sent as they are; "stock to reconcile" events name a
+/// pair of local ids (`stock_location_article`) and travel without that target. No staging error is
+/// left on the PC that wrote them.
+#[tokio::test]
+async fn the_stock_audit_events_are_staged_and_reach_the_other_pc() {
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let targets = [
+        (
+            "inventory_transactions",
+            Some(crate::sync::identity::new_entity_sync_id()),
+        ),
+        (
+            "inventory_mutation_audit_links",
+            Some(crate::sync::identity::new_entity_sync_id()),
+        ),
+        (
+            "inventory_count_sessions",
+            Some(crate::sync::identity::new_entity_sync_id()),
+        ),
+        ("stock_location_article", None),
+    ];
+    for (target_type, target_id) in &targets {
+        crate::audit::writer::write_audit_event(
+            &a,
+            crate::audit::writer::AuditEventInput {
+                action_code: "inventory.test.audit_target".to_string(),
+                target_type: Some((*target_type).to_string()),
+                target_id: Some(target_id.clone().unwrap_or_else(|| "12:34".to_string())),
+                actor_id: None,
+                auth_context: "system".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "standard".to_string(),
+                details_json: Some(serde_json::json!({ "summary": "test" })),
+            },
+        )
+        .await
+        .expect("audit");
+    }
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    assert_eq!(
+        conflict_kinds(&a).await,
+        Vec::<String>::new(),
+        "A: staged without error"
+    );
+    for (target_type, target_id) in &targets {
+        let received = crate::sync::test_support::scalar_opt_text(
+            &b,
+            "SELECT COALESCE(target_id, '<none>') FROM audit_events
+             WHERE action_code = 'inventory.test.audit_target' AND target_type = ?",
+            vec![(*target_type).into()],
+        )
+        .await;
+        assert_eq!(
+            received.as_deref(),
+            Some(target_id.as_deref().unwrap_or("<none>")),
+            "B received the {target_type} event"
+        );
+    }
+}
+
+/// Review S1: a "count posted twice" audit row that this version cannot read — details that are not
+/// JSON, a detail shape without a quantity, or one naming a movement that is not a count — never
+/// breaks the stock-to-reconcile list, its summary, nor recording and posting a count: it is left
+/// out.
+#[tokio::test]
+async fn an_unreadable_posted_twice_audit_never_breaks_the_list_or_a_count() {
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let user = user_with(&db, "au100badaudit", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art, loc) = (article.rowid, location.rowid);
+    let session = approve_count(&db, user, enter_count(&db, user, art, loc, 7.0).await).await;
+    let session_sync_id = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![session.id.into()],
+    )
+    .await;
+    post_on(&db, user, &session_sync_id).await;
+    let count_movement = movement_sync_id(&db, &session_sync_id, "COUNT_ADJUST").await;
+    let entry_movement = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_transactions
+         WHERE article_id = ? AND location_id = ? AND source_type <> 'COUNT_SESSION' LIMIT 1",
+        vec![art.into(), loc.into()],
+    )
+    .await;
+    let write = |target: String, details: serde_json::Value| {
+        let db = &db;
+        async move {
+            crate::audit::writer::write_audit_event(
+                db,
+                crate::audit::writer::AuditEventInput {
+                    action_code: crate::inventory::count_sync::AUDIT_POSTED_TWICE.to_string(),
+                    target_type: Some("inventory_transactions".to_string()),
+                    target_id: Some(target),
+                    actor_id: None,
+                    auth_context: "system".to_string(),
+                    result: "success".to_string(),
+                    before_hash: None,
+                    after_hash: None,
+                    retention_class: "standard".to_string(),
+                    details_json: Some(details),
+                },
+            )
+            .await
+            .expect("audit")
+        }
+    };
+    // No quantity in the shape this version reads.
+    write(count_movement.clone(), serde_json::json!({ "quantity_differs": true })).await;
+    // A movement that is not a count.
+    write(
+        entry_movement,
+        serde_json::json!({ "quantity_differs": true, "this_pc_posting": { "quantity": 1.0 } }),
+    )
+    .await;
+    // Details that are not JSON at all.
+    let broken = write(count_movement, serde_json::json!({ "quantity_differs": true })).await;
+    exec(
+        &db,
+        "UPDATE audit_events SET details_json = '{not json' WHERE id = ?",
+        vec![broken.into()],
+    )
+    .await;
+
+    let list = negative_stock::list_reviews(&db, true)
+        .await
+        .expect("the list still loads");
+    assert!(list.double_postings.is_empty(), "nothing listed from unreadable audits");
+    assert!(list.closed_double_postings.is_empty());
+    assert_eq!(
+        negative_stock::summary(&db)
+            .await
+            .expect("summary")
+            .double_posting_count,
+        0
+    );
+    // Counting the location still works (its mark reads the same audits).
+    let again = enter_count(&db, user, art, loc, 7.0).await;
+    post_count(&db, user, again).await;
+}

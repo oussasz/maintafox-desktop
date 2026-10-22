@@ -977,6 +977,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // A refused vendor recovery code: the target is the vendor's code id
                         // (`auth::recovery_code`), sent as it is.
                         ("admin_recovery_code", NOT_A_ROW),
+                        // A stock count posted on two PCs (`inventory::count_sync`): the target is
+                        // already the row's sync id, the same on every PC, sent as it is.
+                        ("inventory_transactions", NOT_A_ROW),
+                        ("inventory_mutation_audit_links", NOT_A_ROW),
+                        ("inventory_count_sessions", NOT_A_ROW),
+                        // Stock to reconcile of an article at a location (`inventory::negative_stock`):
+                        // the target is `<local article id>:<local location id>`, meaningless on
+                        // another PC; the event travels without it (its details name the pair).
+                        ("stock_location_article", LOCAL_ROW),
                     ],
                 ),
             ],

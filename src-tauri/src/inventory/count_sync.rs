@@ -93,13 +93,14 @@ fn same_value(a: Option<&Value>, b: Option<&Value>) -> bool {
     }
 }
 
-/// Keys whose meaning differs between two wire versions of a row ([`same_value`]), sorted.
+/// Keys whose meaning differs between two wire versions of a row ([`same_value`]), sorted. A key
+/// only one version carries (a column the other PC's version does not have yet) is not compared.
 fn differing_keys<'a>(a: &'a Map<String, Value>, b: &'a Map<String, Value>) -> Vec<&'a str> {
     let mut keys: Vec<&str> = a
         .keys()
         .chain(b.keys())
         .map(String::as_str)
-        .filter(|k| !same_value(a.get(*k), b.get(*k)))
+        .filter(|k| a.contains_key(*k) && b.contains_key(*k) && !same_value(a.get(*k), b.get(*k)))
         .collect();
     keys.sort_unstable();
     keys.dedup();
@@ -356,16 +357,24 @@ pub(crate) async fn settle_count_server_conflict(
 /// (`sync::materialize::evaluate_and_apply`, before its concurrency check): when it is the same
 /// posting ([`same_posting`]) and differs at all, this PC's unsent change is closed (`superseded`)
 /// and the received version is then applied (it reached the server first); a session's own posting
-/// is audited first. A received row identical to this PC's is left to the usual checks. `true`
-/// when settled.
+/// is audited first. A received row identical to this PC's (its own change sent back) or not newer
+/// than the version applied here is left to the usual checks. `true` when settled.
 pub(crate) async fn settle_concurrent_posting(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
+    row_version: i64,
     payload_json: &str,
 ) -> AppResult<bool> {
     if entity_type != SESSIONS && entity_type != LINES {
         return Ok(false);
+    }
+    // A received version not newer than the one applied here is refused by the usual checks
+    // (`STALE_INBOUND`); it never closes this PC's change.
+    if let Some((synced, _)) = crate::sync::queries::synced_row_version(conn, entity_type, entity_sync_id).await? {
+        if row_version <= synced {
+            return Ok(false);
+        }
     }
     let unsent = conn
         .query_one(Statement::from_sql_and_values(
@@ -551,6 +560,15 @@ pub(crate) async fn adopt_first_posted(
                 &movement_type,
                 delta,
             )
+            .await?;
+            // The kept quantity is written before the location is brought in line, so a review item
+            // opened now names its movement from the ledger as every PC holds it (the caller then
+            // writes the rest of the kept content).
+            conn.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE inventory_transactions SET quantity = ? WHERE entity_sync_id = ?",
+                [kept_qty.into(), entity_sync_id.into()],
+            ))
             .await?;
             crate::inventory::negative_stock::reconcile_pair_in(conn, article_id, location_id).await?;
         }

@@ -621,6 +621,7 @@ async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> App
         conn,
         &item.entity_type,
         &item.entity_sync_id,
+        item.row_version,
         &item.payload_json,
     )
     .await?;
