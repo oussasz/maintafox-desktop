@@ -62,7 +62,21 @@ pub(crate) async fn started_file_db(path: &std::path::Path) -> DatabaseConnectio
 }
 
 async fn prepare_started(db: &DatabaseConnection) {
-    crate::migrations::Migrator::up(db, None).await.expect("migrations");
+    prepare_started_up_to(db, None).await;
+}
+
+/// A database as the startup of an earlier version leaves it: every migration but the last
+/// `skip_last` ones, then the startup seeders and capture. For upgrade tests (run the rest with
+/// `Migrator::up(db, None)`).
+pub(crate) async fn started_db_before_last_migrations(skip_last: usize) -> DatabaseConnection {
+    let db = crate::db::test_db::empty_memory_db().await;
+    let steps = crate::migrations::Migrator::migrations().len() - skip_last;
+    prepare_started_up_to(&db, Some(u32::try_from(steps).expect("steps"))).await;
+    db
+}
+
+async fn prepare_started_up_to(db: &DatabaseConnection, steps: Option<u32>) {
+    crate::migrations::Migrator::up(db, steps).await.expect("migrations");
     crate::db::seeder::seed_system_data(db).await.expect("system seed");
     crate::wo::types::ensure_work_order_type_catalog(db)
         .await

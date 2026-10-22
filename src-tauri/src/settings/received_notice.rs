@@ -70,8 +70,8 @@ pub const FORCED_REMOVAL_CATEGORY: &str = "loto_forced_removal";
 
 /// Notification category of two concurrent versions of a PM plan, or of two occurrences of a plan
 /// for the same due date from two such versions (`pm::version_clash`): told to the users holding
-/// the PM planning right (`pm.edit`) on each PC that receives the second one, kept until each
-/// acknowledges it, like the other locked notices.
+/// the PM planning right (`pm.edit`) plant-wide or at the site of the plan's equipment, on each PC
+/// that receives the second one, kept until each acknowledges it, like the other locked notices.
 pub const PM_CONCURRENT_VERSIONS_CATEGORY: &str = "pm_concurrent_versions";
 
 /// Every category of a persistent safety notice: kept for each recipient until they acknowledge it,
@@ -710,6 +710,7 @@ async fn send(
         source_record_id: entity_sync_id.to_string(),
         entity_type,
         entity_sync_id,
+        org_node_id: None,
     };
     let written = emit_notice(conn, &route, title, body, action_url, &message).await;
     match written {
@@ -743,6 +744,7 @@ pub(crate) async fn send_pm_concurrent_notice(
     entity_type: &str,
     entity_sync_id: &str,
     plan_sync_id: &str,
+    site: Option<i64>,
     title: String,
     body: String,
     message: NotificationMessage,
@@ -750,11 +752,12 @@ pub(crate) async fn send_pm_concurrent_notice(
     conn.execute_unprepared("SAVEPOINT pm_concurrent_notice").await?;
     let route = NoticeRoute {
         category: PM_CONCURRENT_VERSIONS_CATEGORY,
-        // Not a record with a routing context: the planners of the whole plant are told.
+        // The plant-wide PM planners, and those of the site of the plan's equipment.
         source_module: "pm_plan",
         source_record_id: plan_sync_id.to_string(),
         entity_type,
         entity_sync_id,
+        org_node_id: site,
     };
     match emit_notice(conn, &route, title, body, "/pm", &message).await {
         Ok(()) => conn.execute_unprepared("RELEASE pm_concurrent_notice").await?,
@@ -781,6 +784,9 @@ struct NoticeRoute<'a> {
     source_record_id: String,
     entity_type: &'a str,
     entity_sync_id: &'a str,
+    /// The site the notice is about, when its record gives none: its holders at that site are told
+    /// too, besides the plant-wide ones.
+    org_node_id: Option<i64>,
 }
 
 async fn emit_notice(
@@ -810,7 +816,13 @@ async fn emit_notice(
             severity: "warning".to_string(),
             dedupe_key: None,
             payload_json: Some(
-                json!({ "entity_type": entity_type, "entity_sync_id": entity_sync_id, "notice": nonce }).to_string(),
+                json!({
+                    "entity_type": entity_type,
+                    "entity_sync_id": entity_sync_id,
+                    "notice": nonce,
+                    "org_node_id": route.org_node_id,
+                })
+                .to_string(),
             ),
             title,
             body: Some(body),
@@ -885,6 +897,7 @@ async fn send_forced_removal(
         source_record_id: n.permit_id.to_string(),
         entity_type: "permit_isolations",
         entity_sync_id: isolation_sync_id,
+        org_node_id: None,
     };
     conn.execute_unprepared("SAVEPOINT forced_removal_notice").await?;
     match emit_notice(conn, &route, title, body, "/permits", &message).await {

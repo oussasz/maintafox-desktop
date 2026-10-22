@@ -4,7 +4,7 @@
 // acknowledges it (CMMS Advisor, as the recovery-code notice); the acknowledgement is audited by the
 // backend. It cannot be archived, snoozed or deleted before.
 
-import { ShieldAlert } from "lucide-react";
+import { ClipboardList, ShieldAlert } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -33,6 +33,12 @@ export const SAFETY_NOTICE_CATEGORIES: ReadonlySet<string> = new Set([
   "loto_forced_removal",
   "pm_concurrent_versions",
 ]);
+/** Message keys of the PM planning notices (not safety): shown with a planning icon. */
+const PM_NOTICE_KEYS: ReadonlySet<string> = new Set([
+  "pm_concurrent_versions",
+  "pm_duplicate_occurrence",
+]);
+
 /** Sent when a notice is acknowledged elsewhere (the inbox): the banner reads its list again. */
 export const SAFETY_NOTICE_ACKNOWLEDGED_EVENT = "maintafox:safety-notice-acknowledged";
 
@@ -117,7 +123,11 @@ export function SafetyRuleNotice({ sessionUserId, className }: SafetyRuleNoticeP
               mfTone.warning.text,
             )}
           >
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            {notice.message_key && PM_NOTICE_KEYS.has(notice.message_key) ? (
+              <ClipboardList className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            ) : (
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            )}
             <div className="flex-1 space-y-1">
               <p id={titleId} className="font-semibold">
                 {text.title}

@@ -376,7 +376,7 @@
       "daily_digest": "Envoyé à chaque personne qui a choisi le résumé quotidien.",
       "safety_rule_received": "Toujours les administrateurs des paramètres de toute l’usine.",
       "loto_forced_removal": "Toujours les personnes qui détiennent le droit de clôture des permis sur le site du permis.",
-      "pm_concurrent_versions": "Toujours les personnes qui détiennent le droit de planification préventive (pm.edit)."
+      "pm_concurrent_versions": "Toujours les personnes qui détiennent le droit de planification préventive (pm.edit) sur tout le site industriel, et celles qui le détiennent sur le site de l’équipement du plan."
     },
     "minutes": "min",
     "minutesAfterAlert": "min après l'alerte",
@@ -397,7 +397,7 @@
   "safetyNotice": {
     "acknowledge": "J’ai pris connaissance",
     "hint": "Cet avis reste affiché à chaque connexion jusqu’à ce que vous en preniez connaissance ; votre confirmation est enregistrée.",
-    "inboxHint": "Avis de sécurité : prenez-en connaissance ; il ne peut pas être reporté ni archivé avant.",
+    "inboxHint": "Avis à confirmer : il ne peut être reporté ni archivé avant.",
     "loadError": "Les avis de sécurité n’ont pas pu être chargés. Ils sont conservés ; reconnectez-vous ou rechargez pour les voir."
   }
 }

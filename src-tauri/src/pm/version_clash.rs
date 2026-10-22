@@ -19,8 +19,9 @@
 //! A received version refused before this update on the unique number (an open `MATERIALIZE_ERROR`
 //! conflict with that database text) is applied again at the next synchronisation, before the rows
 //! waiting for it are retried ([`retry_refused_number_clashes`]): its conflict is closed when it
-//! applies; when it still cannot be applied, the new error is recorded in place of the old one (the
-//! conflict stays open with its real reason, and is not tried again by this pass).
+//! applies; when it now waits for a related record, it goes back to waiting like any received row
+//! (its conflict closed); when it still cannot be applied, the new error is recorded in place of the
+//! old one (the conflict stays open with its real reason, and is not tried again by this pass).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
 use serde_json::json;
@@ -79,7 +80,49 @@ pub(crate) async fn retry_refused_number_clashes(db: &DatabaseConnection) -> App
                 applied += 1;
                 continue;
             }
-            Ok(ApplyOutcome::Deferred { message, .. } | ApplyOutcome::Conflict { message, .. }) => message,
+            Ok(ApplyOutcome::Deferred {
+                code,
+                message,
+                waits_for,
+            }) => {
+                tx.rollback().await?;
+                // It now waits for a row like any received row: deferred, retried on every
+                // synchronisation, listed with what it waits for. The conflict no longer applies; its
+                // key is freed so a later refusal of this row is a new conflict, never hidden.
+                let tx = db.begin().await?;
+                tx.execute(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "UPDATE sync_inbox
+                     SET apply_status = 'deferred', rejection_code = ?, rejection_message = ?,
+                         waits_for_entity_type = ?, waits_for_sync_id = ?, attempt_count = attempt_count + 1,
+                         last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                     WHERE id = ?",
+                    [
+                        code.into(),
+                        message.into(),
+                        waits_for.as_ref().map(|w| w.entity_type.clone()).into(),
+                        waits_for.as_ref().map(|w| w.sync_id.clone()).into(),
+                        inbox_id.into(),
+                    ],
+                ))
+                .await?;
+                tx.execute(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "UPDATE sync_conflicts
+                     SET status = 'resolved_remote', resolution_action = 'waiting_after_update',
+                         resolution_note = 'After the update the version waits for a related record; it is applied when that record arrives.',
+                         conflict_key = conflict_key || ':waiting:' || id,
+                         resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), row_version = row_version + 1,
+                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                     WHERE id = ?",
+                    [conflict_id.into()],
+                ))
+                .await?;
+                tx.commit().await?;
+                continue;
+            }
+            Ok(ApplyOutcome::Conflict { message, .. }) => message,
             Err(e) => e.to_string(),
         };
         tx.rollback().await?;
@@ -182,6 +225,7 @@ pub(crate) async fn after_received_version(conn: &impl ConnectionTrait, version_
     };
     let plan_id = scalar_plan_of(conn, version_id).await?;
     let (code, title, plan_sync_id) = plan_names(conn, plan_id).await?;
+    let site = plan_site(conn, plan_id, None).await?;
     let (v, o) = (received.shown, other.shown);
     let stored = received.stored;
     crate::settings::received_notice::send_pm_concurrent_notice(
@@ -189,6 +233,7 @@ pub(crate) async fn after_received_version(conn: &impl ConnectionTrait, version_
         "pm_plan_versions",
         &received.sync_id,
         &plan_sync_id,
+        site,
         format!(
             "Deux versions concurrentes du plan {code} — vérifier la version en vigueur / Two concurrent versions of \
              plan {code} — check the version in force"
@@ -224,6 +269,28 @@ pub(crate) async fn after_received_version(conn: &impl ConnectionTrait, version_
         ),
     )
     .await
+}
+
+/// The site of a plan's notice, as the notification router routes PM records: the node of the
+/// occurrence's equipment, else of the plan's equipment. A plan scoped otherwise (a family, a
+/// location, a criticality group) gives none: its notice goes to the plant-wide planners.
+async fn plan_site(conn: &impl ConnectionTrait, plan_id: i64, occurrence_id: Option<i64>) -> AppResult<Option<i64>> {
+    conn.query_one(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "SELECT COALESCE(
+                    (SELECT eo.installed_at_node_id FROM pm_occurrences po JOIN equipment eo ON eo.id = po.equipment_id
+                     WHERE po.id = ?),
+                    ep.installed_at_node_id) AS node
+         FROM pm_plans pp
+         LEFT JOIN equipment ep ON pp.asset_scope_type = 'equipment' AND ep.id = pp.asset_scope_id
+         WHERE pp.id = ?",
+        [occurrence_id.into(), plan_id.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<Option<i64>>("", "node"))
+    .transpose()
+    .map_err(err)
+    .map(Option::flatten)
 }
 
 async fn scalar_plan_of(conn: &impl ConnectionTrait, version_id: i64) -> AppResult<i64> {
@@ -280,6 +347,7 @@ pub(crate) async fn after_received_occurrence(conn: &impl ConnectionTrait, occur
         return Ok(());
     };
     let (code, title, plan_sync_id) = plan_names(conn, plan_id).await?;
+    let site = plan_site(conn, plan_id, Some(occurrence_id)).await?;
     let due_text = due_at
         .clone()
         .or_else(|| due_basis.clone())
@@ -291,6 +359,7 @@ pub(crate) async fn after_received_occurrence(conn: &impl ConnectionTrait, occur
         "pm_occurrences",
         &occurrence_sync_id,
         &plan_sync_id,
+        site,
         format!(
             "Deux versions concurrentes du plan {code} — échéance en double le {due_text} / Two concurrent versions \
              of plan {code} — due date {due_text} twice"
@@ -746,5 +815,258 @@ mod tests {
             "{params}"
         );
         assert_ne!(params["version"], params["other_version"], "{params}");
+    }
+
+    const C1: &str = "3ccccccc-0000-4000-8000-000000000001";
+
+    #[tokio::test]
+    async fn three_versions_numbered_alike_on_three_pcs_show_three_numbers() {
+        let shown = concurrent_versions(&[("C", C1, 1), ("B", B1, 1), ("A", A1, 1)]).await;
+        assert_eq!(shown, vec![(A1.into(), 1), (B1.into(), 2), (C1.into(), 3)]);
+    }
+
+    #[tokio::test]
+    async fn a_version_refused_before_the_update_that_now_waits_goes_back_to_waiting() {
+        let mut server = TestServer::new();
+        let a = started_device_db().await;
+        let b = started_device_db().await;
+        let version = RowFactory::for_device(1)
+            .create(&a, "pm_plan_versions")
+            .await
+            .expect("version");
+        server.exchange("A", &a).await;
+        let mut row = server
+            .state
+            .get(&("pm_plan_versions".to_string(), version.entity_sync_id.clone()))
+            .expect("on the server")
+            .clone();
+        // Its plan is not on B (old data of the sending PC, or a plan still to come).
+        let mut payload: serde_json::Value = serde_json::from_str(&row.payload_json).expect("payload");
+        payload["pm_plan_sync_id"] = serde_json::Value::from("plan-not-here");
+        row.payload_json = payload.to_string();
+        row.payload_hash = crate::sync::queries::hash_payload(&row.payload_json);
+        apply_sync_batch(
+            &b,
+            ApplySyncBatchInput {
+                protocol_version: SYNC_PROTOCOL_VERSION_V2.to_string(),
+                server_batch_id: "batch_before_update".into(),
+                checkpoint_token: "v2.before-update".into(),
+                acknowledged_items: vec![],
+                rejected_items: vec![],
+                inbound_items: vec![SyncInboundItemInput {
+                    entity_type: "pm_plan_versions".into(),
+                    entity_sync_id: version.entity_sync_id.clone(),
+                    operation: row.operation.clone(),
+                    row_version: row.row_version,
+                    payload_json: row.payload_json.clone(),
+                    server_seq: Some(row.seq),
+                    payload_hash: Some(row.payload_hash.clone()),
+                    owner_user_sync_id: None,
+                    deleted: false,
+                }],
+                conflict_items: vec![],
+                policy_metadata_json: None,
+            },
+        )
+        .await
+        .expect("ingest");
+        let inbox = inbox_id(&b, "pm_plan_versions", &version.entity_sync_id).await;
+        let message = format!(
+            "Database error: Execution Error: error returned from database: (code: 2067) {VERSION_NUMBER_TAKEN}"
+        );
+        exec(
+            &b,
+            "UPDATE sync_inbox SET apply_status = 'conflict', rejection_code = 'MATERIALIZE_ERROR', rejection_message = ?
+             WHERE id = ?",
+            vec![message.clone().into(), inbox.into()],
+        )
+        .await;
+        record_sync_conflict(
+            &b,
+            NewSyncConflict {
+                source_scope: "inbound",
+                source_batch_id: Some("batch_before_update".into()),
+                linked_outbox_id: None,
+                linked_inbox_id: Some(inbox),
+                entity_type: "pm_plan_versions".into(),
+                entity_sync_id: version.entity_sync_id.clone(),
+                operation: row.operation.clone(),
+                conflict_type: "MATERIALIZE_ERROR".into(),
+                local_payload_json: None,
+                inbound_payload_json: Some(row.payload_json.clone()),
+                checkpoint_token: None,
+                local_row_version: None,
+                inbound_row_version: Some(row.row_version),
+                detail_message: Some(message),
+            },
+        )
+        .await
+        .expect("conflict as recorded before the update");
+
+        crate::sync::materialize::materialize_inbox(&b, 200, true)
+            .await
+            .expect("materialize");
+
+        assert_eq!(open_conflicts(&b).await, 0, "the conflict no longer applies");
+        assert_eq!(
+            scalar_opt_text(
+                &b,
+                "SELECT apply_status || ' ' || rejection_code || ' ' || waits_for_entity_type || ' ' || waits_for_sync_id
+                 FROM sync_inbox WHERE id = ?",
+                vec![inbox.into()],
+            )
+            .await
+            .as_deref(),
+            Some("deferred MISSING_PARENT pm_plans plan-not-here")
+        );
+        let report = crate::sync::waiting::list_waiting_inbox_rows(&b, None)
+            .await
+            .expect("waiting");
+        let listed = report
+            .rows
+            .iter()
+            .find(|r| r.inbox_id == inbox)
+            .expect("listed as waiting");
+        assert_eq!(listed.target.state, crate::sync::waiting::WAIT_NOT_RECEIVED);
+        // Refused again later, it is a new conflict, never hidden under the closed one.
+        record_sync_conflict(
+            &b,
+            NewSyncConflict {
+                source_scope: "inbound",
+                source_batch_id: None,
+                linked_outbox_id: None,
+                linked_inbox_id: Some(inbox),
+                entity_type: "pm_plan_versions".into(),
+                entity_sync_id: version.entity_sync_id.clone(),
+                operation: row.operation.clone(),
+                conflict_type: "MATERIALIZE_ERROR".into(),
+                local_payload_json: None,
+                inbound_payload_json: None,
+                checkpoint_token: None,
+                local_row_version: None,
+                inbound_row_version: Some(row.row_version),
+                detail_message: Some("a later refusal".into()),
+            },
+        )
+        .await
+        .expect("later conflict");
+        assert_eq!(open_conflicts(&b).await, 1);
+    }
+
+    /// A user holding `pm.edit` through a role assigned plant-wide (`site` None) or on a site.
+    async fn planner(db: &DatabaseConnection, name: &str, site: Option<i64>) -> i64 {
+        exec(
+            db,
+            "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+             force_password_change, created_at, updated_at) VALUES (?, ?, ?, 'local', 1, 0, 0, datetime('now'), datetime('now'))",
+            vec![format!("{name}-sync").into(), name.into(), name.into()],
+        )
+        .await;
+        let user = scalar_i64(db, "SELECT id FROM user_accounts WHERE username = ?", vec![name.into()]).await;
+        exec(
+            db,
+            "INSERT INTO roles (entity_sync_id, name, description, is_system, role_type, status, created_at, updated_at) \
+             VALUES (?, ?, '', 0, 'custom', 'active', datetime('now'), datetime('now'))",
+            vec![format!("{name}-role").into(), format!("{name}-role").into()],
+        )
+        .await;
+        let role = scalar_i64(
+            db,
+            "SELECT id FROM roles WHERE name = ?",
+            vec![format!("{name}-role").into()],
+        )
+        .await;
+        for permission in [crate::rbac::permissions::PM_VIEW, crate::rbac::permissions::PM_EDIT] {
+            exec(
+                db,
+                "INSERT INTO role_permissions (role_id, permission_id, granted_at) \
+                 SELECT ?, id, datetime('now') FROM permissions WHERE name = ?",
+                vec![role.into(), permission.into()],
+            )
+            .await;
+        }
+        let (scope_type, reference) = match site {
+            Some(node) => ("org_node", Some(node.to_string())),
+            None => ("tenant", None),
+        };
+        exec(
+            db,
+            "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
+             created_at, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+            vec![
+                format!("{name}-usa").into(),
+                user.into(),
+                role.into(),
+                scope_type.into(),
+                reference.into(),
+            ],
+        )
+        .await;
+        user
+    }
+
+    async fn live_site(db: &DatabaseConnection, factory: &mut RowFactory) -> i64 {
+        let node = factory.create(db, "org_nodes").await.expect("org node").rowid;
+        exec(
+            db,
+            "UPDATE org_nodes SET deleted_at = NULL WHERE id = ?",
+            vec![node.into()],
+        )
+        .await;
+        node
+    }
+
+    #[tokio::test]
+    async fn the_notice_goes_to_the_planners_of_the_plan_site_and_the_plant_never_to_another_site() {
+        let db = crate::sync::test_support::started_db().await;
+        let mut factory = RowFactory::for_device(1);
+        let site_a = live_site(&db, &mut factory).await;
+        let site_b = live_site(&db, &mut factory).await;
+        assert_ne!(site_a, site_b);
+        let equipment = factory.create(&db, "equipment").await.expect("equipment").rowid;
+        exec(
+            &db,
+            "UPDATE equipment SET installed_at_node_id = ? WHERE id = ?",
+            vec![site_a.into(), equipment.into()],
+        )
+        .await;
+        let plan = factory.create(&db, "pm_plans").await.expect("plan");
+        exec(
+            &db,
+            "UPDATE pm_plans SET asset_scope_type = 'equipment', asset_scope_id = ? WHERE id = ?",
+            vec![equipment.into(), plan.rowid.into()],
+        )
+        .await;
+        let plant = planner(&db, "plant_planner", None).await;
+        let on_site_a = planner(&db, "site_a_planner", Some(site_a)).await;
+        let _on_site_b = planner(&db, "site_b_planner", Some(site_b)).await;
+        add_version(&db, &plan.entity_sync_id, A1, 1).await;
+        add_version(&db, &plan.entity_sync_id, B1, 1).await;
+        let received = scalar_i64(
+            &db,
+            "SELECT id FROM pm_plan_versions WHERE entity_sync_id = ?",
+            vec![B1.into()],
+        )
+        .await;
+        after_received_version(&db, received).await.expect("notice");
+
+        let recipients: Vec<i64> = db
+            .query_all(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT n.recipient_user_id AS u FROM notifications n
+                 JOIN notification_events e ON e.id = n.notification_event_id
+                 WHERE e.category_code = ? ORDER BY n.recipient_user_id",
+                [crate::settings::received_notice::PM_CONCURRENT_VERSIONS_CATEGORY.into()],
+            ))
+            .await
+            .expect("recipients")
+            .iter()
+            .map(|r| r.try_get::<i64>("", "u").expect("id"))
+            .collect();
+        let mut expected = crate::auth::rbac::elevated_admin_user_ids(&db).await.expect("admins");
+        expected.extend([plant, on_site_a]);
+        expected.sort_unstable();
+        expected.dedup();
+        assert_eq!(recipients, expected, "plant-wide and site A planners, never site B");
     }
 }

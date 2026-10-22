@@ -376,7 +376,7 @@
       "daily_digest": "Sent to each person who chose the daily digest.",
       "safety_rule_received": "Always the plant-wide settings administrators.",
       "loto_forced_removal": "Always the people holding the permit close right at the permit's site.",
-      "pm_concurrent_versions": "Always the people holding the PM planning right (pm.edit)."
+      "pm_concurrent_versions": "Always the people holding the PM planning right (pm.edit) plant-wide, and those holding it at the site of the plan's equipment."
     },
     "minutes": "min",
     "minutesAfterAlert": "min after the alert",
@@ -397,7 +397,7 @@
   "safetyNotice": {
     "acknowledge": "Acknowledge",
     "hint": "This notice stays after each sign-in until you acknowledge it; your acknowledgement is recorded.",
-    "inboxHint": "Safety notice: acknowledge it; it cannot be snoozed or archived before.",
+    "inboxHint": "Notice to acknowledge: it cannot be snoozed or archived before.",
     "loadError": "The safety notices could not be loaded. They are kept; sign in again or reload to see them."
   }
 }
