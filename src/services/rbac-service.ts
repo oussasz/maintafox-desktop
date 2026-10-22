@@ -438,7 +438,7 @@ export async function getLockoutPolicy(): Promise<LockoutPolicySettings> {
 
 /** Replace the lockout thresholds (validated, step-up, recorded in the history). */
 export async function setLockoutPolicy(input: LockoutPolicySettings): Promise<void> {
-  await invoke<void>("set_lockout_policy", { input });
+  await invoke<void>("set_lockout_policy", { input }, { notifyOnError: false });
 }
 
 // â”€â”€ Permission catalog (SP06-F02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -521,7 +521,7 @@ export async function grantEmergencyElevation(
 export async function revokeEmergencyElevation(
   input: RevokeEmergencyElevationInput,
 ): Promise<void> {
-  await invoke<void>("revoke_emergency_elevation", { input }, { notifyOnError: false });
+  await invoke<void>("revoke_emergency_elevation", { input });
 }
 
 // â”€â”€ Admin Governance â€” Session Visibility (SP06-F03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
