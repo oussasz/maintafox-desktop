@@ -374,7 +374,7 @@ const routes: RouteObject[] = [
                   },
                   {
                     path: "activity",
-                    element: <Navigate to="/settings?tab=security" replace />,
+                    element: <Navigate to="/settings?tab=activity" replace />,
                   },
                   { path: "settings", element: <SettingsPage /> },
                   // Living design-system reference (docs/DESIGN_SYSTEM.md). Development builds only:

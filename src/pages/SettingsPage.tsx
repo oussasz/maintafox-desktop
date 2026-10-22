@@ -87,10 +87,10 @@ export function SettingsPage() {
   const visibleTabs = useMemo(
     () =>
       SETTINGS_TABS.filter((tab) => {
-        if (!tab.requiresAdmSettings) return true;
-        return canManageSettings;
+        if (tab.requiresAdmSettings && !canManageSettings) return false;
+        return tab.permission ? can(tab.permission) : true;
       }),
-    [canManageSettings],
+    [canManageSettings, can],
   );
 
   const defaultTabForUser: SettingsTabId = canManageSettings ? "general" : "profile";
@@ -390,9 +390,15 @@ export function SettingsPage() {
                       <PasswordPolicyPanel />
                       <LockoutPolicyPanel />
                       <PolicyEditorPanel domain="session" onToast={onToast} />
-                      <PermissionGate permission={P.LOG_VIEW}>
-                        <ActivityLogSettingsSection />
-                      </PermissionGate>
+                    </section>
+                  ) : null}
+
+                  {activeTab === "activity" && can(P.LOG_VIEW) ? (
+                    <section className="space-y-6">
+                      <p className="text-sm leading-relaxed text-text-muted">
+                        {t("tabs.activityHint")}
+                      </p>
+                      <ActivityLogSettingsSection />
                     </section>
                   ) : null}
 
