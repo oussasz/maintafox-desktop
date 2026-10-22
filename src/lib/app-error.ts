@@ -12,6 +12,7 @@
  *  - a response that fails schema validation (ZodError) gets a plain message; the technical
  *    detail goes to the console, never on screen.
  */
+import type { TOptions } from "i18next";
 import { ZodError } from "zod";
 
 import { i18n } from "@/i18n/config";
@@ -50,6 +51,18 @@ export function describeAppError(err: unknown): AppErrorDescription {
   const code = extractIpcErrorCode(err);
   const rawMsg = toErrorMessage(err);
 
+  // A refused right: the translated refusal, never the server's own (English, technical) text.
+  // The rights have no readable names in the locale data, so the generic reason is given.
+  if (code === "PERMISSION_DENIED") {
+    return {
+      title: String(i18n.t("errors:appError.PERMISSION_DENIED")),
+      description: String(i18n.t("errors:generic.forbidden")),
+      code,
+      // The server's text names the missing right: kept for "Détails techniques" and support.
+      technical: rawMsg.trim() || null,
+    };
+  }
+
   const i18nKey = code ? `errors:appError.${code}` : "";
   const gateCodeMatch = rawMsg.match(/(GATE_[A-Z0-9_]+)(?::[A-Za-z0-9_=,\-./]+)?/);
   const gateCode = gateCodeMatch?.[1] ?? "";
@@ -63,7 +76,7 @@ export function describeAppError(err: unknown): AppErrorDescription {
   const gateParams = details.find((d) => d.code === gateCode)?.params ?? {};
   const title =
     gateI18nKey && i18n.exists(gateI18nKey)
-      ? String(i18n.t(gateI18nKey, gateParams))
+      ? String(i18n.t(gateI18nKey, gateParams as TOptions))
       : gateCode
         ? codeTitle || String(i18n.t("errors:generic.unexpected"))
         : codeTitle || fallback || String(i18n.t("errors:generic.unexpected"));

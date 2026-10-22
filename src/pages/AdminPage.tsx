@@ -163,10 +163,13 @@ export function AdminPage() {
       description={t("admin:page.subtitle")}
     >
       <div className="flex min-h-0 flex-col gap-4">
-        <AdminMetricCards
-          onOpen={(target) => setActiveTab(metricTab[target])}
-          canOpen={(target) => visibleTabs.some((tab) => tab.key === metricTab[target])}
-        />
+        {/* `get_admin_stats` (polled every minute) asks for adm.users. */}
+        {can(P.ADM_USERS) ? (
+          <AdminMetricCards
+            onOpen={(target) => setActiveTab(metricTab[target])}
+            canOpen={(target) => visibleTabs.some((tab) => tab.key === metricTab[target])}
+          />
+        ) : null}
 
         <Tabs value={activeTabDef?.key ?? ""} onValueChange={setActiveTab}>
           <TabsList className="h-auto w-full flex-wrap justify-start">

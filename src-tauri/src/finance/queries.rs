@@ -1030,7 +1030,7 @@ pub async fn transition_budget_version_lifecycle(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "GATE_FIN_VERSION_TRANSITION_FAILED: Budget lifecycle transition failed.".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget version was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
 

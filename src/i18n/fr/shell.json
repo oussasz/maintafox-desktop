@@ -300,6 +300,7 @@
     "recordUnidentified": "(numéro non disponible)",
     "technicalDetails": "Détails techniques",
     "noRemoteVersion": "Le serveur n'a envoyé aucune version de cet enregistrement",
+    "resolveNeedsRight": "Vous pouvez consulter ce conflit. Choisir une version demande le droit de résoudre les conflits de synchronisation.",
     "recommendedShort": "recommandé",
     "status": {
       "escalated": "Escaladé"

@@ -31,6 +31,14 @@ vi.mock("@/services/inventory-service", async (importOriginal) => {
   return { ...actual, ...svc };
 });
 vi.mock("@/services/rbac-service", () => rbac);
+let canAdmRoles = true;
+vi.mock("@/hooks/use-permissions", () => ({
+  usePermissions: () => ({
+    can: () => canAdmRoles,
+    canAny: () => canAdmRoles,
+    isLoading: false,
+  }),
+}));
 vi.mock("@/components/PermissionGate", () => ({
   PermissionGate: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -62,6 +70,7 @@ describe("ProcurementRulesPanel", () => {
   beforeEach(() => {
     Object.values(svc).forEach((fn) => fn.mockReset());
     rbac.listRoles.mockReset();
+    canAdmRoles = true;
     svc.listCurrencyExchangeRates.mockResolvedValue([
       {
         id: 5,
@@ -143,6 +152,14 @@ describe("ProcurementRulesPanel", () => {
         is_active: true,
       }),
     );
+  });
+
+  it("without adm.roles lists the roles that have a limit and never asks for all roles (AU-52)", async () => {
+    canAdmRoles = false;
+    render(<ProcurementRulesPanel />);
+    expect(await screen.findByText("Buyer")).toBeInTheDocument();
+    expect(screen.queryByText("Store manager")).not.toBeInTheDocument();
+    expect(rbac.listRoles).not.toHaveBeenCalled();
   });
 
   it("retires a rate after confirmation", async () => {

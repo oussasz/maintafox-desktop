@@ -9,6 +9,7 @@
 
 import { create } from "zustand";
 
+import type { ReadableList } from "@/lib/list-access";
 import { preferredWorkingSet } from "@/lib/reference-governance-ui";
 import {
   listReferenceDomains,
@@ -57,6 +58,11 @@ export const FMECA_RATING_SCALES_DOMAIN_ID = -109;
 interface SyntheticCatalog {
   domain: Omit<ReferenceDomain, "audience">;
   set: ReferenceSet;
+  /**
+   * The other module's list this catalog shows, when reading it needs that module's right
+   * (`LIST_READ_RIGHT`); absent: the reference view right of the page is enough.
+   */
+  readList?: ReadableList;
 }
 
 function syntheticCatalog(
@@ -64,8 +70,10 @@ function syntheticCatalog(
   code: string,
   name: string,
   governance: Pick<ReferenceDomain, "governance_level" | "governance_category" | "is_extendable">,
+  readList?: ReadableList,
 ): SyntheticCatalog {
   return {
+    ...(readList ? { readList } : {}),
     domain: {
       id,
       code,
@@ -101,12 +109,14 @@ const SYNTHETIC_CATALOGS: readonly SyntheticCatalog[] = [
     "INVENTORY.ARTICLE_FAMILY",
     "Familles articles de stock",
     TENANT_DICTIONARY,
+    "stockCatalogs",
   ),
   syntheticCatalog(
     INVENTORY_TAX_CATEGORY_DOMAIN_ID,
     "INVENTORY.TAX_CATEGORY",
     "Catégories TVA articles de stock",
     TENANT_DICTIONARY,
+    "stockCatalogs",
   ),
   syntheticCatalog(URGENCY_SCALE_DOMAIN_ID, "WORK.URGENCY_SCALE", "Échelle d'urgence (DI / OT)", {
     governance_level: "protected_analytical",
@@ -138,12 +148,19 @@ const SYNTHETIC_CATALOGS: readonly SyntheticCatalog[] = [
       governance_category: "operational_dictionary",
       is_extendable: true,
     },
+    "permitTypes",
   ),
-  syntheticCatalog(FMECA_RATING_SCALES_DOMAIN_ID, "RELIABILITY.FMECA_SCALES", "Échelles AMDEC", {
-    governance_level: "protected_analytical",
-    governance_category: "system_catalog",
-    is_extendable: false,
-  }),
+  syntheticCatalog(
+    FMECA_RATING_SCALES_DOMAIN_ID,
+    "RELIABILITY.FMECA_SCALES",
+    "Échelles AMDEC",
+    {
+      governance_level: "protected_analytical",
+      governance_category: "system_catalog",
+      is_extendable: false,
+    },
+    "fmecaScales",
+  ),
   syntheticCatalog(
     NOTIFICATION_CATEGORIES_DOMAIN_ID,
     "NOTIFICATION.CATEGORIES",
@@ -158,6 +175,11 @@ const SYNTHETIC_CATALOGS: readonly SyntheticCatalog[] = [
 
 function syntheticCatalogById(domainId: number): SyntheticCatalog | undefined {
   return SYNTHETIC_CATALOGS.find((c) => c.domain.id === domainId);
+}
+
+/** The module list a synthetic catalog reads, when it needs that module's right (AU-83). */
+export function syntheticCatalogReadList(domainId: number): ReadableList | null {
+  return syntheticCatalogById(domainId)?.readList ?? null;
 }
 
 /**
