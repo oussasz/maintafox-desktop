@@ -1822,6 +1822,8 @@
     }
   },
   "errors": {
+    "INV_GR_ARTICLE_MISMATCH": "La ligne de commande {{po_line}} porte sur l’article {{ordered_article}}, pas sur {{received_article}} : réceptionnez l’article commandé.",
+    "INV_ISSUE_WO_ENDED": "L’OT {{work_order}} est clôturé ou annulé : plus aucune pièce ({{article}}) ne peut être sortie sur sa réservation.",
     "NEGATIVE_STOCK_REASON_SHORT": "Indiquez la justification du comptage (au moins {{min}} caractères).",
     "NEGATIVE_STOCK_COUNT_INVALID": "La quantité comptée doit être supérieure ou égale à zéro.",
     "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choisissez le motif d'écart du comptage.",

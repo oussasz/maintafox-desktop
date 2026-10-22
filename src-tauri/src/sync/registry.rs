@@ -547,6 +547,12 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
         table: "stock_balances",
         category: LocalOnlyCategory::DerivedProjection,
     },
+    // Article/location pairs whose reserved stock is recomputed at the end of the sync pass
+    // (`inventory::reservations`).
+    LocalOnlyTable {
+        table: "stock_reserved_dirty",
+        category: LocalOnlyCategory::JobQueue,
+    },
     // Balances below zero to reconcile (`inventory::negative_stock`): open exactly while the
     // location's on-hand stock is below zero, so every PC with the same ledger shows the same.
     LocalOnlyTable {

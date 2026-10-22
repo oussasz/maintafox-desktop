@@ -140,5 +140,8 @@ pub(crate) async fn take_remote_version(conn: &impl ConnectionTrait, conflict: &
         "conflict_take_remote",
     )
     .await?;
+    // A reservation row or movement taken from the server changes reserved stock: recomputed in
+    // this transaction (`inventory::reservations`).
+    crate::inventory::reservations::recompute_dirty_reserved_in(conn).await?;
     set_linked_inbox_status(conn, conflict, "applied").await
 }
