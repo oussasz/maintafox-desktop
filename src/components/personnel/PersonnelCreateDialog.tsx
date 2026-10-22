@@ -1,5 +1,5 @@
 import { Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { EntityFormImageUploader } from "@/components/entity-form/EntityFormImageUploader";
@@ -19,10 +19,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import { Textarea } from "@/components/ui/textarea";
 import { mfInput } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
+import { useReadableLists } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import {
@@ -150,30 +152,51 @@ export function PersonnelCreateDialog() {
   const isExternal = employmentOrigin === "external";
   const canCreateUsers = can(P.ADM_USERS);
 
+  // Each picker list has its own read right (organisation, personnel, training): a list the user
+  // may not read is not asked for and its picker says which right is missing. Read through a ref
+  // so the form is not reset when the rights arrive after the dialog opened.
+  const readable = useReadableLists([
+    "orgNodes",
+    "companies",
+    "people",
+    "teams",
+    "certificationTypes",
+  ]);
+  const readableRef = useRef(readable);
+  readableRef.current = readable;
+
   const loadLookups = useCallback(async () => {
-    try {
-      const [snap, ext, personnel, certList] = await Promise.all([
-        getOrgDesignerSnapshot(),
-        listExternalCompanies({}),
-        listPersonnel({ limit: 2000, offset: 0 }),
-        listCertificationTypes(),
-      ]);
-      const nodes = snap.nodes.filter((n) => n.status === "active");
-      const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
-      setEntityNodes(
-        entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
-      );
-      setCompanies(ext.filter((c) => c.is_active !== 0).map((c) => ({ id: c.id, name: c.name })));
-      setPersonnelList(personnel.items);
-      setCertTypes(certList);
-    } catch {
-      // partial failures are OK — just leave empty lists
-    }
+    const may = readableRef.current;
+    // One list failing leaves only that picker empty.
+    await Promise.allSettled([
+      may.orgNodes
+        ? getOrgDesignerSnapshot().then((snap) => {
+            const nodes = snap.nodes.filter((n) => n.status === "active");
+            const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
+            setEntityNodes(
+              entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
+            );
+          })
+        : null,
+      may.companies
+        ? listExternalCompanies({}).then((ext) =>
+            setCompanies(
+              ext.filter((c) => c.is_active !== 0).map((c) => ({ id: c.id, name: c.name })),
+            ),
+          )
+        : null,
+      may.people
+        ? listPersonnel({ limit: 2000, offset: 0 }).then((personnel) =>
+            setPersonnelList(personnel.items),
+          )
+        : null,
+      may.certificationTypes ? listCertificationTypes().then(setCertTypes) : null,
+    ]);
   }, []);
 
   const handleEntityChange = useCallback(async (nextEntityId: number | null) => {
     setEntityId(nextEntityId);
-    if (nextEntityId == null) {
+    if (nextEntityId == null || !readableRef.current.teams) {
       setTeamId(null);
       setCrewOptions([]);
       return;
@@ -690,6 +713,7 @@ export function PersonnelCreateDialog() {
                       </option>
                     ))}
                   </select>
+                  {!readable.companies ? <ListAccessNote list="companies" /> : null}
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="space-y-1.5">
@@ -750,6 +774,7 @@ export function PersonnelCreateDialog() {
                     </option>
                   ))}
                 </select>
+                {!readable.orgNodes ? <ListAccessNote list="orgNodes" /> : null}
               </div>
               <div className="space-y-1.5">
                 <Label>{t("field.team")} *</Label>
@@ -766,7 +791,8 @@ export function PersonnelCreateDialog() {
                     </option>
                   ))}
                 </select>
-                {entityId != null && !crewsLoading && crewOptions.length === 0 ? (
+                {!readable.teams ? <ListAccessNote list="teams" /> : null}
+                {readable.teams && entityId != null && !crewsLoading && crewOptions.length === 0 ? (
                   <p className="text-xs text-destructive">{t("validation.noCrewsForEntity")}</p>
                 ) : null}
               </div>
@@ -793,6 +819,7 @@ export function PersonnelCreateDialog() {
                   onChange={setSupervisorId}
                   placeholder={t("create.supervisor.placeholder", "Search supervisor…")}
                 />
+                {!readable.people ? <ListAccessNote list="people" /> : null}
               </div>
             </div>
 
@@ -910,18 +937,22 @@ export function PersonnelCreateDialog() {
                 {/* ── Certifications ───────────────────────────────────────── */}
                 <div className="flex items-center justify-between">
                   <SectionLabel>{t("create.section.certs", "Certifications")}</SectionLabel>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-4 h-9 gap-1 text-xs"
-                    onClick={addCert}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    {t("create.cert.add", "Add certification")}
-                  </Button>
+                  {readable.certificationTypes ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-4 h-9 gap-1 text-xs"
+                      onClick={addCert}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      {t("create.cert.add", "Add certification")}
+                    </Button>
+                  ) : null}
                 </div>
-                {certs.length === 0 ? (
+                {!readable.certificationTypes ? (
+                  <ListAccessNote list="certificationTypes" />
+                ) : certs.length === 0 ? (
                   <p className="text-xs text-text-muted">
                     {t("create.cert.empty", "No certifications added.")}
                   </p>

@@ -34,6 +34,12 @@ export const LIST_READ_RIGHT = {
   permitTypes: P.PTW_VIEW,
   /** `list_document_categories` */
   documentCategories: P.DOC_VIEW,
+  /** `list_wo` */
+  workOrders: P.OT_VIEW,
+  /** `list_di` */
+  requests: P.DI_VIEW,
+  /** `list_certification_types`, `list_personnel_certifications` */
+  certificationTypes: P.TRN_VIEW,
   /** `list_work_order_types`: reference view, work-order view or work-order creation. */
   woTypes: [P.REF_VIEW, P.OT_VIEW, P.OT_CREATE],
 } as const satisfies Record<string, PermissionName | readonly PermissionName[]>;
