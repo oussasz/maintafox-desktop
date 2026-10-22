@@ -163,8 +163,14 @@ export function MonthCalendar({
                   ? "bg-primary text-primary-foreground"
                   : selectable && "hover:bg-surface-2",
               )}
+              aria-label={new Date(`${cell.iso}T12:00:00`).toLocaleDateString(language, {
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              })}
               onPointerDown={(e) => {
-                if (!selectable) return;
+                if (!selectable || e.button !== 0) return;
                 e.preventDefault();
                 e.stopPropagation();
                 onSelect(cell.iso);

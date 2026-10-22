@@ -86,8 +86,9 @@ export function DateField({
 
   function onText(next: string) {
     setDraft(next);
-    const complete = /\d{4}\s*$/.test(next.trim());
-    const iso = complete ? parseDateInput(next, language) : null;
+    // Any text that already reads as a real date counts, so a form submitted with Enter (no blur)
+    // carries it; an unfinished one holds no value.
+    const iso = parseDateInput(next, language);
     if (iso && isDateWithin(iso, min, max)) {
       if (iso !== value) onChange(iso);
     } else if (value !== "") {
