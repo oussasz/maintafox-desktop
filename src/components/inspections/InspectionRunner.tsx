@@ -331,10 +331,14 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
   const warningBand = cp ? describeBand(cp.warning_min, cp.warning_max) : null;
   const bandText = (b: ReturnType<typeof describeBand>) => {
     if (b == null) return "";
-    if (b.kind === "between")
+    if (b.kind === "between" && b.min != null && b.max != null) {
       return t("runner.between", { min: formatNumber(b.min), max: formatNumber(b.max) });
-    if (b.kind === "below") return t("runner.below", { value: formatNumber(b.max) });
-    return t("runner.above", { value: formatNumber(b.min) });
+    }
+    if (b.kind === "below" && b.max != null)
+      return t("runner.below", { value: formatNumber(b.max) });
+    if (b.kind === "above" && b.min != null)
+      return t("runner.above", { value: formatNumber(b.min) });
+    return "";
   };
   const answerLabel = (s: ResultStatus) =>
     cp?.check_type === "boolean" && (s === "pass" || s === "fail")
