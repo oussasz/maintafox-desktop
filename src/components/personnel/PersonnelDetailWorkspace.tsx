@@ -15,6 +15,7 @@ import {
   EntityDetailHeader,
   EntityDetailViewSwitcher,
 } from "@/components/detail";
+import { diStatusToI18nKey } from "@/components/di/status-meta";
 import { PersonScheduleExceptions } from "@/components/personnel/PersonScheduleExceptions";
 import { PersonnelPortrait } from "@/components/personnel/PersonnelPortrait";
 import { PersonCapacityDays } from "@/components/personnel/TeamCapacityDays";
@@ -77,11 +78,6 @@ export interface PersonnelDetailWorkspaceProps {
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
-/** Snake-case status code (`pending_review`) to the camel-case i18n key (`pendingReview`). */
-function camelCase(code: string): string {
-  return code.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
-}
-
 function toAssignmentEntry(
   h: PersonnelAssignmentHistoryEntry,
   t: Translate,
@@ -111,14 +107,14 @@ function toAssignmentEntry(
   };
 }
 
-function toWorkHistoryEntry(h: PersonnelWorkHistoryEntry, t: Translate): TimelineEntry {
+export function toWorkHistoryEntry(h: PersonnelWorkHistoryEntry, t: Translate): TimelineEntry {
   const known = (key: string, fallback: string) => t(key, { defaultValue: fallback });
   // Work orders and requests keep their own status vocabulary.
   const status = !h.status_code
     ? "—"
     : h.source_module === "wo"
       ? t(`ot:status.${statusToI18nKey(h.status_code)}`)
-      : known(`di:status.${camelCase(h.status_code)}`, h.status_code);
+      : t(`di:status.${diStatusToI18nKey(h.status_code)}`);
   return {
     id: `${h.source_module}-${h.record_id}-${h.role_code}`,
     timestamp: h.happened_at,
