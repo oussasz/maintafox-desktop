@@ -17,6 +17,10 @@ pub mod event_type {
     pub const LOGOUT: &str = "logout";
     pub const SESSION_EXPIRED: &str = "session.expired";
     pub const SESSION_IDLE_LOCKED: &str = "session.idle_locked";
+    /// A session ended by the stored-state check (`detail.reason`: why).
+    pub const SESSION_CLOSED: &str = "session.closed";
+    /// The account's password date is later than this device's clock; the session is kept.
+    pub const SESSION_CLOCK_ANOMALY: &str = "session.clock_anomaly";
     pub const DEVICE_TRUST_REGISTERED: &str = "device.trust_registered";
     pub const DEVICE_TRUST_REVOKED: &str = "device.trust_revoked";
     pub const STEP_UP_SUCCESS: &str = "step_up.success";
