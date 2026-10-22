@@ -56,6 +56,16 @@
         "count_session": "inventaire {{session}}"
       }
     },
+    "doublePosting": {
+      "flag": "Comptage passé deux fois — à vérifier",
+      "list": "Comptages passés deux fois",
+      "explain": {
+        "COUNT_ADJUST": "L'inventaire {{session}} a été passé en stock plus d'une fois (le même inventaire sur deux postes, ancienne version) : au-delà de sa correction de {{variance}}, le stock a bougé de {{excess}} en plus (actuellement {{onHand}} en stock). Vérifiez le stock et enregistrez un nouveau comptage.",
+        "COUNT_REVERSAL": "La contre-passation de l'inventaire {{session}} a été passée plus d'une fois (sur deux postes, ancienne version) : au-delà de la contre-passation de {{variance}}, le stock a bougé de {{excess}} en plus (actuellement {{onHand}} en stock). Vérifiez le stock et enregistrez un nouveau comptage."
+      },
+      "movementLine": "{{who}}, {{date}} : {{quantity}} (le journal de stock n'enregistre pas le poste)",
+      "closedByCount": "clos par le comptage {{session}} ({{who}}, {{date}})"
+    },
     "label": "Stock négatif",
     "hint": "À corriger : un autre poste a peut-être enregistré un mouvement. Enregistrez un comptage dans « Stock à rapprocher » (Stock › Contrôles).",
     "hintTotal": "Total des magasins négatif. À corriger : un autre poste a peut-être enregistré un mouvement. Enregistrez un comptage dans « Stock à rapprocher » (Stock › Contrôles)."
@@ -1824,6 +1834,6 @@
     "COUNT_SESSION_STALE_SNAPSHOT": "Un comptage a été validé sur cet article et cet emplacement depuis l'ouverture de cette session : annulez cette session et recomptez dans une nouvelle session.",
     "COUNT_SESSION_STATUS_POSTING_ONLY": "Un inventaire est passé en stock ou contre-passé uniquement par « Passer les écarts en stock » ou « Contre-passer » : le stock bouge avec eux.",
     "COUNT_LINE_NOT_APPROVED": "{{lines}} ligne(s) comptée(s) avec écart attendent encore l'approbation d'un vérificateur avant d'approuver l'inventaire.",
-    "COUNT_ALREADY_POSTED": "L'inventaire {{session}} a déjà mouvementé le stock de cet article à cet emplacement (passé en stock ou contre-passé sur un autre PC) : actualisez la session ; rien n'a été mouvementé deux fois."
+    "COUNT_ALREADY_POSTED": "L'inventaire {{session}} a déjà mouvementé le stock de cet article à cet emplacement (passé en stock ou contre-passé sur un autre poste) : actualisez la session ; rien n'a été mouvementé deux fois."
   }
 }

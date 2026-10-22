@@ -659,7 +659,17 @@ async fn concurrency_check(
         // History rows are only inserted; the materializer skips rows that already exist.
         return Ok(None);
     }
-    if let Some(local) = unsent.last() {
+    // The same stock count posted on two PCs: the version that reached the server first is kept,
+    // this PC's unsent one is closed and audited (`inventory::count_sync`).
+    let settled = !unsent.is_empty()
+        && crate::inventory::count_sync::settle_concurrent_posting(
+            conn,
+            &item.entity_type,
+            &item.entity_sync_id,
+            &item.payload_json,
+        )
+        .await?;
+    if let Some(local) = unsent.last().filter(|_| !settled) {
         let base = local
             .base_row_version
             .map_or_else(|| "a new row".to_string(), |v| format!("version {v}"));

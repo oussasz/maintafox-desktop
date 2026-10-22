@@ -2,6 +2,7 @@
 
 pub mod approvals;
 pub mod controls;
+pub mod count_sync;
 pub mod domain;
 pub mod fx;
 pub mod issue;

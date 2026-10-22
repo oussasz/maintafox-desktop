@@ -1389,6 +1389,11 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
             ),
             None => (None, None),
         };
+        // The same stock count posted first on another PC: settled, no item for a person
+        // (`inventory::count_sync`).
+        if crate::inventory::count_sync::settle_count_server_conflict(&tx, conflict, linked_outbox_id).await? {
+            continue;
+        }
         if let Some(outbox_id) = linked_outbox_id {
             let base_label = conflict
                 .local_base_row_version

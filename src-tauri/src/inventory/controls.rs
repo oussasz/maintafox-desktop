@@ -13,8 +13,9 @@ use crate::inventory::domain::{
 /// was opened (its snapshot is stale).
 pub const REFUSED_COUNT_SESSION_STALE: &str = "COUNT_SESSION_STALE_SNAPSHOT";
 
-/// Refusal code (local) and sync conflict code (inbound): the count of this session, article and
-/// location already moved the stock on this PC (the same session posted or reversed on two PCs).
+/// Refusal code: the count of this session, article and location already moved the stock on this
+/// PC (the same session posted or reversed on another PC first); also the code of a push of that
+/// movement closed because the server holds the same count (`inventory::count_sync`).
 pub const COUNT_ALREADY_POSTED: &str = "COUNT_ALREADY_POSTED";
 
 /// Refusal code: a count session is posted or reversed only by its posting or its reversal (the
@@ -137,7 +138,7 @@ async fn upsert_balance<C: ConnectionTrait>(
 }
 
 /// Kind of the seeded sync id of each count movement type.
-fn count_movement_kind(movement_type: &str) -> Option<&'static str> {
+pub(crate) fn count_movement_kind(movement_type: &str) -> Option<&'static str> {
     match movement_type {
         "COUNT_ADJUST" => Some("count_adjust"),
         "COUNT_REVERSAL" => Some("count_reversal"),
@@ -188,66 +189,8 @@ async fn count_movement_sync_id<C: ConnectionTrait>(
 }
 
 /// Sync id of the audit link of a count movement: one link per movement on every PC.
-fn count_audit_link_sync_id(movement_sync_id: &str) -> String {
+pub(crate) fn count_audit_link_sync_id(movement_sync_id: &str) -> String {
     crate::sync::identity::seeded_entity_sync_id("count_audit_link", movement_sync_id)
-}
-
-/// The count movement of a received `inventory_transactions` row that this PC already holds under
-/// another sync id: the same count (`movement_type` `COUNT_ADJUST` or `COUNT_REVERSAL`, source
-/// `COUNT_SESSION`, same session, article and location) posted on two PCs by versions that gave the
-/// movement a random id. `Some` is the conflict message: the received movement is not applied, so
-/// the stock moves once ([`COUNT_ALREADY_POSTED`], `sync::apply_hooks::before_upsert_checked`).
-/// Movements of this version carry the same id on every PC and arrive as replays (no-op).
-pub(crate) async fn inbound_count_movement_check(
-    conn: &impl ConnectionTrait,
-    entity_sync_id: &str,
-    payload: &serde_json::Map<String, serde_json::Value>,
-) -> AppResult<Option<String>> {
-    let text = |k: &str| payload.get(k).and_then(serde_json::Value::as_str);
-    let Some(movement_type) = text("movement_type").filter(|t| count_movement_kind(t).is_some()) else {
-        return Ok(None);
-    };
-    if text("source_type") != Some("COUNT_SESSION") {
-        return Ok(None);
-    }
-    let (Some(session), Some(article), Some(location)) = (
-        text("source_sync_id"),
-        text("article_sync_id"),
-        text("location_sync_id"),
-    ) else {
-        return Ok(None);
-    };
-    let held = conn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT t.entity_sync_id, s.session_code
-             FROM inventory_transactions t
-             JOIN inventory_count_sessions s ON s.id = t.source_id
-             JOIN articles a ON a.id = t.article_id
-             JOIN stock_locations l ON l.id = t.location_id
-             WHERE t.movement_type = ? AND t.source_type = 'COUNT_SESSION'
-               AND s.entity_sync_id = ? AND a.entity_sync_id = ? AND l.entity_sync_id = ?
-               AND (t.entity_sync_id IS NULL OR t.entity_sync_id <> ?)
-             ORDER BY t.id LIMIT 1",
-            [
-                movement_type.into(),
-                session.into(),
-                article.into(),
-                location.into(),
-                entity_sync_id.into(),
-            ],
-        ))
-        .await?;
-    let Some(held) = held else {
-        return Ok(None);
-    };
-    let held_id: Option<String> = held.try_get("", "entity_sync_id")?;
-    let session_code: String = held.try_get("", "session_code")?;
-    Ok(Some(format!(
-        "{movement_type} of count session {session_code} for this article and location is already in this PC's stock \
-         (movement {}): the same count was posted on two PCs; the received movement is not applied, so the stock moves once.",
-        held_id.unwrap_or_default()
-    )))
 }
 
 /// Writes a count movement (`COUNT_ADJUST` or `COUNT_REVERSAL`) with its seeded sync id

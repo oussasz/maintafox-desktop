@@ -6,7 +6,9 @@
  * the variance reason and a reason of at least 8 characters) or a later entry brings it back to
  * zero or more (a goods receipt or transfer in: "régularisé par réception"). Two counts of the same
  * location recorded on different PCs without knowing each other are listed as "double comptage —
- * à vérifier", naming both, until a new count. Locations holding more reserved than on hand are
+ * à vérifier", naming both, until a new count; a count whose movement is in the ledger twice (the
+ * same count posted on two PCs by older versions) as "comptage passé deux fois — à vérifier",
+ * naming the session and both movements, until a new count. Locations holding more reserved than on hand are
  * shown as warnings only. Nothing here can be rejected or accepted as is.
  */
 import { AlertTriangle } from "lucide-react";
@@ -41,6 +43,7 @@ import { useFormatters } from "@/hooks/use-formatters";
 import { appErrorReason } from "@/lib/app-error";
 import {
   NEGATIVE_STOCK_REASON_MIN_CHARS,
+  type DoublePostedMovement,
   type NegativeStockReview,
   type NegativeStockReviewList,
   type ReconciliationCount,
@@ -114,6 +117,13 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
       variance: qty(c.variance_qty),
     });
 
+  const movementLine = (m: DoublePostedMovement) =>
+    t("negativeStock.doublePosting.movementLine", {
+      who: m.posted_by ?? t("negativeStock.doubleCount.unknownUser"),
+      date: m.posted_at ? formatDateTime(m.posted_at) : "—",
+      quantity: qty(m.quantity),
+    });
+
   const openCount = (item: CountTarget) => {
     setCounting(item);
     setCountedQty("");
@@ -183,7 +193,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
         </label>
       </div>
 
-      {open.length === 0 && list.double_counts.length === 0 ? (
+      {open.length === 0 && list.double_counts.length === 0 && list.double_postings.length === 0 ? (
         <p className="text-sm text-text-muted">{t("negativeStock.noneOpen")}</p>
       ) : (
         <ul className="space-y-2" aria-label={t("negativeStock.openList")}>
@@ -265,6 +275,51 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
         </ul>
       ) : null}
 
+      {list.double_postings.length > 0 ? (
+        <ul className="mt-2 space-y-2" aria-label={t("negativeStock.doublePosting.list")}>
+          {list.double_postings.map((item) => (
+            <li
+              key={`${item.article_id}-${item.location_id}-${item.session_code}-${item.movement_type}`}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-status-warning/35 bg-status-warning/10 px-3 py-2"
+            >
+              <div className="min-w-0 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusChip
+                    label={t("negativeStock.doublePosting.flag")}
+                    tone="warning"
+                    icon={AlertTriangle}
+                  />
+                  <span className="font-medium">
+                    {item.article_code} — {item.article_name}
+                  </span>
+                  <span className="text-text-muted">
+                    {item.warehouse_code}/{item.location_code}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-text-muted">
+                  {t(`negativeStock.doublePosting.explain.${item.movement_type}`, {
+                    session: item.session_code,
+                    variance: qty(item.variance_qty),
+                    excess: qty(item.excess_qty),
+                    onHand: qty(item.on_hand_qty),
+                  })}
+                </p>
+                <ul className="mt-1 list-disc ps-5 text-xs text-text-secondary">
+                  {item.movements.map((m) => (
+                    <li key={m.movement_sync_id}>{movementLine(m)}</li>
+                  ))}
+                </ul>
+              </div>
+              <PermissionGate permission={P.INV_MANAGE}>
+                <Button className="h-11" onClick={() => openCount(item)}>
+                  {t("negativeStock.recordCount")}
+                </Button>
+              </PermissionGate>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       {list.over_reservations.length > 0 ? (
         <div className={`${mfAlert.warning} mt-3`} role="status">
           <p className="font-medium">{t("negativeStock.overReservedTitle")}</p>
@@ -283,7 +338,10 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
         </div>
       ) : null}
 
-      {includeClosed && (closed.length > 0 || list.closed_double_counts.length > 0) ? (
+      {includeClosed &&
+      (closed.length > 0 ||
+        list.closed_double_counts.length > 0 ||
+        list.closed_double_postings.length > 0) ? (
         <ul className="mt-3 space-y-1" aria-label={t("negativeStock.closedList")}>
           {closed.map((item) => (
             <li key={item.id} className="text-xs text-text-muted">
@@ -314,6 +372,22 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                 date: item.closed_by_reversal?.reversed_at
                   ? formatDateTime(item.closed_by_reversal.reversed_at)
                   : "—",
+              })}
+            </li>
+          ))}
+          {list.closed_double_postings.map((item) => (
+            <li
+              key={`${item.article_id}-${item.location_id}-${item.session_code}-${item.movement_type}`}
+              className="text-xs text-text-muted"
+            >
+              <span className="font-medium text-text-secondary">
+                {item.article_code} — {item.warehouse_code}/{item.location_code}
+              </span>{" "}
+              · {t("negativeStock.doublePosting.flag")} ·{" "}
+              {t("negativeStock.doublePosting.closedByCount", {
+                session: item.closed_by?.session_code ?? "—",
+                who: item.closed_by?.counted_by ?? t("negativeStock.doubleCount.unknownUser"),
+                date: item.closed_by?.counted_at ? formatDateTime(item.closed_by.counted_at) : "—",
               })}
             </li>
           ))}

@@ -45,6 +45,7 @@ export function NegativeStockSyncNotice({ onNavigate }: NegativeStockSyncNoticeP
     !summary ||
     (summary.negative_count === 0 &&
       summary.double_count_count === 0 &&
+      summary.double_posting_count === 0 &&
       summary.over_reserved_count === 0)
   ) {
     return null;
@@ -56,6 +57,9 @@ export function NegativeStockSyncNotice({ onNavigate }: NegativeStockSyncNoticeP
       ) : null}
       {summary.double_count_count > 0 ? (
         <p>{t("sync.doubleCount", { count: summary.double_count_count })}</p>
+      ) : null}
+      {summary.double_posting_count > 0 ? (
+        <p>{t("sync.doublePosting", { count: summary.double_posting_count })}</p>
       ) : null}
       {summary.over_reserved_count > 0 ? (
         <p>{t("sync.overReserved", { count: summary.over_reserved_count })}</p>

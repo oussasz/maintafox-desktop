@@ -363,6 +363,7 @@
     },
     "negativeStock": "{{count}} emplacement(s) de stock sous zéro après synchronisation, à rapprocher par un comptage (Stock › Contrôles).",
     "doubleCount": "{{count}} emplacement(s) de stock compté(s) sur deux postes sans se connaître : double comptage à vérifier (Stock › Contrôles).",
+    "doublePosting": "{{count}} comptage(s) passé(s) deux fois en stock (le même inventaire sur deux postes, ancienne version) : à vérifier par un nouveau comptage (Stock › Contrôles).",
     "overReserved": "{{count}} emplacement(s) de stock avec plus de réservé que de stock (avertissement).",
     "openNegativeStock": "Ouvrir le stock à rapprocher"
   },

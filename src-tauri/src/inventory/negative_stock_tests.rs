@@ -1938,6 +1938,104 @@ async fn sync_applied(server: &mut TestServer, device: &str, db: &DatabaseConnec
     );
 }
 
+/// `entity type:conflict type` of every sync conflict recorded on `db`, sorted.
+async fn conflict_kinds(db: &DatabaseConnection) -> Vec<String> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT entity_type || ':' || conflict_type AS kind FROM sync_conflicts ORDER BY kind".to_string(),
+    ))
+    .await
+    .expect("conflicts")
+    .iter()
+    .map(|r| r.try_get::<String>("", "kind").expect("kind"))
+    .collect()
+}
+
+/// The row of `entity_type` with this sync id on `db`, as the wire carries it.
+async fn wire_row(
+    db: &DatabaseConnection,
+    entity_type: &str,
+    sync_id: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    crate::sync::test_support::current_payload(db, entity_type, sync_id, &Default::default())
+        .await
+        .expect("payload")
+        .expect("row")
+}
+
+/// Audit events "count posted twice" for a target on `db`.
+async fn posted_twice_audits(db: &DatabaseConnection, target: &str) -> i64 {
+    scalar_i64(
+        db,
+        "SELECT COUNT(*) FROM audit_events WHERE action_code = ? AND target_id = ?",
+        vec![crate::inventory::count_sync::AUDIT_POSTED_TWICE.into(), target.into()],
+    )
+    .await
+}
+
+/// After the same count was posted (or reversed) on A first and B second, and both synchronised:
+/// B keeps A's version of the movement (and of its audit link), of the count session and of its
+/// line; its own posting is audited (movement, link, session); its pushes of them are closed; no
+/// conflict is left for a person on either PC.
+async fn assert_first_posting_kept(
+    a: &DatabaseConnection,
+    b: &DatabaseConnection,
+    session: &str,
+    movement: &str,
+    link: Option<&str>,
+) {
+    let line = text_of(
+        a,
+        "SELECT cl.entity_sync_id FROM inventory_count_lines cl
+         JOIN inventory_count_sessions s ON s.id = cl.session_id WHERE s.entity_sync_id = ?",
+        vec![session.into()],
+    )
+    .await;
+    let mut rows = vec![
+        ("inventory_transactions", movement.to_string(), 1),
+        ("inventory_count_sessions", session.to_string(), 1),
+        // A line names no poster: replaced without an audit of its own (the session's names them).
+        ("inventory_count_lines", line, 0),
+    ];
+    if let Some(link) = link {
+        rows.push(("inventory_mutation_audit_links", link.to_string(), 1));
+    }
+    for (entity_type, sync_id, audits) in rows {
+        let sync_id = sync_id.as_str();
+        assert_eq!(
+            wire_row(b, entity_type, sync_id).await,
+            wire_row(a, entity_type, sync_id).await,
+            "B holds A's {entity_type}"
+        );
+        assert_eq!(
+            posted_twice_audits(b, sync_id).await,
+            audits,
+            "B audits its own {entity_type}"
+        );
+        assert_eq!(posted_twice_audits(a, sync_id).await, 0, "A's version was kept");
+        assert_eq!(
+            crate::sync::test_support::scalar_opt_text(
+                b,
+                "SELECT status || ':' || COALESCE(rejection_code, '') FROM sync_outbox
+                 WHERE entity_type = ? AND entity_sync_id = ? ORDER BY id DESC LIMIT 1",
+                vec![entity_type.into(), sync_id.into()],
+            )
+            .await
+            .as_deref(),
+            Some("superseded:COUNT_ALREADY_POSTED"),
+            "B's push of its {entity_type} is closed"
+        );
+    }
+    for (pc, db) in [("A", a), ("B", b)] {
+        assert_eq!(
+            conflict_kinds(db).await,
+            Vec::<String>::new(),
+            "{pc}: nothing left to a person"
+        );
+    }
+}
+
 /// Stock 10 known to A and B, and a count of 7 (variance −3) entered and approved on A, received by
 /// B: the same approved session on both PCs.
 struct ApprovedOnBoth {
@@ -2065,6 +2163,8 @@ async fn a_count_posted_on_two_pcs_moves_the_stock_once() {
         );
         assert_eq!(audit_links(db, &expected).await, 1, "{pc}: one audit link");
     }
+    let link = crate::inventory::controls::count_audit_link_sync_id(&expected);
+    assert_first_posting_kept(&a, &b, &session_sync_id, &expected, Some(&link)).await;
 }
 
 /// AU-100: the same posted count reversed on two PCs before either synchronised: one
@@ -2115,15 +2215,17 @@ async fn a_count_reversed_on_two_pcs_moves_the_stock_back_once() {
             "{pc}: one posting"
         );
     }
+    assert_first_posting_kept(&a, &b, &session_sync_id, &on_a, None).await;
 }
 
-/// AU-100 fallback: a count movement from a PC of an older version (random sync id) for a count this
-/// PC already holds is refused as `COUNT_ALREADY_POSTED` and the stock stays; the same movement
-/// replayed with its own id is a no-op; a movement of another session of the same article and
-/// location is applied, and that session can then no longer be posted here (refused, the stock
-/// moves once).
+/// AU-100, mixed versions: a count movement from a PC of an older version (random sync id) for a
+/// count this PC already holds is applied like any movement — the ledger stays the same on every PC
+/// — and the count is listed "comptage passé deux fois — à vérifier"; the same movement replayed
+/// with its own id is a no-op; a movement of another session of the same article and location is
+/// applied, and that session can then no longer be posted here (refused: its count already moved the
+/// stock).
 #[tokio::test]
-async fn a_count_movement_received_twice_under_another_id_is_refused() {
+async fn a_count_movement_received_under_another_id_is_applied_and_listed() {
     use crate::inventory::controls;
     use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
     let db = started_device_db().await;
@@ -2159,19 +2261,18 @@ async fn a_count_movement_received_twice_under_another_id_is_refused() {
     let outcome = apply_inbound_payload(&db, "inventory_transactions", &random_id, "upsert", 1, &json)
         .await
         .expect("apply");
-    assert!(
-        matches!(&outcome, ApplyOutcome::Conflict { code, .. } if code == controls::COUNT_ALREADY_POSTED),
-        "{outcome:?}"
-    );
-    assert_eq!(on_hand_milli(&db, art, loc).await, 7_000, "the stock moved once");
-    assert_eq!(count_movements(&db, &session_sync_id, "COUNT_ADJUST").await, (1, 1));
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(on_hand_milli(&db, art, loc).await, 4_000, "applied as received");
+    assert_eq!(count_movements(&db, &session_sync_id, "COUNT_ADJUST").await, (2, 2));
+    let list = negative_stock::list_reviews(&db, false).await.expect("list");
+    assert_eq!(list.double_postings.len(), 1, "listed as a count posted twice");
 
     // This version's movement received again (same id): a replay, no-op.
     let replay = apply_inbound_payload(&db, "inventory_transactions", &held, "upsert", 1, &json)
         .await
         .expect("replay");
     assert!(matches!(replay, ApplyOutcome::Unchanged), "{replay:?}");
-    assert_eq!(on_hand_milli(&db, art, loc).await, 7_000);
+    assert_eq!(on_hand_milli(&db, art, loc).await, 4_000);
 
     // Another session of the same article and location, approved here but not posted: a movement of
     // that session from another PC is not this count, so it is applied.
@@ -2184,7 +2285,7 @@ async fn a_count_movement_received_twice_under_another_id_is_refused() {
     .await;
     let mut for_other = payload;
     for_other.insert("source_sync_id".into(), other_sync_id.clone().into());
-    for_other.insert("quantity".into(), serde_json::json!(-2.0));
+    for_other.insert("quantity".into(), serde_json::json!(1.0));
     let applied = apply_inbound_payload(
         &db,
         "inventory_transactions",
@@ -2196,7 +2297,11 @@ async fn a_count_movement_received_twice_under_another_id_is_refused() {
     .await
     .expect("apply other");
     assert!(matches!(applied, ApplyOutcome::Applied), "{applied:?}");
-    assert_eq!(on_hand_milli(&db, art, loc).await, 5_000, "another count is applied");
+    assert_eq!(
+        on_hand_milli(&db, art, loc).await,
+        5_000,
+        "another count is applied (4 + 1)"
+    );
 
     // That session's count already moved the stock here: posting it again is refused.
     let refused = controls::post_count_session(
@@ -2212,4 +2317,207 @@ async fn a_count_movement_received_twice_under_another_id_is_refused() {
     assert_eq!(refusal_code(refused), controls::COUNT_ALREADY_POSTED);
     assert_eq!(on_hand_milli(&db, art, loc).await, 5_000, "nothing moved twice");
     assert_eq!(count_movements(&db, &other_sync_id, "COUNT_ADJUST").await, (1, 1));
+}
+
+/// CMMS Advisor decision (a): a count already posted twice in a database (two `COUNT_ADJUST`
+/// movements of one session, article and location, from versions that gave each PC's posting its
+/// own id) is one "comptage passé deux fois — à vérifier" item, the same on every PC holding the
+/// ledger, naming the session and both movements; a new count of that article and location (the
+/// stock-to-reconcile resolution, reason of at least 8 characters, audited) closes it on every PC.
+#[tokio::test]
+async fn a_count_posted_twice_is_an_item_that_a_new_count_closes() {
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    let user = user_with(&a, "au100twice", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art, loc) = (article.rowid, location.rowid);
+    let session = approve_count(&a, user, enter_count(&a, user, art, loc, 7.0).await).await;
+    let session_sync_id = text_of(
+        &a,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![session.id.into()],
+    )
+    .await;
+    post_on(&a, user, &session_sync_id).await;
+    let first = movement_sync_id(&a, &session_sync_id, "COUNT_ADJUST").await;
+    // The same posting made on a PC of an older version (its own random id) and applied to the
+    // stock there, as such a database holds it.
+    let second = crate::sync::identity::new_entity_sync_id();
+    exec(
+        &a,
+        "INSERT INTO inventory_transactions
+            (entity_sync_id, article_id, warehouse_id, location_id, movement_type, quantity, source_type,
+             source_id, source_ref, reason, performed_by_id, performed_at, row_version)
+         SELECT ?, article_id, warehouse_id, location_id, movement_type, quantity, source_type, source_id,
+                source_ref, reason, performed_by_id, '2026-10-01T09:00:00Z', 1
+         FROM inventory_transactions WHERE entity_sync_id = ?",
+        vec![second.clone().into(), first.clone().into()],
+    )
+    .await;
+    exec(
+        &a,
+        "UPDATE stock_balances SET on_hand_qty = on_hand_qty - 3, available_qty = available_qty - 3
+         WHERE article_id = ? AND location_id = ?",
+        vec![art.into(), loc.into()],
+    )
+    .await;
+    assert_eq!(on_hand_milli(&a, art, loc).await, 4_000, "corrected twice");
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    let (art_b, loc_b) = local_pair(&b, &article, &location).await;
+    assert_eq!(on_hand_milli(&b, art_b, loc_b).await, 4_000, "B: the same ledger");
+
+    let mut ids = vec![first.clone(), second.clone()];
+    ids.sort();
+    for (pc, db, (art, loc)) in [("A", &a, (art, loc)), ("B", &b, (art_b, loc_b))] {
+        let list = negative_stock::list_reviews(db, false).await.expect("list");
+        assert!(list.items.is_empty(), "{pc}: nothing below zero");
+        assert!(list.double_counts.is_empty(), "{pc}: not a double count of two PCs");
+        assert_eq!(list.double_postings.len(), 1, "{pc}: one item");
+        let item = &list.double_postings[0];
+        assert_eq!((item.article_id, item.location_id), (art, loc), "{pc}");
+        assert_eq!(item.session_code, session.session_code, "{pc}: the count session");
+        assert_eq!(item.movement_type, "COUNT_ADJUST", "{pc}");
+        let mut named: Vec<String> = item.movements.iter().map(|m| m.movement_sync_id.clone()).collect();
+        named.sort();
+        assert_eq!(named, ids, "{pc}: both movements");
+        assert!(
+            item.movements
+                .iter()
+                .all(|m| (m.quantity + 3.0).abs() < 1e-9 && !m.posted_at.is_empty()),
+            "{pc}: quantity and time of each movement"
+        );
+        assert!((item.variance_qty + 3.0).abs() < 1e-9, "{pc}: the count's correction");
+        assert!((item.excess_qty + 3.0).abs() < 1e-9, "{pc}: moved once too often");
+        assert_eq!(item.on_hand_qty, 4.0, "{pc}");
+        assert!(item.closed_by.is_none(), "{pc}");
+        assert_eq!(
+            negative_stock::summary(db).await.expect("summary").double_posting_count,
+            1,
+            "{pc}"
+        );
+    }
+
+    // A reason under 8 characters is refused; a new count with its reason closes it.
+    let short = negative_stock::resolve_by_count(&a, user, resolution(art, loc, 7.0, "court"))
+        .await
+        .expect_err("short reason");
+    assert_eq!(refusal_code(short), REFUSED_REASON_SHORT);
+    let resolved =
+        negative_stock::resolve_by_count(&a, user, resolution(art, loc, 7.0, "Recompté après double passage"))
+            .await
+            .expect("a new count");
+    assert!(
+        (resolved.variance_qty - 3.0).abs() < 1e-9,
+        "the stock is set to the count"
+    );
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'inventory.negative_stock.counted'
+             AND json_extract(details_json, '$.double_posting') = 1",
+            vec![],
+        )
+        .await,
+        1,
+        "the count is audited as resolving it"
+    );
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    for (pc, db, (art, loc)) in [("A", &a, (art, loc)), ("B", &b, (art_b, loc_b))] {
+        assert_eq!(on_hand_milli(db, art, loc).await, 7_000, "{pc}: the counted stock");
+        let open = negative_stock::list_reviews(db, false).await.expect("list");
+        assert!(open.double_postings.is_empty(), "{pc}: closed");
+        let all = negative_stock::list_reviews(db, true).await.expect("list");
+        assert_eq!(all.closed_double_postings.len(), 1, "{pc}: kept in the closed history");
+        assert_eq!(
+            all.closed_double_postings[0]
+                .closed_by
+                .as_ref()
+                .map(|c| c.session_code.clone()),
+            Some(resolved.session_code.clone()),
+            "{pc}: closed by the new count"
+        );
+        assert_eq!(
+            negative_stock::summary(db).await.expect("summary").double_posting_count,
+            0,
+            "{pc}"
+        );
+    }
+}
+
+/// A count posted twice is not closed by a count entered before the second movement was here: its
+/// variance was set against a stock missing that movement.
+#[tokio::test]
+async fn a_count_posted_twice_stays_open_after_a_count_that_missed_a_movement() {
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let user = user_with(&db, "au100missed", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art, loc) = (article.rowid, location.rowid);
+    let session = approve_count(&db, user, enter_count(&db, user, art, loc, 7.0).await).await;
+    let session_sync_id = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![session.id.into()],
+    )
+    .await;
+    post_on(&db, user, &session_sync_id).await;
+    // A later count entered (and so marked) before the second movement was here.
+    let later = enter_count(&db, user, art, loc, 7.0).await;
+    let first = movement_sync_id(&db, &session_sync_id, "COUNT_ADJUST").await;
+    exec(
+        &db,
+        "INSERT INTO inventory_transactions
+            (entity_sync_id, article_id, warehouse_id, location_id, movement_type, quantity, source_type,
+             source_id, source_ref, reason, performed_by_id, performed_at, row_version)
+         SELECT ?, article_id, warehouse_id, location_id, movement_type, quantity, source_type, source_id,
+                source_ref, reason, performed_by_id, performed_at, 1
+         FROM inventory_transactions WHERE entity_sync_id = ?",
+        vec![crate::sync::identity::new_entity_sync_id().into(), first.into()],
+    )
+    .await;
+    post_count(&db, user, later).await;
+    let list = negative_stock::list_reviews(&db, false).await.expect("list");
+    assert_eq!(list.double_postings.len(), 1, "still to verify");
+}
+
+/// The same count posted on two PCs whose count lines really differ (here the reviewer's note was
+/// changed on B before posting): the session, the movement and its audit link are settled as above,
+/// but the line stays a conflict for a person; the stock still moved once.
+#[tokio::test]
+async fn a_count_posted_on_two_pcs_with_different_lines_leaves_the_line_to_a_person() {
+    let ApprovedOnBoth {
+        a,
+        b,
+        mut server,
+        users,
+        pair_a,
+        pair_b,
+        session_sync_id,
+    } = approved_on_both().await;
+    exec(
+        &b,
+        "UPDATE inventory_count_lines SET approval_note = 'Note différente saisie sur B'
+         WHERE session_id = (SELECT id FROM inventory_count_sessions WHERE entity_sync_id = ?)",
+        vec![session_sync_id.clone().into()],
+    )
+    .await;
+    post_on(&a, users.0, &session_sync_id).await;
+    post_on(&b, users.1, &session_sync_id).await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    sync_applied(&mut server, "A", &a).await;
+    for (pc, db, (art, loc)) in [("A", &a, pair_a), ("B", &b, pair_b)] {
+        assert_eq!(on_hand_milli(db, art, loc).await, 7_000, "{pc}: corrected once");
+    }
+    assert_eq!(conflict_kinds(&a).await, Vec::<String>::new(), "A pushed first");
+    let kinds = conflict_kinds(&b).await;
+    assert!(!kinds.is_empty(), "B: the line is left to a person");
+    assert!(
+        kinds.iter().all(|k| k.starts_with("inventory_count_lines:")),
+        "B: only the line: {kinds:?}"
+    );
 }
