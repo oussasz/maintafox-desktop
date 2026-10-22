@@ -4,6 +4,7 @@
 //! V1: resolve_locale_preference returns valid active_locale + supported_locales
 //! V2: write_locale_config persists and resolve picks it up (language switch)
 //! V3: persisted value survives re-read (simulates app restart re-read)
+//! V4: "follow Windows" is a user choice only; the OS language is never a silent default
 
 #[cfg(test)]
 mod tests {
