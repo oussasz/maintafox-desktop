@@ -54,13 +54,18 @@ export const mfCard = {
 export const mfAuth = {
   /**
    * Page canvas. `mf-auth` (styles/auth.css) pins the light brand palette for these screens only;
-   * `min-h-[100dvh]` + vertical padding lets short windows scroll instead of clipping the card.
+   * The root/body are `overflow: hidden`, so the shell is itself the scroll container: viewport
+   * height + `overflow-y-auto`. Centring uses flexible spacers (before/after) instead of
+   * `justify-center`, so short content is centred and tall content starts at the top and scrolls.
    */
   shell:
-    "mf-auth mf-auth-backdrop flex min-h-[100dvh] w-full flex-col items-center justify-center px-4 py-8 sm:px-6",
+    "mf-auth mf-auth-backdrop flex h-[100dvh] w-full flex-col items-center overflow-y-auto px-4 py-8 sm:px-6 before:flex-1 before:content-[''] after:flex-1 after:content-['']",
   /** Lock screen — same canvas as auth, no card */
   lockShell:
-    "mf-auth mf-auth-backdrop flex min-h-[100dvh] w-full flex-col items-center justify-center px-4 py-8 sm:px-6",
+    "mf-auth mf-auth-backdrop flex h-[100dvh] w-full flex-col items-center overflow-y-auto px-4 py-8 sm:px-6 before:flex-1 before:content-[''] after:flex-1 after:content-['']",
+  /** Full-screen recovery / startup screens (no card): same scroll + centring behaviour. */
+  startupShell:
+    "flex h-[100dvh] w-full flex-col items-center gap-4 overflow-y-auto bg-surface-0 px-8 py-8 text-center before:flex-1 before:content-[''] after:flex-1 after:content-['']",
   /** Primary login card: compact, white, subtle border and restrained shadow. */
   card: "w-full max-w-[400px] rounded-xl border border-surface-border bg-surface-1 p-6 shadow-[var(--mfa-shadow-card)] motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200 sm:p-8",
   cardCompact:

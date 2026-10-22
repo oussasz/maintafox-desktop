@@ -101,7 +101,7 @@ export function AuthLockLayer() {
 
   return (
     <div
-      className="fixed inset-0 z-[2147483000] flex items-center justify-center p-6 pointer-events-auto"
+      className="fixed inset-0 z-[2147483000] flex overflow-y-auto p-6 pointer-events-auto"
       role="dialog"
       aria-modal="true"
       aria-labelledby="auth-lock-title"
@@ -110,10 +110,10 @@ export function AuthLockLayer() {
         e.stopPropagation();
       }}
     >
-      <div className="absolute inset-0 bg-surface-0/90 backdrop-blur-sm pointer-events-auto" />
+      <div className="fixed inset-0 bg-surface-0/90 backdrop-blur-sm pointer-events-auto" />
       <div
         className={cn(
-          "mf-auth relative z-[2147483001] w-full max-w-md pointer-events-auto",
+          "mf-auth relative z-[2147483001] m-auto w-full max-w-md pointer-events-auto",
           mfAuth.card,
         )}
         onPointerDown={(e) => e.stopPropagation()}
