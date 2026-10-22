@@ -256,12 +256,9 @@ export function EmergencyElevationPanel() {
       setRevokeTarget(null);
       void fetchData();
     } catch (err) {
+      // The failure is toasted once by the global handler (the user detail dialog revokes
+      // through the same command and relies on it); cancelling the password prompt is no failure.
       if (isStepUpCancelled(err)) return;
-      toast({
-        title: t("emergency.errors.revokeFailed", "Failed to revoke access"),
-        description: appErrorReason(err),
-        variant: "destructive",
-      });
     } finally {
       busyRef.current = false;
       setBusy(false);

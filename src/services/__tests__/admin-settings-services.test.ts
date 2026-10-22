@@ -109,13 +109,9 @@ describe("user administration", () => {
       assignmentId: 3,
       reason: "Changed team",
     });
-    // The panel reports its own failures: the service does not toast a second time.
-    expect(ipc.invoke).toHaveBeenNthCalledWith(
-      3,
-      "revoke_emergency_elevation",
-      { input: { assignment_id: 9, reason: null } },
-      { notifyOnError: false },
-    );
+    expect(ipc.invoke).toHaveBeenNthCalledWith(3, "revoke_emergency_elevation", {
+      input: { assignment_id: 9, reason: null },
+    });
   });
 
   it("lists the sessions of one user or of everyone", async () => {
@@ -373,8 +369,10 @@ describe("security policies", () => {
     await expect(getLockoutPolicy()).rejects.toThrow();
     ipc.invoke.mockResolvedValueOnce(undefined);
     await setLockoutPolicy({ max_attempts: 6, lockout_minutes: 30, progressive: false });
-    expect(ipc.invoke).toHaveBeenLastCalledWith("set_lockout_policy", {
-      input: { max_attempts: 6, lockout_minutes: 30, progressive: false },
-    });
+    expect(ipc.invoke).toHaveBeenLastCalledWith(
+      "set_lockout_policy",
+      { input: { max_attempts: 6, lockout_minutes: 30, progressive: false } },
+      { notifyOnError: false },
+    );
   });
 });
