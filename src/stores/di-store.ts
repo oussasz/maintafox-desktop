@@ -8,6 +8,7 @@
 
 import { create } from "zustand";
 
+import { appErrorReason } from "@/lib/app-error";
 import { createLatestRequestGuard } from "@/lib/latest-request";
 import {
   createDi,
@@ -18,7 +19,6 @@ import {
   triageSubmittedDi as triageSubmittedDiCommand,
   updateDiDraft,
 } from "@/services/di-service";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   AssetSearchResult,
   DiCreateInput,
@@ -158,7 +158,7 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
       set({ ...pageState(page), loading: false });
     } catch (err) {
       if (!isCurrent()) return;
-      set({ error: toErrorMessage(err), listError: err, loading: false });
+      set({ error: appErrorReason(err), listError: err, loading: false });
     }
   },
 
@@ -194,7 +194,7 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
         },
       });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
     } finally {
       set({ loading: false });
     }
@@ -210,7 +210,7 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
       void get().loadQueueCounts();
       return di;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -232,7 +232,7 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
         ...pageState(page),
       });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -261,7 +261,7 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
       void get().loadQueueCounts();
       return di;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -287,7 +287,7 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
       }
       return di;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
