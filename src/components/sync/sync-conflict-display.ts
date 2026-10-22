@@ -227,17 +227,39 @@ export interface ConflictRecordIdentity {
   name: string | null;
 }
 
+/** Number and name a record payload carries (`row.v1`: columns by name). */
+export function payloadIdentity(json: string | null): ConflictRecordIdentity {
+  const payload = parsePayload(json);
+  if (!payload) return { code: null, name: null };
+  return { code: firstText(payload, CODE_FIELDS), name: firstText(payload, NAME_FIELDS) };
+}
+
 /** Number and name of the record, from this device's version first, else the received one. */
 export function conflictRecordIdentity(c: SyncConflictRecord): ConflictRecordIdentity {
   for (const json of [c.local_payload_json, c.inbound_payload_json]) {
-    const payload = parsePayload(json);
-    if (!payload) continue;
-    const code = firstText(payload, CODE_FIELDS);
-    const name = firstText(payload, NAME_FIELDS);
-    if (code || name) return { code, name };
+    const id = payloadIdentity(json);
+    if (id.code || id.name) return id;
   }
   return { code: null, name: null };
 }
+
+/** Coded reasons of a row the database refused, with a text in `shell:sync.applyReason`. */
+export const KNOWN_APPLY_REASONS = new Set([
+  "UNIQUE_TAKEN",
+  "REQUIRED_MISSING",
+  "LINK_MISSING",
+  "RULE_REFUSED",
+  "INVALID_DATA",
+  "TECHNICAL",
+]);
+
+/** Deferral codes with a text in `shell:sync.waiting.own` (`sync::materialize::DEFER_*`). */
+export const KNOWN_WAIT_REASONS = new Set([
+  "MISSING_PARENT",
+  "MISSING_FIELD",
+  "NO_MATERIALIZER",
+  "UNKNOWN_ENTITY_TYPE",
+]);
 
 /** The number a received record carries (`code` or `employee_code`) — for CODE_CLASH. */
 export function clashingNumber(c: SyncConflictRecord): string | null {

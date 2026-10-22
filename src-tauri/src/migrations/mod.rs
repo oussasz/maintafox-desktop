@@ -231,6 +231,7 @@ pub(crate) fn audit_chain_stubs_backfill_sql() -> String {
     m20261020_000250_audit_chain_stubs::backfill_sql()
 }
 mod m20261020_000251_stock_negative_reviews;
+mod m20261022_000252_sync_wait_reasons;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -470,6 +471,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261020_000249_permit_lock_removal::Migration),
             Box::new(m20261020_000250_audit_chain_stubs::Migration),
             Box::new(m20261020_000251_stock_negative_reviews::Migration),
+            Box::new(m20261022_000252_sync_wait_reasons::Migration),
         ]
     }
 }

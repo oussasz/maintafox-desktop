@@ -104,6 +104,35 @@ describe("SyncConflictList", () => {
     );
   });
 
+  it("says in plain words why a received row was refused, keeping the recorded error in the details", async () => {
+    inbox = [
+      {
+        ...conflict,
+        id: 12,
+        entity_type: "pm_plan_versions",
+        conflict_type: "MATERIALIZE_ERROR",
+        local_payload_json: null,
+        recommended_action: "escalate",
+        detail_message: "NOT NULL constraint failed: pm_plan_versions.effective_from",
+        reason: {
+          code: "REQUIRED_MISSING",
+          table: "pm_plan_versions",
+          columns: ["effective_from"],
+          rule: null,
+        },
+      },
+    ];
+    mockRefresh.mockResolvedValue(undefined);
+
+    render(<SyncConflictList />);
+
+    expect(
+      await screen.findByText("sync.applyReason.REQUIRED_MISSING::sync.entity.pm_plan_versions"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("sync.conflictNumber")).toBeInTheDocument();
+    expect(screen.getByText("sync.applyReason.recordedText").closest("details")).not.toBeNull();
+  });
+
   it("keeps the choice disabled while the reason is shorter than the minimum once trimmed", async () => {
     inbox = [conflict];
     mockRefresh.mockResolvedValue(undefined);

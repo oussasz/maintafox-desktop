@@ -3,6 +3,7 @@
 //! Universal Entity Sync Standard: see `docs/engineering/SYNC_STRATEGY.md`.
 
 pub(crate) mod apply_hooks;
+pub mod apply_reason;
 pub mod capture;
 pub mod code_clash;
 pub mod conflicts;
@@ -19,6 +20,7 @@ pub mod row_spec;
 pub mod row_state;
 pub mod seeded_identity;
 pub mod transport;
+pub mod waiting;
 
 #[cfg(test)]
 mod convergence_tests;

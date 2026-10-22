@@ -85,6 +85,7 @@ pub(crate) fn before_upsert(
             None | Some(serde_json::Value::Null) => Some(ApplyOutcome::Deferred {
                 code: DEFER_MISSING_FIELD.into(),
                 message: "hold_kind missing: sent by an older app version; waiting for an update of that device".into(),
+                waits_for: None,
             }),
             Some(serde_json::Value::String(k)) if crate::wo::lifecycle::HoldKind::try_from_str(k).is_some() => None,
             Some(other) => Some(ApplyOutcome::Conflict {
@@ -141,6 +142,7 @@ pub(crate) async fn before_upsert_checked(
                 InboundDecisionVerdict::Defer(message) => ApplyOutcome::Deferred {
                     code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
                     message,
+                    waits_for: None,
                 },
                 InboundDecisionVerdict::Conflict(message) => ApplyOutcome::Conflict {
                     code: "DECISION_SELF_APPROVAL".into(),
@@ -247,6 +249,7 @@ pub(crate) async fn before_upsert_checked(
             InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
                 code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
                 message,
+                waits_for: None,
             },
             InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
                 code: code.into(),
@@ -358,6 +361,7 @@ pub(crate) async fn before_delete_checked(
         crate::settings::site::InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
             code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
             message,
+            waits_for: None,
         },
         crate::settings::site::InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
             code: code.into(),

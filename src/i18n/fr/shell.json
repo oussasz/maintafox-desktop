@@ -44,7 +44,38 @@
     "dismissConflict": "Ignorer",
     "conflictVersions": "Cet appareil : {{local}} · Serveur : {{remote}}",
     "versionUnknown": "inconnue",
-    "deferredInbox": "{{count}} modification(s) reçue(s) attendent des données liées ou une version plus récente de l'application. Elles seront appliquées automatiquement.",
+    "conflictRef": "conflit n° {{id}}",
+    "conflictNumber": "Conflit n° {{id}}",
+    "applyReason": {
+      "UNIQUE_TAKEN": "Ce PC a déjà un autre enregistrement ({{record}}) avec la même valeur de {{fields}} : l'enregistrement reçu ne peut pas être enregistré à côté.",
+      "REQUIRED_MISSING": "L'enregistrement reçu ({{record}}) laisse vide un champ obligatoire ({{fields}}). Il vient probablement d'une version plus ancienne de l'application ou de données anciennes de l'autre PC.",
+      "LINK_MISSING": "L'enregistrement reçu ({{record}}) désigne un enregistrement que ce PC ne possède pas.",
+      "RULE_REFUSED": "Une règle de ce PC a refusé une valeur de l'enregistrement reçu ({{record}}).",
+      "INVALID_DATA": "Une valeur de l'enregistrement reçu ({{record}}) est illisible pour cette version de l'application (souvent des données anciennes de l'autre PC).",
+      "TECHNICAL": "Une erreur technique a empêché d'appliquer l'enregistrement reçu ({{record}}) : voir les détails techniques.",
+      "rule": "Règle : {{rule}}",
+      "recordedText": "Erreur enregistrée : {{message}}"
+    },
+    "waiting": {
+      "title": "{{count}} modification(s) reçue(s) en attente. Elles sont appliquées automatiquement dès que ce qu'elles attendent est là.",
+      "state": {
+        "conflict": "En attente de la résolution du {{ref}}",
+        "refused": "En attente de {{record}}, refusé(e) sur ce PC (son conflit a été clos)",
+        "not_received": "En attente de {{record}}, pas encore reçu(e)",
+        "ready": "Prêt : appliqué à la prochaine synchronisation"
+      },
+      "own": {
+        "MISSING_PARENT": "En attente de données liées pas encore reçues (une personne, un droit, une règle)",
+        "MISSING_FIELD": "Envoyé par une version plus ancienne de l'application : en attente de la mise à jour de l'autre PC",
+        "NO_MATERIALIZER": "Nécessite une version plus récente de l'application sur ce PC",
+        "UNKNOWN_ENTITY_TYPE": "Nécessite une version plus récente de l'application sur ce PC",
+        "other": "En attente (voir les détails techniques)"
+      },
+      "showRows": "Voir les modifications en attente",
+      "moreRows": "{{count}} autres non listées",
+      "loadError": "Les modifications en attente n'ont pas pu être chargées.",
+      "loading": "Chargement des modifications en attente…"
+    },
     "resolveFailed": "Le choix n'a pas pu être appliqué : {{message}}",
     "codeClash": "Le numéro {{number}} est déjà utilisé sur cet appareil par un autre enregistrement (numéroté sur deux appareils avant les codes d'appareil, ou deux appareils partagent un code). Renuméroter donne à l'enregistrement de cet appareil un nouveau numéro de cet appareil ; l'enregistrement reçu garde {{number}}. Rien n'est renommé sans votre choix.",
     "renumberLocal": "Renuméroter l'enregistrement de cet appareil",

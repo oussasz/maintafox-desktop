@@ -7,7 +7,11 @@ import { describe, expect, it } from "vitest";
 import en from "@/i18n/en/shell.json";
 import fr from "@/i18n/fr/shell.json";
 
-import { KNOWN_CONFLICT_KINDS } from "../sync-conflict-display";
+import {
+  KNOWN_APPLY_REASONS,
+  KNOWN_CONFLICT_KINDS,
+  KNOWN_WAIT_REASONS,
+} from "../sync-conflict-display";
 
 describe("sync conflict kinds", () => {
   for (const [lang, shell] of [
@@ -18,6 +22,26 @@ describe("sync conflict kinds", () => {
       const kinds = (shell as { sync: { conflictKind: Record<string, string> } }).sync.conflictKind;
       const missing = [...KNOWN_CONFLICT_KINDS].filter((k) => !kinds[k]?.trim());
       expect(missing).toEqual([]);
+    });
+
+    it(`explain every refused-row reason and every wait in ${lang}`, () => {
+      const sync = (
+        shell as {
+          sync: {
+            applyReason: Record<string, string>;
+            waiting: { own: Record<string, string>; state: Record<string, string> };
+          };
+        }
+      ).sync;
+      expect([...KNOWN_APPLY_REASONS].filter((k) => !sync.applyReason[k]?.trim())).toEqual([]);
+      expect([...KNOWN_WAIT_REASONS, "other"].filter((k) => !sync.waiting.own[k]?.trim())).toEqual(
+        [],
+      );
+      expect(
+        ["conflict", "refused", "not_received", "ready"].filter(
+          (k) => !sync.waiting.state[k]?.trim(),
+        ),
+      ).toEqual([]);
     });
   }
 

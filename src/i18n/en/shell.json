@@ -44,7 +44,38 @@
     "dismissConflict": "Dismiss",
     "conflictVersions": "This device: {{local}} · Server: {{remote}}",
     "versionUnknown": "unknown",
-    "deferredInbox": "{{count}} received change(s) are waiting for related data or a newer app version. They are applied automatically.",
+    "conflictRef": "conflict #{{id}}",
+    "conflictNumber": "Conflict #{{id}}",
+    "applyReason": {
+      "UNIQUE_TAKEN": "This PC already holds another {{record}} with the same value of {{fields}}: the received one cannot be stored next to it.",
+      "REQUIRED_MISSING": "The received {{record}} leaves a required field empty ({{fields}}). It was probably sent by an older app version, or comes from old data on the other PC.",
+      "LINK_MISSING": "The received {{record}} points to a record this PC does not hold.",
+      "RULE_REFUSED": "A rule of this PC refused a value of the received {{record}}.",
+      "INVALID_DATA": "A value of the received {{record}} cannot be read by this version of the app (often old data from the other PC).",
+      "TECHNICAL": "A technical error stopped the received {{record}} from being applied: see the technical details.",
+      "rule": "Rule: {{rule}}",
+      "recordedText": "Recorded error: {{message}}"
+    },
+    "waiting": {
+      "title": "{{count}} received change(s) are waiting. They are applied automatically once what they wait for is here.",
+      "state": {
+        "conflict": "Waiting for {{ref}} to be resolved",
+        "refused": "Waiting for {{record}}, which was refused on this PC (its conflict was closed)",
+        "not_received": "Waiting for {{record}}, not received yet",
+        "ready": "Ready: applied at the next synchronisation"
+      },
+      "own": {
+        "MISSING_PARENT": "Waiting for related data not received yet (a person, a right, a rule)",
+        "MISSING_FIELD": "Sent by an older app version: waiting for the other PC to be updated",
+        "NO_MATERIALIZER": "Needs a newer app version on this PC",
+        "UNKNOWN_ENTITY_TYPE": "Needs a newer app version on this PC",
+        "other": "Waiting (see the technical details)"
+      },
+      "showRows": "Show the waiting changes",
+      "moreRows": "{{count}} more not listed",
+      "loadError": "The waiting changes could not be loaded.",
+      "loading": "Loading the waiting changes…"
+    },
     "resolveFailed": "The choice could not be applied: {{message}}",
     "codeClash": "Number {{number}} is already used on this device by another record (numbered on two devices before device codes existed, or two devices share a code). Renumbering gives the record on this device a new number of this device; the received record keeps {{number}}. Nothing is renamed without your choice.",
     "renumberLocal": "Renumber the record on this device",
