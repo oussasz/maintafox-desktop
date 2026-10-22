@@ -102,7 +102,8 @@ pub async fn end_commitment(
     let state = load_state(&tx, input.commitment_id).await?;
     if state.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Schedule commitment was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Schedule commitment was modified elsewhere (stale row_version)."
+                .to_string(),
         ]));
     }
     if state.status != STATUS_COMMITTED {
@@ -139,7 +140,8 @@ pub async fn end_commitment(
         .await?;
     if updated.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Schedule commitment was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Schedule commitment was modified elsewhere (stale row_version)."
+                .to_string(),
         ]));
     }
     if state.source_type == "work_order" {

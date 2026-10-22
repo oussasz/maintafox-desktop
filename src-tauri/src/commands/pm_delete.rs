@@ -35,7 +35,7 @@ pub async fn delete_pm_plan_version(
     let current_row_version: i64 = row.try_get("", "row_version")?;
     if current_row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM version delete failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM version delete failed (stale row_version).".to_string(),
         ]));
     }
 
@@ -110,7 +110,7 @@ pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: Stat
     let current_row_version: i64 = plan_row.try_get("", "row_version")?;
     if current_row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM plan delete failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM plan delete failed (stale row_version).".to_string(),
         ]));
     }
 

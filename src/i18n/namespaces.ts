@@ -64,6 +64,7 @@ export const ISSUE_NAMESPACES = [
   "reliability",
   "settings",
   "inventory",
+  "budget",
 ] as const;
 
 export type EagerNamespace = (typeof EAGER_NAMESPACES)[number];

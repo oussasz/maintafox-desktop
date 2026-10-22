@@ -360,7 +360,8 @@ pub async fn apply_rcm_decision_logic(
         .await?;
     if aff.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "rcm_decisions update conflict (stale row_version or unknown decision).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: rcm_decisions update conflict (stale row_version or unknown decision)."
+                .into(),
         ]));
     }
     let out = get_rcm_decision_logic(&txn, input.decision_id).await?;
@@ -819,7 +820,7 @@ pub async fn compute_fmeca_criticality(
         .await?;
     if aff.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "fmeca_items update conflict (stale row_version).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: fmeca_items update conflict (stale row_version).".into(),
         ]));
     }
     let row = txn
