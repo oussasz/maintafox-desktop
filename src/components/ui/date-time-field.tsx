@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { DateField } from "@/components/ui/date-field";
 import { TimeInput } from "@/components/ui/time-input";
-import { joinDateTime, splitDateTime } from "@/lib/date-input";
+import { joinDateTime, splitDateTime, splitFieldClasses } from "@/lib/date-input";
 import { cn } from "@/lib/utils";
 
 export interface DateTimeFieldProps {
@@ -16,7 +16,7 @@ export interface DateTimeFieldProps {
   /** `YYYY-MM-DDTHH:mm`, or empty. */
   value: string;
   onChange: (next: string) => void;
-  /** Inclusive bounds on the calendar day, `YYYY-MM-DD`. */
+  /** Inclusive bounds, `YYYY-MM-DD` or a date-time: only the calendar day is enforced. */
   min?: string | undefined;
   max?: string | undefined;
   isDateDisabled?: ((iso: string) => boolean) | undefined;
@@ -79,8 +79,10 @@ export function DateTimeField({
     onChange(joinDateTime(date, next));
   }
 
+  // Layout classes go to the row; height, text and colour classes to both inputs.
+  const classes = splitFieldClasses(className);
   return (
-    <div className={cn("flex items-start gap-2", className)}>
+    <div className={cn("flex items-start gap-2", classes.wrapper)}>
       <DateField
         {...(id ? { id } : {})}
         value={date}
@@ -94,7 +96,7 @@ export function DateTimeField({
         {...(required != null ? { required } : {})}
         {...(ariaLabel ? { "aria-label": ariaLabel } : {})}
         {...(ariaInvalid != null ? { "aria-invalid": ariaInvalid } : {})}
-        className="min-w-0 flex-1"
+        className={cn("min-w-0 flex-1", classes.input)}
       />
       <TimeInput
         {...(id ? { id: `${id}-time` } : {})}
@@ -102,7 +104,7 @@ export function DateTimeField({
         onChange={changeTime}
         size={size}
         disabled={disabled || !date}
-        className="w-[5.5rem] shrink-0"
+        className={cn("w-[5.5rem] shrink-0", classes.input)}
       />
     </div>
   );

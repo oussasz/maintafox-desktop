@@ -79,6 +79,10 @@ describe("splitFieldClasses", () => {
       input: "h-11 text-sm font-mono",
     });
     expect(splitFieldClasses(undefined)).toEqual({ wrapper: "", input: "" });
+    expect(splitFieldClasses("-mt-2 hidden z-10 h-8")).toEqual({
+      wrapper: "-mt-2 hidden z-10",
+      input: "h-8",
+    });
     expect(splitFieldClasses("min-w-0 flex-1")).toEqual({ wrapper: "min-w-0 flex-1", input: "" });
   });
 });

@@ -143,7 +143,8 @@ export function joinDateTime(date: string, time: string): string {
 // ── Class split for composite fields ──────────────────────────────────────
 
 /** Classes that place a field in its layout (width, margin, flex and grid placement). */
-const LAYOUT_CLASS = /^(w|min-w|max-w|basis|flex|grow|shrink|m[trblxy]?|col|row|self|order)(-|$)/;
+const LAYOUT_CLASS =
+  /^-?(w|min-w|max-w|basis|flex|grow|shrink|m[trblxy]?|ms|me|col|row|self|order|top|left|right|bottom|inset|z|float|place-self|justify-self)(-|$)|^(hidden|invisible|block|inline-block|absolute|relative|fixed|sticky)$/;
 
 /**
  * Splits the class names given to a composite field: layout classes go to its wrapper, the rest
@@ -157,7 +158,7 @@ export function splitFieldClasses(className: string | undefined): {
   const input: string[] = [];
   for (const token of (className ?? "").split(/\s+/).filter(Boolean)) {
     // Ignore variants such as `sm:` or `hover:` when classifying.
-    const base = token.slice(token.lastIndexOf(":") + 1).replace(/^!/, "");
+    const base = token.slice(token.lastIndexOf(":") + 1).replace(/^!|!$/g, "");
     (LAYOUT_CLASS.test(base) ? wrapper : input).push(token);
   }
   return { wrapper: wrapper.join(" "), input: input.join(" ") };

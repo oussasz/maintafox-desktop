@@ -17,6 +17,7 @@ import {
   dateInputPlaceholder,
   formatIsoDateForInput,
   isDateWithin,
+  isIsoDate,
   parseDateInput,
   splitFieldClasses,
 } from "@/lib/date-input";
@@ -74,9 +75,20 @@ export function DateField({
   const draftRef = useRef(draft);
   draftRef.current = draft;
 
-  // A value changed from outside (reset, load, calendar) replaces the text; the text the user is
-  // typing is left alone while it already reads as the current value.
+  // The last value this field passed to its parent: the change coming back is its own and must
+  // not rewrite the text being typed (a short year such as 03/11/20 is not yet a value).
+  const emitted = useRef<string | null>(null);
+  function emit(next: string) {
+    emitted.current = next;
+    onChange(next);
+  }
+
+  // A value changed from outside (reset, load) replaces the text.
   useEffect(() => {
+    if (emitted.current === value) {
+      emitted.current = null;
+      return;
+    }
     const typed = parseDateInput(draftRef.current, language) ?? "";
     if (typed !== value) setDraft(formatIsoDateForInput(value, language));
   }, [value, language]);
@@ -87,25 +99,26 @@ export function DateField({
 
   function onText(next: string) {
     setDraft(next);
-    // Any text that already reads as a real date counts, so a form submitted with Enter (no blur)
-    // carries it; an unfinished one holds no value.
     // A date outside the bounds is passed on too and flagged, so the form can say why it refuses it.
-    const iso = parseDateInput(next, language);
+    // Only a finished date is passed on while typing (a four-digit year or a full ISO date), so the
+    // form does not see 2020 on the way to 2026; a short year is read when the field is left or
+    // Enter is pressed.
+    const finished = /\d{4}$/.test(next.trim()) || isIsoDate(next.trim());
+    const iso = finished ? parseDateInput(next, language) : null;
     if (iso) {
-      if (iso !== value) onChange(iso);
+      if (iso !== value) emit(iso);
     } else if (value !== "") {
       // An unfinished or impossible date is no date, as with a native field.
-      onChange("");
+      emit("");
     }
   }
 
-  function commitOnBlur() {
+  function commitText() {
     const iso = parseDateInput(draft, language);
     if (iso) {
       setDraft(formatIsoDateForInput(iso, language));
-      if (iso !== value) onChange(iso);
+      if (iso !== value) emit(iso);
     }
-    onBlur?.();
   }
 
   const label = ariaLabel ?? t("dateField.pickDate");
@@ -128,13 +141,21 @@ export function DateField({
         aria-invalid={ariaInvalid ?? (invalid || undefined)}
         title={invalid ? t("dateField.invalid") : undefined}
         className={cn(
-          "min-w-0 pr-9 tabular-nums",
+          "min-w-0 tabular-nums",
           compact && "h-8 text-sm",
           invalid && "border-destructive focus-visible:ring-destructive",
           classes.input,
+          "pr-9",
         )}
         onChange={(e) => onText(e.target.value)}
-        onBlur={commitOnBlur}
+        onBlur={() => {
+          commitText();
+          onBlur?.();
+        }}
+        onKeyDown={(e) => {
+          // Enter submits the surrounding form without leaving the field: read a short year first.
+          if (e.key === "Enter") commitText();
+        }}
       />
       <Popover open={open} onOpenChange={(next) => !disabled && setOpen(next)}>
         <PopoverTrigger asChild>
@@ -166,7 +187,7 @@ export function DateField({
             disabledDayTitle={disabledDayTitle}
             onSelect={(iso) => {
               setDraft(formatIsoDateForInput(iso, language));
-              if (iso !== value) onChange(iso);
+              if (iso !== value) emit(iso);
               setOpen(false);
             }}
           />

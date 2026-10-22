@@ -70,10 +70,15 @@ function StudyDateField({
     <DateField
       className={cn(RAMS_SELECT_CLASS, "min-w-0")}
       value={value}
-      onChange={setValue}
+      onChange={(v) => {
+        setValue(v);
+        // A finished date (typed in full or picked in the calendar) is saved at once; a short
+        // year is read when the field is left.
+        if (v && v !== saved && !onCommit(v)) setValue(saved);
+      }}
       disabled={disabled}
       aria-label={label}
-      aria-invalid={invalid}
+      aria-invalid={invalid || undefined}
       aria-describedby={describedBy}
       onBlur={() => {
         if (!value || value === saved) {

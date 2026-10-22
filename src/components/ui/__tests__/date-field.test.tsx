@@ -47,11 +47,19 @@ describe("DateField", () => {
     expect(box()).toHaveAttribute("aria-invalid", "true");
   });
 
-  it("counts a pasted ISO date or a short year at once, so Enter in a form carries it", () => {
+  it("passes only a finished date while typing, and reads a short year on Enter or blur", () => {
     render(<Harness />);
     fireEvent.change(box(), { target: { value: "2026-10-25" } });
     expect(value()).toBe("2026-10-25");
+    fireEvent.change(box(), { target: { value: "03/11/20" } });
+    expect(value()).toBe("");
+    expect(box().value).toBe("03/11/20");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(value()).toBe("2020-11-03");
     fireEvent.change(box(), { target: { value: "5.1.26" } });
+    expect(value()).toBe("");
+    expect(box().value).toBe("5.1.26");
+    fireEvent.blur(box());
     expect(value()).toBe("2026-01-05");
   });
 
