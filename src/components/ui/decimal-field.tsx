@@ -12,6 +12,7 @@ import * as React from "react";
 import { Input, type InputProps } from "@/components/ui/input";
 import { useFormatters } from "@/hooks/use-formatters";
 import { cn } from "@/lib/utils";
+import { roundDecimal } from "@/utils/decimal";
 
 export interface DecimalFieldProps extends Omit<
   InputProps,
@@ -70,6 +71,11 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const text = e.target.value;
       setDraft(text);
+      // A lone minus sign is the start of a negative number, not an error yet.
+      if (allowNegative && text.trim() === "-") {
+        setInvalid(false);
+        return;
+      }
       const parsed = parseDecimal(text, { allowNegative });
       if (parsed.kind === "invalid") {
         setInvalid(true);
@@ -89,15 +95,18 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
     const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
       const parsed = parseDecimal(draft, { allowNegative });
       if (parsed.kind === "number") {
-        const factor = 10 ** decimals;
-        const rounded = Math.round(parsed.value * factor) / factor;
+        const rounded = roundDecimal(parsed.value, decimals);
         if (rounded !== parsed.value) {
           last.current = rounded;
           onValueChange(rounded);
         }
         setDraft(show(rounded));
-      } else if (parsed.kind === "empty") {
-        setDraft("");
+      } else {
+        // Left empty, or with text that is not a number: the field shows what the parent holds,
+        // so what is on screen is what will be saved.
+        last.current = value;
+        setDraft(parsed.kind === "empty" ? "" : show(value));
+        setInvalid(false);
       }
       onBlur?.(e);
     };

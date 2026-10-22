@@ -28,7 +28,10 @@ export function parseDecimalInput(raw: string, options: ParseDecimalOptions = {}
   if (text === "") return { kind: "empty" };
   if (!(options.allowNegative ? SIGNED : UNSIGNED).test(text)) return { kind: "invalid" };
   const value = Number(text.replace(",", "."));
-  return Number.isFinite(value) ? { kind: "number", value } : { kind: "invalid" };
+  // "-0" is 0.
+  return Number.isFinite(value)
+    ? { kind: "number", value: value === 0 ? 0 : value }
+    : { kind: "invalid" };
 }
 
 const INTL_LOCALE: Record<string, string> = { fr: "fr-FR", en: "en-US", ar: "ar-DZ" };
@@ -38,6 +41,16 @@ export interface FormatDecimalInputOptions {
   decimals?: number;
   /** Always show exactly `decimals` places (amounts); default trims trailing zeros (quantities). */
   fixed?: boolean;
+}
+
+/**
+ * Rounds to `decimals` places on the decimal digits (1.005 to 2 places is 1.01), not on the
+ * binary value (where 1.005 is 1.00499...).
+ */
+export function roundDecimal(value: number, decimals: number): number {
+  const text = String(value);
+  if (text.includes("e")) return Math.round(value * 10 ** decimals) / 10 ** decimals;
+  return Number(Math.round(Number(text + "e" + decimals)) + "e-" + decimals);
 }
 
 /** A stored number as the text of an entry field: app-language separator, no grouping, no exponent. */

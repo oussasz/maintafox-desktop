@@ -67,13 +67,13 @@ function parseCurrencyFromSettingJson(json: string | undefined | null): string {
 /** Symbol and decimals of `code` from the reference currency list; none when it cannot be read. */
 async function readCurrencyDisplay(
   code: string,
-): Promise<{ symbol: string | null; minorUnits: number }> {
+): Promise<{ symbol: string | null; minorUnits: number } | null> {
   try {
     const row = (await listReferenceCurrencies()).find((c) => c.code === code);
     return { symbol: row?.symbol ?? null, minorUnits: row?.minor_units ?? 2 };
   } catch {
-    // The list needs a session: until it loads, the ISO code is shown.
-    return { symbol: null, minorUnits: 2 };
+    // The list needs a session: until it loads (or if it cannot be read), what is shown stays.
+    return null;
   }
 }
 
@@ -118,13 +118,12 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
         // Optional before auth; i18n keeps its configured fallbackLng.
       }
 
-      const display = await readCurrencyDisplay(currency);
+      // The symbol and decimals of the currency need a session: `refreshCurrency` (run by the
+      // shell once signed in) loads them.
       set({
         activeLocale: locale,
         followsSystemLanguage: pref.user_locale === FOLLOW_SYSTEM_LOCALE,
         activeCurrencyCode: currency,
-        activeCurrencySymbol: display.symbol,
-        activeCurrencyMinorUnits: display.minorUnits,
         direction: getLocaleDirection(locale),
         supportedLocales: pref.supported_locales,
         isLoading: false,
@@ -168,11 +167,16 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
 
   setCurrencyCode: (code: string) => {
     const normalized = normalizeCurrencyCode(code);
-    set({ activeCurrencyCode: normalized });
-    void readCurrencyDisplay(normalized).then(({ symbol, minorUnits }) =>
+    // The previous currency's symbol and decimals must not be shown with the new code.
+    set({
+      activeCurrencyCode: normalized,
+      activeCurrencySymbol: null,
+      activeCurrencyMinorUnits: 2,
+    });
+    void readCurrencyDisplay(normalized).then((display) =>
       set((s) =>
-        s.activeCurrencyCode === normalized
-          ? { activeCurrencySymbol: symbol, activeCurrencyMinorUnits: minorUnits }
+        display && s.activeCurrencyCode === normalized
+          ? { activeCurrencySymbol: display.symbol, activeCurrencyMinorUnits: display.minorUnits }
           : s,
       ),
     );
@@ -182,11 +186,20 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
     try {
       const row = await getSetting(LOCALE_CURRENCY_SETTING_KEY, "tenant");
       const code = parseCurrencyFromSettingJson(row?.setting_value_json);
-      const { symbol, minorUnits } = await readCurrencyDisplay(code);
-      set({
-        activeCurrencyCode: code,
-        activeCurrencySymbol: symbol,
-        activeCurrencyMinorUnits: minorUnits,
+      const display = await readCurrencyDisplay(code);
+      set((s) => {
+        // Another currency than before gets no symbol of the old one; the same currency with
+        // an unreadable list keeps what was shown.
+        const same = code === s.activeCurrencyCode;
+        return {
+          activeCurrencyCode: code,
+          activeCurrencySymbol: display ? display.symbol : same ? s.activeCurrencySymbol : null,
+          activeCurrencyMinorUnits: display
+            ? display.minorUnits
+            : same
+              ? s.activeCurrencyMinorUnits
+              : 2,
+        };
       });
     } catch (err) {
       console.warn("locale-store: failed to refresh currency", err);

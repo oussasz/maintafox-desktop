@@ -97,3 +97,24 @@ describe("DecimalField", () => {
     expect(input.value).toBe("1,235");
   });
 });
+
+describe("rounding and parent reconciliation", () => {
+  it("rounds on the decimal digits, not the binary value", async () => {
+    const { roundDecimal } = await import("@/utils/decimal");
+    expect(roundDecimal(1.005, 2)).toBe(1.01);
+    expect(roundDecimal(1.0005, 3)).toBe(1.001);
+    expect(roundDecimal(2.5, 0)).toBe(3);
+    expect(parseDecimalInput("-0", { allowNegative: true })).toEqual({ kind: "number", value: 0 });
+  });
+
+  it("shows the parent's value again when left with text that is not a number", () => {
+    render(<Harness initial={5} />);
+    const input = screen.getByLabelText("qty") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "abc" } });
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    fireEvent.blur(input);
+    expect(input.value).toBe("5");
+    expect(input).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByTestId("out").textContent).toBe("5");
+  });
+});
