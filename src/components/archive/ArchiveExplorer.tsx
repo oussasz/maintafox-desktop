@@ -30,6 +30,7 @@ import { isExportCancelled } from "@/export/types";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
@@ -93,6 +94,10 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
 
   const [sourceModule, setSourceModule] = useState<string | undefined>(undefined);
   const [searchText, setSearchText] = useState("");
+  // The list reloads when typing pauses, not on every keystroke.
+  const debouncedSearch = useDebouncedValue(searchText, 350);
+  // Open levels of the Module > Class > Year tree (clicking a level also sets its filter).
+  const [openNodes, setOpenNodes] = useState<Set<string>>(new Set());
   const [legalHoldOnly, setLegalHoldOnly] = useState(false);
   const [selectedClasses, setSelectedClasses] = useState<Set<string>>(new Set());
   const [dateFrom, setDateFrom] = useState<string>("");
@@ -115,7 +120,7 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
       } = { limit: FETCH_LIMIT, offset: 0 };
       if (sourceModule) filter.source_module = sourceModule;
       if (legalHoldOnly) filter.legal_hold = true;
-      if (searchText.trim()) filter.search_text = searchText.trim();
+      if (debouncedSearch.trim()) filter.search_text = debouncedSearch.trim();
       if (dateFrom) filter.date_from = dateFrom;
       if (dateTo) filter.date_to = `${dateTo}T23:59:59Z`;
 
@@ -127,7 +132,7 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, legalHoldOnly, searchText, sourceModule]);
+  }, [dateFrom, dateTo, legalHoldOnly, debouncedSearch, sourceModule]);
 
   useEffect(() => {
     void loadItems();
@@ -172,6 +177,15 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
     };
   }, [filteredItems]);
 
+  const toggleNode = useCallback((key: string) => {
+    setOpenNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
   const toggleClassFilter = useCallback((archiveClass: string) => {
     setSelectedClasses((prev) => {
       const next = new Set(prev);
@@ -194,6 +208,22 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
   const selectedRows = useMemo(
     () => filteredItems.filter((item) => selectedIds.has(item.id)),
     [filteredItems, selectedIds],
+  );
+
+  const allVisibleSelected =
+    visibleItems.length > 0 && visibleItems.every((item) => selectedIds.has(item.id));
+  const toggleSelectAll = useCallback(
+    (checked: boolean) => {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const item of visibleItems) {
+          if (checked) next.add(item.id);
+          else next.delete(item.id);
+        }
+        return next;
+      });
+    },
+    [visibleItems],
   );
 
   const clearBulkSelection = useCallback(() => setSelectedIds(new Set()), []);
@@ -295,11 +325,12 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
                 {Array.from(moduleClassYearTree.entries())
                   .sort(([a], [b]) => a.localeCompare(b))
                   .map(([module, classMap]) => (
-                    <details key={module} className="mb-1">
+                    <details key={module} className="mb-1" open={openNodes.has(module)}>
                       <summary
                         className="cursor-pointer rounded px-1 py-0.5 hover:bg-surface-2"
                         onClick={(e) => {
                           e.preventDefault();
+                          toggleNode(module);
                           setSourceModule((prev) => (prev === module ? undefined : module));
                         }}
                       >
@@ -311,19 +342,22 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
                         {Array.from(classMap.entries())
                           .sort(([a], [b]) => a.localeCompare(b))
                           .map(([archiveClass, yearMap]) => (
-                            <details key={`${module}-${archiveClass}`}>
-                              <summary className="cursor-pointer rounded px-1 py-0.5 hover:bg-surface-2">
-                                <button
-                                  type="button"
-                                  className="text-left"
-                                  onClick={(event) => {
-                                    event.preventDefault();
-                                    setSelectedClasses(new Set([archiveClass]));
-                                    setPage(0);
-                                  }}
-                                >
+                            <details
+                              key={`${module}-${archiveClass}`}
+                              open={openNodes.has(`${module}/${archiveClass}`)}
+                            >
+                              <summary
+                                className="cursor-pointer rounded px-1 py-0.5 hover:bg-surface-2"
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  toggleNode(`${module}/${archiveClass}`);
+                                  setSelectedClasses(new Set([archiveClass]));
+                                  setPage(0);
+                                }}
+                              >
+                                <span className="text-left">
                                   {archiveClassLabel(t, archiveClass)}
-                                </button>
+                                </span>
                               </summary>
                               <div className="ml-3 mt-1 space-y-1 border-l border-surface-border pl-2">
                                 {Array.from(yearMap.entries())
@@ -408,14 +442,6 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
                 </label>
               </div>
               <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  className="h-10"
-                  onClick={() => void loadItems()}
-                  disabled={loading}
-                >
-                  {t("explorer.apply")}
-                </Button>
                 <Button size="sm" variant="outline" className="h-10" onClick={resetFilters}>
                   {t("explorer.reset")}
                 </Button>
@@ -518,7 +544,11 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
                 ) : (
                   <div className="rounded-md border border-surface-border">
                     <div className="grid grid-cols-[36px_1fr_auto_auto_auto] gap-2 border-b border-surface-border bg-surface-2 px-3 py-2 text-xs font-medium text-text-muted">
-                      <span className="sr-only">{t("explorer.select")}</span>
+                      <Checkbox
+                        checked={allVisibleSelected}
+                        onCheckedChange={(checked) => toggleSelectAll(checked)}
+                        aria-label={t("explorer.selectAll")}
+                      />
                       <span>{t("explorer.col.record")}</span>
                       <span>{t("explorer.col.class")}</span>
                       <span>{t("explorer.col.status")}</span>

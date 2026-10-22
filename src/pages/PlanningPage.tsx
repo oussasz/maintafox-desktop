@@ -80,7 +80,6 @@ import { mfLayout } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
-import { appErrorText } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
 import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
 import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
@@ -134,7 +133,6 @@ export function PlanningPage() {
   const changeLog = usePlanningStore((s) => s.changeLog);
   const loading = usePlanningStore((s) => s.loading);
   const saving = usePlanningStore((s) => s.saving);
-  const storeError = usePlanningStore((s) => s.error);
 
   const loadBacklog = usePlanningStore((s) => s.loadBacklog);
   const refreshBacklog = usePlanningStore((s) => s.refreshBacklog);
@@ -157,7 +155,6 @@ export function PlanningPage() {
   const [teams, setTeams] = useState<CrewOption[]>([]);
   const [personnel, setPersonnel] = useState<PersonnelOption[]>([]);
   const [approvers, setApprovers] = useState<ApproverOption[]>([]);
-  const [pageError, setPageError] = useState<string | null>(null);
 
   const [boardScope, setBoardScope] = useState<PlanningBoardScope>({ kind: "all" });
   const teamId = boardScope.kind === "crew" ? boardScope.teamId : null;
@@ -302,8 +299,8 @@ export function PlanningPage() {
           setBoardScope({ kind: "all" });
           writeStoredBoardScope(userId, { kind: "all" });
         }
-      } catch (err) {
-        if (!cancelled) setPageError(appErrorText(err));
+      } catch {
+        // The IPC layer already shows the failure as a toast.
       }
     })();
     return () => {
@@ -327,8 +324,8 @@ export function PlanningPage() {
           })),
         );
       })
-      .catch((err: unknown) => {
-        if (!cancelled) setPageError(appErrorText(err));
+      .catch(() => {
+        // The IPC layer already shows the failure as a toast.
       });
     return () => {
       cancelled = true;
@@ -351,8 +348,8 @@ export function PlanningPage() {
           })),
         );
       })
-      .catch((err: unknown) => {
-        if (!cancelled) setPageError(appErrorText(err));
+      .catch(() => {
+        // The IPC layer already shows the failure as a toast.
       });
     return () => {
       cancelled = true;
@@ -526,25 +523,21 @@ export function PlanningPage() {
   }
 
   async function handleCreateCommitment(input: CreateScheduleCommitmentInput) {
-    setPageError(null);
     try {
       await createCommitment(input);
       done("committed");
       await refreshBacklog();
       await reloadBoard();
     } catch (err) {
-      setPageError(appErrorText(err));
       throw err;
     }
   }
 
   async function applyReschedule(input: RescheduleCommitmentInput) {
-    setPageError(null);
     try {
       await rescheduleCommitment(input);
       await reloadBoard();
     } catch (err) {
-      const text = appErrorText(err);
       const codes = extractIpcValidationDetails(err).map((d) => d.code);
       const assigneeCodes = overridableCodes(codes);
       const acknowledged = input.acknowledged_assignee_issues ?? [];
@@ -559,7 +552,6 @@ export function PlanningPage() {
         setOverrideOpen(true);
         return;
       }
-      setPageError(text);
     }
   }
 
@@ -593,25 +585,21 @@ export function PlanningPage() {
   }
 
   async function handleCreateWindow(input: CreatePlanningWindowInput) {
-    setPageError(null);
     try {
       await createPlanningWindow(input);
       done("windowCreated");
       await reloadBoard();
     } catch (err) {
-      setPageError(appErrorText(err));
       throw err;
     }
   }
 
   async function handleCreateBreakIn(input: CreateScheduleBreakInInput) {
-    setPageError(null);
     try {
       await createBreakIn(input);
       done("breakInRecorded");
       await reloadBoard();
     } catch (err) {
-      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -634,7 +622,6 @@ export function PlanningPage() {
   }
 
   async function handleFreeze(reason: string) {
-    setPageError(null);
     try {
       await freezeSchedule({
         period_start: periodStartIso,
@@ -644,13 +631,11 @@ export function PlanningPage() {
       done("periodFrozen");
       await reloadBoard();
     } catch (err) {
-      setPageError(appErrorText(err));
       throw err;
     }
   }
 
   async function handleNotifyTeams() {
-    setPageError(null);
     try {
       await notifyTeams({
         period_start: periodStartIso,
@@ -659,8 +644,8 @@ export function PlanningPage() {
         include_break_ins: true,
       });
       done("teamsNotified");
-    } catch (err) {
-      setPageError(appErrorText(err));
+    } catch {
+      // The IPC layer already shows the failure as a toast.
     }
   }
 
@@ -689,61 +674,63 @@ export function PlanningPage() {
             </Button>
           </PermissionGate>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="outline" className="gap-1.5">
-                <Wrench className="h-3.5 w-3.5" />
-                {t("actions.plannerTools")}
-                <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-[220px]">
-              <PermissionGate permission={P.PLAN_WINDOWS}>
-                <DropdownMenuItem onClick={() => setWindowOpen(true)}>
-                  <SquareStack className="mr-2 h-3.5 w-3.5" />
-                  {t("windows.title")}
-                </DropdownMenuItem>
-              </PermissionGate>
-              <PermissionGate permission={P.PLAN_CONFIRM}>
-                <DropdownMenuItem
-                  disabled={commitments.length === 0 || saving}
-                  title={commitments.length === 0 ? t("actions.requiresCommitments") : undefined}
-                  onClick={() => setFreezeOpen(true)}
-                >
-                  <Lock className="mr-2 h-3.5 w-3.5" />
-                  {t("actions.freezePeriod")}
-                </DropdownMenuItem>
-              </PermissionGate>
-              <PermissionGate permission={P.PLAN_CONFIRM}>
-                <DropdownMenuItem
-                  disabled={commitments.length === 0 || saving}
-                  title={commitments.length === 0 ? t("actions.requiresCommitments") : undefined}
-                  onClick={() => setBreakInOpen(true)}
-                >
-                  <Siren className="mr-2 h-3.5 w-3.5" />
-                  {t("breakIns.title")}
-                </DropdownMenuItem>
-              </PermissionGate>
-              <PermissionGate permission={P.PLAN_CONFIRM}>
-                <DropdownMenuItem
-                  disabled={commitments.length === 0 || saving}
-                  title={commitments.length === 0 ? t("actions.requiresCommitments") : undefined}
-                  onClick={() => void handleNotifyTeams()}
-                >
-                  <Bell className="mr-2 h-3.5 w-3.5" />
-                  {t("actions.notifyTeams")}
-                </DropdownMenuItem>
-              </PermissionGate>
-              {commitments.length === 0 ? (
-                <>
-                  <DropdownMenuSeparator />
-                  <div className="px-2 py-1.5 text-[11px] text-text-muted">
-                    {t("actions.requiresCommitments")}
-                  </div>
-                </>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {can(P.PLAN_WINDOWS) || can(P.PLAN_CONFIRM) ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" className="gap-1.5">
+                  <Wrench className="h-3.5 w-3.5" />
+                  {t("actions.plannerTools")}
+                  <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[220px]">
+                <PermissionGate permission={P.PLAN_WINDOWS}>
+                  <DropdownMenuItem onClick={() => setWindowOpen(true)}>
+                    <SquareStack className="mr-2 h-3.5 w-3.5" />
+                    {t("windows.title")}
+                  </DropdownMenuItem>
+                </PermissionGate>
+                <PermissionGate permission={P.PLAN_CONFIRM}>
+                  <DropdownMenuItem
+                    disabled={commitments.length === 0 || saving}
+                    title={commitments.length === 0 ? t("actions.requiresCommitments") : undefined}
+                    onClick={() => setFreezeOpen(true)}
+                  >
+                    <Lock className="mr-2 h-3.5 w-3.5" />
+                    {t("actions.freezePeriod")}
+                  </DropdownMenuItem>
+                </PermissionGate>
+                <PermissionGate permission={P.PLAN_CONFIRM}>
+                  <DropdownMenuItem
+                    disabled={commitments.length === 0 || saving}
+                    title={commitments.length === 0 ? t("actions.requiresCommitments") : undefined}
+                    onClick={() => setBreakInOpen(true)}
+                  >
+                    <Siren className="mr-2 h-3.5 w-3.5" />
+                    {t("breakIns.title")}
+                  </DropdownMenuItem>
+                </PermissionGate>
+                <PermissionGate permission={P.PLAN_CONFIRM}>
+                  <DropdownMenuItem
+                    disabled={commitments.length === 0 || saving}
+                    title={commitments.length === 0 ? t("actions.requiresCommitments") : undefined}
+                    onClick={() => void handleNotifyTeams()}
+                  >
+                    <Bell className="mr-2 h-3.5 w-3.5" />
+                    {t("actions.notifyTeams")}
+                  </DropdownMenuItem>
+                </PermissionGate>
+                {commitments.length === 0 ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <div className="px-2 py-1.5 text-[11px] text-text-muted">
+                      {t("actions.requiresCommitments")}
+                    </div>
+                  </>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
 
           <div className={mfLayout.viewToggleGroup}>
             <Button
@@ -752,6 +739,7 @@ export function PlanningPage() {
               className={mfLayout.viewToggleButton}
               onClick={() => selectPageView("gantt")}
               title={t("views.gantt")}
+              aria-label={t("views.gantt")}
             >
               <GanttChart className="h-3.5 w-3.5" />
             </Button>
@@ -761,6 +749,7 @@ export function PlanningPage() {
               className={mfLayout.viewToggleButton}
               onClick={() => selectPageView("calendar")}
               title={t("views.calendar")}
+              aria-label={t("views.calendar")}
             >
               <CalendarDays className="h-3.5 w-3.5" />
             </Button>
@@ -770,6 +759,7 @@ export function PlanningPage() {
               className={mfLayout.viewToggleButton}
               onClick={() => selectPageView("week")}
               title={t("views.week")}
+              aria-label={t("views.week")}
             >
               <CalendarCheck className="h-3.5 w-3.5" />
             </Button>
@@ -918,12 +908,6 @@ export function PlanningPage() {
       )}
 
       <CrewsWithoutSiteBanner />
-
-      {(pageError || storeError) && (
-        <div className="border-b border-destructive/20 bg-destructive/5 px-6 py-2 text-sm text-destructive">
-          {pageError ?? storeError}
-        </div>
-      )}
 
       <div className={mfLayout.moduleWorkspace}>
         <div className="flex min-h-0 flex-1 overflow-hidden">
