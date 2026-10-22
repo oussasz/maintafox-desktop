@@ -16,7 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { mfAlert, mfInput, mfTable } from "@/design-system/tokens";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { clearPin, setPin } from "@/services/auth-service";
@@ -141,7 +141,7 @@ export function ProfileSettingsPanel() {
         setSelectedSkillRef(null);
       }
     } catch (err) {
-      const msg = describeAppError(err).title;
+      const msg = appErrorReason(err);
       setLoadError(msg);
       setProfile(null);
     } finally {
@@ -163,7 +163,7 @@ export function ProfileSettingsPanel() {
       setEditing(false);
       setToast({ type: "success", message: t("profile.saveSuccess", "Changes saved.") });
     } catch (err) {
-      const msg = describeAppError(err).title;
+      const msg = appErrorReason(err);
       setToast({ type: "error", message: msg });
     } finally {
       setSaving(false);
@@ -186,7 +186,7 @@ export function ProfileSettingsPanel() {
       });
       setMySkills(refreshed);
     } catch (err) {
-      const msg = describeAppError(err).title;
+      const msg = appErrorReason(err);
       setToast({ type: "error", message: msg });
     } finally {
       setDeclaringSkill(false);
@@ -893,7 +893,7 @@ export function PinRemoveDialog({
       onRemoved();
     } catch (err) {
       // The backend refuses a wrong password: it belongs to this field.
-      setFieldError(describeAppError(err).title);
+      setFieldError(appErrorReason(err));
     } finally {
       setSubmitting(false);
     }

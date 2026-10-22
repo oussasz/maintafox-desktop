@@ -109,9 +109,13 @@ describe("user administration", () => {
       assignmentId: 3,
       reason: "Changed team",
     });
-    expect(ipc.invoke).toHaveBeenNthCalledWith(3, "revoke_emergency_elevation", {
-      input: { assignment_id: 9, reason: null },
-    });
+    // The panel reports its own failures: the service does not toast a second time.
+    expect(ipc.invoke).toHaveBeenNthCalledWith(
+      3,
+      "revoke_emergency_elevation",
+      { input: { assignment_id: 9, reason: null } },
+      { notifyOnError: false },
+    );
   });
 
   it("lists the sessions of one user or of everyone", async () => {
@@ -334,7 +338,11 @@ describe("security policies", () => {
       unreadable_keys: [],
     };
     await setPasswordPolicy(policy);
-    expect(ipc.invoke).toHaveBeenCalledWith("set_password_policy", { input: policy });
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "set_password_policy",
+      { input: policy },
+      { notifyOnError: false },
+    );
   });
 
   it("reads which stored password rules could not be read", async () => {

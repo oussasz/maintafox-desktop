@@ -32,8 +32,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useStepUp } from "@/hooks/use-step-up";
-import { describeAppError } from "@/lib/app-error";
+import { useStepUp, isStepUpCancelled } from "@/hooks/use-step-up";
+import { appErrorReason } from "@/lib/app-error";
 import {
   grantEmergencyElevation,
   listEmergencyGrants,
@@ -206,8 +206,9 @@ export function EmergencyElevationPanel() {
       resetGrantForm();
       void fetchData();
     } catch (err) {
+      if (isStepUpCancelled(err)) return;
       toast({
-        title: describeAppError(err).title,
+        title: appErrorReason(err),
         variant: "destructive",
       });
     } finally {
@@ -255,9 +256,10 @@ export function EmergencyElevationPanel() {
       setRevokeTarget(null);
       void fetchData();
     } catch (err) {
+      if (isStepUpCancelled(err)) return;
       toast({
         title: t("emergency.errors.revokeFailed", "Failed to revoke access"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {

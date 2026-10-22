@@ -421,7 +421,7 @@ export async function getPasswordPolicy(): Promise<PasswordPolicySettings> {
 
 /** Replace the password policy (validated on the server, step-up, recorded in the history). */
 export async function setPasswordPolicy(input: PasswordPolicySettings): Promise<void> {
-  await invoke<void>("set_password_policy", { input });
+  await invoke<void>("set_password_policy", { input }, { notifyOnError: false });
 }
 
 const LockoutPolicySchema = z.object({
@@ -510,14 +510,18 @@ export async function validateRolePermissions(
 export async function grantEmergencyElevation(
   input: GrantEmergencyElevationInput,
 ): Promise<IdPayload> {
-  const raw = await invoke<unknown>("grant_emergency_elevation", { input });
+  const raw = await invoke<unknown>(
+    "grant_emergency_elevation",
+    { input },
+    { notifyOnError: false },
+  );
   return IdPayloadSchema.parse(raw);
 }
 
 export async function revokeEmergencyElevation(
   input: RevokeEmergencyElevationInput,
 ): Promise<void> {
-  await invoke<void>("revoke_emergency_elevation", { input });
+  await invoke<void>("revoke_emergency_elevation", { input }, { notifyOnError: false });
 }
 
 // â”€â”€ Admin Governance â€” Session Visibility (SP06-F03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
