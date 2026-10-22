@@ -68,20 +68,32 @@ function StudyDateField({
   // Remounting the field is how a refused date goes back to the saved one on screen.
   const [resets, setResets] = useState(0);
   const committed = useRef(saved);
+  /** What the field holds right now (the blur handler runs before the next render). */
+  const latest = useRef(saved);
+  const refused = useRef(false);
   useEffect(() => {
     committed.current = saved;
+    latest.current = saved;
+    refused.current = false;
     setValue(saved);
   }, [saved]);
 
-  const refuse = () => {
+  const showSaved = () => {
+    refused.current = false;
+    latest.current = saved;
     setValue(saved);
     setResets((n) => n + 1);
   };
   /** Saves a finished date once; a date already sent (typed, then field left) is not sent twice. */
   const commit = (v: string) => {
     if (!v || v === committed.current) return;
-    if (onCommit(v)) committed.current = v;
-    else refuse();
+    if (onCommit(v)) {
+      committed.current = v;
+      refused.current = false;
+    } else {
+      // The message is shown now; the field goes back to the saved date when it is left.
+      refused.current = true;
+    }
   };
 
   return (
@@ -90,6 +102,7 @@ function StudyDateField({
       className={cn(RAMS_SELECT_CLASS, "min-w-0")}
       value={value}
       onChange={(v) => {
+        latest.current = v;
         setValue(v);
         // A finished date (typed in full or picked in the calendar) is saved at once; a short
         // year is read when the field is left.
@@ -100,8 +113,8 @@ function StudyDateField({
       aria-invalid={invalid || undefined}
       aria-describedby={describedBy}
       onBlur={() => {
-        if (!value) refuse();
-        else commit(value);
+        if (!latest.current || refused.current) showSaved();
+        else commit(latest.current);
       }}
     />
   );
