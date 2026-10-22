@@ -30,6 +30,7 @@ import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -593,7 +594,16 @@ export function AssetEditForm() {
               </p>
             </FormField>
             <FormField name="commissioned_at" label={t("detail.fields.commissioningDate")}>
-              <Input id="commissioned_at" type="date" {...register("commissioned_at")} />
+              <DateField
+                id="commissioned_at"
+                value={watch("commissioned_at") ?? ""}
+                onChange={(v) =>
+                  setValue("commissioned_at", v || null, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
+                }
+              />
             </FormField>
             {asset.decommissioned_at ? (
               <FormField name="decommissioned_at" label={t("detail.fields.endOfLifeDate")}>

@@ -32,6 +32,7 @@ import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { StatusChip } from "@/components/ui/status-chip";
@@ -681,12 +682,7 @@ export function DiCreateForm({
 
         {/* Observed at */}
         <FormField name="observed_at" label={t("form.observedAt.label")}>
-          <Input
-            id="observed_at"
-            type="datetime-local"
-            value={observedAt}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => setObservedAt(e.target.value)}
-          />
+          <DateTimeField id="observed_at" value={observedAt} onChange={(v) => setObservedAt(v)} />
         </FormField>
 
         {/* Flag checkboxes */}

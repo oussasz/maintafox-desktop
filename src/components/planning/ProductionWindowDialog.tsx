@@ -17,6 +17,7 @@ import { natureValueLabel } from "@/components/lookups/MaintenanceNaturePicker";
 import { fromDateTimeLocal, toDateTimeLocal } from "@/components/planning/planning-model";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import {
   Dialog,
   DialogContent,
@@ -204,21 +205,11 @@ export function ProductionWindowDialog({
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label>{t("windows.start")}</Label>
-              <Input
-                className="h-8 text-sm"
-                type="datetime-local"
-                value={start}
-                onChange={(e) => setStart(e.target.value)}
-              />
+              <DateTimeField className="h-8 text-sm" value={start} onChange={(v) => setStart(v)} />
             </div>
             <div>
               <Label>{t("windows.end")}</Label>
-              <Input
-                className="h-8 text-sm"
-                type="datetime-local"
-                value={end}
-                onChange={(e) => setEnd(e.target.value)}
-              />
+              <DateTimeField className="h-8 text-sm" value={end} onChange={(v) => setEnd(v)} />
             </div>
           </div>
           <div className="flex items-start gap-2">

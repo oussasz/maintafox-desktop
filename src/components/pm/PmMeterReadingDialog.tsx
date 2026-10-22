@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 
 import { AssetPicker } from "@/components/assets/AssetPicker";
 import { Button } from "@/components/ui/button";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import {
   Dialog,
   DialogContent,
@@ -191,12 +192,7 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
                 </div>
                 <div className="grid gap-1">
                   <Label htmlFor="pm-reading-at">{t("fields.readingAt")}</Label>
-                  <Input
-                    id="pm-reading-at"
-                    type="datetime-local"
-                    value={readAt}
-                    onChange={(e) => setReadAt(e.target.value)}
-                  />
+                  <DateTimeField id="pm-reading-at" value={readAt} onChange={(v) => setReadAt(v)} />
                 </div>
               </div>
               <fieldset className="grid gap-1">
