@@ -5,6 +5,12 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import { i18n } from "@/i18n/config";
 import { describeAppError } from "@/lib/app-error";
+import {
+  hasStepUpRequester,
+  isLocalStepUpActive,
+  requestGlobalStepUp,
+  STEP_UP_CANCELLED_MESSAGE,
+} from "@/lib/step-up-bridge";
 import { pushAppToast } from "@/store/app-toast-store";
 import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 import { toErrorMessage } from "@/utils/errors";
@@ -290,6 +296,17 @@ export async function invoke<T>(
   try {
     return await tauriInvoke<T>(cmd, args);
   } catch (e) {
+    // A caller without its own `withStepUp` still gets the password prompt, then a retry.
+    if (
+      extractIpcErrorMeta(e).code === "STEP_UP_REQUIRED" &&
+      !isLocalStepUpActive() &&
+      hasStepUpRequester()
+    ) {
+      if (!(await requestGlobalStepUp())) {
+        throw new Error(STEP_UP_CANCELLED_MESSAGE);
+      }
+      return await invoke<T>(cmd, args, options);
+    }
     handleAuthAndPermissionFailures(cmd, e);
     if (options?.notifyOnError !== false) {
       notifyInvokeFailure(cmd, e);

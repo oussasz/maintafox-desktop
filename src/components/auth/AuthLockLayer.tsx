@@ -3,6 +3,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
+import { GlobalStepUpHost } from "@/components/auth/GlobalStepUpHost";
 import { AuthAlert, AuthButton } from "@/components/auth/shell/AuthPrimitives";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { mfAuth, mfInput } from "@/design-system/tokens";
@@ -17,6 +18,15 @@ import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
  * (preserving in-memory form state).
  */
 export function AuthLockLayer() {
+  return (
+    <>
+      <AuthLockSurface />
+      <GlobalStepUpHost />
+    </>
+  );
+}
+
+function AuthLockSurface() {
   const { t } = useTranslation("auth");
   const navigate = useNavigate();
   const location = useLocation();
