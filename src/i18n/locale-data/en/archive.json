@@ -85,6 +85,7 @@
     "emptyHint": "Change or reset the filters.",
     "limitReached": "Only the {{count}} most recent matching records are shown. Narrow the filters to see older ones.",
     "select": "Select",
+    "selectAll": "Select all (current page)",
     "selectRecord": "Select {{name}}",
     "showing": "{{from}}–{{to}} of {{total}}",
     "previous": "Previous",

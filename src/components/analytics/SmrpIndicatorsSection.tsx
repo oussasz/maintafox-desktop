@@ -17,6 +17,7 @@ import { listLinks } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import type { SmrpKpis, SmrpMetric } from "@/services/analytics-dashboard-service";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
 /** Change below this many percentage points reads "stable". */
 const STABLE_POINTS = 0.5;
@@ -146,7 +147,14 @@ function SmrpTile({
   );
 }
 
-export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
+export function SmrpIndicatorsSection({
+  smrp,
+  can = () => true,
+}: {
+  smrp: SmrpKpis | null;
+  /** The user's rights: a tile opens its module only when the user may enter it. */
+  can?: (permission: PermissionName) => boolean;
+}) {
   const { t } = useTranslation("reports");
   const navigate = useNavigate();
   const woOpenRuleText = useWoOpenRuleText();
@@ -194,7 +202,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.schedule.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
-        onOpen={() => navigate("/planning")}
+        {...(can(P.PLAN_VIEW) ? { onOpen: () => navigate("/planning") } : {})}
       />,
     );
   }
@@ -236,7 +244,9 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
           formula={t(`smrp.mix.${key}.formula`)}
           unit={t("smrp.unitPercent")}
           period={period}
-          onOpen={() => navigate(listLinks.workOrders({ mix: key }))}
+          {...(can(P.OT_VIEW)
+            ? { onOpen: () => navigate(listLinks.workOrders({ mix: key })) }
+            : {})}
         />,
       );
     }
@@ -260,7 +270,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.pm.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
-        onOpen={() => navigate("/pm")}
+        {...(can(P.PM_VIEW) ? { onOpen: () => navigate("/pm") } : {})}
       />,
     );
   }
@@ -327,7 +337,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.backlog.formula")}
         unit={t("smrp.backlog.unit")}
         period={t("smrp.backlog.period")}
-        {...(backlogRule
+        {...(backlogRule && can(P.OT_VIEW)
           ? { onOpen: () => navigate(listLinks.workOrders({ scope: backlogRule.scope })) }
           : {})}
       />,
@@ -373,7 +383,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.rav.formula")}
         unit={t("smrp.unitPercentYear")}
         period={period}
-        onOpen={() => navigate("/equipment")}
+        {...(can(P.EQ_VIEW) ? { onOpen: () => navigate("/equipment") } : {})}
         openLabel={c.value_pct == null ? t("smrp.rav.openAssets") : t("smrp.open")}
       />,
     );

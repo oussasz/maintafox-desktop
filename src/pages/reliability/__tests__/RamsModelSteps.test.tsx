@@ -20,6 +20,7 @@ import type {
 import type { ReliabilityStudy } from "@/services/reliability-study-service";
 import { useLocaleStore } from "@/stores/locale-store";
 import { mockInvoke } from "@/test/mocks/tauri";
+import { P } from "@shared/rbac/permissions.generated";
 
 // Keys resolve against the real English catalogue: a missing key fails the test.
 function lookup(catalog: unknown, key: string): string | undefined {
@@ -56,8 +57,13 @@ vi.mock("react-i18next", () => ({
 }));
 // Signed in as user 3.
 vi.mock("@/hooks/use-session", () => ({ useSession: () => ({ info: { user_id: 3 } }) }));
+let deniedRights: string[] = [];
 vi.mock("@/hooks/use-permissions", () => ({
-  usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
+  usePermissions: () => ({
+    can: (p: string) => !deniedRights.includes(p),
+    canAny: () => true,
+    isLoading: false,
+  }),
 }));
 // The Ishikawa canvas has its own tests; here only its placement in step 3 matters.
 vi.mock("@/components/reliability/IshikawaDiagramCanvas", () => ({
@@ -957,6 +963,30 @@ describe("StudyDecisionsStep", () => {
     expect(
       within(row).queryByText("You proposed it: another person approves."),
     ).not.toBeInTheDocument();
+  });
+
+  it("offers Apply only with the right of the module it writes in (AU-85)", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_reliability_study_decisions")
+        return [
+          decision({ id: 1, title: "Interval", action_kind: "pm_interval", status: "approved" }),
+          decision({ id: 2, title: "Repair", status: "approved" }),
+        ];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    deniedRights = [P.PM_EDIT];
+    try {
+      render(<StudyDecisionsStep study={study} version={0} onRecord={() => undefined} />);
+      const interval = within((await screen.findByText("Interval")).closest("tr") as HTMLElement);
+      expect(interval.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
+      expect(
+        interval.getByText("Applying requires the right to edit preventive plans."),
+      ).toBeInTheDocument();
+      const repair = within(screen.getByText("Repair").closest("tr") as HTMLElement);
+      expect(repair.getByRole("button", { name: "Apply" })).toBeInTheDocument();
+    } finally {
+      deniedRights = [];
+    }
   });
 });
 

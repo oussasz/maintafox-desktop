@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -30,8 +31,10 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
 import { toneOf } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
+import { useCanReadList, usePermissionsLoading } from "@/lib/list-access";
 import { listPersonnelSkillReferenceValues } from "@/services/personnel-service";
 import {
   listCertificationTypes,
@@ -106,9 +109,17 @@ export function PersonQualificationSheet({
   onChanged,
 }: PersonQualificationSheetProps) {
   const { t } = useTranslation("training");
+  const { formatDate } = useFormatters();
   const { can } = usePermissions();
-  const canCertify = can(P.TRN_CERTIFY);
+  // Certifications and their types are training lists (trn.view); skills are personnel data.
+  // Each part loads on its own, so one refused or failed list does not empty the other.
+  const canReadCerts = useCanReadList("certificationTypes");
+  const permissionsLoading = usePermissionsLoading();
+  // Recording or verifying a certification also needs the certification list (trn.view).
+  const canCertify = can(P.TRN_CERTIFY) && canReadCerts;
+  // Validating a skill is `upsert_personnel_skill` (per.manage + trn.certify): no trn.view.
   const canManageSkills = can(P.PER_MANAGE);
+  const canValidateSkills = canManageSkills && can(P.TRN_CERTIFY);
   const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [certs, setCerts] = useState<PersonnelCertification[]>([]);
@@ -117,6 +128,7 @@ export function PersonQualificationSheet({
   const [skillCatalogue, setSkillCatalogue] = useState<PersonnelSkillReferenceValue[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
+  const [certError, setCertError] = useState<unknown>(null);
 
   const [certDraft, setCertDraft] = useState<CertDraft | null>(null);
   const [skillDraft, setSkillDraft] = useState<SkillDraft | null>(null);
@@ -126,27 +138,35 @@ export function PersonQualificationSheet({
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
-    try {
-      const [c, s, ct, sk] = await Promise.all([
-        listPersonnelCertifications({ personnel_id: personnelId, limit: 500 }),
-        listPersonnelSkills(personnelId),
-        listCertificationTypes(),
-        listPersonnelSkillReferenceValues(),
-      ]);
-      setCerts(c);
-      setSkills(s);
-      setCertTypes(ct.filter((x) => x.is_active));
-      setSkillCatalogue(sk);
-    } catch (err) {
-      setLoadError(err);
-    } finally {
-      setLoading(false);
+    setCertError(null);
+    const [skillPart, certPart] = await Promise.allSettled([
+      Promise.all([listPersonnelSkills(personnelId), listPersonnelSkillReferenceValues()]),
+      canReadCerts
+        ? Promise.all([
+            listPersonnelCertifications({ personnel_id: personnelId, limit: 500 }),
+            listCertificationTypes(),
+          ])
+        : Promise.resolve(null),
+    ]);
+    if (skillPart.status === "fulfilled") {
+      setSkills(skillPart.value[0]);
+      setSkillCatalogue(skillPart.value[1]);
+    } else {
+      setLoadError(skillPart.reason);
     }
-  }, [personnelId]);
+    if (certPart.status === "fulfilled") {
+      setCerts(certPart.value?.[0] ?? []);
+      setCertTypes((certPart.value?.[1] ?? []).filter((x) => x.is_active));
+    } else {
+      setCertError(certPart.reason);
+    }
+    setLoading(false);
+  }, [personnelId, canReadCerts]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    // Rights not known yet: nothing is asked before it is known which lists may be read.
+    if (!permissionsLoading) void load();
+  }, [load, permissionsLoading]);
 
   useEffect(() => {
     if (focusCertificationTypeId != null && canCertify) {
@@ -299,8 +319,9 @@ export function PersonQualificationSheet({
     onChanged?.();
   };
 
-  if (loading && certs.length === 0 && skills.length === 0) return <LoadingState />;
-  if (loadError) return <ErrorState error={loadError} onRetry={() => void load()} />;
+  if ((loading || permissionsLoading) && certs.length === 0 && skills.length === 0) {
+    return <LoadingState />;
+  }
 
   return (
     <div className="space-y-6">
@@ -329,7 +350,11 @@ export function PersonQualificationSheet({
           ) : null}
         </div>
 
-        {certRows.length === 0 ? (
+        {!canReadCerts ? (
+          <ListAccessNote list="certificationTypes" />
+        ) : certError ? (
+          <ErrorState error={certError} onRetry={() => void load()} />
+        ) : certRows.length === 0 ? (
           <p className="text-sm text-text-muted">{t("sheet.noCertifications")}</p>
         ) : (
           <table className="w-full text-sm">
@@ -351,9 +376,11 @@ export function PersonQualificationSheet({
                   <td className="py-1.5 pr-2">
                     {c.certification_type_name ?? c.certification_type_code}
                   </td>
-                  <td className="py-1.5 pr-2 tabular-nums">{c.issued_at?.slice(0, 10) ?? "—"}</td>
                   <td className="py-1.5 pr-2 tabular-nums">
-                    {c.expires_at?.slice(0, 10) ?? t("sheet.noExpiry")}
+                    {c.issued_at ? formatDate(c.issued_at) : "—"}
+                  </td>
+                  <td className="py-1.5 pr-2 tabular-nums">
+                    {c.expires_at ? formatDate(c.expires_at) : t("sheet.noExpiry")}
                   </td>
                   <td className="py-1.5 pr-2">{c.issuing_body ?? "—"}</td>
                   <td className="py-1.5 pr-2">
@@ -506,7 +533,9 @@ export function PersonQualificationSheet({
             </Button>
           ) : null}
         </div>
-        {skills.length === 0 ? (
+        {loadError ? (
+          <ErrorState error={loadError} onRetry={() => void load()} />
+        ) : skills.length === 0 ? (
           <p className="text-sm text-text-muted">{t("sheet.noSkills")}</p>
         ) : (
           <table className="w-full text-sm">
@@ -543,7 +572,7 @@ export function PersonQualificationSheet({
                             ? {
                                 title: t("skillStatus.validatedBy", {
                                   name: s.verified_by_name,
-                                  date: s.verified_at?.slice(0, 10) ?? "",
+                                  date: s.verified_at ? formatDate(s.verified_at) : "",
                                 }),
                               }
                             : {})}
@@ -555,7 +584,7 @@ export function PersonQualificationSheet({
                       )}
                     </td>
                     <td className="py-1.5 text-right">
-                      {canCertify && !s.is_validated ? (
+                      {canValidateSkills && !s.is_validated ? (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -626,7 +655,7 @@ export function PersonQualificationSheet({
                 onChange={(v) => setSkillDraft({ ...skillDraft, valid_to: v })}
               />
             </FormField>
-            {canCertify ? (
+            {canValidateSkills ? (
               <label className="flex items-center gap-2 text-sm sm:col-span-3">
                 <Switch
                   checked={skillDraft.validate}

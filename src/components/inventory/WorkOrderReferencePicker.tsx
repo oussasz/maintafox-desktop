@@ -10,6 +10,8 @@ import { useTranslation } from "react-i18next";
 
 import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
+import { ListAccessNote } from "@/components/ui/list-access-note";
+import { useCanReadList } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { listWos } from "@/services/wo-service";
 import type { WorkOrder } from "@shared/ipc-types";
@@ -43,8 +45,11 @@ export function WorkOrderReferencePicker({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [version, setVersion] = useState(0);
+  // The list is `list_wo` (ot.view): without it the picker is not searched and says why.
+  const canRead = useCanReadList("workOrders");
 
   useEffect(() => {
+    if (!canRead) return;
     let cancelled = false;
     const handle = window.setTimeout(() => {
       setLoading(true);
@@ -69,7 +74,9 @@ export function WorkOrderReferencePicker({
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [search, version]);
+  }, [search, version, canRead]);
+
+  if (!canRead) return <ListAccessNote list="workOrders" />;
 
   return (
     <div className="space-y-2">

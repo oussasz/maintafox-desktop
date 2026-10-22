@@ -489,6 +489,13 @@ function ConsumptionBar({
 function MonthlyBurn({ cockpit, money }: { cockpit: BudgetCockpit; money: (v: number) => string }) {
   const { t } = useTranslation("budget");
   const max = Math.max(1, ...cockpit.months.map((m) => Math.max(m.budget, m.actual)));
+  // Shown on hover and read by screen readers: the amounts behind the two bars of a month.
+  const monthText = (m: BudgetCockpit["months"][number]) =>
+    t("burn.monthAria", {
+      month: t(`month.${m.calendar_month}`),
+      budget: money(m.budget),
+      actual: money(m.actual),
+    });
   return (
     <section
       aria-labelledby="burn-title"
@@ -515,11 +522,8 @@ function MonthlyBurn({ cockpit, money }: { cockpit: BudgetCockpit; money: (v: nu
             <li
               key={m.period_month}
               className="flex h-full flex-col justify-end"
-              aria-label={t("burn.monthAria", {
-                month: t(`month.${m.calendar_month}`),
-                budget: money(m.budget),
-                actual: money(m.actual),
-              })}
+              title={monthText(m)}
+              aria-label={monthText(m)}
             >
               <div className="flex flex-1 items-end justify-center gap-0.5">
                 <div

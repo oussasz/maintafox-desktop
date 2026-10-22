@@ -87,7 +87,7 @@ describe("QualificationCheckNotice", () => {
       "Samir Sous-traitant cannot be assigned to this job.",
     );
     expect(
-      screen.getByText("Electrical authorisation B1V expired on 2026-09-30."),
+      screen.getByText("Electrical authorisation B1V expired on 30/09/2026."),
     ).toBeInTheDocument();
     // Without trn.certify, no override action — only how to proceed.
     expect(
@@ -149,6 +149,6 @@ describe("QualificationCheckNotice", () => {
       />,
     );
     expect(screen.getByRole("status")).toHaveTextContent("holds every qualification");
-    expect(screen.getByText("B1V runs out on 2026-11-01: plan the renewal.")).toBeInTheDocument();
+    expect(screen.getByText("B1V runs out on 01/11/2026: plan the renewal.")).toBeInTheDocument();
   });
 });

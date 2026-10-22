@@ -78,7 +78,6 @@
     "noTemplate": "Create a checklist first (Templates tab).",
     "team": "Team",
     "noTeam": "No team",
-    "teamNotAllowed": "Your role cannot list the teams; assign a technician instead.",
     "teamLoadError": "The teams could not be loaded.",
     "clearAssigneeNamed": "Remove {{name}}"
   },

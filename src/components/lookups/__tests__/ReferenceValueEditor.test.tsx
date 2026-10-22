@@ -12,6 +12,7 @@ import type {
   ReferenceSet,
   ReferenceValue,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 /** `reference` keys resolve against the real English catalogue: a missing key fails the test. */
 function translateReference(key: string, opts?: Record<string, unknown>): string {
@@ -39,8 +40,13 @@ vi.mock("react-i18next", () => ({
     i18n: { language: "en", resolvedLanguage: "en" },
   }),
 }));
+let withoutRight: string | null = null;
 vi.mock("@/hooks/use-permissions", () => ({
-  usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
+  usePermissions: () => ({
+    can: (p: string) => p !== withoutRight,
+    canAny: () => true,
+    isLoading: false,
+  }),
 }));
 
 const TS = "2026-10-01T10:00:00Z";
@@ -245,5 +251,27 @@ describe("ReferenceValueEditor — equipment classes (controlled catalogue)", ()
     expect(screen.getByRole("button", { name: /Add value/ })).toBeEnabled();
     expect(await screen.findByRole("button", { name: "Validate and publish" })).toBeInTheDocument();
     expect(screen.getByText("Draft")).toBeInTheDocument();
+  });
+
+  it("offers the CSV import only to who may also validate it (ref.publish) (AU-84)", async () => {
+    useReferenceManagerStore.setState({
+      setsMap: { [DOMAIN_ID]: [draft, published] },
+      selectedSetId: draft.id,
+    });
+    serve([draft, published]);
+    const { unmount } = render(<ReferenceValueEditor setId={draft.id} domainId={DOMAIN_ID} />);
+    expect(await screen.findByText("Presse")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import" })).toBeInTheDocument();
+    unmount();
+
+    withoutRight = P.REF_PUBLISH;
+    try {
+      render(<ReferenceValueEditor setId={draft.id} domainId={DOMAIN_ID} />);
+      expect(await screen.findByText("Presse")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Add value/ })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument();
+    } finally {
+      withoutRight = null;
+    }
   });
 });
