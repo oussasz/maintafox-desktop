@@ -197,7 +197,7 @@ export function ProductionWindowDialog({
             </div>
             <div>
               <Label>{t("windows.equipment")}</Label>
-              <AssetPicker value={equipment} onChange={pickEquipment} />
+              <AssetPicker value={equipment} onChange={pickEquipment} size="sm" />
               <p className="mt-1 text-xs text-text-muted">{t("windows.equipmentHint")}</p>
             </div>
           </div>

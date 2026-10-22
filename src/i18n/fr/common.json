@@ -176,6 +176,10 @@
     "noMoreOptions": "Plus d’options"
   },
   "assetPicker": {
+    "all": "Tous les équipements",
+    "register": "Équipements",
+    "emptyRegister": "Aucun équipement enregistré",
+    "typeToSearch": "Saisissez pour rechercher parmi {{total}} équipements",
     "searchFailed": "La recherche a échoué :",
     "retry": "Réessayer",
     "legacyLabel": "Étiquette à réimprimer : cet ancien format ne permet pas d'identifier l'équipement sûrement. Saisissez le code de l'actif imprimé sur l'étiquette, puis réimprimez-la depuis la fiche de l'actif.",

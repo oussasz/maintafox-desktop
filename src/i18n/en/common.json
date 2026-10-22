@@ -176,6 +176,10 @@
     "noMoreOptions": "No more options"
   },
   "assetPicker": {
+    "all": "All equipment",
+    "register": "Equipment",
+    "emptyRegister": "No equipment registered",
+    "typeToSearch": "Type to search among {{total}} pieces of equipment",
     "searchFailed": "The search failed:",
     "retry": "Retry",
     "legacyLabel": "Label to reprint: this label is in a former format that cannot identify the equipment safely. Type the asset code printed on the label, then reprint the label from the asset record.",
