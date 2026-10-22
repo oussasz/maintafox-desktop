@@ -53,6 +53,7 @@ describe("sync conflict kinds", () => {
       "QUALIFICATION_OVERRIDE_UNAUTHORISED",
       "SYNC_STATE_TIME_MISSING",
       "WO_PART_LINE_HAS_USE",
+      "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
     ]) {
       expect(KNOWN_CONFLICT_KINDS.has(code)).toBe(true);
     }
