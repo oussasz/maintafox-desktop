@@ -69,7 +69,7 @@ describe("DateField", () => {
     fireEvent.click(screen.getByRole("button", { name: "Choisir une date" }));
     const day = screen.getAllByRole("button").find((b) => b.textContent === "12");
     expect(day).toBeDefined();
-    fireEvent.pointerDown(day as HTMLElement, { button: 0 });
+    fireEvent.pointerDown(day as HTMLElement);
     expect(value()).toBe("2026-10-12");
     expect(box().value).toBe("12/10/2026");
   });
