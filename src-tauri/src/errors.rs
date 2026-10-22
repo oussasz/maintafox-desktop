@@ -294,8 +294,8 @@ mod coded_refusal_tests {
 
     #[test]
     fn parameters_ride_with_the_code() {
-        let (code, params) = split_coded_refusal("GATE_CLOSEOUT_X:min_len=10,max=3: sentence").expect("coded");
-        assert_eq!(code, "GATE_CLOSEOUT_X");
+        let (code, params) = split_coded_refusal("GATE_FIN_MONTH_INVALID:min_len=10,max=3: sentence").expect("coded");
+        assert_eq!(code, "GATE_FIN_MONTH_INVALID");
         assert_eq!(params.get("min_len").map(String::as_str), Some("10"));
         assert_eq!(params.get("max").map(String::as_str), Some("3"));
     }
@@ -318,11 +318,26 @@ mod coded_refusal_tests {
     }
 
     #[test]
+    fn edges_of_the_parameter_part_are_safe() {
+        // Leading blanks, a reason that is not key=value, a value that holds '=', an empty key,
+        // parameters with no sentence, and non-ASCII text after the code.
+        let (code, params) = split_coded_refusal("  READINESS_DENY:MISSING_EXPOSURE  ").expect("coded");
+        assert_eq!(code, "READINESS_DENY");
+        assert!(params.is_empty());
+        let (_, params) = split_coded_refusal("GATE_FIN_MONTH_INVALID:k=a=b").expect("coded");
+        assert_eq!(params.get("k").map(String::as_str), Some("a=b"));
+        let (_, params) = split_coded_refusal("GATE_FIN_MONTH_INVALID:=v,n=1").expect("coded");
+        assert_eq!(params.len(), 1);
+        let (code, _) = split_coded_refusal("GATE_FIN_MONTH_INVALID: période clôturée").expect("coded");
+        assert_eq!(code, "GATE_FIN_MONTH_INVALID");
+    }
+
+    #[test]
     fn the_ipc_detail_carries_code_and_params_and_keeps_the_text() {
-        let detail = validation_detail("GATE_X_Y:n=4: texte");
-        assert_eq!(detail["code"], "GATE_X_Y");
+        let detail = validation_detail("GATE_FIN_PERIOD_CLOSED:n=4: texte");
+        assert_eq!(detail["code"], "GATE_FIN_PERIOD_CLOSED");
         assert_eq!(detail["params"]["n"], "4");
-        assert_eq!(detail["message"], "GATE_X_Y:n=4: texte");
+        assert_eq!(detail["message"], "GATE_FIN_PERIOD_CLOSED:n=4: texte");
         let plain = validation_detail("Title is required");
         assert!(plain.get("code").is_none());
         assert_eq!(plain["message"], "Title is required");
