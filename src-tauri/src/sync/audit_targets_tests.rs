@@ -6,7 +6,8 @@
 //!
 //! The written types are read from the source: the `target_type` / `entity_type` literal of every
 //! `AuditEventInput { … }` / `AuditEvent { … }` built outside tests, plus the types set at run time,
-//! listed below with where they come from.
+//! listed below with where they come from. Every file that sets a type at run time must be listed
+//! too (`DYNAMIC_SITES`), so a new such site fails the test until its types are added.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -37,7 +38,25 @@ const RUNTIME_TYPES: &[(&str, &str)] = &[
     ("permit_role", "qualification::gate (override context)"),
 ];
 
-/// Types kept on their device by an action-code term of the row filter (not by their type).
+/// Files that build an audit event with a target type set at run time, and where the types they
+/// can write are listed (`RUNTIME_TYPES`, or the literal events that feed them). A new such file
+/// fails the test until its types are added to `RUNTIME_TYPES` and the file is listed here.
+const DYNAMIC_SITES: &[(&str, &str)] = &[
+    (
+        "audit/mod.rs",
+        "audit::emit: fed by the AuditEvent literals, which are scanned",
+    ),
+    (
+        "commands/admin_governance.rs",
+        "user_account (also written as a literal)",
+    ),
+    ("inventory/count_sync.rs", "write_posted_twice_audit: RUNTIME_TYPES"),
+    ("org/site_assignment.rs", "NoSiteKind::audit_target: RUNTIME_TYPES"),
+    ("qualification/gate.rs", "override context: RUNTIME_TYPES"),
+];
+
+/// Types kept on their device by an action-code term of the row filter (not by their type). Only
+/// this action is covered: a notification audit with another action code must be handled on its own.
 const KEPT_BY_ACTION: &[(&str, &str)] = &[("notification", "notification.safety_notice_acknowledged")];
 
 /// Known gaps, reported to their domain leads (not decided here): written with a target the codec
@@ -68,31 +87,83 @@ fn source_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// Literal target types of the audit events built in the application's (non-test) source.
-fn written_literal_types() -> BTreeSet<String> {
+/// What the source scan finds in the audit events built outside tests.
+struct Scan {
+    /// `target_type` / `entity_type` literals.
+    literal: BTreeSet<String>,
+    /// Source files (relative to `src`) that build an audit event with a non-literal target type.
+    dynamic_files: BTreeSet<String>,
+}
+
+/// The text between the `{` that opens a construction (the text starts right after it) and its
+/// matching `}`; string and character literals are skipped so their braces do not count.
+fn construction_body(text: &str) -> &str {
+    let bytes = text.as_bytes();
+    let (mut depth, mut i) = (1usize, 0usize);
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+            }
+            b'\'' if bytes.get(i + 2) == Some(&b'\'') => i += 2,
+            b'\'' if bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'') => i += 3,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &text[..i];
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    text
+}
+
+/// Scans the application's (non-test) source for the audit events it builds.
+fn scan_audit_constructions() -> Scan {
     let construct = regex::Regex::new(r"\bAuditEvent(?:Input)?\s*\{").expect("regex");
-    let field = regex::Regex::new(r#"\b(?:target_type|entity_type):\s*Some\(\s*"([a-z_]+)""#).expect("regex");
-    let test_module = regex::Regex::new(r"#\[cfg\(test\)\]\r?\nmod ").expect("regex");
+    // `target_type: Some("literal"`, `target_type: None`, anything else (`Some(kind.to_string())`,
+    // `target_type: value`, the shorthand `target_type,`) is a type set at run time.
+    let field = regex::Regex::new(
+        r#"\b(?:target_type|entity_type)\s*(?::\s*(?:Some\(\s*"(?P<ty>[A-Za-z0-9_]+)"|(?P<none>None))?|(?P<short>[,}]))"#,
+    )
+    .expect("regex");
+    // Inline test modules sit at the end of their file (`mod x;` declarations do not count).
+    let test_module = regex::Regex::new(r"#\[cfg\(test\)\]\s*mod\s+\w+\s*\{").expect("regex");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
-    source_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
-    let mut types = BTreeSet::new();
+    source_files(&src, &mut files);
+    let mut scan = Scan {
+        literal: BTreeSet::new(),
+        dynamic_files: BTreeSet::new(),
+    };
     for file in files {
         let text = std::fs::read_to_string(&file).expect("read source");
-        // Inline test modules sit at the end of their file.
         let text = test_module.split(&text).next().unwrap_or_default();
+        let relative = file
+            .strip_prefix(&src)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
         for m in construct.find_iter(text) {
             if text[..m.start()].ends_with("struct ") {
                 continue;
             }
-            let window: String = text[m.end()..].chars().take(1200).collect();
-            // The first field of this construction (before the next construction starts).
-            let window = construct.split(&window).next().unwrap_or_default();
-            if let Some(c) = field.captures(window) {
-                types.insert(c[1].to_string());
+            for c in field.captures_iter(construction_body(&text[m.end()..])) {
+                if let Some(ty) = c.name("ty") {
+                    scan.literal.insert(ty.as_str().to_string());
+                } else if c.name("none").is_none() {
+                    scan.dynamic_files.insert(relative.clone());
+                }
             }
         }
     }
-    types
+    scan
 }
 
 fn mapped_types() -> BTreeSet<String> {
@@ -118,11 +189,27 @@ fn kept_by_filter(target_type: &str) -> bool {
 
 #[test]
 fn every_written_audit_target_type_is_sent_or_kept_on_purpose() {
-    let literal = written_literal_types();
+    let scan = scan_audit_constructions();
+    let literal = scan.literal;
     assert!(
         literal.contains("user_account") && literal.contains("stock_location_article"),
         "the source scan finds the audit constructions: {literal:?}"
     );
+    let unknown_sites: Vec<&String> = scan
+        .dynamic_files
+        .iter()
+        .filter(|f| !DYNAMIC_SITES.iter().any(|(k, _)| k == &f.as_str()))
+        .collect();
+    assert!(
+        unknown_sites.is_empty(),
+        "audit events built with a target type set at run time in files not listed in DYNAMIC_SITES:          {unknown_sites:?}. Add every type they can write to RUNTIME_TYPES (it must be mapped for sync or          kept on purpose), then list the file in DYNAMIC_SITES"
+    );
+    for (file, what) in DYNAMIC_SITES {
+        assert!(
+            scan.dynamic_files.contains(*file),
+            "{file} ({what}) no longer builds an audit event with a run-time target type: remove it from DYNAMIC_SITES"
+        );
+    }
     let written: BTreeSet<String> = literal
         .into_iter()
         .chain(RUNTIME_TYPES.iter().map(|(t, _)| (*t).to_string()))
