@@ -610,6 +610,7 @@ async fn record_stage_failure(conn: &impl ConnectionTrait, group: &Group, error:
             checkpoint_token: None,
             local_row_version: None,
             inbound_row_version: None,
+            detail_message: Some(error.to_string()),
         },
     )
     .await?;

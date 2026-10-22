@@ -596,9 +596,12 @@ impl SyncWorker {
             let cycle_ended = Instant::now();
             let mut deadline = cycle_ended + wait;
             loop {
+                // `biased`: commands already queued are all read before a due deadline starts the
+                // cycle, so requests sent together (three join requests from the first-start
+                // screen) make one cycle, never one cycle each by the luck of `select!`'s order.
                 tokio::select! {
+                    biased;
                     () = cancel.cancelled() => break 'cycles,
-                    () = tokio::time::sleep_until(deadline) => break,
                     command = commands.recv() => match command {
                         None => break 'cycles,
                         Some(SyncCommand::RunNow) => {
@@ -619,6 +622,7 @@ impl SyncWorker {
                             }
                         }
                     },
+                    () = tokio::time::sleep_until(deadline) => break,
                 }
             }
         }

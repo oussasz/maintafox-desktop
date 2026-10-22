@@ -51,7 +51,7 @@ pub async fn pm_candidates(
                 "SELECT p.id, p.code, p.title, p.strategy_type,
                         COALESCE(cv.trigger_definition_json,
                                  (SELECT v.trigger_definition_json FROM pm_plan_versions v
-                                  WHERE v.pm_plan_id = p.id ORDER BY v.version_no DESC LIMIT 1)) AS trig
+                                  WHERE v.pm_plan_id = p.id ORDER BY v.version_no DESC, v.entity_sync_id DESC LIMIT 1)) AS trig
                  FROM pm_plans p
                  LEFT JOIN pm_plan_versions cv ON cv.id = p.current_version_id
                  WHERE p.asset_scope_type = 'equipment' AND p.asset_scope_id = ? AND p.is_active = 1

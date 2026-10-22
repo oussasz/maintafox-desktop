@@ -187,6 +187,7 @@
     "wo_overdue": "OT en retard",
     "safety_rule_received": "Règle de sécurité modifiée sur un autre poste",
     "loto_forced_removal": "Cadenas retiré par un retrait forcé",
+    "pm_concurrent_versions": "Versions concurrentes d’un plan préventif",
     "stock_to_reconcile": "Stock à rapprocher après synchronisation"
   },
   "messages": {
@@ -301,6 +302,14 @@
       "title": "Retrait forcé d’un cadenas : {{point}} (permis {{permit}})",
       "body": "{{authorised_by}} a autorisé {{removed_by}} à retirer le cadenas de {{worker}}, absent, le {{removed_at}} — motif : {{reason}}. Le travailleur doit en être informé (Permis de travail › retraits forcés à suivre)."
     },
+    "pm_concurrent_versions": {
+      "title": "Deux versions concurrentes du plan {{plan}} — vérifier la version en vigueur",
+      "body": "{{title}} : v{{version}} ({{version_status}}, créée le {{version_created_at}}) et v{{other_version}} ({{other_status}}, créée le {{other_created_at}}) ont été créées sur deux PC avant leur synchronisation, toutes deux numérotées {{stored_number}}. Chaque PC les affiche v{{version}} et v{{other_version}} ; la version en vigueur est la version publiée (Préventif › plan)."
+    },
+    "pm_duplicate_occurrence": {
+      "title": "Deux versions concurrentes du plan {{plan}} — échéance planifiée deux fois",
+      "body": "{{title}} : les versions v{{version}} et v{{other_version}} ont chacune une échéance le {{due_at}} ({{due_basis}}), OT {{work_order}} et {{other_work_order}}. Rien n’a été annulé : gardez-en une et annulez l’autre vous-même."
+    },
     "stock_negative": {
       "title": "{{code}} sous zéro à {{location}}",
       "body": "{{title}} : {{on_hand}} en stock, sous zéro depuis le {{opened_at}}. Enregistrez un comptage pour le rapprocher."
@@ -366,7 +375,8 @@
       "budget_control_alert": "Destinataire choisi dans les réglages des alertes budgétaires.",
       "daily_digest": "Envoyé à chaque personne qui a choisi le résumé quotidien.",
       "safety_rule_received": "Toujours les administrateurs des paramètres de toute l’usine.",
-      "loto_forced_removal": "Toujours les personnes qui détiennent le droit de clôture des permis sur le site du permis."
+      "loto_forced_removal": "Toujours les personnes qui détiennent le droit de clôture des permis sur le site du permis.",
+      "pm_concurrent_versions": "Toujours les personnes qui détiennent le droit de planification préventive (pm.edit) sur tout le site industriel, et celles qui le détiennent sur le site de l’équipement du plan."
     },
     "minutes": "min",
     "minutesAfterAlert": "min après l'alerte",
@@ -387,7 +397,7 @@
   "safetyNotice": {
     "acknowledge": "J’ai pris connaissance",
     "hint": "Cet avis reste affiché à chaque connexion jusqu’à ce que vous en preniez connaissance ; votre confirmation est enregistrée.",
-    "inboxHint": "Avis de sécurité : prenez-en connaissance ; il ne peut pas être reporté ni archivé avant.",
+    "inboxHint": "Avis à confirmer : il ne peut être reporté ni archivé avant.",
     "loadError": "Les avis de sécurité n’ont pas pu être chargés. Ils sont conservés ; reconnectez-vous ou rechargez pour les voir."
   }
 }

@@ -20,7 +20,7 @@ use serde_json::{Map, Number, Value};
 
 use crate::errors::{AppError, AppResult};
 use crate::sync::identity::seeded_entity_sync_id;
-use crate::sync::materialize::{ApplyOutcome, DEFER_MISSING_PARENT};
+use crate::sync::materialize::{ApplyOutcome, WaitsFor, DEFER_MISSING_PARENT};
 use crate::sync::registry::ConflictPolicy;
 use crate::sync::row_layout::{
     EntityLayout, JsonRef, JsonSeg, LayoutColumn, Role, Target, PAYLOAD_FORMAT, PAYLOAD_FORMAT_KEY,
@@ -453,6 +453,10 @@ async fn translate_url_in(
                 return Ok(Err(ApplyOutcome::Deferred {
                     code: DEFER_MISSING_PARENT.into(),
                     message: format!("{} needs {} {value}, not received yet", column.name, r.entity_type),
+                    waits_for: Some(WaitsFor {
+                        entity_type: r.entity_type.to_string(),
+                        sync_id: value.clone(),
+                    }),
                 }))
             }
         }
@@ -557,6 +561,10 @@ async fn translate_json_in(
                     return Ok(Err(ApplyOutcome::Deferred {
                         code: DEFER_MISSING_PARENT.into(),
                         message: format!("{} needs {} {sync_id}, not received yet", column.name, r.entity_type),
+                        waits_for: Some(WaitsFor {
+                            entity_type: r.entity_type.to_string(),
+                            sync_id,
+                        }),
                     }))
                 }
             }
@@ -1011,6 +1019,10 @@ pub(crate) async fn apply_row(
                         return Ok(ApplyOutcome::Deferred {
                             code: DEFER_MISSING_PARENT.into(),
                             message: format!("{} needs {target_entity} {sync_id}, not received yet", column.name),
+                            waits_for: Some(WaitsFor {
+                                entity_type: target_entity.to_string(),
+                                sync_id,
+                            }),
                         });
                     }
                 }

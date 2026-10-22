@@ -36,7 +36,8 @@ pub(crate) const CONFLICT_COLUMNS: &str = "id, conflict_key, source_scope, sourc
     linked_inbox_id, entity_type, entity_sync_id, operation, conflict_type, local_payload_json,
     inbound_payload_json, authority_side, checkpoint_token, auto_resolution_policy,
     requires_operator_review, recommended_action, status, resolution_action, resolution_note,
-    resolved_by_id, resolved_at, row_version, local_row_version, inbound_row_version, created_at, updated_at";
+    resolved_by_id, resolved_at, row_version, local_row_version, inbound_row_version, detail_message, created_at,
+    updated_at";
 
 pub(crate) fn hash_payload(payload: &str) -> String {
     let mut hasher = Sha256::new();
@@ -266,6 +267,13 @@ fn to_sync_inbox_item(row: &sea_orm::QueryResult) -> AppResult<SyncInboxItem> {
 }
 
 pub(crate) fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConflictRecord> {
+    let conflict_type: String = row
+        .try_get("", "conflict_type")
+        .map_err(|e| decode_err("conflict_type", e))?;
+    let detail_message: Option<String> = row
+        .try_get("", "detail_message")
+        .map_err(|e| decode_err("detail_message", e))?;
+    let reason = crate::sync::apply_reason::conflict_reason(&conflict_type, detail_message.as_deref());
     Ok(SyncConflictRecord {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
         conflict_key: row
@@ -290,9 +298,7 @@ pub(crate) fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConf
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
         operation: row.try_get("", "operation").map_err(|e| decode_err("operation", e))?,
-        conflict_type: row
-            .try_get("", "conflict_type")
-            .map_err(|e| decode_err("conflict_type", e))?,
+        conflict_type,
         local_payload_json: row
             .try_get("", "local_payload_json")
             .map_err(|e| decode_err("local_payload_json", e))?,
@@ -337,6 +343,8 @@ pub(crate) fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConf
         inbound_row_version: row
             .try_get("", "inbound_row_version")
             .map_err(|e| decode_err("inbound_row_version", e))?,
+        detail_message,
+        reason,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -740,6 +748,7 @@ pub async fn record_outbox_delivery_failure(
                     checkpoint_token: None,
                     local_row_version: Some(item.row_version),
                     inbound_row_version: None,
+                    detail_message: Some(error.to_string()),
                 },
             )
             .await?;
@@ -951,6 +960,8 @@ pub(crate) struct NewSyncConflict {
     pub checkpoint_token: Option<String>,
     pub local_row_version: Option<i64>,
     pub inbound_row_version: Option<i64>,
+    /// The error or rule text that refused the row (shown as a plain reason, `sync::apply_reason`).
+    pub detail_message: Option<String>,
 }
 
 /// Insert or refresh a conflict. The key identifies the concrete outbox/inbox row (or inbound
@@ -980,9 +991,9 @@ pub(crate) async fn record_sync_conflict(conn: &impl ConnectionTrait, c: NewSync
             entity_type, entity_sync_id, operation, conflict_type, local_payload_json,
             inbound_payload_json, authority_side, checkpoint_token, auto_resolution_policy,
             requires_operator_review, recommended_action, status, row_version,
-            local_row_version, inbound_row_version, created_at, updated_at
+            local_row_version, inbound_row_version, detail_message, created_at, updated_at
         ) VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?,
             strftime('%Y-%m-%dT%H:%M:%SZ','now'),
             strftime('%Y-%m-%dT%H:%M:%SZ','now')
         )
@@ -994,6 +1005,7 @@ pub(crate) async fn record_sync_conflict(conn: &impl ConnectionTrait, c: NewSync
             inbound_payload_json = COALESCE(excluded.inbound_payload_json, sync_conflicts.inbound_payload_json),
             local_row_version = COALESCE(excluded.local_row_version, sync_conflicts.local_row_version),
             inbound_row_version = COALESCE(excluded.inbound_row_version, sync_conflicts.inbound_row_version),
+            detail_message = COALESCE(excluded.detail_message, sync_conflicts.detail_message),
             authority_side = excluded.authority_side,
             checkpoint_token = excluded.checkpoint_token,
             auto_resolution_policy = excluded.auto_resolution_policy,
@@ -1026,6 +1038,7 @@ pub(crate) async fn record_sync_conflict(conn: &impl ConnectionTrait, c: NewSync
             initial_status.to_string().into(),
             c.local_row_version.into(),
             c.inbound_row_version.into(),
+            c.detail_message.into(),
         ],
     ))
     .await?;
@@ -1090,6 +1103,7 @@ async fn ingest_inbound_items(
                     checkpoint_token: Some(checkpoint_label.to_string()),
                     local_row_version: None,
                     inbound_row_version: Some(inbound.row_version),
+                    detail_message: Some(inbound_errors.join(" ")),
                 },
             )
             .await?;
@@ -1343,6 +1357,7 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
                         checkpoint_token: Some(input.checkpoint_token.clone()),
                         local_row_version: Some(local_row_version),
                         inbound_row_version: None,
+                        detail_message: Some(rejected.rejection_message.clone()),
                     },
                 )
                 .await?;
@@ -1415,6 +1430,7 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
                 checkpoint_token: Some(input.checkpoint_token.clone()),
                 local_row_version: Some(conflict.local_row_version),
                 inbound_row_version: Some(conflict.server_row_version),
+                detail_message: None,
             },
         )
         .await?;
