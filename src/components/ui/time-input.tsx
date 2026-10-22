@@ -55,12 +55,14 @@ export const TimeInput = React.forwardRef<HTMLInputElement, TimeInputProps>(
         value={draft}
         disabled={disabled}
         placeholder={placeholder ?? t("dateField.timePlaceholder")}
+        aria-label={t("dateField.timeLabel")}
+        {...props}
         aria-invalid={invalid || undefined}
         title={invalid ? t("dateField.invalidTime") : undefined}
         maxLength={5}
         className={cn(
           "font-mono tabular-nums",
-          size === "sm" ? "h-8 text-sm" : "h-9",
+          size === "sm" ? "h-8 text-sm" : "h-10",
           invalid && "border-destructive focus-visible:ring-destructive",
           className,
         )}
@@ -69,7 +71,6 @@ export const TimeInput = React.forwardRef<HTMLInputElement, TimeInputProps>(
           if (typed) setDraft(typed);
           onBlur?.(e);
         }}
-        {...props}
       />
     );
   },

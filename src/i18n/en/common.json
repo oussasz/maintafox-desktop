@@ -196,6 +196,7 @@
     "nextMonth": "Next month",
     "invalid": "Not a valid date",
     "invalidTime": "Not a valid time (hh:mm, 24 h)",
+    "timeLabel": "Time",
     "timePlaceholder": "hh:mm"
   },
   "kanban": {

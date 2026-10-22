@@ -40,11 +40,19 @@ describe("DateField", () => {
 
   it("holds no value while the text is unfinished or impossible", () => {
     render(<Harness initial="2026-10-25" />);
-    fireEvent.change(box(), { target: { value: "03/11/20" } });
+    fireEvent.change(box(), { target: { value: "03/11/2" } });
     expect(value()).toBe("");
     fireEvent.change(box(), { target: { value: "31/02/2026" } });
     expect(value()).toBe("");
     expect(box()).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("counts a pasted ISO date or a short year at once, so Enter in a form carries it", () => {
+    render(<Harness />);
+    fireEvent.change(box(), { target: { value: "2026-10-25" } });
+    expect(value()).toBe("2026-10-25");
+    fireEvent.change(box(), { target: { value: "5.1.26" } });
+    expect(value()).toBe("2026-01-05");
   });
 
   it("refuses a date outside the bounds", () => {
