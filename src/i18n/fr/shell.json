@@ -62,7 +62,8 @@
         "conflict": "En attente de la résolution du {{ref}}",
         "refused": "En attente de {{record}}, refusé(e) sur ce PC (son conflit a été clos)",
         "not_received": "En attente de {{record}}, pas encore reçu(e)",
-        "ready": "Prêt : appliqué à la prochaine synchronisation"
+        "ready": "Prêt : appliqué à la prochaine synchronisation",
+        "chain_unresolved": "En attente de {{record}}, dans une chaîne de modifications en attente qui boucle ou est trop longue pour être suivie (voir les détails techniques)"
       },
       "own": {
         "MISSING_PARENT": "En attente de données liées pas encore reçues (une personne, un droit, une règle)",

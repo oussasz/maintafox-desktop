@@ -128,10 +128,11 @@ pub fn classify(message: &str) -> ConflictReason {
         Some((275, _)) => return ConflictReason::new(RULE_REFUSED),
         _ => {}
     }
-    // The row codec names the table it was reading (`Sync error: <table>: <what>`).
+    // The row codec names the table it was reading (`Sync error: <table>: <what>`); any other sync
+    // error is not read as a value of the row.
     if let Some(rest) = message.strip_prefix("Sync error: ") {
         if let Some((table, _)) = rest.split_once(": ") {
-            if !table.is_empty() && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            if crate::sync::registry::entity_by_table(table).is_some() {
                 return ConflictReason {
                     table: Some(table.to_string()),
                     ..ConflictReason::new(INVALID_DATA)
@@ -192,6 +193,12 @@ mod tests {
         assert_eq!(codec.table.as_deref(), Some("pm_plan_versions"));
 
         assert_eq!(classify("disk I/O error").code, TECHNICAL);
+        // A sync error that does not name a replicated table is not a value of the row.
+        assert_eq!(classify("Sync error: inbox payload_json: bad").code, TECHNICAL);
+        assert_eq!(
+            classify("Sync error: pm version clash: plan 4 not found").code,
+            TECHNICAL
+        );
     }
 
     #[test]

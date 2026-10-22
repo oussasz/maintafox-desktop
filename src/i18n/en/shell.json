@@ -62,7 +62,8 @@
         "conflict": "Waiting for {{ref}} to be resolved",
         "refused": "Waiting for {{record}}, which was refused on this PC (its conflict was closed)",
         "not_received": "Waiting for {{record}}, not received yet",
-        "ready": "Ready: applied at the next synchronisation"
+        "ready": "Ready: applied at the next synchronisation",
+        "chain_unresolved": "Waiting for {{record}}, in a chain of waiting changes that loops or is too long to follow (see the technical details)"
       },
       "own": {
         "MISSING_PARENT": "Waiting for related data not received yet (a person, a right, a rule)",

@@ -10,7 +10,9 @@
 //! - [`WAIT_NOT_RECEIVED`]: that row has not arrived yet;
 //! - [`WAIT_READY`]: that row is here now; the waiting row is applied at the next synchronisation;
 //! - [`WAIT_OWN_REASON`]: it waits for something other than one row (an app update, a right, a
-//!   person, a rule): its own reason code says what (`sync::materialize::DEFER_*`).
+//!   person, a rule): its own reason code says what (`sync::materialize::DEFER_*`);
+//! - [`WAIT_CHAIN_UNRESOLVED`]: the chain of rows waiting for each other loops, or is longer than
+//!   this list follows: named at the row where it stopped.
 //!
 //! Groups count every waiting row by what it waits for; the rows themselves are listed up to a
 //! limit, oldest first.
@@ -27,6 +29,7 @@ pub const WAIT_REFUSED: &str = "refused";
 pub const WAIT_NOT_RECEIVED: &str = "not_received";
 pub const WAIT_READY: &str = "ready";
 pub const WAIT_OWN_REASON: &str = "own_reason";
+pub const WAIT_CHAIN_UNRESOLVED: &str = "chain_unresolved";
 
 /// A chain of waiting rows longer than this is reported at the link reached.
 const MAX_CHAIN: usize = 32;
@@ -179,8 +182,8 @@ async fn resolve(
             break known.clone();
         }
         if !seen.insert(current.clone()) || chain.len() >= MAX_CHAIN {
-            // A loop of rows waiting for each other, or a very long chain: report this link.
-            break at(WAIT_NOT_RECEIVED, &current.0, &current.1);
+            // A loop of rows waiting for each other, or a very long chain: said so, at this link.
+            break at(WAIT_CHAIN_UNRESOLVED, &current.0, &current.1);
         }
         chain.push(current.clone());
         let (et, sid) = (&current.0, &current.1);
@@ -486,5 +489,27 @@ mod tests {
         assert_eq!(row.target.state, WAIT_NOT_RECEIVED);
         assert_eq!(row.target.entity_type.as_deref(), Some("pm_plan_versions"));
         assert_eq!(row.target.entity_sync_id.as_deref(), Some(version.as_str()));
+    }
+
+    #[tokio::test]
+    async fn rows_waiting_for_each_other_are_not_called_missing() {
+        let db = crate::sync::test_support::started_db().await;
+        for (id, waits) in [("loop-a", "loop-b"), ("loop-b", "loop-a")] {
+            crate::sync::test_support::exec(
+                &db,
+                "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                                         row_version, payload_json, payload_hash, apply_status, rejection_code,
+                                         waits_for_entity_type, waits_for_sync_id)
+                 VALUES ('b', 'c', 'pm_occurrences', ?, 'upsert', 1, '{}', ?, 'deferred', 'MISSING_PARENT',
+                         'pm_occurrences', ?)",
+                vec![id.into(), id.into(), waits.into()],
+            )
+            .await;
+        }
+        let report = list_waiting_inbox_rows(&db, None).await.expect("waiting rows");
+        assert_eq!(report.rows.len(), 2);
+        for row in &report.rows {
+            assert_eq!(row.target.state, WAIT_CHAIN_UNRESOLVED, "{row:?}");
+        }
     }
 }

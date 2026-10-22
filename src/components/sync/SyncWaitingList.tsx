@@ -58,6 +58,7 @@ export function SyncWaitingList({ count }: SyncWaitingListProps) {
         });
       case "refused":
       case "not_received":
+      case "chain_unresolved":
         return t(`sync.waiting.state.${target.state}`, {
           record: entityLabel(target.entity_type),
         });

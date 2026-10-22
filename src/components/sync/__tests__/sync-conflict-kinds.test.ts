@@ -38,7 +38,7 @@ describe("sync conflict kinds", () => {
         [],
       );
       expect(
-        ["conflict", "refused", "not_received", "ready"].filter(
+        ["conflict", "refused", "not_received", "ready", "chain_unresolved"].filter(
           (k) => !sync.waiting.state[k]?.trim(),
         ),
       ).toEqual([]);

@@ -10536,8 +10536,9 @@ export interface SyncConflictReason {
 
 /**
  * What a waiting received row waits for (`sync::waiting`): `conflict` (an open conflict, by id),
- * `refused`, `not_received`, `ready` (applied at the next synchronisation) or `own_reason`
- * (`reason_code`: an app update, a right, a person…).
+ * `refused`, `not_received`, `ready` (applied at the next synchronisation), `chain_unresolved` (a
+ * chain of waiting rows that loops or is too long) or `own_reason` (`reason_code`: an app update, a
+ * right, a person…).
  */
 export interface SyncWaitTarget {
   state: string;

@@ -617,6 +617,11 @@ pub fn entity(entity_type: &str) -> Option<&'static SyncEntityDef> {
     SYNC_ENTITIES.iter().find(|e| e.entity_type == entity_type)
 }
 
+/// The registered entity type stored in `table`.
+pub fn entity_by_table(table: &str) -> Option<&'static SyncEntityDef> {
+    SYNC_ENTITIES.iter().find(|e| e.table == table)
+}
+
 /// Look up a registered entity type, failing with a sync error when it is unknown.
 pub fn require_entity(entity_type: &str) -> AppResult<&'static SyncEntityDef> {
     entity(entity_type).ok_or_else(|| AppError::SyncError(format!("Unknown sync entity type '{entity_type}'.")))
