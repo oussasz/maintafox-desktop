@@ -1,5 +1,5 @@
 //! Session commands on a real in-memory database (`db::test_db::seeded`): the idle lock and the
-//! activity report (AU-34).
+//! activity report (AU-34); the account lockout of the unlock and step-up passwords (AU-37).
 
 use chrono::{TimeDelta, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -63,7 +63,9 @@ async fn sign_in(state: &AppState, user_id: i32, username: &str) -> String {
     guard.create_session_with_timeouts(user, SessionTimeouts::from_policy(10, 600, 15));
     let current = guard.current.as_ref().expect("session");
     let (id, expires) = (current.session_db_id.clone(), current.expires_at.to_rfc3339());
-    session_manager::store_session_or_clear(&state.db, &mut guard, user_id, &id, &expires)
+    // Only the session row: sign-in's own reset of the failure count is not part of these tests
+    // (sign-in refuses a locked-out account before it).
+    session_manager::create_session_record(&state.db, &id, user_id, &expires)
         .await
         .expect("stored session");
     id
@@ -166,4 +168,164 @@ async fn password_unlock_reopens_a_session_locked_after_its_deadline() {
     touch_session_impl(&state)
         .await
         .expect("open again: input counts again");
+}
+
+// ── AU-37: the unlock and step-up passwords under the sign-in lockout ────────────
+
+async fn failed_attempts(db: &DatabaseConnection, user_id: i32) -> i64 {
+    scalar_i64(
+        db,
+        "SELECT failed_login_attempts AS v FROM user_accounts WHERE id = ?",
+        vec![user_id.into()],
+    )
+    .await
+}
+
+async fn locked_out(db: &DatabaseConnection, user_id: i32) -> bool {
+    scalar_i64(
+        db,
+        "SELECT COUNT(*) AS v FROM user_accounts WHERE id = ? AND locked_until IS NOT NULL",
+        vec![user_id.into()],
+    )
+    .await
+        == 1
+}
+
+async fn session_revoked(db: &DatabaseConnection, session_id: &str) -> bool {
+    scalar_i64(
+        db,
+        "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+        vec![session_id.into()],
+    )
+    .await
+        == 1
+}
+
+/// The lockout ends: the stored lock end is moved into the past.
+async fn lockout_ends(db: &DatabaseConnection, user_id: i32) {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET locked_until = '2000-01-01T00:00:00Z' WHERE id = ?",
+        [user_id.into()],
+    ))
+    .await
+    .expect("unlock account");
+}
+
+async fn unlock(state: &AppState, password: &str) -> AppResult<session_manager::SessionInfo> {
+    unlock_session_impl(
+        state,
+        UnlockSessionRequest {
+            password: password.into(),
+        },
+    )
+    .await
+}
+
+async fn step_up(state: &AppState, password: &str) -> AppResult<crate::commands::rbac::StepUpResponse> {
+    crate::commands::rbac::verify_step_up_impl(
+        state,
+        crate::commands::rbac::StepUpRequest {
+            password: password.into(),
+        },
+    )
+    .await
+}
+
+async fn max_attempts(db: &DatabaseConnection) -> i32 {
+    let max = crate::auth::lockout::LockoutPolicy::load(db).await.max_attempts;
+    assert!(max >= 2, "the policy allows a few attempts ({max})");
+    max
+}
+
+#[tokio::test]
+async fn wrong_unlock_passwords_lock_the_account_and_end_the_session() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let id = technician(&db, "unlock_lockout").await;
+    let session_id = sign_in(&state, id, "unlock_lockout").await;
+    set_last_activity(&state, 45).await;
+    let max = max_attempts(&db).await;
+
+    for attempt in 1..max {
+        let refused = unlock(&state, "wrong-password").await.unwrap_err();
+        assert!(matches!(refused, AppError::Auth(_)), "attempt {attempt}: {refused:?}");
+        assert!(state.session.read().await.current.is_some(), "still locked, not ended");
+    }
+    let refused = unlock(&state, "wrong-password").await.unwrap_err();
+    assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
+    assert!(locked_out(&db, id).await);
+    assert!(state.session.read().await.current.is_none(), "the session ended");
+    assert!(session_revoked(&db, &session_id).await, "its stored row is closed");
+
+    // The right password is refused too while the lockout lasts (a session still open on the
+    // account, e.g. one opened before the lockout).
+    sign_in(&state, id, "unlock_lockout").await;
+    set_last_activity(&state, 45).await;
+    let refused = unlock(&state, PASSWORD).await.unwrap_err();
+    assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
+    assert!(state.session.read().await.current.is_none());
+
+    // Once it ends, the right password unlocks and the count starts afresh.
+    lockout_ends(&db, id).await;
+    sign_in(&state, id, "unlock_lockout").await;
+    set_last_activity(&state, 45).await;
+    let info = unlock(&state, PASSWORD).await.expect("lockout over");
+    assert!(info.is_authenticated && !info.is_locked);
+    assert_eq!(failed_attempts(&db, id).await, 0);
+    assert!(!locked_out(&db, id).await);
+}
+
+#[tokio::test]
+async fn wrong_step_up_passwords_lock_the_account_and_end_the_session() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let id = technician(&db, "stepup_lockout").await;
+    let session_id = sign_in(&state, id, "stepup_lockout").await;
+    let max = max_attempts(&db).await;
+
+    for attempt in 1..max {
+        let refused = step_up(&state, "wrong-password").await.unwrap_err();
+        assert!(matches!(refused, AppError::Auth(_)), "attempt {attempt}: {refused:?}");
+    }
+    let refused = step_up(&state, "wrong-password").await.unwrap_err();
+    assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
+    assert!(state.session.read().await.current.is_none(), "the session ended");
+    assert!(session_revoked(&db, &session_id).await);
+
+    sign_in(&state, id, "stepup_lockout").await;
+    let refused = step_up(&state, PASSWORD).await.unwrap_err();
+    assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
+    assert!(state.session.read().await.current.is_none());
+
+    lockout_ends(&db, id).await;
+    sign_in(&state, id, "stepup_lockout").await;
+    step_up(&state, PASSWORD).await.expect("lockout over");
+    assert!(state.session.read().await.is_step_up_valid());
+    assert_eq!(failed_attempts(&db, id).await, 0);
+}
+
+#[tokio::test]
+async fn a_right_password_resets_the_failure_count() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let id = technician(&db, "reset_count").await;
+    sign_in(&state, id, "reset_count").await;
+    let max = max_attempts(&db).await;
+
+    for _ in 1..max {
+        assert!(step_up(&state, "wrong-password").await.is_err());
+    }
+    assert_eq!(failed_attempts(&db, id).await, i64::from(max - 1));
+    step_up(&state, PASSWORD).await.expect("right password");
+    assert_eq!(failed_attempts(&db, id).await, 0);
+
+    // Unlock and step-up share the count, as sign-in does: max - 1 more failures still pass.
+    set_last_activity(&state, 45).await;
+    for _ in 1..max {
+        assert!(matches!(unlock(&state, "wrong-password").await, Err(AppError::Auth(_))));
+    }
+    assert!(!locked_out(&db, id).await);
+    unlock(&state, PASSWORD).await.expect("right password");
+    assert_eq!(failed_attempts(&db, id).await, 0);
 }

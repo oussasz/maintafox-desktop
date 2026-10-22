@@ -504,10 +504,10 @@ pub(crate) async fn unlock_session_impl(
     payload: UnlockSessionRequest,
 ) -> AppResult<session_manager::SessionInfo> {
     // Read session to get the user — even locked sessions have a user
-    let user = {
+    let (user, session_db_id) = {
         let sm = state.session.read().await;
         match &sm.current {
-            Some(s) if !s.is_expired() => s.user.clone(),
+            Some(s) if !s.is_expired() => (s.user.clone(), s.session_db_id.clone()),
             _ => {
                 return Err(AppError::Auth(
                     "Session expir\u{00e9}e. Veuillez vous reconnecter.".into(),
@@ -516,35 +516,20 @@ pub(crate) async fn unlock_session_impl(
         }
     };
 
-    // Verify password against the database
-    let user_record = session_manager::find_active_user(&state.db, &user.username).await?;
+    // The password, under the sign-in lockout (too many wrong ones end the session).
+    verify_password_in_session(
+        state,
+        &user,
+        &session_db_id,
+        &payload.password,
+        "Unlock failed: wrong password",
+    )
+    .await?;
 
-    let pw_hash = match user_record.and_then(|r| r.5) {
-        Some(h) => h,
-        None => {
-            return Err(AppError::Auth("Mot de passe incorrect.".into()));
-        }
-    };
-
-    let valid = password::verify_password(&payload.password, &pw_hash)?;
-    if !valid {
-        warn!(username = %user.username, "unlock_session::wrong_password");
-        crate::audit::emit(
-            &state.db,
-            crate::audit::AuditEvent {
-                event_type: crate::audit::event_type::STEP_UP_FAILURE,
-                actor_id: Some(user.user_id),
-                summary: "Unlock failed: wrong password",
-                ..Default::default()
-            },
-        )
-        .await;
-        return Err(AppError::Auth("Mot de passe incorrect.".into()));
-    }
-
-    // Unlock the session
+    // Unlock the session (the same one that was checked)
     let mut sm = state.session.write().await;
-    if !sm.unlock_session() {
+    let same_session = sm.current.as_ref().map(|s| s.session_db_id.as_str()) == Some(session_db_id.as_str());
+    if !same_session || !sm.unlock_session() {
         return Err(AppError::Auth(
             "Session expir\u{00e9}e. Veuillez vous reconnecter.".into(),
         ));
@@ -563,6 +548,100 @@ pub(crate) async fn unlock_session_impl(
 
     let info = sm.session_info();
     Ok(info)
+}
+
+/// A password check made inside an open session (unlock after the idle lock, step-up before a
+/// sensitive action), under the same account lockout as sign-in (`lockout`, same policy
+/// settings): refused while the account is locked out; a wrong password counts as a failed
+/// attempt; a right one resets the count. When the account is (or becomes) locked out, the
+/// session ends here (stored row closed, in-memory session cleared, audited) and the refusal is
+/// `ACCOUNT_LOCKED`, as at sign-in, so the screen goes back to sign-in with that message.
+pub(crate) async fn verify_password_in_session(
+    state: &AppState,
+    user: &session_manager::AuthenticatedUser,
+    session_db_id: &str,
+    password_input: &str,
+    failure_summary: &'static str,
+) -> AppResult<()> {
+    if let Err(locked @ AppError::AccountLocked { .. }) = lockout::check_lockout(&state.db, user.user_id).await {
+        end_session_after_lockout(state, user, session_db_id).await;
+        return Err(locked);
+    }
+    let lockout_policy = lockout::LockoutPolicy::load(&state.db).await;
+
+    let pw_hash = session_manager::find_active_user(&state.db, &user.username)
+        .await?
+        .and_then(|r| r.5)
+        .ok_or_else(|| AppError::Auth("Mot de passe incorrect.".into()))?;
+
+    if !password::verify_password(password_input, &pw_hash)? {
+        lockout::record_failed_attempt(&state.db, user.user_id, &lockout_policy).await?;
+        warn!(username = %user.username, summary = failure_summary, "session_password_check::wrong_password");
+        crate::audit::emit(
+            &state.db,
+            crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::STEP_UP_FAILURE,
+                actor_id: Some(user.user_id),
+                summary: failure_summary,
+                ..Default::default()
+            },
+        )
+        .await;
+        if let Err(locked @ AppError::AccountLocked { .. }) = lockout::check_lockout(&state.db, user.user_id).await {
+            end_session_after_lockout(state, user, session_db_id).await;
+            return Err(locked);
+        }
+        return Err(AppError::Auth("Mot de passe incorrect.".into()));
+    }
+
+    lockout::clear_failed_attempts(&state.db, user.user_id).await
+}
+
+/// The account is locked out after password failures made inside the session: the session ends
+/// (stored row closed, in-memory session cleared) and the end is audited.
+async fn end_session_after_lockout(state: &AppState, user: &session_manager::AuthenticatedUser, session_db_id: &str) {
+    let was_current = {
+        let mut guard = state.session.write().await;
+        let current = guard.current.as_ref().map(|s| s.session_db_id.as_str()) == Some(session_db_id);
+        if current {
+            guard.clear_session();
+        }
+        current
+    };
+    // The in-memory session is already gone (fail closed); the stored row is closed too.
+    if let Err(e) = state
+        .db
+        .execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            "UPDATE app_sessions SET is_revoked = 1 WHERE id = ?",
+            [session_db_id.into()],
+        ))
+        .await
+    {
+        warn!(error = %e, "lockout::stored_session_not_closed");
+    }
+    warn!(
+        user_id = user.user_id,
+        session_id = session_db_id,
+        reason = "account_locked",
+        "session ended: account locked out after wrong passwords"
+    );
+    if was_current {
+        crate::audit::emit(
+            &state.db,
+            crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::SESSION_CLOSED,
+                actor_id: Some(user.user_id),
+                actor_name: Some(&user.username),
+                entity_type: Some("app_session"),
+                entity_id: Some(session_db_id),
+                summary: "Session closed: account locked out after wrong passwords",
+                detail_json: Some(serde_json::json!({ "reason": "account_locked" }).to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
 }
 
 // ── PIN Commands ─────────────────────────────────────────────────────────────

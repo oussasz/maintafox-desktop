@@ -17,6 +17,12 @@ const SILENT_IPC_COMMANDS = new Set([
   "set_window_mode",
 ]);
 
+/**
+ * Password checks inside a session (unlock, step-up): an `ACCOUNT_LOCKED` refusal ended the
+ * session and is shown by the caller (session store / step-up dialog), on the sign-in screen.
+ */
+const LOCKOUT_HANDLED_BY_CALLER = new Set(["unlock_session", "verify_step_up"]);
+
 /** Server code (`AppError::PasswordChangeRequired`): the password must be changed first. */
 export const PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED";
 
@@ -114,6 +120,12 @@ function handleSessionFailures(cmd: string, err: unknown): void {
   const { code, rawMsg } = extractIpcErrorMeta(err);
 
   if (SILENT_IPC_COMMANDS.has(cmd) || cmd === "login") {
+    return;
+  }
+
+  if (code === "ACCOUNT_LOCKED" && LOCKOUT_HANDLED_BY_CALLER.has(cmd)) {
+    // The server ended the session; the caller sends the user to sign-in with the lockout
+    // message (a refresh here would wipe that message, the sign-in-again dialog would hide it).
     return;
   }
 

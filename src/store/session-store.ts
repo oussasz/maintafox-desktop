@@ -23,6 +23,9 @@ function extractTauriError(e: unknown, fallback: string): { message: string; cod
   return { message: fallback, code: null };
 }
 
+/** Server code (`AppError::AccountLocked`): the account is locked out after wrong passwords. */
+export const ACCOUNT_LOCKED = "ACCOUNT_LOCKED";
+
 export const UNAUTHENTICATED_SESSION: SessionInfo = {
   is_authenticated: false,
   is_locked: false,
@@ -90,6 +93,12 @@ export interface SessionStoreActions {
   /** Session info read outside the actions (silent refresh after a refused command). */
   applySessionInfo: (info: SessionInfo) => void;
   /**
+   * Too many wrong passwords at unlock or step-up locked the account (`ACCOUNT_LOCKED`): the
+   * server ended the session. Back to sign-in, which shows the same lockout message as a
+   * sign-in refusal.
+   */
+  applyAccountLockout: (message: string) => void;
+  /**
    * A command was refused as unauthenticated but the session is valid: raise the generation once
    * so the screens that failed load again. A second race before a new session changes nothing.
    */
@@ -127,6 +136,17 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       hasBootstrapped: true,
       sessionGeneration: generationAfter(s.info, info, s.sessionGeneration),
     }));
+  },
+
+  applyAccountLockout: (message: string): void => {
+    clearPermissionCache();
+    set({
+      info: UNAUTHENTICATED_SESSION,
+      isLoading: false,
+      error: message,
+      errorCode: ACCOUNT_LOCKED,
+      hasBootstrapped: true,
+    });
   },
 
   noteAuthRace: (): void => {
@@ -231,7 +251,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         sessionGeneration: s.sessionGeneration + 1,
       }));
     } catch (e) {
-      const { message } = extractTauriError(e, "Échec du déverrouillage.");
+      const { message, code } = extractTauriError(e, "Échec du déverrouillage.");
+      if (code === ACCOUNT_LOCKED) {
+        // The server ended the session with the lockout: sign-in shows why.
+        get().applyAccountLockout(message);
+        throw new Error(message);
+      }
       set({
         isLoading: false,
         error: message,
