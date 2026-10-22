@@ -243,41 +243,45 @@ export function AnalyticsDashboardsPage() {
       case ANALYTICS_DASHBOARD_WIDGET_IDS.OPS_KPIS:
         return (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {renderKpi({
-              title: td("kpi.openDis"),
-              context: now,
-              value: count(data?.open_dis.value),
-              available: data?.open_dis.available ?? false,
-              trend: periodTrend(data?.open_dis, "up-bad"),
-              onOpen: () => navigate(listLinks.requests({ scope: "open" })),
-            })}
-            {renderKpi({
-              title: td("kpi.openWos"),
-              context: openWosRule ? `${now} · ${openWosRule.label}` : now,
-              value: count(data?.open_wos.value),
-              available: data?.open_wos.available ?? false,
-              trend: periodTrend(data?.open_wos, "up-bad"),
-              ...(openWosRule
-                ? { onOpen: () => navigate(listLinks.workOrders({ scope: openWosRule.scope })) }
-                : {}),
-            })}
-            {renderKpi({
-              title: td("kpi.totalAssets"),
-              context: t("hub.dashboards.context.inService"),
-              value: count(data?.total_assets.value),
-              available: data?.total_assets.available ?? false,
-              trend: periodTrend(data?.total_assets, "up-good"),
-              onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.TOTAL_ASSETS]),
-            })}
-            {renderKpi({
-              title: td("kpi.overdueItems"),
-              context: t("hub.dashboards.context.overdue"),
-              value: count(data?.overdue_items.value),
-              available: data?.overdue_items.available ?? false,
-              trend: periodTrend(data?.overdue_items, "up-bad"),
-              // Three lists stand behind this figure: the user picks which one to open.
-              onOpen: () => setOverdueChooserOpen(true),
-            })}
+            {can(P.DI_VIEW) &&
+              renderKpi({
+                title: td("kpi.openDis"),
+                context: now,
+                value: count(data?.open_dis.value),
+                available: data?.open_dis.available ?? false,
+                trend: periodTrend(data?.open_dis, "up-bad"),
+                onOpen: () => navigate(listLinks.requests({ scope: "open" })),
+              })}
+            {can(P.OT_VIEW) &&
+              renderKpi({
+                title: td("kpi.openWos"),
+                context: openWosRule ? `${now} · ${openWosRule.label}` : now,
+                value: count(data?.open_wos.value),
+                available: data?.open_wos.available ?? false,
+                trend: periodTrend(data?.open_wos, "up-bad"),
+                ...(openWosRule
+                  ? { onOpen: () => navigate(listLinks.workOrders({ scope: openWosRule.scope })) }
+                  : {}),
+              })}
+            {can(P.EQ_VIEW) &&
+              renderKpi({
+                title: td("kpi.totalAssets"),
+                context: t("hub.dashboards.context.inService"),
+                value: count(data?.total_assets.value),
+                available: data?.total_assets.available ?? false,
+                trend: periodTrend(data?.total_assets, "up-good"),
+                onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.TOTAL_ASSETS]),
+              })}
+            {canAny(P.DI_VIEW, P.PM_VIEW, P.OT_VIEW) &&
+              renderKpi({
+                title: td("kpi.overdueItems"),
+                context: t("hub.dashboards.context.overdue"),
+                value: count(data?.overdue_items.value),
+                available: data?.overdue_items.available ?? false,
+                trend: periodTrend(data?.overdue_items, "up-bad"),
+                // Three lists stand behind this figure: the user picks which one to open.
+                onOpen: () => setOverdueChooserOpen(true),
+              })}
           </div>
         );
       case ANALYTICS_DASHBOARD_WIDGET_IDS.PM_DUE:
@@ -488,7 +492,7 @@ export function AnalyticsDashboardsPage() {
         <LoadingState label={t("hub.dashboards.loading")} />
       ) : (
         <div className="space-y-4">
-          <SmrpIndicatorsSection smrp={data?.smrp ?? null} />
+          <SmrpIndicatorsSection smrp={data?.smrp ?? null} can={can} />
           {visibleWidgets.map((w) => (
             <Fragment key={w.id}>{renderWidget(w.id)}</Fragment>
           ))}

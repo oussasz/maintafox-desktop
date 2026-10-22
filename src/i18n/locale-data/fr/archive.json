@@ -85,6 +85,7 @@
     "emptyHint": "Modifiez ou réinitialisez les filtres.",
     "limitReached": "Seuls les {{count}} enregistrements les plus récents sont affichés. Affinez les filtres pour voir les plus anciens.",
     "select": "Sélection",
+    "selectAll": "Tout sélectionner (page affichée)",
     "selectRecord": "Sélectionner {{name}}",
     "showing": "{{from}}–{{to}} sur {{total}}",
     "previous": "Précédent",

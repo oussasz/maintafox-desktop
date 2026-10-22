@@ -78,7 +78,6 @@
     "noTemplate": "Créez d'abord une check-list (onglet Modèles).",
     "team": "Équipe",
     "noTeam": "Aucune équipe",
-    "teamNotAllowed": "Votre rôle ne permet pas de lister les équipes ; affectez plutôt un technicien.",
     "teamLoadError": "Les équipes n'ont pas pu être chargées.",
     "clearAssigneeNamed": "Retirer {{name}}"
   },

@@ -123,6 +123,19 @@ export function formatPercent(value: number, locale: string): string {
 // ─── Date Formatting ───────────────────────────────────────────────────────
 
 /**
+ * A date-only text ("2026-10-22", a calendar day with no time) is that day in the user's own
+ * time zone; `new Date("2026-10-22")` would be midnight UTC, i.e. the day before west of Greenwich.
+ */
+function toDate(value: Date | string | number): Date {
+  if (value instanceof Date) return value;
+  if (typeof value === "string") {
+    const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (day) return new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
+  }
+  return new Date(value);
+}
+
+/**
  * Formats a Date (or ISO string / timestamp) as a short date.
  *
  * French:  31/03/2026
@@ -136,7 +149,7 @@ export function formatDate(
   locale: string,
 ): string {
   if (value == null) return "\u2014";
-  const date = value instanceof Date ? value : new Date(value);
+  const date = toDate(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
   return new Intl.DateTimeFormat(toIntlLocale(locale), {
     day: "2-digit",
@@ -156,7 +169,7 @@ export function formatDateLong(
   locale: string,
 ): string {
   if (value == null) return "\u2014";
-  const date = value instanceof Date ? value : new Date(value);
+  const date = toDate(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
   return new Intl.DateTimeFormat(toIntlLocale(locale), {
     day: "numeric",
@@ -176,7 +189,7 @@ export function formatDateTime(
   locale: string,
 ): string {
   if (value == null) return "\u2014";
-  const date = value instanceof Date ? value : new Date(value);
+  const date = toDate(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
   return new Intl.DateTimeFormat(toIntlLocale(locale), {
     day: "2-digit",
@@ -199,7 +212,7 @@ export function formatTime(
   locale: string,
 ): string {
   if (value == null) return "\u2014";
-  const date = value instanceof Date ? value : new Date(value);
+  const date = toDate(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
   return new Intl.DateTimeFormat(toIntlLocale(locale), {
     hour: "2-digit",
@@ -218,7 +231,7 @@ export function formatRelativeTime(
   locale: string,
 ): string {
   if (value == null) return "\u2014";
-  const date = value instanceof Date ? value : new Date(value);
+  const date = toDate(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
 
   const now = Date.now();

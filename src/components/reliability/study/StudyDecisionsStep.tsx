@@ -79,6 +79,12 @@ export function StudyDecisionsStep({
 
   // An archived study is a record: its decisions are no longer approved, rejected or applied.
   const canManage = can(P.RAM_MANAGE) && study.status === "active";
+  /**
+   * Applying also writes in another module: a new preventive interval needs pm.edit, any other
+   * decision creates a work order (ot.create). Without that right the decision says so.
+   */
+  const canApply = (d: StudyDecision) =>
+    d.action_kind === "pm_interval" ? can(P.PM_EDIT) : can(P.OT_CREATE);
   const hours = (v: number | null | undefined) => (v == null ? "—" : formatNumber(Math.round(v)));
   /** Another person was designated: only they approve or reject. */
   const designatedElsewhere = (d: StudyDecision) => d.approver_id != null && d.approver_id !== me;
@@ -288,7 +294,7 @@ export function StudyDecisionsStep({
                               </Button>
                             </>
                           ) : null}
-                          {d.status === "approved" ? (
+                          {d.status === "approved" && canApply(d) ? (
                             <Button
                               className="h-10"
                               disabled={busy}
@@ -297,6 +303,15 @@ export function StudyDecisionsStep({
                               <Play className="h-4 w-4" aria-hidden />
                               {t("rams.decisions.apply")}
                             </Button>
+                          ) : null}
+                          {d.status === "approved" && !canApply(d) ? (
+                            <span className="text-xs text-text-muted" role="note">
+                              {t(
+                                d.action_kind === "pm_interval"
+                                  ? "rams.decisions.applyNeedsPmEdit"
+                                  : "rams.decisions.applyNeedsWoCreate",
+                              )}
+                            </span>
                           ) : null}
                         </div>
                       ) : null}

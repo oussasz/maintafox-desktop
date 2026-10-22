@@ -94,6 +94,7 @@ export function UserDetailDialog({
   currentUserId,
 }: UserDetailDialogProps) {
   const { t } = useTranslation("admin");
+  const { t: tErrors } = useTranslation("errors");
   const { formatDateTime, formatDate } = useFormatters();
   const scopeLabel = useScopeLabel();
   const [detail, setDetail] = useState<UserDetail | null>(null);
@@ -404,8 +405,13 @@ export function UserDetailDialog({
                   <Button
                     size="sm"
                     onClick={() => setAssignOpen(true)}
-                    disabled={!user.is_active || choicesUnavailable}
-                    {...(choicesUnavailable ? { title: t("console.choicesLoadError") } : {})}
+                    // The server never lets anyone give a role to their own account.
+                    disabled={isSelf || !user.is_active || choicesUnavailable}
+                    {...(isSelf
+                      ? { title: tErrors("permission.cannotGrantOwnRole") }
+                      : choicesUnavailable
+                        ? { title: t("console.choicesLoadError") }
+                        : {})}
                   >
                     <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
                     {t("console.roles.assign")}

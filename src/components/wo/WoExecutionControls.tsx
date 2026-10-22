@@ -21,6 +21,7 @@ import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Timeline } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -39,6 +40,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { TimeInput } from "@/components/ui/time-input";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
 import {
@@ -1730,28 +1732,16 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
               </label>
               <div className="space-y-1">
                 <Label>{t("execution.laborDialog.date")}</Label>
-                <Input
-                  type="date"
-                  value={laborDate}
-                  onChange={(e) => setLaborDate(e.target.value)}
-                />
+                <DateField value={laborDate} onChange={(v) => setLaborDate(v)} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label>{t("execution.laborDialog.startTime")}</Label>
-                  <Input
-                    type="time"
-                    value={laborStart}
-                    onChange={(e) => setLaborStart(e.target.value)}
-                  />
+                  <TimeInput value={laborStart} onChange={(v) => setLaborStart(v)} />
                 </div>
                 <div className="space-y-1">
                   <Label>{t("execution.laborDialog.endTime")}</Label>
-                  <Input
-                    type="time"
-                    value={laborEnd}
-                    onChange={(e) => setLaborEnd(e.target.value)}
-                  />
+                  <TimeInput value={laborEnd} onChange={(v) => setLaborEnd(v)} />
                 </div>
               </div>
               <div className="space-y-1">

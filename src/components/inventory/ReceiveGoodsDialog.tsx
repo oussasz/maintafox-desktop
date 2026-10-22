@@ -25,6 +25,7 @@ import {
 import { MeasureUnitSelect, useMeasureUnits } from "@/components/lookups/MeasureUnitPicker";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -492,12 +493,11 @@ export function ReceiveGoodsDialog({
             </div>
             <div className="space-y-1">
               <Label htmlFor="gr-posting-date">{t("procurement.receive.postingDate")}</Label>
-              <Input
+              <DateField
                 id="gr-posting-date"
-                type="date"
                 max={todayIso()}
                 value={postingDate}
-                onChange={(e) => setPostingDate(e.target.value)}
+                onChange={(v) => setPostingDate(v)}
                 aria-describedby="gr-posting-date-hint"
               />
               <p id="gr-posting-date-hint" className="text-xs text-text-muted">
@@ -725,11 +725,10 @@ export function ReceiveGoodsDialog({
                                   ? t("procurement.receive.lots.expiry")
                                   : t("procurement.receive.lots.expiryOptional")}
                               </Label>
-                              <Input
+                              <DateField
                                 id={`gr-lot-exp-${lot.key}`}
-                                type="date"
                                 value={lot.expiryDate}
-                                onChange={(e) => patchLot(lot.key, { expiryDate: e.target.value })}
+                                onChange={(v) => patchLot(lot.key, { expiryDate: v })}
                               />
                             </div>
                             <div className="space-y-1">

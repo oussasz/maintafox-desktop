@@ -283,6 +283,7 @@
     "title": "SLA Rules",
     "description": "Configure response and resolution targets for each urgency level.",
     "scaleHint": "The target times of a level for every request are set in the urgency scale (Reference data). The rules below are the exceptions by origin or asset criticality.",
+    "invalidHours": "Enter whole hours (0 or more) in all three fields.",
     "loading": "Loading rules…",
     "empty": "No SLA rules configured.",
     "columns": {

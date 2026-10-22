@@ -16,7 +16,9 @@ export type WoStatusKey =
   | "onHold"
   | "completed"
   | "closed"
-  | "cancelled";
+  | "cancelled"
+  /** A status code this version does not know: shown as such, never as "Brouillon". */
+  | "unknown";
 
 /**
  * Maps any Rust snake_case status_code (current or legacy) to the closest
@@ -46,7 +48,7 @@ const STATUS_MAP: Record<string, WoStatusKey> = {
 
 /** Map any snake_case status_code to a camelCase i18n key safe for `t("status.X")`. */
 export function statusToI18nKey(s: string): WoStatusKey {
-  return STATUS_MAP[s] ?? "draft";
+  return STATUS_MAP[s] ?? "unknown";
 }
 
 /** Chip classes per status — derived from the shared tone vocabulary (design-system/tone.ts). */

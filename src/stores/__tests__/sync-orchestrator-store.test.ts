@@ -401,6 +401,23 @@ describe("shutdown", () => {
     expect(useAppStore.getState().isOnline).toBe(true);
   });
 
+  it("forgets the previous user's sync right and worker status (AU-45)", async () => {
+    await initAndSettle();
+    useSyncOrchestratorStore.getState().setCanViewSync(true);
+    emit(makeWorker());
+    useSyncOrchestratorStore.getState().shutdown();
+
+    const after = useSyncOrchestratorStore.getState();
+    expect(after.canViewSync).toBe(false);
+    expect(after.worker).toBeNull();
+
+    // The next session: a status with other counts does not read the inbox before the rights.
+    await initAndSettle();
+    emit(makeWorker({ unresolved_conflict_count: 3 }));
+    await Promise.resolve();
+    expect(mockListConflicts).not.toHaveBeenCalled();
+  });
+
   it("is safe to call when never initialized", () => {
     expect(() => useSyncOrchestratorStore.getState().shutdown()).not.toThrow();
     expect(unlisten).not.toHaveBeenCalled();
@@ -516,6 +533,7 @@ describe("worker status side effects", () => {
 
   it("refreshes the inbox when conflict or dead-letter counts change", async () => {
     await initAndSettle();
+    useSyncOrchestratorStore.getState().setCanViewSync(true);
     const conflicts = [makeConflict()];
     primeInbox(conflicts);
 
@@ -536,11 +554,24 @@ describe("worker status side effects", () => {
 
   it("swallows a failing background inbox refresh", async () => {
     await initAndSettle();
+    useSyncOrchestratorStore.getState().setCanViewSync(true);
     mockListConflicts.mockRejectedValue(new Error("boom"));
     emit(makeWorker());
     emit(makeWorker({ unresolved_conflict_count: 2 }));
     await vi.waitFor(() => expect(mockListConflicts).toHaveBeenCalled());
     expect(useSyncOrchestratorStore.getState().actionError).toBeNull();
+  });
+
+  it("does not read the inbox in the background without sync.view, and drops it on losing it (AU-45)", async () => {
+    await initAndSettle();
+    emit(makeWorker());
+    emit(makeWorker({ unresolved_conflict_count: 4 }));
+    await Promise.resolve();
+    expect(mockListConflicts).not.toHaveBeenCalled();
+
+    useSyncOrchestratorStore.setState({ canViewSync: true, conflictInbox: [makeConflict()] });
+    useSyncOrchestratorStore.getState().setCanViewSync(false);
+    expect(useSyncOrchestratorStore.getState().conflictInbox).toEqual([]);
   });
 });
 

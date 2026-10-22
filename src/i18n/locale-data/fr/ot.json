@@ -88,6 +88,44 @@
     "repair.swapDowntime": "Swap début/fin de segment (durée négative)",
     "repair.closeAtStart": "Clôturer le segment à l'heure de début",
     "repair.trimOverlap": "Tronquer la fin du premier segment (chevauchement)",
+    "severity": { "error": "Erreur", "warning": "Avertissement" },
+    "code": {
+      "FK_ORPHAN_FAILURE_MODE": "Mode de défaillance introuvable",
+      "WO_DOWNTIME_NEGATIVE_DURATION": "Arrêt de durée négative",
+      "WO_DOWNTIME_UNCLOSED": "Arrêt non clôturé",
+      "WO_DOWNTIME_SUM_EXCEEDS_WINDOW": "Arrêts supérieurs à la durée de l'OT",
+      "WO_DOWNTIME_OVERLAP": "Arrêts qui se chevauchent",
+      "PERMIT_SITE_NOT_EQUIPMENT_SITE": "Site du permis différent de celui de l'équipement"
+    },
+    "domain": {
+      "failure_coding": "Codification des défaillances",
+      "downtime": "Temps d'arrêt",
+      "wo_closeout": "Clôture des OT",
+      "permit_site": "Site des permis"
+    },
+    "recordClass": {
+      "wo_failure_details": "Détail de défaillance",
+      "work_order_downtime_segments": "Segment d'arrêt",
+      "work_orders": "Ordre de travail",
+      "work_permits": "Permis de travail"
+    },
+    "detail": {
+      "work_order_id": "OT n°",
+      "failure_mode_id": "Mode de défaillance n°",
+      "segment_id": "Segment n°",
+      "segment_id_a": "Segment A n°",
+      "segment_id_b": "Segment B n°",
+      "segment_sum_hours": "Arrêts cumulés (h)",
+      "window_hours": "Durée de l'OT (h)",
+      "permit_code": "Permis",
+      "status": "Statut du permis",
+      "equipment_code": "Équipement",
+      "linked_work_order_id": "OT lié n°"
+    },
+    "approverPick": "Approbateur (autre que vous)",
+    "approverNoneAvailable": "Aucun approbateur disponible : personnel actif avec un compte, autre que vous.",
+    "approverNone": "Choisir une personne",
+    "unknownCode": "Constat non répertorié",
     "diagnosticTarget": "Diagnostic · {{domain}} · {{recordClass}}"
   },
   "list": {
@@ -185,6 +223,7 @@
     "completed": "Terminé",
     "closed": "Clôturé",
     "cancelled": "Annulé",
+    "unknown": "Statut inconnu",
     "awaitingApproval": "En attente d'approbation",
     "planned": "Planifié",
     "released": "Lancé",

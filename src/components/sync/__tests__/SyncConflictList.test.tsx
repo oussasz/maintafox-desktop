@@ -15,6 +15,15 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+let canResolve = true;
+vi.mock("@/hooks/use-permissions", () => ({
+  usePermissions: () => ({
+    can: () => canResolve,
+    canAny: () => canResolve,
+    isLoading: false,
+  }),
+}));
+
 const mockRefresh = vi.fn();
 const mockResolve = vi.fn();
 let inbox: unknown[] = [];
@@ -64,6 +73,7 @@ const conflict = {
 beforeEach(() => {
   vi.clearAllMocks();
   inbox = [];
+  canResolve = true;
 });
 
 describe("SyncConflictList", () => {
@@ -230,5 +240,17 @@ describe("conflict reason minimum follows the server", () => {
     const queries = readFileSync("src-tauri/src/sync/queries.rs", "utf8");
     const resolve = /pub async fn resolve_sync_conflict[\s\S]*?\r?\n\}\r?\n/.exec(queries)?.[0];
     expect(resolve).toContain("let min_reason = crate::settings::catalog::MIN_REASON_CHARS;");
+  });
+
+  it("without the right to resolve, shows the conflict read-only with no choice to make (AU-45)", async () => {
+    inbox = [conflict];
+    canResolve = false;
+    mockRefresh.mockResolvedValue(undefined);
+
+    render(<SyncConflictList showTriageActions />);
+
+    expect(await screen.findByText("OT-2026-0144")).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("sync.resolveNeedsRight");
+    expect(screen.queryByRole("button", { name: /sync\.panel\.action\./ })).not.toBeInTheDocument();
   });
 });

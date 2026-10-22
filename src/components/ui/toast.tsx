@@ -1,6 +1,7 @@
 import * as ToastPrimitive from "@radix-ui/react-toast";
 import { X } from "lucide-react";
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 
@@ -60,19 +61,23 @@ ToastAction.displayName = ToastPrimitive.Action.displayName;
 const ToastClose = React.forwardRef<
   React.ElementRef<typeof ToastPrimitive.Close>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitive.Close>
->(({ className, ...props }, ref) => (
-  <ToastPrimitive.Close
-    ref={ref}
-    className={cn(
-      "absolute right-2 top-2 rounded-md p-1 text-foreground/50 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-2 group-hover:opacity-100 group-[.destructive]:text-destructive-foreground group-[.destructive]:focus:ring-destructive-foreground",
-      className,
-    )}
-    toast-close=""
-    {...props}
-  >
-    <X className="h-4 w-4" />
-  </ToastPrimitive.Close>
-));
+>(({ className, ...props }, ref) => {
+  const { t } = useTranslation("common");
+  return (
+    <ToastPrimitive.Close
+      ref={ref}
+      aria-label={t("action.close")}
+      className={cn(
+        "absolute right-2 top-2 rounded-md p-1 text-foreground/60 transition-colors hover:text-foreground focus:outline-none focus:ring-2 group-[.destructive]:text-destructive-foreground group-[.destructive]:focus:ring-destructive-foreground",
+        className,
+      )}
+      toast-close=""
+      {...props}
+    >
+      <X className="h-4 w-4" />
+    </ToastPrimitive.Close>
+  );
+});
 ToastClose.displayName = ToastPrimitive.Close.displayName;
 
 const ToastTitle = React.forwardRef<

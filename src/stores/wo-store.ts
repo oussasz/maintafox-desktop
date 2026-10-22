@@ -8,6 +8,7 @@
 
 import { create } from "zustand";
 
+import { appErrorReason } from "@/lib/app-error";
 import { createLatestRequestGuard } from "@/lib/latest-request";
 import { closeWo } from "@/services/wo-closeout-service";
 import {
@@ -24,7 +25,6 @@ import {
   startWo,
   updateWoDraft,
 } from "@/services/wo-service";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   AssetSearchResult,
   WoAssignInput,
@@ -181,7 +181,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       });
     } catch (err) {
       if (!isCurrent()) return;
-      set({ error: toErrorMessage(err), listError: err, loading: false });
+      set({ error: appErrorReason(err), listError: err, loading: false });
     }
   },
 
@@ -228,7 +228,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     } catch (err) {
       if (!isCurrent()) return;
       set({
-        error: toErrorMessage(err),
+        error: appErrorReason(err),
         detailLoading: false,
         openingWoId: null,
         ...(keepCurrent ? {} : { activeWo: null }),
@@ -250,7 +250,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       });
       return wo;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -268,7 +268,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       });
       void get().loadWos();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -283,7 +283,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       void get().refreshActiveWo();
       void get().loadWos();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -299,7 +299,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -313,7 +313,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -329,7 +329,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -343,7 +343,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -357,7 +357,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -393,7 +393,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
           errors: err.errors,
         } as WoMechCompleteResponse;
       }
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -407,7 +407,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -421,7 +421,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });

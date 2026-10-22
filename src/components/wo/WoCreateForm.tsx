@@ -15,6 +15,7 @@ import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { fromDateTimeLocal, toDateTimeLocal } from "@/components/planning/planning-model";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -502,22 +503,20 @@ export function WoCreateForm({
         <div className="grid grid-cols-2 gap-4">
           {/* Planned Start */}
           <FormField name="plannedStart" label={t("form.plannedStart.label")}>
-            <Input
+            <DateTimeField
               id="wo-planned-start"
-              type="datetime-local"
               value={plannedStart}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setPlannedStart(e.target.value)}
+              onChange={(v) => setPlannedStart(v)}
             />
           </FormField>
 
           {/* Planned End */}
           <FormField name="plannedEnd" label={t("form.plannedEnd.label")}>
-            <Input
+            <DateTimeField
               id="wo-planned-end"
-              type="datetime-local"
               value={plannedEnd}
               min={plannedStart || undefined}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setPlannedEnd(e.target.value)}
+              onChange={(v) => setPlannedEnd(v)}
             />
           </FormField>
         </div>

@@ -55,7 +55,11 @@ export async function getMyProfile(): Promise<UserProfile> {
 }
 
 export async function updateMyProfile(input: UpdateProfileInput): Promise<UserProfile> {
-  const raw = await invoke<unknown>("update_my_profile", { payload: input });
+  const raw = await invoke<unknown>(
+    "update_my_profile",
+    { payload: input },
+    { notifyOnError: false },
+  );
   return UserProfileSchema.parse(raw);
 }
 

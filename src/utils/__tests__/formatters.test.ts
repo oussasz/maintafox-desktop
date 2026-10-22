@@ -254,3 +254,11 @@ describe("getLocaleDirection()", () => {
     expect(getLocaleDirection("xy")).toBe("ltr");
   });
 });
+
+describe("date-only texts", () => {
+  it("is the same calendar day whatever the time zone", () => {
+    expect(formatDate("2026-10-22", "fr")).toBe("22/10/2026");
+    expect(formatDate("2026-01-01", "fr")).toBe("01/01/2026");
+    expect(formatDate("2026-10-22", "en")).toBe("10/22/2026");
+  });
+});

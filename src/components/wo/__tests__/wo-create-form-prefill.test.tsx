@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { toDateTimeLocal } from "@/components/planning/planning-model";
 import { WoCreateForm } from "@/components/wo/WoCreateForm";
+import { formatIsoDateForInput } from "@/lib/date-input";
 import { useWoStore } from "@/stores/wo-store";
 import type { WorkOrder } from "@shared/ipc-types";
 
@@ -83,12 +84,21 @@ describe("WoCreateForm planned dates", () => {
     const { container, getByText } = render(
       <WoCreateForm initial={initial} onSubmitted={vi.fn()} onCancel={vi.fn()} />,
     );
-    const start = container.querySelector<HTMLInputElement>("#wo-planned-start");
-    const end = container.querySelector<HTMLInputElement>("#wo-planned-end");
-    expect(start?.value).toBe(toDateTimeLocal("2026-10-20T06:00:00Z"));
-    expect(end?.value).toBe(toDateTimeLocal("2026-10-20T12:30:00Z"));
+    const field = (id: string) => container.querySelector<HTMLInputElement>(`#${id}`);
+    const shown = (id: string) => `${field(id)?.value} ${field(`${id}-time`)?.value}`;
+    const expected = (instant: string) => {
+      const [date = "", time = ""] = toDateTimeLocal(instant).split("T");
+      return `${formatIsoDateForInput(date, "fr")} ${time}`;
+    };
+    expect(shown("wo-planned-start")).toBe(expected("2026-10-20T06:00:00Z"));
+    expect(shown("wo-planned-end")).toBe(expected("2026-10-20T12:30:00Z"));
 
-    fireEvent.change(end as HTMLInputElement, { target: { value: "2026-10-21T09:15" } });
+    fireEvent.change(field("wo-planned-end") as HTMLInputElement, {
+      target: { value: "21/10/2026" },
+    });
+    fireEvent.change(field("wo-planned-end-time") as HTMLInputElement, {
+      target: { value: "09:15" },
+    });
     const save = getByText("form.update").closest("button") as HTMLButtonElement;
     await waitFor(() => expect(save).not.toBeDisabled());
     fireEvent.click(save);

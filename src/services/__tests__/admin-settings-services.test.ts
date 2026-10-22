@@ -334,7 +334,11 @@ describe("security policies", () => {
       unreadable_keys: [],
     };
     await setPasswordPolicy(policy);
-    expect(ipc.invoke).toHaveBeenCalledWith("set_password_policy", { input: policy });
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "set_password_policy",
+      { input: policy },
+      { notifyOnError: false },
+    );
   });
 
   it("reads which stored password rules could not be read", async () => {
@@ -365,8 +369,10 @@ describe("security policies", () => {
     await expect(getLockoutPolicy()).rejects.toThrow();
     ipc.invoke.mockResolvedValueOnce(undefined);
     await setLockoutPolicy({ max_attempts: 6, lockout_minutes: 30, progressive: false });
-    expect(ipc.invoke).toHaveBeenLastCalledWith("set_lockout_policy", {
-      input: { max_attempts: 6, lockout_minutes: 30, progressive: false },
-    });
+    expect(ipc.invoke).toHaveBeenLastCalledWith(
+      "set_lockout_policy",
+      { input: { max_attempts: 6, lockout_minutes: 30, progressive: false } },
+      { notifyOnError: false },
+    );
   });
 });

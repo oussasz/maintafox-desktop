@@ -2,8 +2,8 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
-import { useStepUp } from "@/hooks/use-step-up";
-import { describeAppError } from "@/lib/app-error";
+import { useStepUp, isStepUpCancelled } from "@/hooks/use-step-up";
+import { appErrorReason } from "@/lib/app-error";
 import {
   getLockoutPolicy,
   getPasswordPolicy,
@@ -53,7 +53,8 @@ export function PasswordPolicyPanel() {
       // Reload: the server says whether the stored policy is readable again.
       await load();
     } catch (err) {
-      setError(describeAppError(err).title);
+      if (isStepUpCancelled(err)) return;
+      setError(appErrorReason(err));
     } finally {
       setSaving(false);
     }
@@ -222,7 +223,8 @@ export function LockoutPolicyPanel() {
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
-      setError(describeAppError(err).title);
+      if (isStepUpCancelled(err)) return;
+      setError(appErrorReason(err));
     } finally {
       setSaving(false);
     }

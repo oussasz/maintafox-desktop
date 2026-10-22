@@ -10,6 +10,7 @@ import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { toneOf } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import {
   listMyPersonnelCertifications,
   listMyTrainingSessions,
@@ -21,6 +22,7 @@ import { CERT_READINESS_TONE } from "./qualification-tones";
 
 export function MyQualificationsPanel() {
   const { t } = useTranslation("training");
+  const { formatDate } = useFormatters();
   const [certs, setCerts] = useState<PersonnelCertification[]>([]);
   const [sessions, setSessions] = useState<TrainingAttendance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,7 +74,7 @@ export function MyQualificationsPanel() {
                 </span>
                 <span className="ml-2 text-xs text-text-muted">
                   {c.expires_at
-                    ? t("mine.expiresOn", { date: c.expires_at.slice(0, 10) })
+                    ? t("mine.expiresOn", { date: formatDate(c.expires_at) })
                     : t("sheet.noExpiry")}
                 </span>
               </span>
@@ -97,7 +99,7 @@ export function MyQualificationsPanel() {
             >
               <span className="text-text-primary">
                 {s.completed_at
-                  ? t("mine.completedOn", { date: s.completed_at.slice(0, 10) })
+                  ? t("mine.completedOn", { date: formatDate(s.completed_at) })
                   : t("mine.notCompleted")}
                 {s.score != null ? ` · ${t("mine.score", { score: s.score })}` : ""}
               </span>

@@ -252,14 +252,16 @@
     "profile": "My Profile",
     "notifications": "Notifications",
     "general": "General",
-    "security": "Security & Logs",
+    "security": "Security",
     "backup": "Backup & Ops",
     "integrations": "System & Sync",
+    "activity": "Activity log",
     "profileHint": "Account details, password, PIN, trusted devices, and session history.",
     "notificationsHint": "Inbox, acknowledgements, snoozes, and per-category preferences.",
     "generalHint": "Language, currency and fiscal year, work orders, reliability, printed document header. Each setting shows its shipped value, who may change it and its history.",
-    "securityHint": "Password policy, session policy, activity feed, and audit log.",
-    "integrationsHint": "Sync status, license, connections, and diagnostics."
+    "securityHint": "Password and session policy.",
+    "integrationsHint": "Sync status, license, connections, and diagnostics.",
+    "activityHint": "What was done in the application, by whom and when, and the audit log."
   },
   "backupOps": {
     "title": "Backup operations",
