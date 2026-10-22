@@ -22,7 +22,7 @@ import frErrors from "./fr/errors.json";
 import frFormats from "./fr/formats.json";
 import frShell from "./fr/shell.json";
 import frValidation from "./fr/validation.json";
-import { EAGER_NAMESPACES, type SupportedLocale } from "./namespaces";
+import { EAGER_NAMESPACES, ISSUE_NAMESPACES, type SupportedLocale } from "./namespaces";
 
 // Vite-optimised glob import for lazy module namespaces.
 // Using import.meta.glob guarantees Vite pre-discovers every locale JSON so
@@ -60,11 +60,21 @@ export const FALLBACK_LOCALE: SupportedLocale = "en";
 // Initialize once (idempotent — safe to call multiple times).
 let initialized = false;
 
+/**
+ * Resolves once the namespaces holding the coded refusal texts are loaded (`ISSUE_NAMESPACES`).
+ * Started by `initI18n`; a refusal translated before it resolves falls back to the backend text.
+ */
+let issueNamespacesPromise: Promise<void> = Promise.resolve();
+
+export function issueNamespacesReady(): Promise<void> {
+  return issueNamespacesPromise;
+}
+
 export function initI18n(): void {
   if (initialized) return;
   initialized = true;
 
-  void i18n
+  const ready = i18n
     .use(initReactI18next)
     // Lazy-loads module namespaces on demand via the Vite glob map.
     .use(
@@ -106,6 +116,10 @@ export function initI18n(): void {
       // fr-DZ → fr, en-US → en
       load: "languageOnly",
     });
+  issueNamespacesPromise = ready
+    .then(() => i18n.loadNamespaces([...ISSUE_NAMESPACES]))
+    .then(() => undefined)
+    .catch(() => undefined);
 
   // The page language follows the app language (spell-check, hyphenation, native date pickers).
   const syncDocumentLanguage = (lng: string) => {
