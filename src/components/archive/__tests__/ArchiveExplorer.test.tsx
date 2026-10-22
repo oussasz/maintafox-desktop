@@ -255,6 +255,10 @@ describe("ArchiveExplorer", () => {
     expect(screen.queryByText("bulk.selected")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "explorer.selectAll" }));
     expect(await screen.findByText("bulk.selected")).toBeInTheDocument();
+    // Every row of the page is ticked, not just one.
+    const rows = screen.getAllByRole("checkbox", { name: /^explorer\.selectRecord/ });
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) expect(row).toBeChecked();
     fireEvent.click(screen.getByRole("checkbox", { name: "explorer.selectAll" }));
     await waitFor(() => expect(screen.queryByText("bulk.selected")).not.toBeInTheDocument());
   });
