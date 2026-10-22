@@ -129,6 +129,7 @@
     "more": "More actions"
   },
   "history": {
+    "noRightToOpen": "You do not have the right to open this item.",
     "loadError": "This equipment's history could not be loaded",
     "partial": "The {{count}} most recent events are shown; older events may exist.",
     "loadOlder": "Load older events",

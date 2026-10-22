@@ -1061,7 +1061,13 @@
         "REVIEW": "À revoir",
         "INSUFFICIENT_DATA": "Données insuffisantes",
         "insufficientData": "Historique de coûts insuffisant pour recommander réparation ou remplacement.",
-        "reasons": {}
+        "reasons": {
+          "MISSING_REPAIR_COST": "Coût de réparation inconnu.",
+          "MISSING_REPLACEMENT_COST": "Coût de remplacement inconnu.",
+          "RATIO_NEAR_THRESHOLD": "Le rapport réparation/remplacement est proche du seuil : à revoir.",
+          "REPAIR_COST_FROM_HISTORY_AVG": "Coût de réparation estimé d'après la moyenne des réparations précédentes.",
+          "REPLACEMENT_COST_PROVISIONAL": "Coût de remplacement provisoire (valorisation peu fiable)."
+        }
       },
       "history": {
         "repairCount": "Réparations antérieures",
