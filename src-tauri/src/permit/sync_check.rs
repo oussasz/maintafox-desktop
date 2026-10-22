@@ -1433,13 +1433,18 @@ pub(crate) async fn apply_group(
             ApplyOutcome::Applied | ApplyOutcome::Unchanged => {}
             // A child that waits (a row it needs has not arrived) makes the whole group wait: rolled
             // back, retried with the next rows applied.
-            ApplyOutcome::Deferred { code, message } => {
+            ApplyOutcome::Deferred {
+                code,
+                message,
+                waits_for,
+            } => {
                 return Ok(Some(ApplyOutcome::Deferred {
                     code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
                     message: format!(
                         "{} {} received with it waits ({code}: {message})",
                         row.entity_type, item.entity_sync_id
                     ),
+                    waits_for,
                 }));
             }
             ApplyOutcome::Conflict { code, message } => {

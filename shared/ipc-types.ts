@@ -10518,8 +10518,59 @@ export interface SyncConflictRecord {
   row_version: number;
   local_row_version: number | null;
   inbound_row_version: number | null;
+  /** The error or rule text recorded when the conflict was found (technical details). */
+  detail_message: string | null;
+  /** That text as a coded reason, for a row the database refused (`sync::apply_reason`). */
+  reason: SyncConflictReason | null;
   created_at: string;
   updated_at: string;
+}
+
+/** `UNIQUE_TAKEN` | `REQUIRED_MISSING` | `LINK_MISSING` | `RULE_REFUSED` | `INVALID_DATA` | `TECHNICAL`. */
+export interface SyncConflictReason {
+  code: string;
+  table: string | null;
+  columns: string[];
+  rule: string | null;
+}
+
+/**
+ * What a waiting received row waits for (`sync::waiting`): `conflict` (an open conflict, by id),
+ * `refused`, `not_received`, `ready` (applied at the next synchronisation), `chain_unresolved` (a
+ * chain of waiting rows that loops or is too long) or `own_reason` (`reason_code`: an app update, a
+ * right, a person…).
+ */
+export interface SyncWaitTarget {
+  state: string;
+  conflict_id: number | null;
+  entity_type: string | null;
+  entity_sync_id: string | null;
+  reason_code: string | null;
+}
+
+export interface SyncWaitingInboxRow {
+  inbox_id: number;
+  entity_type: string;
+  entity_sync_id: string;
+  payload_json: string;
+  reason_code: string | null;
+  detail_message: string | null;
+  waits_for_entity_type: string | null;
+  waits_for_sync_id: string | null;
+  target: SyncWaitTarget;
+  attempt_count: number;
+  last_attempt_at: string | null;
+}
+
+export interface SyncWaitingGroup {
+  target: SyncWaitTarget;
+  count: number;
+}
+
+export interface SyncWaitingInboxReport {
+  total: number;
+  groups: SyncWaitingGroup[];
+  rows: SyncWaitingInboxRow[];
 }
 
 export interface ResolveSyncConflictInput {

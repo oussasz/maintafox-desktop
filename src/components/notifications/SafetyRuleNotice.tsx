@@ -4,7 +4,7 @@
 // acknowledges it (CMMS Advisor, as the recovery-code notice); the acknowledgement is audited by the
 // backend. It cannot be archived, snoozed or deleted before.
 
-import { ShieldAlert } from "lucide-react";
+import { ClipboardList, ShieldAlert } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -24,13 +24,21 @@ import {
 export const SAFETY_NOTICE_CATEGORY = "safety_rule_received";
 /**
  * Every category of a persistent safety notice (`settings::received_notice::SAFETY_NOTICE_CATEGORIES`):
- * a safety rule changed on another PC, and a lock taken off by a forced removal (shown to the
- * permit close-right holders of the site). Each recipient acknowledges their own.
+ * a safety rule changed on another PC, a lock taken off by a forced removal (shown to the
+ * permit close-right holders of the site), and two concurrent versions of a PM plan (shown to the
+ * PM planners). Each recipient acknowledges their own.
  */
 export const SAFETY_NOTICE_CATEGORIES: ReadonlySet<string> = new Set([
   SAFETY_NOTICE_CATEGORY,
   "loto_forced_removal",
+  "pm_concurrent_versions",
 ]);
+/** Message keys of the PM planning notices (not safety): shown with a planning icon. */
+const PM_NOTICE_KEYS: ReadonlySet<string> = new Set([
+  "pm_concurrent_versions",
+  "pm_duplicate_occurrence",
+]);
+
 /** Sent when a notice is acknowledged elsewhere (the inbox): the banner reads its list again. */
 export const SAFETY_NOTICE_ACKNOWLEDGED_EVENT = "maintafox:safety-notice-acknowledged";
 
@@ -115,7 +123,11 @@ export function SafetyRuleNotice({ sessionUserId, className }: SafetyRuleNoticeP
               mfTone.warning.text,
             )}
           >
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            {notice.message_key && PM_NOTICE_KEYS.has(notice.message_key) ? (
+              <ClipboardList className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            ) : (
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            )}
             <div className="flex-1 space-y-1">
               <p id={titleId} className="font-semibold">
                 {text.title}

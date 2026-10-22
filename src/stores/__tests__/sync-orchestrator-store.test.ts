@@ -125,6 +125,8 @@ function makeConflict(overrides: Partial<SyncConflictRecord> = {}): SyncConflict
     row_version: 1,
     local_row_version: 3,
     inbound_row_version: 4,
+    detail_message: null,
+    reason: null,
     created_at: "2026-10-12T07:00:00Z",
     updated_at: "2026-10-12T07:00:00Z",
     ...overrides,

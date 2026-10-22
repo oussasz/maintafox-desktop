@@ -163,7 +163,7 @@ async fn self_approval_refusal(db: &DatabaseConnection, rule: SelfApprovalRule, 
 }
 
 const DECISION_SELECT: &str = "SELECT d.*, e.asset_id_code AS asset_code, p.code AS plan_code,
-        v.version_no AS linked_version_no, wo.code AS linked_wo_code,
+        (SELECT n.display_no FROM pm_plan_version_numbers n WHERE n.id = v.id) AS linked_version_no, wo.code AS linked_wo_code,
         COALESCE(ap.display_name, ap.username) AS approver_name,
         COALESCE(pb.display_name, pb.username) AS proposed_by_name,
         COALESCE(db.display_name, db.username) AS decided_by_name
@@ -413,7 +413,7 @@ pub async fn create_decision(
                     DbBackend::Sqlite,
                     "SELECT p.strategy_type, COALESCE(cv.trigger_definition_json,
                         (SELECT v.trigger_definition_json FROM pm_plan_versions v WHERE v.pm_plan_id = p.id
-                         ORDER BY v.version_no DESC LIMIT 1)) AS trig
+                         ORDER BY v.version_no DESC, v.entity_sync_id DESC LIMIT 1)) AS trig
                      FROM pm_plans p LEFT JOIN pm_plan_versions cv ON cv.id = p.current_version_id WHERE p.id = ?",
                     [plan_id.into()],
                 ))

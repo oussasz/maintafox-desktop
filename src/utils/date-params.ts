@@ -24,6 +24,9 @@ export const DATE_TIME_PARAMS: ReadonlySet<string> = new Set([
   "removed_at",
   // When a location's current shortage began (stock to reconcile, notifications).
   "opened_at",
+  // When two concurrent versions of a PM plan were created (notifications).
+  "version_created_at",
+  "other_created_at",
 ]);
 
 /**
