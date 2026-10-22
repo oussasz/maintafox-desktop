@@ -10,7 +10,12 @@ import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 import { toErrorMessage } from "@/utils/errors";
 
 /** Commands invoked during bootstrap where a toast would be noisy or misleading. */
-const SILENT_IPC_COMMANDS = new Set(["health_check", "get_app_info", "get_task_status"]);
+const SILENT_IPC_COMMANDS = new Set([
+  "health_check",
+  "get_app_info",
+  "get_task_status",
+  "set_window_mode",
+]);
 
 type AuthLockMode = "session" | "permission" | "unknown";
 
@@ -83,16 +88,47 @@ async function refreshSessionStoreSilent(): Promise<{
     const { getSessionInfo } = await import("@/services/auth-service");
     const { useSessionStore } = await import("@/store/session-store");
     const info = await getSessionInfo();
-    useSessionStore.setState({
-      info,
-      isLoading: false,
-      error: null,
-      errorCode: null,
-      hasBootstrapped: true,
-    });
+    useSessionStore.getState().applySessionInfo(info);
     return { is_authenticated: info.is_authenticated, is_locked: info.is_locked };
   } catch {
     return null;
+  }
+}
+
+/** The error says the session is lost (sign in again), not a permission or data problem. */
+export function isLostSessionError(err: unknown): boolean {
+  return classifyAuthLock(extractIpcErrorMeta(err).code) === "session";
+}
+
+/** Opens the sign-in-again dialog for a command refused because the session is lost. */
+export function openSignInAgain(cmd: string, err: unknown): void {
+  const { code, rawMsg } = extractIpcErrorMeta(err);
+  useAuthInterceptorStore.getState().openFromAuthFailure({
+    mode: "session",
+    failure: { atMs: Date.now(), command: cmd, code: code || null, message: rawMsg },
+  });
+}
+
+/** A command was refused as unauthenticated while the session is valid: screens reload once. */
+async function noteAuthRace(): Promise<void> {
+  const { useSessionStore } = await import("@/store/session-store");
+  useSessionStore.getState().noteAuthRace();
+}
+
+/**
+ * For calls made with `invokeSilent` (no lock, no toast) whose failure leaves a screen empty, such
+ * as the permission list: on a session error, re-read the session; when it is in fact valid (an
+ * authentication race), raise the session generation once so the screens load again. A session
+ * really lost shows as such through the refreshed session.
+ */
+export async function confirmSessionAfterSilentFailure(err: unknown): Promise<void> {
+  const { code } = extractIpcErrorMeta(err);
+  if (!isSessionConfirmCode(code)) {
+    return;
+  }
+  const snapshot = await refreshSessionStoreSilent();
+  if (snapshot?.is_authenticated && !snapshot.is_locked) {
+    await noteAuthRace();
   }
 }
 
@@ -140,7 +176,8 @@ function handleAuthAndPermissionFailures(cmd: string, err: unknown): void {
       }
 
       if (snapshot.is_authenticated) {
-        // Transient race: session is still valid.
+        // Transient race: the session is still valid. Screens that failed load again (once).
+        await noteAuthRace();
         return;
       }
 

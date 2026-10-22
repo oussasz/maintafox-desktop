@@ -58,6 +58,8 @@ export const AssetSuggestionSchema = z.object({
 export const AssetPickerSuggestionsSchema = z.object({
   mode: z.string(),
   items: z.array(AssetSearchResultSchema),
+  total: z.number(),
+  complete: z.boolean(),
 });
 
 // ── Search command ────────────────────────────────────────────────────────────

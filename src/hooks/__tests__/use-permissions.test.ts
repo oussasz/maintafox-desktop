@@ -1,9 +1,10 @@
-import { renderHook, waitFor, act } from "@testing-library/react";
-import { createElement, type ReactNode } from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { type ReactNode, createElement } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PermissionProvider } from "@/contexts/PermissionContext";
 import { usePermissions } from "@/hooks/use-permissions";
+import type * as IpcInvoke from "@/lib/ipc-invoke";
 import { resetPermissionCacheForTests, writePermissionCache } from "@/lib/permission-cache";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -20,6 +21,12 @@ vi.mock("@/hooks/use-session", () => ({
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => vi.fn()),
+}));
+
+const mockConfirmSession = vi.fn(async (_err: unknown) => undefined);
+vi.mock("@/lib/ipc-invoke", async (importOriginal) => ({
+  ...(await importOriginal<typeof IpcInvoke>()),
+  confirmSessionAfterSilentFailure: (err: unknown) => mockConfirmSession(err),
 }));
 
 const MOCK_PERMISSIONS = [
@@ -86,6 +93,7 @@ describe("usePermissions", () => {
     resetPermissionCacheForTests();
     mockGetMyPermissions.mockReset();
     mockGetMyPermissions.mockResolvedValue(MOCK_PERMISSIONS);
+    mockConfirmSession.mockClear();
     mockSession.mockReturnValue(authenticatedSession());
   });
 
@@ -169,6 +177,26 @@ describe("usePermissions", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.permissions).toHaveLength(3);
     expect(result.current.can(P.EQ_VIEW)).toBe(true);
+  });
+
+  it("reloads after an AUTH error once a new session starts (F1)", async () => {
+    // Fresh start: no cache; the first load is refused (the session was not usable yet).
+    mockGetMyPermissions.mockRejectedValueOnce({
+      code: "AUTH_ERROR",
+      message: "Authentication error: Session expirée ou absente. Veuillez vous reconnecter.",
+    });
+    mockSession.mockReturnValue({ ...authenticatedSession(), sessionGeneration: 1 });
+    const { result, rerender } = renderHook(() => usePermissions(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.permissions).toHaveLength(0);
+    expect(mockConfirmSession).toHaveBeenCalledOnce();
+
+    // Signing in again (or an authentication race) raises the session generation: reload.
+    mockSession.mockReturnValue({ ...authenticatedSession(), sessionGeneration: 2 });
+    rerender();
+    await waitFor(() => expect(result.current.permissions).toHaveLength(3));
+    expect(result.current.can(P.ADM_USERS)).toBe(true);
+    expect(mockGetMyPermissions).toHaveBeenCalledTimes(2);
   });
 
   it("restores cached permissions after remount when reload fails", async () => {

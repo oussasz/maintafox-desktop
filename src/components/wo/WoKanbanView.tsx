@@ -37,8 +37,6 @@ const STATUS_TO_COLUMN: Record<string, string> = {
   in_progress: "executing",
   on_hold: "executing",
   completed: "completed",
-  closed: "closed",
-  cancelled: "cancelled",
   awaiting_approval: "planning",
   planned: "planning",
   ready_to_schedule: "ready",
@@ -56,9 +54,22 @@ const COLUMN_META: { id: string; labelKey: string; status: string }[] = [
   { id: "ready", labelKey: "kanban.columnReady", status: "ready" },
   { id: "executing", labelKey: "kanban.columnExecuting", status: "in_progress" },
   { id: "completed", labelKey: "kanban.columnCompleted", status: "completed" },
-  { id: "closed", labelKey: "kanban.columnClosed", status: "closed" },
-  { id: "cancelled", labelKey: "kanban.columnCancelled", status: "cancelled" },
 ];
+
+/**
+ * Closed and cancelled work orders have no lane: like the request board, the board shows the
+ * active stages and those two states live only in the archive section under it.
+ */
+const ARCHIVE_ONLY_STATUSES: readonly string[] = ["closed", "cancelled"];
+
+/** True when the status filter asks for nothing but archived work orders. */
+export function filtersArchiveOnly(statusFilter: readonly string[] | null | undefined): boolean {
+  return (
+    statusFilter != null &&
+    statusFilter.length > 0 &&
+    statusFilter.every((s) => ARCHIVE_ONLY_STATUSES.includes(s))
+  );
+}
 
 /** Cards read per lane and per "load more". */
 const LANE_PAGE_SIZE = 20;
@@ -175,6 +186,16 @@ export function WoKanbanView({ filter, reloadSignal, onCardClick }: WoKanbanView
     [onCardClick],
   );
 
+  if (filtersArchiveOnly(query.status_codes)) {
+    return (
+      <p
+        className="m-4 rounded-md border border-surface-border bg-surface-2 px-3 py-2 text-sm text-text-secondary"
+        data-testid="wo-kanban-archive-pointer"
+      >
+        {t("kanban.archiveOnlyNotice")}
+      </p>
+    );
+  }
   if (board.error != null) {
     return <ErrorState error={board.error} onRetry={reload} />;
   }

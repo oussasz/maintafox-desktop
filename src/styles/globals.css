@@ -176,6 +176,12 @@
 }
 
 @layer base {
+  /* WebView2 draws its own reveal/clear buttons in password fields; the app has its own eye toggle. */
+  input[type="password"]::-ms-reveal,
+  input[type="password"]::-ms-clear {
+    display: none;
+  }
+
   *,
   *::before,
   *::after {

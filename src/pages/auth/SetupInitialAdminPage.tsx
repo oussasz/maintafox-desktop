@@ -14,6 +14,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { ActivationStepper } from "@/components/auth/activation/ActivationStepper";
 import { formatLicenseDate } from "@/components/auth/activation/OrganizationLicenseCard";
 import { AuthField } from "@/components/auth/shell/AuthField";
 import { AuthAlert, AuthButton } from "@/components/auth/shell/AuthPrimitives";
@@ -23,6 +24,7 @@ import { useProductLicenseGateRefresh } from "@/contexts/product-license-gate-co
 import { mfAuth, mfAuthAlert } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { appErrorText, describeAppError } from "@/lib/app-error";
+import { editionLabel } from "@/lib/edition-label";
 import { cn } from "@/lib/utils";
 import {
   type ActivationLicenseMetadata,
@@ -196,6 +198,17 @@ export function SetupInitialAdminPage() {
 
   return (
     <AuthShell width="sm">
+      <div className="mb-6">
+        <ActivationStepper
+          current="finish"
+          progressLabel={t("activation.stepOf", { current: 3, total: 3 })}
+          labels={{
+            validate: t("activation.steps.validate"),
+            activate: t("activation.steps.activate"),
+            finish: t("activation.steps.finish"),
+          }}
+        />
+      </div>
       {canCreate ? (
         <>
           <h1 className={mfAuth.title}>{t("setupAdmin.title")}</h1>
@@ -225,7 +238,7 @@ export function SetupInitialAdminPage() {
       {showLicenseMeta ? (
         <dl className={cn("mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5", mfAuthAlert.info)}>
           <dt className="font-medium">{t("login.licenseDetails.tier")}</dt>
-          <dd>{licenseMeta?.license_tier ?? na}</dd>
+          <dd>{editionLabel(licenseMeta?.license_tier) ?? na}</dd>
           <dt className="font-medium">{t("login.licenseDetails.slotLimit")}</dt>
           <dd>{licenseMeta?.device_limit ?? na}</dd>
           <dt className="font-medium">{t("login.licenseDetails.expiry")}</dt>

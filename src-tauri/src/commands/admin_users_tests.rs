@@ -1425,25 +1425,29 @@ async fn sessions_older_than_the_password_end_even_when_it_changed_on_another_de
     let state = AppState::new(db.clone());
     let worker = insert_user(&db, "roaming_worker").await;
     let user = caller_for(worker, "roaming_worker");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = '2026-01-05T08:00:00Z' WHERE id = ?",
+        [worker.into()],
+    ))
+    .await
+    .unwrap();
     let session_id = open_session(&state, &db, worker, "roaming_worker").await;
     enforce_stored_session(&db, &state.session, &user, Some(&session_id))
         .await
         .expect("open session passes");
 
-    // A change within the clock tolerance of the session start does not end it.
+    // The same date received again with another precision and offset does not end it.
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
-        [
-            (chrono::Utc::now() + chrono::Duration::seconds(60)).to_rfc3339().into(),
-            worker.into(),
-        ],
+        "UPDATE user_accounts SET password_changed_at = '2026-01-05T09:00:00.000+01:00' WHERE id = ?",
+        [worker.into()],
     ))
     .await
     .unwrap();
     enforce_stored_session(&db, &state.session, &user, Some(&session_id))
         .await
-        .expect("within the tolerance");
+        .expect("the same date");
 
     // An administrator reset on another device arrives by sync, ten minutes after the session
     // started: new password, change required.
@@ -2016,4 +2020,189 @@ async fn a_user_created_on_a_site_gets_only_that_site_and_administrators_stay_pl
         format!("{emergency:?}").contains("SCOPE_ADMIN_ROLE_PLANT_WIDE"),
         "{emergency:?}"
     );
+}
+
+/// Audit rows of a session-check event for a session (`action_code`, `details_json`).
+async fn session_audit(db: &DatabaseConnection, action: &str, session_id: &str) -> Vec<String> {
+    db.query_all(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT details_json FROM audit_events WHERE action_code = ? AND target_id = ? ORDER BY id",
+        [action.into(), session_id.into()],
+    ))
+    .await
+    .expect("audit rows")
+    .iter()
+    .map(|r| {
+        r.try_get::<Option<String>>("", "details_json")
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    })
+    .collect()
+}
+
+/// F1 (owner test of 0.9.1): a password date later than this device's clock (written while a
+/// clock ran ahead) closed every new session at once, so signing in again never helped. It is now
+/// a clock anomaly, recorded once; a real change after sign-in still ends the session.
+#[tokio::test]
+async fn a_password_date_ahead_of_the_clock_keeps_new_sessions_and_a_real_change_still_ends_them() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "clock_worker").await;
+    let user = caller_for(worker, "clock_worker");
+    let ahead = (chrono::Utc::now() + chrono::Duration::days(3)).to_rfc3339();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [ahead.into(), worker.into()],
+    ))
+    .await
+    .unwrap();
+
+    let session_id = open_session(&state, &db, worker, "clock_worker").await;
+    for _ in 0..3 {
+        enforce_stored_session(&db, &state.session, &user, Some(&session_id))
+            .await
+            .expect("a fresh session survives a password date ahead of the clock");
+    }
+    let anomalies = session_audit(&db, crate::audit::event_type::SESSION_CLOCK_ANOMALY, &session_id).await;
+    assert_eq!(anomalies.len(), 1, "recorded once per session: {anomalies:?}");
+
+    // A real change arrives (on another device, by sync): the stored value changes.
+    let changed = (chrono::Utc::now() + chrono::Duration::days(3) + chrono::Duration::hours(1)).to_rfc3339();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [changed.into(), worker.into()],
+    ))
+    .await
+    .unwrap();
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+    assert!(state.session.read().await.current.is_none());
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+            vec![session_id.clone().into()],
+        )
+        .await,
+        1
+    );
+    let closed = session_audit(&db, crate::audit::event_type::SESSION_CLOSED, &session_id).await;
+    assert_eq!(closed.len(), 1, "{closed:?}");
+    assert!(closed[0].contains("password_changed"), "{closed:?}");
+}
+
+/// A change made soon after sign-in (within the clock tolerance of the session start) ends the
+/// session once the session has read the account's date: the value changed, whatever the clocks.
+#[tokio::test]
+async fn a_password_change_soon_after_sign_in_ends_the_session() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "quick_change").await;
+    let user = caller_for(worker, "quick_change");
+    let session_id = open_session(&state, &db, worker, "quick_change").await;
+    enforce_stored_session(&db, &state.session, &user, Some(&session_id))
+        .await
+        .expect("open session passes");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [chrono::Utc::now().to_rfc3339().into(), worker.into()],
+    ))
+    .await
+    .unwrap();
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+}
+
+/// Every end of a session by the stored-state check is audited with its reason.
+#[tokio::test]
+async fn a_closed_session_is_audited_with_its_reason() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "revoked_reason").await;
+    let user = caller_for(worker, "revoked_reason");
+    let session_id = open_session(&state, &db, worker, "revoked_reason").await;
+    crate::auth::session_manager::revoke_user_sessions(&db, worker)
+        .await
+        .unwrap();
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+    let closed = session_audit(&db, crate::audit::event_type::SESSION_CLOSED, &session_id).await;
+    assert_eq!(closed.len(), 1, "{closed:?}");
+    assert!(closed[0].contains("\"revoked\""), "{closed:?}");
+}
+
+/// Sign-in records the session's reference password date: a change made elsewhere right after
+/// sign-in (before any command) ends the session even when that date is ahead of this clock.
+#[tokio::test]
+async fn sign_in_records_the_password_date_so_an_early_change_still_ends_the_session() {
+    use crate::auth::session_manager::{enforce_stored_session, store_session_or_clear};
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "early_change").await;
+    let user = caller_for(worker, "early_change");
+    let session_id = {
+        let mut sm = state.session.write().await;
+        let id = sm
+            .create_session(caller_for(worker, "early_change"))
+            .session_db_id
+            .clone();
+        store_session_or_clear(
+            &db,
+            &mut sm,
+            i32::try_from(worker).unwrap(),
+            &id,
+            &(chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339(),
+        )
+        .await
+        .expect("sign-in stored");
+        id
+    };
+    // Changed on a device whose clock runs an hour ahead, before this session's first command.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [
+            (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339().into(),
+            worker.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+}
+
+/// Commands run at once at a session's first check (the dashboard): one reference, one audit row.
+#[tokio::test]
+async fn simultaneous_first_checks_record_one_clock_anomaly() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "busy_dashboard").await;
+    let user = caller_for(worker, "busy_dashboard");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [
+            (chrono::Utc::now() + chrono::Duration::days(2)).to_rfc3339().into(),
+            worker.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+    let session_id = open_session(&state, &db, worker, "busy_dashboard").await;
+    let check = || enforce_stored_session(&db, &state.session, &user, Some(&session_id));
+    let (a, b, c, d, e, f) = tokio::join!(check(), check(), check(), check(), check(), check());
+    for result in [a, b, c, d, e, f] {
+        result.expect("kept");
+    }
+    let anomalies = session_audit(&db, crate::audit::event_type::SESSION_CLOCK_ANOMALY, &session_id).await;
+    assert_eq!(anomalies.len(), 1, "{anomalies:?}");
 }
