@@ -31,6 +31,7 @@ import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { FormField } from "@/components/ui/FormField";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DateField } from "@/components/ui/date-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
@@ -554,13 +555,19 @@ export function AssetCreateForm() {
             label={t("rams.utilization")}
             error={fieldError(errors.rams_utilization_factor?.message)}
           >
-            <Input
+            <DecimalField
               id="rams_utilization_factor"
-              type="number"
+              decimals={2}
               min={0.01}
               max={1.5}
-              step={0.01}
-              {...register("rams_utilization_factor", { valueAsNumber: true })}
+              value={
+                Number.isFinite(watch("rams_utilization_factor"))
+                  ? (watch("rams_utilization_factor") ?? null)
+                  : null
+              }
+              onValueChange={(v) =>
+                setValue("rams_utilization_factor", v ?? Number.NaN, { shouldValidate: true })
+              }
             />
             <p className="mt-1 text-[11px] text-text-muted">
               {t("createForm.fields.utilizationHint")}
