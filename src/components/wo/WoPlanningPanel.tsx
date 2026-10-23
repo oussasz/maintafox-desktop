@@ -74,7 +74,11 @@ import type {
 import { P } from "@shared/rbac/permissions.generated";
 
 import { WoPermitRequirementField } from "./WoPermitRequirementField";
-import { WoPermitRuleNote, permitRuleFlagActive } from "./WoPermitRuleNote";
+import {
+  WoPermitRuleNote,
+  permitFromSafetyRequestOnly,
+  permitRuleFlagActive,
+} from "./WoPermitRuleNote";
 import { WoShiftSelect } from "./WoShiftSelect";
 import { WoShutdownRequirementField } from "./WoShutdownRequirementField";
 import { useWoAccess } from "./WoSiteScope";
@@ -723,8 +727,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     const handleMoveToReady = handleSavePlan;
 
-    // A flag set by a plant rule is not an edit of the work order: it is cleared with the
-    // permit-issue right and a reason (WoPermitRuleNote), so the box stays locked meanwhile.
+    // A flag set by a plant rule, or a requirement carried from a request flagged "sécurité", is not
+    // an edit of the work order: it is cleared with the permit-issue right and a reason
+    // (WoPermitRuleNote), so the box stays locked meanwhile.
     const ruleFlagActive = permitRuleFlagActive(wo);
     const permitRequirementEditable =
       canEdit &&
@@ -737,10 +742,15 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       : !PERMIT_REQUIREMENT_EDITABLE_STATUSES.has(statusCode)
         ? t("permitRequirement.frozen")
         : ruleFlagActive
-          ? t("permitRule.checkboxLocked", { rule: wo.permit_rule_code ?? "" })
+          ? wo.permit_rule_code != null
+            ? t("permitRule.checkboxLocked", { rule: wo.permit_rule_code })
+            : t("permitRule.clearHint")
           : null;
+    // The safety request's note (WoPermitRuleNote) already names that origin.
     const permitOriginHint =
-      wo.source_di_id != null && wo.requires_permit ? t("permitRequirement.fromSafetyDi") : null;
+      wo.source_di_id != null && wo.requires_permit && !permitFromSafetyRequestOnly(wo)
+        ? t("permitRequirement.fromSafetyDi")
+        : null;
 
     /** Saved immediately: the start gate reads it, so it must not wait for "Save plan". */
     const handlePermitRequirementChange = useCallback(

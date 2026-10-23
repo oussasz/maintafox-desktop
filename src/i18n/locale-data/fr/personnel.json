@@ -154,11 +154,28 @@
       "pendingDi": "DI en attente",
       "di30d": "DI sur 30 jours"
     },
+    "workHistory": {
+      "module": { "wo": "OT", "di": "DI" },
+      "role": {
+        "primary_responsible": "Responsable principal",
+        "intervener": "Intervenant",
+        "submitter": "Demandeur",
+        "reviewer": "Examinateur",
+        "participant": "Participant"
+      }
+    },
+    "authorizationType": {
+      "permit_issuer": "Autorisation de permis",
+      "isolation_authority": "Autorité d'isolement",
+      "inspector": "Inspecteur",
+      "warehouse_signoff": "Validation magasin"
+    },
     "rates": {
       "effectiveFrom": "Effective au",
       "labor": "Taux horaire",
       "overtime": "Taux heures sup.",
       "source": "Source",
+      "sourceType": { "manual": "Saisie manuelle" },
       "active": "Actif",
       "empty": "Aucune grille de taux. Ajoutez un taux horaire pour le Planning et le coût main-d'œuvre OT.",
       "addTitle": "Ajouter une grille de taux",
@@ -206,15 +223,29 @@
       "editKeepsCurrent": "La photo actuelle est conservée. Choisissez une image pour la remplacer.",
       "label": "Photo de profil",
       "hint": "Choisissez une photo (JPEG/PNG, max 5 Mo)",
-      "error": "Échec du téléversement de la photo"
+      "error": "Échec du téléversement de la photo",
+      "empty": "Pas encore de photo",
+      "add": "Ajouter une photo",
+      "primary": "Principale",
+      "remove": "Retirer"
+    },
+    "supervisor": {
+      "placeholder": "Rechercher un supérieur…"
+    },
+    "notes": {
+      "placeholder": "Remarques complémentaires…"
     },
     "skill": {
+      "placeholder": "Choisir une compétence…",
+      "empty": "Aucune compétence ajoutée. Le choix d'un poste préremplit selon son profil d'exigences.",
       "add": "Ajouter une compétence",
       "remove": "Supprimer",
       "proficiency": "Niveau",
       "fromPosition": "Prérempli depuis les exigences du poste"
     },
     "cert": {
+      "placeholder": "Choisir une certification…",
+      "empty": "Aucune certification ajoutée.",
       "add": "Ajouter une certification",
       "remove": "Supprimer",
       "issuedAt": "Émise le",
@@ -224,6 +255,8 @@
       "fromPosition": "Prérempli depuis les exigences du poste"
     },
     "account": {
+      "label": "Créer un compte MaintaFox",
+      "hint": "Ouvre la création de compte utilisateur après l'enregistrement.",
       "checkbox": "Créer un compte utilisateur MaintaFox pour cette personne",
       "locked": "Le compte de cette personne sera lié à l'enregistrement que vous venez de créer"
     },
@@ -396,7 +429,8 @@
       "active": "Actif",
       "category": "Catégorie",
       "code": "Code",
-      "name": "Nom"
+      "name": "Nom",
+      "namePlaceholder": "ex. Technicien de maintenance senior"
     },
     "section": {
       "certs": "Certifications requises",

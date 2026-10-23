@@ -260,8 +260,17 @@ export function LicenseEnforcementPanel() {
                       <span className="text-text-secondary">
                         {formatDateTime(trace.occurred_at)}
                       </span>
-                      <span>{trace.event_type}</span>
-                      <span>{trace.outcome}</span>
+                      {/* Internal event tags and outcomes, shown as plain words; an unknown one as a generic label. */}
+                      <span>
+                        {t(`license.traceEvent.${trace.event_type.replace(/\./g, "_")}`, {
+                          defaultValue: t("license.traceEvent.other"),
+                        })}
+                      </span>
+                      <span>
+                        {t(`license.traceOutcome.${trace.outcome}`, {
+                          defaultValue: t("license.traceOutcome.other"),
+                        })}
+                      </span>
                     </li>
                   ))}
                 </ul>

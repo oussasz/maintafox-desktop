@@ -118,7 +118,7 @@ pub async fn resolve_targets(
             .to_string(),
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Unsupported PM asset scope type '{other}'."
+                "GATE_PM_SCOPE_TYPE_INVALID: Unsupported PM asset scope type '{other}'."
             )]))
         }
     };
@@ -402,7 +402,7 @@ async fn emit_occurrence(
 
 fn parse_ts(raw: &str, field: &str) -> AppResult<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(raw)
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be RFC3339.")]))?
+        .map_err(|_| AppError::ValidationFailed(vec![format!("GATE_PM_DATE_INVALID: {field} must be RFC3339.")]))?
         .with_timezone(&Utc))
 }
 
@@ -524,7 +524,7 @@ async fn generate_meter(
     let Some(meter) = resolve_meter(db, trigger, target.equipment_id).await? else {
         if trigger.get("asset_meter_id").and_then(Value::as_i64).unwrap_or(0) > 0 {
             return Err(AppError::ValidationFailed(vec![
-                "Meter trigger references unknown or inactive asset meter.".to_string(),
+                "GATE_PM_METER_UNKNOWN: Meter trigger references unknown or inactive asset meter.".to_string(),
             ]));
         }
         // The asset has no meter of that type: nothing can be due on it.
@@ -551,7 +551,8 @@ async fn generate_meter(
         }
         (None, None) => {
             return Err(AppError::ValidationFailed(vec![
-                "meter trigger requires threshold_value or interval_value > 0.".to_string(),
+                "GATE_PM_METER_INTERVAL_REQUIRED: meter trigger requires threshold_value or interval_value > 0."
+                    .to_string(),
             ]))
         }
     };
@@ -629,7 +630,7 @@ async fn apply_meter_first(
 ) -> AppResult<()> {
     let Some(interval) = spec.get("interval_value").and_then(Value::as_f64).filter(|v| *v > 0.0) else {
         return Err(AppError::ValidationFailed(vec![
-            "meter block requires interval_value > 0.".to_string(),
+            "GATE_PM_METER_INTERVAL_REQUIRED: meter block requires interval_value > 0.".to_string(),
         ]));
     };
     let Some(meter) = resolve_meter(db, spec, target.equipment_id).await? else {
@@ -764,7 +765,7 @@ async fn generate_on_demand(
         .to_uppercase();
     if code.is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{} trigger requires {key}.",
+            "GATE_PM_TRIGGER_FIELD_REQUIRED: {} trigger requires {key}.",
             plan.strategy
         )]));
     }
@@ -868,11 +869,14 @@ pub async fn generate(
         let scope_type: String = row.try_get("", "asset_scope_type")?;
         let scope_id: Option<i64> = row.try_get("", "asset_scope_id")?;
         let trigger_json: String = row.try_get("", "trigger_definition_json")?;
-        let trigger_value = serde_json::from_str::<Value>(&trigger_json)
-            .map_err(|_| AppError::ValidationFailed(vec!["trigger_definition_json must be valid JSON.".to_string()]))?;
+        let trigger_value = serde_json::from_str::<Value>(&trigger_json).map_err(|_| {
+            AppError::ValidationFailed(vec![
+                "GATE_PM_DEFINITION_INVALID: trigger_definition_json must be valid JSON.".to_string(),
+            ])
+        })?;
         let Some(trigger) = trigger_value.as_object() else {
             return Err(AppError::ValidationFailed(vec![
-                "trigger_definition_json must be a JSON object.".to_string(),
+                "GATE_PM_DEFINITION_INVALID: trigger_definition_json must be a JSON object.".to_string(),
             ]));
         };
         let tolerance = parse_tolerance(trigger)?;
@@ -927,7 +931,7 @@ pub async fn generate(
                 }
                 other => {
                     return Err(AppError::ValidationFailed(vec![format!(
-                        "Unsupported PM strategy type '{other}'."
+                        "GATE_PM_STRATEGY_INVALID: Unsupported PM strategy type '{other}'."
                     )]));
                 }
             }

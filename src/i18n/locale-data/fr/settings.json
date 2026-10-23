@@ -403,6 +403,25 @@
     "edition": "Édition {{edition}}",
     "pendingWrites": "Modifications en attente d'envoi :",
     "lastAction": "Dernière action d'administration :",
+    "traceEvent": {
+      "activation_applied": "Activation appliquée",
+      "activation_contract_applied": "Contrat d'activation appliqué",
+      "activation_revocation_applied": "Révocation d'activation appliquée",
+      "activation_secret_rotated": "Secret de liaison renouvelé",
+      "activation_rebind_requested": "Nouvelle liaison demandée",
+      "entitlement_envelope_applied": "Droits de licence reçus",
+      "license_admin_action_applied": "Action d'administration de licence appliquée",
+      "license_admin_action_reconciled": "Action d'administration de licence rapprochée",
+      "license_compromise_response_applied": "Réponse à une compromission appliquée",
+      "other": "Événement de licence"
+    },
+    "traceOutcome": {
+      "accepted": "accepté",
+      "applied": "appliqué",
+      "requested": "demandé",
+      "rejected": "rejeté",
+      "other": "résultat enregistré"
+    },
     "traces_one": "{{count}} événement de licence récent (détails techniques)",
     "traces_other": "{{count}} événements de licence récents (détails techniques)",
     "reason": "Motif",

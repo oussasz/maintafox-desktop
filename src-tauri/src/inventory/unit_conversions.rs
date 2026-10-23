@@ -318,7 +318,7 @@ async fn bump(
     if res.rows_affected() == 0 {
         get_unit_conversion(conn, id).await?;
         return Err(AppError::ValidationFailed(vec![
-            "The conversion was changed meanwhile; reload it.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: The conversion was changed meanwhile; reload it.".into(),
         ]));
     }
     Ok(())

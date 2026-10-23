@@ -98,7 +98,7 @@ async fn validate_migration_pair(
 ) -> AppResult<(domains::ReferenceDomain, values::ReferenceValue, values::ReferenceValue)> {
     if from_value_id == to_value_id {
         return Err(AppError::ValidationFailed(vec![
-            "La valeur source et la valeur cible doivent etre differentes.".into(),
+            "GATE_REF_MIGRATION_SAME_VALUE: La valeur source et la valeur cible doivent etre differentes.".into(),
         ]));
     }
 
@@ -107,19 +107,19 @@ async fn validate_migration_pair(
 
     if from.domain_id != domain_id || to.domain_id != domain_id {
         return Err(AppError::ValidationFailed(vec![
-            "Les valeurs source/cible doivent appartenir au domaine demandé.".into(),
+            "GATE_REF_MIGRATION_DOMAIN: Les valeurs source/cible doivent appartenir au domaine demandé.".into(),
         ]));
     }
 
     if from.domain_id != to.domain_id {
         return Err(AppError::ValidationFailed(vec![
-            "Les valeurs source et cible doivent appartenir au même domaine.".into(),
+            "GATE_REF_MIGRATION_DOMAIN: Les valeurs source et cible doivent appartenir au même domaine.".into(),
         ]));
     }
 
     if !to.value.is_active {
         return Err(AppError::ValidationFailed(vec![
-            "La valeur cible doit être active pour recevoir une migration.".into(),
+            "GATE_REF_MIGRATION_TARGET_INACTIVE: La valeur cible doit être active pour recevoir une migration.".into(),
         ]));
     }
 

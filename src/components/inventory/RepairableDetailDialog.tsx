@@ -17,6 +17,7 @@ import type { TimelineEntry, TimelineStepState } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -575,12 +576,12 @@ export function RepairableDetailDialog({
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="space-y-1">
                         <Label>{t("procurement.repairableDetail.fields.repairCost")}</Label>
-                        <Input
-                          type="number"
+                        <DecimalField
+                          decimals={2}
+                          fixed
                           min={0}
-                          step="0.01"
-                          value={closeRepairCost}
-                          onChange={(e) => setCloseRepairCost(e.target.value)}
+                          value={closeRepairCost.trim() === "" ? null : Number(closeRepairCost)}
+                          onValueChange={(v) => setCloseRepairCost(v == null ? "" : String(v))}
                         />
                       </div>
                       <div className="space-y-1">

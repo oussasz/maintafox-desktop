@@ -183,12 +183,32 @@ impl WoAction {
     }
 }
 
+/// Key of a status code in the `ot:status.*` labels (`in_progress` -> `inProgress`), sent as a
+/// refusal parameter so the screen can show the status label instead of the raw code.
+pub fn status_i18n_key(code: &str) -> String {
+    let mut out = String::with_capacity(code.len());
+    let mut upper = false;
+    for c in code.chars() {
+        if c == '_' {
+            upper = true;
+        } else if upper {
+            out.extend(c.to_uppercase());
+            upper = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 pub fn guard_wo_transition(from: &WoStatus, to: &WoStatus) -> Result<(), String> {
     if from.allowed_transitions().contains(to) {
         Ok(())
     } else {
         Err(format!(
-            "Illegal WO state transition: '{}' -> '{}'",
+            "GATE_WO_TRANSITION_ILLEGAL:from={},to={}: Illegal WO state transition: '{}' -> '{}'",
+            status_i18n_key(from.as_str()),
+            status_i18n_key(to.as_str()),
             from.as_str(),
             to.as_str()
         ))
@@ -200,7 +220,8 @@ pub fn assert_action_allowed(status: &WoStatus, action: WoAction) -> Result<(), 
         Ok(())
     } else {
         Err(format!(
-            "Action '{}' is not allowed in status '{}'.",
+            "GATE_WO_ACTION_NOT_ALLOWED:status={}: Action '{}' is not allowed in status '{}'.",
+            status_i18n_key(status.as_str()),
             action.as_str(),
             status.as_str()
         ))
@@ -218,6 +239,21 @@ mod tests {
         assert!(guard_wo_transition(&WoStatus::Ready, &WoStatus::InProgress).is_ok());
         assert!(guard_wo_transition(&WoStatus::Draft, &WoStatus::Ready).is_err());
         assert!(guard_wo_transition(&WoStatus::Planning, &WoStatus::InProgress).is_err());
+    }
+
+    #[test]
+    fn status_codes_map_to_label_keys() {
+        assert_eq!(status_i18n_key("in_progress"), "inProgress");
+        assert_eq!(status_i18n_key("on_hold"), "onHold");
+        assert_eq!(status_i18n_key("draft"), "draft");
+    }
+
+    #[test]
+    fn refusals_carry_codes_and_label_keys() {
+        let e = guard_wo_transition(&WoStatus::Draft, &WoStatus::Ready).unwrap_err();
+        assert!(e.starts_with("GATE_WO_TRANSITION_ILLEGAL:from=draft,to=ready:"));
+        let e = assert_action_allowed(&WoStatus::Planning, WoAction::Start).unwrap_err();
+        assert!(e.starts_with("GATE_WO_ACTION_NOT_ALLOWED:status=planning:"));
     }
 
     #[test]

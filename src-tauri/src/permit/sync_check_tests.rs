@@ -2153,7 +2153,34 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_removed_or_partly_rewritten
     let reflagged = with(cleared.clone(), &[("requires_permit", json!(1))]);
     let outcome = apply(&db, "work_orders", &wo_sync, &reflagged).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "re-flag: {outcome:?}");
-    // No local action removes a recorded clearing or a part of it: a received row doing so is refused.
+    // That re-tick (an older build keeps the clearing) ends protected here: the clearing is withdrawn
+    // and recorded.
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT CAST(requires_permit AS TEXT) || '|' || COALESCE(permit_rule_cleared_at, '') \
+                 FROM work_orders WHERE id = {wo_id}"
+            ),
+        )
+        .await
+        .as_deref(),
+        Some("1|")
+    );
+    assert!(
+        text(
+            &db,
+            &format!(
+                "SELECT payload_json FROM wo_action_events WHERE wo_id = {wo_id} \
+                 AND action_code = 'permit_clearing_withdrawn'"
+            ),
+        )
+        .await
+        .is_some_and(|p| p.contains("received_retick")),
+        "recorded"
+    );
+    // No local action removes a part of a recorded clearing, or removes it without requiring the
+    // permit again: a received row doing so is refused.
     for (what, changes) in [
         ("reason removed", vec![("permit_rule_clear_reason", json!(null))]),
         ("clearer removed", vec![("permit_rule_cleared_by_sync_id", json!(null))]),
@@ -2166,8 +2193,9 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_removed_or_partly_rewritten
             ],
         ),
         (
-            "removed",
+            "removed, not required",
             vec![
+                ("requires_permit", json!(0)),
                 ("permit_rule_cleared_by_sync_id", json!(null)),
                 ("permit_rule_cleared_at", json!(null)),
                 ("permit_rule_clear_reason", json!(null)),
@@ -2197,6 +2225,43 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_removed_or_partly_rewritten
         .await
         .as_deref(),
         Some("0")
+    );
+    // Required again on a PC that withdraws the clearing (`withdraw_clearing_on_retick`): the received
+    // re-tick, the whole clearing removed, is applied and the flag is protected again here.
+    let reticked = with(
+        cleared.clone(),
+        &[
+            ("requires_permit", json!(1)),
+            ("permit_rule_cleared_by_sync_id", json!(null)),
+            ("permit_rule_cleared_at", json!(null)),
+            ("permit_rule_clear_reason", json!(null)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &reticked).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "re-tick: {outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT CAST(requires_permit AS TEXT) || '|' || COALESCE(permit_rule_cleared_at, '') \
+                 FROM work_orders WHERE id = {wo_id}"
+            ),
+        )
+        .await
+        .as_deref(),
+        Some("1|")
+    );
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(reticked, &[("requires_permit", json!(0))]),
+    )
+    .await;
+    assert_eq!(
+        code(&outcome),
+        Some("WO_PERMIT_RULE_CLEAR_INVALID"),
+        "unticked again without a clearing: {outcome:?}"
     );
 }
 
@@ -5761,4 +5826,662 @@ async fn a_removal_verified_before_the_update_is_held_for_review_and_the_lock_st
     assert_eq!(locks_after, locks_before, "still a lock in place");
     let err = set_status(&db, &wp, "closed").await.expect_err("lock still fitted");
     assert!(format!("{err:?}").contains("PERMIT_REMOVAL_PENDING"), "{err:?}");
+}
+
+// ── A permit requirement carried from a request flagged "sécurité" (migration 255, AU-01, D1) ──
+
+/// An account holding `ptw.issue` on the org node `site` only (a permanent role); its sync id.
+async fn site_permit_issuer(db: &DatabaseConnection, username: &str, site: i64) -> String {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+             force_password_change, created_at, updated_at) VALUES ('{username}-sync', '{username}', '{username}', \
+             'local', 1, 0, 0, datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+    let user: i64 = text(
+        db,
+        &format!("SELECT CAST(id AS TEXT) FROM user_accounts WHERE username = '{username}'"),
+    )
+    .await
+    .expect("user")
+    .parse()
+    .expect("id");
+    let role =
+        crate::auth::scope_tests::role(db, &format!("SO {username}"), &[crate::rbac::permissions::PTW_ISSUE]).await;
+    crate::auth::scope_tests::assign(db, i32::try_from(user).expect("id"), role, "org_node", Some(site)).await;
+    format!("{username}-sync")
+}
+
+/// A work order whose permit requirement comes from a safety request, as this PC holds it, and its
+/// sync id.
+async fn safety_origin_wo(db: &DatabaseConnection, equipment_code: &str) -> (i64, String) {
+    let asset = insert_equipment(db, equipment_code).await;
+    let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+    exec(
+        db,
+        &format!("UPDATE work_orders SET permit_from_safety_di = 1, requires_permit = 1 WHERE id = {wo_id}"),
+    )
+    .await;
+    let wo_sync = text(
+        db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    (wo_id, wo_sync)
+}
+
+async fn requires_permit(db: &DatabaseConnection, wo_id: i64) -> Option<String> {
+    text(
+        db,
+        &format!("SELECT CAST(requires_permit AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+}
+
+/// A received work order that clears a requirement carried from a safety request says who cleared
+/// it (with the permit-issue right at its site here), when and why — as a plant rule's flag.
+#[tokio::test]
+async fn a_cleared_safety_request_requirement_is_rechecked() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-1").await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+    assert_eq!(
+        held.get("permit_from_safety_di"),
+        Some(&json!(1)),
+        "the origin travels with the row"
+    );
+    let cleared = |by: Value, at: Value, reason: Value| {
+        with(
+            held.clone(),
+            &[
+                ("requires_permit", json!(0)),
+                ("permit_rule_cleared_by_sync_id", by),
+                ("permit_rule_cleared_at", at),
+                ("permit_rule_clear_reason", reason),
+            ],
+        )
+    };
+    let reason = json!("Inspection visuelle seulement");
+    let admin = json!(user_sync(&db, APPLIER).await);
+
+    // Cleared by the general edit of another PC: no who, when or why.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(held.clone(), &[("requires_permit", json!(0))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    for (what, payload) in [
+        ("no reason", cleared(admin.clone(), json!(now()), Value::Null)),
+        ("short reason", cleared(admin.clone(), json!(now()), json!("court"))),
+        ("no time", cleared(admin.clone(), Value::Null, reason.clone())),
+        ("no person", cleared(Value::Null, json!(now()), reason.clone())),
+    ] {
+        let outcome = apply(&db, "work_orders", &wo_sync, &payload).await;
+        assert_eq!(
+            code(&outcome),
+            Some("WO_PERMIT_RULE_CLEAR_INVALID"),
+            "{what}: {outcome:?}"
+        );
+    }
+    // Someone without the permit-issue right; someone holding it at another site only.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!(user_sync(&db, VERIFIER).await), json!(now()), reason.clone()),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    exec(
+        &db,
+        "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, \
+         updated_at, structure_model_id) VALUES (2, 'so-node-2', 'SO-SITE-2', 'Site 2', 1, 'active', \
+         datetime('now'), datetime('now'), 1)",
+    )
+    .await;
+    let elsewhere = site_permit_issuer(&db, "so_issuer_2", 2).await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!(elsewhere), json!(now()), reason.clone()),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    // A person not applied here yet: waits.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!("user-not-here"), json!(now()), reason.clone()),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    assert_eq!(
+        requires_permit(&db, wo_id).await.as_deref(),
+        Some("1"),
+        "nothing applied"
+    );
+
+    // The permit-issue right at the work order's site, who / when / why: applied.
+    let issuer = site_permit_issuer(&db, "so_issuer_1", 1).await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!(issuer), json!(now()), reason.clone()),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(requires_permit(&db, wo_id).await.as_deref(), Some("0"));
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(permit_from_safety_di AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "the origin stays on record"
+    );
+}
+
+/// The safety origin is never turned off by a received row; a row without the column (a PC without
+/// migration 255) keeps the value held here, so its general-edit clearing is refused too.
+#[tokio::test]
+async fn the_safety_origin_is_never_removed_by_sync() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-2").await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+
+    for payload in [
+        with(held.clone(), &[("permit_from_safety_di", json!(0))]),
+        with(
+            held.clone(),
+            &[("permit_from_safety_di", json!(0)), ("requires_permit", json!(0))],
+        ),
+        with(held.clone(), &[("permit_from_safety_di", Value::Null)]),
+    ] {
+        let outcome = apply(&db, "work_orders", &wo_sync, &payload).await;
+        assert_eq!(code(&outcome), Some("WO_PERMIT_SAFETY_ORIGIN_CHANGED"), "{outcome:?}");
+    }
+
+    let mut old_pc = with(held.clone(), &[("requires_permit", json!(0))]);
+    old_pc.remove("permit_from_safety_di");
+    let outcome = apply(&db, "work_orders", &wo_sync, &old_pc).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    assert_eq!(requires_permit(&db, wo_id).await.as_deref(), Some("1"));
+
+    // A row of that PC that leaves the requirement alone is applied, and the origin is kept.
+    let mut old_pc = with(held, &[("title", json!("Replace breaker (updated)"))]);
+    old_pc.remove("permit_from_safety_di");
+    let outcome = apply(&db, "work_orders", &wo_sync, &old_pc).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(permit_from_safety_di AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
+
+/// A request on the equipment of site 1, flagged "sécurité"; its sync id.
+async fn request_flagged_safety(db: &DatabaseConnection) -> String {
+    let asset = insert_equipment(db, "EQ-SYNC-SO-DI").await;
+    let symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+        .await
+        .expect("symptom")
+        .expect("seeded symptom");
+    let di = crate::di::queries::create_intervention_request(
+        db,
+        crate::di::queries::DiCreateInput {
+            equipment_id: asset,
+            org_node_id: 1,
+            title: "Fuite".into(),
+            description: "Fuite sur la pompe".into(),
+            origin_type: "operator".into(),
+            request_type: "repair".into(),
+            symptom_code_id: Some(symptom),
+            impact_level: "unknown".into(),
+            production_impact: false,
+            safety_flag: true,
+            environmental_flag: false,
+            quality_flag: false,
+            reported_urgency: "normal".into(),
+            observed_at: None,
+            source_inspection_anomaly_id: None,
+            submitter_id: APPLIER,
+        },
+    )
+    .await
+    .expect("request");
+    text(
+        db,
+        &format!("SELECT entity_sync_id FROM intervention_requests WHERE id = {}", di.id),
+    )
+    .await
+    .expect("request sync id")
+}
+
+/// A work order new here, converted from a safety request on a PC without migration 255, judged with
+/// the safety flag of its request here: not started, it is applied protected (origin, permit
+/// required); past "ready" and unticked without who, when or why, it is refused; required, it is
+/// applied with that origin.
+#[tokio::test]
+async fn a_new_work_order_from_an_older_pc_takes_the_safety_origin_of_its_request() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-3").await;
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    let on_hold = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'on_hold'",
+    )
+    .await
+    .expect("on hold status");
+    let di = request_flagged_safety(&db).await;
+    let new_row = |code: &str, requires: i64| {
+        let mut p = with(
+            template.clone(),
+            &[
+                ("code", json!(code)),
+                ("source_di_sync_id", json!(di.clone())),
+                ("requires_permit", json!(requires)),
+            ],
+        );
+        p.remove("permit_from_safety_di");
+        p
+    };
+
+    // Not started, unticked there by the general edit: applied, and protected here.
+    let outcome = apply(&db, "work_orders", "wo-older-pc-unticked", &new_row("OT-OLD-PC-0", 0)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(permit_from_safety_di AS TEXT) || '|' || CAST(requires_permit AS TEXT) \
+             FROM work_orders WHERE entity_sync_id = 'wo-older-pc-unticked'"
+        )
+        .await
+        .as_deref(),
+        Some("1|1")
+    );
+
+    // Past "ready", unticked without who, when or why: refused, never applied silently.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-older-pc-cleared",
+        &with(new_row("OT-OLD-PC-1", 0), &[("status_sync_id", json!(on_hold))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+
+    // Still required: applied, and protected here.
+    let outcome = apply(&db, "work_orders", "wo-older-pc-flagged", &new_row("OT-OLD-PC-2", 1)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(permit_from_safety_di AS TEXT) FROM work_orders WHERE entity_sync_id = 'wo-older-pc-flagged'"
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
+
+// ── Review of AU-01: explicit origin 0, waits, site move ──────────────────────────────────────
+
+/// A request on a new equipment of site 1 (flagged "sécurité" when `safety`); its sync id.
+async fn request_on_site_1(db: &DatabaseConnection, equipment_code: &str, safety: bool) -> String {
+    let asset = insert_equipment(db, equipment_code).await;
+    let symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+        .await
+        .expect("symptom")
+        .expect("seeded symptom");
+    let di = crate::di::queries::create_intervention_request(
+        db,
+        crate::di::queries::DiCreateInput {
+            equipment_id: asset,
+            org_node_id: 1,
+            title: "Fuite".into(),
+            description: "Fuite sur la pompe".into(),
+            origin_type: "operator".into(),
+            request_type: "repair".into(),
+            symptom_code_id: Some(symptom),
+            impact_level: "unknown".into(),
+            production_impact: false,
+            safety_flag: safety,
+            environmental_flag: false,
+            quality_flag: false,
+            reported_urgency: "normal".into(),
+            observed_at: None,
+            source_inspection_anomaly_id: None,
+            submitter_id: APPLIER,
+        },
+    )
+    .await
+    .expect("request");
+    text(
+        db,
+        &format!("SELECT entity_sync_id FROM intervention_requests WHERE id = {}", di.id),
+    )
+    .await
+    .expect("request sync id")
+}
+
+fn deferred_message(outcome: &ApplyOutcome) -> Option<&str> {
+    match outcome {
+        ApplyOutcome::Deferred { message, .. } => Some(message.as_str()),
+        _ => None,
+    }
+}
+
+/// A received work order past "ready" (its permit requirement frozen) that says origin 0 with a request
+/// flagged here is stored as sent while it requires a permit: the start was judged where it started.
+/// With a request not flagged, 0 is applied as sent, and so are its later rows.
+#[tokio::test]
+async fn an_explicit_origin_0_is_judged_the_same_on_every_row() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-4").await;
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    let on_hold = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'on_hold'",
+    )
+    .await
+    .expect("on hold status");
+    let row = |code: &str, di: &str, title: &str| {
+        with(
+            template.clone(),
+            &[
+                ("code", json!(code)),
+                ("status_sync_id", json!(on_hold.clone())),
+                ("source_di_sync_id", json!(di)),
+                ("requires_permit", json!(1)),
+                ("permit_from_safety_di", json!(0)),
+                ("title", json!(title)),
+            ],
+        )
+    };
+    let stored = |sync: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT CAST(permit_from_safety_di AS TEXT) || '|' || CAST(requires_permit AS TEXT) \
+                     FROM work_orders WHERE entity_sync_id = '{sync}'"
+                ),
+            )
+            .await
+        }
+    };
+
+    let flagged = request_on_site_1(&db, "EQ-SYNC-SO-DI-4", true).await;
+    for title in ["Fuite pompe", "Fuite pompe (mise à jour)"] {
+        let outcome = apply(
+            &db,
+            "work_orders",
+            "wo-explicit-0-flagged",
+            &row("OT-X0-1", &flagged, title),
+        )
+        .await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{title}: {outcome:?}");
+        assert_eq!(
+            stored("wo-explicit-0-flagged").await.as_deref(),
+            Some("0|1"),
+            "as sent, required"
+        );
+    }
+    // Its later row unticking it without who, when or why: refused, although its stored origin is 0
+    // (the request is flagged here, so it is judged as a safety work order on every row).
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-explicit-0-flagged",
+        &with(
+            row("OT-X0-1", &flagged, "Fuite pompe"),
+            &[("requires_permit", json!(0))],
+        ),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    assert_eq!(
+        stored("wo-explicit-0-flagged").await.as_deref(),
+        Some("0|1"),
+        "still required"
+    );
+    // Past "ready", unticked without who, when or why: refused.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-explicit-0-flagged-2",
+        &with(row("OT-X0-3", &flagged, "Fuite"), &[("requires_permit", json!(0))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+
+    let plain = request_on_site_1(&db, "EQ-SYNC-SO-DI-5", false).await;
+    for title in ["Fuite pompe", "Fuite pompe (mise à jour)"] {
+        let outcome = apply(
+            &db,
+            "work_orders",
+            "wo-explicit-0-plain",
+            &row("OT-X0-2", &plain, title),
+        )
+        .await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{title}: {outcome:?}");
+        assert_eq!(stored("wo-explicit-0-plain").await.as_deref(), Some("0|1"), "as sent");
+    }
+}
+
+/// Two PCs offline: PC B flags the request while PC A links a work order to it (not flagged on A).
+/// On B, A's work order (origin 0, no permit) and its later rows are applied and protected; A
+/// protects its own copy when the request reaches it. Both end with the origin and a permit required.
+#[tokio::test]
+async fn a_request_flagged_on_one_pc_and_linked_on_another_converges_protected() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-8").await;
+    let planning = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'planning'",
+    )
+    .await
+    .expect("planning status");
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    let state = |sync: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT CAST(permit_from_safety_di AS TEXT) || '|' || CAST(requires_permit AS TEXT) \
+                     FROM work_orders WHERE entity_sync_id = '{sync}'"
+                ),
+            )
+            .await
+        }
+    };
+
+    // On B: the request is flagged here; A's planning work order arrives without the origin.
+    let flagged = request_on_site_1(&db, "EQ-SYNC-SO-DI-8", true).await;
+    let from_a = |title: &str| {
+        with(
+            template.clone(),
+            &[
+                ("code", json!("OT-A-1")),
+                ("source_di_sync_id", json!(flagged.clone())),
+                ("status_sync_id", json!(planning.clone())),
+                ("actual_start", Value::Null),
+                ("requires_permit", json!(0)),
+                ("permit_from_safety_di", json!(0)),
+                ("title", json!(title)),
+            ],
+        )
+    };
+    let outcome = apply(&db, "work_orders", "wo-from-pc-a", &from_a("Fuite pompe")).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state("wo-from-pc-a").await.as_deref(), Some("1|1"), "protected here");
+    // A edits it again before the request reaches it: applied, still protected here.
+    let outcome = apply(&db, "work_orders", "wo-from-pc-a", &from_a("Fuite pompe (mise à jour)")).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state("wo-from-pc-a").await.as_deref(), Some("1|1"));
+    // Once A received the request it sends the protected row: applied.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-from-pc-a",
+        &with(
+            from_a("Fuite pompe"),
+            &[("permit_from_safety_di", json!(1)), ("requires_permit", json!(1))],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state("wo-from-pc-a").await.as_deref(), Some("1|1"));
+
+    // On A: its own work order linked to the request while not flagged, then the flagged request
+    // arrives: A protects it in the same apply, recorded.
+    let unflagged = request_on_site_1(&db, "EQ-SYNC-SO-DI-9", false).await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-on-pc-a",
+        &with(
+            template.clone(),
+            &[
+                ("code", json!("OT-A-2")),
+                ("source_di_sync_id", json!(unflagged.clone())),
+                ("status_sync_id", json!(planning.clone())),
+                ("actual_start", Value::Null),
+                ("requires_permit", json!(0)),
+                ("permit_from_safety_di", json!(0)),
+            ],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state("wo-on-pc-a").await.as_deref(), Some("0|0"), "not flagged yet");
+    let request = with(
+        wire(&db, "intervention_requests", &unflagged).await,
+        &[("safety_flag", json!(1))],
+    );
+    let outcome = apply(&db, "intervention_requests", &unflagged, &request).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        state("wo-on-pc-a").await.as_deref(),
+        Some("1|1"),
+        "protected when the flag arrives"
+    );
+    assert!(
+        text(
+            &db,
+            "SELECT payload_json FROM wo_action_events e JOIN work_orders w ON w.id = e.wo_id \
+             WHERE w.entity_sync_id = 'wo-on-pc-a' AND e.action_code = 'permit_safety_origin_raised'",
+        )
+        .await
+        .is_some_and(|p| p.contains("safety_request_flagged")),
+        "recorded"
+    );
+}
+
+/// A new work order from an older PC waits for its request; a clearing judged at a site not applied
+/// here yet waits for that site.
+#[tokio::test]
+async fn a_safety_check_waits_for_its_request_and_its_site() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-6").await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+
+    let mut older = with(
+        held.clone(),
+        &[
+            ("code", json!("OT-WAIT-1")),
+            ("source_di_sync_id", json!("di-not-here")),
+        ],
+    );
+    older.remove("permit_from_safety_di");
+    let outcome = apply(&db, "work_orders", "wo-waits-for-request", &older).await;
+    let message = deferred_message(&outcome).unwrap_or_else(|| panic!("waits: {outcome:?}"));
+    assert!(message.contains("request it was converted from"), "{message}");
+
+    let moved_and_cleared = with(
+        held,
+        &[
+            ("entity_sync_id", json!("node-not-here")),
+            ("requires_permit", json!(0)),
+            ("permit_rule_cleared_by_sync_id", json!(user_sync(&db, VERIFIER).await)),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Inspection visuelle seulement")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &moved_and_cleared).await;
+    let message = deferred_message(&outcome).unwrap_or_else(|| panic!("waits: {outcome:?}"));
+    assert!(message.contains("its site node-not-here"), "{message}");
+}
+
+/// A cleared safety requirement moved to another site by a received row keeping the clearing is
+/// refused; the same move with the clearing withdrawn (as the moving PC does) is applied.
+#[tokio::test]
+async fn a_received_site_move_does_not_carry_a_safety_clearing() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-7").await;
+    let issuer = site_permit_issuer(&db, "so_issuer_7", 1).await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+    let cleared = with(
+        held,
+        &[
+            ("requires_permit", json!(0)),
+            ("permit_rule_cleared_by_sync_id", json!(issuer)),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Inspection visuelle seulement")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &cleared).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    exec(
+        &db,
+        "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, \
+         updated_at, structure_model_id) VALUES (2, 'so-node-2', 'SO-SITE-2', 'Site 2', 1, 'active', \
+         datetime('now'), datetime('now'), 1)",
+    )
+    .await;
+
+    let moved_kept = with(cleared.clone(), &[("entity_sync_id", json!("so-node-2"))]);
+    let outcome = apply(&db, "work_orders", &wo_sync, &moved_kept).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    assert_eq!(
+        requires_permit(&db, wo_id).await.as_deref(),
+        Some("0"),
+        "nothing applied"
+    );
+
+    let moved_withdrawn = with(
+        cleared,
+        &[
+            ("entity_sync_id", json!("so-node-2")),
+            ("requires_permit", json!(1)),
+            ("permit_rule_cleared_by_sync_id", Value::Null),
+            ("permit_rule_cleared_at", Value::Null),
+            ("permit_rule_clear_reason", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &moved_withdrawn).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        requires_permit(&db, wo_id).await.as_deref(),
+        Some("1"),
+        "in force again"
+    );
 }

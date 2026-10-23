@@ -227,9 +227,9 @@ pub async fn convert_di_to_work_order(
             code, type_id, status_id, equipment_id, \
             source_di_id, entity_id, requester_id, \
             title, description, urgency_id, requires_permit, \
-            permit_rule_code, permit_rule_permit_type, \
+            permit_rule_code, permit_rule_permit_type, permit_from_safety_di, \
             entity_sync_id, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             wo_code.clone().into(),
             type_id.into(),
@@ -252,6 +252,9 @@ pub async fn convert_di_to_work_order(
             requires_permit.into(),
             permit_flag.rule_code.clone().into(),
             permit_flag.permit_type_code.clone().into(),
+            // The request's safety flag is the origin of the requirement: cleared only with the
+            // permit-issue right at the work order's site and a reason (migration 255).
+            i64::from(di.safety_flag).into(),
             crate::sync::identity::new_entity_sync_id().into(),
             now.clone().into(),
             now.clone().into(),

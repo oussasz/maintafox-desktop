@@ -53,6 +53,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
 import { DateField } from "@/components/ui/date-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -3545,13 +3546,12 @@ export const ProcurementRepairablePanel = forwardRef<
             </div>
             <div className="space-y-1">
               <Label htmlFor="inv-repair-qty">{t("procurement.repairables.form.quantity")}</Label>
-              <Input
+              <DecimalField
                 id="inv-repair-qty"
-                type="number"
+                decimals={3}
                 min={0}
-                step="0.01"
                 value={repairQty}
-                onChange={(e) => setRepairQty(Number(e.target.value || 0))}
+                onValueChange={(v) => setRepairQty(v ?? 0)}
               />
             </div>
             <div className="space-y-1">
@@ -3812,26 +3812,25 @@ export const ProcurementRepairablePanel = forwardRef<
               <Label htmlFor="inv-price-unit">
                 {t("procurement.suppliers.prices.fields.unitPrice")}
               </Label>
-              <Input
+              <DecimalField
                 id="inv-price-unit"
-                type="number"
+                decimals={2}
+                fixed
                 min={0}
-                step="0.01"
-                value={priceFormUnitPrice}
-                onChange={(e) => setPriceFormUnitPrice(e.target.value)}
+                value={priceFormUnitPrice.trim() === "" ? null : Number(priceFormUnitPrice)}
+                onValueChange={(v) => setPriceFormUnitPrice(v == null ? "" : String(v))}
               />
             </div>
             <div className="space-y-1">
               <Label htmlFor="inv-price-min">
                 {t("procurement.suppliers.prices.fields.minQty")}
               </Label>
-              <Input
+              <DecimalField
                 id="inv-price-min"
-                type="number"
+                decimals={3}
                 min={0}
-                step="0.01"
-                value={priceFormMinQty}
-                onChange={(e) => setPriceFormMinQty(e.target.value)}
+                value={priceFormMinQty.trim() === "" ? null : Number(priceFormMinQty)}
+                onValueChange={(v) => setPriceFormMinQty(v == null ? "" : String(v))}
               />
             </div>
             <div className="space-y-1">

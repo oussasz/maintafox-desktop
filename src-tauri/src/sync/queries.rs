@@ -67,7 +67,7 @@ fn validate_operation(operation: &str, errors: &mut Vec<String>) {
 fn validate_protocol_version(version: &str) -> AppResult<()> {
     if version != SYNC_PROTOCOL_VERSION_V1 && version != SYNC_PROTOCOL_VERSION_V2 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported sync protocol version '{version}'. Supported: {SYNC_PROTOCOL_VERSION_V1}, {SYNC_PROTOCOL_VERSION_V2}."
+            "GATE_SYNC_PROTOCOL_VERSION: Unsupported sync protocol version '{version}'. Supported: {SYNC_PROTOCOL_VERSION_V1}, {SYNC_PROTOCOL_VERSION_V2}."
         )]));
     }
     Ok(())
@@ -105,8 +105,11 @@ fn map_resolution_to_status(action: &str) -> Option<&'static str> {
 }
 
 fn parse_rfc3339(value: &str, field: &str) -> AppResult<()> {
-    chrono::DateTime::parse_from_rfc3339(value)
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")]))?;
+    chrono::DateTime::parse_from_rfc3339(value).map_err(|_| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_DATE_INVALID: {field} must be a valid RFC3339 timestamp."
+        )])
+    })?;
     Ok(())
 }
 
@@ -1200,7 +1203,7 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
                 && is_stale_checkpoint(&current_checkpoint, &input.checkpoint_token)
             {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Stale checkpoint token '{}' rejected. Current token is '{}'.",
+                    "GATE_SYNC_CHECKPOINT_STALE: Stale checkpoint token '{}' rejected. Current token is '{}'.",
                     input.checkpoint_token, current_checkpoint
                 )]));
             }
@@ -1528,7 +1531,9 @@ pub async fn apply_snapshot_page(
     checkpoint_token: Option<&str>,
 ) -> AppResult<ApplySyncBatchResult> {
     if snapshot_id.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["snapshot_id is required.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_SYNC_SNAPSHOT_REQUIRED: snapshot_id is required.".to_string(),
+        ]));
     }
     let tx = db.begin().await?;
     let mut typed_rejections = Vec::new();
@@ -1876,7 +1881,7 @@ pub async fn resolve_sync_conflict(
     let conflict = to_sync_conflict(&current)?;
     if conflict.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Sync conflict was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Sync conflict was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     if matches!(
@@ -1884,7 +1889,7 @@ pub async fn resolve_sync_conflict(
         "resolved_local" | "resolved_remote" | "merged" | "dismissed"
     ) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Sync conflict {} is already closed ({}).",
+            "GATE_SYNC_CONFLICT_CLOSED: Sync conflict {} is already closed ({}).",
             conflict.id, conflict.status
         )]));
     }
@@ -2091,7 +2096,7 @@ pub async fn replay_sync_failures(
     let guard_applied = input.mode == "checkpoint_rollback" || input.mode == "window";
     if guard_applied && unresolved_operator_conflicts > 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Replay blocked by checkpoint safety guard: unresolved operator-required conflicts exist.".to_string(),
+            "GATE_SYNC_REPLAY_BLOCKED: Replay blocked by checkpoint safety guard: unresolved operator-required conflicts exist.".to_string(),
         ]));
     }
 
@@ -2363,12 +2368,14 @@ pub async fn preview_sync_repair(
     validate_non_empty("reason", &input.reason, &mut validation_errors);
     if !supported_repair_mode(&input.mode) {
         validation_errors.push(
-            "Unsupported repair mode. Allowed: requeue_rejected_outbox, retry_operator_conflicts, checkpoint_realign."
+            "GATE_SYNC_REPAIR_MODE_BLOCKED: Unsupported repair mode. Allowed: requeue_rejected_outbox, retry_operator_conflicts, checkpoint_realign."
                 .to_string(),
         );
     }
     if input.mode.contains("reset") {
-        validation_errors.push("Destructive reset is disabled. Use scoped repair modes only.".to_string());
+        validation_errors.push(
+            "GATE_SYNC_REPAIR_MODE_BLOCKED: Destructive reset is disabled. Use scoped repair modes only.".to_string(),
+        );
     }
     if input.mode == "checkpoint_realign" {
         validate_non_empty(
@@ -2519,7 +2526,9 @@ pub async fn preview_sync_repair(
             warnings.push("Checkpoint realign updates token pointer only; data rows are untouched.".to_string());
         }
         _ => {
-            return Err(AppError::ValidationFailed(vec!["Unsupported repair mode.".to_string()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_SYNC_REPAIR_MODE_BLOCKED: Unsupported repair mode.".to_string(),
+            ]));
         }
     }
 
@@ -2622,13 +2631,14 @@ pub async fn execute_sync_repair(
     let status: String = plan_row.try_get("", "status").map_err(|e| decode_err("status", e))?;
     if status != "previewed" {
         return Err(AppError::ValidationFailed(vec![
-            "Repair plan is no longer executable (must be in previewed status).".to_string(),
+            "GATE_SYNC_REPAIR_PLAN_STATE: Repair plan is no longer executable (must be in previewed status)."
+                .to_string(),
         ]));
     }
     let mode: String = plan_row.try_get("", "mode").map_err(|e| decode_err("mode", e))?;
     if !supported_repair_mode(&mode) || mode.contains("reset") {
         return Err(AppError::ValidationFailed(vec![
-            "Destructive or unsupported repair mode blocked.".to_string(),
+            "GATE_SYNC_REPAIR_MODE_BLOCKED: Destructive or unsupported repair mode blocked.".to_string(),
         ]));
     }
     let scope_json: String = plan_row
@@ -2760,9 +2770,11 @@ pub async fn execute_sync_repair(
             }
         }
         "checkpoint_realign" => {
-            let checkpoint_token = preview_scope
-                .checkpoint_token
-                .ok_or_else(|| AppError::ValidationFailed(vec!["checkpoint_token is required.".to_string()]))?;
+            let checkpoint_token = preview_scope.checkpoint_token.ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "GATE_SYNC_CHECKPOINT_REQUIRED: checkpoint_token is required.".to_string()
+                ])
+            })?;
             tx.execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
                 "INSERT INTO sync_checkpoint (
@@ -2780,7 +2792,9 @@ pub async fn execute_sync_repair(
             .await?;
         }
         _ => {
-            return Err(AppError::ValidationFailed(vec!["Unsupported repair mode.".to_string()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_SYNC_REPAIR_MODE_BLOCKED: Unsupported repair mode.".to_string(),
+            ]));
         }
     }
 

@@ -9,6 +9,7 @@ import { useLookupOptions } from "@/components/inventory/use-lookup-options";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -680,13 +681,12 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                   <Label htmlFor="inv-cl-qty" className="text-xs">
                     {t("controls.lines.countedQty")}
                   </Label>
-                  <Input
+                  <DecimalField
                     id="inv-cl-qty"
-                    type="number"
+                    decimals={3}
                     min={0}
-                    step="0.01"
                     value={lineCountQty}
-                    onChange={(e) => setLineCountQty(Number(e.target.value || 0))}
+                    onValueChange={(v) => setLineCountQty(v ?? 0)}
                   />
                 </div>
                 <div className="space-y-1">

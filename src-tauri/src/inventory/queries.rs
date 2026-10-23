@@ -38,29 +38,29 @@ async fn get_lookup_domain_id(db: &DatabaseConnection, domain_key: &str) -> AppR
 fn validate_article_stock_contract(input: &InventoryArticleInput) -> AppResult<()> {
     if input.min_stock < 0.0 || input.reorder_point < 0.0 || input.safety_stock < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "Stock thresholds cannot be negative.".to_string()
+            "GATE_INV_THRESHOLD_NEGATIVE: Stock thresholds cannot be negative.".to_string(),
         ]));
     }
     if let Some(max_stock) = input.max_stock {
         if max_stock < 0.0 {
             return Err(AppError::ValidationFailed(vec![
-                "max_stock cannot be negative.".to_string()
+                "GATE_INV_THRESHOLD_NEGATIVE: max_stock cannot be negative.".to_string(),
             ]));
         }
         if max_stock < input.min_stock {
             return Err(AppError::ValidationFailed(vec![
-                "max_stock must be greater than or equal to min_stock.".to_string(),
+                "GATE_INV_THRESHOLDS: max_stock must be greater than or equal to min_stock.".to_string(),
             ]));
         }
         if max_stock < input.reorder_point {
             return Err(AppError::ValidationFailed(vec![
-                "max_stock must be greater than or equal to reorder_point.".to_string(),
+                "GATE_INV_THRESHOLDS: max_stock must be greater than or equal to reorder_point.".to_string(),
             ]));
         }
     }
     if input.reorder_point < input.min_stock {
         return Err(AppError::ValidationFailed(vec![
-            "reorder_point must be greater than or equal to min_stock.".to_string(),
+            "GATE_INV_THRESHOLDS: reorder_point must be greater than or equal to min_stock.".to_string(),
         ]));
     }
     Ok(())
@@ -150,7 +150,7 @@ async fn ensure_preferred_location_hint(
         let warehouse_active: i64 = warehouse_row.try_get("", "is_active")?;
         if warehouse_active == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "preferred_warehouse_id must reference an active warehouse.".to_string(),
+                "GATE_INV_LOCATION_INACTIVE: preferred_warehouse_id must reference an active warehouse.".to_string(),
             ]));
         }
     }
@@ -165,14 +165,14 @@ async fn ensure_preferred_location_hint(
             .await?;
         let Some(row) = row else {
             return Err(AppError::ValidationFailed(vec![
-                "preferred_location_id does not exist.".to_string(),
+                "GATE_INV_LOCATION_UNKNOWN: preferred_location_id does not exist.".to_string(),
             ]));
         };
         let location_wh: i64 = row.try_get("", "warehouse_id")?;
         let location_active: i64 = row.try_get("", "is_active")?;
         if location_active == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "preferred_location_id must reference an active location.".to_string(),
+                "GATE_INV_LOCATION_INACTIVE: preferred_location_id must reference an active location.".to_string(),
             ]));
         }
         if Some(location_wh) != preferred_warehouse_id {
@@ -218,7 +218,7 @@ pub async fn create_article_family(
     let name = input.name.trim().to_string();
     if code.is_empty() || name.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Family code and name are required.".to_string()
+            "GATE_INV_CODE_NAME_REQUIRED: Family code and name are required.".to_string(),
         ]));
     }
 
@@ -261,7 +261,7 @@ pub async fn update_article_family(
     let name = input.name.trim().to_string();
     if code.is_empty() || name.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Family code and name are required.".to_string()
+            "GATE_INV_CODE_NAME_REQUIRED: Family code and name are required.".to_string(),
         ]));
     }
     let is_active = parse_bool_to_i64(input.is_active, true);
@@ -399,7 +399,7 @@ pub async fn create_inventory_tax_category(
     let label = input.label.trim().to_string();
     if code.is_empty() || label.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Tax category code and label are required.".to_string(),
+            "GATE_INV_CODE_NAME_REQUIRED: Tax category code and label are required.".to_string(),
         ]));
     }
 
@@ -437,7 +437,9 @@ pub async fn create_inventory_tax_category(
     .map_err(|e| {
         let message = e.to_string();
         if message.contains("UNIQUE constraint failed") {
-            AppError::ValidationFailed(vec!["Tax category code already exists.".to_string()])
+            AppError::ValidationFailed(vec![
+                "GATE_INV_CODE_EXISTS: Tax category code already exists.".to_string()
+            ])
         } else {
             AppError::from(e)
         }
@@ -481,7 +483,7 @@ pub async fn update_inventory_tax_category(
     let label = input.label.trim().to_string();
     if code.is_empty() || label.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Tax category code and label are required.".to_string(),
+            "GATE_INV_CODE_NAME_REQUIRED: Tax category code and label are required.".to_string(),
         ]));
     }
 
@@ -496,7 +498,7 @@ pub async fn update_inventory_tax_category(
         .await?;
     if conflicting.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Tax category code already exists.".to_string()
+            "GATE_INV_CODE_EXISTS: Tax category code already exists.".to_string(),
         ]));
     }
 
@@ -523,7 +525,7 @@ pub async fn update_inventory_tax_category(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Tax category update failed (not found or stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Tax category update failed (not found or stale row_version).".to_string(),
         ]));
     }
 
@@ -591,7 +593,8 @@ pub async fn deactivate_inventory_tax_category(
         .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Tax category deactivation failed (not found or stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Tax category deactivation failed (not found or stale row_version)."
+                .to_string(),
         ]));
     }
 
@@ -696,7 +699,7 @@ pub async fn create_warehouse(db: &DatabaseConnection, input: CreateWarehouseInp
     let name = input.name.trim().to_string();
     if code.is_empty() || name.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Warehouse code and name are required.".to_string(),
+            "GATE_INV_CODE_NAME_REQUIRED: Warehouse code and name are required.".to_string(),
         ]));
     }
     let tx = db.begin().await?;
@@ -709,7 +712,7 @@ pub async fn create_warehouse(db: &DatabaseConnection, input: CreateWarehouseInp
         .await?;
     if dup.is_some() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Warehouse code '{code}' already exists."
+            "GATE_INV_CODE_EXISTS: Warehouse code '{code}' already exists."
         )]));
     }
     tx.execute(Statement::from_sql_and_values(
@@ -808,7 +811,7 @@ pub async fn create_stock_location(
     let name = input.name.trim().to_string();
     if code.is_empty() || name.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Location code and name are required.".to_string()
+            "GATE_INV_CODE_NAME_REQUIRED: Location code and name are required.".to_string(),
         ]));
     }
     let wh = db
@@ -837,7 +840,7 @@ pub async fn create_stock_location(
         .await?;
     if dup.is_some() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Location code '{code}' already exists in this warehouse."
+            "GATE_INV_CODE_EXISTS: Location code '{code}' already exists in this warehouse."
         )]));
     }
 
@@ -904,7 +907,7 @@ pub async fn update_stock_location(
     let current_rv: i64 = row.try_get("", "row_version")?;
     if current_rv != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Location was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Location was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
 
@@ -926,7 +929,7 @@ pub async fn update_stock_location(
             .await?;
         if dup.is_some() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Location code '{code}' already exists in this warehouse."
+                "GATE_INV_CODE_EXISTS: Location code '{code}' already exists in this warehouse."
             )]));
         }
         sets.push("code = ?".to_string());
@@ -979,7 +982,7 @@ pub async fn update_stock_location(
     if result.rows_affected() == 0 {
         tx.rollback().await?;
         return Err(AppError::ValidationFailed(vec![
-            "Location update failed (not found or stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Location update failed (not found or stale row_version).".to_string(),
         ]));
     }
     tx.commit().await?;
@@ -1208,7 +1211,7 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
 
     if input.article_code.trim().is_empty() || input.article_name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Article code and name are required.".to_string()
+            "GATE_INV_CODE_NAME_REQUIRED: Article code and name are required.".to_string(),
         ]));
     }
     validate_article_stock_contract(&input)?;
@@ -1226,7 +1229,7 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
         .await?;
     if existing.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Article code already exists.".to_string()
+            "GATE_INV_CODE_EXISTS: Article code already exists.".to_string(),
         ]));
     }
 
@@ -1391,7 +1394,7 @@ pub async fn update_article(
     let name = input.article_name.trim().to_string();
     if code.is_empty() || name.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Article code and name are required.".to_string()
+            "GATE_INV_CODE_NAME_REQUIRED: Article code and name are required.".to_string(),
         ]));
     }
     let is_active = parse_bool_to_i64(input.is_active, true);
@@ -1431,7 +1434,7 @@ pub async fn update_article(
         .await?;
     if conflicting.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Article code already exists.".to_string()
+            "GATE_INV_CODE_EXISTS: Article code already exists.".to_string(),
         ]));
     }
 
@@ -1526,7 +1529,7 @@ pub async fn update_article(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Article update failed (not found or stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Article update failed (not found or stale row_version).".to_string(),
         ]));
     }
 
@@ -1854,7 +1857,7 @@ async fn ensure_work_order_reference(
     let wo_code = source_ref.map(str::trim).unwrap_or("");
     if wo_code.is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Movement reason '{reason}' requires a work order reference."
+            "GATE_INV_WO_REQUIRED: Movement reason '{reason}' requires a work order reference."
         )]));
     }
     let exists = db
@@ -1866,7 +1869,7 @@ async fn ensure_work_order_reference(
         .await?;
     if exists.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Work order '{wo_code}' does not exist."
+            "GATE_INV_WO_UNKNOWN: Work order '{wo_code}' does not exist."
         )]));
     }
     Ok(())
@@ -1921,7 +1924,7 @@ pub async fn adjust_stock_full(
     crate::inventory::lots::ensure_whole_units(&tracking, input.delta_qty.abs())?;
     if input.delta_qty == 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "delta_qty must be different from 0.".to_string()
+            "GATE_INV_DELTA_ZERO: delta_qty must be different from 0.".to_string(),
         ]));
     }
     if let Some(cost) = unit_cost {
@@ -1943,7 +1946,7 @@ pub async fn adjust_stock_full(
     // characters, and it is audited (decision 2, `inventory::negative_stock`).
     if !crate::inventory::negative_stock::balance_change_allowed((on_hand, reserved), (next_on_hand, reserved)) {
         return Err(AppError::ValidationFailed(vec![
-            "Adjustment would produce negative stock.".to_string(),
+            "GATE_INV_NEGATIVE_STOCK: Adjustment would produce negative stock.".to_string(),
         ]));
     }
     crate::inventory::negative_stock::check_entry_reason(on_hand, input.delta_qty, input.notes.as_deref())?;
@@ -2003,7 +2006,7 @@ pub async fn adjust_stock_full(
             }
             (None, None) => {
                 return Err(AppError::ValidationFailed(vec![
-                    "This article is lot/serial-tracked: give the lot or serial number of the entry.".to_string(),
+                    "GATE_INV_LOT_OR_SERIAL_REQUIRED: This article is lot/serial-tracked: give the lot or serial number of the entry.".to_string(),
                 ]))
             }
         };
@@ -2116,17 +2119,21 @@ async fn ensure_location_exists<C: ConnectionTrait>(db: &C, location_id: i64) ->
             [location_id.into()],
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["location_id does not exist.".to_string()]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_LOCATION_UNKNOWN: location_id does not exist.".to_string()
+            ])
+        })?;
     let location_active: i64 = location_row.try_get("", "location_active")?;
     if location_active == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "location_id must reference an active location.".to_string(),
+            "GATE_INV_LOCATION_INACTIVE: location_id must reference an active location.".to_string(),
         ]));
     }
     let warehouse_active: i64 = location_row.try_get("", "warehouse_active")?;
     if warehouse_active == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "location_id must belong to an active warehouse.".to_string(),
+            "GATE_INV_LOCATION_INACTIVE: location_id must belong to an active warehouse.".to_string(),
         ]));
     }
     Ok(location_row.try_get("", "warehouse_id")?)
@@ -2140,11 +2147,13 @@ async fn ensure_article_active<C: ConnectionTrait>(db: &C, article_id: i64) -> A
             [article_id.into()],
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["article_id does not exist.".to_string()]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec!["GATE_INV_ARTICLE_UNKNOWN: article_id does not exist.".to_string()])
+        })?;
     let is_active: i64 = row.try_get("", "is_active")?;
     if is_active == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "article_id must reference an active article.".to_string(),
+            "GATE_INV_ARTICLE_INACTIVE: article_id must reference an active article.".to_string(),
         ]));
     }
     Ok(())
@@ -2204,9 +2213,9 @@ async fn upsert_balance<C: ConnectionTrait>(
     if !crate::inventory::negative_stock::balance_change_allowed(current, (on_hand_qty, reserved_qty)) {
         return Err(AppError::ValidationFailed(vec![
             if on_hand_qty < 0.0 || reserved_qty < 0.0 {
-                "Stock balances cannot be negative.".to_string()
+                "GATE_INV_NEGATIVE_STOCK: Stock balances cannot be negative.".to_string()
             } else {
-                "available_qty cannot be negative.".to_string()
+                "GATE_INV_NEGATIVE_STOCK: available_qty cannot be negative.".to_string()
             },
         ]));
     }
@@ -2387,7 +2396,7 @@ pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput
 pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &InventoryReserveInput) -> AppResult<i64> {
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "quantity must be greater than 0.".to_string()
+            "GATE_INV_QTY_POSITIVE: quantity must be greater than 0.".to_string(),
         ]));
     }
     if input.source_type.trim().is_empty() {
@@ -2398,7 +2407,7 @@ pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &Invento
     let available = on_hand - reserved;
     if available < input.quantity {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Insufficient available stock for reservation (available: {available})."
+            "GATE_INV_INSUFFICIENT_STOCK:available={available}: Insufficient available stock for reservation (available: {available})."
         )]));
     }
 
@@ -2507,7 +2516,7 @@ pub(crate) async fn issue_reserved_in<C: ConnectionTrait>(
 ) -> AppResult<(i64, Option<f64>)> {
     if quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "quantity must be greater than 0.".to_string()
+            "GATE_INV_QTY_POSITIVE: quantity must be greater than 0.".to_string(),
         ]));
     }
     let reservation = load_reservation_by_id(tx, reservation_id).await?;
@@ -2543,7 +2552,7 @@ pub(crate) async fn issue_reserved_in<C: ConnectionTrait>(
     let remaining_reserved = reservation.quantity_reserved - reservation.quantity_issued;
     if remaining_reserved + 1e-9 < quantity {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Issue exceeds reserved remainder ({remaining_reserved})."
+            "GATE_INV_ISSUE_OVER_RESERVED:reserved={remaining_reserved}: Issue exceeds reserved remainder ({remaining_reserved})."
         )]));
     }
 
@@ -2553,7 +2562,7 @@ pub(crate) async fn issue_reserved_in<C: ConnectionTrait>(
     let held = crate::inventory::reservations::reservation_held(tx, reservation.id).await?;
     if on_hand + 1e-9 < quantity || held + 1e-9 < quantity {
         return Err(AppError::ValidationFailed(vec![
-            "Insufficient on-hand/reserved quantity for issue.".to_string(),
+            "GATE_INV_INSUFFICIENT_STOCK: Insufficient on-hand/reserved quantity for issue.".to_string(),
         ]));
     }
 
@@ -2655,7 +2664,7 @@ pub async fn return_reserved_stock_as(
 ) -> AppResult<StockReservation> {
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "quantity must be greater than 0.".to_string()
+            "GATE_INV_QTY_POSITIVE: quantity must be greater than 0.".to_string(),
         ]));
     }
     let tx = db.begin().await?;
@@ -2679,7 +2688,7 @@ pub async fn return_reserved_stock_as(
     let issued = reservation.quantity_issued.max(ledger_issued);
     if issued + 1e-9 < input.quantity {
         return Err(AppError::ValidationFailed(vec![
-            "Return quantity exceeds issued quantity.".to_string(),
+            "GATE_INV_RETURN_OVER_ISSUED: Return quantity exceeds issued quantity.".to_string(),
         ]));
     }
     // D13: nothing stays reserved for a released reservation or for a work order that is closed

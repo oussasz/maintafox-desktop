@@ -37,7 +37,7 @@ pub async fn list_pm_scope_options(db: &impl ConnectionTrait, scope_type: &str) 
         }
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "No scope options for asset scope type '{other}'."
+                "GATE_PM_SCOPE_TYPE_INVALID: No scope options for asset scope type '{other}'."
             )]))
         }
     };
@@ -124,7 +124,7 @@ pub fn parse_reading_kind(kind: Option<&str>) -> AppResult<Option<MeterReadingKi
         Some("rollover") => Ok(Some(MeterReadingKind::Rollover)),
         Some("replacement") => Ok(Some(MeterReadingKind::Replacement)),
         Some(other) => Err(AppError::ValidationFailed(vec![format!(
-            "Unknown meter reading kind '{other}' (normal, rollover, replacement)."
+            "GATE_PM_READING_KIND_INVALID: Unknown meter reading kind '{other}' (normal, rollover, replacement)."
         )])),
     }
 }
@@ -197,7 +197,7 @@ pub async fn create_pm_revision_from_finding(db: &DatabaseConnection, finding_id
     let plan = queries::get_pm_plan(db, plan_id).await?;
     if plan.lifecycle_status == "retired" {
         return Err(AppError::ValidationFailed(vec![
-            "A retired PM plan cannot be revised.".to_string()
+            "GATE_PM_PLAN_RETIRED: A retired PM plan cannot be revised.".to_string(),
         ]));
     }
     if let Some(existing) = db
@@ -224,7 +224,7 @@ pub async fn create_pm_revision_from_finding(db: &DatabaseConnection, finding_id
         .or_else(|| versions.iter().max_by_key(|v| v.version_no))
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "The plan has no version to revise; create a version first.".to_string()
+                "GATE_PM_NO_VERSION_TO_REVISE: The plan has no version to revise; create a version first.".to_string(),
             ])
         })?;
     let effective_from = Utc::now().format("%Y-%m-%dT00:00:00Z").to_string();

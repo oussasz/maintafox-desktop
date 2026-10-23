@@ -19,6 +19,7 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { useLookupOptions } from "@/components/inventory/use-lookup-options";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -27,7 +28,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -422,14 +422,12 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
           <div className="space-y-3">
             <div className="space-y-1">
               <Label htmlFor="inv-neg-counted">{t("negativeStock.dialog.counted")}</Label>
-              <Input
+              <DecimalField
                 id="inv-neg-counted"
-                type="number"
+                decimals={3}
                 min={0}
-                step="any"
-                inputMode="decimal"
-                value={countedQty}
-                onChange={(e) => setCountedQty(e.target.value)}
+                value={countedQty.trim() === "" ? null : Number(countedQty)}
+                onValueChange={(v) => setCountedQty(v == null ? "" : String(v))}
                 aria-invalid={countedQty !== "" && !countValid}
               />
             </div>

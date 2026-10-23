@@ -5695,3 +5695,36 @@ fn a_new_part_line_must_say_whether_it_is_required() {
     assert!(crate::pm::wo_content::validate_required_parts_json(Some(r#"["X"]"#)).is_err());
     assert!(crate::pm::wo_content::validate_required_parts_json(Some(r#"[{"code":"X","required":false}]"#)).is_ok());
 }
+
+#[test]
+fn planning_pdf_prints_local_time_and_labels_in_the_report_language() {
+    use crate::reports::export::ReportLocale;
+    let instant = "2026-10-12T06:00:00Z";
+    let local = chrono::DateTime::parse_from_rfc3339(instant)
+        .expect("instant")
+        .with_timezone(&chrono::Local);
+    assert_eq!(
+        scheduling::local_pdf_instant(ReportLocale::Fr, instant),
+        local.format("%d/%m/%Y %H:%M").to_string()
+    );
+    assert_eq!(
+        scheduling::local_pdf_instant(ReportLocale::En, instant),
+        local.format("%Y-%m-%d %H:%M").to_string()
+    );
+    assert_eq!(
+        scheduling::local_pdf_instant(ReportLocale::Fr, "not a date"),
+        "not a date"
+    );
+    assert_eq!(
+        scheduling::pdf_source_type_label(ReportLocale::Fr, "work_order"),
+        "Ordre de travail"
+    );
+    assert_eq!(
+        scheduling::pdf_source_type_label(ReportLocale::En, "work_order"),
+        "Work order"
+    );
+    assert_eq!(
+        scheduling::pdf_source_type_label(ReportLocale::En, "pm_occurrence"),
+        "PM occurrence"
+    );
+}

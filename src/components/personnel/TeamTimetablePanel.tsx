@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfTone } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import {
@@ -78,6 +79,7 @@ export function TeamTimetablePanel({
     () => new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeZone: "UTC" }),
     [i18n.language],
   );
+  const { formatPercent } = useFormatters();
   const num = useMemo(
     () => new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 1 }),
     [i18n.language],
@@ -247,7 +249,7 @@ export function TeamTimetablePanel({
           <div>
             <dt className="text-xs text-text-muted">{t("timetable.editor.utilisation")}</dt>
             <dd className="tabular-nums">
-              {currentClass ? `${num.format(currentClass.version.utilisation_percent)} %` : "—"}
+              {currentClass ? formatPercent(currentClass.version.utilisation_percent) : "—"}
             </dd>
           </div>
         </dl>

@@ -40,7 +40,7 @@ fn normalize_strategy_type(value: &str) -> AppResult<String> {
         Ok(normalized)
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported PM strategy type '{value}'."
+            "GATE_PM_STRATEGY_INVALID: Unsupported PM strategy type '{value}'."
         )]))
     }
 }
@@ -51,7 +51,7 @@ fn normalize_asset_scope_type(value: &str) -> AppResult<String> {
         Ok(normalized)
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported PM asset scope type '{value}'."
+            "GATE_PM_SCOPE_TYPE_INVALID: Unsupported PM asset scope type '{value}'."
         )]))
     }
 }
@@ -62,7 +62,7 @@ fn normalize_lifecycle_status(value: &str) -> AppResult<String> {
         Ok(normalized)
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported PM lifecycle status '{value}'."
+            "GATE_PM_STATUS_INVALID: Unsupported PM lifecycle status '{value}'."
         )]))
     }
 }
@@ -86,8 +86,11 @@ fn lifecycle_transition_allowed(current: &str, next: &str) -> bool {
 }
 
 fn validate_rfc3339(ts: &str, field: &str) -> AppResult<()> {
-    DateTime::parse_from_rfc3339(ts)
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")]))?;
+    DateTime::parse_from_rfc3339(ts).map_err(|_| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_PM_DATE_INVALID: {field} must be a valid RFC3339 timestamp."
+        )])
+    })?;
     Ok(())
 }
 
@@ -98,16 +101,20 @@ fn validate_effective_window(effective_from: &str, effective_to: Option<&str>) -
         if DateTime::parse_from_rfc3339(effective_to)
             .map(|v| v.with_timezone(&Utc))
             .map_err(|_| {
-                AppError::ValidationFailed(vec!["effective_to must be a valid RFC3339 timestamp.".to_string()])
+                AppError::ValidationFailed(vec![
+                    "GATE_PM_DATE_INVALID: effective_to must be a valid RFC3339 timestamp.".to_string(),
+                ])
             })?
             < DateTime::parse_from_rfc3339(effective_from)
                 .map(|v| v.with_timezone(&Utc))
                 .map_err(|_| {
-                    AppError::ValidationFailed(vec!["effective_from must be a valid RFC3339 timestamp.".to_string()])
+                    AppError::ValidationFailed(vec![
+                        "GATE_PM_DATE_INVALID: effective_from must be a valid RFC3339 timestamp.".to_string(),
+                    ])
                 })?
         {
             return Err(AppError::ValidationFailed(vec![
-                "effective_to must be >= effective_from.".to_string(),
+                "GATE_PM_DATE_ORDER: effective_to must be >= effective_from.".to_string(),
             ]));
         }
     }
@@ -132,13 +139,13 @@ async fn ensure_lookup_value_in_domain(
         .await?;
     let Some(row) = row else {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{field_name} does not exist."
+            "GATE_PM_REFERENCE_INVALID: {field_name} does not exist."
         )]));
     };
     let domain_key: String = row.try_get("", "domain_key")?;
     if domain_key != expected_domain_key {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{field_name} must reference domain '{expected_domain_key}'."
+            "GATE_PM_REFERENCE_INVALID: {field_name} must reference domain '{expected_domain_key}'."
         )]));
     }
     Ok(())
@@ -148,17 +155,20 @@ async fn validate_required_skills_json(db: &DatabaseConnection, input: Option<&s
     let Some(raw) = input else {
         return Ok(());
     };
-    let parsed = serde_json::from_str::<Value>(raw)
-        .map_err(|_| AppError::ValidationFailed(vec!["required_skills_json must be valid JSON.".to_string()]))?;
+    let parsed = serde_json::from_str::<Value>(raw).map_err(|_| {
+        AppError::ValidationFailed(vec![
+            "GATE_PM_DEFINITION_INVALID: required_skills_json must be valid JSON.".to_string(),
+        ])
+    })?;
     let Some(codes) = parsed.as_array() else {
         return Err(AppError::ValidationFailed(vec![
-            "required_skills_json must be an array of skill codes.".to_string(),
+            "GATE_PM_DEFINITION_INVALID: required_skills_json must be an array of skill codes.".to_string(),
         ]));
     };
     for code in codes {
         let Some(code) = code.as_str() else {
             return Err(AppError::ValidationFailed(vec![
-                "required_skills_json must contain strings only.".to_string(),
+                "GATE_PM_DEFINITION_INVALID: required_skills_json must contain strings only.".to_string(),
             ]));
         };
         let row = db
@@ -176,7 +186,7 @@ async fn validate_required_skills_json(db: &DatabaseConnection, input: Option<&s
         let cnt: i64 = row.try_get("", "cnt")?;
         if cnt == 0 {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Skill code '{code}' is not published in PERSONNEL.SKILLS."
+                "GATE_PM_SKILL_UNKNOWN: Skill code '{code}' is not published in PERSONNEL.SKILLS."
             )]));
         }
     }
@@ -197,7 +207,7 @@ async fn validate_meter_spec(
     if let Some(start) = spec.get("start_reading") {
         if !start.is_null() && start.as_f64().map(|r| r < 0.0).unwrap_or(true) {
             return Err(AppError::ValidationFailed(vec![
-                "start_reading must be a number >= 0.".to_string()
+                "GATE_PM_START_READING_INVALID: start_reading must be a number >= 0.".to_string(),
             ]));
         }
     }
@@ -211,14 +221,14 @@ async fn validate_meter_spec(
             .await?;
         if exists.is_none() {
             return Err(AppError::ValidationFailed(vec![
-                "Meter trigger references unknown or inactive asset meter.".to_string(),
+                "GATE_PM_METER_UNKNOWN: Meter trigger references unknown or inactive asset meter.".to_string(),
             ]));
         }
         if interval_value > 0.0 || (allow_absolute && threshold_value > 0.0) {
             return Ok(());
         }
         return Err(AppError::ValidationFailed(vec![
-            "Meter trigger on an asset meter requires interval_value > 0 (or threshold_value > 0).".to_string(),
+            "GATE_PM_METER_INTERVAL_REQUIRED: Meter trigger on an asset meter requires interval_value > 0 (or threshold_value > 0).".to_string(),
         ]));
     }
     let meter_type = spec
@@ -235,7 +245,7 @@ async fn validate_meter_spec(
     let has_type = meter_type.is_some() || matches!(meter_source.as_str(), "odometer" | "operating_hours");
     if !has_type || interval_value <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "Meter trigger requires an asset meter or a meter type, and interval_value > 0.".to_string(),
+            "GATE_PM_METER_INTERVAL_REQUIRED: Meter trigger requires an asset meter or a meter type, and interval_value > 0.".to_string(),
         ]));
     }
     if let Some(meter_type) = meter_type {
@@ -251,7 +261,7 @@ async fn validate_meter_spec(
             .await?;
         if known.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Unknown meter type '{meter_type}'."
+                "GATE_PM_METER_TYPE_UNKNOWN: Unknown meter type '{meter_type}'."
             )]));
         }
     }
@@ -263,11 +273,14 @@ async fn validate_trigger_definition(
     strategy_type: &str,
     trigger_definition_json: &str,
 ) -> AppResult<()> {
-    let parsed = serde_json::from_str::<Value>(trigger_definition_json)
-        .map_err(|_| AppError::ValidationFailed(vec!["trigger_definition_json must be valid JSON.".to_string()]))?;
+    let parsed = serde_json::from_str::<Value>(trigger_definition_json).map_err(|_| {
+        AppError::ValidationFailed(vec![
+            "GATE_PM_DEFINITION_INVALID: trigger_definition_json must be valid JSON.".to_string(),
+        ])
+    })?;
     let Some(obj) = parsed.as_object() else {
         return Err(AppError::ValidationFailed(vec![
-            "trigger_definition_json must be an object.".to_string(),
+            "GATE_PM_DEFINITION_INVALID: trigger_definition_json must be an object.".to_string(),
         ]));
     };
     crate::pm::schedule::parse_tolerance(obj)?;
@@ -277,7 +290,7 @@ async fn validate_trigger_definition(
             if let Some(meter) = obj.get("meter").filter(|m| !m.is_null()) {
                 let Some(meter) = meter.as_object() else {
                     return Err(AppError::ValidationFailed(vec![
-                        "meter (whichever comes first) must be an object.".to_string(),
+                        "GATE_PM_DEFINITION_INVALID: meter (whichever comes first) must be an object.".to_string(),
                     ]));
                 };
                 validate_meter_spec(db, meter, false).await?;
@@ -288,7 +301,7 @@ async fn validate_trigger_definition(
             let code = obj.get("event_code").and_then(Value::as_str).unwrap_or_default();
             if code.trim().is_empty() {
                 return Err(AppError::ValidationFailed(vec![
-                    "Event trigger requires event_code.".to_string()
+                    "GATE_PM_TRIGGER_FIELD_REQUIRED: Event trigger requires event_code.".to_string(),
                 ]));
             }
         }
@@ -296,7 +309,7 @@ async fn validate_trigger_definition(
             let code = obj.get("condition_code").and_then(Value::as_str).unwrap_or_default();
             if code.trim().is_empty() {
                 return Err(AppError::ValidationFailed(vec![
-                    "Condition trigger requires condition_code.".to_string(),
+                    "GATE_PM_TRIGGER_FIELD_REQUIRED: Condition trigger requires condition_code.".to_string(),
                 ]));
             }
         }
@@ -414,7 +427,7 @@ pub async fn create_pm_plan(db: &DatabaseConnection, input: CreatePmPlanInput) -
     let title = input.title.trim().to_string();
     if code.is_empty() || title.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "PM plan code and title are required.".to_string()
+            "GATE_PM_PLAN_CODE_TITLE_REQUIRED: PM plan code and title are required.".to_string(),
         ]));
     }
     let strategy_type = normalize_strategy_type(&input.strategy_type)?;
@@ -452,7 +465,7 @@ pub async fn update_pm_plan(
     let current = get_pm_plan(db, plan_id).await?;
     if current.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM plan was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM plan was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     let title = input.title.unwrap_or(current.title);
@@ -473,7 +486,9 @@ pub async fn update_pm_plan(
          WHERE id=? AND row_version=?",
         [title.into(),input.description.or(current.description).into(),asset_scope_type.into(),input.asset_scope_id.or(current.asset_scope_id).into(),strategy_type.into(),criticality_value_id.into(),assigned_team_id.into(),i64::from(input.requires_shutdown.unwrap_or(current.requires_shutdown==1)).into(),i64::from(input.requires_permit.unwrap_or(current.requires_permit==1)).into(),i64::from(input.is_active.unwrap_or(current.is_active==1)).into(),plan_id.into(),expected_row_version.into()])).await?;
     if result.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec!["PM plan update failed.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM plan update failed.".to_string(),
+        ]));
     }
     tx.commit().await?;
     get_pm_plan(db, plan_id).await
@@ -486,19 +501,19 @@ pub async fn transition_pm_plan_lifecycle(
     let current = get_pm_plan(db, input.plan_id).await?;
     if current.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM lifecycle transition failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM lifecycle transition failed (stale row_version).".to_string(),
         ]));
     }
     let next = normalize_lifecycle_status(&input.next_status)?;
     if !lifecycle_transition_allowed(&current.lifecycle_status, &next) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Invalid PM lifecycle transition: {} -> {}.",
+            "GATE_PM_LIFECYCLE_TRANSITION:from={0},to={1}: Invalid PM lifecycle transition: {} -> {}.",
             current.lifecycle_status, next
         )]));
     }
     if next == "active" && current.current_version_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot activate PM plan without a published current version.".to_string(),
+            "GATE_PM_NO_PUBLISHED_VERSION: Cannot activate PM plan without a published current version.".to_string(),
         ]));
     }
     let tx = db.begin().await?;
@@ -578,14 +593,14 @@ pub async fn update_pm_plan_version(
     let status: String = row.try_get("", "status")?;
     if status != "draft" {
         return Err(AppError::ValidationFailed(vec![
-            "Only draft PM plan versions can be edited.".to_string(),
+            "GATE_PM_VERSION_NOT_DRAFT_EDIT: Only draft PM plan versions can be edited.".to_string(),
         ]));
     }
     crate::pm::wo_content::validate_required_parts_json(input.required_parts_json.as_deref())?;
     let rv: i64 = row.try_get("", "row_version")?;
     if rv != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM plan version was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM plan version was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     let plan_id: i64 = row.try_get("", "pm_plan_id")?;
@@ -629,14 +644,15 @@ pub async fn publish_pm_plan_version(
     let rv: i64 = row.try_get("", "row_version")?;
     if rv != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM version publish failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM version publish failed (stale row_version).".to_string(),
         ]));
     }
     let plan_id: i64 = row.try_get("", "pm_plan_id")?;
     let plan = get_pm_plan(db, plan_id).await?;
     if !matches!(plan.lifecycle_status.as_str(), "approved" | "active" | "suspended") {
         return Err(AppError::ValidationFailed(vec![
-            "Plan must be approved, active, or suspended before publishing a version.".to_string(),
+            "GATE_PM_PLAN_NOT_PUBLISHABLE: Plan must be approved, active, or suspended before publishing a version."
+                .to_string(),
         ]));
     }
     let tx = db.begin().await?;
@@ -672,7 +688,7 @@ fn normalize_occurrence_status(value: &str) -> AppResult<String> {
         Ok(normalized)
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported PM occurrence status '{value}'."
+            "GATE_PM_STATUS_INVALID: Unsupported PM occurrence status '{value}'."
         )]))
     }
 }
@@ -714,7 +730,9 @@ pub(crate) fn parse_as_of_or_now(as_of: Option<&str>) -> AppResult<DateTime<Utc>
     match as_of {
         Some(raw) => {
             let parsed = DateTime::parse_from_rfc3339(raw).map_err(|_| {
-                AppError::ValidationFailed(vec!["as_of must be a valid RFC3339 timestamp.".to_string()])
+                AppError::ValidationFailed(vec![
+                    "GATE_PM_DATE_INVALID: as_of must be a valid RFC3339 timestamp.".to_string()
+                ])
             })?;
             Ok(parsed.with_timezone(&Utc))
         }
@@ -1429,14 +1447,14 @@ pub async fn transition_pm_occurrence(
     let current = get_pm_occurrence_by_id(db, input.occurrence_id).await?;
     if current.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM occurrence was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM occurrence was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
 
     let next_status = normalize_occurrence_status(&input.next_status)?;
     if !occurrence_transition_allowed(&current.status, &next_status) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Invalid PM occurrence transition: {} -> {}.",
+            "GATE_PM_OCCURRENCE_TRANSITION:from={0},to={1}: Invalid PM occurrence transition: {} -> {}.",
             current.status, next_status
         )]));
     }
@@ -1450,7 +1468,8 @@ pub async fn transition_pm_occurrence(
             .is_empty()
     {
         return Err(AppError::ValidationFailed(vec![
-            "reason_code is required for deferred, missed, and cancelled transitions.".to_string(),
+            "GATE_PM_REASON_REQUIRED: reason_code is required for deferred, missed, and cancelled transitions."
+                .to_string(),
         ]));
     }
     // The reason of a deferral, miss or cancellation is a value of `PM.DEFERRAL_REASONS`.
@@ -1506,7 +1525,7 @@ pub async fn transition_pm_occurrence(
                 // The OT's creator is the person who generated it: never a stand-in user.
                 creator_id: input.actor_id.ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "An acting user is required to generate the work order of a PM occurrence.".to_string(),
+                        "GATE_PM_ACTING_USER_REQUIRED: An acting user is required to generate the work order of a PM occurrence.".to_string(),
                     ])
                 })?,
                 requires_permit: Some(content.requires_permit),
@@ -1555,7 +1574,7 @@ pub async fn transition_pm_occurrence(
 
     if update.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "PM occurrence transition failed due to stale row_version.".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM occurrence transition failed due to stale row_version.".to_string(),
         ]));
     }
 
@@ -1631,7 +1650,7 @@ fn normalize_execution_result(value: &str) -> AppResult<String> {
     match normalized.as_str() {
         "completed_no_findings" | "completed_with_findings" | "deferred" | "missed" | "cancelled" => Ok(normalized),
         _ => Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported PM execution result '{}'.",
+            "GATE_PM_RESULT_INVALID: Unsupported PM execution result '{}'.",
             value
         )])),
     }
@@ -1663,19 +1682,27 @@ fn bounded_period(input_from: Option<&str>, input_to: Option<&str>) -> AppResult
     let now = Utc::now();
     let from = match input_from {
         Some(value) => DateTime::parse_from_rfc3339(value)
-            .map_err(|_| AppError::ValidationFailed(vec!["from must be a valid RFC3339 timestamp.".to_string()]))?
+            .map_err(|_| {
+                AppError::ValidationFailed(vec![
+                    "GATE_PM_DATE_INVALID: from must be a valid RFC3339 timestamp.".to_string()
+                ])
+            })?
             .with_timezone(&Utc),
         None => now - Duration::days(30),
     };
     let to = match input_to {
         Some(value) => DateTime::parse_from_rfc3339(value)
-            .map_err(|_| AppError::ValidationFailed(vec!["to must be a valid RFC3339 timestamp.".to_string()]))?
+            .map_err(|_| {
+                AppError::ValidationFailed(vec![
+                    "GATE_PM_DATE_INVALID: to must be a valid RFC3339 timestamp.".to_string()
+                ])
+            })?
             .with_timezone(&Utc),
         None => now,
     };
     if to < from {
         return Err(AppError::ValidationFailed(vec![
-            "to must be greater than or equal to from.".to_string(),
+            "GATE_PM_DATE_ORDER: to must be greater than or equal to from.".to_string(),
         ]));
     }
     Ok((
@@ -1943,7 +1970,7 @@ async fn create_follow_up_di_from_finding(
     let asset_scope_id: Option<i64> = plan_row.try_get("", "asset_scope_id")?;
     if asset_scope_type != "equipment" || asset_scope_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Follow-up DI creation requires PM plan asset_scope_type = 'equipment' with asset_scope_id.".to_string(),
+            "GATE_PM_FOLLOWUP_NO_EQUIPMENT: Follow-up DI creation requires PM plan asset_scope_type = 'equipment' with asset_scope_id.".to_string(),
         ]));
     }
 
@@ -1955,11 +1982,16 @@ async fn create_follow_up_di_from_finding(
             [equipment_id.into()],
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["PM plan equipment not found for follow-up DI.".to_string()]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_PM_FOLLOWUP_NO_EQUIPMENT: PM plan equipment not found for follow-up DI.".to_string(),
+            ])
+        })?;
     let org_node_id: Option<i64> = node_row.try_get("", "installed_at_node_id")?;
     let Some(org_node_id) = org_node_id else {
         return Err(AppError::ValidationFailed(vec![
-            "PM plan equipment must have installed_at_node_id for follow-up DI routing.".to_string(),
+            "GATE_PM_FOLLOWUP_NO_LOCATION: PM plan equipment must have installed_at_node_id for follow-up DI routing."
+                .to_string(),
         ]));
     };
 
@@ -2031,7 +2063,7 @@ async fn create_follow_up_wo_from_finding(
     let asset_scope_id: Option<i64> = plan_row.try_get("", "asset_scope_id")?;
     if asset_scope_type != "equipment" || asset_scope_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot create follow-up OT without equipment scope on PM plan.".to_string(),
+            "GATE_PM_FOLLOWUP_NO_EQUIPMENT: Cannot create follow-up OT without equipment scope on PM plan.".to_string(),
         ]));
     }
     let wo_type_code = follow_up_work_order_type_code(db, finding.follow_up_work_order_type_id).await?;
@@ -2085,7 +2117,11 @@ async fn follow_up_work_order_type_code(db: &DatabaseConnection, explicit_type_i
         .await?
         .into_iter()
         .find(|t| t.id == type_id && t.is_active)
-        .ok_or_else(|| AppError::ValidationFailed(vec![format!("Type d'OT introuvable (type_id={type_id}).")]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PM_WO_TYPE_UNKNOWN: Type d'OT introuvable (type_id={type_id})."
+            )])
+        })?;
     if !ty
         .nature
         .as_deref()
@@ -2252,12 +2288,12 @@ pub async fn execute_pm_occurrence(
 
     if execution_result == "completed_no_findings" && !findings_input.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "completed_no_findings cannot include findings payload.".to_string(),
+            "GATE_PM_FINDINGS_NOT_ALLOWED: completed_no_findings cannot include findings payload.".to_string(),
         ]));
     }
     if execution_result == "completed_with_findings" && findings_input.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "completed_with_findings requires at least one finding.".to_string(),
+            "GATE_PM_FINDINGS_REQUIRED: completed_with_findings requires at least one finding.".to_string(),
         ]));
     }
 
@@ -2279,12 +2315,12 @@ pub async fn execute_pm_occurrence(
 
     if execution_result == "deferred" && defer_reason.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "defer_reason_code is required for deferred execution outcomes.".to_string(),
+            "GATE_PM_REASON_REQUIRED: defer_reason_code is required for deferred execution outcomes.".to_string(),
         ]));
     }
     if execution_result == "missed" && miss_reason.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "miss_reason_code is required for missed execution outcomes.".to_string(),
+            "GATE_PM_REASON_REQUIRED: miss_reason_code is required for missed execution outcomes.".to_string(),
         ]));
     }
 
@@ -2317,7 +2353,8 @@ pub async fn execute_pm_occurrence(
     let creator = || {
         actor_id.ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "An acting user is required to create the follow-up of a PM finding.".to_string(),
+                "GATE_PM_ACTING_USER_REQUIRED: An acting user is required to create the follow-up of a PM finding."
+                    .to_string(),
             ])
         })
     };
@@ -2325,7 +2362,8 @@ pub async fn execute_pm_occurrence(
     if let (Some(linked), Some(provided)) = (occurrence.linked_work_order_id, input.work_order_id) {
         if linked != provided {
             return Err(AppError::ValidationFailed(vec![
-                "work_order_id must match linked occurrence work order when one already exists.".to_string(),
+                "GATE_PM_WO_MISMATCH: work_order_id must match linked occurrence work order when one already exists."
+                    .to_string(),
             ]));
         }
     }
@@ -2344,7 +2382,9 @@ pub async fn execute_pm_occurrence(
                 [wo_id.into()],
             ))
             .await?
-            .ok_or_else(|| AppError::ValidationFailed(vec!["work_order_id does not exist.".to_string()]))?;
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec!["GATE_PM_WO_UNKNOWN: work_order_id does not exist.".to_string()])
+            })?;
         work_order_code = wo_row.try_get("", "code")?;
         actual_duration_hours = wo_row.try_get("", "actual_duration_hours")?;
         actual_labor_hours = wo_row.try_get("", "active_labor_hours")?;
@@ -2413,13 +2453,13 @@ pub async fn execute_pm_occurrence(
         let finding_type = finding.finding_type.trim().to_uppercase();
         if finding_type.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "finding_type is required for each PM finding.".to_string(),
+                "GATE_PM_FINDING_TYPE_REQUIRED: finding_type is required for each PM finding.".to_string(),
             ]));
         }
         let description = finding.description.trim().to_string();
         if description.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "description is required for each PM finding.".to_string(),
+                "GATE_PM_FINDING_DESCRIPTION_REQUIRED: description is required for each PM finding.".to_string(),
             ]));
         }
 

@@ -679,15 +679,20 @@ async fn a_draft_moves_to_the_site_of_its_new_equipment() {
     assert_eq!(before.entity_id, Some(f.t.site_a));
 
     // Other equipment of the same site's line: the order now belongs to the line.
-    let moved = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, before.row_version, f.eq_a1))
-        .await
-        .expect("to equipment of line A1");
+    let moved =
+        queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, before.row_version, f.eq_a1), None)
+            .await
+            .expect("to equipment of line A1");
     assert_eq!(moved.entity_id, Some(f.t.line_a1));
 
     // Equipment installed nowhere: refused, as at create; the order is unchanged.
-    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, moved.row_version, f.eq_none))
-        .await
-        .unwrap_err();
+    let err = queries::update_wo_draft_fields(
+        &f.db,
+        draft_equipment_change(f.wo_a, moved.row_version, f.eq_none),
+        None,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(err, AppError::ValidationFailed(_)), "{err:?}");
     let kept = queries::get_work_order(&f.db, f.wo_a)
         .await
@@ -697,7 +702,7 @@ async fn a_draft_moves_to_the_site_of_its_new_equipment() {
 
     // Equipment of site B (a plant-wide user may do it): the order moves to site B, so a site-A
     // user no longer sees it.
-    let to_b = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, kept.row_version, f.eq_b))
+    let to_b = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, kept.row_version, f.eq_b), None)
         .await
         .expect("to equipment of site B");
     assert_eq!(to_b.entity_id, Some(f.t.site_b));
@@ -717,7 +722,7 @@ async fn a_draft_moves_to_the_site_of_its_new_equipment() {
         ),
     )
     .await;
-    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, to_b.row_version, f.eq_a))
+    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, to_b.row_version, f.eq_a), None)
         .await
         .unwrap_err();
     assert!(
@@ -734,7 +739,7 @@ async fn a_draft_moves_to_the_site_of_its_new_equipment() {
         "UPDATE work_permits SET status = 'closed' WHERE entity_sync_id = 'site-move-permit'",
     )
     .await;
-    let back = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, kept.row_version, f.eq_a))
+    let back = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, kept.row_version, f.eq_a), None)
         .await
         .expect("back to site A once the permit is closed");
     assert_eq!(back.entity_id, Some(f.t.site_a));
@@ -788,7 +793,7 @@ async fn a_draft_with_stock_reserved_or_locks_fitted_does_not_move() {
         ),
     )
     .await;
-    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a1, wo.row_version, f.eq_b))
+    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a1, wo.row_version, f.eq_b), None)
         .await
         .unwrap_err();
     refused_because(err, "réservation");
@@ -818,7 +823,7 @@ async fn a_draft_with_stock_reserved_or_locks_fitted_does_not_move() {
            FROM work_permits WHERE code = 'PTW-WO-MOVE'",
     )
     .await;
-    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a1, wo.row_version, f.eq_b))
+    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a1, wo.row_version, f.eq_b), None)
         .await
         .unwrap_err();
     refused_because(err, "consignation");
@@ -834,7 +839,7 @@ async fn a_draft_with_stock_reserved_or_locks_fitted_does_not_move() {
         "UPDATE permit_isolations SET removal_verified_at = datetime('now') WHERE entity_sync_id = 'wo-move-iso'",
     )
     .await;
-    let moved = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a1, kept.row_version, f.eq_b))
+    let moved = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a1, kept.row_version, f.eq_b), None)
         .await
         .expect("moves once nothing ties it to its old location");
     assert_eq!(moved.entity_id, Some(f.t.site_b));
@@ -861,7 +866,7 @@ async fn an_open_permit_holds_any_equipment_change_but_stock_only_a_change_of_si
         ),
     )
     .await;
-    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, wo.row_version, eq_a2))
+    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, wo.row_version, eq_a2), None)
         .await
         .unwrap_err();
     assert!(
@@ -914,7 +919,7 @@ async fn an_open_permit_holds_any_equipment_change_but_stock_only_a_change_of_si
         ),
     )
     .await;
-    let changed = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, kept.row_version, eq_a2))
+    let changed = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, kept.row_version, eq_a2), None)
         .await
         .expect("same location, permit closed: allowed despite the reservation");
     assert_eq!(
@@ -923,7 +928,7 @@ async fn an_open_permit_holds_any_equipment_change_but_stock_only_a_change_of_si
     );
 
     // The reservation still holds back a change of site.
-    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, changed.row_version, f.eq_b))
+    let err = queries::update_wo_draft_fields(&f.db, draft_equipment_change(f.wo_a, changed.row_version, f.eq_b), None)
         .await
         .unwrap_err();
     assert!(

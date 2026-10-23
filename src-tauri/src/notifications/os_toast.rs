@@ -105,7 +105,9 @@ pub async fn pending_os_toasts(
 /// Fails unless every notification belongs to `user_id`.
 pub async fn ensure_owned(conn: &impl ConnectionTrait, user_id: i64, notification_ids: &[i64]) -> AppResult<()> {
     if notification_ids.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["notification_ids is empty.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_NOTIF_IDS_EMPTY: notification_ids is empty.".into(),
+        ]));
     }
     for id in notification_ids {
         let owner = conn
