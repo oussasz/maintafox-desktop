@@ -1412,17 +1412,47 @@ pub async fn delete_personnel_schedule_exception(id: i64, state: State<'_, AppSt
     timetable::delete_personnel_schedule_exception(&state.db, id).await
 }
 
+/// Readers of the site work weeks: the schedule-class screens of Données de référence and the
+/// people managers (same readers as `list_schedule_class_versions`). Weekday numbers per site.
+pub(crate) const SITE_WORK_WEEK_READERS: &[&str] =
+    &[crate::rbac::permissions::REF_VIEW, crate::rbac::permissions::PER_VIEW];
+
 /// Weekly rest days of every site and of the sites that set their own.
 #[tauri::command]
 pub async fn list_site_work_weeks(state: State<'_, AppState>) -> AppResult<Vec<calendar::SiteWorkWeek>> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::PER_VIEW,
-        PermissionScope::Global
-    );
+    crate::commands::qualification::require_any_permission(&state, &user, SITE_WORK_WEEK_READERS).await?;
     calendar::list_site_work_weeks(&state.db).await
+}
+
+#[cfg(test)]
+mod site_work_week_readers_tests {
+    use super::SITE_WORK_WEEK_READERS;
+    use crate::auth::scope_tests::{assign, role, user};
+    use crate::commands::qualification::first_held_permission;
+    use crate::rbac::permissions::{OT_VIEW, PER_VIEW, REF_VIEW};
+
+    async fn reads(db: &sea_orm::DatabaseConnection, name: &str, perms: &[&str]) -> bool {
+        let id = user(db, name).await;
+        let r = role(db, &format!("work weeks {name}"), perms).await;
+        assign(db, id, r, "tenant", None).await;
+        let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
+        first_held_permission(db, &cache, id, SITE_WORK_WEEK_READERS)
+            .await
+            .expect("rbac")
+            .is_some()
+    }
+
+    #[tokio::test]
+    async fn reference_data_readers_read_the_site_work_weeks() {
+        let db = crate::db::test_db::seeded().await;
+        assert!(reads(&db, "ref.reader", &[REF_VIEW]).await, "ref.view alone is enough");
+        assert!(reads(&db, "per.reader", &[PER_VIEW]).await, "per.view as before");
+        assert!(
+            !reads(&db, "ot.reader", &[OT_VIEW]).await,
+            "another module's right is not"
+        );
+    }
 }
 
 #[tauri::command]

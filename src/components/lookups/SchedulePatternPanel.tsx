@@ -201,10 +201,11 @@ export function ClasseHoraireEditor({
     [i18n.language],
   );
 
-  // The site rest days are `list_site_work_weeks`, which the server opens to per.view only: the
-  // timetable is read without them for other users (no refused call, no error in place of it).
-  const { can, isLoading: permissionsLoading } = usePermissions();
-  const canReadSiteWeeks = can(P.PER_VIEW);
+  // The site rest days are `list_site_work_weeks`, which the server opens to ref.view or per.view
+  // (as the timetable itself): the timetable is read without them for other users, and a refused
+  // or failed call leaves only the rest days out, never the whole panel.
+  const { canAny, isLoading: permissionsLoading } = usePermissions();
+  const canReadSiteWeeks = canAny(P.REF_VIEW, P.PER_VIEW);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -214,10 +215,15 @@ export function ClasseHoraireEditor({
       setVersions(rows);
       let restDays: number[] = [];
       if (canReadSiteWeeks) {
-        const allSites = (await listSiteWorkWeeks())
-          .filter((w) => w.entity_id == null && w.effective_from <= today)
-          .sort((a, b) => a.effective_from.localeCompare(b.effective_from));
-        restDays = allSites.at(-1)?.weekend_days ?? [];
+        try {
+          const allSites = (await listSiteWorkWeeks())
+            .filter((w) => w.entity_id == null && w.effective_from <= today)
+            .sort((a, b) => a.effective_from.localeCompare(b.effective_from));
+          restDays = allSites.at(-1)?.weekend_days ?? [];
+        } catch {
+          // The timetable stays readable; only the site rest days are not shown.
+          restDays = [];
+        }
       }
       setSiteRestDays(restDays);
       const current = versionOn(rows, today) ?? rows.at(-1);
