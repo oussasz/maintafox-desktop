@@ -10,8 +10,11 @@
  * same count posted on two PCs by older versions) as "comptage passé deux fois — à vérifier",
  * naming the session and both movements, until a new count; a reservation issued, or a PO line
  * received, beyond its quantity by several PCs as "sur-sortie / sur-réception — à rapprocher",
- * naming the work order or PO and every movement, until a count made on a PC holding them all.
- * Locations holding more reserved than on hand are shown as warnings only. Nothing here can be rejected or accepted as is.
+ * naming the work order or PO and every movement, until a count made on a PC holding them all
+ * (from this list, a count session or an inventory campaign) or, for an over-issue, a return of
+ * the reservation back to its reserved quantity ("régularisé par retour"); closed ones name that
+ * return, or the count's session, counter and approver. Locations holding more reserved than on
+ * hand are shown as warnings only. Nothing here can be rejected or accepted as is.
  */
 import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -154,7 +157,36 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
     if (item.work_order_code) {
       return t("negativeStock.overQuantity.documentWorkOrder", { code: item.work_order_code });
     }
-    return item.reservation_ref ?? t("negativeStock.overQuantity.documentNone");
+    if (item.reservation_ref) {
+      return t("negativeStock.overQuantity.documentReservation", { ref: item.reservation_ref });
+    }
+    return t("negativeStock.overQuantity.documentNone");
+  };
+
+  /** How a closed over-issue or over-receipt was closed: the return, or the count. */
+  const overClosure = (item: OverQuantityReview) => {
+    const unknown = t("negativeStock.doubleCount.unknownUser");
+    const back = item.closed_by_return;
+    if (item.closure_kind === "return" && back) {
+      return t("negativeStock.overQuantity.closedByReturn", {
+        quantity: qty(back.quantity),
+        who: back.posted_by ?? unknown,
+        date: back.posted_at ? formatDateTime(back.posted_at) : "—",
+      });
+    }
+    const by = item.closed_by;
+    return t(
+      by?.approved_by
+        ? "negativeStock.overQuantity.closedByCountApproved"
+        : "negativeStock.overQuantity.closedByCount",
+      {
+        session: by?.session_code ?? "—",
+        path: by ? t(`negativeStock.overQuantity.closedPath.${by.path}`) : "",
+        who: by?.counted_by ?? unknown,
+        date: by?.counted_at ? formatDateTime(by.counted_at) : "—",
+        approver: by?.approved_by ?? "",
+      },
+    );
   };
 
   const openCount = (item: CountTarget) => {
@@ -386,6 +418,11 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                     onHand: qty(item.on_hand_qty),
                   })}
                 </p>
+                {item.kind === "over_receipt" ? (
+                  <p className="mt-1 text-xs text-text-muted">
+                    {t("negativeStock.overQuantity.receiptRejected")}
+                  </p>
+                ) : null}
                 <ul className="mt-1 list-disc ps-5 text-xs text-text-secondary">
                   {item.movements.map((m) => (
                     <li key={m.movement_sync_id}>{overMovementLine(m)}</li>
@@ -483,11 +520,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                 {item.article_code} — {item.warehouse_code}/{item.location_code}
               </span>{" "}
               · {t(`negativeStock.overQuantity.flagKind.${item.kind}`)} · {overDocument(item)} ·{" "}
-              {t("negativeStock.doublePosting.closedByCount", {
-                session: item.closed_by?.session_code ?? "—",
-                who: item.closed_by?.counted_by ?? t("negativeStock.doubleCount.unknownUser"),
-                date: item.closed_by?.counted_at ? formatDateTime(item.closed_by.counted_at) : "—",
-              })}
+              {overClosure(item)}
             </li>
           ))}
         </ul>

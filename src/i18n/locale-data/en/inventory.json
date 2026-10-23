@@ -83,11 +83,20 @@
         "over_receipt": "Over-receipt — to reconcile"
       },
       "explainKind": {
-        "over_issue": "Reservation for {{document}}: {{expected}} reserved, {{actual}} issued in all (issues made on several PCs, returns deducted), {{excess}} too many. {{onHand}} on hand now. Check the stock and record a count on a PC that has received all these issues.",
+        "over_issue": "{{document}}: {{expected}} reserved, {{actual}} issued in all (issues made on several PCs, returns deducted), {{excess}} too many. {{onHand}} on hand now. Check the stock and record a count on a PC that has received all these issues.",
         "over_receipt": "Purchase order {{document}}: {{expected}} ordered, {{actual}} received in all (receipts made on several PCs), {{excess}} too many. {{onHand}} on hand now. Check the stock and record a count on a PC that has received all these receipts."
       },
-      "documentWorkOrder": "work order {{code}}",
-      "documentNone": "a reservation without reference",
+      "documentWorkOrder": "Reservation for work order {{code}}",
+      "documentReservation": "Reservation {{ref}}",
+      "documentNone": "Reservation without work order",
+      "receiptRejected": "If these receipts were rejected in full at inspection, no stock moved: the count confirms the stock as it stands.",
+      "closedByReturn": "Regularised by return: {{quantity}} returned by {{who}}, {{date}}",
+      "closedByCount": "Closed by count {{session}} {{path}}: counted by {{who}}, {{date}}",
+      "closedByCountApproved": "Closed by count {{session}} {{path}}: counted by {{who}}, {{date}}, variance approved by {{approver}}",
+      "closedPath": {
+        "reconciliation": "from the stock-to-reconcile list",
+        "count_session": "from a count session or inventory campaign"
+      },
       "movementLine": "{{movement}} — {{who}}, {{date}}: {{quantity}}",
       "movementLineRef": "{{movement}} {{ref}} — {{who}}, {{date}}: {{quantity}}",
       "syncNotice": "{{count}} over-issue(s) or over-receipt(s) (issues or receipts made on several PCs beyond the quantity reserved or ordered): to reconcile with a count (Inventory › Controls)."

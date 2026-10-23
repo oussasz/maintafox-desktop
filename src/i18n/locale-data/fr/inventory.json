@@ -83,11 +83,20 @@
         "over_receipt": "Sur-réception — à rapprocher"
       },
       "explainKind": {
-        "over_issue": "Réservation pour {{document}} : {{expected}} réservé(s), {{actual}} sorti(s) au total (sorties faites sur plusieurs postes, retours déduits), soit {{excess}} de trop. Actuellement {{onHand}} en stock. Vérifiez le stock et enregistrez un comptage sur un poste qui a reçu toutes ces sorties.",
+        "over_issue": "{{document}} : {{expected}} réservé(s), {{actual}} sorti(s) au total (sorties faites sur plusieurs postes, retours déduits), soit {{excess}} de trop. Actuellement {{onHand}} en stock. Vérifiez le stock et enregistrez un comptage sur un poste qui a reçu toutes ces sorties.",
         "over_receipt": "Commande {{document}} : {{expected}} commandé(s), {{actual}} réceptionné(s) au total (réceptions faites sur plusieurs postes), soit {{excess}} de trop. Actuellement {{onHand}} en stock. Vérifiez le stock et enregistrez un comptage sur un poste qui a reçu toutes ces réceptions."
       },
-      "documentWorkOrder": "l'OT {{code}}",
-      "documentNone": "une réservation sans référence",
+      "documentWorkOrder": "Réservation pour l'OT {{code}}",
+      "documentReservation": "Réservation {{ref}}",
+      "documentNone": "Réservation sans OT",
+      "receiptRejected": "Si ces réceptions ont été refusées en totalité au contrôle, aucun stock n'a bougé : le comptage confirme le stock tel qu'il est.",
+      "closedByReturn": "Régularisé par retour : {{quantity}} retourné(s) par {{who}}, {{date}}",
+      "closedByCount": "Clos par le comptage {{session}} {{path}} : compté par {{who}}, {{date}}",
+      "closedByCountApproved": "Clos par le comptage {{session}} {{path}} : compté par {{who}}, {{date}}, écart approuvé par {{approver}}",
+      "closedPath": {
+        "reconciliation": "depuis la liste du stock à rapprocher",
+        "count_session": "d'un inventaire ou comptage tournant"
+      },
       "movementLine": "{{movement}} — {{who}}, {{date}} : {{quantity}}",
       "movementLineRef": "{{movement}} {{ref}} — {{who}}, {{date}} : {{quantity}}",
       "syncNotice": "{{count}} sur-sortie(s) ou sur-réception(s) (sorties ou réceptions faites sur plusieurs postes au-delà de la quantité réservée ou commandée) : à rapprocher par un comptage (Stock › Contrôles)."
