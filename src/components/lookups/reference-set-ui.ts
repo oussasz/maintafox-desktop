@@ -74,5 +74,5 @@ export function referenceDomainLabel(
   }
   const key = `domainLabels.${domain.code.replace(/\./g, "_")}`;
   const translated = t(key);
-  return translated && translated !== key && !translated.endsWith(key) ? translated : domain.name;
+  return translated && !translated.includes(key) ? translated : domain.name;
 }

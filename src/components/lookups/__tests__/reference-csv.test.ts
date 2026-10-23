@@ -112,6 +112,11 @@ describe("reference set presentation", () => {
     expect(referenceDomainLabel({ id: 9, code: "PLANT.OWN_LIST", name: "Ma liste" }, known)).toBe(
       "Ma liste",
     );
+    // The app's i18n returns "[key]" for a missing key (parseMissingKeyHandler).
+    const bracketed = (key: string) => `[${key}]`;
+    expect(
+      referenceDomainLabel({ id: 9, code: "PLANT.OWN_LIST", name: "Ma liste" }, bracketed),
+    ).toBe("Ma liste");
   });
 
   it("hides the readiness checks the publish action takes care of", () => {
