@@ -533,7 +533,18 @@
     "GATE_REF_SCHEDULE_DAY_INVALID": "Jour de la semaine invalide dans le modèle horaire.",
     "GATE_REF_CURRENCY_MINOR_UNITS": "Une devise doit indiquer son nombre de décimales (0 à 4, par exemple 2 pour les centimes).",
     "GATE_REF_CURRENCY_DETAILS_INVALID": "Les détails de la devise ne sont pas valides.",
-    "GATE_REF_CURRENCY_SYMBOL_LENGTH": "Le symbole de la devise doit comporter entre 1 et 8 caractères."
+    "GATE_REF_CURRENCY_SYMBOL_LENGTH": "Le symbole de la devise doit comporter entre 1 et 8 caractères.",
+    "GATE_PLAN_DATE_INVALID": "Date refusée : saisissez une date et une heure valides.",
+    "GATE_PLAN_DATE_ORDER": "Période refusée : la fin doit être postérieure au début.",
+    "GATE_PLAN_SLOT_START_INVALID": "Le début du créneau n'est pas une date et une heure valides.",
+    "GATE_PLAN_APPROVER_NOT_ALLOWED": "L'approbateur choisi n'a pas le droit de confirmer le planning ni de gérer les fenêtres.",
+    "GATE_PLAN_APPROVER_NO_PERSONNEL": "L'approbateur choisi n'est lié à aucune fiche du personnel.",
+    "GATE_PLAN_BREAKIN_LOCKED_WINDOW": "Insertion refusée : le créneau chevauche une fenêtre verrouillée. Indiquez un motif de dérogation pour continuer.",
+    "GATE_PLAN_COMMITMENT_FROZEN": "Reprogrammation refusée : cet engagement est gelé.",
+    "GATE_PLAN_WO_STATUS_NOT_SYNCABLE": "Synchronisation refusée : l'OT n°{{wo}} n'est plus au statut planifié ou prêt.",
+    "GATE_NOTIF_DIGEST_MODE_INVALID": "Mode de réception refusé : choisissez immédiat, résumé quotidien ou désactivé.",
+    "GATE_NOTIF_DIGEST_ALWAYS_INSTANT": "La catégorie du résumé quotidien est toujours remise immédiatement.",
+    "GATE_NOTIF_IDS_EMPTY": "Aucune notification n'est sélectionnée."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "Cet enregistrement appartient à un site hors de vos rôles.",

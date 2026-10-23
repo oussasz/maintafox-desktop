@@ -83,8 +83,11 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 }
 
 fn parse_rfc3339(value: &str, field: &str) -> AppResult<DateTime<Utc>> {
-    let parsed = DateTime::parse_from_rfc3339(value)
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")]))?;
+    let parsed = DateTime::parse_from_rfc3339(value).map_err(|_| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_PLAN_DATE_INVALID: {field} must be a valid RFC3339 timestamp."
+        )])
+    })?;
     Ok(parsed.with_timezone(&Utc))
 }
 
@@ -93,7 +96,7 @@ fn validate_window(start: &str, end: &str, start_field: &str, end_field: &str) -
     let end_dt = parse_rfc3339(end, end_field)?;
     if end_dt <= start_dt {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{end_field} must be strictly greater than {start_field}."
+            "GATE_PLAN_DATE_ORDER: {end_field} must be strictly greater than {start_field}."
         )]));
     }
     Ok(())
@@ -842,7 +845,9 @@ pub(crate) async fn enforce_assignee_qualifications(
     let work_day = crate::wo::shifts::planned_instant(slot_start)
         .map(|t| t.with_timezone(&chrono::Local).date_naive())
         .ok_or_else(|| {
-            AppError::ValidationFailed(vec![format!("The slot start '{slot_start}' is not a date and time.")])
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PLAN_SLOT_START_INVALID: The slot start '{slot_start}' is not a date and time."
+            )])
         })?;
     match super::qualifications::check_assignee(db, source_type, source_id, personnel_id, work_day).await? {
         Some(check) if !check.qualified => Err(crate::qualification::gate::blocked_error(&check)),
@@ -1671,13 +1676,14 @@ pub async fn create_schedule_break_in(
     if let Some(approver_user_id) = approved_by_user_id {
         if !user_has_plan_approval_scope(&tx, approver_user_id).await? {
             return Err(AppError::ValidationFailed(vec![
-                "approved_by_user_id must have plan.confirm or plan.windows permission.".to_string(),
+                "GATE_PLAN_APPROVER_NOT_ALLOWED: approved_by_user_id must have plan.confirm or plan.windows permission.".to_string(),
             ]));
         }
         approved_by_personnel_id = resolve_user_personnel_id(&tx, approver_user_id).await?;
         if approved_by_personnel_id.is_none() {
             return Err(AppError::ValidationFailed(vec![
-                "approved_by_user_id must be linked to a personnel record.".to_string(),
+                "GATE_PLAN_APPROVER_NO_PERSONNEL: approved_by_user_id must be linked to a personnel record."
+                    .to_string(),
             ]));
         }
     }
@@ -1818,7 +1824,7 @@ pub async fn create_schedule_break_in(
     let locked_window = find_locked_window(&tx, &input.new_slot_start, &input.new_slot_end, location).await?;
     if locked_window.is_some() && dangerous_override_reason.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Break-in intersects a locked window and requires dangerous_override_reason.".to_string(),
+            "GATE_PLAN_BREAKIN_LOCKED_WINDOW: Break-in intersects a locked window and requires dangerous_override_reason.".to_string(),
         ]));
     }
 
@@ -2074,7 +2080,7 @@ pub async fn create_schedule_commitment(
             if let Some(approver) = b.approved_by_user_id {
                 if !user_has_plan_approval_scope(&tx, approver).await? {
                     return Err(AppError::ValidationFailed(vec![
-                        "approved_by_user_id must have plan.confirm or plan.windows permission.".to_string(),
+                        "GATE_PLAN_APPROVER_NOT_ALLOWED: approved_by_user_id must have plan.confirm or plan.windows permission.".to_string(),
                     ]));
                 }
             }
@@ -2301,7 +2307,7 @@ pub async fn reschedule_schedule_commitment(
         )
         .await;
         return Err(AppError::ValidationFailed(vec![
-            "Commitment is frozen and cannot be rescheduled.".to_string(),
+            "GATE_PLAN_COMMITMENT_FROZEN: Commitment is frozen and cannot be rescheduled.".to_string(),
         ]));
     }
 

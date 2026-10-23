@@ -533,7 +533,18 @@
     "GATE_REF_SCHEDULE_DAY_INVALID": "Invalid weekday in the schedule pattern.",
     "GATE_REF_CURRENCY_MINOR_UNITS": "A currency needs its number of decimals (0 to 4, e.g. 2 for cents).",
     "GATE_REF_CURRENCY_DETAILS_INVALID": "The currency details are not valid.",
-    "GATE_REF_CURRENCY_SYMBOL_LENGTH": "The currency symbol must be 1 to 8 characters long."
+    "GATE_REF_CURRENCY_SYMBOL_LENGTH": "The currency symbol must be 1 to 8 characters long.",
+    "GATE_PLAN_DATE_INVALID": "Date refused: enter a valid date and time.",
+    "GATE_PLAN_DATE_ORDER": "Period refused: the end must be after the start.",
+    "GATE_PLAN_SLOT_START_INVALID": "The slot start is not a valid date and time.",
+    "GATE_PLAN_APPROVER_NOT_ALLOWED": "The chosen approver is not allowed to confirm the plan or manage windows.",
+    "GATE_PLAN_APPROVER_NO_PERSONNEL": "The chosen approver is not linked to a personnel record.",
+    "GATE_PLAN_BREAKIN_LOCKED_WINDOW": "Break-in refused: the slot overlaps a locked window. Give an override reason to proceed.",
+    "GATE_PLAN_COMMITMENT_FROZEN": "Reschedule refused: this commitment is frozen.",
+    "GATE_PLAN_WO_STATUS_NOT_SYNCABLE": "Sync refused: work order no. {{wo}} is no longer planned or ready.",
+    "GATE_NOTIF_DIGEST_MODE_INVALID": "Delivery mode refused: choose instant, daily digest or off.",
+    "GATE_NOTIF_DIGEST_ALWAYS_INSTANT": "The daily digest category is always delivered instantly.",
+    "GATE_NOTIF_IDS_EMPTY": "No notification is selected."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",
