@@ -695,6 +695,26 @@
       "optional": "Motif (facultatif)",
       "ledgerHint": "Le motif est enregistré dans le journal d'administration."
     },
+    "reasonLine": "Motif : {{reason}}",
+    "refusal": {
+      "permission_denied": "Action refusée : droit manquant.",
+      "validation_failed": "Action refusée : données non valides ou règle non respectée.",
+      "not_found": "Action refusée : élément introuvable.",
+      "generic": "Action refusée."
+    },
+    "summary": {
+      "user_created": "Compte « {{target}} » créé",
+      "user_updated": "Compte « {{target}} » modifié",
+      "password_reset_by_admin": "Mot de passe de « {{target}} » réinitialisé par un administrateur (changement obligatoire à la prochaine connexion)",
+      "account_unlocked": "Compte « {{target}} » déverrouillé",
+      "role_created": "Rôle « {{target}} » créé",
+      "role_updated": "Rôle « {{target}} » modifié ({{added}} permission(s) ajoutée(s), {{removed}} retirée(s))",
+      "role_retired": "Rôle « {{target}} » retiré du service",
+      "role_assigned": "Rôle attribué : {{target}}",
+      "role_revoked": "Rôle retiré : {{target}}",
+      "emergency_grant_created": "Accès d'urgence accordé : {{target}}",
+      "permission_created": "Permission personnalisée créée : {{target}}"
+    },
     "results": {
       "applied": "Appliqué",
       "blocked": "Refusé",

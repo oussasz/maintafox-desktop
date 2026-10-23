@@ -5,7 +5,7 @@
  */
 import { useTranslation } from "react-i18next";
 
-import { Input } from "@/components/ui/input";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { useFormatters } from "@/hooks/use-formatters";
 import type { EquipmentLife, LifeSource } from "@/services/reliability-model-service";
 
@@ -38,22 +38,22 @@ function NumberField({
   label,
   value,
   onChange,
+  decimals = 4,
 }: {
   label: string;
+  /** NaN means "not entered yet": the field is empty. */
   value: number;
   onChange: (v: number) => void;
+  decimals?: number;
 }) {
   return (
     <label className="grid gap-1 text-xs font-medium text-text-secondary">
       {label}
-      <Input
-        inputMode="decimal"
+      <DecimalField
         className="h-10"
-        defaultValue={Number.isFinite(value) ? String(value) : ""}
-        onChange={(e) => {
-          const v = Number(e.target.value.replace(",", "."));
-          onChange(e.target.value.trim() === "" ? Number.NaN : v);
-        }}
+        decimals={decimals}
+        value={Number.isFinite(value) ? value : null}
+        onValueChange={(v) => onChange(v ?? Number.NaN)}
       />
     </label>
   );
@@ -154,6 +154,7 @@ export function SourceFields({
       {source?.kind === "reliability" ? (
         <NumberField
           label={t("rams.system.reliabilityValue")}
+          decimals={6}
           value={source.value}
           onChange={(v) => onChange({ ...source, value: v })}
         />
@@ -161,6 +162,7 @@ export function SourceFields({
       {source?.kind === "probability" ? (
         <NumberField
           label={t("rams.system.probabilityValue")}
+          decimals={6}
           value={source.value}
           onChange={(v) => onChange({ ...source, value: v })}
         />
@@ -168,6 +170,7 @@ export function SourceFields({
       {source?.kind === "rate" ? (
         <NumberField
           label={t("rams.system.rate")}
+          decimals={12}
           value={source.per_hour}
           onChange={(v) => onChange({ ...source, per_hour: v })}
         />

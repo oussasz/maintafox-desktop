@@ -150,6 +150,8 @@
       "scopeNotClosed": "Pas encore clôturés",
       "scopeOverdue": "En retard (ouverts, fin prévue dépassée)",
       "mix": "Nature des travaux",
+      "completed": "Terminés sur la période",
+      "completedValue": "Du {{from}} au {{to}}",
       "mixValue": {
         "planned": "Planifiés (préventif et amélioration)",
         "reactive": "Réactifs (correctif)",

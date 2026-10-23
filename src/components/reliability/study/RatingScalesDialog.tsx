@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -43,12 +44,9 @@ export function RatingScalesDialog({
   const [draft, setDraft] = useState<RatingScales>(scales);
   const [kind, setKind] = useState<Kind>("severity");
   const [saving, setSaving] = useState(false);
-  /** Threshold text as typed ("0.", "0,1"…), so decimals can be entered; parsed on change. */
-  const [thresholdText, setThresholdText] = useState<Record<number, string>>({});
   useEffect(() => {
     if (open) {
       setDraft(scales);
-      setThresholdText({});
     }
   }, [open, scales]);
   const fr = (i18n.resolvedLanguage ?? i18n.language ?? "fr").toLowerCase().startsWith("fr");
@@ -61,15 +59,10 @@ export function RatingScalesDialog({
     }));
 
   const levels = [...draft[kind]].sort((a, b) => b.score - a.score);
-  /** A threshold typed as text that is not a number: saving would keep the previous value. */
-  const badThreshold = Object.values(thresholdText).some((text) => {
-    const v = Number(text.replace(",", "."));
-    return text.trim() === "" || !Number.isFinite(v) || v < 0;
-  });
   const emptyDefinition = (["severity", "occurrence", "detection"] as Kind[]).some((k) =>
     draft[k].some((l) => l[labelKey].trim() === ""),
   );
-  const blocked = badThreshold || emptyDefinition;
+  const blocked = emptyDefinition;
   return (
     <Dialog open={open} onOpenChange={(o) => !saving && onOpenChange(o)}>
       <DialogContent className="max-w-3xl">
@@ -155,25 +148,13 @@ export function RatingScalesDialog({
                       )
                     ) : kind === "occurrence" ? (
                       editable ? (
-                        <Input
+                        <DecimalField
                           className="h-9 w-28"
-                          inputMode="decimal"
+                          decimals={3}
+                          min={0}
                           aria-label={t("rams.scales.thresholdOf", { score: l.score })}
-                          value={thresholdText[l.score] ?? String(l.min_per_year ?? 0)}
-                          aria-invalid={(() => {
-                            const text = thresholdText[l.score];
-                            if (text == null) return false;
-                            const v = Number(text.replace(",", "."));
-                            return text.trim() === "" || !Number.isFinite(v) || v < 0;
-                          })()}
-                          onChange={(e) => {
-                            const text = e.target.value;
-                            setThresholdText((m) => ({ ...m, [l.score]: text }));
-                            const v = Number(text.replace(",", "."));
-                            if (text.trim() !== "" && Number.isFinite(v)) {
-                              update(l.score, { min_per_year: v });
-                            }
-                          }}
+                          value={l.min_per_year ?? 0}
+                          onValueChange={(v) => update(l.score, { min_per_year: v ?? 0 })}
                         />
                       ) : (
                         t("rams.scales.perYear", { value: formatDecimal(l.min_per_year ?? 0, 2) })
@@ -201,7 +182,7 @@ export function RatingScalesDialog({
         </div>
         {editable && blocked ? (
           <p role="alert" className="text-xs text-text-danger">
-            {badThreshold ? t("rams.scales.thresholdInvalid") : t("rams.scales.definitionRequired")}
+            {t("rams.scales.definitionRequired")}
           </p>
         ) : null}
         <DialogFooter className="gap-2">

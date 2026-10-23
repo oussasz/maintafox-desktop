@@ -10,7 +10,7 @@ import { useTranslation } from "react-i18next";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
-import { Input } from "@/components/ui/input";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { mfLayout } from "@/design-system/tokens";
 import { RELIABILITY_PATTERN_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
@@ -35,9 +35,9 @@ export function roundInterval(h: number): number {
   return Math.max(1, Math.round(h));
 }
 
-function parseAmount(v: string): number | null {
-  const n = Number(v.replace(/\s/g, "").replace(",", "."));
-  return Number.isFinite(n) && n > 0 ? n : null;
+/** A cost counts only when it is a positive amount. */
+function positiveAmount(v: number | null): number | null {
+  return v != null && Number.isFinite(v) && v > 0 ? v : null;
 }
 
 export function StudyLifeStep({
@@ -59,14 +59,14 @@ export function StudyLifeStep({
   const [analysis, setAnalysis] = useState<LifeAnalysis | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
-  const [planned, setPlanned] = useState("");
-  const [failure, setFailure] = useState("");
+  const [planned, setPlanned] = useState<number | null>(null);
+  const [failure, setFailure] = useState<number | null>(null);
   const [planId, setPlanId] = useState<number | null>(null);
   const [asDefault, setAsDefault] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const plannedN = parseAmount(planned);
-  const failureN = parseAmount(failure);
+  const plannedN = positiveAmount(planned);
+  const failureN = positiveAmount(failure);
 
   const load = useCallback(
     async (
@@ -84,8 +84,8 @@ export function StudyLifeStep({
         });
         setAnalysis(a);
         if (costs == null && a.cost) {
-          setPlanned(String(a.cost.planned_cost));
-          setFailure(String(a.cost.failure_cost));
+          setPlanned(a.cost.planned_cost);
+          setFailure(a.cost.failure_cost);
         }
         setPlanId(a.selected_pm_plan_id);
       } catch (e) {
@@ -317,22 +317,22 @@ export function StudyLifeStep({
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="grid gap-1 text-xs font-medium text-text-secondary">
                 {t("rams.cost.planned", { currency })}
-                <Input
-                  inputMode="decimal"
+                <DecimalField
                   className="h-10"
+                  min={0}
                   value={planned}
                   disabled={!editable}
-                  onChange={(e) => setPlanned(e.target.value)}
+                  onValueChange={setPlanned}
                 />
               </label>
               <label className="grid gap-1 text-xs font-medium text-text-secondary">
                 {t("rams.cost.failure", { currency })}
-                <Input
-                  inputMode="decimal"
+                <DecimalField
                   className="h-10"
+                  min={0}
                   value={failure}
                   disabled={!editable}
-                  onChange={(e) => setFailure(e.target.value)}
+                  onValueChange={setFailure}
                 />
               </label>
               <label className="grid gap-1 text-xs font-medium text-text-secondary sm:col-span-2">
