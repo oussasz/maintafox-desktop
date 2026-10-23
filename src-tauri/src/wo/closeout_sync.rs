@@ -24,17 +24,31 @@
 //!   closer" are) -> `WO_CLOSE_GATE`.
 //!   A refused completion or close writes nothing: the work order and its group are rolled back.
 //! - R5 a task new, changed or deleted while its work order is completed, closed or cancelled here
-//!   (in its group: before and after the change) -> `WO_TASK_AFTER_COMPLETION`; a task result
-//!   received alone while its work order is not executed here (draft, planning, ready…) ->
-//!   `WO_TASK_WRONG_STATUS`; a mandatory task deleted, or made optional, unless its work order is
-//!   a draft or in planning here -> `WO_MANDATORY_TASK_REMOVED`;
-//! - R6 a verification new or changed while its work order is not `completed` here (outside its
-//!   group) -> `WO_VERIFICATION_WRONG_STATUS`; by the work order's responsible ->
-//!   `WO_SELF_VERIFICATION`; with no responsible, by someone who recorded labour on it (D7) ->
-//!   `WO_VERIFIER_RECORDED_LABOUR`;
+//!   (in its group: before and after the change) -> `WO_TASK_AFTER_COMPLETION`; a mandatory task
+//!   deleted, or made optional, unless its work order is a draft or in planning here ->
+//!   `WO_MANDATORY_TASK_REMOVED`;
+//! - R6 a verification by the work order's responsible -> `WO_SELF_VERIFICATION`; with no
+//!   responsible, by someone who recorded labour on it (D7) -> `WO_VERIFIER_RECORDED_LABOUR`; new
+//!   or changed while its work order is closed or cancelled here -> `WO_VERIFICATION_WRONG_STATUS`;
 //! - R7 a failure coding, a labour line or a tool new, changed or deleted while its work order is
 //!   closed or cancelled here (in its group: before and after the change) ->
 //!   `WO_FAILURE_DETAIL_AFTER_CLOSE` / `WO_LABOUR_AFTER_CLOSE` / `WO_TOOL_AFTER_CLOSE`.
+//!
+//! Rows recorded after a status change this PC has not received yet wait (deferred, with the reason
+//! shown in the sync centre), never conflict: a task result while the work order is a draft, in
+//! planning or ready here; a verification while it is not completed here (draft to on hold); labour
+//! or tool use while it is not executed here (draft, planning, ready, completed). The delta brings a
+//! work order's latest state after the rows recorded before it, and a page may end between them;
+//! the waiting row is then counted in the work order's next status-change group and judged there.
+//! A row whose work order never reaches that status here waits for good (fail safe, visible as
+//! deferred). Inside a group only the two ends of the change are seen, so a result recorded during
+//! an execution between two pre-execution statuses is not refused; any later completion or close
+//! is judged (R3 / R4).
+//!
+//! A work order received completed or closed again with the same status here, but completed or
+//! closed at another time (reopened and completed or closed again elsewhere), is judged as coming
+//! back from execution (`in_progress` before the change): its re-recorded children come with it,
+//! and R3 / R4 run.
 //!
 //! A mandatory task received cancelled, deferred or NOK without evidence from a PC that has not
 //! upgraded is not refused as a row while its work order is open (it is the technician's record):
@@ -45,8 +59,9 @@
 //! A work order new here received by a snapshot this PC asked for (joining the plant, or
 //! bootstrapping again; `sync::materialize::applying_snapshot_row`) is the plant's history, already
 //! judged on the PCs that held it: it is applied with its children (R2), and neither it (R3 / R4)
-//! nor its children (R5-R7, the verifier rules) are judged again, so a PC joining never refuses a
-//! work order closed before these rules existed. Snapshot pages are all stored before any is
+//! nor its children that came with the snapshot (R5-R7, the verifier rules) are judged again, so a
+//! PC joining never refuses a work order closed before these rules existed; a child received as a
+//! change since, applied in that group, is judged. Snapshot pages are all stored before any is
 //! applied (`sync::transport::worker`), so a work order always finds its children in the inbox,
 //! whatever the order of the pages.
 
@@ -66,7 +81,6 @@ pub(crate) mod codes {
     pub const COMPLETION_GATE: &str = "WO_COMPLETION_GATE";
     pub const CLOSE_GATE: &str = "WO_CLOSE_GATE";
     pub const TASK_AFTER_COMPLETION: &str = "WO_TASK_AFTER_COMPLETION";
-    pub const TASK_WRONG_STATUS: &str = "WO_TASK_WRONG_STATUS";
     pub const MANDATORY_TASK_REMOVED: &str = "WO_MANDATORY_TASK_REMOVED";
     pub const VERIFICATION_WRONG_STATUS: &str = "WO_VERIFICATION_WRONG_STATUS";
     pub const SELF_VERIFICATION: &str = "WO_SELF_VERIFICATION";
@@ -149,12 +163,28 @@ pub(crate) async fn closeout_entry(
     let Some(to) = status_code(conn, status_sync).await? else {
         return Ok(Err(format!("work-order status {status_sync} is not applied yet")));
     };
-    let previous_status = match local.as_ref().and_then(|l| field(l, "status_sync_id")) {
+    let mut previous_status = match local.as_ref().and_then(|l| field(l, "status_sync_id")) {
         Some(from_sync) => status_code(conn, from_sync).await?,
         None => None,
     };
     if local.is_some() && previous_status.as_deref() == Some(to.as_str()) {
-        return Ok(Ok(None));
+        // The same status here, but completed or closed again elsewhere after a reopening (its
+        // completion or close is stamped at another time): judged as coming back from execution, so
+        // the children re-recorded during that execution come with it and R3 / R4 run (review S2).
+        let stamp = match to.as_str() {
+            "completed" => Some("mechanically_completed_at"),
+            "closed" => Some("closed_at"),
+            _ => None,
+        };
+        let round_trip = stamp.is_some_and(|k| {
+            let before = local.as_ref().and_then(|l| field(l, k));
+            let after = field(received, k);
+            before.is_some() && after.is_some() && before != after
+        });
+        if !round_trip {
+            return Ok(Ok(None));
+        }
+        previous_status = Some("in_progress".to_string());
     }
     let target = match to.as_str() {
         "completed" => CloseoutTarget::Completed,
@@ -363,6 +393,14 @@ async fn parent_of(conn: &impl ConnectionTrait, wo_sync: &str) -> AppResult<Pare
     })
 }
 
+/// Why a received child waits: the status it was recorded in has not been reached here yet.
+fn behind(what: &str, code: &str, status: &str) -> String {
+    format!(
+        "{what}: waits for work order {code} (here '{status}') to receive the status change it was recorded \
+         after; applied with it"
+    )
+}
+
 fn same_state(local: Option<&Payload>, row: &Payload) -> bool {
     let Some(local) = local else {
         return false;
@@ -426,8 +464,9 @@ pub(crate) async fn inbound_closeout_child_check(
     let parent = parent_of(conn, &wo_sync).await?;
     let code = match &parent {
         Parent::Missing => return Ok(None),
-        // Snapshot history: applied as the plant holds it.
-        Parent::InGroup { judged: false, .. } => return Ok(None),
+        // Snapshot history: applied as the plant holds it — a child that came with the snapshot too;
+        // one received as a change since is judged (review N1).
+        Parent::InGroup { judged: false, .. } if crate::sync::materialize::applying_snapshot_row() => return Ok(None),
         Parent::InGroup { code, .. } | Parent::Held { code, .. } => code.clone(),
     };
     if table == "work_order_tasks" {
@@ -447,7 +486,9 @@ pub(crate) async fn inbound_closeout_child_check(
                 format!("mandatory task {entity_sync_id} made optional while work order {code} is past planning here"),
             );
         }
-        // A result recorded alone while the work order is not executed here (AU-15).
+        // A result recorded while the work order is not executed here yet (AU-15): its start (or
+        // completion) is still on its way, made on the PC that recorded it; the row waits for the
+        // work order's next status change here and is judged in that group (review B3).
         if let Parent::Held { status, .. } = &parent {
             let has_result = differs(local.as_ref(), &row, TASK_RESULT_KEYS)
                 && (is_set(&row, "is_completed") || local.as_ref().is_some_and(|l| is_set(l, "is_completed")));
@@ -455,10 +496,7 @@ pub(crate) async fn inbound_closeout_child_check(
                 && !RECORDING.contains(&status.as_str())
                 && !["completed", "closed", "cancelled"].contains(&status.as_str())
             {
-                return conflict(
-                    codes::TASK_WRONG_STATUS,
-                    format!("task {entity_sync_id}: result {what} while work order {code} is '{status}' here"),
-                );
+                return wait(behind(&format!("task {entity_sync_id}: result {what}"), &code, status));
             }
         }
     }
@@ -483,19 +521,42 @@ pub(crate) async fn inbound_closeout_child_check(
                 format!("{label} {entity_sync_id} {what} while work order {code} is '{status}' here"),
             );
         }
+        // Labour and tool use recorded while the work order is not executed here (draft, planning,
+        // ready, completed): made during an execution this PC has not received yet; waits for the
+        // work order's next status change (review S1).
+        if let Parent::Held { status, .. } = &parent {
+            let execution_record = match table {
+                // A labour line booked, or its time changed (a note may be corrected any time).
+                "work_order_interveners" => {
+                    local.is_none() || differs(local.as_ref(), &row, &["started_at", "ended_at", "hours_worked"])
+                }
+                "work_order_tools" => match &local {
+                    Some(l) => l.get("usage_status") != row.get("usage_status"),
+                    None => field(&row, "usage_status").is_some_and(|u| u != "planned"),
+                },
+                _ => false,
+            };
+            if execution_record && !RECORDING.contains(&status.as_str()) {
+                return wait(behind(&format!("{label} {entity_sync_id} {what}"), &code, status));
+            }
+        }
         return Ok(None);
     }
     if table != "work_order_verifications" {
         return Ok(None);
     }
     // R6: recorded on a completed work order (in its group, the work order's own completion and
-    // close are judged with it).
+    // close are judged with it). Received before that completion here: waits for it (review B3);
+    // on a work order closed or cancelled here: refused.
     if let Parent::Held { status, .. } = &parent {
-        if status != "completed" {
+        if ["closed", "cancelled"].contains(&status.as_str()) {
             return conflict(
                 codes::VERIFICATION_WRONG_STATUS,
                 format!("verification {entity_sync_id} {what} while work order {code} is '{status}' here"),
             );
+        }
+        if status != "completed" {
+            return wait(behind(&format!("verification {entity_sync_id} {what}"), &code, status));
         }
     }
     let Some(verifier_sync) = field(&row, "verified_by_sync_id") else {

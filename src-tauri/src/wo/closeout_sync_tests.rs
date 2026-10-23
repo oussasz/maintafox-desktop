@@ -590,7 +590,7 @@ async fn a_received_verification_by_the_labour_person_is_a_conflict() {
         p
     };
     let admin = admin_sync(&db).await;
-    // Not completed here: refused.
+    // Not completed here yet: waits for the completion (review B3); closed or cancelled here: refused.
     let outcome = apply(
         &db,
         "work_order_verifications",
@@ -598,7 +598,22 @@ async fn a_received_verification_by_the_labour_person_is_a_conflict() {
         &verification(&sync, &admin),
     )
     .await;
-    assert_eq!(code(&outcome), Some(codes::VERIFICATION_WRONG_STATUS), "{outcome:?}");
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    for status in ["closed", "cancelled"] {
+        set_wo_status(&db, wo_id, status).await;
+        let outcome = apply(
+            &db,
+            "work_order_verifications",
+            "ver-late",
+            &verification(&sync, &admin),
+        )
+        .await;
+        assert_eq!(
+            code(&outcome),
+            Some(codes::VERIFICATION_WRONG_STATUS),
+            "{status}: {outcome:?}"
+        );
+    }
     set_wo_status(&db, wo_id, "completed").await;
     // By the responsible (admin).
     let outcome = apply(
@@ -1095,11 +1110,12 @@ async fn mandatory_tasks_are_not_removed_and_results_wait_for_execution() {
     set_wo_status(&db, wo_id, "planning").await;
     let outcome = apply(&db, "work_order_tasks", &tsync, &optional).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
-    // A result received alone while the work order is ready here: refused; on hold: applied.
+    // A result received alone while the work order is ready here: waits for its start (review B3);
+    // on hold: applied.
     set_wo_status(&db, wo_id, "ready").await;
     let result = received_task_result(&db, &tsync, "ok").await;
     let outcome = apply(&db, "work_order_tasks", &tsync, &result).await;
-    assert_eq!(code(&outcome), Some(codes::TASK_WRONG_STATUS), "{outcome:?}");
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
     set_wo_status(&db, wo_id, "on_hold").await;
     let outcome = apply(&db, "work_order_tasks", &tsync, &result).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
@@ -1467,4 +1483,290 @@ async fn scalar(db: &DatabaseConnection, wo_sync: &str) -> i64 {
     .expect("wo here")
     .try_get_by_index::<i64>(0)
     .expect("id")
+}
+
+// ── Review round 2 (B3, S1, S2, N1) ─────────────────────────────────────────────────────────────
+
+fn verification_row(wo_sync: &str, by: &str) -> Payload {
+    let Value::Object(p) = json!({
+        "_sync_format": "row.v1",
+        "work_order_sync_id": wo_sync,
+        "verified_by_sync_id": by,
+        "verified_at": now(),
+        "result": "pass",
+        "return_to_service_confirmed": 1,
+    }) else {
+        unreachable!()
+    };
+    p
+}
+
+/// B3: the task result arrives in one pass while the work order is still ready here; the
+/// completion made on the same PC arrives in the next pass: the task waits, then comes with it.
+#[tokio::test]
+async fn a_task_result_received_before_its_completion_waits_for_it() {
+    let db = setup().await;
+    let (wo_id, sync) = wo_ready_to_complete(&db).await;
+    let task = add_task(&db, wo_id, "Lock out and try", true).await;
+    let tsync = task_sync(&db, task.id).await;
+    let task_row = received_task_result(&db, &tsync, "ok").await;
+    let wo_row = received_completed(&db, &sync).await;
+    set_wo_status(&db, wo_id, "ready").await;
+
+    inbox(&db, "b-page-1", "work_order_tasks", &tsync, 50, &task_row).await;
+    let first = materialize(&db).await;
+    assert_eq!(first.conflicts, 0, "{:?}", conflict_codes(&db).await);
+    assert_eq!(
+        inbox_status(&db, "work_order_tasks", &tsync).await.as_deref(),
+        Some("deferred")
+    );
+    inbox(&db, "b-page-2", "work_orders", &sync, 50, &wo_row).await;
+    let second = materialize(&db).await;
+    assert_eq!(second.conflicts, 0, "{:?}", conflict_codes(&db).await);
+    assert_eq!(wo_status(&db, wo_id).await, "completed");
+    assert_eq!(
+        inbox_status(&db, "work_order_tasks", &tsync).await.as_deref(),
+        Some("applied")
+    );
+    assert!(crate::wo::tasks::open_mandatory_tasks(&db, wo_id)
+        .await
+        .expect("open")
+        .is_empty());
+}
+
+/// B3: the verification arrives in one pass while the work order is in progress here; the close
+/// (completed, verified and closed on another PC) in the next: the verification waits, then the
+/// close is judged with it and applied.
+#[tokio::test]
+async fn a_verification_received_before_its_close_waits_for_it() {
+    let db = setup().await;
+    let (wo_id, sync) = wo_ready_to_complete(&db).await;
+    let other = super::closeout_tests::tests::create_second_user(&db).await;
+    let verification = verification_row(&sync, &user_sync_of(&db, other).await);
+    let closed = status_sync(&db, "closed").await;
+    let wo_row = with(
+        wire(&db, "work_orders", &sync).await,
+        &[
+            ("status_sync_id", json!(closed)),
+            ("mechanically_completed_at", json!(now())),
+            ("closed_at", json!(now())),
+            ("updated_at", json!(now())),
+        ],
+    );
+    inbox(
+        &db,
+        "b-page-1",
+        "work_order_verifications",
+        "ver-before-close",
+        1,
+        &verification,
+    )
+    .await;
+    let first = materialize(&db).await;
+    assert_eq!(first.conflicts, 0, "{:?}", conflict_codes(&db).await);
+    assert_eq!(
+        inbox_status(&db, "work_order_verifications", "ver-before-close")
+            .await
+            .as_deref(),
+        Some("deferred")
+    );
+    inbox(&db, "b-page-2", "work_orders", &sync, 60, &wo_row).await;
+    let second = materialize(&db).await;
+    assert_eq!(second.conflicts, 0, "{:?}", conflict_codes(&db).await);
+    assert_eq!(wo_status(&db, wo_id).await, "closed");
+    assert_eq!(
+        inbox_status(&db, "work_order_verifications", "ver-before-close")
+            .await
+            .as_deref(),
+        Some("applied")
+    );
+}
+
+/// S1: labour and tool use received while the work order is not executed here wait for its next
+/// status change; closed here, labour is refused (R7).
+#[tokio::test]
+async fn labour_and_tool_use_received_outside_execution_wait() {
+    let db = setup().await;
+    let (wo_id, sync) = wo_ready_to_complete(&db).await;
+    add_tool_to(&db, wo_id).await;
+    exec(
+        &db,
+        "UPDATE work_order_interveners SET entity_sync_id = 'labour-s1-' || id WHERE entity_sync_id IS NULL",
+        vec![],
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE work_order_tools SET entity_sync_id = 'tool-s1-' || id, usage_status = 'planned' \
+         WHERE entity_sync_id IS NULL",
+        vec![],
+    )
+    .await;
+    let labour_sync = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_interveners WHERE work_order_id = ?",
+        vec![wo_id.into()],
+    )
+    .await
+    .expect("labour");
+    let tool_sync = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_tools WHERE work_order_id = ?",
+        vec![wo_id.into()],
+    )
+    .await
+    .expect("tool");
+    let labour = with(
+        wire(&db, "work_order_interveners", &labour_sync).await,
+        &[("hours_worked", json!(3.5))],
+    );
+    let tool = with(
+        wire(&db, "work_order_tools", &tool_sync).await,
+        &[("usage_status", json!("used"))],
+    );
+    for status in ["ready", "completed"] {
+        set_wo_status(&db, wo_id, status).await;
+        let outcome = apply(&db, "work_order_interveners", &labour_sync, &labour).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Deferred { .. }),
+            "{status} labour: {outcome:?}"
+        );
+        let outcome = apply(&db, "work_order_tools", &tool_sync, &tool).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Deferred { .. }),
+            "{status} tool: {outcome:?}"
+        );
+    }
+    set_wo_status(&db, wo_id, "closed").await;
+    let outcome = apply(&db, "work_order_interveners", &labour_sync, &labour).await;
+    assert_eq!(code(&outcome), Some(codes::LABOUR_AFTER_CLOSE), "{outcome:?}");
+
+    // Ready here, the labour waits; the start received next brings it.
+    set_wo_status(&db, wo_id, "ready").await;
+    inbox(&db, "b-s1-1", "work_order_interveners", &labour_sync, 50, &labour).await;
+    let first = materialize(&db).await;
+    assert_eq!(first.conflicts, 0, "{:?}", conflict_codes(&db).await);
+    assert_eq!(
+        inbox_status(&db, "work_order_interveners", &labour_sync)
+            .await
+            .as_deref(),
+        Some("deferred")
+    );
+    let in_progress = status_sync(&db, "in_progress").await;
+    let started = with(
+        wire(&db, "work_orders", &sync).await,
+        &[("status_sync_id", json!(in_progress)), ("updated_at", json!(now()))],
+    );
+    inbox(&db, "b-s1-2", "work_orders", &sync, 50, &started).await;
+    let second = materialize(&db).await;
+    assert_eq!(second.conflicts, 0, "{:?}", conflict_codes(&db).await);
+    assert_eq!(
+        inbox_status(&db, "work_order_interveners", &labour_sync)
+            .await
+            .as_deref(),
+        Some("applied")
+    );
+}
+
+/// S2: completed here; reopened elsewhere, the task reopened and recorded again, completed again:
+/// received with the same status, it is judged as coming back from execution — applied with its
+/// re-recorded task, or refused by the completion checks when that task is left open.
+#[tokio::test]
+async fn a_completion_made_again_elsewhere_is_judged_with_its_re_recorded_children() {
+    for (result, refused) in [("ok", false), ("cancelled", true)] {
+        let db = setup().await;
+        let (wo_id, sync) = wo_ready_to_complete(&db).await;
+        let actor = admin_id(&db).await;
+        let task = add_task(&db, wo_id, "Measure the vibration", true).await;
+        tasks_ok(&db, task.id).await;
+        let rv = crate::wo::queries::get_work_order(&db, wo_id)
+            .await
+            .expect("wo")
+            .expect("wo")
+            .row_version;
+        crate::wo::execution::complete_wo_mechanically(
+            &db,
+            crate::wo::execution::WoMechCompleteInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                actual_end: None,
+                actual_duration_hours: None,
+                conclusion: None,
+            },
+        )
+        .await
+        .expect("completed here");
+        let tsync = task_sync(&db, task.id).await;
+        let task_row = with(
+            wire(&db, "work_order_tasks", &tsync).await,
+            &[
+                ("result_code", json!(result)),
+                ("completed_at", json!("2099-01-01T00:00:00Z")),
+            ],
+        );
+        let again = with(
+            wire(&db, "work_orders", &sync).await,
+            &[
+                ("mechanically_completed_at", json!("2026-01-02T03:04:05Z")),
+                ("updated_at", json!(now())),
+            ],
+        );
+        let task_row = with(task_row, &[("completed_at", json!(now()))]);
+        inbox(&db, "b-again", "work_order_tasks", &tsync, 70, &task_row).await;
+        inbox(&db, "b-again", "work_orders", &sync, 70, &again).await;
+        materialize(&db).await;
+        let found = conflict_codes(&db).await;
+        if refused {
+            assert!(found.iter().any(|c| c == codes::COMPLETION_GATE), "{result}: {found:?}");
+        } else {
+            assert!(found.is_empty(), "{result}: {found:?}");
+            assert_eq!(
+                inbox_status(&db, "work_order_tasks", &tsync).await.as_deref(),
+                Some("applied")
+            );
+        }
+        assert_eq!(wo_status(&db, wo_id).await, "completed");
+    }
+}
+
+/// N1: in the group of a snapshot work order new here, a verification received as a change (not
+/// with the snapshot) is judged: by the labour person of a WO without responsible, refused.
+#[tokio::test]
+async fn a_change_applied_with_snapshot_history_is_judged() {
+    let source = setup().await;
+    let (wo_id, rv) = create_wo_in_progress(&source).await;
+    advance_to_completed_verified(&source, wo_id, rv).await;
+    let actor = admin_id(&source).await;
+    exec(
+        &source,
+        "UPDATE work_orders SET primary_responsible_id = NULL WHERE id = ?",
+        vec![wo_id.into()],
+    )
+    .await;
+    let sync = wo_sync(&source, wo_id).await;
+    let rows: Vec<(String, String, Payload)> = rows_of(&source, wo_id, CHILD_TABLES)
+        .await
+        .into_iter()
+        .filter(|(table, _, _)| table != "work_order_verifications")
+        .collect();
+    let wo_row = wire(&source, "work_orders", &sync).await;
+    let target = target_pc().await;
+    for (table, sid, p) in &rows {
+        inbox(&target, "snapshot-all-n1", table, sid, 5, p).await;
+    }
+    let by_labour_person = verification_row(&sync, &user_sync_of(&source, actor).await);
+    inbox(
+        &target,
+        "b-delta-n1",
+        "work_order_verifications",
+        "ver-n1",
+        1,
+        &by_labour_person,
+    )
+    .await;
+    inbox(&target, "snapshot-all-n1", "work_orders", &sync, 5, &wo_row).await;
+    materialize(&target).await;
+    let found = conflict_codes(&target).await;
+    assert!(found.iter().any(|c| c == "SYNC_GROUP_REFUSED"), "{found:?}");
 }
