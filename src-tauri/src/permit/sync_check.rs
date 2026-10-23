@@ -488,14 +488,44 @@ pub(crate) struct Group {
     parent_sync_id: String,
     previous_status: Option<String>,
     rows: Vec<GroupRow>,
+    /// A received work-order completion or close: judged on the written state after the group
+    /// (`wo::closeout_sync::judge_closeout`). `None` for permit and work-order start groups.
+    pub(crate) closeout: Option<crate::wo::closeout_sync::CloseoutEntry>,
+}
+
+impl Group {
+    /// A group of waiting rows applied with `parent_sync_id`, judged against `previous_status`
+    /// (the parent's status here before the change; `None`: new here).
+    pub(crate) fn new(
+        parent_sync_id: String,
+        previous_status: Option<String>,
+        rows: Vec<GroupRow>,
+        closeout: Option<crate::wo::closeout_sync::CloseoutEntry>,
+    ) -> Self {
+        Self {
+            parent_sync_id,
+            previous_status,
+            rows,
+            closeout,
+        }
+    }
+}
+
+/// While the children of a group are applied (`apply_group`): the status `parent_sync_id` had here
+/// before the change (`Some(None)`: new here); `None` outside that parent's group.
+pub(crate) fn group_previous_status(parent_sync_id: &str) -> Option<Option<String>> {
+    GROUP_PARENT
+        .try_with(|(parent, previous)| (parent == parent_sync_id).then(|| previous.clone()))
+        .ok()
+        .flatten()
 }
 
 /// The rows of one table naming a parent: the local ones with the counted waiting versions laid over
 /// them, the counted waiting rows themselves, and why a waiting row cannot be counted yet.
-struct Children {
-    rows: Vec<(String, Payload)>,
-    counted: Vec<GroupRow>,
-    blocked: Option<String>,
+pub(crate) struct Children {
+    pub(crate) rows: Vec<(String, Payload)>,
+    pub(crate) counted: Vec<GroupRow>,
+    pub(crate) blocked: Option<String>,
 }
 
 /// Rows of `table` naming the parent `parent_sync_id` (a row of `parent_table`; local column
@@ -757,7 +787,7 @@ async fn permit_transition(
 }
 
 /// The local id of a row of `table` (fixed names, never received text) found by its sync identity.
-async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> AppResult<Option<i64>> {
+pub(crate) async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> AppResult<Option<i64>> {
     conn.query_one(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         format!("SELECT id FROM \"{table}\" WHERE entity_sync_id = ?"),
@@ -1394,6 +1424,7 @@ pub(crate) async fn permit_group(
         parent_sync_id: entity_sync_id.to_string(),
         previous_status: from,
         rows,
+        closeout: None,
     }))
 }
 
@@ -1709,7 +1740,7 @@ fn lock_record_kept(local: Option<&Payload>, iso: &Payload) -> Option<InboundVer
 }
 
 /// The local id of the user with this sync id.
-async fn local_user(conn: &impl ConnectionTrait, user_sync_id: &str) -> AppResult<Option<i64>> {
+pub(crate) async fn local_user(conn: &impl ConnectionTrait, user_sync_id: &str) -> AppResult<Option<i64>> {
     local_id(conn, "user_accounts", user_sync_id).await
 }
 
@@ -2263,7 +2294,7 @@ pub(crate) async fn inbound_delete_check(
 }
 
 /// Code of a work-order status named by its sync id; `None` when not here.
-async fn status_code(conn: &impl ConnectionTrait, status_sync_id: &str) -> AppResult<Option<String>> {
+pub(crate) async fn status_code(conn: &impl ConnectionTrait, status_sync_id: &str) -> AppResult<Option<String>> {
     conn.query_one(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "SELECT code FROM work_order_statuses WHERE entity_sync_id = ?",
@@ -2299,7 +2330,7 @@ async fn work_order_start(
     Ok(Ok(Some(wo)))
 }
 
-async fn wo_children(
+pub(crate) async fn wo_children(
     conn: &impl ConnectionTrait,
     table: &'static str,
     key: &str,
@@ -3005,5 +3036,6 @@ pub(crate) async fn work_order_group(
         parent_sync_id: entity_sync_id.to_string(),
         previous_status: None,
         rows,
+        closeout: None,
     }))
 }

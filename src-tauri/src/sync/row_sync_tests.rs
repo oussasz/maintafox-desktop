@@ -397,6 +397,33 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
             Err(e) => problems.push(format!("create {entity_type}: {e}")),
         }
     }
+    // A verification is recorded on a completed work order, by someone other than its responsible
+    // (`wo::closeout_sync`, R6): the generic one is moved to a work order of its own, completed,
+    // without a responsible or labour, its parts confirmed (it passes the completion checks on
+    // arrival). The shared generic work order keeps the other children, so they can still change.
+    for row in created
+        .iter_mut()
+        .filter(|r| r.entity_type == "work_order_verifications")
+    {
+        let wo = factory
+            .create(&a, "work_orders")
+            .await
+            .expect("work order of the verification");
+        exec(
+            &a,
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'completed'),
+                    primary_responsible_id = NULL, parts_actuals_confirmed = 1 WHERE rowid = ?",
+            vec![wo.rowid.into()],
+        )
+        .await;
+        exec(
+            &a,
+            "UPDATE work_order_verifications SET work_order_id = ? WHERE rowid = ?",
+            vec![wo.rowid.into(), row.rowid.into()],
+        )
+        .await;
+        *row = created_row(&a, row.entity_type, row.rowid).await.expect("verification");
+    }
     // Personal rows travel only to devices where their owner is signed in or trusted: they are
     // given to the seeded administrator (same identity on A and B), who is trusted on B. All rows
     // of personal tables move (a personal row's personal parent belongs to the same person); a
