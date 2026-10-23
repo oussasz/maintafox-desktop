@@ -12,7 +12,7 @@ import { ClipboardCopy, Download, Loader2, Send, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason, describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   getDiagnosticsInfo,
@@ -21,6 +21,10 @@ import {
   type SupportBundleUploadResult,
 } from "@/services/diagnostics-service";
 import type { DiagnosticsAppInfo, SupportBundle } from "@shared/ipc-types";
+
+// Same limits as the backend (diagnostics/upload.rs TICKET_NOTE_MIN_CHARS / TICKET_NOTE_MAX_CHARS).
+const NOTE_MIN_CHARS = 3;
+const NOTE_MAX_CHARS = 2000;
 
 interface Props {
   open: boolean;
@@ -44,14 +48,26 @@ export function SupportBundleDialog({ open, onClose }: Props) {
     setSent(null);
     try {
       const trimmed = note.trim();
+      if (
+        trimmed.length > 0 &&
+        (trimmed.length < NOTE_MIN_CHARS || trimmed.length > NOTE_MAX_CHARS)
+      ) {
+        setError(
+          t("errors:gateError.GATE_SUPPORT_NOTE_LENGTH", {
+            min: NOTE_MIN_CHARS,
+            max: NOTE_MAX_CHARS,
+          }),
+        );
+        return;
+      }
       setSent(await uploadSupportBundle(trimmed.length > 0 ? trimmed : null));
       setNote("");
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setIsSending(false);
     }
-  }, [note]);
+  }, [note, t]);
 
   const handleGenerate = useCallback(async () => {
     setIsGenerating(true);
@@ -147,7 +163,7 @@ export function SupportBundleDialog({ open, onClose }: Props) {
               aria-label={t("notePlaceholder")}
               className="w-full rounded-md border border-surface-border bg-surface-1 p-2 text-sm"
               rows={3}
-              maxLength={2000}
+              maxLength={NOTE_MAX_CHARS}
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder={t("notePlaceholder")}

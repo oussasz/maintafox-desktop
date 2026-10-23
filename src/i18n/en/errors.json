@@ -480,7 +480,9 @@
     "GATE_PM_VERSION_NOT_DRAFT_EDIT": "Edit refused: only a draft version can be edited.",
     "GATE_PM_WO_MISMATCH": "Occurrence refused: the given work order is not the one already linked to this occurrence.",
     "GATE_PM_WO_TYPE_UNKNOWN": "Follow-up refused: the chosen work-order type does not exist or is inactive.",
-    "GATE_PM_WO_UNKNOWN": "Occurrence refused: the given work order does not exist."
+    "GATE_PM_WO_UNKNOWN": "Occurrence refused: the given work order does not exist.",
+    "GATE_SUPPORT_NOT_ACTIVATED": "Cannot send: this device is not activated with Maintafox. Activate the licence, then try again.",
+    "GATE_SUPPORT_NOTE_LENGTH": "The note must be between {{min}} and {{max}} characters long."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",
