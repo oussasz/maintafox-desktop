@@ -170,7 +170,7 @@ export function SourceFields({
       {source?.kind === "rate" ? (
         <NumberField
           label={t("rams.system.rate")}
-          decimals={8}
+          decimals={12}
           value={source.per_hour}
           onChange={(v) => onChange({ ...source, per_hour: v })}
         />

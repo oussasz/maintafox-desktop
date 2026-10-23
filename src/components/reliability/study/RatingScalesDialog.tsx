@@ -150,6 +150,7 @@ export function RatingScalesDialog({
                       editable ? (
                         <DecimalField
                           className="h-9 w-28"
+                          decimals={3}
                           min={0}
                           aria-label={t("rams.scales.thresholdOf", { score: l.score })}
                           value={l.min_per_year ?? 0}
