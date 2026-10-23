@@ -27,6 +27,11 @@
     "reasonHint": "At least {{min}} characters: why the rule does not apply to this job.",
     "cleared": "Requirement of rule {{rule}} cleared on {{date}}: {{reason}}"
   },
+  "permitSafety": {
+    "clearBody": "{{code}} will be able to start without a permit although the originating request reported a safety risk. The reason, date and your name are kept on the work order and in its history.",
+    "reasonHint": "At least {{min}} characters: why this job needs no permit.",
+    "cleared": "Safety request requirement cleared on {{date}}: {{reason}}"
+  },
   "shutdownRequirement": {
     "sectionTitle": "Equipment shutdown",
     "label": "Needs shutdown",

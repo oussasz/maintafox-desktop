@@ -125,6 +125,7 @@ export const WorkOrderSchema = z.object({
   permit_rule_cleared_by_id: z.number().nullable(),
   permit_rule_cleared_at: z.string().nullable(),
   permit_rule_clear_reason: z.string().nullable(),
+  permit_from_safety_di: z.boolean().optional(),
   entity_sync_id: z.string().nullable().optional(),
   closeout_validation_profile_id: z.number().nullable().optional(),
   closeout_validation_passed: z.boolean().optional(),

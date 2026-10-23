@@ -35,7 +35,14 @@
 //!   again on the received state; a failed rule is a conflict, a permit type or status not applied
 //!   yet makes the row wait (`permit::sync_check`);
 //!   A work order whose permit flag set by a plant rule is cleared names who cleared it (holding the
-//!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`);
+//!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`); so
+//!   does one whose requirement came from a request flagged "sécurité" (`permit_from_safety_di`,
+//!   migration 255: the right at its site), and that origin is never turned off by a received row;
+//! - `work_orders` / `intervention_requests`: after the apply, a request flagged "sécurité" here
+//!   protects its work orders not started yet (origin, permit required, a clearing withdrawn); a
+//!   work order new here received without the column and already started takes that origin; a
+//!   protected work order required again but still carrying its clearing ends protected
+//!   (`after_received_work_order`, recorded in its history and audit trail);
 //! - `permit_types`: a change of the three-person lock-removal setting, or a switch-off of the
 //!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
 //!   here), when and why; the shipped LOTO type's isolation rule is never switched off
@@ -386,12 +393,13 @@ fn hook_err(table: &str, e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("{table} apply hook: {e}"))
 }
 
-/// After an inbound row was inserted (`inserted`) or updated.
+/// After an inbound row was inserted (`inserted`) or updated; `payload` is the row as received.
 pub(crate) async fn after_upsert(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
     row: &RowLocator,
     inserted: bool,
+    payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<()> {
     match layout.def.entity_type {
         "inventory_transactions" if inserted => {
@@ -428,6 +436,25 @@ pub(crate) async fn after_upsert(
                 .await?
                 .ok_or_else(|| hook_err(layout.table(), "occurrence not found after insert"))?;
             crate::pm::version_clash::after_received_occurrence(conn, id).await
+        }
+        // The permit protection a request flagged "sécurité" gives its work orders, derived here from
+        // the request here (`after_received_work_order`).
+        "work_orders" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "work order not found after apply"))?;
+            let sent_without_origin = inserted && !payload.contains_key(crate::permit::sync_check::SAFETY_ORIGIN);
+            after_received_work_order(conn, id, sent_without_origin).await
+        }
+        // A request received flagged "sécurité" protects its work orders not started yet, as the PC
+        // that flagged it did (`permit_requirement::raise_work_orders_of_safety_request`).
+        "intervention_requests" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "request not found after apply"))?;
+            crate::wo::workflow::actions::permit_requirement::raise_work_orders_of_safety_request(conn, id, None)
+                .await?;
+            Ok(())
         }
         "user_dismissals" => {
             let id = located_row_id(conn, layout, row)
@@ -467,6 +494,46 @@ pub(crate) async fn after_upsert(
         }
         _ => Ok(()),
     }
+}
+
+/// A work order applied from a received row, in the apply's transaction (the same rules on every PC,
+/// from the request held here; `permit::sync_check::inbound_permit_rule_check` judged the row with
+/// them):
+/// - not started yet (draft, planning, ready) and its request flagged "sécurité": it carries that
+///   origin and requires a permit (`permit_requirement::raise_work_orders_of_safety_request`);
+/// - new here, sent by a PC without migration 255 (`sent_without_origin`: no `permit_from_safety_di`
+///   in the row), already started, its request flagged: it carries that origin;
+/// - protected, required again but still carrying its clearing (a re-tick made by an older build):
+///   its clearing is withdrawn, recorded (`withdraw_received_clearing_of_required`).
+async fn after_received_work_order(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    sent_without_origin: bool,
+) -> AppResult<()> {
+    let source_di: Option<i64> = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT source_di_id FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<i64>>("", "source_di_id").ok().flatten());
+    if let Some(di) = source_di {
+        crate::wo::workflow::actions::permit_requirement::raise_work_orders_of_safety_request(conn, di, None).await?;
+    }
+    if sent_without_origin {
+        conn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "UPDATE work_orders SET permit_from_safety_di = 1 \
+              WHERE id = ? AND permit_from_safety_di = 0 AND EXISTS ( \
+                SELECT 1 FROM intervention_requests ir \
+                 WHERE ir.id = work_orders.source_di_id AND ir.safety_flag = 1)",
+            [wo_id.into()],
+        ))
+        .await?;
+    }
+    crate::wo::workflow::actions::permit_requirement::withdraw_received_clearing_of_required(conn, wo_id).await?;
+    Ok(())
 }
 
 async fn queue_received_media(conn: &impl ConnectionTrait, media_id: i64) -> AppResult<()> {

@@ -451,11 +451,17 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_orders", "permit_rule_code", "NULL"),
     ("work_orders", "permit_rule_permit_type", "NULL"),
     ("work_orders", "permit_rule_cleared_at", "NULL"),
+    // Nor a permit requirement from a request flagged "sécurité" (migration 255, judged on arrival
+    // the same way).
+    ("work_orders", "permit_from_safety_di", "0"),
     // A generic record carries no assigned-site trace (written once by an administrator on a record
     // without a site and judged on arrival, `org::site_assignment::inbound_site_assignment_check`).
     ("work_orders", "site_assigned_by_id", "NULL"),
     ("work_orders", "site_assigned_at", "NULL"),
     ("work_orders", "site_assign_reason", "NULL"),
+    // A generic request is not flagged "sécurité": its generic work order carries no safety origin
+    // (migration 255, judged on arrival).
+    ("intervention_requests", "safety_flag", "0"),
     ("intervention_requests", "site_assigned_by_id", "NULL"),
     ("intervention_requests", "site_assigned_at", "NULL"),
     ("intervention_requests", "site_assign_reason", "NULL"),
@@ -748,9 +754,13 @@ async fn factory_columns(
 ) -> Result<Vec<FactoryColumn>, String> {
     if super::row_spec::row_spec(entity_type).is_some() {
         let layout = row_layout::layout(db, entity_type).await.map_err(|e| e.to_string())?;
+        // The layout is computed once per process, from the current schema: a database built
+        // before a migration that added a column (`started_db_before_migration`) does not have it,
+        // and the row is made without it.
         return Ok(layout
             .columns
             .iter()
+            .filter(|c| raw.iter().any(|r| r.name == c.name))
             .map(|c| {
                 let raw_col = raw.iter().find(|r| r.name == c.name);
                 let kind = match &c.role {

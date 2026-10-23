@@ -272,6 +272,7 @@ mod tests {
                 reported_urgency: None,
                 observed_at: None,
             },
+            None,
         )
         .await;
 
@@ -312,6 +313,7 @@ mod tests {
                 reported_urgency: None,
                 observed_at: None,
             },
+            None,
         )
         .await
         .expect("update should succeed on submitted DI");
@@ -355,6 +357,7 @@ mod tests {
                 reported_urgency: None,
                 observed_at: None,
             },
+            None,
         )
         .await
         .expect("update should succeed on returned_for_clarification DI");
@@ -396,6 +399,7 @@ mod tests {
                 reported_urgency: None,
                 observed_at: None,
             },
+            None,
         )
         .await
         .expect("first update should succeed");
@@ -418,6 +422,7 @@ mod tests {
                 reported_urgency: None,
                 observed_at: None,
             },
+            None,
         )
         .await;
 
@@ -459,6 +464,7 @@ mod tests {
                 reported_urgency: None,
                 observed_at: None,
             },
+            None,
         )
         .await
         .expect("v1->v2 update");
@@ -481,6 +487,7 @@ mod tests {
                 reported_urgency: None,
                 observed_at: None,
             },
+            None,
         )
         .await
         .expect("v2->v3 update should succeed");
