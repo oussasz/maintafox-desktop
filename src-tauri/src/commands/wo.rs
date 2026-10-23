@@ -1460,8 +1460,14 @@ pub(crate) async fn close_wo_impl(
     };
 
     let result = close_wo_audited(state, &user, input).await;
-    if let (Some(id), Err(_)) = (&own_session, &result) {
-        crate::commands::auth::end_session_if_locked_out(state, &user, id).await?;
+    // Checked whatever the outcome: the signer password is checked and counted even when the
+    // close-out goes through (critical FMECA suggestions with matched parts), so a close that
+    // succeeds can still have locked the account. A committed close stays reported as such.
+    if let Some(id) = &own_session {
+        let locked_out = crate::commands::auth::end_session_if_locked_out(state, &user, id).await;
+        if result.is_err() {
+            locked_out?;
+        }
     }
     result
 }

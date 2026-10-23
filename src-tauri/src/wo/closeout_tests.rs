@@ -1048,6 +1048,90 @@ mod tests {
         let db = setup().await;
         let actor = admin_id(&db).await;
         let (wo_id, rv, _signer) = wo_needing_signer_override(&db).await;
+        let (state, session_id) = self_signing_session(&db, actor).await;
+
+        let max = i64::from(crate::auth::lockout::LockoutPolicy::load(&db).await.max_attempts);
+        let close = |password: &'static str| self_signed_close(wo_id, rv, actor, password);
+        for attempt in 1..max {
+            let refused = crate::commands::wo::close_wo_impl(&state, close("mauvais"))
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(refused, AppError::ValidationFailed(_)),
+                "attempt {attempt}: {refused:?}"
+            );
+            assert!(state.session.read().await.current.is_some());
+        }
+        let refused = crate::commands::wo::close_wo_impl(&state, close("mauvais"))
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
+        assert!(
+            state.session.read().await.current.is_none(),
+            "the closer's session ended"
+        );
+        assert_eq!(session_revoked(&db, &session_id).await, 1);
+    }
+
+    /// The signer password is checked and counted even when matched parts make the override
+    /// unnecessary, so the close goes through: a lockout it causes still ends the session, and
+    /// the committed close is still reported.
+    #[tokio::test]
+    async fn a_self_signed_lockout_ends_the_session_even_when_the_close_goes_through() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv, _signer) = wo_needing_signer_override(&db).await;
+        let (state, session_id) = self_signing_session(&db, actor).await;
+        let max = i64::from(crate::auth::lockout::LockoutPolicy::load(&db).await.max_attempts);
+        for sql in [
+            format!(
+                "INSERT INTO work_order_parts (work_order_id, article_id, quantity_planned, quantity_used, \
+                 unit_cost, is_required) VALUES ({wo_id}, 9202, 1.0, 1.0, 0, 1)"
+            ),
+            format!(
+                "UPDATE user_accounts SET failed_login_attempts = {} WHERE id = {actor}",
+                max - 1
+            ),
+        ] {
+            db.execute_unprepared(&sql).await.expect("fixture");
+        }
+
+        let closed = crate::commands::wo::close_wo_impl(&state, self_signed_close(wo_id, rv, actor, "mauvais")).await;
+        assert!(closed.is_ok(), "matched parts: the close goes through: {closed:?}");
+        assert!(
+            state.session.read().await.current.is_none(),
+            "the closer's account is locked: the session ended"
+        );
+        assert_eq!(session_revoked(&db, &session_id).await, 1);
+    }
+
+    fn self_signed_close(wo_id: i64, rv: i64, actor: i64, password: &str) -> WoCloseInput {
+        WoCloseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            fmeca_parts_override_reason: Some("Piece suggeree indisponible, montage equivalent".into()),
+            fmeca_parts_override_signed_by_id: Some(actor),
+            fmeca_parts_override_signer_password: Some(password.into()),
+            ..Default::default()
+        }
+    }
+
+    async fn session_revoked(db: &sea_orm::DatabaseConnection, session_id: &str) -> i64 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+            [session_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get::<i64>("", "v")
+        .expect("decode")
+    }
+
+    /// Self-signing allowed by the policy, and `actor` signed in with a stored session.
+    async fn self_signing_session(db: &sea_orm::DatabaseConnection, actor: i64) -> (crate::state::AppState, String) {
         db.execute_unprepared(
             "UPDATE closeout_validation_policies SET fmeca_parts_override_require_distinct_signer = 0",
         )
@@ -1077,53 +1161,13 @@ mod tests {
             (current.session_db_id.clone(), current.expires_at.to_rfc3339())
         };
         crate::auth::session_manager::create_session_record(
-            &db,
+            db,
             &session_id.0,
             i32::try_from(actor).expect("fits"),
             &session_id.1,
         )
         .await
         .expect("stored session");
-
-        let max = i64::from(crate::auth::lockout::LockoutPolicy::load(&db).await.max_attempts);
-        let close = |password: &'static str| WoCloseInput {
-            wo_id,
-            actor_id: actor,
-            expected_row_version: rv,
-            fmeca_parts_override_reason: Some("Piece suggeree indisponible, montage equivalent".into()),
-            fmeca_parts_override_signed_by_id: Some(actor),
-            fmeca_parts_override_signer_password: Some(password.into()),
-            ..Default::default()
-        };
-        for attempt in 1..max {
-            let refused = crate::commands::wo::close_wo_impl(&state, close("mauvais"))
-                .await
-                .unwrap_err();
-            assert!(
-                matches!(refused, AppError::ValidationFailed(_)),
-                "attempt {attempt}: {refused:?}"
-            );
-            assert!(state.session.read().await.current.is_some());
-        }
-        let refused = crate::commands::wo::close_wo_impl(&state, close("mauvais"))
-            .await
-            .unwrap_err();
-        assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
-        assert!(
-            state.session.read().await.current.is_none(),
-            "the closer's session ended"
-        );
-        let revoked = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
-                [session_id.0.clone().into()],
-            ))
-            .await
-            .expect("query")
-            .expect("row")
-            .try_get::<i64>("", "v")
-            .expect("decode");
-        assert_eq!(revoked, 1);
+        (state, session_id.0)
     }
 }
