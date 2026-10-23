@@ -480,6 +480,22 @@ async fn refused_admin_actions_are_ledgered_as_blocked() {
         .try_get("", "summary")
         .unwrap();
     assert_eq!(summary, "validation_failed");
+    // An administrator's refusal is also written to the security journal, with the text.
+    let journal: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT details_json AS v FROM audit_events WHERE action_code = 'permission.denied' AND actor_id = ?",
+            [actor.into()],
+        ))
+        .await
+        .unwrap()
+        .expect("a security journal row for the administrator's refusal")
+        .try_get("", "v")
+        .unwrap();
+    let journal: serde_json::Value = serde_json::from_str(&journal).unwrap();
+    let journal = &journal["detail"];
+    assert_eq!(journal["refusal"], "validation_failed");
+    assert!(journal["error"].as_str().is_some_and(|e| e.contains("nope")));
 }
 
 #[tokio::test]
@@ -795,6 +811,23 @@ async fn refusals_of_non_administrators_go_to_the_security_journal() {
         0,
         "no ledger row for someone without administration rights"
     );
+    // The refusal and the backend's own text stay recoverable from the security journal.
+    let detail: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT details_json AS v FROM audit_events WHERE action_code = 'permission.denied' AND actor_id = ?",
+            [outsider.into()],
+        ))
+        .await
+        .unwrap()
+        .expect("a security journal row")
+        .try_get("", "v")
+        .unwrap();
+    let detail: serde_json::Value = serde_json::from_str(&detail).unwrap();
+    let detail = &detail["detail"];
+    assert_eq!(detail["action"], "user_deactivated");
+    assert_eq!(detail["refusal"], "permission_denied");
+    assert!(detail["error"].as_str().is_some_and(|e| e.contains("adm.users")));
 }
 
 // ── Anti-escalation, session revocation, forced password change ────────────────────────────

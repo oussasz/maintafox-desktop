@@ -257,7 +257,16 @@ pub(crate) async fn record_blocked_admin_action<T>(
             } else {
                 "Administration action refused (no administration permission)"
             },
-            detail_json: Some(serde_json::json!({ "action": action, "error": message }).to_string()),
+            // `refusal` tells a refused right from bad input or a stale id, as the ledger code does.
+            detail_json: Some(
+                serde_json::json!({
+                    "action": action,
+                    "refusal": refusal_code,
+                    "target_role_id": target_role_id,
+                    "error": message,
+                })
+                .to_string(),
+            ),
             ..Default::default()
         },
     )
