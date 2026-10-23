@@ -1635,6 +1635,13 @@ pub const FINANCE_MANAGER_PERMISSIONS: &[&str] = &[
     DOC_VIEW,
 ];
 
+/// Permissions kept in the catalog and on the roles that hold them, but not shown on the
+/// plant's role screens (unused in this version).
+pub const HIDDEN_FROM_PLANT_SCREENS: &[&str] = &[IOT_VIEW, IOT_MANAGE, ERP_VIEW, ERP_CONFIGURE];
+
+/// Whole permission categories not shown on the plant's role screens.
+pub const HIDDEN_CATEGORIES_FROM_PLANT_SCREENS: &[&str] = &["vendor_console"];
+
 /// Resolve a permission or alias to its canonical name.
 pub fn canonicalize(name: &str) -> Option<&'static str> {
     for meta in CATALOG {
