@@ -119,6 +119,17 @@ impl LocalSession {
         self.is_locked || Utc::now() > idle_deadline
     }
 
+    /// Once the idle deadline has passed the lock is recorded, so it holds until an unlock
+    /// (password or PIN) whatever happens to the clock afterwards. The PIN attempts are NOT reset
+    /// here: wrong PINs may already have been tried against this lock (the PIN unlock reads the
+    /// time-based lock without recording it), and recording the lock later must not give more
+    /// tries. They start afresh at each unlock (`SessionManager::unlock_session`).
+    fn latch_idle_lock(&mut self) {
+        if !self.is_locked && self.is_idle_locked() {
+            self.is_locked = true;
+        }
+    }
+
     /// True if a step-up verification was completed within `step_up_window_minutes`.
     pub fn is_step_up_valid(&self) -> bool {
         let window_secs = u64::try_from(self.step_up_window_minutes.max(0)).unwrap_or(0) * 60;
@@ -142,6 +153,9 @@ pub struct SessionInfo {
     pub pin_configured: Option<bool>,
     pub expires_at: Option<String>,
     pub last_activity_at: Option<String>,
+    /// Minutes without user input before the session locks (session policy at sign-in). The shell
+    /// uses it to show the lock screen when the deadline passes; the server stays the authority.
+    pub idle_timeout_minutes: Option<i64>,
     pub tenant_id: Option<String>,
     pub token_tenant_id: Option<String>,
 }
@@ -169,6 +183,21 @@ pub enum RequireSessionFailure {
     IdleLocked,
 }
 
+impl RequireSessionFailure {
+    /// The refusal sent to the screen: `SESSION_LOCKED` (the lock screen unlocks it) or
+    /// `AUTH_ERROR` (sign in again).
+    pub fn into_app_error(self) -> crate::errors::AppError {
+        match self {
+            Self::IdleLocked => crate::errors::AppError::SessionLocked(
+                "Session verrouillée pour inactivité. Veuillez vous déverrouiller.".into(),
+            ),
+            Self::MissingOrExpired => {
+                crate::errors::AppError::Auth("Session expirée ou absente. Veuillez vous reconnecter.".into())
+            }
+        }
+    }
+}
+
 impl SessionManager {
     pub const fn new() -> Self {
         Self { current: None }
@@ -181,24 +210,23 @@ impl SessionManager {
             .is_some_and(|s| !s.is_expired() && !s.is_idle_locked())
     }
 
-    /// Validate the in-memory session for a protected IPC command.
+    /// Validate the in-memory session for a protected IPC command and return a clone of the
+    /// authenticated user.
     ///
-    /// On success, refreshes `last_activity_at` (idle-lock prevention) and returns
-    /// a clone of the authenticated user.
+    /// It does NOT count as activity: timed polls (notifications, presence, statistics, sync)
+    /// call protected commands too, and must not keep an unattended session open. Only
+    /// [`Self::record_activity`] (the `touch_session` command, sent by the shell on real user
+    /// input) moves `last_activity_at`. A session found past its idle deadline is locked here.
     pub fn require_active_user(&mut self) -> Result<AuthenticatedUser, RequireSessionFailure> {
-        match &self.current {
-            None => return Err(RequireSessionFailure::MissingOrExpired),
-            Some(session) if session.is_expired() => {
-                return Err(RequireSessionFailure::MissingOrExpired);
-            }
+        match self.current.as_mut() {
+            None => Err(RequireSessionFailure::MissingOrExpired),
+            Some(session) if session.is_expired() => Err(RequireSessionFailure::MissingOrExpired),
             Some(session) if session.is_idle_locked() => {
-                return Err(RequireSessionFailure::IdleLocked);
+                session.latch_idle_lock();
+                Err(RequireSessionFailure::IdleLocked)
             }
-            Some(_) => {}
+            Some(session) => Ok(session.user.clone()),
         }
-        self.touch();
-        // SAFETY: branches above guarantee a non-expired, non-idle-locked session.
-        Ok(self.current.as_ref().unwrap().user.clone())
     }
 
     /// Returns a reference to the current authenticated user, if any.
@@ -207,11 +235,23 @@ impl SessionManager {
         self.current.as_ref().filter(|s| !s.is_expired()).map(|s| &s.user)
     }
 
-    /// Updates the `last_activity_at` timestamp to prevent idle lock.
-    /// Call this at the start of any authenticated IPC command.
-    pub fn touch(&mut self) {
-        if let Some(session) = &mut self.current {
-            session.last_activity_at = Utc::now();
+    /// The user worked in the app (keyboard, mouse, touch): `last_activity_at` moves to now.
+    ///
+    /// A session already past its idle deadline (the PC woke up after a long sleep, the app was
+    /// left alone) is not revived: it is locked and stays locked until an unlock (password or
+    /// PIN), which is the only other way `last_activity_at` moves.
+    pub fn record_activity(&mut self) -> Result<(), RequireSessionFailure> {
+        match self.current.as_mut() {
+            None => Err(RequireSessionFailure::MissingOrExpired),
+            Some(session) if session.is_expired() => Err(RequireSessionFailure::MissingOrExpired),
+            Some(session) if session.is_idle_locked() => {
+                session.latch_idle_lock();
+                Err(RequireSessionFailure::IdleLocked)
+            }
+            Some(session) => {
+                session.last_activity_at = Utc::now();
+                Ok(())
+            }
         }
     }
 
@@ -307,6 +347,7 @@ impl SessionManager {
                 pin_configured: None,
                 expires_at: None,
                 last_activity_at: None,
+                idle_timeout_minutes: None,
                 tenant_id: None,
                 token_tenant_id: None,
             },
@@ -322,6 +363,7 @@ impl SessionManager {
                 pin_configured: Some(s.pin_configured),
                 expires_at: Some(s.expires_at.to_rfc3339()),
                 last_activity_at: Some(s.last_activity_at.to_rfc3339()),
+                idle_timeout_minutes: Some(s.idle_timeout_minutes),
                 tenant_id: Some(s.user.tenant_id.clone()),
                 token_tenant_id: Some(s.user.token_tenant_id.clone()),
             },
@@ -1106,16 +1148,118 @@ mod tests {
         assert!(mgr.current.as_ref().unwrap().is_locked);
     }
 
-    #[test]
-    fn require_active_user_ok_touches_activity() {
+    /// A session whose last user input was `minutes_ago` minutes ago, with a 10-minute idle policy.
+    fn session_idle_for(minutes_ago: i64) -> SessionManager {
         let mut mgr = SessionManager::new();
-        mgr.create_session(make_user());
+        mgr.create_session_with_timeouts(make_user(), SessionTimeouts::from_policy(10, 600, 15));
+        mgr.current.as_mut().unwrap().last_activity_at = Utc::now() - TimeDelta::minutes(minutes_ago);
+        mgr
+    }
+
+    #[test]
+    fn commands_and_polls_do_not_count_as_activity() {
+        let mut mgr = session_idle_for(9);
         let before = mgr.current.as_ref().unwrap().last_activity_at;
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        let user = mgr.require_active_user().expect("active session");
-        assert_eq!(user.username, "test_user");
+        // Every protected command (notification, presence, statistics polls) goes through this.
+        for _ in 0..20 {
+            let user = mgr.require_active_user().expect("still within the idle timeout");
+            assert_eq!(user.username, "test_user");
+        }
+        assert_eq!(
+            mgr.current.as_ref().unwrap().last_activity_at,
+            before,
+            "polls do not move activity"
+        );
+
+        // The idle deadline passes with polls still running: the session locks.
+        mgr.current.as_mut().unwrap().last_activity_at = Utc::now() - TimeDelta::minutes(11);
+        assert_eq!(
+            mgr.require_active_user().unwrap_err(),
+            RequireSessionFailure::IdleLocked
+        );
+        assert!(mgr.current.as_ref().unwrap().is_locked, "the lock is recorded");
+        assert!(mgr.session_info().is_locked);
+    }
+
+    #[test]
+    fn user_activity_before_the_deadline_extends_the_session() {
+        let mut mgr = session_idle_for(9);
+        let before = mgr.current.as_ref().unwrap().last_activity_at;
+        mgr.record_activity().expect("within the idle timeout");
         let after = mgr.current.as_ref().unwrap().last_activity_at;
-        assert!(after >= before);
+        assert!(after > before);
+        assert!(Utc::now() - after < TimeDelta::seconds(5));
+        assert!(mgr.is_authenticated());
+    }
+
+    #[test]
+    fn user_activity_after_the_deadline_does_not_revive_the_session() {
+        // The PC woke up after a long sleep: the first input must not reopen the session.
+        let mut mgr = session_idle_for(45);
+        let before = mgr.current.as_ref().unwrap().last_activity_at;
+        assert_eq!(mgr.record_activity().unwrap_err(), RequireSessionFailure::IdleLocked);
+        assert_eq!(mgr.current.as_ref().unwrap().last_activity_at, before, "not revived");
+        assert!(mgr.current.as_ref().unwrap().is_locked);
+        // Still locked at the next input, even if the clock went back meanwhile.
+        mgr.current.as_mut().unwrap().last_activity_at = Utc::now();
+        assert_eq!(mgr.record_activity().unwrap_err(), RequireSessionFailure::IdleLocked);
+        assert_eq!(
+            mgr.require_active_user().unwrap_err(),
+            RequireSessionFailure::IdleLocked
+        );
+        assert!(!mgr.is_authenticated());
+
+        // Only an unlock (after the password or PIN check) reopens it, with fresh activity.
+        assert!(mgr.unlock_session());
+        assert!(mgr.is_authenticated());
+        let current = mgr.current.as_ref().unwrap();
+        assert!(!current.is_locked);
+        assert!(Utc::now() - current.last_activity_at < TimeDelta::seconds(5));
+        mgr.record_activity().expect("active again");
+    }
+
+    #[test]
+    fn record_activity_without_session_is_refused() {
+        let mut mgr = SessionManager::new();
+        assert_eq!(
+            mgr.record_activity().unwrap_err(),
+            RequireSessionFailure::MissingOrExpired
+        );
+        let mut expired = session_idle_for(0);
+        expired.current.as_mut().unwrap().expires_at = Utc::now() - TimeDelta::minutes(1);
+        assert_eq!(
+            expired.record_activity().unwrap_err(),
+            RequireSessionFailure::MissingOrExpired
+        );
+    }
+
+    #[test]
+    fn recording_the_idle_lock_keeps_the_pin_attempts() {
+        // Wrong PINs tried against the time-based lock before anything recorded it.
+        let mut mgr = session_idle_for(11);
+        {
+            let s = mgr.current.as_mut().unwrap();
+            s.pin_failed_attempts = 3;
+            s.pin_unlock_disabled = true;
+        }
+        assert!(mgr.require_active_user().is_err());
+        assert!(mgr.record_activity().is_err());
+        let s = mgr.current.as_ref().unwrap();
+        assert!(s.is_locked);
+        assert_eq!(s.pin_failed_attempts, 3, "no new PIN tries");
+        assert!(s.pin_unlock_disabled, "PIN unlock stays disabled");
+        // The unlock (password) starts them afresh.
+        assert!(mgr.unlock_session());
+        let s = mgr.current.as_ref().unwrap();
+        assert_eq!(s.pin_failed_attempts, 0);
+        assert!(!s.pin_unlock_disabled);
+    }
+
+    #[test]
+    fn session_info_gives_the_idle_timeout() {
+        let mgr = session_idle_for(0);
+        assert_eq!(mgr.session_info().idle_timeout_minutes, Some(10));
+        assert_eq!(SessionManager::new().session_info().idle_timeout_minutes, None);
     }
 
     #[test]

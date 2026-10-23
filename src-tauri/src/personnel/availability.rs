@@ -453,12 +453,23 @@ pub async fn update_availability_block(
     ))
     .await?;
     if is_critical != existing.is_critical {
+        // The block and the person are named by their sync ids, the same on every PC: the audit
+        // travels (`sync::row_spec`, audit_events), and a block can be deleted later while its
+        // audit stays, unchanged, in the audit chain (`audit::chain`). A row without a sync id
+        // (no capture installed) keeps a device-marked key.
+        let block_ref =
+            crate::sync::identity::optional_entity_sync_id(&txn, "personnel_availability_blocks", existing.id)
+                .await?
+                .unwrap_or_else(|| format!("local-{}", existing.id));
+        let person_ref = crate::sync::identity::optional_entity_sync_id(&txn, "personnel", existing.personnel_id)
+            .await?
+            .unwrap_or_else(|| format!("local-{}", existing.personnel_id));
         crate::audit::writer::write_audit_event_in(
             &txn,
             crate::audit::writer::AuditEventInput {
                 action_code: AUDIT_BLOCK_CRITICAL_CHANGED.to_string(),
                 target_type: Some("personnel_availability_block".to_string()),
-                target_id: Some(existing.id.to_string()),
+                target_id: Some(block_ref.clone()),
                 actor_id: Some(actor_id),
                 auth_context: "session".to_string(),
                 result: "success".to_string(),
@@ -467,8 +478,8 @@ pub async fn update_availability_block(
                 retention_class: "standard".to_string(),
                 // Who (actor), which block and person, before → after; never the type or reason.
                 details_json: Some(serde_json::json!({
-                    "block_id": existing.id,
-                    "personnel_id": existing.personnel_id,
+                    "block_sync_id": block_ref,
+                    "personnel_sync_id": person_ref,
                     "is_critical_before": existing.is_critical,
                     "is_critical_after": is_critical,
                 })),

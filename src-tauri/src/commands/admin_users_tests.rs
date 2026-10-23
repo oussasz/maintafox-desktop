@@ -467,6 +467,35 @@ async fn refused_admin_actions_are_ledgered_as_blocked() {
         1,
         "a missing step-up is a prompt, not a refusal"
     );
+    // The ledger keeps a code for the kind of refusal, never the backend's own sentence.
+    let summary: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT summary FROM admin_change_events WHERE action = 'user_deactivated' AND apply_result = 'blocked'",
+            [],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "summary")
+        .unwrap();
+    assert_eq!(summary, "validation_failed");
+    // An administrator's refusal is also written to the security journal, with the text.
+    let journal: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT details_json AS v FROM audit_events WHERE action_code = 'permission.denied' AND actor_id = ?",
+            [actor.into()],
+        ))
+        .await
+        .unwrap()
+        .expect("a security journal row for the administrator's refusal")
+        .try_get("", "v")
+        .unwrap();
+    let journal: serde_json::Value = serde_json::from_str(&journal).unwrap();
+    let journal = &journal["detail"];
+    assert_eq!(journal["refusal"], "validation_failed");
+    assert!(journal["error"].as_str().is_some_and(|e| e.contains("nope")));
 }
 
 #[tokio::test]
@@ -593,6 +622,95 @@ async fn roles_are_cloned_updated_and_retired_with_a_diff() {
         retire_role_impl(&state, &caller, readonly).await.is_err(),
         "system roles cannot be retired"
     );
+}
+
+/// The role editor never shows the permissions unused in this version, and its save sends only
+/// what changed: a role holding one keeps it after an update, and nothing new is granted.
+#[tokio::test]
+async fn a_role_keeps_a_hidden_permission_it_holds_after_an_update() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let readonly = role_id(&db, "Readonly").await;
+    let copy = clone_role_impl(
+        &state,
+        &caller,
+        CloneRoleInput {
+            source_role_id: readonly,
+            name: "Readonly (hidden kept)".into(),
+            description: None,
+        },
+    )
+    .await
+    .expect("clone")
+    .id;
+
+    // The role holds a permission that is hidden from the plant role screens (the read-only
+    // defaults may already include it).
+    let hidden = crate::rbac::permissions::HIDDEN_FROM_PLANT_SCREENS[0];
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at) \
+         SELECT ?, id, datetime('now') FROM permissions WHERE name = ?",
+        [copy.into(), hidden.into()],
+    ))
+    .await
+    .expect("grant hidden permission");
+    // ...and a legacy alias row still in the catalogue table (also left off the role screens).
+    let alias: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT name AS v FROM permissions WHERE name IN ({}) ORDER BY name LIMIT 1",
+                crate::rbac::permissions::ALIAS_MAP
+                    .iter()
+                    .map(|(a, _)| format!("'{a}'"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        ))
+        .await
+        .expect("query alias row")
+        .expect("a legacy alias row exists")
+        .try_get("", "v")
+        .expect("decode");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at) \
+         SELECT ?, id, datetime('now') FROM permissions WHERE name = ?",
+        [copy.into(), alias.clone().into()],
+    ))
+    .await
+    .expect("grant alias row");
+    let before = load_role_permission_names(&db, copy).await.unwrap();
+    assert!(before.iter().any(|p| p == hidden));
+    assert!(before.contains(&alias));
+
+    let added = crate::rbac::permissions::REP_EXPORT.to_string();
+    assert!(!before.contains(&added));
+    let changed = update_role_impl(
+        &state,
+        &caller,
+        UpdateRoleInput {
+            role_id: copy,
+            description: Some("Viewers who export reports".into()),
+            add_permissions: Some(vec![added.clone()]),
+            remove_permissions: Some(vec![]),
+        },
+    )
+    .await
+    .expect("update");
+    assert!(changed);
+
+    let after = load_role_permission_names(&db, copy).await.unwrap();
+    assert!(after.iter().any(|p| p == hidden), "the hidden permission is kept");
+    assert!(after.contains(&alias), "the legacy alias row is kept");
+    let mut expected = before.clone();
+    expected.push(added);
+    expected.sort();
+    let mut sorted_after = after.clone();
+    sorted_after.sort();
+    assert_eq!(sorted_after, expected, "only the requested permission was added");
 }
 
 async fn admin_assignment(db: &DatabaseConnection) -> i64 {
@@ -782,6 +900,25 @@ async fn refusals_of_non_administrators_go_to_the_security_journal() {
         0,
         "no ledger row for someone without administration rights"
     );
+    // The refusal and the backend's own text stay recoverable from the security journal.
+    let detail: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT details_json AS v FROM audit_events WHERE action_code = 'permission.denied' AND actor_id = ?",
+            [outsider.into()],
+        ))
+        .await
+        .unwrap()
+        .expect("a security journal row")
+        .try_get("", "v")
+        .unwrap();
+    let detail: serde_json::Value = serde_json::from_str(&detail).unwrap();
+    let detail = &detail["detail"];
+    assert_eq!(detail["action"], "user_deactivated");
+    assert_eq!(detail["refusal"], "permission_denied");
+    assert!(detail["error"]
+        .as_str()
+        .is_some_and(|e| e.contains(crate::rbac::permissions::ADM_USERS)));
 }
 
 // ── Anti-escalation, session revocation, forced password change ────────────────────────────

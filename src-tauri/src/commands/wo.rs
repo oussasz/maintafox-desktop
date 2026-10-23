@@ -1428,14 +1428,55 @@ pub async fn save_verification(
 
 #[tauri::command]
 pub async fn close_wo(
-    mut input: closeout::WoCloseInput,
+    input: closeout::WoCloseInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
+    close_wo_impl(state.inner(), input).await
+}
+
+pub(crate) async fn close_wo_impl(
+    state: &AppState,
+    mut input: closeout::WoCloseInput,
+) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_CLOSE, input.wo_id).await?;
+    require_on_wo(state, user.user_id, crate::rbac::permissions::OT_CLOSE, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
 
+    // Self-signed override (the policy may allow the closer as signer): the password checked is
+    // the signed-in user's own, so a lockout it causes ends the session, as every other password
+    // check inside a session does (`commands::auth::check_session_password`).
+    let self_signed = input.fmeca_parts_override_signed_by_id == Some(input.actor_id)
+        && input
+            .fmeca_parts_override_signer_password
+            .as_deref()
+            .is_some_and(|p| !p.trim().is_empty());
+    let own_session = if self_signed {
+        let id = crate::commands::auth::current_session_db_id(state).await?;
+        crate::commands::auth::end_session_if_locked_out(state, &user, &id).await?;
+        Some(id)
+    } else {
+        None
+    };
+
+    let result = close_wo_audited(state, &user, input).await;
+    // Checked whatever the outcome: the signer password is checked and counted even when the
+    // close-out goes through (critical FMECA suggestions with matched parts), so a close that
+    // succeeds can still have locked the account. A committed close stays reported as such.
+    if let Some(id) = &own_session {
+        let locked_out = crate::commands::auth::end_session_if_locked_out(state, &user, id).await;
+        if result.is_err() {
+            locked_out?;
+        }
+    }
+    result
+}
+
+async fn close_wo_audited(
+    state: &AppState,
+    user: &crate::auth::session_manager::AuthenticatedUser,
+    input: closeout::WoCloseInput,
+) -> AppResult<crate::wo::domain::WorkOrder> {
     match closeout::close_wo(&state.db, input).await {
         Ok(wo) => {
             audit::record_wo_change_event(

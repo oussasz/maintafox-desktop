@@ -26,6 +26,7 @@ const sessionInfoSchema = z.object({
   force_password_change: z.boolean().nullable(),
   expires_at: z.string().nullable(),
   last_activity_at: z.string().nullable(),
+  idle_timeout_minutes: z.number().nullable().default(null),
   password_expires_in_days: z.number().nullable().default(null),
   pin_configured: z.boolean().nullable().default(null),
   tenant_id: z.string().nullable().default(null),
@@ -65,6 +66,17 @@ export async function getSessionInfo(): Promise<SessionInfo> {
 }
 
 /**
+ * The user worked in the app (keyboard, mouse, touch): the only call that keeps the session
+ * from idle-locking. Refused with `SESSION_LOCKED` once the idle deadline has passed (the session
+ * then stays locked until unlocked). Returns the session info with the new activity time.
+ * Silent: the caller decides how a refusal is shown.
+ */
+export async function touchSession(): Promise<SessionInfo> {
+  const raw = await invokeSilent<unknown>("touch_session");
+  return sessionInfoSchema.parse(raw);
+}
+
+/**
  * Unlock an idle-locked session by verifying the user's password.
  * Returns the updated session info on success.
  */
@@ -86,6 +98,25 @@ export async function forceChangePassword(newPassword: string): Promise<SessionI
   // The response wraps session_info
   const parsed = z.object({ session_info: sessionInfoSchema }).parse(raw);
   return parsed.session_info;
+}
+
+const passwordRequirementsSchema = z.object({
+  min_length: z.number().int().positive(),
+  require_uppercase: z.boolean(),
+  require_lowercase: z.boolean(),
+  require_digit: z.boolean(),
+  require_special: z.boolean(),
+});
+
+export type PasswordRequirements = z.infer<typeof passwordRequirementsSchema>;
+
+/**
+ * What a new password must satisfy (the plant's password policy). Readable by any signed-in user,
+ * also while a password change is required: the change screen shows it.
+ */
+export async function getPasswordRequirements(): Promise<PasswordRequirements> {
+  const raw = await invokeSilent<unknown>("get_password_requirements");
+  return passwordRequirementsSchema.parse(raw);
 }
 
 /**

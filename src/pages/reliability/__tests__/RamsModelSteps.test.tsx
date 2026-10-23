@@ -991,7 +991,7 @@ describe("StudyDecisionsStep", () => {
 });
 
 describe("RatingScalesDialog", () => {
-  it("says the grids are plant-wide and refuses to save a threshold that is not a number", () => {
+  it("says the grids are plant-wide and keeps the last valid threshold when the text is not a number", () => {
     render(
       <RatingScalesDialog
         open
@@ -1007,13 +1007,15 @@ describe("RatingScalesDialog", () => {
       name: "Threshold of rating 3 (failures per year)",
     });
     fireEvent.change(threshold, { target: { value: "0,5x" } });
+    // The field flags the text, keeps the last valid threshold, and gives it back on blur.
     expect(threshold).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByRole("alert")).toHaveTextContent(/must be a number of 0 or more/);
-    expect(screen.getByRole("button", { name: "Save the grids" })).toBeDisabled();
+    fireEvent.blur(threshold);
+    expect(threshold).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByRole("button", { name: "Save the grids" })).toBeEnabled();
 
     // A decimal with a comma is accepted.
     fireEvent.change(threshold, { target: { value: "0,5" } });
-    expect(threshold).toHaveAttribute("aria-invalid", "false");
+    expect(threshold).not.toHaveAttribute("aria-invalid");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save the grids" })).toBeEnabled();
   });

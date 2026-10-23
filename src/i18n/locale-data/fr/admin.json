@@ -400,7 +400,410 @@
       "ins": "Rondes d'inspection",
       "cfg": "Configuration",
       "adm": "Administration",
-      "cst": "Personnalisé"
+      "cst": "Personnalisé",
+      "act": "Activation du poste",
+      "ent": "Droits d'usage",
+      "lic": "Licence",
+      "integrity": "Intégrité des données",
+      "sync": "Synchronisation"
+    },
+    "items": {
+      "eq_view": {
+        "label": "Voir les équipements",
+        "description": "Consulter le registre des équipements."
+      },
+      "eq_manage": {
+        "label": "Créer et modifier les équipements",
+        "description": "Créer et modifier les fiches équipement."
+      },
+      "eq_import": {
+        "label": "Importer des équipements",
+        "description": "Importer des équipements depuis un fichier CSV ou un ERP."
+      },
+      "eq_delete": {
+        "label": "Supprimer des équipements",
+        "description": "Supprimer des fiches équipement (récupérables dans les archives). Action sensible : confirmation du mot de passe requise."
+      },
+      "di_view": {
+        "label": "Voir les demandes d'intervention",
+        "description": "Consulter la liste et le détail des demandes d'intervention (DI)."
+      },
+      "di_create": {
+        "label": "Créer des demandes d'intervention",
+        "description": "Soumettre des DI pour tous les équipements."
+      },
+      "di_create_own": {
+        "label": "Créer des DI pour sa propre entité",
+        "description": "Soumettre des DI uniquement pour l'entité de l'utilisateur."
+      },
+      "di_screen": {
+        "label": "Trier les DI reçues",
+        "description": "Faire passer les DI soumises dans la file de revue."
+      },
+      "di_review": {
+        "label": "Examiner les demandes d'intervention",
+        "description": "Examiner, retourner ou rejeter des demandes d'intervention."
+      },
+      "di_approve": {
+        "label": "Approuver les demandes d'intervention",
+        "description": "Approuver, différer ou réactiver des demandes d'intervention. Action sensible."
+      },
+      "di_convert": {
+        "label": "Convertir une DI en ordre de travail",
+        "description": "Transformer une DI approuvée en ordre de travail (OT). Action sensible."
+      },
+      "di_admin": {
+        "label": "Administrer les demandes d'intervention",
+        "description": "Forcer, archiver, rouvrir des DI et gérer leurs paramètres. Action sensible."
+      },
+      "di_delete": {
+        "label": "Supprimer des DI brouillon",
+        "description": "Supprimer les demandes d'intervention encore à l'état de brouillon. Action sensible."
+      },
+      "ot_view": {
+        "label": "Voir les ordres de travail",
+        "description": "Consulter les ordres de travail (OT) et leur détail."
+      },
+      "ot_create": {
+        "label": "Créer des ordres de travail",
+        "description": "Créer de nouveaux ordres de travail."
+      },
+      "ot_edit": {
+        "label": "Planifier et exécuter les OT",
+        "description": "Modifier, planifier, affecter et exécuter les ordres de travail."
+      },
+      "ot_emergency_assign": {
+        "label": "Réaffecter un OT en urgence",
+        "description": "Changer l'équipe ou le technicien d'un OT sans contrôle de capacité du planning. Action sensible."
+      },
+      "ot_approve": {
+        "label": "Approuver les ordres de travail",
+        "description": "Approuver les OT en brouillon ou en planification."
+      },
+      "ot_close": {
+        "label": "Clôturer les ordres de travail",
+        "description": "Clôturer les OT vérifiés techniquement. Action sensible."
+      },
+      "ot_reopen": {
+        "label": "Rouvrir des ordres de travail",
+        "description": "Rouvrir un OT récemment clôturé. Action sensible : confirmation du mot de passe requise."
+      },
+      "ot_admin": {
+        "label": "Administrer les ordres de travail",
+        "description": "Forcer, archiver des OT et gérer leurs paramètres. Action sensible."
+      },
+      "ot_delete": {
+        "label": "Supprimer des OT brouillon",
+        "description": "Supprimer les ordres de travail encore à l'état de brouillon. Action sensible : confirmation du mot de passe requise."
+      },
+      "org_view": {
+        "label": "Voir l'organisation",
+        "description": "Consulter la structure organisationnelle."
+      },
+      "org_manage": {
+        "label": "Gérer les nœuds de l'organisation",
+        "description": "Créer et modifier les nœuds et entités de l'organisation."
+      },
+      "org_admin": {
+        "label": "Publier et fusionner les unités",
+        "description": "Publier, archiver et fusionner des unités organisationnelles. Action sensible : confirmation du mot de passe requise."
+      },
+      "per_view": {
+        "label": "Voir le personnel",
+        "description": "Consulter les fiches du personnel."
+      },
+      "per_manage": {
+        "label": "Gérer le personnel",
+        "description": "Créer et modifier les fiches du personnel."
+      },
+      "per_report": {
+        "label": "Voir les rapports d'effectifs",
+        "description": "Consulter et exporter les rapports sur les effectifs."
+      },
+      "per_sensitiveview": {
+        "label": "Voir les données sensibles du personnel",
+        "description": "Consulter les champs confidentiels des fiches du personnel."
+      },
+      "per_position_view": {
+        "label": "Voir les postes",
+        "description": "Consulter les postes et leurs profils d'exigences."
+      },
+      "per_position_manage": {
+        "label": "Gérer les postes",
+        "description": "Créer, modifier et archiver les postes et profils d'exigences."
+      },
+      "ref_view": {
+        "label": "Voir les données de référence",
+        "description": "Consulter les listes et valeurs de référence."
+      },
+      "ref_manage": {
+        "label": "Gérer les données de référence",
+        "description": "Créer et modifier les valeurs de référence encadrées."
+      },
+      "ref_publish": {
+        "label": "Publier les données de référence",
+        "description": "Publier de nouvelles versions des domaines de référence. Action sensible : confirmation du mot de passe requise."
+      },
+      "inv_view": {
+        "label": "Voir le stock",
+        "description": "Consulter les articles et les niveaux de stock."
+      },
+      "inv_manage": {
+        "label": "Gérer les mouvements de stock",
+        "description": "Sortir, retourner, ajuster et transférer du stock entre magasins."
+      },
+      "inv_procure": {
+        "label": "Gérer les achats",
+        "description": "Créer et approuver les demandes d'achat et les commandes. Action sensible."
+      },
+      "inv_count": {
+        "label": "Réaliser les inventaires",
+        "description": "Exécuter et valider les sessions d'inventaire physique. Action sensible."
+      },
+      "pm_view": {
+        "label": "Voir la maintenance préventive",
+        "description": "Consulter les plans et occurrences de maintenance préventive."
+      },
+      "pm_create": {
+        "label": "Créer des plans préventifs",
+        "description": "Créer de nouveaux plans de maintenance préventive."
+      },
+      "pm_edit": {
+        "label": "Modifier les plans préventifs",
+        "description": "Modifier les plans de maintenance préventive et leurs versions."
+      },
+      "pm_delete": {
+        "label": "Supprimer des plans préventifs brouillon",
+        "description": "Supprimer les plans de maintenance préventive encore en brouillon. Action sensible."
+      },
+      "pm_approve": {
+        "label": "Approuver les plans préventifs",
+        "description": "Approuver les modifications des plans de maintenance préventive."
+      },
+      "ram_view": {
+        "label": "Voir la fiabilité (RAMS)",
+        "description": "Consulter les données de fiabilité et RAMS."
+      },
+      "ram_manage": {
+        "label": "Gérer les données de fiabilité",
+        "description": "Modifier les données RAMS et les modes de défaillance."
+      },
+      "ram_analyze": {
+        "label": "Lancer les analyses de fiabilité",
+        "description": "Exécuter les analyses RAMS avancées."
+      },
+      "ram_export": {
+        "label": "Exporter les analyses de fiabilité",
+        "description": "Exporter les résultats des analyses RAMS."
+      },
+      "rep_view": {
+        "label": "Voir les rapports",
+        "description": "Consulter les rapports standard et les analyses."
+      },
+      "rep_export": {
+        "label": "Exporter les rapports",
+        "description": "Exporter les données des rapports."
+      },
+      "rep_manage": {
+        "label": "Gérer les rapports personnalisés",
+        "description": "Créer et modifier des rapports personnalisés."
+      },
+      "arc_view": {
+        "label": "Voir les archives",
+        "description": "Parcourir les éléments archivés."
+      },
+      "arc_restore": {
+        "label": "Restaurer des archives",
+        "description": "Restaurer des enregistrements archivés. Action sensible : confirmation du mot de passe requise."
+      },
+      "arc_export": {
+        "label": "Exporter les archives",
+        "description": "Exporter les données archivées."
+      },
+      "arc_purge": {
+        "label": "Purger définitivement les archives",
+        "description": "Supprimer définitivement des enregistrements archivés, sans retour possible. Action sensible : confirmation du mot de passe requise."
+      },
+      "doc_view": {
+        "label": "Voir la documentation",
+        "description": "Consulter la documentation et la bibliothèque."
+      },
+      "doc_manage": {
+        "label": "Gérer la documentation",
+        "description": "Créer et modifier les articles de documentation."
+      },
+      "plan_view": {
+        "label": "Voir le planning",
+        "description": "Consulter les données de planification et d'ordonnancement."
+      },
+      "plan_edit": {
+        "label": "Modifier le planning",
+        "description": "Modifier les plannings et les engagements."
+      },
+      "plan_confirm": {
+        "label": "Confirmer le planning",
+        "description": "Confirmer les engagements du planning."
+      },
+      "plan_windows": {
+        "label": "Gérer les fenêtres de planning",
+        "description": "Gérer les fenêtres de planification."
+      },
+      "log_view": {
+        "label": "Voir le fil d'activité",
+        "description": "Consulter le fil d'activité et les événements d'audit de son périmètre."
+      },
+      "log_export": {
+        "label": "Exporter le journal d'audit",
+        "description": "Exporter les données du journal d'audit. Action sensible : confirmation du mot de passe requise."
+      },
+      "log_admin": {
+        "label": "Administrer le journal d'audit",
+        "description": "Gérer la durée de conservation et la politique du journal d'audit. Action sensible : confirmation du mot de passe requise."
+      },
+      "trn_view": {
+        "label": "Voir les formations",
+        "description": "Consulter les formations et les certifications."
+      },
+      "trn_manage": {
+        "label": "Gérer les formations",
+        "description": "Gérer les dossiers et plans de formation."
+      },
+      "trn_certify": {
+        "label": "Délivrer ou retirer des certifications",
+        "description": "Délivrer ou révoquer des certifications du personnel. Action sensible : confirmation du mot de passe requise."
+      },
+      "erp_reconcile": {
+        "label": "Valider les réceptions de marchandises (rapprochement)",
+        "description": "Rapprocher l'état de comptabilisation ERP des réceptions de marchandises. Action sensible."
+      },
+      "ptw_view": {
+        "label": "Voir les permis de travail",
+        "description": "Consulter les permis de travail."
+      },
+      "ptw_issue": {
+        "label": "Délivrer des permis de travail",
+        "description": "Délivrer des permis de travail."
+      },
+      "ptw_close": {
+        "label": "Clôturer ou annuler des permis de travail",
+        "description": "Clôturer et annuler des permis de travail. Action sensible : confirmation du mot de passe requise."
+      },
+      "fin_view": {
+        "label": "Voir les budgets et coûts",
+        "description": "Consulter les budgets et les données de coûts."
+      },
+      "fin_budget": {
+        "label": "Gérer les budgets de référence",
+        "description": "Gérer les budgets de référence encadrés. Action sensible."
+      },
+      "fin_report": {
+        "label": "Exporter les rapports budgétaires",
+        "description": "Exporter les rapports budgétaires encadrés."
+      },
+      "fin_manage": {
+        "label": "Gérer budgets et centres de coûts",
+        "description": "Gérer les budgets et centres de coûts (droit global historique)."
+      },
+      "fin_post": {
+        "label": "Transmettre les coûts réels à l'ERP",
+        "description": "Transmettre les coûts réels à l'ERP. Action sensible : confirmation du mot de passe requise."
+      },
+      "fin_approve": {
+        "label": "Approuver les coûts et engagements",
+        "description": "Approuver les événements de coût et les engagements. Action sensible : confirmation du mot de passe requise."
+      },
+      "ins_view": {
+        "label": "Voir les rondes d'inspection",
+        "description": "Consulter les rondes d'inspection et leurs listes de contrôle."
+      },
+      "ins_execute": {
+        "label": "Réaliser les rondes d'inspection",
+        "description": "Exécuter les rondes d'inspection et enregistrer les résultats."
+      },
+      "ins_admin": {
+        "label": "Gérer les modèles de ronde",
+        "description": "Gérer les modèles et les calendriers d'inspection. Action sensible."
+      },
+      "cfg_view": {
+        "label": "Voir la configuration",
+        "description": "Consulter la configuration de l'entreprise."
+      },
+      "cfg_manage": {
+        "label": "Gérer la configuration",
+        "description": "Modifier les règles de configuration de l'entreprise. Action sensible : confirmation du mot de passe requise."
+      },
+      "cfg_publish": {
+        "label": "Publier la configuration",
+        "description": "Publier les changements de configuration pour tous les utilisateurs. Action sensible : confirmation du mot de passe requise."
+      },
+      "adm_users": {
+        "label": "Gérer les comptes utilisateurs",
+        "description": "Gérer les comptes utilisateurs et leurs périmètres. Action sensible : confirmation du mot de passe requise."
+      },
+      "adm_roles": {
+        "label": "Gérer les rôles",
+        "description": "Gérer les rôles et leurs permissions. Action sensible : confirmation du mot de passe requise."
+      },
+      "adm_permissions": {
+        "label": "Gérer le catalogue des permissions",
+        "description": "Consulter et encadrer le catalogue des permissions. Action sensible : confirmation du mot de passe requise."
+      },
+      "adm_settings": {
+        "label": "Gérer les paramètres de l'application",
+        "description": "Gérer les paramètres de l'application et les diagnostics. Action sensible : confirmation du mot de passe requise."
+      },
+      "adm_audit": {
+        "label": "Voir tout le journal d'audit",
+        "description": "Consulter l'intégralité du journal d'audit."
+      },
+      "sync_view": {
+        "label": "Voir l'état de la synchronisation",
+        "description": "Consulter l'état, les conflits et l'historique de rejeu de la synchronisation."
+      },
+      "sync_manage": {
+        "label": "Gérer la synchronisation",
+        "description": "Appliquer les lots de synchronisation et préparer les envois. Action sensible."
+      },
+      "sync_resolve": {
+        "label": "Résoudre les conflits de synchronisation",
+        "description": "Résoudre les conflits de synchronisation. Action sensible."
+      },
+      "sync_replay": {
+        "label": "Rejouer la synchronisation",
+        "description": "Lancer un rejeu de synchronisation ou un retour à un point de contrôle. Action sensible : confirmation du mot de passe requise."
+      },
+      "sync_repair": {
+        "label": "Réparer la synchronisation",
+        "description": "Prévisualiser et exécuter des réparations ciblées de la synchronisation. Action sensible : confirmation du mot de passe requise."
+      },
+      "integrity_repair": {
+        "label": "Réparer l'intégrité des données",
+        "description": "Corriger les anomalies d'intégrité des données. Action sensible : confirmation du mot de passe requise."
+      },
+      "act_view": {
+        "label": "Voir l'activation du poste",
+        "description": "Consulter l'état d'activation de ce poste."
+      },
+      "act_manage": {
+        "label": "Gérer l'activation du poste",
+        "description": "Gérer l'activation de ce poste. Action sensible : confirmation du mot de passe requise."
+      },
+      "lic_view": {
+        "label": "Voir l'état de la licence",
+        "description": "Consulter l'état d'application de la licence."
+      },
+      "lic_manage": {
+        "label": "Gérer la licence",
+        "description": "Gérer la matrice d'application de la licence. Action sensible : confirmation du mot de passe requise."
+      },
+      "ent_view": {
+        "label": "Voir les droits d'usage",
+        "description": "Consulter les enveloppes de droits d'usage."
+      },
+      "ent_manage": {
+        "label": "Gérer les droits d'usage",
+        "description": "Gérer les enveloppes de droits d'usage. Action sensible : confirmation du mot de passe requise."
+      }
     }
   },
   "sessions": {
@@ -695,6 +1098,26 @@
       "optional": "Motif (facultatif)",
       "ledgerHint": "Le motif est enregistré dans le journal d'administration."
     },
+    "reasonLine": "Motif : {{reason}}",
+    "refusal": {
+      "permission_denied": "Action refusée : droit manquant.",
+      "validation_failed": "Action refusée : données non valides ou règle non respectée.",
+      "not_found": "Action refusée : élément introuvable.",
+      "generic": "Action refusée."
+    },
+    "summary": {
+      "user_created": "Compte « {{target}} » créé",
+      "user_updated": "Compte « {{target}} » modifié",
+      "password_reset_by_admin": "Mot de passe de « {{target}} » réinitialisé par un administrateur (changement obligatoire à la prochaine connexion)",
+      "account_unlocked": "Compte « {{target}} » déverrouillé",
+      "role_created": "Rôle « {{target}} » créé",
+      "role_updated": "Rôle « {{target}} » modifié ({{added}} permission(s) ajoutée(s), {{removed}} retirée(s))",
+      "role_retired": "Rôle « {{target}} » retiré du service",
+      "role_assigned": "Rôle attribué : {{target}}",
+      "role_revoked": "Rôle retiré : {{target}}",
+      "emergency_grant_created": "Accès d'urgence accordé : {{target}}",
+      "permission_created": "Permission personnalisée créée : {{target}}"
+    },
     "results": {
       "applied": "Appliqué",
       "blocked": "Refusé",
@@ -786,7 +1209,9 @@
       "common": "En commun",
       "loadError": "Les rôles n'ont pas pu être chargés.",
       "validationError": "La vérification des dépendances n'a pas pu être effectuée. Le serveur la refait à l'enregistrement.",
-      "templateUnreadable": "Ce modèle de rôle est illisible : le rôle n'a pas été créé. Choisissez un autre modèle ou aucun modèle."
+      "templateUnreadable": "Ce modèle de rôle est illisible : le rôle n'a pas été créé. Choisissez un autre modèle ou aucun modèle.",
+      "hiddenRetained_one": "{{count}} droit non utilisé dans cette version conservé",
+      "hiddenRetained_other": "{{count}} droits non utilisés dans cette version conservés"
     },
     "choicesLoadError": "Les listes de rôles et de sites n'ont pas pu être chargées : les filtres par rôle et par site et l'attribution de rôles sont indisponibles.",
     "usersLoadError": "Les comptes n'ont pas pu être chargés."

@@ -13,7 +13,7 @@ use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
-use crate::rbac::resolver;
+use crate::rbac::{name_shown_in_plant_role_screens, resolver, shown_in_plant_role_screens};
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
 
@@ -142,6 +142,7 @@ pub async fn list_permissions(
             is_system: r.try_get::<i32>("", "is_system")? != 0,
         });
     }
+    permissions.retain(|p| shown_in_plant_role_screens(&p.name, &p.category));
 
     Ok(permissions)
 }
@@ -183,8 +184,15 @@ pub async fn get_permission_dependencies(
             dependency_type: r.try_get("", "dependency_type")?,
         });
     }
+    deps.retain(dependency_shown);
 
     Ok(deps)
+}
+
+/// A dependency row is shown only when both of its sides are.
+fn dependency_shown(dep: &PermissionDependencyRow) -> bool {
+    name_shown_in_plant_role_screens(&dep.permission_name)
+        && name_shown_in_plant_role_screens(&dep.required_permission_name)
 }
 
 /// Reserved system-namespace prefixes.  Custom permissions must NOT start with
@@ -424,6 +432,9 @@ pub(crate) async fn role_editor_catalog(db: &sea_orm::DatabaseConnection) -> App
             is_system: r.try_get::<i32>("", "is_system")? != 0,
         });
     }
+    // Permissions unused in this version stay on the roles that hold them (update_role adds
+    // and removes by difference) but are not offered here.
+    permissions.retain(|p| shown_in_plant_role_screens(&p.name, &p.category));
 
     let dep_rows = db
         .query_all(Statement::from_string(
@@ -442,6 +453,7 @@ pub(crate) async fn role_editor_catalog(db: &sea_orm::DatabaseConnection) -> App
             dependency_type: r.try_get("", "dependency_type")?,
         });
     }
+    dependencies.retain(dependency_shown);
 
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let holder_rows = db
@@ -471,4 +483,124 @@ pub(crate) async fn role_editor_catalog(db: &sea_orm::DatabaseConnection) -> App
         dependencies,
         role_holders,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    use super::role_editor_catalog;
+    use crate::rbac::permissions::{
+        ALIAS_MAP, CATALOG, ERP_RECONCILE, HIDDEN_CATEGORIES_FROM_PLANT_SCREENS, HIDDEN_FROM_PLANT_SCREENS, INV_VIEW,
+    };
+
+    fn hidden_names() -> Vec<&'static str> {
+        CATALOG
+            .iter()
+            .filter(|m| {
+                HIDDEN_FROM_PLANT_SCREENS.contains(&m.name)
+                    || HIDDEN_CATEGORIES_FROM_PLANT_SCREENS.contains(&m.category)
+            })
+            .map(|m| m.name)
+            .collect()
+    }
+
+    /// The role editor offers neither the permissions unused in this version, the vendor
+    /// console's own rights nor the legacy alias names, nor any dependency touching them; they
+    /// stay in the catalogue table.
+    #[tokio::test]
+    async fn the_role_editor_catalog_leaves_out_permissions_unused_in_this_version() {
+        let db = crate::db::test_db::seeded().await;
+        let hidden = hidden_names();
+        assert_eq!(hidden.len(), 11, "4 flagged permissions + 7 vendor console rights");
+
+        // A dependency row with a hidden side is not shown either.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO permission_dependencies \
+             (permission_name, required_permission_name, dependency_type, created_at) \
+             VALUES (?, ?, 'warn', datetime('now'))",
+            [HIDDEN_FROM_PLANT_SCREENS[0].into(), INV_VIEW.into()],
+        ))
+        .await
+        .expect("insert dependency");
+
+        let catalog = role_editor_catalog(&db).await.expect("catalog");
+        let names: Vec<&str> = catalog.permissions.iter().map(|p| p.name.as_str()).collect();
+        for name in &hidden {
+            assert!(!names.contains(name), "{name} is not offered");
+        }
+        assert!(catalog
+            .permissions
+            .iter()
+            .all(|p| !HIDDEN_CATEGORIES_FROM_PLANT_SCREENS.contains(&p.category.as_str())));
+        assert!(names.contains(&ERP_RECONCILE), "goods-receipt validation stays visible");
+        // Every canonical permission of this version is offered; no legacy alias name is.
+        assert_eq!(names.len(), CATALOG.len() - hidden.len());
+        assert!(names.iter().all(|n| !ALIAS_MAP.iter().any(|(alias, _)| alias == n)));
+        assert!(catalog.dependencies.iter().all(|d| {
+            !hidden.contains(&d.permission_name.as_str()) && !hidden.contains(&d.required_permission_name.as_str())
+        }));
+
+        // Nothing is deleted: the rows are still in the local catalogue table.
+        let row = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT COUNT(*) AS n FROM permissions WHERE name IN ({})",
+                    hidden.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join(",")
+                ),
+            ))
+            .await
+            .expect("count")
+            .expect("row");
+        assert_eq!(row.try_get::<i64>("", "n").expect("n"), hidden.len() as i64);
+    }
+
+    fn source_files(dir: &std::path::Path, exts: &[&str], out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("read source dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                source_files(&path, exts, out);
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| exts.contains(&e))
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    /// The legacy alias names left off the role screens are never checked anywhere: no backend
+    /// or UI permission check names one, so hiding them can never hide a live control. (Checks
+    /// use the generated constants; an alias has none, so it could only appear as a literal.)
+    #[test]
+    fn no_permission_check_names_a_legacy_alias() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("repo root")
+            .to_path_buf();
+        let mut files = Vec::new();
+        source_files(&root.join("src-tauri/src"), &["rs"], &mut files);
+        source_files(&root.join("src"), &["ts", "tsx"], &mut files);
+        source_files(&root.join("shared"), &["ts", "tsx"], &mut files);
+        let skipped = |p: &std::path::Path| {
+            let rel = p.strip_prefix(&root).unwrap_or(p).to_string_lossy().replace('\\', "/");
+            rel.starts_with("src-tauri/src/migrations/")
+                || rel == "src-tauri/src/rbac/permissions_generated.rs"
+                || rel == "shared/rbac/permissions.generated.ts"
+        };
+        assert!(files.len() > 100, "the source tree was found");
+        let mut found = Vec::new();
+        for file in files.iter().filter(|p| !skipped(p)) {
+            let text = std::fs::read_to_string(file).expect("read source");
+            for (alias, _) in ALIAS_MAP {
+                if text.contains(&format!("\"{alias}\"")) || text.contains(&format!("'{alias}'")) {
+                    found.push(format!("{alias} in {}", file.display()));
+                }
+            }
+        }
+        assert!(found.is_empty(), "legacy alias still checked: {found:?}");
+    }
 }

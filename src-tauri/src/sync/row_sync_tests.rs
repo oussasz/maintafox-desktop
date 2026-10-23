@@ -929,6 +929,103 @@ async fn received_deletes_never_erase_history_rows() {
     assert_eq!(media_left, 0, "a received media delete removes the attachment");
 }
 
+/// The review history of a request, the break-ins of a schedule and the verifications of a work
+/// order are written once and never changed (append-only): a received row is inserted as on any
+/// type, a received delete or archive is a visible `APPEND_ONLY_DELETE` conflict and the row stays,
+/// and a received rewrite of a row already here changes nothing.
+#[tokio::test]
+async fn received_history_of_reviews_break_ins_and_verifications_is_never_erased() {
+    use super::materialize::{apply_inbound_payload, ApplyOutcome};
+
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let mut rows = Vec::new();
+    for entity_type in ["di_review_events", "schedule_break_ins", "work_order_verifications"] {
+        let def = registry::entity(entity_type).expect("registered");
+        assert_eq!(def.conflict_policy, ConflictPolicy::AppendOnly, "{entity_type}");
+        rows.push(factory.create(&a, entity_type).await.expect(entity_type));
+    }
+    let mut problems = Vec::new();
+    let pushed = server.exchange("A", &a).await;
+    check_exchange(&pushed, "push", &mut problems);
+    let received = server.exchange("B", &b).await;
+    check_exchange(&received, "receive", &mut problems);
+    assert!(problems.is_empty(), "{problems:?}");
+
+    for row in &rows {
+        let layout = row_layout::layout(&b, row.entity_type).await.expect("layout");
+        let count = || async {
+            scalar_i64(
+                &b,
+                &format!("SELECT COUNT(*) FROM \"{}\" WHERE entity_sync_id = ?", layout.table()),
+                vec![row.entity_sync_id.clone().into()],
+            )
+            .await
+        };
+        assert_eq!(
+            count().await,
+            1,
+            "{}: the received insert is applied on B",
+            row.entity_type
+        );
+
+        let delete = serde_json::Value::Object(super::row_codec::delete_payload(&layout, None)).to_string();
+        for operation in ["delete", "archive"] {
+            let outcome = apply_inbound_payload(&b, row.entity_type, &row.entity_sync_id, operation, 99, &delete)
+                .await
+                .expect("apply");
+            assert!(
+                matches!(&outcome, ApplyOutcome::Conflict { code, .. } if code == "APPEND_ONLY_DELETE"),
+                "{} {operation}: {outcome:?}",
+                row.entity_type
+            );
+        }
+        assert_eq!(count().await, 1, "{}: kept on B", row.entity_type);
+
+        // A rewrite of the row already here (only a tampered or older client sends one) is skipped.
+        let mut payload =
+            crate::sync::test_support::current_payload(&b, row.entity_type, &row.entity_sync_id, &Default::default())
+                .await
+                .expect("payload")
+                .expect("row");
+        let before = serde_json::Value::Object(payload.clone()).to_string();
+        // A free-text column of each table.
+        let note_column = match row.entity_type {
+            "schedule_break_ins" => "override_reason",
+            _ => "notes",
+        };
+        payload.insert(note_column.into(), "rewritten by a peer".into());
+        let outcome = apply_inbound_payload(
+            &b,
+            row.entity_type,
+            &row.entity_sync_id,
+            "upsert",
+            99,
+            &serde_json::Value::Object(payload).to_string(),
+        )
+        .await
+        .expect("apply rewrite");
+        assert!(
+            matches!(outcome, ApplyOutcome::Unchanged),
+            "{}: {outcome:?}",
+            row.entity_type
+        );
+        let after =
+            crate::sync::test_support::current_payload(&b, row.entity_type, &row.entity_sync_id, &Default::default())
+                .await
+                .expect("payload")
+                .expect("row");
+        assert_eq!(
+            serde_json::Value::Object(after).to_string(),
+            before,
+            "{}: the row is not rewritten",
+            row.entity_type
+        );
+    }
+}
+
 /// Every domain list above, in domain order.
 const DOMAIN_TYPES: &[&[&str]] = &[
     FOUNDATION_TYPES,

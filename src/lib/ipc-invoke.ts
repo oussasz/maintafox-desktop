@@ -23,6 +23,18 @@ const SILENT_IPC_COMMANDS = new Set([
   "set_window_mode",
 ]);
 
+/**
+ * Server code (`AppError::AccountLocked`). Outside sign-in it only comes from a password check
+ * inside the session, which ended the session with the lockout.
+ */
+const ACCOUNT_LOCKED = "ACCOUNT_LOCKED";
+
+/** The session ended with the account lockout: sign-in shows the lockout message. */
+async function applyAccountLockout(message: string): Promise<void> {
+  const { useSessionStore } = await import("@/store/session-store");
+  useSessionStore.getState().applyAccountLockout(message);
+}
+
 /** Server code (`AppError::PasswordChangeRequired`): the password must be changed first. */
 export const PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED";
 
@@ -120,6 +132,14 @@ function handleSessionFailures(cmd: string, err: unknown): void {
   const { code, rawMsg } = extractIpcErrorMeta(err);
 
   if (SILENT_IPC_COMMANDS.has(cmd) || cmd === "login") {
+    return;
+  }
+
+  if (code === ACCOUNT_LOCKED) {
+    // A password check inside the session (unlock, step-up, PIN set/clear, password change)
+    // locked the account and the server ended the session: back to sign-in with the lockout
+    // message (a refresh would wipe that message, the sign-in-again dialog would hide it).
+    void applyAccountLockout(rawMsg);
     return;
   }
 

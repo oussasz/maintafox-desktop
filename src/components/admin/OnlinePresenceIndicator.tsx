@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 
-import { invokeSilent } from "@/lib/ipc-invoke";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { getUserPresence } from "@/services/rbac-service";
 import { useSessionStore } from "@/store/session-store";
@@ -82,8 +81,8 @@ export function OnlinePresenceIndicator({ userId, size = "sm" }: OnlinePresenceI
         setStatus("offline");
         return;
       }
-      // Touch current user's session so presence stays fresh (silent — never AuthLock).
-      void invokeSilent("touch_session").catch(() => {});
+      // No activity is sent from here: a timed poll is not the user working (the shell sends
+      // `touch_session` on real input, which also keeps this user's presence fresh).
       await fetchPresence([userId]);
       const cached = cachedPresence.get(userId);
       setStatus(cached?.status ?? "offline");

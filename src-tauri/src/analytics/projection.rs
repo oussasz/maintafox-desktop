@@ -375,7 +375,7 @@ pub async fn build_executive_dashboard(
                     "SELECT date(ir.created_at) AS d, COUNT(*) AS cnt
                      FROM intervention_requests ir
                      WHERE date(ir.created_at) >= date('now', ?)
-                       AND (? IS NULL OR ir.org_node_id = ?)
+                       AND (? IS NULL OR ir.org_node_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))
                      GROUP BY date(ir.created_at)",
                     [shift.clone().into(), org_bind.clone(), org_bind.clone()],
                 ))
@@ -397,7 +397,7 @@ pub async fn build_executive_dashboard(
                      JOIN work_order_statuses s ON s.id = wo.status_id
                      WHERE s.code = 'closed' AND wo.closed_at IS NOT NULL
                        AND date(wo.closed_at) >= date('now', ?)
-                       AND (? IS NULL OR wo.entity_id = ?)
+                       AND (? IS NULL OR wo.entity_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))
                      GROUP BY date(wo.closed_at)",
                     [shift.clone().into(), org_bind.clone(), org_bind.clone()],
                 ))
@@ -420,7 +420,7 @@ pub async fn build_executive_dashboard(
                      LEFT JOIN equipment e ON e.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment'
                      WHERE po.due_at IS NOT NULL
                        AND date(po.due_at) >= date('now', ?)
-                       AND (? IS NULL OR e.installed_at_node_id = ?)
+                       AND (? IS NULL OR e.installed_at_node_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))
                      GROUP BY date(po.due_at)",
                     [shift.into(), org_bind.clone(), org_bind.clone()],
                 ))
@@ -450,7 +450,7 @@ pub async fn build_executive_dashboard(
                 DbBackend::Sqlite,
                 "SELECT ir.status AS status, COUNT(*) AS cnt
                  FROM intervention_requests ir
-                 WHERE (? IS NULL OR ir.org_node_id = ?)
+                 WHERE (? IS NULL OR ir.org_node_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))
                  GROUP BY ir.status
                  ORDER BY cnt DESC",
                 [org_bind.clone(), org_bind.clone()],
@@ -506,7 +506,7 @@ pub async fn build_executive_dashboard(
                      JOIN work_order_statuses st ON st.id = wo.status_id
                      WHERE st.code = 'closed' AND wo.closed_at IS NOT NULL
                        AND date(wo.closed_at) >= date('now', ?)
-                       AND (? IS NULL OR wo.entity_id = ?)
+                       AND (? IS NULL OR wo.entity_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))
                      GROUP BY date(wo.closed_at)",
                     [horizon_shift.into(), org_bind.clone(), org_bind.clone()],
                 ))
@@ -535,13 +535,25 @@ pub async fn build_executive_dashboard(
 
     // ── Top 5 bad-actor assets (latest snapshot in horizon, most events) ──
     let bad_actor_assets = if can_rep {
-        load_bad_actors(db, start, now, org, can_ot, 5).await?
+        // Their closed-WO cost is a finance figure.
+        load_bad_actors(db, start, now, org, can_ot && can_fin, 5).await?
     } else {
         Vec::new()
     };
 
     let smrp = if can_ot || can_pm {
-        Some(build_smrp_kpis(db, SmrpWindow::last_days(now, horizon), now, org, can_ot, can_pm).await?)
+        Some(
+            build_smrp_kpis(
+                db,
+                SmrpWindow::last_days(now, horizon),
+                now,
+                org,
+                can_ot,
+                can_pm,
+                can_fin,
+            )
+            .await?,
+        )
     } else {
         None
     };
@@ -601,7 +613,7 @@ pub async fn load_bad_actors(
             JOIN equipment e ON e.id = s.equipment_id \
             WHERE s.equipment_id IS NOT NULL \
               AND datetime(s.period_end) >= datetime(?1) AND datetime(s.period_end) <= datetime(?2) \
-              AND (?3 IS NULL OR e.installed_at_node_id = ?3) \
+              AND (?3 IS NULL OR e.installed_at_node_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?3)) \
          ) \
          SELECT e.id AS equipment_id, e.asset_id_code AS asset_code, e.name AS asset_label, \
                 r.event_count, r.mtbf, r.availability, {cost_sql} AS cost \

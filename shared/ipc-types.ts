@@ -81,6 +81,8 @@ export interface SessionInfo {
   force_password_change: boolean | null;
   expires_at: string | null;
   last_activity_at: string | null;
+  /** Minutes without user input before the session locks (session policy at sign-in). */
+  idle_timeout_minutes?: number | null;
   password_expires_in_days: number | null;
   pin_configured: boolean | null;
   tenant_id?: string | null;
@@ -5470,6 +5472,9 @@ export interface WoListFilter {
   overdue_only?: boolean | null;
   /** Only OTs not yet closed: the reports' / analytics "open OT" rule (`wo::backlog::NOT_CLOSED_SQL`). */
   not_closed_only?: boolean | null;
+  /** Only work completed in `[completed_from, completed_to)` (ISO instants): the SMRP work-mix population. */
+  completed_from?: string | null;
+  completed_to?: string | null;
   limit: number;
   offset: number;
 }

@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { PartNecessityChoice } from "@/components/common/PartNecessityChoice";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
@@ -283,12 +284,12 @@ export function PmMeterSpecFields({
         <Label htmlFor={`${idPrefix}-start`}>
           {unit ? t("fields.startReading", { unit }) : t("fields.startReadingNoUnit")}
         </Label>
-        <Input
+        <DecimalField
           id={`${idPrefix}-start`}
-          type="number"
+          decimals={3}
           min={0}
-          value={value.startReading ?? ""}
-          onChange={(e) => onChange({ ...value, startReading: optionalNumber(e.target.value) })}
+          value={value.startReading ?? null}
+          onValueChange={(v) => onChange({ ...value, startReading: v })}
         />
         <p className="text-xs text-text-muted">{t("hints.startReadingOptional")}</p>
       </div>
@@ -407,19 +408,15 @@ export function PmPartsPicker({
                 <Label className="sr-only" htmlFor={`pm-part-qty-${idx}`}>
                   {t("fields.quantity")}
                 </Label>
-                <Input
+                <DecimalField
                   id={`pm-part-qty-${idx}`}
                   className="w-24"
-                  type="number"
+                  decimals={3}
                   min={0}
-                  value={part.quantity ?? ""}
+                  value={part.quantity ?? null}
                   aria-label={t("fields.quantityOf", { code: part.articleCode })}
-                  onChange={(e) =>
-                    onChange(
-                      value.map((p, i) =>
-                        i === idx ? { ...p, quantity: optionalNumber(e.target.value) } : p,
-                      ),
-                    )
+                  onValueChange={(v) =>
+                    onChange(value.map((p, i) => (i === idx ? { ...p, quantity: v } : p)))
                   }
                 />
                 <Button

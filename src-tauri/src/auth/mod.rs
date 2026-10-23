@@ -29,7 +29,8 @@ pub(crate) mod scope_tests;
 /// Short-circuit an IPC command if there is no active authenticated session.
 ///
 /// Distinguishes idle-lock (`SESSION_LOCKED`) from missing/expired (`AUTH_ERROR`).
-/// On success, refreshes `last_activity_at` so normal IPC keeps the session alive.
+/// It does not count as user activity (timed polls use it too): only `touch_session`, sent by
+/// the shell on real keyboard/mouse input, keeps the session from idle-locking.
 ///
 /// Usage inside an `async` Tauri command:
 /// ```ignore
@@ -48,16 +49,7 @@ macro_rules! require_session {
                     let id = guard.current.as_ref().map(|s| s.session_db_id.clone());
                     (user, id)
                 }
-                Err($crate::auth::session_manager::RequireSessionFailure::IdleLocked) => {
-                    return Err($crate::errors::AppError::SessionLocked(
-                        "Session verrouillée pour inactivité. Veuillez vous déverrouiller.".into(),
-                    ));
-                }
-                Err($crate::auth::session_manager::RequireSessionFailure::MissingOrExpired) => {
-                    return Err($crate::errors::AppError::Auth(
-                        "Session expirée ou absente. Veuillez vous reconnecter.".into(),
-                    ));
-                }
+                Err(failure) => return Err(failure.into_app_error()),
             }
         };
         // Stored state: revoked session, disabled account, password change required.

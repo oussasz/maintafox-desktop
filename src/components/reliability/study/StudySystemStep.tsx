@@ -9,8 +9,8 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Input } from "@/components/ui/input";
 import { mfLayout } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -59,7 +59,7 @@ export function StudySystemStep({
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("rbd");
-  const [mission, setMission] = useState("");
+  const [mission, setMission] = useState<number | null>(null);
   const [rbd, setRbd] = useState<RbdSpec | null>(null);
   const [fta, setFta] = useState<FtSpec | null>(null);
   const [rbdSel, setRbdSel] = useState<string | null>(null);
@@ -77,7 +77,7 @@ export function StudySystemStep({
     try {
       const m = await getReliabilityStudySystemModel(study.id);
       setModel(m);
-      setMission(m.mission_hours != null ? String(m.mission_hours) : "");
+      setMission(m.mission_hours ?? null);
       setRbd(m.rbd?.spec ?? null);
       setFta(m.fta?.spec ?? null);
       setRbdSel(m.rbd?.spec.root_id ?? null);
@@ -94,7 +94,7 @@ export function StudySystemStep({
     void load();
   }, [load]);
 
-  const missionN = Number(mission.replace(",", "."));
+  const missionN = mission ?? Number.NaN;
   const missionOk = Number.isFinite(missionN) && missionN > 0;
 
   useEffect(() => {
@@ -269,13 +269,13 @@ export function StudySystemStep({
                   ? t("rams.units.opHours")
                   : t("rams.units.calHours"),
             })}
-            <Input
+            <DecimalField
               className="h-10 w-36"
-              inputMode="decimal"
+              min={0}
               value={mission}
-              aria-invalid={mission !== "" && !missionOk}
-              onChange={(e) => {
-                setMission(e.target.value);
+              aria-invalid={mission != null && !missionOk ? true : undefined}
+              onValueChange={(v) => {
+                setMission(v);
                 setDirty(true);
               }}
             />
@@ -284,7 +284,7 @@ export function StudySystemStep({
             variant="outline"
             className="h-10"
             onClick={() => {
-              setMission(String(HOURS_PER_YEAR));
+              setMission(HOURS_PER_YEAR);
               setDirty(true);
             }}
           >

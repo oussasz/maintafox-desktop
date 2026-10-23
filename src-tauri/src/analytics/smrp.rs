@@ -222,7 +222,7 @@ async fn work_mix_totals(db: &DatabaseConnection, window: SmrpWindow, org: Optio
                AND COALESCE(wo.mechanically_completed_at, wo.closed_at) IS NOT NULL \
                AND datetime(COALESCE(wo.mechanically_completed_at, wo.closed_at)) >= datetime(?) \
                AND datetime(COALESCE(wo.mechanically_completed_at, wo.closed_at)) < datetime(?) \
-               AND (? IS NULL OR wo.entity_id = ?) \
+               AND (? IS NULL OR wo.entity_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?)) \
              GROUP BY t.semantic_tag",
             vec![
                 instant(window.from).into(),
@@ -357,7 +357,7 @@ pub async fn weekly_capacity(db: &DatabaseConnection, org: Option<i64>) -> AppRe
             "SELECT p.id AS pid FROM personnel p \
              WHERE COALESCE(p.employment_status, 'active') = 'active' \
                AND (p.termination_date IS NULL OR date(p.termination_date) >= date('now')) \
-               AND (? IS NULL OR p.primary_entity_id = ?) \
+               AND (? IS NULL OR p.primary_entity_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?)) \
              ORDER BY p.id",
             vec![org.into(), org.into()],
         ))
@@ -402,7 +402,7 @@ pub async fn backlog(
                 COALESCE(SUM(CASE WHEN s.code = 'ready' THEN COALESCE(wo.expected_duration_hours, 0) END), 0) AS ready \
              FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
              WHERE s.code IN {open} \
-               AND (? IS NULL OR wo.entity_id = ?)",
+               AND (? IS NULL OR wo.entity_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))",
             open = crate::wo::backlog::OPEN_STATUS_SQL
         ),
         vec![org.into(), org.into()],
@@ -436,7 +436,7 @@ async fn cost_on_valued_assets(db: &DatabaseConnection, window: SmrpWindow, org:
          JOIN equipment e ON e.id = wo.equipment_id \
          WHERE wo.closed_at IS NOT NULL AND e.replacement_value > 0 AND e.deleted_at IS NULL \
            AND datetime(wo.closed_at) >= datetime(?) AND datetime(wo.closed_at) < datetime(?) \
-           AND (? IS NULL OR e.installed_at_node_id = ?)",
+           AND (? IS NULL OR e.installed_at_node_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))",
         vec![
             instant(window.from).into(),
             instant(window.to).into(),
@@ -454,7 +454,7 @@ pub async fn cost_to_rav(db: &DatabaseConnection, window: SmrpWindow, org: Optio
         "SELECT COUNT(*) AS total, \
                 COALESCE(SUM(CASE WHEN e.replacement_value > 0 THEN 1 ELSE 0 END), 0) AS valued, \
                 COALESCE(SUM(CASE WHEN e.replacement_value > 0 THEN e.replacement_value END), 0) AS rav \
-         FROM equipment e WHERE e.deleted_at IS NULL AND (? IS NULL OR e.installed_at_node_id = ?)",
+         FROM equipment e WHERE e.deleted_at IS NULL AND (? IS NULL OR e.installed_at_node_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))",
         vec![org.into(), org.into()],
     )
     .await?;
@@ -476,7 +476,8 @@ pub async fn cost_to_rav(db: &DatabaseConnection, window: SmrpWindow, org: Optio
 
 // ── All together ───────────────────────────────────────────────────────────────────────────
 
-/// SMRP indicators over `window` (and its previous window), within what the caller may see.
+/// SMRP indicators over `window` (and its previous window), within what the caller may see: the
+/// cost indicator (cost / replacement value) needs the finance view on top of the OT view.
 pub async fn build_smrp_kpis(
     db: &DatabaseConnection,
     window: SmrpWindow,
@@ -484,6 +485,7 @@ pub async fn build_smrp_kpis(
     org: Option<i64>,
     can_ot: bool,
     can_pm: bool,
+    can_fin: bool,
 ) -> AppResult<SmrpKpis> {
     let metric = |current: SmrpRatio, previous: SmrpRatio| SmrpMetric { current, previous };
     let schedule = if can_ot {
@@ -518,7 +520,7 @@ pub async fn build_smrp_kpis(
         } else {
             None
         },
-        cost_to_rav: if can_ot {
+        cost_to_rav: if can_ot && can_fin {
             Some(cost_to_rav(db, window, org).await?)
         } else {
             None

@@ -2,6 +2,7 @@
   "$schema": "./permission-registry.schema.json",
   "version": 1,
   "description": "Canonical desktop RBAC permission registry. Sole source of permission-name strings.",
+  "plant_screens_hidden_categories": ["vendor_console"],
   "permissions": [
     {
       "name": "eq.view",
@@ -606,6 +607,7 @@
       "requires_step_up": false,
       "usage": "catalog-only",
       "usage_justification": "IoT module catalog placeholder; no desktop enforcement yet",
+      "plant_screens": false,
       "aliases": []
     },
     {
@@ -616,6 +618,7 @@
       "requires_step_up": false,
       "usage": "catalog-only",
       "usage_justification": "IoT module catalog placeholder; no desktop enforcement yet",
+      "plant_screens": false,
       "aliases": ["iot.configure"]
     },
     {
@@ -626,6 +629,7 @@
       "requires_step_up": false,
       "usage": "catalog-only",
       "usage_justification": "ERP view surfaces not yet gated; reconcile is enforced separately",
+      "plant_screens": false,
       "aliases": []
     },
     {
@@ -636,6 +640,7 @@
       "requires_step_up": true,
       "usage": "catalog-only",
       "usage_justification": "ERP configuration UI not yet gated",
+      "plant_screens": false,
       "aliases": ["erp.manage"]
     },
     {

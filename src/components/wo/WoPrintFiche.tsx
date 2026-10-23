@@ -24,7 +24,9 @@ import {
   getWoAnalyticsSnapshot,
 } from "@/services/wo-closeout-service";
 import { listLabor, listParts, listTasks } from "@/services/wo-execution-service";
+import { useLocaleStore } from "@/stores/locale-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
+import { formatCurrency, formatHours, formatNumber } from "@/utils/formatters";
 import type { WoExecPart, WoExecTask, WoIntervener, WorkOrder } from "@shared/ipc-types";
 
 // ── i18n keys for the print template ────────────────────────────────────────
@@ -82,6 +84,16 @@ function buildHtml(
   qrSvg: string,
 ): string {
   const now = new Date().toLocaleDateString(locale);
+  // Print HTML is built outside React: read the tenant currency from the locale store.
+  const loc = useLocaleStore.getState();
+  const money = (v: number) =>
+    formatCurrency(
+      v,
+      locale,
+      loc.activeCurrencyCode,
+      loc.activeCurrencySymbol,
+      loc.activeCurrencyMinorUnits,
+    );
   const letterhead = wrapDocumentHeaderBlock(letterheadHtml);
 
   const taskRows = tasks
@@ -94,7 +106,7 @@ function buildHtml(
   const laborRows = labor
     .map(
       (l) =>
-        `<tr><td>${esc(formatPersonLabel(l.intervener_display_name))}</td><td>${esc(formatOrDash(l.skill_label))}</td><td>${l.hours_worked != null ? `${l.hours_worked}h` : "—"}</td></tr>`,
+        `<tr><td>${esc(formatPersonLabel(l.intervener_display_name))}</td><td>${esc(formatOrDash(l.skill_label))}</td><td>${l.hours_worked != null ? formatHours(l.hours_worked, locale) : "—"}</td></tr>`,
     )
     .join("");
 
@@ -103,7 +115,7 @@ function buildHtml(
   const partRows = activeParts
     .map(
       (p) =>
-        `<tr><td>${esc(formatOrDash(p.article_ref ?? p.article_label))}</td><td>${p.quantity_used ?? p.quantity_planned ?? "—"}${p.unit_symbol ? ` ${esc(p.unit_symbol)}` : ""}</td><td>${p.unit_cost != null ? `${p.unit_cost.toFixed(2)}` : "—"}</td></tr>`,
+        `<tr><td>${esc(formatOrDash(p.article_ref ?? p.article_label))}</td><td>${(p.quantity_used ?? p.quantity_planned) != null ? formatNumber((p.quantity_used ?? p.quantity_planned) as number, locale, { maximumFractionDigits: 3 }) : "—"}${p.unit_symbol ? ` ${esc(p.unit_symbol)}` : ""}</td><td>${p.unit_cost != null ? money(p.unit_cost) : "—"}</td></tr>`,
     )
     .join("");
 
@@ -177,7 +189,7 @@ function buildHtml(
       <tr><th>${esc(t("print.plannedStart"))}</th><td>${fmtDate(wo.planned_start, locale)}</td></tr>
       <tr><th>${esc(t("print.plannedEnd"))}</th><td>${fmtDate(wo.planned_end, locale)}</td></tr>
       <tr><th>${esc(t("print.shift"))}</th><td>${shiftDisplay}</td></tr>
-      <tr><th>${esc(t("print.estimatedDuration"))}</th><td>${wo.expected_duration_hours != null ? `${wo.expected_duration_hours}h` : "—"}</td></tr>
+      <tr><th>${esc(t("print.estimatedDuration"))}</th><td>${wo.expected_duration_hours != null ? formatHours(wo.expected_duration_hours, locale) : "—"}</td></tr>
       <tr><th>${esc(t("print.assignedTo"))}</th><td>${esc(wo.responsible_username ?? "—")}</td></tr>
     </table>
   </div>
@@ -275,10 +287,10 @@ function buildHtml(
       ? `<div class="section">
     <h2>${esc(t("print.costSummary"))}</h2>
     <table>
-      <tr><th style="width:35%">${esc(t("print.laborCost"))}</th><td>${costTotals.labor_cost.toFixed(2)}</td></tr>
-      <tr><th>${esc(t("print.partsCost"))}</th><td>${costTotals.parts_cost.toFixed(2)}</td></tr>
-      <tr><th>${esc(t("print.serviceCost"))}</th><td>${costTotals.service_cost.toFixed(2)}</td></tr>
-      <tr><th><strong>${esc(t("print.totalCost"))}</strong></th><td><strong>${costTotals.total_cost.toFixed(2)}</strong></td></tr>
+      <tr><th style="width:35%">${esc(t("print.laborCost"))}</th><td>${money(costTotals.labor_cost)}</td></tr>
+      <tr><th>${esc(t("print.partsCost"))}</th><td>${money(costTotals.parts_cost)}</td></tr>
+      <tr><th>${esc(t("print.serviceCost"))}</th><td>${money(costTotals.service_cost)}</td></tr>
+      <tr><th><strong>${esc(t("print.totalCost"))}</strong></th><td><strong>${money(costTotals.total_cost)}</strong></td></tr>
     </table>
   </div>`
       : ""
