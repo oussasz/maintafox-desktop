@@ -47,12 +47,14 @@
 //!   work order new here received without the column and already started takes that origin; a
 //!   protected work order required again but still carrying its clearing ends protected
 //!   (`after_received_work_order`, recorded in its history and audit trail);
-//! - `work_orders` entering `completed` or `closed`: applied with its waiting tasks, failure coding,
-//!   labour, parts, downtime, tools, verifications and status changes, then judged by the local
-//!   completion and close gates on the written state; `work_order_tasks` /
-//!   `work_order_failure_details` / `work_order_interveners` / `work_order_tools` /
-//!   `work_order_verifications` (changes and deletes): refused after the completion or close
-//!   here, and a verification keeps the self-verification rules (`wo::closeout_sync`);
+//! - `work_orders` changing status (or new here): applied with its waiting reservations, tasks,
+//!   failure coding, labour, parts, downtime, tools, verifications and status changes; entering
+//!   `completed` or `closed`, then judged by the local completion and close gates on the written
+//!   state; `work_order_tasks` / `work_order_failure_details` / `work_order_interveners` /
+//!   `work_order_tools` / `work_order_verifications` (changes and deletes): refused after the
+//!   completion or close here, a task result outside execution and a mandatory task removed past
+//!   planning refused, and a verification keeps the self-verification rules
+//!   (`wo::closeout_sync`); snapshot history is applied, not judged;
 //! - `permit_types`: a change of the three-person lock-removal setting, or a switch-off of the
 //!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
 //!   here), when and why; the shipped LOTO type's isolation rule is never switched off
@@ -368,11 +370,16 @@ pub(crate) async fn upsert_group(
 ) -> AppResult<Option<crate::permit::sync_check::Group>> {
     match layout.def.entity_type {
         "work_permits" => crate::permit::sync_check::permit_group(conn, entity_sync_id, payload).await,
-        // A start and a completion or close are exclusive (the status entered differs).
-        "work_orders" => match crate::permit::sync_check::work_order_group(conn, entity_sync_id, payload).await? {
-            Some(group) => Ok(Some(group)),
-            None => crate::wo::closeout_sync::closeout_group(conn, entity_sync_id, payload).await,
-        },
+        // A start (or resume, reopen) brings its permits, waits and status changes; every status
+        // change (and a work order new here) brings its close-out children too: one group.
+        "work_orders" => {
+            let start = crate::permit::sync_check::work_order_group(conn, entity_sync_id, payload).await?;
+            let closeout = crate::wo::closeout_sync::closeout_group(conn, entity_sync_id, payload).await?;
+            Ok(match (start, closeout) {
+                (Some(start), Some(closeout)) => Some(start.followed_by(closeout)),
+                (start, closeout) => start.or(closeout),
+            })
+        }
         _ => Ok(None),
     }
 }

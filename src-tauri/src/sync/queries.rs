@@ -1450,9 +1450,12 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
         }
     }
 
+    // Only the snapshots this PC asks for are stored under a `snapshot-` batch id (the worker names
+    // them): an exchange answer never is, whatever id the server gives it (`wo::closeout_sync`).
+    let exchange_batch_id = crate::sync::materialize::exchange_batch_id(&input.server_batch_id);
     let (inbound_applied_count, inbound_duplicate_count) = ingest_inbound_items(
         &tx,
-        &input.server_batch_id,
+        &exchange_batch_id,
         &input.checkpoint_token,
         &input.inbound_items,
         &mut typed_rejections,

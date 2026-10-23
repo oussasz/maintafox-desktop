@@ -116,7 +116,7 @@ const JUDGED_STATUSES: &[&str] = &["active", "closed", "handed_back", "suspended
 tokio::task_local! {
     /// While the children counted for a permit's change are applied with it (`apply_group`): that
     /// permit and its status before the change (`None`: new here).
-    static GROUP_PARENT: (String, Option<String>);
+    static GROUP_PARENT: (String, Option<String>, bool);
 }
 
 /// A non-empty text field of a payload.
@@ -488,8 +488,12 @@ pub(crate) struct Group {
     parent_sync_id: String,
     previous_status: Option<String>,
     rows: Vec<GroupRow>,
-    /// A received work-order completion or close: judged on the written state after the group
-    /// (`wo::closeout_sync::judge_closeout`). `None` for permit and work-order start groups.
+    /// The parent's received change is judged (`false`: a work order new here received by a
+    /// snapshot, the plant's history; its children are applied with it, not judged again).
+    judged: bool,
+    /// A received work-order status change (or a work order new here): its close-out children are
+    /// in the group, and a completion or close is judged on the written state after it
+    /// (`wo::closeout_sync::judge_closeout`). `None` for permit and start-only groups.
     pub(crate) closeout: Option<crate::wo::closeout_sync::CloseoutEntry>,
 }
 
@@ -500,14 +504,28 @@ impl Group {
         parent_sync_id: String,
         previous_status: Option<String>,
         rows: Vec<GroupRow>,
+        judged: bool,
         closeout: Option<crate::wo::closeout_sync::CloseoutEntry>,
     ) -> Self {
         Self {
             parent_sync_id,
             previous_status,
             rows,
+            judged,
             closeout,
         }
+    }
+
+    /// The rows of a work-order start group followed by those of its close-out group (the same
+    /// received work order): one group, judged against the close-out group's previous status.
+    pub(crate) fn followed_by(self, closeout: Group) -> Group {
+        let mut rows = self.rows;
+        for row in closeout.rows {
+            if !rows.iter().any(|r| r.inbox_id == row.inbox_id) {
+                rows.push(row);
+            }
+        }
+        Group { rows, ..closeout }
     }
 }
 
@@ -515,7 +533,16 @@ impl Group {
 /// before the change (`Some(None)`: new here); `None` outside that parent's group.
 pub(crate) fn group_previous_status(parent_sync_id: &str) -> Option<Option<String>> {
     GROUP_PARENT
-        .try_with(|(parent, previous)| (parent == parent_sync_id).then(|| previous.clone()))
+        .try_with(|(parent, previous, _)| (parent == parent_sync_id).then(|| previous.clone()))
+        .ok()
+        .flatten()
+}
+
+/// While the children of a group are applied: whether `parent_sync_id`'s received change is judged
+/// (`Some(false)`: snapshot history); `None` outside that parent's group.
+pub(crate) fn group_parent_judged(parent_sync_id: &str) -> Option<bool> {
+    GROUP_PARENT
+        .try_with(|(parent, _, judged)| (parent == parent_sync_id).then_some(*judged))
         .ok()
         .flatten()
 }
@@ -543,6 +570,20 @@ async fn children(
     parent_col: &str,
     parent_key: &str,
     parent_sync_id: &str,
+) -> AppResult<Children> {
+    children_with(conn, table, parent_table, parent_col, parent_key, parent_sync_id, &[]).await
+}
+
+/// [`children`], where a reference to one of `applied_with` (rows counted in the same group,
+/// applied before these) does not block a waiting row.
+async fn children_with(
+    conn: &impl ConnectionTrait,
+    table: &'static str,
+    parent_table: &str,
+    parent_col: &str,
+    parent_key: &str,
+    parent_sync_id: &str,
+    applied_with: &[(&str, String)],
 ) -> AppResult<Children> {
     let three_person = table == "permit_isolations" && permit_three_person(conn, parent_sync_id).await?;
     let mut rows: BTreeMap<String, Payload> = BTreeMap::new();
@@ -602,6 +643,7 @@ async fn children(
             .await?
             .into_iter()
             .filter(|(entity, id)| !(*entity == parent_table && id == parent_sync_id))
+            .filter(|(entity, id)| !applied_with.iter().any(|(e, i)| e == entity && i == id))
             .collect();
         if let Some((entity, id)) = missing.first() {
             blocked = Some(format!("{table} {sid} waits for {entity} {id}"));
@@ -1423,6 +1465,7 @@ pub(crate) async fn permit_group(
     Ok((!rows.is_empty()).then(|| Group {
         parent_sync_id: entity_sync_id.to_string(),
         previous_status: from,
+        judged: true,
         rows,
         closeout: None,
     }))
@@ -1456,7 +1499,11 @@ pub(crate) async fn apply_group(
         }
         let outcome = GROUP_PARENT
             .scope(
-                (group.parent_sync_id.clone(), group.previous_status.clone()),
+                (
+                    group.parent_sync_id.clone(),
+                    group.previous_status.clone(),
+                    group.judged,
+                ),
                 Box::pin(crate::sync::materialize::apply_inbox_row_in(conn, &item)),
             )
             .await?;
@@ -1579,7 +1626,7 @@ async fn cancellation_check(
     };
     let current = field(&permit, "status").unwrap_or_default().to_string();
     let held = GROUP_PARENT
-        .try_with(|(parent, previous)| (parent == permit_sync).then(|| previous.clone()))
+        .try_with(|(parent, previous, _)| (parent == permit_sync).then(|| previous.clone()))
         .ok()
         .flatten()
         .map_or(current, |previous| previous.unwrap_or_else(|| "draft".into()));
@@ -1647,7 +1694,7 @@ pub(crate) async fn inbound_isolation_check(
         current.clone()
     } else {
         GROUP_PARENT
-            .try_with(|(parent, previous)| (parent == permit_sync).then(|| previous.clone()))
+            .try_with(|(parent, previous, _)| (parent == permit_sync).then(|| previous.clone()))
             .ok()
             .flatten()
             .map_or_else(
@@ -2338,6 +2385,19 @@ pub(crate) async fn wo_children(
     wo_sync: &str,
 ) -> AppResult<Children> {
     children(conn, table, "work_orders", col, key, wo_sync).await
+}
+
+/// [`wo_children`], where a reference to one of `applied_with` (rows of the same group applied
+/// before these) does not block a waiting row.
+pub(crate) async fn wo_children_with(
+    conn: &impl ConnectionTrait,
+    table: &'static str,
+    key: &str,
+    col: &str,
+    wo_sync: &str,
+    applied_with: &[(&str, String)],
+) -> AppResult<Children> {
+    children_with(conn, table, "work_orders", col, key, wo_sync, applied_with).await
 }
 
 /// Re-check of a protected permit requirement of a work order (`wo::workflow::actions::
@@ -3035,6 +3095,7 @@ pub(crate) async fn work_order_group(
     Ok((!rows.is_empty()).then(|| Group {
         parent_sync_id: entity_sync_id.to_string(),
         previous_status: None,
+        judged: true,
         rows,
         closeout: None,
     }))
