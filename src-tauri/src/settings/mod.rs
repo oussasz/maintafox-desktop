@@ -435,6 +435,10 @@ pub async fn scrub_hash_only_history<C: ConnectionTrait>(db: &C) -> AppResult<u6
 }
 
 /// Most recent settings changes, optionally for one key or policy domain only.
+///
+/// Without a key, the history leaves out the machine-written rows of the licence checks
+/// (`product.*`) and of the first-start tenant set-up (`tenant.initial_bootstrap`): they are
+/// recorded for the audit trail and would push people's own changes out of the list.
 pub async fn list_change_events(
     db: &DatabaseConnection,
     limit: i64,
@@ -461,9 +465,13 @@ pub async fn list_change_events(
                FROM settings_change_events e
                LEFT JOIN user_accounts u ON u.id = e.changed_by_id
                WHERE (? IS NULL OR e.setting_key_or_domain = ?)
+                 AND (? IS NOT NULL
+                      OR (e.setting_key_or_domain NOT LIKE 'product.%'
+                          AND e.setting_key_or_domain <> 'tenant.initial_bootstrap'))
                ORDER BY e.changed_at DESC, e.id DESC
                LIMIT ?",
             [
+                key.map(str::to_string).into(),
                 key.map(str::to_string).into(),
                 key.map(str::to_string).into(),
                 safe_limit.into(),
@@ -1328,6 +1336,35 @@ mod tests {
             .all(|e| e.new_value_json.is_none() && e.old_value_json.is_none()));
         assert_eq!(scrub_hash_only_history(&db).await.unwrap(), 1);
         assert_eq!(scrub_hash_only_history(&db).await.unwrap(), 0, "idempotent");
+    }
+
+    #[tokio::test]
+    async fn the_history_leaves_out_machine_written_rows_unless_asked_for_by_key() {
+        let db = crate::db::test_db::seeded().await;
+        set_setting_recorded(&db, "wo.reopen_window_days", "tenant", "40", Some(1), "x", false)
+            .await
+            .unwrap();
+        for key in ["product.license_onboarding", "tenant.initial_bootstrap"] {
+            db.execute(Statement::from_string(
+                DbBackend::Sqlite,
+                format!(
+                    "INSERT INTO settings_change_events                      (setting_key_or_domain, change_summary, changed_at, required_step_up, apply_result)                      VALUES ('{key}', 'machine', '2026-10-16T00:00:00Z', 0, 'applied')"
+                ),
+            ))
+            .await
+            .unwrap();
+        }
+        let all = list_change_events(&db, 50, None).await.unwrap();
+        assert!(all.iter().any(|e| e.setting_key_or_domain == "wo.reopen_window_days"));
+        assert!(
+            all.iter().all(|e| !e.setting_key_or_domain.starts_with("product.")
+                && e.setting_key_or_domain != "tenant.initial_bootstrap"),
+            "licence checks and first-start set-up do not push people's changes out of the list"
+        );
+        let by_key = list_change_events(&db, 50, Some("product.license_onboarding"))
+            .await
+            .unwrap();
+        assert!(!by_key.is_empty(), "a key asked for by name is still listed");
     }
 
     #[tokio::test]

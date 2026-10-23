@@ -100,6 +100,25 @@ export async function forceChangePassword(newPassword: string): Promise<SessionI
   return parsed.session_info;
 }
 
+const passwordRequirementsSchema = z.object({
+  min_length: z.number().int().positive(),
+  require_uppercase: z.boolean(),
+  require_lowercase: z.boolean(),
+  require_digit: z.boolean(),
+  require_special: z.boolean(),
+});
+
+export type PasswordRequirements = z.infer<typeof passwordRequirementsSchema>;
+
+/**
+ * What a new password must satisfy (the plant's password policy). Readable by any signed-in user,
+ * also while a password change is required: the change screen shows it.
+ */
+export async function getPasswordRequirements(): Promise<PasswordRequirements> {
+  const raw = await invokeSilent<unknown>("get_password_requirements");
+  return passwordRequirementsSchema.parse(raw);
+}
+
 /**
  * Set or change the user's quick-unlock PIN.
  * Requires the current password for verification.

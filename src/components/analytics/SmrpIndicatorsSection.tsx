@@ -252,7 +252,16 @@ export function SmrpIndicatorsSection({
           unit={t("smrp.unitPercent")}
           period={period}
           {...(can(P.OT_VIEW)
-            ? { onOpen: () => navigate(listLinks.workOrders({ mix: key })) }
+            ? {
+                onOpen: () =>
+                  navigate(
+                    listLinks.workOrders({
+                      mix: key,
+                      completedFrom: smrp.from,
+                      completedTo: smrp.to,
+                    }),
+                  ),
+              }
             : {})}
         />,
       );

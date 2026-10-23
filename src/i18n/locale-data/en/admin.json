@@ -695,6 +695,26 @@
       "optional": "Reason (optional)",
       "ledgerHint": "The reason is recorded in the administration log."
     },
+    "reasonLine": "Reason: {{reason}}",
+    "refusal": {
+      "permission_denied": "Action refused: missing right.",
+      "validation_failed": "Action refused: invalid data or a rule was not met.",
+      "not_found": "Action refused: item not found.",
+      "generic": "Action refused."
+    },
+    "summary": {
+      "user_created": "Account \"{{target}}\" created",
+      "user_updated": "Account \"{{target}}\" changed",
+      "password_reset_by_admin": "Password of \"{{target}}\" reset by an administrator (change required at next sign-in)",
+      "account_unlocked": "Account \"{{target}}\" unlocked",
+      "role_created": "Role \"{{target}}\" created",
+      "role_updated": "Role \"{{target}}\" changed ({{added}} permission(s) added, {{removed}} removed)",
+      "role_retired": "Role \"{{target}}\" retired",
+      "role_assigned": "Role assigned: {{target}}",
+      "role_revoked": "Role removed: {{target}}",
+      "emergency_grant_created": "Emergency access granted: {{target}}",
+      "permission_created": "Custom permission created: {{target}}"
+    },
     "results": {
       "applied": "Applied",
       "blocked": "Refused",
