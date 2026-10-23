@@ -23,6 +23,12 @@ fn now_iso() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
+/// How far a PO line's received quantity may stand above its ordered quantity on one PC (the
+/// stock-unit rounding of quantities entered in a purchase unit): beyond it a receipt is refused
+/// (`GATE_INV_RECEIVE_OVER_ORDERED`), and a line received beyond it on several PCs is an
+/// over-receipt to reconcile (`negative_stock`, "sur-réception — à rapprocher").
+pub(crate) const RECEIVE_OVER_ORDERED_TOLERANCE: f64 = 1e-6;
+
 fn next_doc_number(prefix: &str) -> String {
     format!("{prefix}-{}", Utc::now().timestamp_millis())
 }
@@ -1044,7 +1050,7 @@ pub async fn receive_purchase_order_goods(
         // Agreed PO price: values the accepted quantity and feeds the weighted-average cost.
         let po_unit_price: Option<f64> = po_line_row.try_get("", "unit_price").ok().flatten();
         let current_received_qty: f64 = po_line_row.try_get("", "received_qty")?;
-        if current_received_qty + received_qty > ordered_qty + 1e-6 {
+        if current_received_qty + received_qty > ordered_qty + RECEIVE_OVER_ORDERED_TOLERANCE {
             return Err(AppError::ValidationFailed(vec![
                 "GATE_INV_RECEIVE_OVER_ORDERED: Receiving quantity exceeds ordered quantity.".to_string(),
             ]));

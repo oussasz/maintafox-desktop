@@ -18,6 +18,10 @@
 //!   a "comptage passé deux fois — à vérifier" item, derived from the synchronised ledger (CMMS
 //!   Advisor decision (a), [`DoublePostedCountReview`]), closed only by a new count of that article
 //!   and location made on a PC holding every one of its movements ([`resolve_by_count`]).
+//! - one reservation issued beyond its reserved quantity, or one purchase-order line received
+//!   beyond its ordered quantity, by movements of several PCs (AU-103): a "sur-sortie /
+//!   sur-réception — à rapprocher" item, derived from the synchronised ledger and receipt lines
+//!   (CMMS Advisor decision D12 (a), [`OverQuantityReview`]), closed the same way.
 //!
 //! Determinism. A negative item is open exactly while the location's on-hand stock is below zero:
 //! [`reconcile_pair_in`] opens or closes it from the balance, after each received movement
@@ -42,10 +46,10 @@
 //! Resolution. A stock count of that article at that location ([`resolve_by_count`], `inv.manage`,
 //! plant-wide while stores have no site), with the variance reason and a reason of at least
 //! [`REVIEW_REASON_MIN_CHARS`] characters (the count-approval rule): it is posted through the count
-//! workflow (`controls::record_location_count_in`) and audited. It resolves a negative item and a
-//! double count alike. A later entry that brings the stock back to zero or more also closes a
-//! negative item; how is kept ([`closure_kind_of`], one kind for each stock entry of the ledger): a
-//! goods receipt or a transfer in is "régularisé par réception", a return naming its source
+//! workflow (`controls::record_location_count_in`) and audited. It resolves a negative item, a
+//! double count, a count posted twice and an over-issue or over-receipt alike. A later entry that
+//! brings the stock back to zero or more also closes a negative item; how is kept
+//! ([`closure_kind_of`], one kind for each stock entry of the ledger): a goods receipt or a transfer in is "régularisé par réception", a return naming its source
 //! document (the work-order issue it returns, the repair order — a repair return or a cancelled
 //! repair release) is "régularisé par retour", a manual entry made where the location stood below
 //! zero (its reason is required there: `queries::adjust_stock_full`, marked
@@ -258,6 +262,83 @@ pub struct DoublePostedCountReview {
     pub available_qty: f64,
 }
 
+/// More issued against one reservation than it reserved (movements of several PCs).
+pub const OVER_ISSUE: &str = "over_issue";
+/// More received on one purchase-order line than it ordered (receipts of several PCs).
+pub const OVER_RECEIPT: &str = "over_receipt";
+
+/// One movement of an over-issue (an issue or a return of the reservation) or of an over-receipt
+/// (a goods-receipt entry of the line at the location).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OverQuantityMovement {
+    pub movement_sync_id: String,
+    /// `ISSUE`, `RETURN` or `GR_ACCEPT`.
+    pub movement_type: String,
+    /// The document it was recorded on (the goods-receipt number, the issue's reference), when any.
+    pub document_ref: Option<String>,
+    /// Who recorded it (the movement's author), when the account is known here.
+    pub posted_by: Option<String>,
+    pub posted_at: String,
+    pub quantity: f64,
+}
+
+/// "Sur-sortie / sur-réception — à rapprocher" (CMMS Advisor decision D12 (a), AU-103): movements
+/// are physical facts and are applied as received, so two PCs that each issue the last 5 of a
+/// 5-unit reservation leave 10 issued against it, and two PCs that each receive the same PO line
+/// leave it received twice (and the stock raised twice). Neither is refused; both are listed here.
+///
+/// - Over-issue (kind [`OVER_ISSUE`]): on one reservation, its issues net of its returns in the
+///   ledger (`ISSUE` − `RETURN` linked to it) exceed its reserved quantity. Its location is the
+///   reservation's, where every one of its movements is made.
+/// - Over-receipt (kind [`OVER_RECEIPT`]): on one PO line, the quantity of its receipt lines
+///   (`goods_receipt_lines`, one row per receipt, rejected part included as the receiving rule
+///   counts it) exceeds its ordered quantity beyond [`RECEIVE_OVER_ORDERED_TOLERANCE`]. One item
+///   per location the line was received into, each listing the stock entries made there
+///   (`GR_ACCEPT` of those receipts).
+///
+/// [`RECEIVE_OVER_ORDERED_TOLERANCE`]: crate::inventory::procurement::RECEIVE_OVER_ORDERED_TOLERANCE
+///
+/// The reservation's `quantity_issued` and the line's `received_qty` are counters each PC keeps on
+/// its row (two versions of one row are a sync conflict); this item never reads them. It is
+/// derived from rows that are written once — the reservation's reserved quantity, the ledger, the
+/// receipt lines and the line's ordered quantity — so every PC holding the same rows and movements
+/// shows the same items, whatever order they arrived in. On one PC neither can happen: an issue is
+/// refused beyond the reservation's remainder, a receipt beyond the ordered quantity.
+///
+/// Closed, like a count posted twice, only by a count of that article and location made on a PC
+/// holding every one of its rows ([`count_mark`] names the movements and receipt lines,
+/// [`resolve_by_count`]); a movement or receipt that arrives after that count reopens it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OverQuantityReview {
+    /// [`OVER_ISSUE`] or [`OVER_RECEIPT`].
+    pub kind: String,
+    pub article_id: i64,
+    pub article_code: String,
+    pub article_name: String,
+    pub location_id: i64,
+    pub location_code: String,
+    pub warehouse_code: String,
+    /// Over-issue: the work order the reservation is for (either link kind), when it has one.
+    pub work_order_code: Option<String>,
+    /// Over-issue: the reservation's own reference (a reservation made without a work order).
+    pub reservation_ref: Option<String>,
+    /// Over-receipt: the purchase order of the line.
+    pub purchase_order_number: Option<String>,
+    /// Reserved (over-issue) or ordered (over-receipt) quantity.
+    pub expected_qty: f64,
+    /// Issued net of returns (over-issue) or received on every receipt line (over-receipt).
+    pub actual_qty: f64,
+    /// `actual_qty − expected_qty`.
+    pub excess_qty: f64,
+    /// Oldest first (time recorded, then sync id).
+    pub movements: Vec<OverQuantityMovement>,
+    /// The count that closed it (listed with the closed items).
+    pub closed_by: Option<ReconciliationCount>,
+    pub on_hand_qty: f64,
+    pub reserved_qty: f64,
+    pub available_qty: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NegativeStockReviewList {
     /// Open items first, then the closed ones when asked for.
@@ -271,6 +352,10 @@ pub struct NegativeStockReviewList {
     /// count closed.
     pub double_postings: Vec<DoublePostedCountReview>,
     pub closed_double_postings: Vec<DoublePostedCountReview>,
+    /// The over-issues and over-receipts to reconcile, then (when the closed items are asked for)
+    /// those a count closed.
+    pub over_quantities: Vec<OverQuantityReview>,
+    pub closed_over_quantities: Vec<OverQuantityReview>,
     pub over_reservations: Vec<OverReservationWarning>,
 }
 
@@ -281,6 +366,8 @@ pub struct NegativeStockSummary {
     pub double_count_count: i64,
     /// Counts posted twice still to verify ([`DoublePostedCountReview`]).
     pub double_posting_count: i64,
+    /// Over-issues and over-receipts still to reconcile ([`OverQuantityReview`]).
+    pub over_quantity_count: i64,
     pub over_reserved_count: i64,
 }
 
@@ -628,7 +715,9 @@ fn known_by(nodes: &[CountNode]) -> HashMap<&str, HashSet<&str>> {
 /// The list also names the movements of every count of the pair posted twice that are in this PC's
 /// stock (sync ids of `inventory_transactions`, not of count lines): the new count was set against a
 /// stock holding them all, which closes that "comptage passé deux fois" ([`double_postings_of`]).
-/// Ids that are not count lines are ignored by the double-count rule.
+/// It names likewise the movements and receipt lines of every over-issue and over-receipt of the
+/// pair held here ([`over_quantities_of`]). Ids that are not count lines are ignored by the
+/// double-count rule.
 pub(crate) async fn count_mark(
     conn: &impl ConnectionTrait,
     article_id: i64,
@@ -636,9 +725,15 @@ pub(crate) async fn count_mark(
 ) -> AppResult<(String, String)> {
     let nodes = count_nodes(conn, article_id, location_id).await?;
     let known = known_by(&nodes);
-    // Movements of a count posted twice that are in this PC's stock: a count that saw them all
-    // closes that item ([`double_postings_of`]); they are named in the mark and count as applied.
-    let doubled = double_posted_movement_ids(conn, article_id, location_id).await?;
+    // Movements of a count posted twice, and rows of an over-issue or over-receipt, that are in
+    // this PC's stock: a count that saw them all closes that item ([`double_postings_of`],
+    // [`over_quantities_of`]); they are named in the mark and count as applied.
+    let mut doubled = double_posted_movement_ids(conn, article_id, location_id).await?;
+    for found in over_quantities_found(conn, article_id, location_id).await? {
+        doubled.extend(found.held_ids);
+    }
+    doubled.sort();
+    doubled.dedup();
     let mut applied: HashSet<&str> = nodes
         .iter()
         .filter(|n| n.applied)
@@ -865,6 +960,28 @@ async fn double_posted_movement_ids(
     Ok(ids)
 }
 
+/// The first count of the pair (oldest first) whose session is not reversed and that knows every
+/// one of `ids`, directly or through the counts it follows: the count that closes an item made of
+/// those rows. `None` when `ids` is empty (no count closes an item it never saw).
+fn closing_count(
+    nodes: &[CountNode],
+    known: &HashMap<&str, HashSet<&str>>,
+    ids: &[&str],
+) -> Option<ReconciliationCount> {
+    if ids.is_empty() {
+        return None;
+    }
+    nodes
+        .iter()
+        .find(|z| {
+            !z.reversed
+                && known
+                    .get(z.count.count_sync_id.as_str())
+                    .is_some_and(|k| ids.iter().all(|id| k.contains(id)))
+        })
+        .map(|z| z.count.clone())
+}
+
 /// One count of an article and location posted twice (or divergent), and the count that closed it,
 /// if any.
 struct DoublePosting {
@@ -903,17 +1020,7 @@ async fn double_postings_of(
     }
     let nodes = count_nodes(conn, article_id, location_id).await?;
     let known = known_by(&nodes);
-    let closer = |ids: &[&str]| -> Option<ReconciliationCount> {
-        nodes
-            .iter()
-            .find(|z| {
-                !z.reversed
-                    && known
-                        .get(z.count.count_sync_id.as_str())
-                        .is_some_and(|k| ids.iter().all(|id| k.contains(id)))
-            })
-            .map(|z| z.count.clone())
-    };
+    let closer = |ids: &[&str]| closing_count(&nodes, &known, ids);
     let mut out = Vec::with_capacity(groups.len() + divergent.len());
     for group in &groups {
         let session_id: i64 = group.try_get("", "source_id")?;
@@ -1042,6 +1149,264 @@ async fn double_posting_pairs(conn: &impl ConnectionTrait) -> AppResult<Vec<(i64
                   AND (CASE WHEN json_valid(ae.details_json)
                        THEN json_extract(ae.details_json, '$.quantity_differs') END) = 1
                   AND t.source_type = 'COUNT_SESSION' AND t.movement_type IN ('COUNT_ADJUST', 'COUNT_REVERSAL'))
+             ORDER BY article_id, location_id",
+            vec![],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| -> AppResult<(i64, i64)> { Ok((r.try_get("", "article_id")?, r.try_get("", "location_id")?)) })
+        .collect()
+}
+
+/// An over-issue or over-receipt found at an article and location ([`over_quantities_found`]).
+struct OverQuantity {
+    kind: &'static str,
+    work_order_code: Option<String>,
+    reservation_ref: Option<String>,
+    purchase_order_number: Option<String>,
+    expected_qty: f64,
+    actual_qty: f64,
+    movements: Vec<OverQuantityMovement>,
+    /// Sync ids of the rows it is made of that are held here (its movements; for an over-receipt
+    /// also its receipt lines at the location): a count knowing them all closes it.
+    held_ids: Vec<String>,
+}
+
+/// Reservations of an article and location whose issues net of returns in the ledger exceed their
+/// reserved quantity (SQL prefilter, without tolerance; the exact rule is applied in Rust).
+const OVER_ISSUE_CANDIDATES: &str = "SELECT r.id, r.quantity_reserved, r.source_ref
+     FROM stock_reservations r
+     WHERE r.article_id = ? AND r.location_id = ?
+       AND (SELECT COALESCE(SUM(CASE t.movement_type WHEN 'ISSUE' THEN t.quantity ELSE -t.quantity END), 0)
+            FROM inventory_transactions t
+            WHERE t.reservation_id = r.id AND t.movement_type IN ('ISSUE', 'RETURN')
+              AND t.article_id = r.article_id AND t.location_id = r.location_id
+              AND t.entity_sync_id IS NOT NULL) > r.quantity_reserved
+     ORDER BY r.entity_sync_id, r.id";
+
+/// PO lines of an article received into a location whose receipt lines together exceed the
+/// ordered quantity (SQL prefilter, without tolerance; the exact rule is applied in Rust).
+const OVER_RECEIPT_CANDIDATES: &str = "SELECT pol.id, pol.ordered_qty, po.po_number
+     FROM purchase_order_lines pol
+     JOIN purchase_orders po ON po.id = pol.purchase_order_id
+     WHERE pol.article_id = ?
+       AND EXISTS (SELECT 1 FROM goods_receipt_lines g WHERE g.po_line_id = pol.id AND g.location_id = ?)
+       AND (SELECT COALESCE(SUM(g.received_qty), 0) FROM goods_receipt_lines g
+            WHERE g.po_line_id = pol.id AND g.entity_sync_id IS NOT NULL) > pol.ordered_qty
+     ORDER BY po.po_number, pol.entity_sync_id, pol.id";
+
+/// Sum of quantities in sync-id order, so the floating-point result is the same on every PC.
+fn sum_in_sync_order(mut rows: Vec<(String, f64)>) -> f64 {
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    rows.iter().map(|(_, q)| q).sum()
+}
+
+fn over_movement(row: &QueryResult) -> AppResult<OverQuantityMovement> {
+    let display: Option<String> = row.try_get("", "display_name")?;
+    let username: Option<String> = row.try_get("", "username")?;
+    Ok(OverQuantityMovement {
+        movement_sync_id: row.try_get("", "entity_sync_id")?,
+        movement_type: row.try_get("", "movement_type")?,
+        document_ref: row
+            .try_get::<Option<String>>("", "source_ref")?
+            .filter(|r| !r.trim().is_empty()),
+        posted_by: display.filter(|d| !d.trim().is_empty()).or(username),
+        posted_at: row.try_get::<Option<String>>("", "performed_at")?.unwrap_or_default(),
+        quantity: row.try_get("", "quantity")?,
+    })
+}
+
+/// The over-issues and over-receipts of an article and location, from the rows held here: the
+/// reservations of the pair issued beyond their reserved quantity, then the PO lines received into
+/// the location beyond their ordered quantity ([`OverQuantityReview`]).
+async fn over_quantities_found(
+    conn: &impl ConnectionTrait,
+    article_id: i64,
+    location_id: i64,
+) -> AppResult<Vec<OverQuantity>> {
+    let mut out = Vec::new();
+    let wo_sources = crate::finance::wo_costing::WO_SOURCE_TYPES_SQL;
+    for reservation in conn
+        .query_all(sqlite(
+            OVER_ISSUE_CANDIDATES,
+            vec![article_id.into(), location_id.into()],
+        ))
+        .await?
+    {
+        let reservation_id: i64 = reservation.try_get("", "id")?;
+        let reserved: f64 = reservation.try_get("", "quantity_reserved")?;
+        let rows = conn
+            .query_all(sqlite(
+                "SELECT t.entity_sync_id, t.movement_type, t.source_ref, t.performed_at, t.quantity,
+                        ua.display_name, ua.username
+                 FROM inventory_transactions t
+                 LEFT JOIN user_accounts ua ON ua.id = t.performed_by_id
+                 WHERE t.reservation_id = ? AND t.movement_type IN ('ISSUE', 'RETURN')
+                   AND t.article_id = ? AND t.location_id = ? AND t.entity_sync_id IS NOT NULL
+                 ORDER BY t.performed_at, t.entity_sync_id",
+                vec![reservation_id.into(), article_id.into(), location_id.into()],
+            ))
+            .await?;
+        let movements = rows.iter().map(over_movement).collect::<AppResult<Vec<_>>>()?;
+        let issued = sum_in_sync_order(
+            movements
+                .iter()
+                .map(|m| {
+                    let sign = if m.movement_type == "ISSUE" { 1.0 } else { -1.0 };
+                    (m.movement_sync_id.clone(), sign * m.quantity)
+                })
+                .collect(),
+        );
+        if issued <= reserved + QTY_TOLERANCE {
+            continue;
+        }
+        let work_order_code = conn
+            .query_one(sqlite(
+                &format!(
+                    "SELECT wo.code FROM work_orders wo
+                     WHERE wo.id = (SELECT r.source_id FROM stock_reservations r
+                                    WHERE r.id = ?1 AND r.source_type IN ({wo_sources}))
+                        OR wo.id IN (SELECT wop.work_order_id FROM work_order_parts wop WHERE wop.reservation_id = ?1)
+                     ORDER BY wo.code LIMIT 1"
+                ),
+                vec![reservation_id.into()],
+            ))
+            .await?
+            .map(|row| row.try_get::<String>("", "code"))
+            .transpose()?;
+        out.push(OverQuantity {
+            kind: OVER_ISSUE,
+            work_order_code,
+            reservation_ref: reservation
+                .try_get::<Option<String>>("", "source_ref")?
+                .filter(|r| !r.trim().is_empty()),
+            purchase_order_number: None,
+            expected_qty: reserved,
+            actual_qty: issued,
+            held_ids: movements.iter().map(|m| m.movement_sync_id.clone()).collect(),
+            movements,
+        });
+    }
+    for line in conn
+        .query_all(sqlite(
+            OVER_RECEIPT_CANDIDATES,
+            vec![article_id.into(), location_id.into()],
+        ))
+        .await?
+    {
+        let po_line_id: i64 = line.try_get("", "id")?;
+        let ordered: f64 = line.try_get("", "ordered_qty")?;
+        let receipt_lines = conn
+            .query_all(sqlite(
+                "SELECT entity_sync_id, received_qty, location_id FROM goods_receipt_lines
+                 WHERE po_line_id = ? AND entity_sync_id IS NOT NULL",
+                vec![po_line_id.into()],
+            ))
+            .await?;
+        let mut received = Vec::with_capacity(receipt_lines.len());
+        let mut held_ids = Vec::new();
+        for row in &receipt_lines {
+            let sync_id: String = row.try_get("", "entity_sync_id")?;
+            if row.try_get::<i64>("", "location_id")? == location_id {
+                held_ids.push(sync_id.clone());
+            }
+            received.push((sync_id, row.try_get::<f64>("", "received_qty")?));
+        }
+        let received = sum_in_sync_order(received);
+        // The receiving rule's own margin: what one PC may receive is never an over-receipt.
+        if received <= ordered + crate::inventory::procurement::RECEIVE_OVER_ORDERED_TOLERANCE {
+            continue;
+        }
+        // The stock entries of this line's receipts at the location (a receipt movement names its
+        // goods receipt, not its line: the receipt's line of this article and location is the one).
+        let rows = conn
+            .query_all(sqlite(
+                "SELECT t.entity_sync_id, t.movement_type, t.source_ref, t.performed_at, t.quantity,
+                        ua.display_name, ua.username
+                 FROM inventory_transactions t
+                 LEFT JOIN user_accounts ua ON ua.id = t.performed_by_id
+                 WHERE t.movement_type = 'GR_ACCEPT' AND t.source_type = 'PO_GR'
+                   AND t.article_id = ? AND t.location_id = ? AND t.entity_sync_id IS NOT NULL
+                   AND t.source_id IN (SELECT g.goods_receipt_id FROM goods_receipt_lines g
+                                       WHERE g.po_line_id = ? AND g.location_id = ?)
+                 ORDER BY t.performed_at, t.entity_sync_id",
+                vec![
+                    article_id.into(),
+                    location_id.into(),
+                    po_line_id.into(),
+                    location_id.into(),
+                ],
+            ))
+            .await?;
+        let movements = rows.iter().map(over_movement).collect::<AppResult<Vec<_>>>()?;
+        held_ids.extend(movements.iter().map(|m| m.movement_sync_id.clone()));
+        held_ids.sort();
+        out.push(OverQuantity {
+            kind: OVER_RECEIPT,
+            work_order_code: None,
+            reservation_ref: None,
+            purchase_order_number: Some(line.try_get("", "po_number")?),
+            expected_qty: ordered,
+            actual_qty: received,
+            movements,
+            held_ids,
+        });
+    }
+    Ok(out)
+}
+
+/// The over-issues and over-receipts of an article and location, each with the count that closed
+/// it: a count of the pair whose session is not reversed and that knows every one of its rows
+/// ([`closing_count`], [`count_mark`]).
+async fn over_quantities_of(
+    conn: &impl ConnectionTrait,
+    article_id: i64,
+    location_id: i64,
+) -> AppResult<Vec<(OverQuantity, Option<ReconciliationCount>)>> {
+    let found = over_quantities_found(conn, article_id, location_id).await?;
+    if found.is_empty() {
+        return Ok(Vec::new());
+    }
+    let nodes = count_nodes(conn, article_id, location_id).await?;
+    let known = known_by(&nodes);
+    Ok(found
+        .into_iter()
+        .map(|item| {
+            let ids: Vec<&str> = item.held_ids.iter().map(String::as_str).collect();
+            let closed_by = closing_count(&nodes, &known, &ids);
+            (item, closed_by)
+        })
+        .collect())
+}
+
+/// Whether an article and location has an over-issue or over-receipt still to reconcile.
+pub(crate) async fn over_quantity_open(
+    conn: &impl ConnectionTrait,
+    article_id: i64,
+    location_id: i64,
+) -> AppResult<bool> {
+    Ok(over_quantities_of(conn, article_id, location_id)
+        .await?
+        .iter()
+        .any(|(_, closed_by)| closed_by.is_none()))
+}
+
+/// Every article and location with an over-issue or over-receipt (open or closed; prefilter).
+async fn over_quantity_pairs(conn: &impl ConnectionTrait) -> AppResult<Vec<(i64, i64)>> {
+    let rows = conn
+        .query_all(sqlite(
+            "SELECT DISTINCT article_id, location_id FROM (
+                SELECT r.article_id, r.location_id FROM stock_reservations r
+                JOIN inventory_transactions t ON t.reservation_id = r.id
+                WHERE t.movement_type IN ('ISSUE', 'RETURN') AND t.entity_sync_id IS NOT NULL
+                  AND t.article_id = r.article_id AND t.location_id = r.location_id
+                GROUP BY r.id
+                HAVING SUM(CASE t.movement_type WHEN 'ISSUE' THEN t.quantity ELSE -t.quantity END) > r.quantity_reserved
+                UNION
+                SELECT pol.article_id, g.location_id FROM purchase_order_lines pol
+                JOIN goods_receipt_lines g ON g.po_line_id = pol.id
+                WHERE (SELECT COALESCE(SUM(x.received_qty), 0) FROM goods_receipt_lines x
+                       WHERE x.po_line_id = pol.id AND x.entity_sync_id IS NOT NULL) > pol.ordered_qty)
              ORDER BY article_id, location_id",
             vec![],
         ))
@@ -1227,6 +1592,50 @@ pub async fn list_reviews(db: &DatabaseConnection, include_closed: bool) -> AppR
             }
         }
     }
+    let mut over_quantities = Vec::new();
+    let mut closed_over_quantities = Vec::new();
+    for (article_id, location_id) in over_quantity_pairs(db).await? {
+        let found = over_quantities_of(db, article_id, location_id).await?;
+        if found.is_empty() {
+            continue;
+        }
+        let Some(row) = db
+            .query_one(sqlite(PAIR_SELECT, vec![location_id.into(), article_id.into()]))
+            .await?
+        else {
+            continue;
+        };
+        for (item, closed_by) in found {
+            if closed_by.is_some() && !include_closed {
+                continue;
+            }
+            let review = OverQuantityReview {
+                kind: item.kind.to_string(),
+                article_id,
+                article_code: row.try_get("", "article_code")?,
+                article_name: row.try_get("", "article_name")?,
+                location_id,
+                location_code: row.try_get("", "location_code")?,
+                warehouse_code: row.try_get("", "warehouse_code")?,
+                work_order_code: item.work_order_code,
+                reservation_ref: item.reservation_ref,
+                purchase_order_number: item.purchase_order_number,
+                expected_qty: item.expected_qty,
+                actual_qty: item.actual_qty,
+                excess_qty: item.actual_qty - item.expected_qty,
+                movements: item.movements,
+                closed_by,
+                on_hand_qty: row.try_get("", "on_hand_qty")?,
+                reserved_qty: row.try_get("", "reserved_qty")?,
+                available_qty: row.try_get("", "available_qty")?,
+            };
+            if review.closed_by.is_some() {
+                closed_over_quantities.push(review);
+            } else {
+                over_quantities.push(review);
+            }
+        }
+    }
     let over_reservations = db
         .query_all(sqlite(
             "SELECT sb.article_id, a.article_code, a.article_name, sb.location_id, sl.code AS location_code,
@@ -1261,6 +1670,8 @@ pub async fn list_reviews(db: &DatabaseConnection, include_closed: bool) -> AppR
         closed_double_counts,
         double_postings,
         closed_double_postings,
+        over_quantities,
+        closed_over_quantities,
         over_reservations,
     })
 }
@@ -1294,6 +1705,20 @@ pub async fn summary(db: &DatabaseConnection) -> AppResult<NegativeStockSummary>
                         .await?
                         .iter()
                         .filter(|d| d.closed_by.is_none())
+                        .count(),
+                )
+                .unwrap_or(i64::MAX);
+            }
+            open
+        },
+        over_quantity_count: {
+            let mut open = 0_i64;
+            for (article_id, location_id) in over_quantity_pairs(db).await? {
+                open += i64::try_from(
+                    over_quantities_of(db, article_id, location_id)
+                        .await?
+                        .iter()
+                        .filter(|(_, closed_by)| closed_by.is_none())
                         .count(),
                 )
                 .unwrap_or(i64::MAX);
@@ -1343,7 +1768,7 @@ pub(crate) async fn negative_crossing(
 }
 
 /// Resolves the stock to reconcile of an article and location — the negative item, a double count
-/// to verify, or both — by a stock count recorded there by `user_id`: needs `inv.manage`
+/// or a count posted twice to verify, an over-issue or over-receipt, or several — by a stock count recorded there by `user_id`: needs `inv.manage`
 /// (plant-wide: stores have no site yet, as for stock adjustments), a reason of at least
 /// [`REVIEW_REASON_MIN_CHARS`] characters, the quantity counted (zero or more) and a code of the
 /// variance-reason list. The count is posted through the count workflow, marked as knowing every
@@ -1405,7 +1830,8 @@ pub async fn resolve_by_count(
         .await?
         .is_some();
     let double_posting = double_posting_open(&tx, input.article_id, input.location_id).await?;
-    if item_id.is_none() && !double_count && !double_posting {
+    let over_quantity = over_quantity_open(&tx, input.article_id, input.location_id).await?;
+    if item_id.is_none() && !double_count && !double_posting && !over_quantity {
         return Err(refused(
             REFUSED_NOT_OPEN,
             "This location's stock is no longer to reconcile.",
@@ -1447,6 +1873,7 @@ pub async fn resolve_by_count(
                 "negative_review_id": item_id,
                 "double_count": double_count,
                 "double_posting": double_posting,
+                "over_quantity": over_quantity,
                 "follows_counts": serde_json::from_str::<serde_json::Value>(&follows_json).unwrap_or_default(),
                 "replica_id": replica_id,
                 "system_qty": posted.system_qty,
