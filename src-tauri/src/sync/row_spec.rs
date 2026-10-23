@@ -985,9 +985,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // A site given to an old record without one (`org::site_assignment`).
                         ("intervention_request", "intervention_requests"),
                         ("planning_window", "planning_windows"),
-                        // A work-order type given its maintenance nature (`wo::types`): the type is
-                        // a value of the WORK.ORDER_TYPES list (`reference_values` id).
-                        ("work_order_type", "reference_values"),
+                        // A work-order type given its maintenance nature (`wo::types`): the target
+                        // is already the type's sync id (a WORK.ORDER_TYPES value), sent as it is,
+                        // so the audit is unchanged when the value is deleted later (a discarded
+                        // draft set, a retired domain).
+                        ("work_order_type", NOT_A_ROW),
                         // A qualification requirement created or changed
                         // (`qualification::requirements`; requirements are never deleted).
                         ("qualification_requirement", "qualification_requirements"),

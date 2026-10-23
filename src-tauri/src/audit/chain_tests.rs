@@ -754,8 +754,9 @@ async fn stored_hash(db: &DatabaseConnection, id: i64) -> String {
 
 /// The audits of a work-order type's nature, of a qualification requirement and of an absence
 /// block's critical flag travel (sealed over their sync payload); the audits of a session of this
-/// PC stay on it (local form). An absence block deleted after its audit leaves the chain intact:
-/// the audit names the block by its sync id, which does not depend on the block still existing.
+/// PC stay on it (local form). An absence block deleted after its audit, or a type value deleted
+/// with its discarded draft set, leaves the chain intact: the audit names it by its sync id, which
+/// does not depend on the row still existing.
 #[tokio::test]
 async fn audits_of_types_requirements_and_absence_blocks_travel_and_session_audits_stay() {
     let db = started_db().await;
@@ -775,7 +776,7 @@ async fn audits_of_types_requirements_and_absence_blocks_travel_and_session_audi
         ..event("test.target", None, None)
     };
     let travelling = [
-        audit("work_order_type", wo_type.rowid.to_string()),
+        audit("work_order_type", wo_type.entity_sync_id.clone()),
         audit("qualification_requirement", requirement.rowid.to_string()),
         audit("personnel_availability_block", block.entity_sync_id.clone()),
     ];
@@ -800,6 +801,37 @@ async fn audits_of_types_requirements_and_absence_blocks_travel_and_session_audi
         vec![block.rowid.into()],
     )
     .await;
+    // The type's value was in a draft set, discarded: the value is hard-deleted.
+    let set_id = scalar_i64(
+        &db,
+        "SELECT set_id FROM reference_values WHERE id = ?",
+        vec![wo_type.rowid.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE reference_sets SET status = 'draft' WHERE id = ?",
+        vec![set_id.into()],
+    )
+    .await;
+    // A plant list that takes drafts, as WORK.ORDER_TYPES does.
+    exec(
+        &db,
+        "UPDATE reference_domains SET audience = 'company', governance_category = 'controlled_catalog' \
+         WHERE id = (SELECT domain_id FROM reference_sets WHERE id = ?)",
+        vec![set_id.into()],
+    )
+    .await;
+    crate::reference::sets::discard_draft_set(&db, set_id)
+        .await
+        .expect("discard the draft set");
+    let left = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM reference_values WHERE id = ?",
+        vec![wo_type.rowid.into()],
+    )
+    .await;
+    assert_eq!(left, 0, "the type's value is deleted with its draft set");
     let report = verify_audit_chain(&db).await.expect("verify");
     assert!(report.intact, "{report:?}");
 }
