@@ -184,7 +184,12 @@ pub(super) fn refusal_code(err: AppError) -> String {
 }
 
 /// A second location of the same article with `qty` in stock, created on `a`.
-async fn second_location(a: &DatabaseConnection, factory: &mut RowFactory, article_id: i64, qty: f64) -> CreatedRow {
+pub(super) async fn second_location(
+    a: &DatabaseConnection,
+    factory: &mut RowFactory,
+    article_id: i64,
+    qty: f64,
+) -> CreatedRow {
     let location = factory.create(a, "stock_locations").await.expect("location");
     exec(
         a,
@@ -322,6 +327,19 @@ fn move_to(
 pub(super) async fn post_count(
     db: &DatabaseConnection,
     user: i32,
+    counted: (
+        crate::inventory::domain::InventoryCountSession,
+        crate::inventory::domain::InventoryCountLine,
+    ),
+) -> crate::inventory::domain::InventoryCountSession {
+    post_count_approved_by(db, user, user, counted).await
+}
+
+/// [`post_count`], the line's variance approved by `approver`.
+pub(super) async fn post_count_approved_by(
+    db: &DatabaseConnection,
+    user: i32,
+    approver: i32,
     (session, line): (
         crate::inventory::domain::InventoryCountSession,
         crate::inventory::domain::InventoryCountLine,
@@ -338,7 +356,7 @@ pub(super) async fn post_count(
             ApproveInventoryCountLineInput {
                 line_id: line.id,
                 expected_row_version: line.row_version,
-                reviewer_id: i64::from(user),
+                reviewer_id: i64::from(approver),
                 reviewer_evidence: "Bac vérifié au comptage".into(),
             },
         )
@@ -1449,7 +1467,10 @@ async fn exec_unsent(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Va
 }
 
 /// The count session `code` on `db`.
-async fn session_by_code(db: &DatabaseConnection, code: &str) -> crate::inventory::domain::InventoryCountSession {
+pub(super) async fn session_by_code(
+    db: &DatabaseConnection,
+    code: &str,
+) -> crate::inventory::domain::InventoryCountSession {
     crate::inventory::controls::list_count_sessions(db)
         .await
         .expect("sessions")

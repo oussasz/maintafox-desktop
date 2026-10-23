@@ -1,19 +1,24 @@
 //! "Sur-sortie / sur-réception — à rapprocher" (`inventory::negative_stock`, AU-103, CMMS Advisor
 //! decision D12 (a)): two PCs issuing the whole of one reservation, or receiving the same PO line,
 //! leave it issued or received beyond its quantity. The item is listed on every PC holding the
-//! movements, whatever order they arrived in, never on one PC's normal flows, and is closed only by
-//! a count made where every one of its movements was held, with a reason of at least 8 characters.
+//! movements, whatever order they arrived in, never on one PC's normal flows. It is closed by a
+//! count made where every one of its rows was held (from the list, with a reason of at least 8
+//! characters, or from a count session), reopened by a row arriving after that count or by its
+//! reversal; an over-issue is also closed by a return of the reservation (CMMS Advisor ruling
+//! 2026-10-23), and kept with the closed items.
 
 use sea_orm::DatabaseConnection;
 
 use super::negative_stock_tests::{
-    enter_count, local_pair, on_hand_milli, post_count, refusal_code, resolution, stocked_pair, user_with,
+    enter_count, local_pair, on_hand_milli, post_count, post_count_approved_by, refusal_code, resolution,
+    second_location, session_by_code, stocked_pair, user_with,
 };
 use crate::inventory::domain::{
     InventoryIssueInput, InventoryReserveInput, InventoryReturnInput, ReceiveGoodsInput, ReceivePurchaseOrderLineInput,
 };
 use crate::inventory::negative_stock::{
-    self, OverQuantityReview, OVER_ISSUE, OVER_RECEIPT, REFUSED_NOT_OPEN, REFUSED_REASON_SHORT,
+    self, OverQuantityReview, CLOSURE_COUNT, CLOSURE_RETURN, COUNT_PATH_COUNT_SESSION, COUNT_PATH_RECONCILIATION,
+    OVER_ISSUE, OVER_RECEIPT, REFUSED_NOT_OPEN, REFUSED_REASON_SHORT,
 };
 use crate::inventory::{procurement, queries};
 use crate::sync::test_support::{exec, scalar_i64, started_device_db, CreatedRow, RowFactory, TestServer};
@@ -119,6 +124,43 @@ fn movement_ids(item: &OverQuantityReview) -> Vec<String> {
     ids
 }
 
+/// The ids a count of the pair entered now on `db` would name (its mark, sorted).
+async fn mark_of(db: &DatabaseConnection, article_id: i64, location_id: i64) -> Vec<String> {
+    use sea_orm::TransactionTrait;
+    let tx = db.begin().await.expect("tx");
+    let (_, follows) = negative_stock::count_mark(&tx, article_id, location_id)
+        .await
+        .expect("mark");
+    tx.rollback().await.expect("rollback");
+    let mut ids: Vec<String> = serde_json::from_str(&follows).expect("mark list");
+    ids.sort();
+    ids
+}
+
+/// Sync id of the count line of the session `code` (one line).
+async fn count_line_sync_id(db: &DatabaseConnection, code: &str) -> String {
+    crate::sync::test_support::scalar_opt_text(
+        db,
+        "SELECT cl.entity_sync_id FROM inventory_count_lines cl
+         JOIN inventory_count_sessions cs ON cs.id = cl.session_id WHERE cs.session_code = ?",
+        vec![code.into()],
+    )
+    .await
+    .expect("count line")
+}
+
+/// The JSON list of the counts a count line follows.
+async fn follows_of(db: &DatabaseConnection, line_id: i64) -> Vec<String> {
+    let json = crate::sync::test_support::scalar_opt_text(
+        db,
+        "SELECT count_follows_json FROM inventory_count_lines WHERE id = ?",
+        vec![line_id.into()],
+    )
+    .await
+    .expect("mark");
+    serde_json::from_str(&json).expect("mark list")
+}
+
 /// Stock 10 at a location known to A, B and C, with one reservation of 5 made on A and received by
 /// all three. Returns the PCs, the server, each PC's `(article, location, reservation)`.
 struct SharedReservation {
@@ -202,6 +244,11 @@ async fn an_over_issue_from_two_pcs_is_listed_on_every_pc_whatever_the_arrival_o
         let summary = negative_stock::summary(db).await.expect("summary");
         assert_eq!(summary.over_quantity_count, 1, "{pc}");
         assert_eq!(summary.negative_count, 0, "{pc}: the location is at 0, not below");
+        assert_eq!(
+            mark_of(db, art, loc).await,
+            movement_ids(item),
+            "{pc}: a count entered here names both issues"
+        );
         seen.push(movement_ids(item));
     }
     assert!(
@@ -302,25 +349,38 @@ async fn an_over_issue_is_closed_only_by_a_count_made_where_every_movement_was_h
     }
 }
 
-/// A PO line of 5 on the PC that made it, received by A and B alike: `(PCs, server, each PC's
-/// (article, location, PO id, PO line id), the PO number)`.
+/// A PO line of 5 made on the first PC and known to every PC (`dbs`): each PC's `(article, location,
+/// PO id, PO line id)`, with, when asked, a second location of the article holding 2 (`ids2`, the
+/// same tuple at that location), and the PO number.
 struct SharedOrder {
-    a: DatabaseConnection,
-    b: DatabaseConnection,
+    dbs: Vec<DatabaseConnection>,
     server: TestServer,
-    ids: [(i64, i64, i64, i64); 2],
+    ids: Vec<(i64, i64, i64, i64)>,
+    ids2: Vec<(i64, i64, i64, i64)>,
     po_number: String,
 }
 
-async fn shared_order() -> SharedOrder {
-    let a = started_device_db().await;
-    let b = started_device_db().await;
+/// The PCs' names on the test server, in the order of `SharedOrder::dbs`.
+const PC_NAMES: [&str; 4] = ["A", "B", "C", "D"];
+
+async fn shared_order(pcs: usize, with_second_location: bool) -> SharedOrder {
+    assert!(pcs <= PC_NAMES.len());
+    let mut dbs = Vec::with_capacity(pcs);
+    for _ in 0..pcs {
+        dbs.push(started_device_db().await);
+    }
+    let a = &dbs[0];
     let mut server = TestServer::new();
     let mut factory = RowFactory::new();
-    let (article, location) = stocked_pair(&a, &mut factory, 1.0).await;
-    let line = factory.create(&a, "purchase_order_lines").await.expect("PO line");
+    let (article, location) = stocked_pair(a, &mut factory, 1.0).await;
+    let location2 = if with_second_location {
+        Some(second_location(a, &mut factory, article.rowid, 2.0).await)
+    } else {
+        None
+    };
+    let line = factory.create(a, "purchase_order_lines").await.expect("PO line");
     exec(
-        &a,
+        a,
         "UPDATE purchase_order_lines SET article_id = ?, ordered_qty = 5, received_qty = 0, status = 'OPEN',
                 unit_price = 10, source_reservation_id = NULL
          WHERE id = ?",
@@ -328,24 +388,26 @@ async fn shared_order() -> SharedOrder {
     )
     .await;
     exec(
-        &a,
+        a,
         "UPDATE purchase_orders SET status = 'APPROVED', currency_code = NULL
          WHERE id = (SELECT purchase_order_id FROM purchase_order_lines WHERE id = ?)",
         vec![line.rowid.into()],
     )
     .await;
     let po_number = crate::sync::test_support::scalar_opt_text(
-        &a,
+        a,
         "SELECT po.po_number FROM purchase_orders po JOIN purchase_order_lines l ON l.purchase_order_id = po.id
          WHERE l.id = ?",
         vec![line.rowid.into()],
     )
     .await
     .expect("PO number");
-    sync(&mut server, "A", &a).await;
-    sync(&mut server, "B", &b).await;
-    let mut ids = [(0, 0, 0, 0); 2];
-    for (i, db) in [&a, &b].into_iter().enumerate() {
+    for (name, db) in PC_NAMES.into_iter().zip(&dbs) {
+        sync(&mut server, name, db).await;
+    }
+    let mut ids = Vec::with_capacity(pcs);
+    let mut ids2 = Vec::new();
+    for db in &dbs {
         let (art, loc) = local_pair(db, &article, &location).await;
         let line_id = local_id(db, "purchase_order_lines", &line.entity_sync_id).await;
         let po_id = scalar_i64(
@@ -354,15 +416,37 @@ async fn shared_order() -> SharedOrder {
             vec![line_id.into()],
         )
         .await;
-        ids[i] = (art, loc, po_id, line_id);
+        ids.push((art, loc, po_id, line_id));
+        if let Some(location2) = &location2 {
+            let loc2 = local_id(db, "stock_locations", &location2.entity_sync_id).await;
+            ids2.push((art, loc2, po_id, line_id));
+        }
     }
     SharedOrder {
-        a,
-        b,
+        dbs,
         server,
         ids,
+        ids2,
         po_number,
     }
+}
+
+/// Sync ids of the receipt lines of a PO line at a location held on `db`.
+async fn receipt_line_ids(db: &DatabaseConnection, line_id: i64, location_id: i64) -> Vec<String> {
+    let rows = sea_orm::ConnectionTrait::query_all(
+        db,
+        sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM goods_receipt_lines WHERE po_line_id = ? AND location_id = ?
+             ORDER BY entity_sync_id",
+            vec![line_id.into(), location_id.into()],
+        ),
+    )
+    .await
+    .expect("receipt lines");
+    rows.iter()
+        .map(|r| r.try_get::<String>("", "entity_sync_id").expect("sync id"))
+        .collect()
 }
 
 async fn receive(
@@ -405,27 +489,28 @@ async fn receive(
 #[tokio::test]
 async fn an_over_receipt_from_two_pcs_is_listed_on_both_and_a_count_closes_it() {
     let SharedOrder {
-        a,
-        b,
+        dbs,
         mut server,
         ids,
         po_number,
-    } = shared_order().await;
-    receive(&a, ids[0], 5.0, 0.0).await.expect("A receives the line");
-    receive(&b, ids[1], 5.0, 0.0).await.expect("B receives the line");
-    for (pc, db, (art, loc, _, _)) in [("A", &a, ids[0]), ("B", &b, ids[1])] {
+        ..
+    } = shared_order(2, false).await;
+    let (a, b) = (&dbs[0], &dbs[1]);
+    receive(a, ids[0], 5.0, 0.0).await.expect("A receives the line");
+    receive(b, ids[1], 5.0, 0.0).await.expect("B receives the line");
+    for (pc, db, (art, loc, _, _)) in [("A", a, ids[0]), ("B", b, ids[1])] {
         assert!(
             over_items(db, art, loc).await.0.is_empty(),
             "{pc}: its own receipt alone"
         );
     }
     // A receives B's receipt after its own; B receives A's after its own.
-    sync(&mut server, "A", &a).await;
-    sync(&mut server, "B", &b).await;
-    sync(&mut server, "A", &a).await;
+    sync(&mut server, "A", a).await;
+    sync(&mut server, "B", b).await;
+    sync(&mut server, "A", a).await;
 
     let mut seen = Vec::new();
-    for (pc, db, (art, loc, _, _)) in [("A", &a, ids[0]), ("B", &b, ids[1])] {
+    for (pc, db, (art, loc, _, _)) in [("A", a, ids[0]), ("B", b, ids[1])] {
         assert_eq!(on_hand_milli(db, art, loc).await, 11_000, "{pc}: both receipts applied");
         let (open, closed) = over_items(db, art, loc).await;
         assert_eq!((open.len(), closed.len()), (1, 0), "{pc}: one over-receipt");
@@ -453,39 +538,43 @@ async fn an_over_receipt_from_two_pcs_is_listed_on_both_and_a_count_closes_it() 
     }
     assert_eq!(seen[0], seen[1], "the same receipt entries on both PCs");
 
-    let manager = user_with(&b, "overreceiptmgr", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let manager = user_with(b, "overreceiptmgr", &[crate::rbac::permissions::INV_MANAGE]).await;
     let (art_b, loc_b, _, _) = ids[1];
     let resolved = negative_stock::resolve_by_count(
-        &b,
+        b,
         manager,
         resolution(art_b, loc_b, 6.0, "Livraison reçue deux fois, recompté"),
     )
     .await
     .expect("the count resolves the over-receipt");
     assert_eq!(resolved.variance_qty, -5.0);
-    assert!(over_items(&b, art_b, loc_b).await.0.is_empty(), "B: closed");
-    sync(&mut server, "B", &b).await;
-    sync(&mut server, "A", &a).await;
+    assert!(over_items(b, art_b, loc_b).await.0.is_empty(), "B: closed");
+    sync(&mut server, "B", b).await;
+    sync(&mut server, "A", a).await;
     let (art_a, loc_a, _, _) = ids[0];
-    let (open, closed) = over_items(&a, art_a, loc_a).await;
+    let (open, closed) = over_items(a, art_a, loc_a).await;
     assert!(open.is_empty(), "A: B's count held both receipts");
     assert_eq!(closed.len(), 1);
-    assert_eq!(on_hand_milli(&a, art_a, loc_a).await, 6_000, "A applies the count");
+    assert_eq!(on_hand_milli(a, art_a, loc_a).await, 6_000, "A applies the count");
 }
 
 /// One PC's normal flows never give an item: a reservation issued in parts with a return in
 /// between up to its quantity, a further issue refused; a PO line received in two receipts (one
 /// with a rejected part) up to its quantity, a further receipt refused. The sync centre counts
-/// nothing and a count's mark names nothing.
+/// nothing and a count's mark names nothing, while it names the rows of an over-receipt once B's
+/// receipt of the same line arrives.
 #[tokio::test]
 async fn one_pcs_normal_flows_never_give_an_item() {
-    let SharedOrder { a, ids, .. } = shared_order().await;
+    let SharedOrder {
+        dbs, mut server, ids, ..
+    } = shared_order(2, false).await;
+    let (a, b) = (&dbs[0], &dbs[1]);
     let (art, loc, _, _) = ids[0];
-    adjust_in(&a, art, loc, 9.0).await;
-    let reservation = reserve(&a, art, loc, 5.0).await;
-    issue(&a, reservation, 3.0).await.expect("issue 3");
+    adjust_in(a, art, loc, 9.0).await;
+    let reservation = reserve(a, art, loc, 5.0).await;
+    issue(a, reservation, 3.0).await.expect("issue 3");
     queries::return_reserved_stock(
-        &a,
+        a,
         InventoryReturnInput {
             reservation_id: reservation,
             quantity: 1.0,
@@ -494,31 +583,42 @@ async fn one_pcs_normal_flows_never_give_an_item() {
     )
     .await
     .expect("return 1");
-    issue(&a, reservation, 3.0).await.expect("issue 3 more: 5 net");
-    issue(&a, reservation, 0.5)
+    issue(a, reservation, 3.0).await.expect("issue 3 more: 5 net");
+    issue(a, reservation, 0.5)
         .await
         .expect_err("beyond the reservation: refused on one PC");
 
-    receive(&a, ids[0], 3.0, 1.0).await.expect("3 received, 1 rejected");
-    receive(&a, ids[0], 2.0, 0.0).await.expect("2 more: the 5 ordered");
-    receive(&a, ids[0], 0.5, 0.0)
+    receive(a, ids[0], 3.0, 1.0).await.expect("3 received, 1 rejected");
+    receive(a, ids[0], 2.0, 0.0).await.expect("2 more: the 5 ordered");
+    receive(a, ids[0], 0.5, 0.0)
         .await
         .expect_err("beyond the ordered quantity: refused on one PC");
 
-    let (open, closed) = over_items(&a, art, loc).await;
+    let (open, closed) = over_items(a, art, loc).await;
     assert!(open.is_empty() && closed.is_empty(), "no over-issue, no over-receipt");
     assert_eq!(
-        negative_stock::summary(&a).await.expect("summary").over_quantity_count,
+        negative_stock::summary(a).await.expect("summary").over_quantity_count,
         0
     );
-    let (_, follows) = {
-        use sea_orm::TransactionTrait;
-        let tx = a.begin().await.expect("tx");
-        let mark = negative_stock::count_mark(&tx, art, loc).await.expect("mark");
-        tx.rollback().await.expect("rollback");
-        mark
-    };
-    assert_eq!(follows, "[]", "the mark names nothing");
+    assert!(mark_of(a, art, loc).await.is_empty(), "a count's mark names nothing");
+
+    // The same mark names exactly the rows of an item once there is one: B, not knowing A's
+    // receipts, receives the whole line too.
+    receive(b, ids[1], 5.0, 0.0).await.expect("B receives the line");
+    sync(&mut server, "B", b).await;
+    sync(&mut server, "A", a).await;
+    let (open, _) = over_items(a, art, loc).await;
+    assert_eq!(open.len(), 1, "3 + 2 + 5 received for 5 ordered");
+    assert_eq!(open[0].kind, OVER_RECEIPT);
+    let mut rows = receipt_line_ids(a, ids[0].3, loc).await;
+    assert_eq!(rows.len(), 3);
+    rows.extend(movement_ids(&open[0]));
+    rows.sort();
+    assert_eq!(
+        mark_of(a, art, loc).await,
+        rows,
+        "its receipt lines and stock entries, nothing of the reservation"
+    );
 }
 
 async fn adjust_in(db: &DatabaseConnection, article_id: i64, location_id: i64, qty: f64) {
@@ -535,4 +635,392 @@ async fn adjust_in(db: &DatabaseConnection, article_id: i64, location_id: i64, q
     )
     .await
     .expect("stock in");
+}
+
+/// A return of the reservation (CMMS Advisor ruling 2026-10-23, Q1 (a)): after A and B each issued
+/// the 5 reserved, the manager's count on A closes the over-issue; the storekeeper then returns 5
+/// against the reservation on A. The item is closed "régularisé par retour" with that return (who,
+/// when, 5), listed with the closed items on every PC, not to reconcile any more; a count entered
+/// later on B, from a count session, still follows the manager's count although the item is no
+/// longer the one that count closed.
+#[tokio::test]
+async fn a_return_of_the_reservation_closes_the_over_issue_and_keeps_it_listed() {
+    let SharedReservation {
+        dbs: [a, b, c],
+        mut server,
+        ids,
+    } = shared_reservation().await;
+    let manager = user_with(&a, "overissuereturnmgr", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let storekeeper = user_with(&a, "overissuereturner", &[crate::rbac::permissions::INV_MANAGE]).await;
+    issue(&a, ids[0].2, 5.0).await.expect("A issues");
+    issue(&b, ids[1].2, 5.0).await.expect("B issues");
+    for (name, db) in [("B", &b), ("A", &a)] {
+        sync(&mut server, name, db).await;
+    }
+    let (art_a, loc_a, reservation_a) = ids[0];
+    let counted = negative_stock::resolve_by_count(
+        &a,
+        manager,
+        resolution(art_a, loc_a, 0.0, "Bac recompté : 5 sortis deux fois"),
+    )
+    .await
+    .expect("the count closes the over-issue");
+    let (open, closed) = over_items(&a, art_a, loc_a).await;
+    assert!(open.is_empty());
+    assert_eq!(closed[0].closure_kind.as_deref(), Some(CLOSURE_COUNT));
+
+    queries::return_reserved_stock_as(
+        &a,
+        InventoryReturnInput {
+            reservation_id: reservation_a,
+            quantity: 5.0,
+            notes: Some("Pièces non montées".into()),
+        },
+        Some(i64::from(storekeeper)),
+    )
+    .await
+    .expect("5 returned against the reservation");
+    for (name, db) in [("A", &a), ("B", &b), ("C", &c)] {
+        sync(&mut server, name, db).await;
+    }
+    // A count entered on B follows the manager's: what that count knew (both issues) is held
+    // on B, whatever those issues make now.
+    let counter = user_with(&b, "overissuelatercount", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art_b, loc_b, _) = ids[1];
+    let (_, line) = enter_count(&b, counter, art_b, loc_b, 5.0).await;
+    let manager_count = count_line_sync_id(&b, &counted.session_code).await;
+    assert!(
+        follows_of(&b, line.id).await.contains(&manager_count),
+        "a later count follows the count made before the return"
+    );
+
+    let mut seen = Vec::new();
+    for (pc, db, (art, loc, _)) in [("A", &a, ids[0]), ("B", &b, ids[1]), ("C", &c, ids[2])] {
+        assert_eq!(on_hand_milli(db, art, loc).await, 5_000, "{pc}: 10 − 5 − 5 + 5");
+        let (open, closed) = over_items(db, art, loc).await;
+        assert!(open.is_empty(), "{pc}: nothing to reconcile");
+        assert_eq!(closed.len(), 1, "{pc}: kept with the closed items");
+        let item = &closed[0];
+        assert_eq!(item.kind, OVER_ISSUE, "{pc}");
+        assert_eq!(
+            item.closure_kind.as_deref(),
+            Some(CLOSURE_RETURN),
+            "{pc}: régularisé par retour"
+        );
+        assert_eq!(item.closed_by, None, "{pc}: the count did not know the return");
+        let by = item.closed_by_return.as_ref().expect("the return");
+        assert_eq!(by.movement_type, "RETURN", "{pc}");
+        assert_eq!(by.quantity, 5.0, "{pc}");
+        assert_eq!(by.posted_by.as_deref(), Some("overissuereturner"), "{pc}");
+        assert!(!by.posted_at.is_empty(), "{pc}");
+        assert_eq!(
+            (item.expected_qty, item.actual_qty, item.excess_qty),
+            (5.0, 10.0, 5.0),
+            "{pc}: what was issued beyond the reservation before the return"
+        );
+        assert_eq!(item.movements.len(), 3, "{pc}: both issues and the return");
+        assert_eq!(
+            negative_stock::summary(db).await.expect("summary").over_quantity_count,
+            0,
+            "{pc}"
+        );
+        seen.push((movement_ids(item), by.movement_sync_id.clone()));
+    }
+    assert!(seen.windows(2).all(|w| w[0] == w[1]), "the same on every PC: {seen:?}");
+    let again = negative_stock::resolve_by_count(&a, manager, resolution(art_a, loc_a, 5.0, "Recompté après retour"))
+        .await
+        .expect_err("nothing left to reconcile");
+    assert_eq!(refusal_code(again), REFUSED_NOT_OPEN);
+}
+
+/// Parts brought back without naming the reservation (a stock entry) are not a return of it: the
+/// over-issue stays to reconcile. A zero-variance count of a count session on A, which holds both
+/// issues, closes it (CMMS Advisor ruling Q2 (a)) — no reason of 8 characters is asked there — and
+/// the closed item names that session, path and who counted; a count without variance has no
+/// approver.
+#[tokio::test]
+async fn a_return_naming_no_reservation_leaves_the_over_issue_to_a_count() {
+    let SharedReservation {
+        dbs: [a, b, _c],
+        mut server,
+        ids,
+    } = shared_reservation().await;
+    issue(&a, ids[0].2, 5.0).await.expect("A issues");
+    issue(&b, ids[1].2, 5.0).await.expect("B issues");
+    for (name, db) in [("B", &b), ("A", &a)] {
+        sync(&mut server, name, db).await;
+    }
+    let (art, loc, _) = ids[0];
+    adjust_in(&a, art, loc, 5.0).await;
+    let (open, closed) = over_items(&a, art, loc).await;
+    assert_eq!((open.len(), closed.len()), (1, 0), "still to reconcile");
+    assert_eq!(open[0].actual_qty, 10.0);
+    assert_eq!(open[0].closure_kind, None);
+
+    let counter = user_with(&a, "overissuecyclecount", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let session = post_count(&a, counter, enter_count(&a, counter, art, loc, 5.0).await).await;
+    let (open, closed) = over_items(&a, art, loc).await;
+    assert!(open.is_empty(), "the cycle count held both issues");
+    assert_eq!(closed.len(), 1);
+    assert_eq!(closed[0].closure_kind.as_deref(), Some(CLOSURE_COUNT));
+    let by = closed[0].closed_by.as_ref().expect("closed by the count");
+    assert_eq!(by.session_code, session.session_code);
+    assert_eq!(by.path, COUNT_PATH_COUNT_SESSION);
+    assert_eq!(by.counted_by.as_deref(), Some("overissuecyclecount"));
+    assert_eq!(by.variance_qty, 0.0);
+    assert_eq!(by.approved_by, None, "no variance, no approval");
+}
+
+/// A PO line received on A into the first location and on B into a second one: one over-receipt
+/// per location, each closed only by a count of its own location — the first by the manager's
+/// count from the list on A, the second by a count session on B whose variance another user
+/// approved; the closed item names that session, who counted and who approved, on both PCs.
+#[tokio::test]
+async fn an_over_receipt_into_two_locations_is_closed_by_each_locations_own_count() {
+    let SharedOrder {
+        dbs,
+        mut server,
+        ids,
+        ids2,
+        ..
+    } = shared_order(2, true).await;
+    let (a, b) = (&dbs[0], &dbs[1]);
+    receive(a, ids[0], 5.0, 0.0)
+        .await
+        .expect("A receives into the first location");
+    receive(b, ids2[1], 5.0, 0.0)
+        .await
+        .expect("B receives into the second location");
+    for (name, db) in [("A", a), ("B", b), ("A", a)] {
+        sync(&mut server, name, db).await;
+    }
+    for (pc, db, first, second) in [("A", a, ids[0], ids2[0]), ("B", b, ids[1], ids2[1])] {
+        for (place, (art, loc, _, _)) in [("first", first), ("second", second)] {
+            let (open, closed) = over_items(db, art, loc).await;
+            assert_eq!((open.len(), closed.len()), (1, 0), "{pc}: {place} location");
+            assert_eq!(
+                (open[0].actual_qty, open[0].excess_qty, open[0].movements.len()),
+                (10.0, 5.0, 1),
+                "{pc}: {place} location lists its own entry"
+            );
+        }
+        assert_eq!(
+            negative_stock::summary(db).await.expect("summary").over_quantity_count,
+            2,
+            "{pc}"
+        );
+    }
+
+    let manager = user_with(a, "overrcptlocmgr", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art_a, loc_a, _, _) = ids[0];
+    negative_stock::resolve_by_count(a, manager, resolution(art_a, loc_a, 6.0, "Premier bac recompté"))
+        .await
+        .expect("the first location's count");
+    sync(&mut server, "A", a).await;
+    sync(&mut server, "B", b).await;
+    for (pc, db, first, second) in [("A", a, ids[0], ids2[0]), ("B", b, ids[1], ids2[1])] {
+        let (open, closed) = over_items(db, first.0, first.1).await;
+        assert_eq!((open.len(), closed.len()), (0, 1), "{pc}: the first location is closed");
+        let by = closed[0].closed_by.as_ref().expect("its count");
+        assert_eq!(by.path, COUNT_PATH_RECONCILIATION, "{pc}");
+        assert_eq!(by.approved_by.as_deref(), Some("overrcptlocmgr"), "{pc}");
+        let (open, closed) = over_items(db, second.0, second.1).await;
+        assert_eq!((open.len(), closed.len()), (1, 0), "{pc}: not the second one");
+    }
+
+    let counter = user_with(b, "overrcptloccounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let approver = user_with(b, "overrcptlocapprover", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art_b, loc2_b, _, _) = ids2[1];
+    let session = post_count_approved_by(b, counter, approver, enter_count(b, counter, art_b, loc2_b, 2.0).await).await;
+    sync(&mut server, "B", b).await;
+    sync(&mut server, "A", a).await;
+    for (pc, db, (art, loc2, _, _)) in [("A", a, ids2[0]), ("B", b, ids2[1])] {
+        assert_eq!(on_hand_milli(db, art, loc2).await, 2_000, "{pc}: 2 + 5 counted at 2");
+        let (open, closed) = over_items(db, art, loc2).await;
+        assert_eq!(
+            (open.len(), closed.len()),
+            (0, 1),
+            "{pc}: the second location is closed"
+        );
+        let by = closed[0].closed_by.as_ref().expect("its count session");
+        assert_eq!(by.session_code, session.session_code, "{pc}");
+        assert_eq!(by.path, COUNT_PATH_COUNT_SESSION, "{pc}");
+        assert_eq!(by.counted_by.as_deref(), Some("overrcptloccounter"), "{pc}");
+        assert_eq!(by.approved_by.as_deref(), Some("overrcptlocapprover"), "{pc}");
+        assert_eq!(
+            negative_stock::summary(db).await.expect("summary").over_quantity_count,
+            0,
+            "{pc}"
+        );
+    }
+}
+
+/// An issue that arrives after the closing count reopens the over-issue: A, B and C each issue
+/// the 5 reserved; A counts holding A's and B's issues, which closes it on A; C's issue arrives
+/// afterwards, which the count did not know: it is to reconcile again (issued 15), on A and C.
+#[tokio::test]
+async fn an_issue_arriving_after_the_closing_count_reopens_the_over_issue() {
+    let SharedReservation {
+        dbs: [a, b, c],
+        mut server,
+        ids,
+    } = shared_reservation().await;
+    let manager = user_with(&a, "overissuereopen", &[crate::rbac::permissions::INV_MANAGE]).await;
+    for (db, (_, _, reservation)) in [(&a, ids[0]), (&b, ids[1]), (&c, ids[2])] {
+        issue(db, reservation, 5.0)
+            .await
+            .expect("each PC issues the reservation");
+    }
+    for (name, db) in [("B", &b), ("A", &a)] {
+        sync(&mut server, name, db).await;
+    }
+    let (art_a, loc_a, _) = ids[0];
+    negative_stock::resolve_by_count(&a, manager, resolution(art_a, loc_a, 0.0, "Recompté sur le poste A"))
+        .await
+        .expect("closed by the count");
+    assert!(over_items(&a, art_a, loc_a).await.0.is_empty());
+
+    for (name, db) in [("A", &a), ("C", &c), ("A", &a)] {
+        sync(&mut server, name, db).await;
+    }
+    for (pc, db, (art, loc, _)) in [("A", &a, ids[0]), ("C", &c, ids[2])] {
+        let (open, closed) = over_items(db, art, loc).await;
+        assert_eq!((open.len(), closed.len()), (1, 0), "{pc}: reopened by C's issue");
+        assert_eq!(
+            (open[0].actual_qty, open[0].excess_qty, open[0].movements.len()),
+            (15.0, 10.0, 3),
+            "{pc}"
+        );
+        assert_eq!(open[0].closed_by, None, "{pc}");
+    }
+}
+
+/// A receipt line held without its stock entry, and a stock entry held without its receipt line:
+/// A and B each receive the whole line; C does not get B's stock entry yet, D not B's receipt line.
+/// C lists the over-receipt with A's entry only (the receipt lines say 10 received); D lists none
+/// (an entry is summed only with its receipt line). C's count, made then, does not hold B's entry:
+/// once the held rows arrive, every PC lists the same open item with both entries.
+#[tokio::test]
+async fn a_receipt_line_and_its_stock_entry_arriving_apart_give_the_same_item_everywhere() {
+    let SharedOrder {
+        dbs, mut server, ids, ..
+    } = shared_order(4, false).await;
+    receive(&dbs[0], ids[0], 5.0, 0.0).await.expect("A receives the line");
+    receive(&dbs[1], ids[1], 5.0, 0.0).await.expect("B receives the line");
+    let b_line = crate::sync::test_support::scalar_opt_text(
+        &dbs[1],
+        "SELECT entity_sync_id FROM goods_receipt_lines WHERE po_line_id = ?",
+        vec![ids[1].3.into()],
+    )
+    .await
+    .expect("B's receipt line");
+    let b_entry = crate::sync::test_support::scalar_opt_text(
+        &dbs[1],
+        "SELECT entity_sync_id FROM inventory_transactions WHERE movement_type = 'GR_ACCEPT'",
+        vec![],
+    )
+    .await
+    .expect("B's stock entry");
+    sync(&mut server, "A", &dbs[0]).await;
+    sync(&mut server, "B", &dbs[1]).await;
+    server.hold_back("C", &b_entry);
+    server.hold_back("D", &b_line);
+    sync(&mut server, "C", &dbs[2]).await;
+    sync(&mut server, "D", &dbs[3]).await;
+
+    let (art_c, loc_c, _, _) = ids[2];
+    let (open, _) = over_items(&dbs[2], art_c, loc_c).await;
+    assert_eq!(open.len(), 1, "C: the receipt lines say 10 received");
+    assert_eq!((open[0].actual_qty, open[0].movements.len()), (10.0, 1), "C");
+    assert!(open[0].movements.iter().all(|m| m.movement_sync_id != b_entry), "C");
+    let (art_d, loc_d, _, _) = ids[3];
+    assert!(
+        over_items(&dbs[3], art_d, loc_d).await.0.is_empty(),
+        "D: B's entry without its line is not summed"
+    );
+    assert_eq!(
+        negative_stock::summary(&dbs[3])
+            .await
+            .expect("summary")
+            .over_quantity_count,
+        0
+    );
+
+    let manager = user_with(&dbs[2], "overrcptheld", &[crate::rbac::permissions::INV_MANAGE]).await;
+    negative_stock::resolve_by_count(
+        &dbs[2],
+        manager,
+        resolution(art_c, loc_c, 11.0, "Recompté sur le poste C"),
+    )
+    .await
+    .expect("C's count");
+    assert!(
+        over_items(&dbs[2], art_c, loc_c).await.0.is_empty(),
+        "C: closed by its count"
+    );
+
+    server.release("C");
+    server.release("D");
+    for name in ["C", "D", "A", "B", "C", "D"] {
+        let i = PC_NAMES.iter().position(|n| *n == name).expect("PC");
+        sync(&mut server, name, &dbs[i]).await;
+    }
+    let mut seen = Vec::new();
+    for (i, (art, loc, _, _)) in ids.iter().copied().enumerate() {
+        let pc = PC_NAMES[i];
+        let (open, closed) = over_items(&dbs[i], art, loc).await;
+        assert_eq!(
+            (open.len(), closed.len()),
+            (1, 0),
+            "{pc}: C's count did not hold B's entry"
+        );
+        assert_eq!((open[0].actual_qty, open[0].movements.len()), (10.0, 2), "{pc}");
+        seen.push(movement_ids(&open[0]));
+    }
+    assert!(
+        seen.windows(2).all(|w| w[0] == w[1]),
+        "the same entries everywhere: {seen:?}"
+    );
+}
+
+/// Reversing the count that closed an over-receipt reopens it, on the PC that reversed it and on
+/// the others.
+#[tokio::test]
+async fn reversing_the_closing_count_reopens_the_over_receipt() {
+    use crate::inventory::domain::ReverseInventoryCountSessionInput;
+    let SharedOrder {
+        dbs, mut server, ids, ..
+    } = shared_order(2, false).await;
+    let (a, b) = (&dbs[0], &dbs[1]);
+    receive(a, ids[0], 5.0, 0.0).await.expect("A receives");
+    receive(b, ids[1], 5.0, 0.0).await.expect("B receives");
+    for (name, db) in [("A", a), ("B", b), ("A", a)] {
+        sync(&mut server, name, db).await;
+    }
+    let manager = user_with(b, "overrcptreverse", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art_b, loc_b, _, _) = ids[1];
+    let resolved =
+        negative_stock::resolve_by_count(b, manager, resolution(art_b, loc_b, 6.0, "Livraison reçue deux fois"))
+            .await
+            .expect("closed by the count");
+    assert!(over_items(b, art_b, loc_b).await.0.is_empty());
+    let session = session_by_code(b, &resolved.session_code).await;
+    crate::inventory::controls::reverse_count_session(
+        b,
+        ReverseInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            reason: "Compté sur le mauvais bac".into(),
+            actor_id: Some(i64::from(manager)),
+        },
+    )
+    .await
+    .expect("reversal");
+    sync(&mut server, "B", b).await;
+    sync(&mut server, "A", a).await;
+    for (pc, db, (art, loc, _, _)) in [("A", a, ids[0]), ("B", b, ids[1])] {
+        assert_eq!(on_hand_milli(db, art, loc).await, 11_000, "{pc}: the count undone");
+        let (open, closed) = over_items(db, art, loc).await;
+        assert_eq!((open.len(), closed.len()), (1, 0), "{pc}: to reconcile again");
+    }
 }
