@@ -1563,6 +1563,17 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         return Err(AppError::ValidationFailed(preflight_errors));
     }
 
+    // Labour still open (left by an older version: completion refuses it now) is closed with the
+    // close, before the costs are rolled up.
+    crate::wo::labor::close_open_labor_at_end(
+        &txn,
+        input.wo_id,
+        &now_utc_z(),
+        input.actor_id,
+        crate::wo::labor::LaborEnd::Closed,
+    )
+    .await?;
+
     // ── Compute final costs ───────────────────────────────────────────────
     let cost_row = txn
         .query_one(Statement::from_sql_and_values(

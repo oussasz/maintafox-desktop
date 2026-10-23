@@ -541,3 +541,73 @@ async fn labour_is_booked_and_closed_only_during_execution() {
         .await
         .expect("closed during a hold");
 }
+
+/// N3 (lead decision): cancelling a WO closes its labour still open at the cancel time, audited.
+#[tokio::test]
+async fn cancel_closes_open_labour_at_the_cancel_time() {
+    use crate::wo::labor::{self, AddLaborInput};
+    let db = setup().await;
+    let actor = admin_id(&db).await;
+    let (wo_id, rv) = create_wo_in_progress(&db).await;
+    let open = labor::add_labor_entry(
+        &db,
+        AddLaborInput {
+            wo_id,
+            intervener_id: actor,
+            skill_id: None,
+            started_at: Some("2026-04-10T08:00:00Z".into()),
+            ended_at: None,
+            hours_worked: None,
+            hourly_rate: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("open labour");
+    let wo = crate::wo::queries::cancel_work_order(
+        &db,
+        crate::wo::domain::WoCancelInput {
+            id: wo_id,
+            expected_row_version: rv,
+            actor_id: actor,
+            cancel_reason: "Equipment replaced instead".into(),
+        },
+    )
+    .await
+    .expect("cancelled");
+    let cancelled_at = text(
+        &db,
+        "SELECT cancelled_at FROM work_orders WHERE id = ?",
+        vec![wo_id.into()],
+    )
+    .await
+    .expect("cancelled_at");
+    assert_eq!(wo.status_code.as_deref(), Some("cancelled"));
+    assert_eq!(
+        text(
+            &db,
+            "SELECT ended_at FROM work_order_interveners WHERE id = ?",
+            vec![open.id.into()]
+        )
+        .await,
+        Some(cancelled_at)
+    );
+    let notes = text(
+        &db,
+        "SELECT notes FROM work_order_interveners WHERE id = ?",
+        vec![open.id.into()],
+    )
+    .await
+    .expect("note");
+    assert!(notes.contains("annulation"), "{notes}");
+    assert!(
+        text(
+            &db,
+            "SELECT details_json FROM wo_change_events WHERE wo_id = ? AND action = 'labor_closed_by_cancellation'",
+            vec![wo_id.into()],
+        )
+        .await
+        .is_some(),
+        "audited"
+    );
+}

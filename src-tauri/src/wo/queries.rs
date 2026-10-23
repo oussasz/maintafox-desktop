@@ -1205,6 +1205,16 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
     )
     .await?;
 
+    // Labour still open is closed at the cancel time (no entry stays open on a cancelled OT).
+    crate::wo::labor::close_open_labor_at_end(
+        &txn,
+        input.id,
+        &now,
+        input.actor_id,
+        crate::wo::labor::LaborEnd::Cancelled,
+    )
+    .await?;
+
     // A cancelled OT that consumed labour or parts is still charged to its cost centre.
     crate::finance::settlement::settle_cancelled_work_order(&txn, input.id, input.actor_id).await?;
 

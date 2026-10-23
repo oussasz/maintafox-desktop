@@ -1336,22 +1336,33 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             ))
             .await?;
 
-            // Failure detail: cause determined
+            // Failure detail: worn bearing, no failure-mode code chosen (cause not determined, with
+            // the notes the close-out policy asks for), so the demo close goes through.
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO work_order_failure_details \
                  (work_order_id, cause_not_determined, is_temporary_repair, is_permanent_repair, notes) \
-                 VALUES (?, 0, 0, 1, 'Roulement grippé — usure normale fin de vie (18000h). Remplacé par neuf.')",
+                 VALUES (?, 1, 0, 1, 'Roulement grippé — usure normale fin de vie (18000h). Remplacé par neuf.')",
+                [wo_id.into()],
+            ))
+            .await?;
+            // Root cause, and a responsible other than the verifier (the technician demo account
+            // when seeded): the verification is independent (D7).
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_orders SET root_cause_summary = 'Usure normale du roulement en fin de vie', \
+                 primary_responsible_id = (SELECT id FROM user_accounts WHERE username = 'technicien') \
+                 WHERE id = ?",
                 [wo_id.into()],
             ))
             .await?;
 
-            // Verification record
+            // Verification record: passed, return to service confirmed
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO work_order_verifications \
                  (work_order_id, verified_by_id, verified_at, result, return_to_service_confirmed, recurrence_risk_level, notes) \
-                 VALUES (?, ?, '2026-04-06T15:00:00Z', 'approved', 1, 'low', 'Vibrations post-montage: 2.1 mm/s — conforme ISO 10816')",
+                 VALUES (?, ?, '2026-04-06T15:00:00Z', 'pass', 1, 'low', 'Vibrations post-montage: 2.1 mm/s — conforme ISO 10816')",
                 [wo_id.into(), admin_id.into()],
             ))
             .await?;
@@ -1644,7 +1655,35 @@ mod tests {
     async fn every_seeded_status_and_code_is_in_its_current_set() {
         let db = crate::db::test_db::seeded().await;
         super::seed_demo_data(&db).await.expect("demo data");
+        super::seed_technicien_user(&db).await.expect("technician account");
         super::seed_demo_work_orders(&db).await.expect("demo work orders");
+
+        // The demo close-out (demo_010, technically verified) passes every close gate.
+        let demo_010: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM work_orders WHERE title = 'Remplacement roulement moteur MOT-002'".to_string(),
+            ))
+            .await
+            .expect("demo_010")
+            .expect("demo_010 seeded")
+            .try_get_by_index(0)
+            .expect("id");
+        let rpn = crate::reliability::advanced_rams::queries::fmeca_rpn_critical_threshold_i64_in(&db)
+            .await
+            .expect("rpn threshold");
+        let evidence = crate::wo::closeout::CloseEvidence {
+            closer_user_id: None,
+            no_downtime_attestation: None,
+            no_downtime_attestation_reason: None,
+            fmeca_override_reason: None,
+            fmeca_override_signer_id: None,
+            fmeca_override_signer_password: crate::wo::closeout::SignerPassword::Given(None),
+        };
+        let (errors, _, _) = crate::wo::closeout::close_preflight(&db, demo_010, &evidence, rpn)
+            .await
+            .expect("close preflight");
+        assert!(errors.is_empty(), "demo_010 close-out blocked: {errors:?}");
 
         let di = codes(&db, "SELECT DISTINCT status FROM intervention_requests").await;
         assert!(!di.is_empty(), "the demo seeds requests");

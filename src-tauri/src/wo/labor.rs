@@ -189,6 +189,64 @@ fn require_labor_recording_status(status_code: &str) -> AppResult<()> {
     )]))
 }
 
+/// Labour entries still open when their WO is cancelled or closed are closed at that moment, in the
+/// same transaction (lead decision, AU-99 review N3): no entry stays open on a WO where labour can
+/// no longer be closed. Hours not entered are counted from the start to `at`; the note says why, and
+/// the WO's audit trail records how many were closed. Returns that number.
+pub(crate) async fn close_open_labor_at_end(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    at: &str,
+    actor_id: i64,
+    end: LaborEnd,
+) -> AppResult<u64> {
+    let (note, action) = match end {
+        LaborEnd::Cancelled => ("Clôturée par l'annulation de l'OT", "labor_closed_by_cancellation"),
+        LaborEnd::Closed => ("Clôturée par la clôture de l'OT", "labor_closed_by_closeout"),
+    };
+    let closed = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_order_interveners SET \
+                ended_at = ?, \
+                hours_worked = CASE \
+                    WHEN COALESCE(hours_worked, 0) > 0 THEN hours_worked \
+                    WHEN started_at IS NOT NULL AND julianday(?) > julianday(started_at) \
+                        THEN ROUND((julianday(?) - julianday(started_at)) * 24, 2) \
+                    ELSE hours_worked END, \
+                notes = CASE WHEN notes IS NULL OR trim(notes) = '' THEN ? ELSE notes || ' — ' || ? END \
+             WHERE work_order_id = ? AND ended_at IS NULL",
+            [at.into(), at.into(), at.into(), note.into(), note.into(), wo_id.into()],
+        ))
+        .await?
+        .rows_affected();
+    if closed > 0 {
+        crate::wo::audit::insert_wo_change_event(
+            conn,
+            &crate::wo::audit::WoAuditInput {
+                wo_id: Some(wo_id),
+                action: action.into(),
+                actor_id: Some(actor_id),
+                summary: Some(format!(
+                    "{closed} entrée(s) de main-d'œuvre ouverte(s) clôturée(s) : {note}"
+                )),
+                details_json: Some(serde_json::json!({ "closed": closed, "at": at }).to_string()),
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+        )
+        .await?;
+    }
+    Ok(closed)
+}
+
+/// Why open labour is closed by the WO's end ([`close_open_labor_at_end`]).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum LaborEnd {
+    Cancelled,
+    Closed,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) add_labor_entry
 // ═══════════════════════════════════════════════════════════════════════════════
