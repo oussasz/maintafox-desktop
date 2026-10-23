@@ -152,11 +152,13 @@ pub async fn evaluate_unit_cost(
                     confidence: "medium".to_string(),
                 })
             }
-            _ => Err(AppError::ValidationFailed(vec![format!("Bad method {method}")])),
+            _ => Err(AppError::ValidationFailed(vec![format!(
+                "GATE_INV_VALUATION_METHOD_INVALID: Bad method {method}"
+            )])),
         };
     }
     Err(AppError::ValidationFailed(vec![
-        "No matching valuation policy.".to_string()
+        "GATE_INV_VALUATION_POLICY_MISSING: No matching valuation policy.".to_string(),
     ]))
 }
 

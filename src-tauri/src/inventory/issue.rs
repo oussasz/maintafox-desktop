@@ -102,7 +102,7 @@ pub async fn issue_stock_with_source(
             let location_id: i64 = row.try_get("", "location_id")?;
             if article_id != request.article_id || location_id != request.location_id {
                 return Err(AppError::ValidationFailed(vec![
-                    "The reservation is for another article or location.".to_string(),
+                    "GATE_INV_RESERVATION_MISMATCH: The reservation is for another article or location.".to_string(),
                 ]));
             }
             let wo_code: Option<String> = row.try_get("", "wo_code").ok().flatten();
@@ -116,7 +116,8 @@ pub async fn issue_stock_with_source(
         None => {
             let Some(work_order_id) = request.work_order_id else {
                 return Err(AppError::ValidationFailed(vec![
-                    "An issue from the store names the work order the parts go to.".to_string(),
+                    "GATE_INV_ISSUE_WO_REQUIRED: An issue from the store names the work order the parts go to."
+                        .to_string(),
                 ]));
             };
             let (code, status) = work_order_code(&tx, work_order_id).await?;
@@ -239,7 +240,9 @@ pub async fn issue_stock_with_source(
 pub async fn resolve_scan(db: &DatabaseConnection, value: String) -> AppResult<ScanResolution> {
     let scanned = value.trim().to_string();
     if scanned.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Nothing was scanned.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_SCAN_EMPTY: Nothing was scanned.".to_string(),
+        ]));
     }
     let article = |row: sea_orm::QueryResult, lot_id: Option<i64>, matched: &str| -> AppResult<ScanResolution> {
         Ok(ScanResolution {
@@ -263,7 +266,7 @@ pub async fn resolve_scan(db: &DatabaseConnection, value: String) -> AppResult<S
             .await?;
         if rows.len() > 1 {
             return Err(AppError::ValidationFailed(vec![format!(
-                "'{scanned}' matches several articles; scan the article code instead."
+                "GATE_INV_SCAN_AMBIGUOUS_ARTICLE: '{scanned}' matches several articles; scan the article code instead."
             )]));
         }
         if let Some(row) = rows.into_iter().next() {
@@ -298,10 +301,10 @@ pub async fn resolve_scan(db: &DatabaseConnection, value: String) -> AppResult<S
     }
     if lots.len() > 1 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "'{scanned}' is a lot number used by several articles; scan the article first."
+            "GATE_INV_SCAN_AMBIGUOUS_LOT: '{scanned}' is a lot number used by several articles; scan the article first."
         )]));
     }
     Err(AppError::ValidationFailed(vec![format!(
-        "No active article, barcode, lot or serial number matches '{scanned}'."
+        "GATE_INV_SCAN_NO_MATCH: No active article, barcode, lot or serial number matches '{scanned}'."
     )]))
 }
