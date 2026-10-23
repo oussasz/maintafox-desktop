@@ -505,6 +505,15 @@ async fn a_login_without_a_personnel_card_is_refused_where_qualifications_are_re
         .expect_err("unlinked login on a job with requirements");
     assert_eq!(codes(refused), vec!["QUALIFICATION_PERSON_UNKNOWN".to_string()]);
 
+    // The same work order, back in draft, goes through planning (the responsible check).
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'draft') WHERE id = {}",
+            wo.id
+        ),
+    )
+    .await;
     let wo = crate::wo::workflow::actions::submit::submit_wo(
         &db,
         crate::wo::workflow::actions::submit::WoSubmitInput {
