@@ -428,7 +428,7 @@ pub async fn save_inspection_schedule(
             })?;
             if input.expected_row_version != Some(current.row_version) {
                 return Err(AppError::ValidationFailed(vec![
-                    "row_version mismatch on inspection_schedules.".into(),
+                    "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_schedules.".into(),
                 ]));
             }
             let updated = txn
@@ -463,7 +463,7 @@ pub async fn save_inspection_schedule(
                 .await?;
             if updated.rows_affected() == 0 {
                 return Err(AppError::ValidationFailed(vec![
-                    "Concurrent update on inspection_schedules.".into(),
+                    "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on inspection_schedules.".into(),
                 ]));
             }
             remove_unstarted_future_rounds(&txn, id, &now).await?;
@@ -737,8 +737,11 @@ pub async fn generate_inspection_rounds(
     input: GenerateInspectionRoundsInput,
 ) -> AppResult<GenerateInspectionRoundsResult> {
     let as_of = match input.as_of.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(raw) => parse_ts(raw)
-            .ok_or_else(|| AppError::ValidationFailed(vec!["as_of must be an RFC 3339 timestamp.".into()]))?,
+        Some(raw) => parse_ts(raw).ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INSP_DATE_INVALID: as_of must be an RFC 3339 timestamp.".into()
+            ])
+        })?,
         None => Utc::now(),
     };
     let txn = db.begin().await?;
