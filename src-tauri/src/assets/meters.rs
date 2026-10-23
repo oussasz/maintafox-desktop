@@ -134,14 +134,14 @@ pub fn next_meter_offset(
         Some(MeterReadingKind::Rollover) => {
             let Some(rv) = rollover_value else {
                 return Err(AppError::ValidationFailed(vec![
-                    "Ce compteur n'a pas de valeur de retournement (rollover_value) : un retour \
+                    "GATE_ASSET_METER_NO_ROLLOVER: Ce compteur n'a pas de valeur de retournement (rollover_value) : un retour \
                      a zero ne peut pas etre enregistre."
                         .into(),
                 ]));
             };
             if reading >= prev {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Un retournement suppose un releve ({reading}) inferieur au precedent ({prev})."
+                    "GATE_ASSET_METER_ROLLOVER_NOT_LOWER: Un retournement suppose un releve ({reading}) inferieur au precedent ({prev})."
                 )]));
             }
             Ok((MeterReadingKind::Rollover, current_offset + rv))
@@ -152,7 +152,7 @@ pub fn next_meter_offset(
             current_offset + rollover_value.unwrap_or_default(),
         )),
         _ => Err(AppError::ValidationFailed(vec![format!(
-            "Le releve ({reading}) est inferieur au precedent ({prev}). Indiquez s'il s'agit d'un \
+            "GATE_ASSET_METER_NO_ROLLOVER: Le releve ({reading}) est inferieur au precedent ({prev}). Indiquez s'il s'agit d'un \
              retour a zero du compteur (valeur de retournement configuree) ou d'un remplacement \
              du compteur."
         )])),
@@ -273,7 +273,7 @@ async fn validate_lookup(db: &impl ConnectionTrait, domain_key: &str, code: &str
     let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
     if cnt == 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Valeur '{code}' introuvable dans le domaine '{domain_key}' ({field_label})."
+            "GATE_ASSET_REFERENCE_VALUE_UNKNOWN: Valeur '{code}' introuvable dans le domaine '{domain_key}' ({field_label})."
         )]));
     }
     Ok(())
@@ -346,7 +346,7 @@ async fn assert_single_primary(
     let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
     if cnt > 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Un seul compteur primaire est autorise par equipement. \
+            "GATE_ASSET_METER_PRIMARY_EXISTS: Un seul compteur primaire est autorise par equipement. \
              Desactivez le compteur primaire existant avant d'en definir un nouveau."
                 .into(),
         ]));
@@ -423,17 +423,17 @@ pub async fn create_asset_meter(
 
     let name = payload.name.trim().to_string();
     if name.is_empty() {
-        errors.push("Le nom du compteur est obligatoire.".into());
+        errors.push("GATE_ASSET_METER_NAME_REQUIRED: Le nom du compteur est obligatoire.".into());
     }
 
     let initial = payload.initial_reading.unwrap_or(0.0);
     if initial < 0.0 {
-        errors.push("Le releve initial ne peut pas etre negatif.".into());
+        errors.push("GATE_ASSET_METER_INITIAL_NEGATIVE: Le releve initial ne peut pas etre negatif.".into());
     }
 
     if let Some(rv) = payload.rollover_value {
         if rv <= 0.0 {
-            errors.push("La valeur de retournement (rollover) doit etre strictement positive.".into());
+            errors.push("GATE_ASSET_METER_ROLLOVER_POSITIVE: La valeur de retournement (rollover) doit etre strictement positive.".into());
         }
     }
 
@@ -555,7 +555,7 @@ pub async fn record_meter_reading_of_kind(
     // ── 3. Validate reading_value ────────────────────────────────────────
     if payload.reading_value < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "La valeur du releve ne peut pas etre negative.".into(),
+            "GATE_ASSET_METER_NEGATIVE: La valeur du releve ne peut pas etre negative.".into(),
         ]));
     }
 
@@ -597,7 +597,7 @@ pub async fn record_meter_reading_of_kind(
                 .map_err(|e| decode_err("reading_at", e))?;
             if reading_at <= prev_at {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "L'horodatage du releve ({reading_at}) doit etre posterieur \
+                    "GATE_ASSET_METER_TIME_ORDER: L'horodatage du releve ({reading_at}) doit etre posterieur \
                      au dernier releve ({prev_at})."
                 )]));
             }
@@ -615,7 +615,7 @@ pub async fn record_meter_reading_of_kind(
             )?;
         } else if kind == Some(MeterReadingKind::Rollover) {
             return Err(AppError::ValidationFailed(vec![
-                "Un retournement suppose un releve precedent.".into(),
+                "GATE_ASSET_METER_ROLLOVER_NEEDS_PREVIOUS: Un retournement suppose un releve precedent.".into(),
             ]));
         }
     }
