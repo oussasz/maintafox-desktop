@@ -11,8 +11,8 @@ import { useTranslation } from "react-i18next";
 import { visibleQuestions } from "@/components/reliability/RamsLoopDialogs";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Input } from "@/components/ui/input";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
 import { mfLayout } from "@/design-system/tokens";
@@ -185,7 +185,7 @@ function RcmEditor({
   const { formatNumber, formatDecimal } = useFormatters();
   const { can } = usePermissions();
   const [answers, setAnswers] = useState<StudyRcmAnswers>(row.answers);
-  const [pf, setPf] = useState(row.pf_interval_hours != null ? String(row.pf_interval_hours) : "");
+  const [pf, setPf] = useState<number | null>(row.pf_interval_hours ?? null);
   const [rec, setRec] = useState(row.recommendation);
   const [tactic, setTactic] = useState<string>(
     row.saved?.selected_tactic ?? row.recommendation.recommended_tactic,
@@ -197,8 +197,7 @@ function RcmEditor({
   const [previewRun, setPreviewRun] = useState(0);
   /** "On-condition feasible" was answered by typing a P-F interval (undone if it is cleared). */
   const [pfAnswered, setPfAnswered] = useState(false);
-  const pfN = Number(pf.replace(",", "."));
-  const pfValid = pf.trim() === "" || (Number.isFinite(pfN) && pfN > 0);
+  const pfValid = pf == null || pf > 0;
 
   useEffect(() => {
     const h = setTimeout(() => {
@@ -238,7 +237,7 @@ function RcmEditor({
           answers,
           selected_tactic: tactic,
           justification: justification.trim() || null,
-          pf_interval_hours: pf.trim() ? pfN : null,
+          pf_interval_hours: pf,
         }),
       );
     } catch {
@@ -248,7 +247,7 @@ function RcmEditor({
     }
   };
 
-  const inspection = pf.trim() && pfValid ? pfN / 2 : null;
+  const inspection = pf != null && pfValid ? pf / 2 : null;
   const replacement =
     row.replacement_interval_hours != null ? roundInterval(row.replacement_interval_hours) : null;
   const sendToDecisions = () => {
@@ -370,16 +369,15 @@ function RcmEditor({
         </div>
         <label className="mt-3 grid max-w-xs gap-1 text-xs font-medium text-text-secondary">
           {t("rams.rcm.pfInterval", { unit })}
-          <Input
-            inputMode="decimal"
+          <DecimalField
             className="h-10"
+            min={0}
             value={pf}
             disabled={!editable}
-            aria-invalid={!pfValid}
-            onChange={(e) => {
-              setPf(e.target.value);
-              const v = Number(e.target.value.replace(",", "."));
-              const known = Number.isFinite(v) && v > 0;
+            aria-invalid={pfValid ? undefined : true}
+            onValueChange={(v) => {
+              setPf(v);
+              const known = v != null && v > 0;
               // A known P-F interval makes condition monitoring feasible; clearing it gives the
               // question back to the analyst only when the interval had answered it.
               if (known && !answers.on_condition_feasible) {
