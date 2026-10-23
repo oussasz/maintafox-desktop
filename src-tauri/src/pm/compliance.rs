@@ -25,7 +25,11 @@ use crate::pm::schedule::{classify_timing, compliance_pct, rfc3339, time_window,
 
 fn parse(ts: &str, field: &str) -> AppResult<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(ts)
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")]))?
+        .map_err(|_| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PM_DATE_INVALID: {field} must be a valid RFC3339 timestamp."
+            )])
+        })?
         .with_timezone(&Utc))
 }
 
@@ -162,7 +166,9 @@ pub async fn get_pm_compliance(db: &impl ConnectionTrait, input: PmComplianceInp
     let from = parse(&input.from, "from")?;
     let to = parse(&input.to, "to")?;
     if to <= from {
-        return Err(AppError::ValidationFailed(vec!["to must be after from.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PM_DATE_ORDER: to must be after from.".to_string(),
+        ]));
     }
     compliance_between(
         db,

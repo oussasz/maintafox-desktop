@@ -42,7 +42,7 @@ pub async fn delete_pm_plan_version(
     let status: String = row.try_get("", "status")?;
     if status != "draft" {
         return Err(AppError::ValidationFailed(vec![
-            "Only draft PM plan versions can be deleted.".to_string(),
+            "GATE_PM_VERSION_NOT_DRAFT_DELETE: Only draft PM plan versions can be deleted.".to_string(),
         ]));
     }
 
@@ -58,7 +58,7 @@ pub async fn delete_pm_plan_version(
     let linked_occurrence_count: i64 = linked_occurrence_row.try_get("", "cnt")?;
     if linked_occurrence_count > 0 {
         return Err(AppError::ValidationFailed(vec![
-            "A PM version with generated occurrences cannot be deleted.".to_string(),
+            "GATE_PM_VERSION_HAS_OCCURRENCES: A PM version with generated occurrences cannot be deleted.".to_string(),
         ]));
     }
 
@@ -117,7 +117,7 @@ pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: Stat
     let lifecycle_status: String = plan_row.try_get("", "lifecycle_status")?;
     if lifecycle_status != "draft" {
         return Err(AppError::ValidationFailed(vec![
-            "Only draft PM plans can be deleted.".to_string()
+            "GATE_PM_PLAN_NOT_DRAFT_DELETE: Only draft PM plans can be deleted.".to_string(),
         ]));
     }
 
@@ -133,7 +133,8 @@ pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: Stat
     let version_count: i64 = version_count_row.try_get("", "cnt")?;
     if version_count > 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Delete PM versions first. A PM plan with versions cannot be deleted.".to_string(),
+            "GATE_PM_PLAN_HAS_VERSIONS: Delete PM versions first. A PM plan with versions cannot be deleted."
+                .to_string(),
         ]));
     }
 
@@ -149,7 +150,7 @@ pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: Stat
     let occurrence_count: i64 = occurrence_count_row.try_get("", "cnt")?;
     if occurrence_count > 0 {
         return Err(AppError::ValidationFailed(vec![
-            "A PM plan with generated occurrences cannot be deleted.".to_string(),
+            "GATE_PM_PLAN_HAS_OCCURRENCES: A PM plan with generated occurrences cannot be deleted.".to_string(),
         ]));
     }
 
@@ -162,7 +163,9 @@ pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: Stat
         ))
         .await?;
     if delete_result.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec!["PM plan delete failed.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM plan delete failed.".to_string(),
+        ]));
     }
 
     Ok(())
