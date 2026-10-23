@@ -631,6 +631,23 @@ pub(crate) async fn check_session_password(
     Ok(true)
 }
 
+/// The signed-in user's own account is locked out (a password of theirs was counted elsewhere,
+/// e.g. as the close-out override signer): the session ends, as in [`check_session_password`],
+/// and the refusal is `ACCOUNT_LOCKED` (sign-in shows why).
+pub(crate) async fn end_session_if_locked_out(
+    state: &AppState,
+    user: &session_manager::AuthenticatedUser,
+    session_db_id: &str,
+) -> AppResult<()> {
+    match lockout::check_lockout(&state.db, user.user_id).await {
+        Err(locked @ AppError::AccountLocked { .. }) => {
+            end_session_after_lockout(state, user, session_db_id).await;
+            Err(locked)
+        }
+        other => other,
+    }
+}
+
 /// The stored session id of the current session (after `require_session!`).
 pub(crate) async fn current_session_db_id(state: &AppState) -> AppResult<String> {
     state

@@ -961,6 +961,24 @@ mod tests {
             "the signer's account is locked out"
         );
         assert_eq!(scalar(&db, failed, actor).await, 0, "the user closing is not counted");
+        // Each wrong signer password is audited: actor = the user closing, target = the signer.
+        let audited = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS v FROM audit_events WHERE action_code = ? AND actor_id = ? \
+                 AND target_type = 'user_account' AND target_id = ?",
+                [
+                    crate::audit::event_type::STEP_UP_FAILURE.into(),
+                    actor.into(),
+                    signer.to_string().into(),
+                ],
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<i64>("", "v")
+            .expect("decode");
+        assert_eq!(audited, max);
 
         // Locked out: even the right password is refused, without being checked or counted.
         let attempts_before = scalar(&db, failed, signer).await;
@@ -991,5 +1009,121 @@ mod tests {
         }
         assert_eq!(scalar(&db, failed, signer).await, 0);
         assert_eq!(scalar(&db, locked, signer).await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_committed_close_stays_closed_when_the_signer_outcome_cannot_be_recorded() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv, signer) = wo_needing_signer_override(&db).await;
+        // Earlier failures to reset, and a database that refuses the reset after the commit.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET failed_login_attempts = 2 WHERE id = ?",
+            [signer.into()],
+        ))
+        .await
+        .expect("failures");
+        db.execute_unprepared(
+            "CREATE TRIGGER block_signer_reset BEFORE UPDATE OF failed_login_attempts ON user_accounts \
+             BEGIN SELECT RAISE(ABORT, 'blocked for the test'); END",
+        )
+        .await
+        .expect("trigger");
+
+        let closed = close_with_signer(&db, wo_id, rv, actor, signer, SIGNER_PASSWORD).await;
+        assert!(
+            closed.is_ok(),
+            "the close is committed and reported as such: {closed:?}"
+        );
+        let wo = queries::get_work_order(&db, wo_id).await.expect("read").expect("wo");
+        assert_eq!(wo.status_code.as_deref(), Some("closed"));
+    }
+
+    /// Self-signing allowed by the policy: the closer's own password is checked, so a lockout it
+    /// causes ends the closer's session (ACCOUNT_LOCKED → sign-in), as every password check in a
+    /// session does.
+    #[tokio::test]
+    async fn a_self_signed_override_locks_out_like_any_password_check_in_the_session() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv, _signer) = wo_needing_signer_override(&db).await;
+        db.execute_unprepared(
+            "UPDATE closeout_validation_policies SET fmeca_parts_override_require_distinct_signer = 0",
+        )
+        .await
+        .expect("self-signing allowed");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET force_password_change = 0 WHERE id = ?",
+            [actor.into()],
+        ))
+        .await
+        .expect("password chosen");
+
+        let state = crate::state::AppState::new(db.clone());
+        let session_id = {
+            let mut guard = state.session.write().await;
+            guard.create_session(crate::auth::session_manager::AuthenticatedUser {
+                user_id: i32::try_from(actor).expect("fits"),
+                username: "admin".into(),
+                display_name: None,
+                is_admin: true,
+                force_password_change: false,
+                tenant_id: "tenant-test".into(),
+                token_tenant_id: "tenant-test".into(),
+            });
+            let current = guard.current.as_ref().expect("session");
+            (current.session_db_id.clone(), current.expires_at.to_rfc3339())
+        };
+        crate::auth::session_manager::create_session_record(
+            &db,
+            &session_id.0,
+            i32::try_from(actor).expect("fits"),
+            &session_id.1,
+        )
+        .await
+        .expect("stored session");
+
+        let max = i64::from(crate::auth::lockout::LockoutPolicy::load(&db).await.max_attempts);
+        let close = |password: &'static str| WoCloseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            fmeca_parts_override_reason: Some("Piece suggeree indisponible, montage equivalent".into()),
+            fmeca_parts_override_signed_by_id: Some(actor),
+            fmeca_parts_override_signer_password: Some(password.into()),
+            ..Default::default()
+        };
+        for attempt in 1..max {
+            let refused = crate::commands::wo::close_wo_impl(&state, close("mauvais"))
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(refused, AppError::ValidationFailed(_)),
+                "attempt {attempt}: {refused:?}"
+            );
+            assert!(state.session.read().await.current.is_some());
+        }
+        let refused = crate::commands::wo::close_wo_impl(&state, close("mauvais"))
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
+        assert!(
+            state.session.read().await.current.is_none(),
+            "the closer's session ended"
+        );
+        let revoked = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+                [session_id.0.clone().into()],
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<i64>("", "v")
+            .expect("decode");
+        assert_eq!(revoked, 1);
     }
 }

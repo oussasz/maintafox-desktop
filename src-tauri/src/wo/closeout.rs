@@ -550,9 +550,13 @@ fn signer_password_account(input: &WoCloseInput) -> Option<i32> {
 /// The signer's password outcome, counted toward the signer's account lockout as at sign-in: a
 /// wrong one is a failed attempt (`lockout::record_failed_attempt`, same policy), a right one
 /// resets the count. Written outside the close-out transaction, so a refused close-out still
-/// counts. The signed-in user's session is not touched: the account is the signer's.
+/// counts. A wrong password is audited like the other failed password checks (actor: the user
+/// closing; target: the signer's account). When the signer is the signed-in user (self-signing
+/// allowed by the policy), the command ends the session if this locks the account
+/// (`commands::wo::close_wo`).
 async fn record_signer_password_outcome(
     db: &DatabaseConnection,
+    input: &WoCloseInput,
     signer: Option<i32>,
     checked: Option<bool>,
 ) -> AppResult<()> {
@@ -560,12 +564,31 @@ async fn record_signer_password_outcome(
         return Ok(());
     };
     if ok {
-        crate::auth::lockout::clear_failed_attempts(db, signer).await
-    } else {
-        let policy = crate::auth::lockout::LockoutPolicy::load(db).await;
-        tracing::warn!(signer_id = signer, "close-out override: wrong signer password");
-        crate::auth::lockout::record_failed_attempt(db, signer, &policy).await
+        return crate::auth::lockout::clear_failed_attempts(db, signer).await;
     }
+    let policy = crate::auth::lockout::LockoutPolicy::load(db).await;
+    tracing::warn!(
+        signer_id = signer,
+        wo_id = input.wo_id,
+        "close-out override: wrong signer password"
+    );
+    let signer_ref = signer.to_string();
+    audit::emit(
+        db,
+        audit::AuditEvent {
+            event_type: audit::event_type::STEP_UP_FAILURE,
+            actor_id: i32::try_from(input.actor_id).ok(),
+            entity_type: Some("user_account"),
+            entity_id: Some(&signer_ref),
+            summary: "Close-out override refused: wrong signer password",
+            detail_json: Some(
+                serde_json::json!({ "context": "closeout_override", "work_order_id": input.wo_id }).to_string(),
+            ),
+            ..Default::default()
+        },
+    )
+    .await;
+    crate::auth::lockout::record_failed_attempt(db, signer, &policy).await
 }
 
 async fn verify_user_password(db: &impl ConnectionTrait, user_id: i64, password_raw: &str) -> AppResult<bool> {
@@ -1406,7 +1429,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // ── Return all blocking errors at once ────────────────────────────────
     if !preflight.is_ok() {
         txn.rollback().await?;
-        record_signer_password_outcome(db, signer_for_password, signer_password_checked).await?;
+        record_signer_password_outcome(db, &input, signer_for_password, signer_password_checked).await?;
         return Err(AppError::ValidationFailed(preflight.errors));
     }
 
@@ -1569,7 +1592,11 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // Its schedule commitments are closed with it (`planning::lifecycle`).
     crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.wo_id).await?;
     txn.commit().await?;
-    record_signer_password_outcome(db, signer_for_password, signer_password_checked).await?;
+    // The close is committed: a failure to record the signer outcome is logged, never turned
+    // into an error (the follow-ups below must still run).
+    if let Err(e) = record_signer_password_outcome(db, &input, signer_for_password, signer_password_checked).await {
+        tracing::error!(error = %e, wo_id = input.wo_id, "close-out: signer password outcome not recorded");
+    }
 
     crate::pm::generation_control::on_work_order_closed_for_pm(db, input.wo_id, Some(input.actor_id)).await;
 
