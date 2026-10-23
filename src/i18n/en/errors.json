@@ -207,6 +207,8 @@
     "GATE_TASK_REOPEN_COMMENT_REQUIRED": "Say why the task is reopened.",
     "GATE_TOOL_WRONG_STATUS": "Tool use is recorded only while the work order is in progress or on hold.",
     "GATE_CLOSEOUT_TASKS_OPEN": "Close-out blocked: mandatory tasks are not closed with OK, N/A, or NOK with a finding or follow-up work order.",
+    "GATE_LABOR_WRONG_STATUS": "Labour is recorded only while the work order is in progress or on hold.",
+    "GATE_CLOSEOUT_VERIFIER_NOT_INDEPENDENT": "Close-out blocked: the verification was made by the work order's responsible or, with none, by someone who recorded labour. An independent verification is required.",
     "GATE_CLOSEOUT_VERIFIER_RECORDED_LABOUR": "Without a responsible person, the verifier must not be anyone who recorded labour on the work order.",
     "GATE_COMPLETE_OPEN_LABOR": "Completion blocked: close the open labour entries first.",
     "GATE_COMPLETE_TASKS_INCOMPLETE": "Completion blocked: some mandatory tasks are not finished.",

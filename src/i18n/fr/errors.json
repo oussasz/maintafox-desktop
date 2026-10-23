@@ -207,6 +207,8 @@
     "GATE_TASK_REOPEN_COMMENT_REQUIRED": "Indiquez pourquoi la tâche est rouverte.",
     "GATE_TOOL_WRONG_STATUS": "L'utilisation d'un outil ne se saisit que pendant l'exécution (en cours ou en attente).",
     "GATE_CLOSEOUT_TASKS_OPEN": "Clôture bloquée : des tâches obligatoires ne sont pas clôturées avec OK, N/A, ou NOK avec constat ou OT de suivi.",
+    "GATE_LABOR_WRONG_STATUS": "La main-d'œuvre ne se saisit ou ne se clôture que pendant l'exécution (en cours ou en attente).",
+    "GATE_CLOSEOUT_VERIFIER_NOT_INDEPENDENT": "Clôture bloquée : la vérification a été faite par le responsable de l'OT ou, sans responsable, par une personne qui a saisi de la main-d'œuvre. Une vérification indépendante est requise.",
     "GATE_CLOSEOUT_VERIFIER_RECORDED_LABOUR": "Sans responsable principal, le vérificateur doit être différent de chaque personne qui a saisi de la main-d'œuvre sur l'OT.",
     "GATE_COMPLETE_OPEN_LABOR": "Complétion bloquée : clôturez d'abord les entrées de main-d'œuvre ouvertes.",
     "GATE_COMPLETE_TASKS_INCOMPLETE": "Complétion bloquée : des tâches obligatoires ne sont pas terminées.",

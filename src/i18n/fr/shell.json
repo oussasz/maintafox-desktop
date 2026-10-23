@@ -156,6 +156,8 @@
       "WO_VERIFICATION_WRONG_STATUS": "Vérification reçue alors que l'OT n'est pas terminé ici",
       "WO_SELF_VERIFICATION": "Vérification par le responsable de l'OT",
       "WO_VERIFIER_RECORDED_LABOUR": "Vérification (OT sans responsable) par une personne qui a saisi de la main-d'œuvre",
+      "WO_TASK_WRONG_STATUS": "Résultat de tâche reçu alors que l'OT n'est pas en exécution ici",
+      "WO_MANDATORY_TASK_REMOVED": "Tâche obligatoire supprimée ou rendue facultative sur un autre poste alors que l'OT a dépassé la planification ici",
       "PERMIT_TYPE_REQUIRED_TO_START": "Un ordre de travail démarré sans permis du type exigé par une règle de l'usine",
       "WO_PERMIT_RULE_CHANGED": "La règle de l'usine qui exige le permis d'un ordre de travail a été retirée ou modifiée ailleurs",
       "PERMIT_THREE_PERSON_REMOVAL": "Un retrait de cadenas vérifié par la personne qui avait vérifié l'isolement, alors que le type de permis exige une troisième personne",

@@ -63,6 +63,8 @@ describe("sync conflict kinds", () => {
       "WO_VERIFICATION_WRONG_STATUS",
       "WO_SELF_VERIFICATION",
       "WO_VERIFIER_RECORDED_LABOUR",
+      "WO_TASK_WRONG_STATUS",
+      "WO_MANDATORY_TASK_REMOVED",
     ]) {
       expect(KNOWN_CONFLICT_KINDS.has(code)).toBe(true);
     }
