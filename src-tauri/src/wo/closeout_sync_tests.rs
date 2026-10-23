@@ -1831,6 +1831,8 @@ async fn a_reopening_split_across_passes_is_judged_with_its_return() {
                 ("completed_at", json!(hours_from_now(1))),
             ],
         );
+        // The reopening's transition arrives first (captured before the re-made records).
+        receive_reopen(&db, wo_id, "completed", "b-reopen-1").await;
         inbox(&db, "b-reopen-1", "work_order_tasks", &tsync, 70, &task_row).await;
         let first = materialize(&db).await;
         assert_eq!(first.conflicts, 0, "{result}: {:?}", conflict_codes(&db).await);
@@ -1872,7 +1874,8 @@ async fn a_reopening_split_across_passes_is_judged_with_its_return() {
 #[tokio::test]
 async fn a_higher_reopen_count_marks_a_return_from_execution() {
     let db = setup().await;
-    let (_, sync, tsync) = completed_here_with_task(&db).await;
+    let (wo_id, sync, tsync) = completed_here_with_task(&db).await;
+    receive_reopen(&db, wo_id, "completed", "b-count-0").await;
     let task_row = with(
         wire(&db, "work_order_tasks", &tsync).await,
         &[("completed_at", json!(hours_from_now(1)))],
@@ -1927,6 +1930,7 @@ async fn a_reclose_split_across_passes_is_judged_with_its_return() {
         verification_row(&sync, &user_sync_of(&db, verifier).await),
         &[("verified_at", json!(hours_from_now(1)))],
     );
+    receive_reopen(&db, wo_id, "closed", "b-reclose-0").await;
     inbox(
         &db,
         "b-reclose-1",
@@ -1960,59 +1964,134 @@ async fn a_reclose_split_across_passes_is_judged_with_its_return() {
     );
 }
 
-/// SF1: a row recorded after this PC's completion does not turn an ordinary close (completed →
-/// closed, no return from execution) into a refused group: the close is judged without it, and the
-/// row keeps waiting, visibly, never applied unjudged.
-#[tokio::test]
-async fn a_row_recorded_after_completion_does_not_block_the_close() {
-    let db = setup().await;
-    let (wo_id, sync, tsync) = completed_here_with_task(&db).await;
-    let verifier = super::closeout_tests::tests::create_second_user(&db).await;
+/// A reopening of the WO made on another PC, received here (its `reopen` transition, applied in a
+/// pass of its own, dated after this PC's completion or close).
+async fn receive_reopen(db: &DatabaseConnection, wo_id: i64, from: &str, batch: &str) {
     exec(
-        &db,
-        "INSERT INTO work_order_verifications (work_order_id, verified_by_id, verified_at, result, \
-         return_to_service_confirmed) VALUES (?, ?, ?, 'pass', 1)",
-        vec![wo_id.into(), verifier.into(), now().into()],
+        db,
+        "UPDATE wo_state_transition_log SET entity_sync_id = 'transition-' || id WHERE entity_sync_id IS NULL",
+        vec![],
     )
     .await;
+    let any = text(
+        db,
+        "SELECT entity_sync_id FROM wo_state_transition_log WHERE wo_id = ? ORDER BY id LIMIT 1",
+        vec![wo_id.into()],
+    )
+    .await
+    .expect("a transition of the WO");
+    let sid = format!("reopen-{batch}");
+    let reopen = with(
+        wire(db, "wo_state_transition_log", &any).await,
+        &[
+            ("action", json!("reopen")),
+            ("from_status", json!(from)),
+            ("to_status", json!("in_progress")),
+            ("acted_at", json!(hours_from_now(0))),
+        ],
+    );
+    inbox(db, batch, "wo_state_transition_log", &sid, 1, &reopen).await;
+    let result = materialize(db).await;
+    assert_eq!(result.conflicts, 0, "{:?}", conflict_codes(db).await);
+    assert_eq!(
+        inbox_status(db, "wo_state_transition_log", &sid).await.as_deref(),
+        Some("applied")
+    );
+}
+
+/// Final B2: a later time alone is no evidence of a reopening. With none received, a task changed
+/// after this PC's completion is refused as before (R5); once a reopening made elsewhere has been
+/// received, the same row waits for the work order's return, its reason naming both.
+#[tokio::test]
+async fn a_change_after_completion_waits_only_for_a_received_reopening() {
+    let db = setup().await;
+    let (wo_id, _, tsync) = completed_here_with_task(&db).await;
     let task_row = with(
         wire(&db, "work_order_tasks", &tsync).await,
         &[("result_code", json!("na")), ("completed_at", json!(hours_from_now(1)))],
     );
-    inbox(&db, "b-after-1", "work_order_tasks", &tsync, 70, &task_row).await;
-    materialize(&db).await;
+    let outcome = apply(&db, "work_order_tasks", &tsync, &task_row).await;
     assert_eq!(
-        inbox_status(&db, "work_order_tasks", &tsync).await.as_deref(),
-        Some("deferred")
+        code(&outcome),
+        Some(codes::TASK_AFTER_COMPLETION),
+        "no reopening: {outcome:?}"
     );
+
+    receive_reopen(&db, wo_id, "completed", "b-b2-1").await;
+    let outcome = apply(&db, "work_order_tasks", &tsync, &task_row).await;
+    match outcome {
+        ApplyOutcome::Deferred { message, .. } => {
+            assert!(message.contains("during a reopening"), "{message}");
+            assert!(message.contains("work order"), "{message}");
+        }
+        other => panic!("waits for the return: {other:?}"),
+    }
+    // Recorded before this PC's completion: refused even after a reopening.
+    let earlier = with(task_row, &[("completed_at", json!("2020-01-01T00:00:00Z"))]);
+    let outcome = apply(&db, "work_order_tasks", &tsync, &earlier).await;
+    assert_eq!(code(&outcome), Some(codes::TASK_AFTER_COMPLETION), "{outcome:?}");
+}
+
+/// Final B1: a verification and failure coding recorded on another PC an hour after this PC's
+/// completion are applied as before (the completed status accepts them), and the close that follows
+/// is judged with them: 0 conflicts.
+#[tokio::test]
+async fn a_verification_and_failure_coding_after_completion_are_applied_then_closed() {
+    let db = setup().await;
+    let (wo_id, sync, _) = completed_here_with_task(&db).await;
+    let verifier = super::closeout_tests::tests::create_second_user(&db).await;
+    let verification = with(
+        verification_row(&sync, &user_sync_of(&db, verifier).await),
+        &[("verified_at", json!(hours_from_now(1)))],
+    );
+    exec(
+        &db,
+        "UPDATE work_order_failure_details SET entity_sync_id = 'fd-b1-' || id WHERE entity_sync_id IS NULL",
+        vec![],
+    )
+    .await;
+    let fd_sync = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_failure_details WHERE work_order_id = ?",
+        vec![wo_id.into()],
+    )
+    .await
+    .expect("failure detail");
+    let fd = with(
+        wire(&db, "work_order_failure_details", &fd_sync).await,
+        &[(
+            "notes",
+            json!("Bearing cage broken; cause not determined on site, lab analysis pending"),
+        )],
+    );
+    inbox(&db, "b-b1-1", "work_order_verifications", "ver-b1", 1, &verification).await;
+    inbox(&db, "b-b1-1", "work_order_failure_details", &fd_sync, 70, &fd).await;
+    let first = materialize(&db).await;
+    assert_eq!(first.conflicts, 0, "{:?}", conflict_codes(&db).await);
+    assert_eq!(
+        inbox_status(&db, "work_order_verifications", "ver-b1").await.as_deref(),
+        Some("applied")
+    );
+    assert_eq!(
+        inbox_status(&db, "work_order_failure_details", &fd_sync)
+            .await
+            .as_deref(),
+        Some("applied")
+    );
+
     let closed = status_sync(&db, "closed").await;
     let close = with(
         wire(&db, "work_orders", &sync).await,
         &[
             ("status_sync_id", json!(closed)),
-            ("closed_at", json!(now())),
+            ("closed_at", json!(hours_from_now(2))),
             ("updated_at", json!(now())),
         ],
     );
-    inbox(&db, "b-after-2", "work_orders", &sync, 70, &close).await;
+    inbox(&db, "b-b1-2", "work_orders", &sync, 70, &close).await;
     let second = materialize(&db).await;
     assert_eq!(second.conflicts, 0, "{:?}", conflict_codes(&db).await);
     assert_eq!(wo_status(&db, wo_id).await, "closed");
-    assert_eq!(
-        inbox_status(&db, "work_order_tasks", &tsync).await.as_deref(),
-        Some("deferred")
-    );
-    assert_eq!(
-        text(
-            &db,
-            "SELECT result_code FROM work_order_tasks WHERE entity_sync_id = ?",
-            vec![tsync.clone().into()]
-        )
-        .await
-        .as_deref(),
-        Some("ok"),
-        "never applied unjudged"
-    );
 }
 
 /// SF2: a WO cancelled on another PC with labour still open: the labour closure is written before
@@ -2050,6 +2129,10 @@ async fn labour_closed_by_a_cancel_arrives_before_it() {
     .await;
     assert_eq!(first.conflicts, 0, "{:?}", conflict_codes(&target).await);
 
+    // The source PC captures its changes as the app does: the labour closure is captured before
+    // the work order's cancel, so the delta delivers it first.
+    crate::sync::capture::install_capture(&source).await.expect("capture");
+    exec(&source, "DELETE FROM sync_capture_journal", vec![]).await;
     crate::wo::queries::cancel_work_order(
         &source,
         crate::wo::domain::WoCancelInput {
@@ -2061,6 +2144,21 @@ async fn labour_closed_by_a_cancel_arrives_before_it() {
     )
     .await
     .expect("cancelled on the other PC");
+    let captured: Vec<String> = source
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT entity_type FROM sync_capture_journal ORDER BY id".to_string(),
+        ))
+        .await
+        .expect("journal")
+        .iter()
+        .filter_map(|r| r.try_get_by_index::<String>(0).ok())
+        .collect();
+    let at = |t: &str| captured.iter().position(|e| e == t);
+    assert!(
+        matches!((at("work_order_interveners"), at("work_orders")), (Some(l), Some(w)) if l < w),
+        "labour captured before the cancel: {captured:?}"
+    );
     let labour_sync = text(
         &source,
         "SELECT entity_sync_id FROM work_order_interveners WHERE work_order_id = ?",

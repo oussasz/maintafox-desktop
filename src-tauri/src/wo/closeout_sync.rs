@@ -48,7 +48,11 @@
 //! A work order received completed or closed again with the same status here, but completed or
 //! closed at another time (reopened and completed or closed again elsewhere), is judged as coming
 //! back from execution (`in_progress` before the change): its re-recorded children come with it,
-//! and R3 / R4 run.
+//! and R3 / R4 run. A child that R5 / R6 / R7 would refuse waits for that return instead only when
+//! a reopening has actually been received here (the work order's log holds more `reopen`
+//! transitions than this PC's `reopen_count`) and the row was recorded after this PC's completion
+//! or close; anything else is refused as before. Such a row waits until the return arrives; one
+//! whose return never comes waits for good, deferred with its reason.
 //!
 //! A mandatory task received cancelled, deferred or NOK without evidence from a PC that has not
 //! upgraded is not refused as a row while its work order is open (it is the technician's record):
@@ -119,7 +123,13 @@ const TASK_RESULT_KEYS: &[&str] = &[
 ];
 
 /// Work-order statuses in which a task result is recorded (`wo::tasks::TASK_RECORDING_STATUSES`).
-const RECORDING: &[&str] = crate::wo::tasks::TASK_RECORDING_STATUSES;
+/// Work-order statuses before execution: a task result received then waits for the start.
+const BEFORE_EXECUTION: &[&str] = &["draft", "planning", "ready"];
+/// Work-order statuses outside execution in which labour and tool use received wait for the next
+/// status change (closed and cancelled refuse them, R7).
+const OUTSIDE_EXECUTION: &[&str] = &["draft", "planning", "ready", "completed"];
+/// Work-order statuses before completion: a verification received then waits for it.
+const BEFORE_COMPLETION: &[&str] = &["draft", "planning", "ready", "in_progress", "on_hold"];
 /// Work-order statuses in which a mandatory task may still be removed or made optional.
 const BEFORE_PLANNING_FROZEN: &[&str] = &["draft", "planning"];
 
@@ -428,19 +438,51 @@ async fn parent_of(conn: &impl ConnectionTrait, wo_sync: &str) -> AppResult<Pare
     })
 }
 
-/// The times a close-out child records its own work at (a task's result, a labour line's start and
-/// end, a verification, a tool added).
-const RECORD_TIME_KEYS: &[&str] = &["completed_at", "started_at", "ended_at", "verified_at", "created_at"];
+/// The time a close-out child records its own work at, per table (a task's result, a labour line's
+/// start and end, a verification, a tool added); failure coding has none.
+fn record_time_keys(table: &str) -> &'static [&'static str] {
+    match table {
+        "work_order_tasks" => &["completed_at"],
+        "work_order_interveners" => &["started_at", "ended_at"],
+        "work_order_verifications" => &["verified_at"],
+        "work_order_tools" => &["created_at"],
+        _ => &[],
+    }
+}
 
-/// Whether a received child was recorded after this PC's completion (work order `completed` here)
-/// or close (`closed` here) of its work order: then it belongs to a reopening made elsewhere whose
-/// return (the work order completed or closed again) is still on its way (review round 3, SF1).
-async fn recorded_after(conn: &impl ConnectionTrait, wo_sync: &str, status: &str, row: &Payload) -> AppResult<bool> {
+/// Whether a child that a rule would refuse belongs to a reopening of its work order made on
+/// another PC whose return has not arrived yet (review round 3 SF1, final B2): a reopening has been
+/// received here — the work order's log holds more `reopen` transitions than this PC's
+/// `reopen_count` (the log is applied whatever the work order's status, and captured before the
+/// records re-made during the reopening) — and the row was recorded after this PC's completion
+/// (work order `completed` here) or close (`closed` here). A later time alone is no evidence.
+async fn awaiting_return(
+    conn: &impl ConnectionTrait,
+    table: &str,
+    wo_sync: &str,
+    status: &str,
+    row: &Payload,
+) -> AppResult<bool> {
     let stamp_key = match status {
         "completed" => "mechanically_completed_at",
         "closed" => "closed_at",
         _ => return Ok(false),
     };
+    let reopened = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT (SELECT COUNT(*) FROM wo_state_transition_log t WHERE t.wo_id = w.id AND t.action = 'reopen') \
+                    > COALESCE(w.reopen_count, 0) AS pending \
+             FROM work_orders w WHERE w.entity_sync_id = ?",
+            [wo_sync.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<bool>("", "pending").map_err(sync_err))
+        .transpose()?
+        .unwrap_or(false);
+    if !reopened {
+        return Ok(false);
+    }
     let Some(stamp) = local_wire(conn, "work_orders", wo_sync)
         .await?
         .as_ref()
@@ -449,17 +491,18 @@ async fn recorded_after(conn: &impl ConnectionTrait, wo_sync: &str, status: &str
     else {
         return Ok(false);
     };
-    Ok(RECORD_TIME_KEYS
+    Ok(record_time_keys(table)
         .iter()
         .filter_map(|k| field(row, k).and_then(crate::settings::site::instant))
         .any(|t| t > stamp))
 }
 
-/// Why a received child recorded after this PC's completion or close waits ([`RECORDED_AFTER_MARKER`]).
+/// Why a received child waits for its work order's return from a reopening ([`RECORDED_AFTER_MARKER`]).
 fn after_end(what: &str, code: &str, status: &str) -> String {
     format!(
-        "{what}: {RECORDED_AFTER_MARKER} of work order {code} (here '{status}'); waits for that work order to \
-         come back from the reopening it was recorded in, applied with it"
+        "{what}: {RECORDED_AFTER_MARKER} of work order {code} (here '{status}'), during a reopening of it made on \
+         another PC and received here; waits for the work order to come back from that reopening (completed or \
+         closed again), applied and judged with it"
     )
 }
 
@@ -527,6 +570,14 @@ pub(crate) async fn inbound_closeout_child_check(
     if same_state(local.as_ref(), &row) {
         return Ok(None);
     }
+    // A history row already here (append-only, e.g. a verification) is never rewritten by the apply
+    // (`row_codec::apply_row` skips it): nothing to judge.
+    if local.is_some()
+        && crate::sync::registry::entity(table)
+            .is_some_and(|d| d.conflict_policy == crate::sync::registry::ConflictPolicy::AppendOnly)
+    {
+        return Ok(None);
+    }
     let Some(wo_sync) = field(&row, "work_order_sync_id").map(str::to_string) else {
         return Ok(None);
     };
@@ -539,15 +590,6 @@ pub(crate) async fn inbound_closeout_child_check(
         Parent::InGroup { judged: false, .. } if crate::sync::materialize::applying_snapshot_row() => return Ok(None),
         Parent::InGroup { code, .. } | Parent::Held { code, .. } => code.clone(),
     };
-    // Recorded after this PC's completion or close: part of a reopening made elsewhere whose return
-    // has not arrived yet (a page may end between them). It waits, visibly, and is judged with that
-    // return; if none ever comes it is never applied (review round 3, SF1).
-    if let Parent::Held { status, .. } = &parent {
-        if recorded_after(conn, &wo_sync, status, &row).await? {
-            let label = table.trim_start_matches("work_order_");
-            return wait(after_end(&format!("{label} {entity_sync_id} {what}"), &code, status));
-        }
-    }
     if table == "work_order_tasks" {
         // A mandatory task made optional, only while the work order is a draft or in planning.
         let downgraded = local.as_ref().is_some_and(|l| is_set(l, "is_mandatory")) && !is_set(&row, "is_mandatory");
@@ -571,10 +613,7 @@ pub(crate) async fn inbound_closeout_child_check(
         if let Parent::Held { status, .. } = &parent {
             let has_result = differs(local.as_ref(), &row, TASK_RESULT_KEYS)
                 && (is_set(&row, "is_completed") || local.as_ref().is_some_and(|l| is_set(l, "is_completed")));
-            if has_result
-                && !RECORDING.contains(&status.as_str())
-                && !["completed", "closed", "cancelled"].contains(&status.as_str())
-            {
+            if has_result && BEFORE_EXECUTION.contains(&status.as_str()) {
                 return wait(behind(&format!("task {entity_sync_id}: result {what}"), &code, status));
             }
         }
@@ -595,6 +634,12 @@ pub(crate) async fn inbound_closeout_child_check(
                 Parent::Held { status, .. } => status.clone(),
                 Parent::Missing => String::new(),
             };
+            // Refused here, unless it belongs to a reopening received from another PC whose return
+            // (a page may end between them) has not arrived yet: then it waits for that return,
+            // visibly, and is judged with it (review round 3 SF1, final B1 / B2).
+            if matches!(parent, Parent::Held { .. }) && awaiting_return(conn, table, &wo_sync, &status, &row).await? {
+                return wait(after_end(&format!("{label} {entity_sync_id} {what}"), &code, &status));
+            }
             return conflict(
                 conflict_code,
                 format!("{label} {entity_sync_id} {what} while work order {code} is '{status}' here"),
@@ -615,7 +660,7 @@ pub(crate) async fn inbound_closeout_child_check(
                 },
                 _ => false,
             };
-            if execution_record && !RECORDING.contains(&status.as_str()) {
+            if execution_record && OUTSIDE_EXECUTION.contains(&status.as_str()) {
                 return wait(behind(&format!("{label} {entity_sync_id} {what}"), &code, status));
             }
         }
@@ -629,12 +674,19 @@ pub(crate) async fn inbound_closeout_child_check(
     // on a work order closed or cancelled here: refused.
     if let Parent::Held { status, .. } = &parent {
         if ["closed", "cancelled"].contains(&status.as_str()) {
+            if awaiting_return(conn, table, &wo_sync, status, &row).await? {
+                return wait(after_end(
+                    &format!("verification {entity_sync_id} {what}"),
+                    &code,
+                    status,
+                ));
+            }
             return conflict(
                 codes::VERIFICATION_WRONG_STATUS,
                 format!("verification {entity_sync_id} {what} while work order {code} is '{status}' here"),
             );
         }
-        if status != "completed" {
+        if BEFORE_COMPLETION.contains(&status.as_str()) {
             return wait(behind(&format!("verification {entity_sync_id} {what}"), &code, status));
         }
     }
