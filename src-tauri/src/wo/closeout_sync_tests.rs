@@ -812,4 +812,33 @@ async fn a_snapshot_arrival_applies_history_without_false_conflicts() {
             assert_eq!(applied, None, "{batch}: not written");
         }
     }
+
+    // Received as changes, without the legacy task, but verified by the WO's own responsible: the
+    // verifier rule holds inside the group of a work order new here too.
+    let admin = admin_sync(&source).await;
+    let target = setup().await;
+    seed_test_equipment(&target).await;
+    super::closeout_tests::tests::create_second_user(&target).await;
+    for (table, sid, p) in rows.iter().filter(|(_, sid, _)| sid != "task-legacy") {
+        let p = if table == "work_order_verifications" {
+            with(p.clone(), &[("verified_by_sync_id", json!(admin))])
+        } else {
+            p.clone()
+        };
+        inbox(&target, "b-self", table, sid, 5, &p).await;
+    }
+    inbox(&target, "b-self", "work_orders", &sync, 5, &wo_row).await;
+    materialize(&target).await;
+    let found = conflict_codes(&target).await;
+    assert!(found.iter().any(|c| c == "SYNC_GROUP_REFUSED"), "{found:?}");
+    assert_eq!(
+        text(
+            &target,
+            "SELECT entity_sync_id FROM work_orders WHERE entity_sync_id = ?",
+            vec![sync.clone().into()]
+        )
+        .await,
+        None,
+        "not written"
+    );
 }

@@ -359,11 +359,12 @@ pub(crate) async fn inbound_closeout_child_check(
         return Ok(None);
     };
     let in_group = group_previous_status(&wo_sync).is_some();
-    let Some((status, code)) = judged_parent_status(conn, &wo_sync).await? else {
-        return Ok(None);
-    };
     let what = if local.is_some() { "changed" } else { "added" };
+    let judged = judged_parent_status(conn, &wo_sync).await?;
     if let Some((refused_in, conflict_code, label)) = child_rule(table) {
+        let Some((status, code)) = judged else {
+            return Ok(None);
+        };
         if refused_in.contains(&status.as_str()) {
             return conflict(
                 conflict_code,
@@ -376,13 +377,22 @@ pub(crate) async fn inbound_closeout_child_check(
         return Ok(None);
     }
     // R6: recorded on a completed work order (in its close-out group, the work order's own
-    // completion and close are judged with it).
-    if !in_group && status != "completed" {
-        return conflict(
-            codes::VERIFICATION_WRONG_STATUS,
-            format!("verification {entity_sync_id} {what} while work order {code} is '{status}' here"),
-        );
-    }
+    // completion and close are judged with it); the verifier rules hold in the group too, also
+    // for a work order new here.
+    let code = match judged {
+        Some((status, code)) => {
+            if !in_group && status != "completed" {
+                return conflict(
+                    codes::VERIFICATION_WRONG_STATUS,
+                    format!("verification {entity_sync_id} {what} while work order {code} is '{status}' here"),
+                );
+            }
+            code
+        }
+        None if in_group => wo_sync.clone(),
+        // The work order is not here yet: the apply waits for it.
+        None => return Ok(None),
+    };
     let Some(verifier_sync) = field(&row, "verified_by_sync_id") else {
         return Ok(None);
     };
