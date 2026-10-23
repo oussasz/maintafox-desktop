@@ -21,7 +21,9 @@
 //!   quantity, or stock issued from the store against its reservation): only a line with no
 //!   recorded use is cancelled (`wo::parts::inbound_part_line_check`, `before_upsert_checked`);
 //! - `app_settings`: a tenant setting whose change is locked here (fiscal start month, currency
-//!   once postings exist) is refused as a conflict (`before_upsert_checked`);
+//!   once postings exist) is refused as a conflict (`before_upsert_checked`); a received row that is
+//!   not a tenant setting, or that would change or delete a setting of this device, is refused as a
+//!   `SETTING_DEVICE_SCOPE` conflict (`inbound_device_setting_check`);
 //! - `reliability_study_decisions`: an approval by the decision's own proposer is refused as a
 //!   conflict unless the decision's site opted out of four-eyes; a study, equipment or site not
 //!   applied yet makes it wait (`reliability::study::decisions::inbound_self_approval_check`);
@@ -118,7 +120,8 @@ pub(crate) const AUDIT_STUB_REFUSED: &str = "AUDIT_STUB_REFUSED";
 /// outcome (recorded like every other sync conflict, for a person to decide).
 /// - `app_settings`: the fiscal-year start month and the tenant currency cannot change once this
 ///   device stores postings that depend on them (`finance::fiscal`, `inventory::fx`). A change
-///   made on a device where they were still free is refused here, as it is in Settings.
+///   made on a device where they were still free is refused here, as it is in Settings. A setting
+///   of one device is never received (`inbound_device_setting_check`).
 /// - `weekly_schedules`: a week never moves backwards in its lifecycle by synchronisation.
 /// - `audit_chain_stubs`: never this PC's own chain, never malformed (`audit::chain`).
 pub(crate) async fn before_upsert_checked(
@@ -293,13 +296,13 @@ pub(crate) async fn before_upsert_checked(
     if layout.def.entity_type != "app_settings" {
         return Ok(None);
     }
+    if let Some(outcome) = inbound_device_setting_check(conn, entity_sync_id, Some(payload)).await? {
+        return Ok(Some(outcome));
+    }
     let text = |k: &str| payload.get(k).and_then(serde_json::Value::as_str);
     let (Some(key), Some(value)) = (text("setting_key"), text("setting_value_json")) else {
         return Ok(None);
     };
-    if text("setting_scope") != Some("tenant") {
-        return Ok(None);
-    }
     let guard = async {
         crate::finance::fiscal::guard_fiscal_start_write(conn, key, value).await?;
         crate::inventory::fx::guard_currency_write(conn, key, value).await
@@ -311,6 +314,56 @@ pub(crate) async fn before_upsert_checked(
             message: format!("{key}: {}", messages.join("; ")),
         })),
         Err(other) => Err(other),
+    }
+}
+
+/// Conflict code of an `app_settings` row received for a setting of one device (`setting_scope`
+/// other than `tenant`).
+pub(crate) const SETTING_DEVICE_SCOPE: &str = "SETTING_DEVICE_SCOPE";
+
+/// `app_settings` mixes tenant settings (synchronised) and settings of this device (licence
+/// onboarding, bootstrap state, updater, diagnostics), which never leave the PC: the outbound row
+/// filter of `sync::row_spec` sends tenant rows only. A received row that is not a tenant setting
+/// (`payload`, or no scope at all), or that would change or delete a device setting held here
+/// under its sync id, comes from an abnormal sender: it is refused as a conflict for a person to
+/// see, never written.
+async fn inbound_device_setting_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
+    use crate::sync::materialize::ApplyOutcome;
+    let refused = |message: String| {
+        Ok(Some(ApplyOutcome::Conflict {
+            code: SETTING_DEVICE_SCOPE.into(),
+            message,
+        }))
+    };
+    if let Some(payload) = payload {
+        let scope = payload.get("setting_scope").and_then(serde_json::Value::as_str);
+        if scope != Some("tenant") {
+            return refused(format!(
+                "app_settings: a setting of scope {scope:?} belongs to one device and is never received by synchronisation"
+            ));
+        }
+    }
+    let local_scope = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT setting_scope FROM app_settings WHERE entity_sync_id = ? LIMIT 1",
+            [entity_sync_id.into()],
+        ))
+        .await?
+        .map(|row| row.try_get::<Option<String>>("", "setting_scope"))
+        .transpose()
+        .map_err(|e| hook_err("app_settings", e))?
+        .flatten();
+    match local_scope {
+        Some(scope) if scope != "tenant" => refused(format!(
+            "app_settings: the row held here under this sync id is a setting of this device (scope {scope:?}): \
+             it is never changed or deleted by synchronisation"
+        )),
+        _ => Ok(None),
     }
 }
 
@@ -377,6 +430,12 @@ pub(crate) async fn before_delete_checked(
     .await?
     {
         return Ok(Some(outcome));
+    }
+    // A setting of this device is never deleted by sync (`inbound_device_setting_check`).
+    if layout.def.entity_type == "app_settings" {
+        if let Some(outcome) = inbound_device_setting_check(conn, entity_sync_id, None).await? {
+            return Ok(Some(outcome));
+        }
     }
     let verdict = match layout.def.entity_type {
         "work_permits" | "permit_isolations" | "permit_suspensions" | "permit_types" | "qualification_requirements" => {

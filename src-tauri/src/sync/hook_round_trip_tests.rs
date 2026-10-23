@@ -100,6 +100,123 @@ async fn a_locked_fiscal_start_received_by_sync_is_a_conflict() {
     );
 }
 
+/// app_settings: a setting of one device never travels (outbound row filter). A received row of
+/// another scope, or one that would rewrite or delete a device setting held here under its sync
+/// id, is a SETTING_DEVICE_SCOPE conflict and nothing is written; a tenant setting still applies.
+#[tokio::test]
+async fn a_device_setting_received_by_sync_is_a_conflict() {
+    let db = crate::db::test_db::seeded().await;
+    exec(
+        &db,
+        "INSERT INTO app_settings (setting_key, category, setting_scope, setting_value_json, \
+         setting_risk, validation_status, last_modified_at) \
+         VALUES ('test.device_only', 'diagnostics', 'device', '\"here\"', 'low', 'valid', '2026-01-01T00:00:00Z')",
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO app_settings (setting_key, category, setting_scope, setting_value_json, \
+         setting_risk, validation_status, last_modified_at) \
+         VALUES ('test.tenant_wide', 'diagnostics', 'tenant', '\"plant\"', 'low', 'valid', '2026-01-01T00:00:00Z')",
+    )
+    .await;
+    crate::sync::capture::install_capture_in(&db)
+        .await
+        .expect("capture + identities");
+    let sync_id_of = |key: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT entity_sync_id FROM app_settings WHERE setting_key = '{key}'"),
+            )
+            .await
+        }
+    };
+    let value_of = |key: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT setting_value_json FROM app_settings WHERE setting_key = '{key}'"),
+            )
+            .await
+        }
+    };
+    let is_device_scope_conflict =
+        |o: &ApplyOutcome| matches!(o, ApplyOutcome::Conflict { code, .. } if code == "SETTING_DEVICE_SCOPE");
+
+    // The tenant row as a peer sends it, used as the template of the received rows.
+    let tenant_id = sync_id_of("test.tenant_wide").await;
+    let template = crate::sync::test_support::current_payload(&db, "app_settings", &tenant_id, &Default::default())
+        .await
+        .expect("payload")
+        .expect("row");
+    let apply = |sync_id: String, operation: &'static str, payload: serde_json::Map<String, serde_json::Value>| {
+        let db = &db;
+        async move {
+            apply_inbound_payload(
+                db,
+                "app_settings",
+                &sync_id,
+                operation,
+                2,
+                &serde_json::Value::Object(payload).to_string(),
+            )
+            .await
+            .expect("apply")
+        }
+    };
+
+    // A new row of device scope from another PC: refused, not inserted.
+    let mut device_row = template.clone();
+    device_row.insert("setting_key".into(), "test.sent_device_only".into());
+    device_row.insert("setting_scope".into(), "device".into());
+    let new_id = crate::sync::identity::new_entity_sync_id();
+    let outcome = apply(new_id.clone(), "upsert", device_row).await;
+    assert!(is_device_scope_conflict(&outcome), "{outcome:?}");
+    let inserted: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("SELECT COUNT(*) FROM app_settings WHERE entity_sync_id = '{new_id}'"),
+        ))
+        .await
+        .expect("q")
+        .expect("row")
+        .try_get_by_index(0)
+        .expect("count");
+    assert_eq!(inserted, 0, "the device row is not written");
+
+    // A tenant row sent under the sync id of this PC's device setting: refused, the value stays.
+    let device_id = sync_id_of("test.device_only").await;
+    let mut takeover = template.clone();
+    takeover.insert("setting_key".into(), "test.device_only".into());
+    takeover.insert("setting_value_json".into(), "\"taken over\"".into());
+    let outcome = apply(device_id.clone(), "upsert", takeover).await;
+    assert!(is_device_scope_conflict(&outcome), "{outcome:?}");
+    assert_eq!(value_of("test.device_only").await, "\"here\"");
+
+    // A delete of this PC's device setting: refused, the row stays.
+    let layout = crate::sync::row_layout::layout(&db, "app_settings")
+        .await
+        .expect("layout");
+    let outcome = apply(
+        device_id,
+        "delete",
+        crate::sync::row_codec::delete_payload(&layout, None),
+    )
+    .await;
+    assert!(is_device_scope_conflict(&outcome), "{outcome:?}");
+    assert_eq!(value_of("test.device_only").await, "\"here\"");
+
+    // A tenant setting still applies.
+    let mut tenant = template;
+    tenant.insert("setting_value_json".into(), "\"changed on another PC\"".into());
+    let outcome = apply(tenant_id, "upsert", tenant).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(value_of("test.tenant_wide").await, "\"changed on another PC\"");
+}
+
 /// A work-order part line received from a PC that has not run migration 231 (no `is_required` in
 /// the payload) is stored as required — what it meant there.
 #[tokio::test]
