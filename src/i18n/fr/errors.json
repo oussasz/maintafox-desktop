@@ -439,7 +439,7 @@
     "GATE_SYNC_SNAPSHOT_REQUIRED": "Synchronisation refusée : l'instantané est obligatoire.",
     "GATE_PM_ACTING_USER_REQUIRED": "Action refusée : aucun utilisateur n'est connecté pour l'enregistrer.",
     "GATE_PM_DATE_INVALID": "Date refusée : la date ou l'heure n'est pas valide. Choisissez-la dans le sélecteur.",
-    "GATE_PM_DATE_ORDER": "Dates refusées : la fin doit être postérieure ou égale au début.",
+    "GATE_PM_DATE_ORDER": "Dates refusées : la fin doit être postérieure au début.",
     "GATE_PM_DEFINITION_INVALID": "Plan PM refusé : le réglage du déclencheur ou des compétences est illisible. Rouvrez-le et enregistrez-le de nouveau.",
     "GATE_PM_FINDING_DESCRIPTION_REQUIRED": "Exécution refusée : décrivez chaque constat.",
     "GATE_PM_FINDING_TYPE_REQUIRED": "Exécution refusée : choisissez le type de chaque constat.",
@@ -470,7 +470,7 @@
     "GATE_PM_SCOPE_TYPE_INVALID": "Plan PM refusé : le type de périmètre n'est pas reconnu.",
     "GATE_PM_SKILL_UNKNOWN": "Plan PM refusé : une compétence choisie n'est pas publiée dans les données de référence.",
     "GATE_PM_START_READING_INVALID": "Plan PM refusé : le relevé de départ doit être un nombre supérieur ou égal à zéro.",
-    "GATE_PM_STATUS_INVALID": "Filtre refusé : le statut choisi n'est pas reconnu.",
+    "GATE_PM_STATUS_INVALID": "Changement refusé : le statut choisi n'est pas reconnu.",
     "GATE_PM_STRATEGY_INVALID": "Plan PM refusé : la stratégie choisie n'est pas reconnue.",
     "GATE_PM_TOLERANCE_INVALID": "Plan PM refusé : la tolérance doit avoir une unité (jours ou pourcentage) et des valeurs positives.",
     "GATE_PM_TRIGGER_FIELD_REQUIRED": "Plan PM refusé : il manque une information obligatoire pour ce type de déclencheur.",
@@ -478,7 +478,7 @@
     "GATE_PM_VERSION_NOT_DRAFT_DELETE": "Suppression refusée : seule une version en brouillon peut être supprimée.",
     "GATE_PM_VERSION_NOT_DRAFT_EDIT": "Modification refusée : seule une version en brouillon peut être modifiée.",
     "GATE_PM_WO_MISMATCH": "Occurrence refusée : l'OT indiqué n'est pas celui déjà lié à cette occurrence.",
-    "GATE_PM_WO_TYPE_UNKNOWN": "Génération refusée : le type d'OT du plan n'existe plus dans les données de référence.",
+    "GATE_PM_WO_TYPE_UNKNOWN": "Suite refusée : le type d'OT choisi n'existe pas ou est inactif.",
     "GATE_PM_WO_UNKNOWN": "Occurrence refusée : l'OT indiqué n'existe pas."
   },
   "scope": {

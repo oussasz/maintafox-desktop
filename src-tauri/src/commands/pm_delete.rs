@@ -73,9 +73,9 @@ pub async fn delete_pm_plan_version(
         ))
         .await?;
     if delete_result.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(
-            vec!["PM version delete failed.".to_string()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM version delete failed.".to_string(),
+        ]));
     }
 
     tx.execute(Statement::from_sql_and_values(
