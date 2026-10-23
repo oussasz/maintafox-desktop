@@ -76,6 +76,22 @@
         }
       }
     },
+    "overQuantity": {
+      "list": "Sur-sorties et sur-réceptions à rapprocher",
+      "flagKind": {
+        "over_issue": "Sur-sortie — à rapprocher",
+        "over_receipt": "Sur-réception — à rapprocher"
+      },
+      "explainKind": {
+        "over_issue": "Réservation pour {{document}} : {{expected}} réservé(s), {{actual}} sorti(s) au total (sorties faites sur plusieurs postes, retours déduits), soit {{excess}} de trop. Actuellement {{onHand}} en stock. Vérifiez le stock et enregistrez un comptage sur un poste qui a reçu toutes ces sorties.",
+        "over_receipt": "Commande {{document}} : {{expected}} commandé(s), {{actual}} réceptionné(s) au total (réceptions faites sur plusieurs postes), soit {{excess}} de trop. Actuellement {{onHand}} en stock. Vérifiez le stock et enregistrez un comptage sur un poste qui a reçu toutes ces réceptions."
+      },
+      "documentWorkOrder": "l'OT {{code}}",
+      "documentNone": "une réservation sans référence",
+      "movementLine": "{{movement}} — {{who}}, {{date}} : {{quantity}}",
+      "movementLineRef": "{{movement}} {{ref}} — {{who}}, {{date}} : {{quantity}}",
+      "syncNotice": "{{count}} sur-sortie(s) ou sur-réception(s) (sorties ou réceptions faites sur plusieurs postes au-delà de la quantité réservée ou commandée) : à rapprocher par un comptage (Stock › Contrôles)."
+    },
     "label": "Stock négatif",
     "hint": "À corriger : un autre poste a peut-être enregistré un mouvement. Enregistrez un comptage dans « Stock à rapprocher » (Stock › Contrôles).",
     "hintTotal": "Total des magasins négatif. À corriger : un autre poste a peut-être enregistré un mouvement. Enregistrez un comptage dans « Stock à rapprocher » (Stock › Contrôles)."

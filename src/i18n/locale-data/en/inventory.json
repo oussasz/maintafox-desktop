@@ -76,6 +76,22 @@
         }
       }
     },
+    "overQuantity": {
+      "list": "Over-issues and over-receipts to reconcile",
+      "flagKind": {
+        "over_issue": "Over-issue — to reconcile",
+        "over_receipt": "Over-receipt — to reconcile"
+      },
+      "explainKind": {
+        "over_issue": "Reservation for {{document}}: {{expected}} reserved, {{actual}} issued in all (issues made on several PCs, returns deducted), {{excess}} too many. {{onHand}} on hand now. Check the stock and record a count on a PC that has received all these issues.",
+        "over_receipt": "Purchase order {{document}}: {{expected}} ordered, {{actual}} received in all (receipts made on several PCs), {{excess}} too many. {{onHand}} on hand now. Check the stock and record a count on a PC that has received all these receipts."
+      },
+      "documentWorkOrder": "work order {{code}}",
+      "documentNone": "a reservation without reference",
+      "movementLine": "{{movement}} — {{who}}, {{date}}: {{quantity}}",
+      "movementLineRef": "{{movement}} {{ref}} — {{who}}, {{date}}: {{quantity}}",
+      "syncNotice": "{{count}} over-issue(s) or over-receipt(s) (issues or receipts made on several PCs beyond the quantity reserved or ordered): to reconcile with a count (Inventory › Controls)."
+    },
     "label": "Negative stock",
     "hint": "To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",
     "hintTotal": "Total over all stores is negative. To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls)."

@@ -93,6 +93,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [
         {
           article_id: 22,
@@ -125,6 +127,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     mocks.listNegativeStockReviews.mockResolvedValue({
@@ -133,6 +137,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     mocks.resolveNegativeStockByCount.mockResolvedValue({
@@ -181,6 +187,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -235,6 +243,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -290,6 +300,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [posting],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -343,6 +355,8 @@ describe("NegativeStockReviewPanel", () => {
         },
       ],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -370,6 +384,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -395,6 +411,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -434,6 +452,8 @@ describe("NegativeStockReviewPanel", () => {
       ],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -444,6 +464,153 @@ describe("NegativeStockReviewPanel", () => {
     expect(frInventory.negativeStock.doubleCount.closedByReversal).toMatch(
       /^clos par annulation du comptage/,
     );
+  });
+
+  it("names the work order, the purchase order and every movement of an over-issue and an over-receipt", async () => {
+    const over = (overrides: Record<string, unknown>) => ({
+      article_id: 21,
+      article_code: "A-21",
+      article_name: "Bearing",
+      location_id: 10,
+      location_code: "BIN",
+      warehouse_code: "MAIN",
+      work_order_code: null,
+      reservation_ref: null,
+      purchase_order_number: null,
+      expected_qty: 5,
+      actual_qty: 10,
+      excess_qty: 5,
+      closed_by: null,
+      on_hand_qty: 0,
+      reserved_qty: 0,
+      available_qty: 0,
+      ...overrides,
+    });
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
+      over_quantities: [
+        over({
+          kind: "over_issue",
+          work_order_code: "OT-0042",
+          movements: [
+            {
+              movement_sync_id: "i1",
+              movement_type: "ISSUE",
+              document_ref: null,
+              posted_by: "Alice",
+              posted_at: TS,
+              quantity: 5,
+            },
+            {
+              movement_sync_id: "i2",
+              movement_type: "ISSUE",
+              document_ref: null,
+              posted_by: "Bob",
+              posted_at: TS,
+              quantity: 5,
+            },
+          ],
+        }),
+        over({
+          kind: "over_receipt",
+          purchase_order_number: "PO-77",
+          on_hand_qty: 10,
+          available_qty: 10,
+          movements: [
+            {
+              movement_sync_id: "g1",
+              movement_type: "GR_ACCEPT",
+              document_ref: "GR-1",
+              posted_by: null,
+              posted_at: TS,
+              quantity: 5,
+            },
+          ],
+        }),
+      ],
+      closed_over_quantities: [],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    expect(await screen.findByText("Over-issue — to reconcile")).toBeInTheDocument();
+    expect(screen.getByText("Over-receipt — to reconcile")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /^Reservation for work order OT-0042: 5 reserved, 10 issued in all .*5 too many/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/^Purchase order PO-77: 5 ordered, 10 received in all .*5 too many/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^Issue to work order — Alice, .*: 5$/)).toBeInTheDocument();
+    expect(screen.getByText(/^Issue to work order — Bob, .*: 5$/)).toBeInTheDocument();
+    expect(screen.getByText(/^Goods receipt GR-1 — Unknown user, .*: 5$/)).toBeInTheDocument();
+    expect(screen.queryByText("No location below zero.")).not.toBeInTheDocument();
+    const buttons = screen.getAllByRole("button", { name: "Record a count" });
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[0] as HTMLElement);
+    expect(await screen.findByRole("button", { name: "Record the count" })).toBeDisabled();
+    expect(frInventory.negativeStock.overQuantity.flagKind.over_issue).toBe(
+      "Sur-sortie — à rapprocher",
+    );
+    expect(frInventory.negativeStock.overQuantity.flagKind.over_receipt).toBe(
+      "Sur-réception — à rapprocher",
+    );
+  });
+
+  it("shows an over-receipt closed by a count with the closed items", async () => {
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [
+        {
+          kind: "over_receipt",
+          article_id: 21,
+          article_code: "A-21",
+          article_name: "Bearing",
+          location_id: 10,
+          location_code: "BIN",
+          warehouse_code: "MAIN",
+          work_order_code: null,
+          reservation_ref: null,
+          purchase_order_number: "PO-77",
+          expected_qty: 5,
+          actual_qty: 10,
+          excess_qty: 5,
+          movements: [],
+          closed_by: {
+            count_sync_id: "c1",
+            session_code: "CC-9",
+            path: "reconciliation",
+            counted_by: "Alice",
+            device_code: "7KQ2",
+            counted_at: TS,
+            system_qty: 10,
+            counted_qty: 5,
+            variance_qty: -5,
+          },
+          on_hand_qty: 5,
+          reserved_qty: 0,
+          available_qty: 5,
+        },
+      ],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    fireEvent.click(await screen.findByLabelText("Show reconciled items"));
+    expect(
+      await screen.findByText(
+        /Over-receipt — to reconcile · PO-77 · closed by count CC-9 \(Alice, .+\)/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("has every text in French too", () => {

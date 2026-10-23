@@ -5,8 +5,10 @@
  * review item per article and location, closed by a stock count recorded there (inv.manage, a
  * reason) or by a later stock entry. Two counts of the same location recorded on different PCs
  * without knowing each other are a double count to verify, closed by a new count; so is a count
- * whose movement is in the ledger twice (posted on two PCs by older versions). More reserved
- * than held is a warning only.
+ * whose movement is in the ledger twice (posted on two PCs by older versions). A reservation
+ * issued, or a PO line received, beyond its quantity by movements of several PCs is a
+ * "sur-sortie / sur-réception — à rapprocher", closed the same way. More reserved than held is a
+ * warning only.
  *
  * IPC failures are passed on untouched so their coded reasons (`inventory:errors.*`) reach the
  * screen (`appErrorReason`).
@@ -136,6 +138,52 @@ export const DoublePostedCountReviewSchema = z.object({
 });
 export type DoublePostedCountReview = z.infer<typeof DoublePostedCountReviewSchema>;
 
+/** One movement of an over-issue (issue or return of the reservation) or over-receipt (receipt entry). */
+export const OverQuantityMovementSchema = z.object({
+  movement_sync_id: z.string(),
+  movement_type: z.enum(["ISSUE", "RETURN", "GR_ACCEPT"]),
+  /** The document it was recorded on (goods-receipt number), when any. */
+  document_ref: z.string().nullable(),
+  posted_by: z.string().nullable(),
+  posted_at: z.string(),
+  quantity: z.number(),
+});
+export type OverQuantityMovement = z.infer<typeof OverQuantityMovementSchema>;
+
+/**
+ * "Sur-sortie / sur-réception — à rapprocher": one reservation issued beyond its reserved
+ * quantity, or one PO line received beyond its ordered quantity, by movements of several PCs
+ * (listed per location of the receipts). Closed only by a count of that article and location made
+ * on a PC holding every one of its movements.
+ */
+export const OverQuantityReviewSchema = z.object({
+  kind: z.enum(["over_issue", "over_receipt"]),
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  location_id: z.number(),
+  location_code: z.string(),
+  warehouse_code: z.string(),
+  /** Over-issue: the work order of the reservation, when it has one. */
+  work_order_code: z.string().nullable(),
+  /** Over-issue: the reservation's own reference. */
+  reservation_ref: z.string().nullable(),
+  /** Over-receipt: the purchase order of the line. */
+  purchase_order_number: z.string().nullable(),
+  /** Reserved (over-issue) or ordered (over-receipt). */
+  expected_qty: z.number(),
+  /** Issued net of returns, or received on every receipt. */
+  actual_qty: z.number(),
+  excess_qty: z.number(),
+  movements: z.array(OverQuantityMovementSchema),
+  /** The count that closed it (null while it is to reconcile). */
+  closed_by: ReconciliationCountSchema.nullable(),
+  on_hand_qty: z.number(),
+  reserved_qty: z.number(),
+  available_qty: z.number(),
+});
+export type OverQuantityReview = z.infer<typeof OverQuantityReviewSchema>;
+
 const NegativeStockReviewListSchema = z.object({
   items: z.array(NegativeStockReviewSchema),
   double_counts: z.array(DoubleCountReviewSchema),
@@ -144,6 +192,9 @@ const NegativeStockReviewListSchema = z.object({
   double_postings: z.array(DoublePostedCountReviewSchema),
   /** Counts posted twice that a new count closed (when closed items are asked). */
   closed_double_postings: z.array(DoublePostedCountReviewSchema),
+  over_quantities: z.array(OverQuantityReviewSchema),
+  /** Over-issues and over-receipts that a count closed (when closed items are asked). */
+  closed_over_quantities: z.array(OverQuantityReviewSchema),
   over_reservations: z.array(OverReservationWarningSchema),
 });
 export type NegativeStockReviewList = z.infer<typeof NegativeStockReviewListSchema>;
@@ -153,6 +204,8 @@ const NegativeStockSummarySchema = z.object({
   double_count_count: z.number(),
   /** Counts posted twice (same count on two PCs, older versions) still to verify. */
   double_posting_count: z.number(),
+  /** Over-issues and over-receipts (several PCs) still to reconcile. */
+  over_quantity_count: z.number(),
   over_reserved_count: z.number(),
 });
 export type NegativeStockSummary = z.infer<typeof NegativeStockSummarySchema>;
