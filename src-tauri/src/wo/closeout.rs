@@ -20,6 +20,7 @@ use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 use crate::reliability::queries as reliability_queries;
 use crate::wo::queries;
 use crate::wo::time::{now_utc_second, now_utc_z, stamp};
+use crate::wo::workflow::state_machine::status_i18n_key;
 use chrono::{Duration, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -146,7 +147,7 @@ pub async fn reopen_window_days(db: &impl ConnectionTrait) -> AppResult<i64> {
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "Setting {SETTING_REOPEN_WINDOW_DAYS} is missing; a closed work order cannot be reopened."
+                "GATE_REOPEN_WINDOW_NOT_SET: Setting {SETTING_REOPEN_WINDOW_DAYS} is missing; a closed work order cannot be reopened."
             )])
         })?;
     let raw: String = row
@@ -154,12 +155,12 @@ pub async fn reopen_window_days(db: &impl ConnectionTrait) -> AppResult<i64> {
         .map_err(|e| decode_err("setting_value_json", e))?;
     let days: i64 = serde_json::from_str(raw.trim()).map_err(|_| {
         AppError::ValidationFailed(vec![format!(
-            "Setting {SETTING_REOPEN_WINDOW_DAYS} must be a whole number of days (got {raw})."
+            "GATE_REOPEN_WINDOW_INVALID: Setting {SETTING_REOPEN_WINDOW_DAYS} must be a whole number of days (got {raw})."
         )])
     })?;
     if days < 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Setting {SETTING_REOPEN_WINDOW_DAYS} must not be negative."
+            "GATE_REOPEN_WINDOW_NEGATIVE: Setting {SETTING_REOPEN_WINDOW_DAYS} must not be negative."
         )]));
     }
     Ok(days)
@@ -363,7 +364,7 @@ fn map_verification(row: &sea_orm::QueryResult) -> AppResult<WoVerification> {
 fn check_concurrency(rows_affected: u64) -> AppResult<()> {
     if rows_affected == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a ete modifie par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a ete modifie par un autre utilisateur. \
              Veuillez recharger et reessayer."
                 .to_string(),
         ]));
@@ -667,7 +668,7 @@ pub async fn save_failure_detail(db: &DatabaseConnection, input: SaveFailureDeta
     // ── Validate: cannot be both temporary AND permanent ──────────────────
     if input.is_temporary_repair && input.is_permanent_repair {
         return Err(AppError::ValidationFailed(vec![
-            "L'action ne peut pas etre a la fois temporaire et permanente. \
+            "GATE_CLOSEOUT_ACTION_TEMP_AND_PERM: L'action ne peut pas etre a la fois temporaire et permanente. \
              (Action cannot be both temporary and permanent.)"
                 .to_string(),
         ]));
@@ -677,7 +678,8 @@ pub async fn save_failure_detail(db: &DatabaseConnection, input: SaveFailureDeta
     let (status_code, _status, _rv) = load_wo_status(db, input.wo_id).await?;
     if matches!(status_code.as_str(), "closed" | "cancelled") {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de modifier les details de defaillance pour un OT en statut '{status_code}'."
+            "GATE_CLOSEOUT_FAILURE_DETAILS_LOCKED:status={}: Impossible de modifier les details de defaillance pour un OT en statut '{status_code}'.",
+            status_i18n_key(&status_code)
         )]));
     }
 
@@ -804,12 +806,15 @@ pub async fn save_failure_coding(db: &DatabaseConnection, input: SaveFailureCodi
     let mut errors = Vec::new();
     if let Some(id) = input.failure_mechanism_id {
         if !is_value_of_domain(db, id, DOMAIN_FAILURE_MECHANISMS).await? {
-            errors.push("Le mécanisme de défaillance choisi n'existe plus dans le référentiel.".to_string());
+            errors.push("GATE_CLOSEOUT_MECHANISM_UNKNOWN: Le mécanisme de défaillance choisi n'existe plus dans le référentiel.".to_string());
         }
     }
     if let Some(id) = input.detection_method_id {
         if !is_value_of_domain(db, id, DOMAIN_DETECTION_METHODS).await? {
-            errors.push("La méthode de détection choisie n'existe plus dans le référentiel.".to_string());
+            errors.push(
+                "GATE_CLOSEOUT_DETECTION_UNKNOWN: La méthode de détection choisie n'existe plus dans le référentiel."
+                    .to_string(),
+            );
         }
     }
     if !errors.is_empty() {
@@ -858,7 +863,7 @@ pub async fn save_verification(
     // ── Validate result ───────────────────────────────────────────────────
     if !VALID_VERIFICATION_RESULTS.contains(&input.result.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Resultat de verification invalide : '{}'. Valeurs autorisees : pass, fail, monitor.",
+            "GATE_CLOSEOUT_VERIFY_RESULT_INVALID: Resultat de verification invalide : '{}'. Valeurs autorisees : pass, fail, monitor.",
             input.result
         )]));
     }
@@ -867,7 +872,7 @@ pub async fn save_verification(
     if let Some(ref level) = input.recurrence_risk_level {
         if !VALID_RECURRENCE_LEVELS.contains(&level.as_str()) {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Niveau de risque de recurrence invalide : '{}'. Valeurs autorisees : none, low, medium, high.",
+                "GATE_CLOSEOUT_RECURRENCE_RISK_INVALID: Niveau de risque de recurrence invalide : '{}'. Valeurs autorisees : none, low, medium, high.",
                 level
             )]));
         }
@@ -879,7 +884,8 @@ pub async fn save_verification(
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
     if current_status != WoStatus::Completed {
         return Err(AppError::ValidationFailed(vec![format!(
-            "La revue superviseur n'est disponible qu'en statut completed (actuel: '{from_code}')."
+            "GATE_CLOSEOUT_REVIEW_STATUS:status={}: La revue superviseur n'est disponible qu'en statut completed (actuel: '{from_code}').",
+            status_i18n_key(&from_code)
         )]));
     }
     use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
@@ -906,7 +912,7 @@ pub async fn save_verification(
     if let Some(resp_id) = primary_responsible_id {
         if resp_id == input.verified_by_id {
             return Err(AppError::ValidationFailed(vec![
-                "L'auto-verification n'est pas autorisee : le verificateur doit etre different \
+                "GATE_CLOSEOUT_SELF_VERIFICATION: L'auto-verification n'est pas autorisee : le verificateur doit etre different \
                  du responsable principal. (Self-verification is not allowed.)"
                     .to_string(),
             ]));
@@ -1089,7 +1095,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         .try_get::<i64>("", "labor_cnt")
         .map_err(|e| decode_err("labor_cnt", e))?;
     if alh <= 0.0 && labor_cnt == 0 {
-        preflight.add("Heures de main-d'oeuvre requises. (Labor actuals required.)");
+        preflight.add("GATE_CLOSEOUT_LABOR_REQUIRED: Heures de main-d'oeuvre requises. (Labor actuals required.)");
     }
 
     // (b) Parts actuals required
@@ -1112,7 +1118,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         .try_get::<i64>("", "parts_cnt")
         .map_err(|e| decode_err("parts_cnt", e))?;
     if pac == 0 && parts_cnt == 0 {
-        preflight.add("Consommation de pieces requise. (Parts actuals required.)");
+        preflight.add("GATE_CLOSEOUT_PARTS_REQUIRED: Consommation de pieces requise. (Parts actuals required.)");
     }
 
     // (c) Failure coding + RCA for corrective/emergency (ISO 14224 close-out)
@@ -1144,21 +1150,21 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             if cause_not_determined {
                 if !policy.allow_close_with_cause_not_determined {
                     preflight.add(
-                        "La politique n'autorise pas la cloture avec cause non determinee. \
+                        "GATE_CLOSEOUT_CND_NOT_ALLOWED: La politique n'autorise pas la cloture avec cause non determinee. \
                          (Policy disallows close with cause not determined.)",
                     );
                 }
                 let nmin = policy.notes_min_length_when_cnd.max(1) as usize;
                 if fd_notes.as_deref().is_none_or(|s| s.trim().len() < nmin) {
                     preflight.add(format!(
-                        "Notes obligatoires (cause non determinee), minimum {nmin} caracteres. \
+                        "GATE_CLOSEOUT_CND_NOTES_REQUIRED:min={nmin}: Notes obligatoires (cause non determinee), minimum {nmin} caracteres. \
                          (Notes required when cause not determined.)"
                     ));
                 }
             } else {
                 if failure_mode_id.is_none() {
                     preflight.add(
-                        "Mode de defaillance obligatoire (ISO 14224 — failure mode). \
+                        "GATE_CLOSEOUT_FAILURE_MODE_REQUIRED: Mode de defaillance obligatoire (ISO 14224 — failure mode). \
                          (Failure mode is required.)",
                     );
                 }
@@ -1167,14 +1173,14 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 }
                 if failure_cause_id.is_none() && !policy.allow_close_with_cause_mode_only {
                     preflight.add(
-                        "Cause de defaillance obligatoire (ISO 14224 — failure cause), \
+                        "GATE_CLOSEOUT_FAILURE_CAUSE_REQUIRED: Cause de defaillance obligatoire (ISO 14224 — failure cause), \
                          sauf politique mode-seul. (Failure cause is required.)",
                     );
                 }
             }
         } else {
             preflight.add(
-                "Codification de defaillance requise pour un OT correctif/urgence. \
+                "GATE_CLOSEOUT_FAILURE_CODING_REQUIRED: Codification de defaillance requise pour un OT correctif/urgence. \
                  (Failure coding required for corrective/emergency work.)",
             );
         }
@@ -1195,7 +1201,9 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             .try_get::<Option<String>>("", "root_cause_summary")
             .map_err(|e| decode_err("root_cause_summary", e))?;
         if rcs.as_deref().is_none_or(|s| s.trim().is_empty()) {
-            preflight.add("Resume de cause racine requis. (Root cause summary required.)");
+            preflight.add(
+                "GATE_CLOSEOUT_ROOT_CAUSE_REQUIRED: Resume de cause racine requis. (Root cause summary required.)",
+            );
         }
     }
 
@@ -1300,7 +1308,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             .unwrap_or(false);
         if dt_cnt == 0 && !(attest && reason_ok) {
             preflight.add(
-                "Temps d'arret production : enregistrer un segment d'arret ou attester \
+                "GATE_CLOSEOUT_DOWNTIME_REQUIRED: Temps d'arret production : enregistrer un segment d'arret ou attester \
                  explicitement l'absence d'arret avec justification. \
                  (Downtime segment or explicit no-downtime attestation required.)",
             );
@@ -1323,7 +1331,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             .map_err(|e| decode_err("rts_cnt", e))?;
         if rts_cnt == 0 {
             preflight.add(
-                "Verification avec retour en service confirme requis. \
+                "GATE_CLOSEOUT_RTS_VERIFICATION_REQUIRED: Verification avec retour en service confirme requis. \
                  (Verification with return-to-service confirmed is required.)",
             );
         }
@@ -1342,7 +1350,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             .try_get::<i64>("", "cnt")
             .map_err(|e| decode_err("ver_cnt", e))?;
         if ver_cnt == 0 {
-            preflight.add("Verification technique requise. (Technical verification required.)");
+            preflight.add("GATE_CLOSEOUT_VERIFICATION_REQUIRED: Verification technique requise. (Technical verification required.)");
         }
     }
 
@@ -1552,7 +1560,8 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
 pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResult<WorkOrder> {
     if input.reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Une raison de reouverture est obligatoire. (Reopen reason is required.)".to_string(),
+            "GATE_REOPEN_REASON_REQUIRED: Une raison de reouverture est obligatoire. (Reopen reason is required.)"
+                .to_string(),
         ]));
     }
 
@@ -1561,7 +1570,7 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         "in_progress" => WoStatus::InProgress,
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Cible de reouverture invalide '{other}'. Utilisez 'in_progress' ou 'planning'."
+                "GATE_REOPEN_TARGET_INVALID: Cible de reouverture invalide '{other}'. Utilisez 'in_progress' ou 'planning'."
             )]));
         }
     };
@@ -1588,7 +1597,8 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         WoStatus::Closed => ensure_within_reopen_window(&txn, input.wo_id).await?,
         _ => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Only completed or recently closed work orders can be reopened (current status '{from_code}')."
+                "GATE_REOPEN_STATUS:status={}: Only completed or recently closed work orders can be reopened (current status '{from_code}').",
+                status_i18n_key(&from_code)
             )]));
         }
     }
@@ -1682,13 +1692,14 @@ async fn ensure_within_reopen_window(txn: &impl ConnectionTrait, wo_id: i64) -> 
         .and_then(|c| chrono::DateTime::parse_from_rfc3339(c).ok())
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "The closure date of this work order is unknown; it cannot be reopened.".into(),
+                "GATE_REOPEN_CLOSED_AT_UNKNOWN: The closure date of this work order is unknown; it cannot be reopened."
+                    .into(),
             ])
         })?;
     let age_days = (chrono::Utc::now() - closed.with_timezone(&chrono::Utc)).num_seconds() as f64 / 86_400.0;
     if age_days > window as f64 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "This work order was closed more than {window} day(s) ago (reopen window); create a new work order instead."
+            "GATE_REOPEN_WINDOW_EXPIRED:days={window}: This work order was closed more than {window} day(s) ago (reopen window); create a new work order instead."
         )]));
     }
     Ok(())
@@ -1743,7 +1754,8 @@ pub async fn update_wo_rca(db: &DatabaseConnection, input: UpdateWoRcaInput) -> 
     let (status_code, _status, _rv) = load_wo_status(db, input.wo_id).await?;
     if matches!(status_code.as_str(), "closed" | "cancelled") {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de modifier les champs RCA pour un OT en statut '{status_code}'."
+            "GATE_CLOSEOUT_RCA_LOCKED:status={}: Impossible de modifier les champs RCA pour un OT en statut '{status_code}'.",
+            status_i18n_key(&status_code)
         )]));
     }
 
