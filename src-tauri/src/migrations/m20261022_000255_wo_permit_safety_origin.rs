@@ -61,6 +61,8 @@ impl MigrationTrait for Migration {
 
 #[cfg(test)]
 mod tests {
+    use sea_orm_migration::{MigrationTrait, SchemaManager};
+
     use crate::sync::test_support::{exec, scalar_i64, started_db, RowFactory};
 
     async fn origin(db: &sea_orm::DatabaseConnection, wo_id: i64) -> i64 {
@@ -72,23 +74,24 @@ mod tests {
         .await
     }
 
-    /// The column is there with its safe default, and the backfill (run by the migration on the work
-    /// orders that existed before it: reset here to that state) marks only the work orders of a
-    /// request flagged "sécurité". The generic row factory needs the current schema, so the rows are
-    /// made on it and set back to "not marked" first.
+    async fn column_count(db: &sea_orm::DatabaseConnection) -> i64 {
+        scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM pragma_table_info('work_orders') \
+              WHERE name = 'permit_from_safety_di' AND \"notnull\" = 1 AND dflt_value = '0'",
+            vec![],
+        )
+        .await
+    }
+
+    /// The migration itself, on a database whose work orders existed before it: the rows are made on
+    /// the current schema (the generic row factory needs it), then the column is dropped (capture
+    /// triggers off meanwhile, as during migrations) and the migration runs: it adds the column
+    /// (NOT NULL DEFAULT 0) and marks only the work orders of a request flagged "sécurité", without
+    /// changing any permit requirement. Run again, it changes nothing.
     #[tokio::test]
     async fn existing_work_orders_of_a_safety_request_are_marked_and_no_others() {
         let db = started_db().await;
-        assert_eq!(
-            scalar_i64(
-                &db,
-                "SELECT COUNT(*) FROM pragma_table_info('work_orders')                   WHERE name = 'permit_from_safety_di' AND \"notnull\" = 1 AND dflt_value = '0'",
-                vec![],
-            )
-            .await,
-            1,
-            "column added, NOT NULL DEFAULT 0"
-        );
         let mut factory = RowFactory::new();
         // From a request flagged "sécurité".
         let from_safety = factory.create(&db, "work_orders").await.expect("wo").rowid;
@@ -122,11 +125,16 @@ mod tests {
             vec![manual.into()],
         )
         .await;
-        exec(&db, "UPDATE work_orders SET permit_from_safety_di = 0", vec![]).await;
         let requires_before = scalar_i64(&db, "SELECT SUM(requires_permit) FROM work_orders", vec![]).await;
 
-        exec(&db, super::BACKFILL_SQL, vec![]).await;
+        // The database as it was before migration 255.
+        crate::sync::capture::suspend_capture(&db).await.expect("capture off");
+        exec(&db, "ALTER TABLE work_orders DROP COLUMN permit_from_safety_di", vec![]).await;
+        assert_eq!(column_count(&db).await, 0);
 
+        let manager = SchemaManager::new(&db);
+        super::Migration.up(&manager).await.expect("migration 255");
+        assert_eq!(column_count(&db).await, 1, "column added, NOT NULL DEFAULT 0");
         assert_eq!(origin(&db, from_safety).await, 1, "from a safety request");
         assert_eq!(origin(&db, from_plain).await, 0, "from a request without the flag");
         assert_eq!(origin(&db, manual).await, 0, "not from a request");
@@ -135,5 +143,11 @@ mod tests {
             requires_before,
             "no permit requirement is changed"
         );
+
+        super::Migration.up(&manager).await.expect("migration 255 again");
+        assert_eq!(column_count(&db).await, 1);
+        assert_eq!(origin(&db, from_safety).await, 1);
+        assert_eq!(origin(&db, from_plain).await, 0);
+        crate::sync::capture::install_capture(&db).await.expect("capture on");
     }
 }
