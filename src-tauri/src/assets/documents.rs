@@ -108,7 +108,7 @@ async fn validate_lookup(db: &impl ConnectionTrait, domain_key: &str, code: &str
     let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
     if cnt == 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Valeur '{code}' introuvable dans le domaine '{domain_key}' ({field_label})."
+            "GATE_ASSET_REFERENCE_VALUE_UNKNOWN: Valeur '{code}' introuvable dans le domaine '{domain_key}' ({field_label})."
         )]));
     }
     Ok(())
@@ -224,7 +224,7 @@ pub async fn upsert_asset_document_link(
     let document_ref = payload.document_ref.trim().to_string();
     if document_ref.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "La reference du document ne peut pas etre vide.".into(),
+            "GATE_ASSET_DOC_REFERENCE_REQUIRED: La reference du document ne peut pas etre vide.".into(),
         ]));
     }
 

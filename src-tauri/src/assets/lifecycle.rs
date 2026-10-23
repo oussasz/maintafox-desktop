@@ -178,7 +178,7 @@ async fn validate_event_type(db: &impl ConnectionTrait, code: &str) -> AppResult
     let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
     if cnt == 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Type d'evenement '{code}' introuvable dans le domaine \
+            "GATE_ASSET_LIFECYCLE_EVENT_UNKNOWN: Type d'evenement '{code}' introuvable dans le domaine \
              'equipment.lifecycle_event_type'."
         )]));
     }
@@ -240,23 +240,27 @@ fn validate_payload_for_event_type(payload: &RecordLifecycleEventPayload) -> App
     match et {
         "MOVED" => {
             if payload.from_org_node_id.is_none() {
-                errors.push("Un evenement de type 'MOVED' requiert 'from_org_node_id'.".into());
+                errors.push(
+                    "GATE_ASSET_LIFECYCLE_MOVED_FROM: Un evenement de type 'MOVED' requiert 'from_org_node_id'.".into(),
+                );
             }
             if payload.to_org_node_id.is_none() {
-                errors.push("Un evenement de type 'MOVED' requiert 'to_org_node_id'.".into());
+                errors.push(
+                    "GATE_ASSET_LIFECYCLE_MOVED_TO: Un evenement de type 'MOVED' requiert 'to_org_node_id'.".into(),
+                );
             }
         }
         "REPLACED" => {
             if payload.related_asset_id.is_none() {
-                errors.push("Un evenement de type 'REPLACED' requiert 'related_asset_id'.".into());
+                errors.push("GATE_ASSET_LIFECYCLE_REPLACED_RELATED: Un evenement de type 'REPLACED' requiert 'related_asset_id'.".into());
             }
         }
         "RECLASSIFIED" => {
             if payload.from_class_code.is_none() {
-                errors.push("Un evenement de type 'RECLASSIFIED' requiert 'from_class_code'.".into());
+                errors.push("GATE_ASSET_LIFECYCLE_RECLASSIFIED_FROM: Un evenement de type 'RECLASSIFIED' requiert 'from_class_code'.".into());
             }
             if payload.to_class_code.is_none() {
-                errors.push("Un evenement de type 'RECLASSIFIED' requiert 'to_class_code'.".into());
+                errors.push("GATE_ASSET_LIFECYCLE_RECLASSIFIED_TO: Un evenement de type 'RECLASSIFIED' requiert 'to_class_code'.".into());
             }
         }
         // Other event types have no mandatory extra fields beyond the base set.
@@ -391,7 +395,7 @@ pub(crate) async fn record_lifecycle_event_in(
                 Some("SCRAPPED") => "SCRAPPED".to_string(),
                 Some(other) => {
                     return Err(AppError::ValidationFailed(vec![format!(
-                        "Statut terminal invalide '{other}' pour un événement DECOMMISSIONED. \
+                        "GATE_ASSET_DECOMMISSION_TARGET_INVALID: Statut terminal invalide '{other}' pour un événement DECOMMISSIONED. \
                          Valeurs autorisées: DECOMMISSIONED, SCRAPPED."
                     )]));
                 }
