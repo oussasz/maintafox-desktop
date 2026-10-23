@@ -8,7 +8,7 @@
  * A version in force is never changed: the planner adds one from today or later, so past
  * capacity and plans stay as they were. Versions created by the upgrade are flagged for review.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { EntityFormDialog, EntityFormFooter } from "@/components/entity-form";
@@ -30,6 +30,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { DateField } from "@/components/ui/date-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { StatusChip } from "@/components/ui/status-chip";
@@ -51,6 +52,82 @@ import {
 import { formatOrgIpcError } from "@/utils/errors";
 import type { ReferenceValue } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
+
+/**
+ * Whole-number field that can be cleared while typing: the text stays as typed, a valid number is
+ * passed up at once, and on leaving the field an empty or invalid text goes back to the held value
+ * (or to `emptyValue` when the field is allowed to mean that value).
+ */
+function IntegerDraftInput({
+  value,
+  onCommit,
+  min,
+  max,
+  emptyValue,
+  commitOnBlur = false,
+  className,
+  ...props
+}: {
+  value: number;
+  onCommit: (n: number) => void;
+  min: number;
+  max?: number;
+  emptyValue?: number;
+  /** Commit when the field is left, not on each keystroke (a value that resizes other fields). */
+  commitOnBlur?: boolean;
+  className?: string;
+} & Omit<
+  React.ComponentProps<typeof Input>,
+  "value" | "onChange" | "onBlur" | "type" | "min" | "max" | "className"
+>) {
+  const [draft, setDraft] = useState(String(value));
+  const last = useRef(value);
+  useEffect(() => {
+    if (value !== last.current) {
+      last.current = value;
+      setDraft(String(value));
+    }
+  }, [value]);
+  return (
+    <Input
+      {...props}
+      inputMode="numeric"
+      autoComplete="off"
+      value={draft}
+      className={className}
+      onChange={(e) => {
+        const text = e.target.value;
+        setDraft(text);
+        if (commitOnBlur) return;
+        if (!/^\d+$/.test(text.trim())) return;
+        const n = Number(text.trim());
+        if (n < min || (max != null && n > max)) return;
+        last.current = n;
+        onCommit(n);
+      }}
+      onBlur={() => {
+        if (commitOnBlur && /^\d+$/.test(draft.trim())) {
+          const n = Number(draft.trim());
+          if (n >= min && (max == null || n <= max)) {
+            if (n !== value) {
+              last.current = n;
+              onCommit(n);
+            }
+            setDraft(String(n));
+            return;
+          }
+        }
+        if (draft.trim() === "" && emptyValue !== undefined) {
+          last.current = emptyValue;
+          onCommit(emptyValue);
+          setDraft(String(emptyValue));
+          return;
+        }
+        setDraft(String(value));
+      }}
+    />
+  );
+}
 
 function todayIso(): string {
   const d = new Date();
@@ -107,7 +184,7 @@ export function ClasseHoraireEditor({
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<ScheduleClassVersion | null>(null);
   const [effectiveFrom, setEffectiveFrom] = useState(today);
-  const [utilisation, setUtilisation] = useState("");
+  const [utilisation, setUtilisation] = useState<number | null>(null);
   const [note, setNote] = useState("");
   const [draft, setDraft] = useState<TimetableDraft>(() => templateDraft("day_week", today));
 
@@ -146,7 +223,7 @@ export function ClasseHoraireEditor({
       const current = versionOn(rows, today) ?? rows.at(-1);
       if (current) {
         setDraft(draftFrom(current));
-        setUtilisation(String(current.utilisation_percent));
+        setUtilisation(current.utilisation_percent);
       }
     } catch (e) {
       setLoadError(e);
@@ -159,7 +236,7 @@ export function ClasseHoraireEditor({
     if (!permissionsLoading) void load();
   }, [load, permissionsLoading]);
 
-  const utilisationValue = utilisation.trim() === "" ? null : Number(utilisation);
+  const utilisationValue = utilisation;
   const issue = validateTimetable(draft, utilisationValue);
   const metrics = timetableMetrics(draft.days, utilisationValue);
   const toReview = versions.some((v) => v.review_status === "to_review");
@@ -171,7 +248,7 @@ export function ClasseHoraireEditor({
     if (v) {
       setDraft(draftFrom(v));
       setEffectiveFrom(v.effective_from);
-      setUtilisation(String(v.utilisation_percent));
+      setUtilisation(v.utilisation_percent);
       setNote(v.note ?? "");
     } else {
       setEffectiveFrom(today);
@@ -442,17 +519,15 @@ export function ClasseHoraireEditor({
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="tt-util">{t("timetable.editor.utilisationLabel")}</Label>
-              <Input
+              <DecimalField
                 id="tt-util"
-                type="number"
                 min={1}
                 max={100}
-                step={1}
-                inputMode="decimal"
+                decimals={2}
                 placeholder={t("timetable.editor.utilisationPlaceholder")}
                 value={utilisation}
                 aria-describedby="tt-util-help"
-                onChange={(e) => setUtilisation(e.target.value)}
+                onValueChange={setUtilisation}
                 className="h-9 w-32"
               />
               <p id="tt-util-help" className="text-xs text-text-muted">
@@ -527,15 +602,13 @@ export function ClasseHoraireEditor({
               <>
                 <div className="grid gap-1.5">
                   <Label htmlFor="tt-cycle">{t("timetable.editor.cycleLength")}</Label>
-                  <Input
+                  <IntegerDraftInput
                     id="tt-cycle"
-                    type="number"
                     min={1}
                     max={MAX_CYCLE_DAYS}
+                    commitOnBlur
                     value={draft.cycleLength}
-                    onChange={(e) => {
-                      const n = Number(e.target.value);
-                      if (!Number.isFinite(n) || n < 1) return;
+                    onCommit={(n) => {
                       const length = Math.min(MAX_CYCLE_DAYS, Math.trunc(n));
                       setDraft((d) => ({
                         ...d,
@@ -603,21 +676,14 @@ export function ClasseHoraireEditor({
                         />
                       </td>
                       <td className="py-1 pr-2">
-                        <Input
-                          type="number"
+                        <IntegerDraftInput
                           min={0}
-                          step={5}
+                          emptyValue={0}
                           value={d.break_minutes}
                           disabled={d.is_rest_day}
                           aria-label={t("timetable.editor.breakOf", { day: label })}
                           className="h-10 w-20"
-                          onChange={(e) => {
-                            const n = Number(e.target.value);
-                            patchDay({
-                              ...d,
-                              break_minutes: Number.isFinite(n) && n >= 0 ? Math.trunc(n) : 0,
-                            });
-                          }}
+                          onCommit={(n) => patchDay({ ...d, break_minutes: Math.trunc(n) })}
                         />
                       </td>
                       <td className="py-1 text-right tabular-nums">

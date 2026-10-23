@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,7 +35,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ReviewMark } from "@/components/ui/review-mark";
 import { useFormatters } from "@/hooks/use-formatters";
@@ -185,8 +185,8 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
   /** Per tab: why its data could not be read (never shown as "no data" / "available"). */
   const [tabErrors, setTabErrors] = useState<Partial<Record<TabDataKey, unknown>>>({});
   const [tabsReload, setTabsReload] = useState(0);
-  const [laborRateInput, setLaborRateInput] = useState("");
-  const [overtimeRateInput, setOvertimeRateInput] = useState("");
+  const [laborRateInput, setLaborRateInput] = useState<number | null>(null);
+  const [overtimeRateInput, setOvertimeRateInput] = useState<number | null>(null);
   const [rateSaving, setRateSaving] = useState(false);
   const [rateError, setRateError] = useState<string | null>(null);
 
@@ -195,30 +195,17 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
 
   const submitRateCard = useCallback(async () => {
     setRateError(null);
-    const laborTrim = laborRateInput.trim();
-    const overtimeTrim = overtimeRateInput.trim();
-    if (!laborTrim) {
+    if (laborRateInput === null || laborRateInput < 0) {
       setRateError(t("validation.laborRateInvalid"));
       return;
     }
-    const laborNum = Number(laborTrim.replace(",", "."));
-    if (!Number.isFinite(laborNum) || laborNum < 0) {
-      setRateError(t("validation.laborRateInvalid"));
-      return;
-    }
-    let overtimeNum = 0;
-    if (overtimeTrim) {
-      overtimeNum = Number(overtimeTrim.replace(",", "."));
-      if (!Number.isFinite(overtimeNum) || overtimeNum < 0) {
-        setRateError(t("validation.overtimeRateInvalid"));
-        return;
-      }
-    }
+    const laborNum = laborRateInput;
+    const overtimeNum = overtimeRateInput ?? 0;
     setRateSaving(true);
     try {
       await createRateCard(p.id, laborNum, overtimeNum, null, "manual");
-      setLaborRateInput("");
-      setOvertimeRateInput("");
+      setLaborRateInput(null);
+      setOvertimeRateInput(null);
       await openPersonnel(p.id);
     } catch (err) {
       setRateError(describeAppError(err).title);
@@ -536,27 +523,21 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label htmlFor="detail-labor-rate">{t("field.laborRate")}</Label>
-                  <Input
+                  <DecimalField
                     id="detail-labor-rate"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    inputMode="decimal"
+                    fixed
                     value={laborRateInput}
-                    onChange={(e) => setLaborRateInput(e.target.value)}
+                    onValueChange={setLaborRateInput}
                     placeholder={t("field.laborRatePlaceholder")}
                   />
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor="detail-overtime-rate">{t("field.overtimeRate")}</Label>
-                  <Input
+                  <DecimalField
                     id="detail-overtime-rate"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    inputMode="decimal"
+                    fixed
                     value={overtimeRateInput}
-                    onChange={(e) => setOvertimeRateInput(e.target.value)}
+                    onValueChange={setOvertimeRateInput}
                     placeholder={t("field.overtimeRatePlaceholder")}
                   />
                 </div>
