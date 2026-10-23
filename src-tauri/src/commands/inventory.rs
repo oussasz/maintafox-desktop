@@ -1445,15 +1445,82 @@ pub async fn upsert_inventory_document_link(
     state: State<'_, AppState>,
 ) -> AppResult<InventoryDocumentLink> {
     let user = require_session!(state);
-    require_permission!(
-        state,
+    // The record's own write right: buyers attach documents to their orders.
+    crate::commands::qualification::require_any_permission(
+        &state,
         &user,
-        crate::rbac::permissions::INV_MANAGE,
-        PermissionScope::Global
-    );
+        document_link_write_rights(&input.entity_type),
+    )
+    .await?;
     // Who did it comes from the session, never from the UI payload.
     input.created_by_id = Some(i64::from(user.user_id));
     queries::upsert_inventory_document_link(&state.db, input).await
+}
+
+/// Rights that may add a document link to a record of `entity_type` (normalised as the query
+/// does): purchase and repair orders are written with `inv.procure` (or `inv.manage`); suppliers
+/// and articles with `inv.manage`. An unknown type needs `inv.manage`, then the query refuses it.
+pub(crate) fn document_link_write_rights(entity_type: &str) -> &'static [&'static str] {
+    use crate::rbac::permissions::{INV_MANAGE, INV_PROCURE};
+    match entity_type.trim().to_uppercase().as_str() {
+        "PURCHASE_ORDER" | "REPAIRABLE_ORDER" => &[INV_PROCURE, INV_MANAGE],
+        _ => &[INV_MANAGE],
+    }
+}
+
+#[cfg(test)]
+mod document_link_rights_tests {
+    use super::document_link_write_rights;
+    use crate::auth::scope_tests::{assign, role, user};
+    use crate::commands::qualification::first_held_permission;
+    use crate::rbac::permissions::{INV_MANAGE, INV_PROCURE, INV_VIEW};
+
+    async fn allowed(db: &sea_orm::DatabaseConnection, user_id: i32, entity_type: &str) -> bool {
+        let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
+        first_held_permission(db, &cache, user_id, document_link_write_rights(entity_type))
+            .await
+            .expect("rbac")
+            .is_some()
+    }
+
+    async fn holder(db: &sea_orm::DatabaseConnection, name: &str, perms: &[&str]) -> i32 {
+        let id = user(db, name).await;
+        let r = role(db, &format!("doc links {name}"), perms).await;
+        assign(db, id, r, "tenant", None).await;
+        id
+    }
+
+    #[tokio::test]
+    async fn each_entity_type_needs_its_own_write_right() {
+        let db = crate::db::test_db::seeded().await;
+        let buyer = holder(&db, "buyer", &[INV_VIEW, INV_PROCURE]).await;
+        let manager = holder(&db, "stock.manager", &[INV_VIEW, INV_MANAGE]).await;
+        let reader = holder(&db, "stock.reader", &[INV_VIEW]).await;
+
+        for (entity_type, buyer_ok) in [
+            ("PURCHASE_ORDER", true),
+            ("REPAIRABLE_ORDER", true),
+            ("SUPPLIER", false),
+            ("ARTICLE", false),
+            (" purchase_order ", true),
+            ("repairable_order", true),
+        ] {
+            assert_eq!(
+                allowed(&db, buyer, entity_type).await,
+                buyer_ok,
+                "inv.procure on {entity_type}"
+            );
+            assert!(allowed(&db, manager, entity_type).await, "inv.manage on {entity_type}");
+            assert!(
+                !allowed(&db, reader, entity_type).await,
+                "inv.view only on {entity_type}"
+            );
+        }
+        assert!(
+            !allowed(&db, buyer, "EQUIPMENT").await,
+            "an unknown type needs inv.manage"
+        );
+    }
 }
 
 // ── WO material readiness ────────────────────────────────────────────────────
