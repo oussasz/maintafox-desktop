@@ -89,6 +89,17 @@ async fn sync_id_of(db: &DatabaseConnection, table: &str, id: i64) -> String {
     .expect("sync id")
 }
 
+/// Runs `sql` on `db` with change capture suppressed: the rows keep their place in the outbox and
+/// are sent as they now stand (used to set the time a movement was recorded).
+async fn exec_uncaptured(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
+    use sea_orm::TransactionTrait;
+    let tx = db.begin().await.expect("tx");
+    crate::sync::capture::begin_suppression(&tx).await.expect("suppress");
+    exec(&tx, sql, values).await;
+    crate::sync::capture::end_suppression(&tx).await.expect("unsuppress");
+    tx.commit().await.expect("commit");
+}
+
 /// `(on hand, reserved)` of the pair, in thousandths.
 async fn balance_milli(db: &DatabaseConnection, article_id: i64, location_id: i64) -> (i64, i64) {
     (
@@ -318,8 +329,15 @@ async fn an_over_issue_is_closed_only_by_a_count_made_where_every_movement_was_h
     let (open, closed) = over_items(&a, art_a, loc_a).await;
     assert!(open.is_empty(), "A: closed by its count");
     assert_eq!(closed.len(), 1);
-    let closing_session = closed[0].closed_by.as_ref().expect("closed by").session_code.clone();
+    let closing = closed[0].closed_by.as_ref().expect("closed by");
+    let closing_session = closing.session_code.clone();
     assert_eq!(closing_session, resolved.session_code);
+    assert_eq!(closing.path, COUNT_PATH_RECONCILIATION);
+    assert_eq!(closing.variance_qty, 0.0, "0 on hand, 0 counted");
+    assert_eq!(
+        closing.approved_by, None,
+        "a count from the list without variance names no approver"
+    );
     assert_eq!(
         negative_stock::summary(&a).await.expect("summary").over_quantity_count,
         0
@@ -587,6 +605,15 @@ async fn one_pcs_normal_flows_never_give_an_item() {
     issue(a, reservation, 0.5)
         .await
         .expect_err("beyond the reservation: refused on one PC");
+    // Times are kept to the second: put the issue, the return and the issue in the same one, as a
+    // quick storekeeper would, so the order never depends on the random sync ids (a return is read
+    // before an issue of the same second).
+    exec_uncaptured(
+        a,
+        "UPDATE inventory_transactions SET performed_at = '2026-10-23T08:00:00Z' WHERE reservation_id = ?",
+        vec![reservation.into()],
+    )
+    .await;
 
     receive(a, ids[0], 3.0, 1.0).await.expect("3 received, 1 rejected");
     receive(a, ids[0], 2.0, 0.0).await.expect("2 more: the 5 ordered");
@@ -680,6 +707,15 @@ async fn a_return_of_the_reservation_closes_the_over_issue_and_keeps_it_listed()
     )
     .await
     .expect("5 returned against the reservation");
+    // Times are kept to the second and a return is read before an issue of the same second: date
+    // the return clearly after the issues, so a fast run never reads it as made with them.
+    exec_uncaptured(
+        &a,
+        "UPDATE inventory_transactions SET performed_at = '2099-01-01T00:00:00Z'
+         WHERE reservation_id = ? AND movement_type = 'RETURN'",
+        vec![reservation_a.into()],
+    )
+    .await;
     for (name, db) in [("A", &a), ("B", &b), ("C", &c)] {
         sync(&mut server, name, db).await;
     }
@@ -813,7 +849,8 @@ async fn an_over_receipt_into_two_locations_is_closed_by_each_locations_own_coun
 
     let manager = user_with(a, "overrcptlocmgr", &[crate::rbac::permissions::INV_MANAGE]).await;
     let (art_a, loc_a, _, _) = ids[0];
-    negative_stock::resolve_by_count(a, manager, resolution(art_a, loc_a, 6.0, "Premier bac recompté"))
+    // 1 + 5 on hand, 1 missing: a variance, which the person counting approves.
+    negative_stock::resolve_by_count(a, manager, resolution(art_a, loc_a, 5.0, "Premier bac recompté"))
         .await
         .expect("the first location's count");
     sync(&mut server, "A", a).await;
@@ -823,7 +860,12 @@ async fn an_over_receipt_into_two_locations_is_closed_by_each_locations_own_coun
         assert_eq!((open.len(), closed.len()), (0, 1), "{pc}: the first location is closed");
         let by = closed[0].closed_by.as_ref().expect("its count");
         assert_eq!(by.path, COUNT_PATH_RECONCILIATION, "{pc}");
-        assert_eq!(by.approved_by.as_deref(), Some("overrcptlocmgr"), "{pc}");
+        assert_eq!(by.variance_qty, -1.0, "{pc}");
+        assert_eq!(
+            by.approved_by.as_deref(),
+            Some("overrcptlocmgr"),
+            "{pc}: a variance counted from the list is approved by the person counting"
+        );
         let (open, closed) = over_items(db, second.0, second.1).await;
         assert_eq!((open.len(), closed.len()), (1, 0), "{pc}: not the second one");
     }
@@ -1023,4 +1065,209 @@ async fn reversing_the_closing_count_reopens_the_over_receipt() {
         let (open, closed) = over_items(db, art, loc).await;
         assert_eq!((open.len(), closed.len()), (1, 0), "{pc}: to reconcile again");
     }
+}
+
+/// An issue or return of `quantity` recorded at `t` (seconds), as the walk reads it.
+fn walk_movement_of(id: &str, movement_type: &str, t: u32, quantity: f64) -> negative_stock::OverQuantityMovement {
+    negative_stock::OverQuantityMovement {
+        movement_sync_id: id.to_string(),
+        movement_type: movement_type.to_string(),
+        document_ref: None,
+        posted_by: None,
+        posted_at: format!("2026-10-23T00:{:02}:{:02}Z", t / 60, t % 60),
+        quantity,
+    }
+}
+
+/// An issue or return of 5 recorded at `t` (seconds).
+fn walk_movement(id: &str, movement_type: &str, t: u32) -> negative_stock::OverQuantityMovement {
+    walk_movement_of(id, movement_type, t, 5.0)
+}
+
+/// The walk over `movements`, given in any order (the walk takes the order every PC shares), for a
+/// reservation of 5: `None`, or `(actual, sync id of the closing return)`.
+fn walk(movements: Vec<negative_stock::OverQuantityMovement>) -> Option<(f64, Option<String>)> {
+    negative_stock::over_issue_walk(&movements, 5.0)
+        .map(|w| (w.actual_qty, w.closing_return.map(|r| r.movement_sync_id)))
+}
+
+/// The walk with interleaved times (reservation of 5, every movement 5). Open depends on the final
+/// net only; the clock decides only whether a closed-by-return entry is shown.
+#[test]
+fn the_over_issue_walk_follows_the_recorded_times() {
+    // Two issues, then the return: over, then closed by that return.
+    assert_eq!(
+        walk(vec![
+            walk_movement("i1", "ISSUE", 10),
+            walk_movement("i2", "ISSUE", 20),
+            walk_movement("r", "RETURN", 30),
+        ]),
+        Some((10.0, Some("r".into()))),
+        "closed by the return, at its highest (10) before it"
+    );
+    // A false closed entry: A issues at t10; B, its clock ahead, returns at "t30"; A, having
+    // received the return, issues again at t20. The net was never above 5, but the walk reads
+    // +5, +5, −5: closed by return, never open.
+    assert_eq!(
+        walk(vec![
+            walk_movement("a1", "ISSUE", 10),
+            walk_movement("b-return", "RETURN", 30),
+            walk_movement("a2", "ISSUE", 20),
+        ]),
+        Some((10.0, Some("b-return".into()))),
+        "a skewed clock shows a closed-by-return entry that did not happen, never an open item"
+    );
+    // A hidden entry: A issues with its clock ahead ("t100"); B issues at t50 and returns at t60.
+    // The net really went to 10, then back to 5; the walk reads +5, −5, +5 and finds nothing.
+    assert_eq!(
+        walk(vec![
+            walk_movement("a1", "ISSUE", 100),
+            walk_movement("b1", "ISSUE", 50),
+            walk_movement("b-return", "RETURN", 60),
+        ]),
+        None,
+        "a skewed clock hides a closed-by-return entry, never an open item"
+    );
+    // A return before the second issue: the reservation was never above 5.
+    assert_eq!(
+        walk(vec![
+            walk_movement("i1", "ISSUE", 10),
+            walk_movement("r", "RETURN", 20),
+            walk_movement("i2", "ISSUE", 30),
+        ]),
+        None,
+        "issue, return, issue: never over"
+    );
+    // Closed by a return, then issued beyond again: open, and no closing return.
+    assert_eq!(
+        walk(vec![
+            walk_movement("i1", "ISSUE", 10),
+            walk_movement("i2", "ISSUE", 20),
+            walk_movement("r", "RETURN", 30),
+            walk_movement("i3", "ISSUE", 40),
+        ]),
+        Some((10.0, None)),
+        "a later issue reopens it"
+    );
+    // Whatever the order, a final net above the reservation is open.
+    for order in [[10, 20, 30], [30, 10, 20], [20, 30, 10]] {
+        assert_eq!(
+            walk(vec![
+                walk_movement("i1", "ISSUE", order[0]),
+                walk_movement("i2", "ISSUE", order[1]),
+                walk_movement("i3", "ISSUE", order[2]),
+            ]),
+            Some((15.0, None)),
+            "{order:?}"
+        );
+    }
+    // Same second (Stock Lead ruling: a return before an issue of the same second). One PC issues
+    // 3, returns 1 and issues 3 within one second: no entry, whatever the sync ids.
+    let ids = ["a", "b", "c"];
+    for (i, j, k) in [(0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)] {
+        assert_eq!(
+            walk(vec![
+                walk_movement_of(ids[i], "ISSUE", 10, 3.0),
+                walk_movement_of(ids[j], "RETURN", 10, 1.0),
+                walk_movement_of(ids[k], "ISSUE", 10, 3.0),
+            ]),
+            None,
+            "one PC's issue, return, issue in one second, sync ids {:?}",
+            (ids[i], ids[j], ids[k])
+        );
+    }
+    // Two PCs each issue the 5 reserved and B returns 5, all in one second: really over, then
+    // back. The return is read first (−5, +5, +5): never over, so the history is hidden (no item,
+    // no count closure shown). Accepted by the ruling; the status is right (nothing to reconcile).
+    assert_eq!(
+        walk(vec![
+            walk_movement("a-issue", "ISSUE", 10),
+            walk_movement("b-issue", "ISSUE", 10),
+            walk_movement("b-return", "RETURN", 10),
+        ]),
+        None,
+        "two PCs' over-issue and the return in one second: hidden history"
+    );
+    // The same second never hides an open item: two issues and no return.
+    assert_eq!(
+        walk(vec![
+            walk_movement("a-issue", "ISSUE", 10),
+            walk_movement("b-issue", "ISSUE", 10),
+        ]),
+        Some((10.0, None))
+    );
+}
+
+/// A count stays followed once the rows it knew make no item any more (`held_rows_named`): A and B
+/// each issue the 5 reserved, the manager's count on A (no variance) closes the over-issue, then 5
+/// are returned against the reservation on A. On B the return is recorded between the two issues
+/// (a skewed clock): the walk never goes beyond 5 and B lists no item, so the issues are not among
+/// the rows of an item. A count entered on B still follows the manager's count, since both issues
+/// it knew are held on B.
+#[tokio::test]
+async fn a_count_stays_followed_when_its_rows_no_longer_make_an_item() {
+    let SharedReservation {
+        dbs: [a, b, _c],
+        mut server,
+        ids,
+    } = shared_reservation().await;
+    let manager = user_with(&a, "overissueheldmgr", &[crate::rbac::permissions::INV_MANAGE]).await;
+    issue(&a, ids[0].2, 5.0).await.expect("A issues");
+    issue(&b, ids[1].2, 5.0).await.expect("B issues");
+    for (name, db) in [("B", &b), ("A", &a)] {
+        sync(&mut server, name, db).await;
+    }
+    let (art_a, loc_a, reservation_a) = ids[0];
+    let counted = negative_stock::resolve_by_count(
+        &a,
+        manager,
+        resolution(art_a, loc_a, 0.0, "Bac recompté : 5 sortis deux fois"),
+    )
+    .await
+    .expect("the count closes the over-issue");
+    queries::return_reserved_stock(
+        &a,
+        InventoryReturnInput {
+            reservation_id: reservation_a,
+            quantity: 5.0,
+            notes: None,
+        },
+    )
+    .await
+    .expect("5 returned against the reservation");
+    sync(&mut server, "A", &a).await;
+    sync(&mut server, "B", &b).await;
+
+    let (art_b, loc_b, reservation_b) = ids[1];
+    for (sql, at) in [
+        (
+            "UPDATE inventory_transactions SET performed_at = ? WHERE id = (SELECT MIN(id) FROM inventory_transactions
+              WHERE reservation_id = ? AND movement_type = 'ISSUE')",
+            "2026-10-23T08:00:10Z",
+        ),
+        (
+            "UPDATE inventory_transactions SET performed_at = ? WHERE reservation_id = ? AND movement_type = 'RETURN'",
+            "2026-10-23T08:00:20Z",
+        ),
+        (
+            "UPDATE inventory_transactions SET performed_at = ? WHERE id = (SELECT MAX(id) FROM inventory_transactions
+              WHERE reservation_id = ? AND movement_type = 'ISSUE')",
+            "2026-10-23T08:00:30Z",
+        ),
+    ] {
+        exec(&b, sql, vec![at.into(), reservation_b.into()]).await;
+    }
+    let (open, closed) = over_items(&b, art_b, loc_b).await;
+    assert!(
+        open.is_empty() && closed.is_empty(),
+        "B: issue, return, issue never goes beyond 5"
+    );
+
+    let counter = user_with(&b, "overissueheldcount", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, line) = enter_count(&b, counter, art_b, loc_b, 5.0).await;
+    let manager_count = count_line_sync_id(&b, &counted.session_code).await;
+    assert!(
+        follows_of(&b, line.id).await.contains(&manager_count),
+        "the count entered on B follows the manager's: both issues it knew are held on B"
+    );
 }

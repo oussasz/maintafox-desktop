@@ -124,6 +124,43 @@ describe("list of the stock to reconcile", () => {
     await expect(listNegativeStockReviews(false)).rejects.toThrow();
   });
 
+  it.each(["closure_kind", "closed_by_return"])(
+    "rejects a closed over-issue without its %s key",
+    async (key) => {
+      const item = overIssue();
+      delete item[key];
+      mockInvoke.mockResolvedValueOnce(reviewList({ closed_over_quantities: [item] }));
+      await expect(listNegativeStockReviews(true)).rejects.toThrow();
+    },
+  );
+
+  it("rejects a closing count without its approved_by key", async () => {
+    const count: Record<string, unknown> = {
+      count_sync_id: "c1",
+      session_code: "CC-9",
+      path: "count_session",
+      counted_by: "Alice",
+      approved_by: null,
+      device_code: "PC-1",
+      counted_at: TS,
+      system_qty: 10,
+      counted_qty: 5,
+      variance_qty: -5,
+    };
+    const closedByCount = overIssue({
+      closure_kind: "count",
+      closed_by_return: null,
+      closed_by: count,
+    });
+    mockInvoke.mockResolvedValueOnce(reviewList({ closed_over_quantities: [closedByCount] }));
+    const list = await listNegativeStockReviews(true);
+    expect(list.closed_over_quantities[0]?.closed_by?.approved_by).toBeNull();
+
+    delete count["approved_by"];
+    mockInvoke.mockResolvedValueOnce(reviewList({ closed_over_quantities: [closedByCount] }));
+    await expect(listNegativeStockReviews(true)).rejects.toThrow();
+  });
+
   it("rejects an item of an unknown kind", async () => {
     mockInvoke.mockResolvedValueOnce(
       reviewList({ closed_over_quantities: [overIssue({ kind: "other" })] }),

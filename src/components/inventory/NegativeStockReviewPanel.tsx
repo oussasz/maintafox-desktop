@@ -163,18 +163,12 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
     return t("negativeStock.overQuantity.documentNone");
   };
 
-  /** How a closed over-issue or over-receipt was closed: the return, or the count. */
-  const overClosure = (item: OverQuantityReview) => {
+  /**
+   * The count that closed an item (over-issue, over-receipt, count posted twice): its session,
+   * path, who counted, when, and who approved its variance when it had one.
+   */
+  const countClosure = (by: ReconciliationCount | null) => {
     const unknown = t("negativeStock.doubleCount.unknownUser");
-    const back = item.closed_by_return;
-    if (item.closure_kind === "return" && back) {
-      return t("negativeStock.overQuantity.closedByReturn", {
-        quantity: qty(back.quantity),
-        who: back.posted_by ?? unknown,
-        date: back.posted_at ? formatDateTime(back.posted_at) : "—",
-      });
-    }
-    const by = item.closed_by;
     return t(
       by?.approved_by
         ? "negativeStock.overQuantity.closedByCountApproved"
@@ -187,6 +181,19 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
         approver: by?.approved_by ?? "",
       },
     );
+  };
+
+  /** How a closed over-issue or over-receipt was closed: the return, or the count. */
+  const overClosure = (item: OverQuantityReview) => {
+    const back = item.closed_by_return;
+    if (item.closure_kind === "return" && back) {
+      return t("negativeStock.overQuantity.closedByReturn", {
+        quantity: qty(back.quantity),
+        who: back.posted_by ?? t("negativeStock.doubleCount.unknownUser"),
+        date: back.posted_at ? formatDateTime(back.posted_at) : "—",
+      });
+    }
+    return countClosure(item.closed_by);
   };
 
   const openCount = (item: CountTarget) => {
@@ -504,11 +511,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                 {item.article_code} — {item.warehouse_code}/{item.location_code}
               </span>{" "}
               · {t(`negativeStock.doublePosting.flagKind.${item.kind}`)} ·{" "}
-              {t("negativeStock.doublePosting.closedByCount", {
-                session: item.closed_by?.session_code ?? "—",
-                who: item.closed_by?.counted_by ?? t("negativeStock.doubleCount.unknownUser"),
-                date: item.closed_by?.counted_at ? formatDateTime(item.closed_by.counted_at) : "—",
-              })}
+              {countClosure(item.closed_by)}
             </li>
           ))}
           {list.closed_over_quantities.map((item, i) => (

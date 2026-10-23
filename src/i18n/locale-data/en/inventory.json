@@ -59,7 +59,6 @@
     "doublePosting": {
       "list": "Counts posted twice",
       "movementLine": "{{who}}, {{date}}: {{quantity}} (the stock ledger does not record the PC)",
-      "closedByCount": "closed by count {{session}} ({{who}}, {{date}})",
       "flagKind": {
         "posted_twice": "Count posted twice — to verify",
         "divergent": "Divergent count — to verify"

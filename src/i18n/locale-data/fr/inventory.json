@@ -59,7 +59,6 @@
     "doublePosting": {
       "list": "Comptages passés deux fois",
       "movementLine": "{{who}}, {{date}} : {{quantity}} (le journal de stock n'enregistre pas le poste)",
-      "closedByCount": "clos par le comptage {{session}} ({{who}}, {{date}})",
       "flagKind": {
         "posted_twice": "Comptage passé deux fois — à vérifier",
         "divergent": "Comptage divergent — à vérifier"
@@ -95,7 +94,7 @@
       "closedByCountApproved": "Clos par le comptage {{session}} {{path}} : compté par {{who}}, {{date}}, écart approuvé par {{approver}}",
       "closedPath": {
         "reconciliation": "depuis la liste du stock à rapprocher",
-        "count_session": "d'un inventaire ou comptage tournant"
+        "count_session": "d'une session de comptage ou d'une campagne d'inventaire"
       },
       "movementLine": "{{movement}} — {{who}}, {{date}} : {{quantity}}",
       "movementLineRef": "{{movement}} {{ref}} — {{who}}, {{date}} : {{quantity}}",

@@ -700,6 +700,59 @@ describe("NegativeStockReviewPanel", () => {
     expect(screen.queryByRole("button", { name: "Record a count" })).not.toBeInTheDocument();
     expect(frInventory.negativeStock.overQuantity.documentNone).toBe("Réservation sans OT");
     expect(frInventory.negativeStock.overQuantity.closedByReturn).toMatch(/^Régularisé par retour/);
+    expect(frInventory.negativeStock.overQuantity.closedPath.count_session).toBe(
+      "d'une session de comptage ou d'une campagne d'inventaire",
+    );
+  });
+
+  it("shows a closed count posted twice with the count's path and approver", async () => {
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [
+        {
+          kind: "posted_twice",
+          article_id: 21,
+          article_code: "A-21",
+          article_name: "Bearing",
+          location_id: 10,
+          location_code: "BIN",
+          warehouse_code: "MAIN",
+          session_code: "CC-4",
+          movement_type: "COUNT_ADJUST",
+          movements: [],
+          variance_qty: -2,
+          excess_qty: -2,
+          closed_by: {
+            count_sync_id: "c3",
+            session_code: "CC-12",
+            path: "count_session",
+            counted_by: "Erin",
+            approved_by: "Frank",
+            device_code: "Q8LW",
+            counted_at: TS,
+            system_qty: 6,
+            counted_qty: 8,
+            variance_qty: 2,
+          },
+          on_hand_qty: 8,
+          reserved_qty: 0,
+          available_qty: 8,
+        },
+      ],
+      over_quantities: [],
+      closed_over_quantities: [],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    fireEvent.click(await screen.findByLabelText("Show reconciled items"));
+    expect(
+      await screen.findByText(
+        /Count posted twice — to verify · Closed by count CC-12 from a count session or inventory campaign: counted by Erin, .+, variance approved by Frank$/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("has every text in French too", () => {
