@@ -60,8 +60,16 @@ const stable = vi.hoisted(() => ({
 vi.mock("@/hooks/use-formatters", () => ({
   useFormatters: () => ({
     formatCurrency: (v: number) => `${v.toFixed(2)} DA`,
-    // Used by DecimalField: the stored number as typed text.
-    formatDecimalInput: (v: number) => String(v),
+    // Used by DecimalField: the stored number as typed text, and the typed text as a number.
+    formatDecimalInput: (v: number | null) => (v === null ? "" : String(v)),
+    parseDecimal: (raw: string) => {
+      const text = raw.trim().replace(",", ".");
+      if (text === "") return { kind: "empty" as const };
+      const value = Number(text);
+      return Number.isFinite(value)
+        ? { kind: "number" as const, value }
+        : { kind: "invalid" as const };
+    },
   }),
 }));
 vi.mock("@/hooks/use-session", () => ({ useSession: () => stable.session }));
