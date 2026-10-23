@@ -115,7 +115,7 @@ function buildHtml(
   const partRows = activeParts
     .map(
       (p) =>
-        `<tr><td>${esc(formatOrDash(p.article_ref ?? p.article_label))}</td><td>${(p.quantity_used ?? p.quantity_planned) != null ? formatNumber((p.quantity_used ?? p.quantity_planned) as number, locale) : "—"}${p.unit_symbol ? ` ${esc(p.unit_symbol)}` : ""}</td><td>${p.unit_cost != null ? money(p.unit_cost) : "—"}</td></tr>`,
+        `<tr><td>${esc(formatOrDash(p.article_ref ?? p.article_label))}</td><td>${(p.quantity_used ?? p.quantity_planned) != null ? formatNumber((p.quantity_used ?? p.quantity_planned) as number, locale, { maximumFractionDigits: 3 }) : "—"}${p.unit_symbol ? ` ${esc(p.unit_symbol)}` : ""}</td><td>${p.unit_cost != null ? money(p.unit_cost) : "—"}</td></tr>`,
     )
     .join("");
 
