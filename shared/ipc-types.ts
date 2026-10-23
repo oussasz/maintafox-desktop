@@ -5773,6 +5773,10 @@ export interface WoExecTask {
   notes: string | null;
   /** "planned" | "execution_added" | "generated" — enriched by backend JOIN */
   origin?: string | null | undefined;
+  /** What a NOK result found (migration 256). */
+  finding_note?: string | null | undefined;
+  /** The work order opened to deal with a NOK result (migration 256). */
+  follow_up_work_order_id?: number | null | undefined;
 }
 
 /** Labor/intervener row as returned by execution commands (raw FK columns). */
