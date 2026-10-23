@@ -459,6 +459,9 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_orders", "site_assigned_by_id", "NULL"),
     ("work_orders", "site_assigned_at", "NULL"),
     ("work_orders", "site_assign_reason", "NULL"),
+    // A generic request is not flagged "sécurité": its generic work order carries no safety origin
+    // (migration 255, judged on arrival).
+    ("intervention_requests", "safety_flag", "0"),
     ("intervention_requests", "site_assigned_by_id", "NULL"),
     ("intervention_requests", "site_assigned_at", "NULL"),
     ("intervention_requests", "site_assign_reason", "NULL"),

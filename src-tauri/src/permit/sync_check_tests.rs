@@ -6046,3 +6046,203 @@ async fn a_new_work_order_from_an_older_pc_takes_the_safety_origin_of_its_reques
         Some("1")
     );
 }
+
+// ── Review of AU-01: explicit origin 0, waits, site move ──────────────────────────────────────
+
+/// A request on a new equipment of site 1 (flagged "sécurité" when `safety`); its sync id.
+async fn request_on_site_1(db: &DatabaseConnection, equipment_code: &str, safety: bool) -> String {
+    let asset = insert_equipment(db, equipment_code).await;
+    let symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+        .await
+        .expect("symptom")
+        .expect("seeded symptom");
+    let di = crate::di::queries::create_intervention_request(
+        db,
+        crate::di::queries::DiCreateInput {
+            equipment_id: asset,
+            org_node_id: 1,
+            title: "Fuite".into(),
+            description: "Fuite sur la pompe".into(),
+            origin_type: "operator".into(),
+            request_type: "repair".into(),
+            symptom_code_id: Some(symptom),
+            impact_level: "unknown".into(),
+            production_impact: false,
+            safety_flag: safety,
+            environmental_flag: false,
+            quality_flag: false,
+            reported_urgency: "normal".into(),
+            observed_at: None,
+            source_inspection_anomaly_id: None,
+            submitter_id: APPLIER,
+        },
+    )
+    .await
+    .expect("request");
+    text(
+        db,
+        &format!("SELECT entity_sync_id FROM intervention_requests WHERE id = {}", di.id),
+    )
+    .await
+    .expect("request sync id")
+}
+
+fn deferred_message(outcome: &ApplyOutcome) -> Option<&str> {
+    match outcome {
+        ApplyOutcome::Deferred { message, .. } => Some(message.as_str()),
+        _ => None,
+    }
+}
+
+/// A new work order that says origin 0 although its request is flagged "sécurité" here is refused,
+/// and so is every later row of it from the same PC: never stored unprotected, never stored with a
+/// value the sender does not hold. With a request not flagged, 0 is applied as sent, and so are its
+/// later rows.
+#[tokio::test]
+async fn an_explicit_origin_0_is_judged_the_same_on_every_row() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-4").await;
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    let row = |code: &str, di: &str, title: &str| {
+        with(
+            template.clone(),
+            &[
+                ("code", json!(code)),
+                ("source_di_sync_id", json!(di)),
+                ("requires_permit", json!(1)),
+                ("permit_from_safety_di", json!(0)),
+                ("title", json!(title)),
+            ],
+        )
+    };
+    let stored = |sync: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT CAST(permit_from_safety_di AS TEXT) FROM work_orders WHERE entity_sync_id = '{sync}'"),
+            )
+            .await
+        }
+    };
+
+    let flagged = request_on_site_1(&db, "EQ-SYNC-SO-DI-4", true).await;
+    for title in ["Fuite pompe", "Fuite pompe (mise à jour)"] {
+        let outcome = apply(
+            &db,
+            "work_orders",
+            "wo-explicit-0-flagged",
+            &row("OT-X0-1", &flagged, title),
+        )
+        .await;
+        assert_eq!(
+            code(&outcome),
+            Some("WO_PERMIT_SAFETY_ORIGIN_CHANGED"),
+            "{title}: {outcome:?}"
+        );
+    }
+    assert_eq!(stored("wo-explicit-0-flagged").await, None, "nothing stored");
+
+    let plain = request_on_site_1(&db, "EQ-SYNC-SO-DI-5", false).await;
+    for title in ["Fuite pompe", "Fuite pompe (mise à jour)"] {
+        let outcome = apply(
+            &db,
+            "work_orders",
+            "wo-explicit-0-plain",
+            &row("OT-X0-2", &plain, title),
+        )
+        .await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{title}: {outcome:?}");
+        assert_eq!(stored("wo-explicit-0-plain").await.as_deref(), Some("0"), "as sent");
+    }
+}
+
+/// A new work order from an older PC waits for its request; a clearing judged at a site not applied
+/// here yet waits for that site.
+#[tokio::test]
+async fn a_safety_check_waits_for_its_request_and_its_site() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-6").await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+
+    let mut older = with(
+        held.clone(),
+        &[
+            ("code", json!("OT-WAIT-1")),
+            ("source_di_sync_id", json!("di-not-here")),
+        ],
+    );
+    older.remove("permit_from_safety_di");
+    let outcome = apply(&db, "work_orders", "wo-waits-for-request", &older).await;
+    let message = deferred_message(&outcome).unwrap_or_else(|| panic!("waits: {outcome:?}"));
+    assert!(message.contains("request it was converted from"), "{message}");
+
+    let moved_and_cleared = with(
+        held,
+        &[
+            ("entity_sync_id", json!("node-not-here")),
+            ("requires_permit", json!(0)),
+            ("permit_rule_cleared_by_sync_id", json!(user_sync(&db, VERIFIER).await)),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Inspection visuelle seulement")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &moved_and_cleared).await;
+    let message = deferred_message(&outcome).unwrap_or_else(|| panic!("waits: {outcome:?}"));
+    assert!(message.contains("its site node-not-here"), "{message}");
+}
+
+/// A cleared safety requirement moved to another site by a received row keeping the clearing is
+/// refused; the same move with the clearing withdrawn (as the moving PC does) is applied.
+#[tokio::test]
+async fn a_received_site_move_does_not_carry_a_safety_clearing() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-7").await;
+    let issuer = site_permit_issuer(&db, "so_issuer_7", 1).await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+    let cleared = with(
+        held,
+        &[
+            ("requires_permit", json!(0)),
+            ("permit_rule_cleared_by_sync_id", json!(issuer)),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Inspection visuelle seulement")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &cleared).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    exec(
+        &db,
+        "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, \
+         updated_at, structure_model_id) VALUES (2, 'so-node-2', 'SO-SITE-2', 'Site 2', 1, 'active', \
+         datetime('now'), datetime('now'), 1)",
+    )
+    .await;
+
+    let moved_kept = with(cleared.clone(), &[("entity_sync_id", json!("so-node-2"))]);
+    let outcome = apply(&db, "work_orders", &wo_sync, &moved_kept).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    assert_eq!(
+        requires_permit(&db, wo_id).await.as_deref(),
+        Some("0"),
+        "nothing applied"
+    );
+
+    let moved_withdrawn = with(
+        cleared,
+        &[
+            ("entity_sync_id", json!("so-node-2")),
+            ("requires_permit", json!(1)),
+            ("permit_rule_cleared_by_sync_id", Value::Null),
+            ("permit_rule_cleared_at", Value::Null),
+            ("permit_rule_clear_reason", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &moved_withdrawn).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        requires_permit(&db, wo_id).await.as_deref(),
+        Some("1"),
+        "in force again"
+    );
+}

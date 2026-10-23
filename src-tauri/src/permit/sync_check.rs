@@ -2359,15 +2359,29 @@ pub(crate) async fn inbound_permit_rule_check(
             ),
         );
     }
+    // A work order new here takes the origin its request here gives it: a row without the column
+    // (a PC without migration 255) gets it when applied (`sync::apply_hooks::after_upsert`); a row
+    // that says 0 for a request flagged "sécurité" lost that origin on the way (every PC with the
+    // column sets it at conversion and on a manual create from the request): refused, like an
+    // origin turned off, never applied unprotected.
     let mut safety_origin = flag(&wo, SAFETY_ORIGIN);
-    if !safety_origin && local.is_none() && !received.contains_key(SAFETY_ORIGIN) {
+    if !safety_origin && local.is_none() {
         match source_request_is_safety(conn, &wo).await? {
-            Some(flagged) => safety_origin = flagged,
             None => {
                 return wait(format!(
                     "work order {code}: the request it was converted from is not applied yet"
                 ))
             }
+            Some(true) if received.contains_key(SAFETY_ORIGIN) => {
+                return conflict(
+                    "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
+                    format!(
+                        "work order {code}: its request is flagged as a safety concern here, but the received work \
+                         order does not carry that origin of its permit requirement"
+                    ),
+                );
+            }
+            Some(flagged) => safety_origin = flagged,
         }
     }
     let origin = match field(&wo, "permit_rule_code") {
@@ -2394,6 +2408,39 @@ pub(crate) async fn inbound_permit_rule_check(
     // A clearing recorded here is never removed nor partly rewritten (who, when or why missing). A
     // different complete clearing (another PC that cleared the same order offline) is judged in full
     // below, like a new one, so both PCs converge on it when it is valid.
+    // A safety requirement's clearing withdrawn because the work order changed site (the requirement
+    // in force again, no who, when or why, another site): what the PC that moved it does in the same
+    // change (`permit_requirement::void_clearing_on_site_change`), the safe direction. Any other
+    // removal of a recorded clearing is refused below.
+    let site_changed = local.as_ref().is_some_and(|l| {
+        field(l, "entity_sync_id").is_some() && field(l, "entity_sync_id") != field(&wo, "entity_sync_id")
+    });
+    if origin == ProtectedOrigin::SafetyRequest
+        && site_changed
+        && clearing_changed
+        && clearing(&wo) == none
+        && flag(&wo, "requires_permit")
+    {
+        return Ok(None);
+    }
+    // A safety requirement cleared at one site does not stay cleared at another: a received move of
+    // a work order whose clearing is kept is refused (the PC that moved it withdraws the clearing in
+    // the same change). A work order that had no site here was cleared with the plant-wide right,
+    // which holds at any site.
+    if origin == ProtectedOrigin::SafetyRequest && field(&wo, "permit_rule_cleared_at").is_some() {
+        if let Some(l) = local.as_ref() {
+            let (held_site, new_site) = (field(l, "entity_sync_id"), field(&wo, "entity_sync_id"));
+            if held_site.is_some() && held_site != new_site && clearing(l) == clearing(&wo) {
+                return conflict(
+                    "WO_PERMIT_RULE_CLEAR_INVALID",
+                    format!(
+                        "work order {code}: its permit requirement from a safety request was cleared at its site \
+                         here and the received work order moves it to another site with that clearing kept"
+                    ),
+                );
+            }
+        }
+    }
     if clearing_changed
         && local
             .as_ref()
@@ -2508,7 +2555,7 @@ pub(crate) async fn inbound_permit_rule_check(
 }
 
 /// The column that records a permit requirement carried from a request flagged "sécurité".
-const SAFETY_ORIGIN: &str = "permit_from_safety_di";
+pub(crate) const SAFETY_ORIGIN: &str = "permit_from_safety_di";
 
 /// Whether the source request of a received work order (`source_di_sync_id`) is flagged "sécurité"
 /// here: `Some(false)` when it has none, `None` when it is not applied here yet.

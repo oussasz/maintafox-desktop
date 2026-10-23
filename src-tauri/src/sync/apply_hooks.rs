@@ -38,8 +38,9 @@
 //!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`); so
 //!   does one whose requirement came from a request flagged "sécurité" (`permit_from_safety_di`,
 //!   migration 255: the right at its site), and that origin is never turned off by a received row;
-//! - `work_orders`: after the insert of a work order new here, its source request flagged
-//!   "sécurité" gives it that origin when the sending PC had no such column (`after_upsert`);
+//! - `work_orders`: after the insert of a work order new here received without the column, its
+//!   source request flagged "sécurité" gives it that origin (the sending PC had no such column,
+//!   `after_upsert`);
 //! - `permit_types`: a change of the three-person lock-removal setting, or a switch-off of the
 //!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
 //!   here), when and why; the shipped LOTO type's isolation rule is never switched off
@@ -390,12 +391,13 @@ fn hook_err(table: &str, e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("{table} apply hook: {e}"))
 }
 
-/// After an inbound row was inserted (`inserted`) or updated.
+/// After an inbound row was inserted (`inserted`) or updated; `payload` is the row as received.
 pub(crate) async fn after_upsert(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
     row: &RowLocator,
     inserted: bool,
+    payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<()> {
     match layout.def.entity_type {
         "inventory_transactions" if inserted => {
@@ -433,11 +435,12 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "occurrence not found after insert"))?;
             crate::pm::version_clash::after_received_occurrence(conn, id).await
         }
-        // A work order new here, from a request flagged "sécurité", carries that origin of its permit
-        // requirement (migration 255) even when the PC that sent it had no such column (it was then
-        // judged with that origin, `permit::sync_check::inbound_permit_rule_check`). Only ever set,
-        // never cleared: the protected side.
-        "work_orders" if inserted => {
+        // A work order new here, from a request flagged "sécurité", sent by a PC that had no such
+        // column (the received row has no `permit_from_safety_di`), carries that origin of its permit
+        // requirement (migration 255): it was judged with it (`permit::sync_check::
+        // inbound_permit_rule_check`, the same rule). A row that carries the column keeps the value
+        // sent (an explicit 0 with a flagged request is refused by that check). Only ever set.
+        "work_orders" if inserted && !payload.contains_key(crate::permit::sync_check::SAFETY_ORIGIN) => {
             let id = located_row_id(conn, layout, row)
                 .await?
                 .ok_or_else(|| hook_err(layout.table(), "work order not found after insert"))?;
