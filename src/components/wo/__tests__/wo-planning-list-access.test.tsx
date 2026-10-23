@@ -58,7 +58,11 @@ const stable = vi.hoisted(() => ({
   typeLabels: { typeLabel: (code: string) => code },
 }));
 vi.mock("@/hooks/use-formatters", () => ({
-  useFormatters: () => ({ formatCurrency: (v: number) => `${v.toFixed(2)} DA` }),
+  useFormatters: () => ({
+    formatCurrency: (v: number) => `${v.toFixed(2)} DA`,
+    // Used by DecimalField: the stored number as typed text.
+    formatDecimalInput: (v: number) => String(v),
+  }),
 }));
 vi.mock("@/hooks/use-session", () => ({ useSession: () => stable.session }));
 // Rights at the work order’s site (`useWoAccess`): granted here.
