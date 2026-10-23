@@ -826,6 +826,9 @@
     "permitRequired": "Permis / consignation désormais exigé",
     "permitNotRequired": "Permis / consignation plus exigé",
     "actions": {
+      "task_reopened": "Tâche rouverte",
+      "labor_closed_by_cancellation": "Main-d'œuvre ouverte clôturée par l'annulation",
+      "labor_closed_by_closeout": "Main-d'œuvre ouverte clôturée par la clôture",
       "permit_rule_flag_cleared": "Exigence de permis (règle) levée",
       "shutdown_required_set": "OT marqué « nécessite un arrêt »",
       "shutdown_required_cleared": "« Nécessite un arrêt » retiré",

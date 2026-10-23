@@ -153,7 +153,7 @@
       "WO_FAILURE_DETAIL_AFTER_CLOSE": "Codification de défaillance modifiée sur un autre poste alors que l'OT est clôturé ici",
       "WO_LABOUR_AFTER_CLOSE": "Main-d'œuvre saisie sur un autre poste alors que l'OT est clôturé ici",
       "WO_TOOL_AFTER_CLOSE": "Outil modifié sur un autre poste alors que l'OT est clôturé ici",
-      "WO_VERIFICATION_WRONG_STATUS": "Vérification reçue alors que l'OT n'est pas terminé ici",
+      "WO_VERIFICATION_WRONG_STATUS": "Vérification reçue alors que l'OT est clôturé ou annulé ici",
       "WO_SELF_VERIFICATION": "Vérification par le responsable de l'OT",
       "WO_VERIFIER_RECORDED_LABOUR": "Vérification (OT sans responsable) par une personne qui a saisi de la main-d'œuvre",
       "WO_MANDATORY_TASK_REMOVED": "Tâche obligatoire supprimée ou rendue facultative sur un autre poste alors que l'OT a dépassé la planification ici",

@@ -826,6 +826,9 @@
     "permitRequired": "Permit / lockout now required",
     "permitNotRequired": "Permit / lockout no longer required",
     "actions": {
+      "task_reopened": "Task reopened",
+      "labor_closed_by_cancellation": "Open labour closed by the cancellation",
+      "labor_closed_by_closeout": "Open labour closed by the close-out",
       "permit_rule_flag_cleared": "Permit requirement (rule) cleared",
       "shutdown_required_set": "Flagged as needing a shutdown",
       "shutdown_required_cleared": "“Needs shutdown” removed",
