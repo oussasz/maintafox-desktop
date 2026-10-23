@@ -890,9 +890,12 @@ async fn refuse_equipment_change_with_old_items(
     }
 }
 
+/// `actor_id`: who makes the change (recorded on the permit-requirement consequences: a clearing
+/// withdrawn by a re-tick or voided by a site move).
 pub async fn update_wo_draft_fields(
     db: &DatabaseConnection,
     input: super::domain::WoDraftUpdateInput,
+    actor_id: Option<i64>,
 ) -> AppResult<WorkOrder> {
     super::domain::validate_wo_shift(input.shift.as_deref())?;
     let txn = db.begin().await?;
@@ -1027,7 +1030,8 @@ pub async fn update_wo_draft_fields(
         // A flag set by a plant permit rule (or a safety request) is cleared only by the clear
         // command; required again after a clearing, it is protected again.
         if rp {
-            crate::wo::workflow::actions::permit_requirement::withdraw_clearing_on_retick(&txn, input.id, None).await?;
+            crate::wo::workflow::actions::permit_requirement::withdraw_clearing_on_retick(&txn, input.id, actor_id)
+                .await?;
         } else {
             crate::wo::workflow::actions::permit_requirement::assert_not_rule_flagged(&txn, input.id).await?;
         }
@@ -1074,7 +1078,7 @@ pub async fn update_wo_draft_fields(
             input.id,
             current.entity_id,
             Some(new_site),
-            None,
+            actor_id,
         )
         .await?;
     }

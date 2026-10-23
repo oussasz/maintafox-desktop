@@ -425,7 +425,7 @@ pub async fn update_wo_draft(
     )
     .await?;
     let before = queries::get_work_order(&state.db, input.id).await?;
-    let wo = queries::update_wo_draft_fields(&state.db, input).await?;
+    let wo = queries::update_wo_draft_fields(&state.db, input, Some(i64::from(user.user_id))).await?;
     // Every change of a draft's equipment is recorded (who, when, old and new equipment), and
     // whether the order moved with it to another location (org node).
     if let Some(before) = before.filter(|b| b.equipment_id != wo.equipment_id) {

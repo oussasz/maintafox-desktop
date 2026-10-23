@@ -489,6 +489,7 @@ async fn the_general_edit_cannot_clear_a_safety_request_requirement() {
             subtype_code: None,
             requires_permit: Some(false),
         },
+        None,
     )
     .await
     .expect_err("the draft form cannot clear it");
@@ -803,6 +804,7 @@ async fn a_cleared_safety_requirement_is_reinstated_when_the_work_order_changes_
             subtype_code: None,
             requires_permit: None,
         },
+        Some(actor),
     )
     .await
     .expect("moved to site 2");
@@ -822,6 +824,24 @@ async fn a_cleared_safety_requirement_is_reinstated_when_the_work_order_changes_
     assert!(
         voided.contains("\"old_site\":1") && voided.contains("\"new_site\":2"),
         "{voided}"
+    );
+    // Who moved it, and the withdrawn clearer by their sync id too (another PC does not share local ids).
+    assert!(
+        voided.contains("\"voided_cleared_by_sync_id\":\"pr-issuer1\""),
+        "{voided}"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_action_events WHERE wo_id = {} AND action_code = 'permit_clearing_voided' \
+                 AND actor_id = {actor}",
+                wo.id
+            ),
+        )
+        .await,
+        1,
+        "the actor is recorded"
     );
     assert_eq!(
         scalar(
@@ -1046,14 +1066,170 @@ async fn a_cleared_requirement_required_again_is_protected_again() {
         subtype_code: None,
         requires_permit: Some(requires),
     };
-    let again = crate::wo::queries::update_wo_draft_fields(&db, draft(cleared.row_version, true))
+    let again = crate::wo::queries::update_wo_draft_fields(&db, draft(cleared.row_version, true), Some(actor))
         .await
         .expect("required again");
     assert!(again.requires_permit);
     assert_eq!(again.permit_rule_cleared_at, None, "clearing withdrawn");
     assert_eq!(withdrawn_count(&db, wo.id).await, 11);
-    let err = crate::wo::queries::update_wo_draft_fields(&db, draft(again.row_version, false))
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_change_events WHERE wo_id = {} AND action = 'permit_clearing_withdrawn' \
+                 AND actor_id = {actor}",
+                wo.id
+            ),
+        )
+        .await,
+        1,
+        "the actor of the draft form is recorded"
+    );
+    let err = crate::wo::queries::update_wo_draft_fields(&db, draft(again.row_version, false), None)
         .await
         .expect_err("protected again");
     assert_eq!(code_of(&err), req::CODE_SAFETY_FLAG_NEEDS_CLEAR);
+}
+
+/// A request flagged "sécurité" after a work order was linked to it: its work orders not started yet
+/// are protected in the same change (origin, permit required, recorded with the actor); a work order
+/// already past "ready" is left as it is.
+#[tokio::test]
+async fn a_request_flagged_after_its_work_order_was_linked_protects_it() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(&db, "vibration")
+        .await
+        .expect("symptom")
+        .expect("seeded symptom");
+    let request = |title: &'static str| DiCreateInput {
+        equipment_id: 1,
+        org_node_id: 1,
+        title: title.into(),
+        description: "Fuite sur la pompe".into(),
+        origin_type: "operator".into(),
+        request_type: "repair".into(),
+        symptom_code_id: Some(symptom),
+        impact_level: "unknown".into(),
+        production_impact: false,
+        safety_flag: false,
+        environmental_flag: false,
+        quality_flag: false,
+        reported_urgency: "normal".into(),
+        observed_at: None,
+        source_inspection_anomaly_id: None,
+        submitter_id: actor,
+    };
+    let linked = |di: i64| crate::wo::domain::WoCreateInput {
+        type_code: "corrective".into(),
+        equipment_id: Some(1),
+        location_id: None,
+        source_di_id: Some(di),
+        source_inspection_anomaly_id: None,
+        source_ram_ishikawa_diagram_id: None,
+        source_ishikawa_flow_node_id: None,
+        source_rca_cause_text: None,
+        entity_id: Some(1),
+        planner_id: None,
+        urgency_code: Some("normal".into()),
+        subtype_code: None,
+        title: "Fuite pompe".into(),
+        description: None,
+        notes: None,
+        planned_start: None,
+        planned_end: None,
+        shift: None,
+        expected_duration_hours: None,
+        creator_id: actor,
+        requires_permit: Some(false),
+    };
+    let flag = |di: &crate::di::domain::InterventionRequest| crate::di::queries::DiDraftUpdateInput {
+        id: di.id,
+        expected_row_version: di.row_version,
+        title: None,
+        description: None,
+        request_type: None,
+        symptom_code_id: None,
+        impact_level: None,
+        production_impact: None,
+        safety_flag: Some(true),
+        environmental_flag: None,
+        quality_flag: None,
+        reported_urgency: None,
+        observed_at: None,
+    };
+
+    // Linked while the request was not flagged: no permit, no origin.
+    let di = create_intervention_request(&db, request("Fuite"))
+        .await
+        .expect("request");
+    let wo = crate::wo::queries::create_work_order(&db, linked(di.id))
+        .await
+        .expect("create");
+    assert!(!wo.requires_permit && !wo.permit_from_safety_di);
+    // The request is flagged: the draft work order is protected in the same change.
+    crate::di::queries::update_di_draft_fields(&db, flag(&di), Some(actor))
+        .await
+        .expect("flagged");
+    let raised = crate::wo::queries::get_work_order(&db, wo.id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert!(raised.requires_permit, "a permit is required");
+    assert!(raised.permit_from_safety_di, "the origin is recorded");
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT (SELECT COUNT(*) FROM wo_action_events WHERE wo_id = {id} \
+                         AND action_code = 'permit_safety_origin_raised' AND actor_id = {actor}) * 10 + \
+                        (SELECT COUNT(*) FROM wo_change_events WHERE wo_id = {id} \
+                         AND action = 'permit_safety_origin_raised' AND actor_id = {actor})",
+                id = wo.id
+            ),
+        )
+        .await,
+        11,
+        "in the history and the audit trail, with the actor"
+    );
+    let err = req::set_permit_requirement(
+        &db,
+        WoPermitRequirementInput {
+            wo_id: wo.id,
+            expected_row_version: raised.row_version,
+            requires_permit: false,
+        },
+        actor,
+    )
+    .await
+    .expect_err("the general edit cannot clear it");
+    assert_eq!(code_of(&err), req::CODE_SAFETY_FLAG_NEEDS_CLEAR);
+
+    // A work order already past "ready" is not changed (its start was judged when it started).
+    let di = create_intervention_request(&db, request("Fuite 2"))
+        .await
+        .expect("request");
+    let started = crate::wo::queries::create_work_order(&db, linked(di.id))
+        .await
+        .expect("create");
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress') \
+             WHERE id = {}",
+            started.id
+        ),
+    )
+    .await;
+    crate::di::queries::update_di_draft_fields(&db, flag(&di), Some(actor))
+        .await
+        .expect("flagged");
+    let kept = crate::wo::queries::get_work_order(&db, started.id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert!(
+        !kept.requires_permit && !kept.permit_from_safety_di,
+        "started: left as it is"
+    );
 }

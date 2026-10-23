@@ -319,7 +319,7 @@ pub async fn update_di_draft(
     // is, so its own anchor is the only one to check (no move, rule §2.7 does not apply).
     require_own_or_review(&state, user.user_id, &current_di).await?;
 
-    queries::update_di_draft_fields(&state.db, input).await
+    queries::update_di_draft_fields(&state.db, input, Some(i64::from(user.user_id))).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -754,9 +754,13 @@ async fn factory_columns(
 ) -> Result<Vec<FactoryColumn>, String> {
     if super::row_spec::row_spec(entity_type).is_some() {
         let layout = row_layout::layout(db, entity_type).await.map_err(|e| e.to_string())?;
+        // The layout is computed once per process, from the current schema: a database built
+        // before a migration that added a column (`started_db_before_migration`) does not have it,
+        // and the row is made without it.
         return Ok(layout
             .columns
             .iter()
+            .filter(|c| raw.iter().any(|r| r.name == c.name))
             .map(|c| {
                 let raw_col = raw.iter().find(|r| r.name == c.name);
                 let kind = match &c.role {

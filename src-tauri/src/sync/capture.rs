@@ -111,7 +111,17 @@ pub async fn install_capture_in(conn: &impl ConnectionTrait) -> AppResult<Captur
             ))
             .await?;
         }
-        for sql in trigger_sql(&layout)? {
+        let present: Vec<String> = conn
+            .query_all(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT name FROM pragma_table_info(?)",
+                [layout.table().into()],
+            ))
+            .await?
+            .iter()
+            .filter_map(|r| r.try_get::<String>("", "name").ok())
+            .collect();
+        for sql in trigger_sql(&layout, &present)? {
             conn.execute_unprepared(&sql).await?;
         }
         report.baseline_rows += baseline(conn, &layout).await?;
@@ -177,11 +187,16 @@ const NOT_SUPPRESSED: &str = "NOT EXISTS (SELECT 1 FROM sync_capture_suppression
 /// An update is a change to send only when a synchronised column changed: updates of device-local
 /// or derived columns (a login time, an SLA "notified" stamp, an org path) and of the local
 /// version counter alone stay on the device.
-fn replicated_change_sql(layout: &EntityLayout) -> String {
+/// `present`: the table's columns in this database. The layout is computed once per process from
+/// the current schema; a database still before a migration that added a column (only in tests that
+/// build one, `sync::test_support::started_db_before_migration`) has no such column for the trigger
+/// to read. In the app every replicated column exists once the migrations have run.
+fn replicated_change_sql(layout: &EntityLayout, present: &[String]) -> String {
     let changed: Vec<String> = layout
         .columns
         .iter()
         .filter(|c| matches!(c.role, Role::Identity | Role::Value { .. } | Role::Ref { .. }))
+        .filter(|c| present.iter().any(|p| p == &c.name))
         .map(|c| format!("NEW.{0} IS NOT OLD.{0}", quote(&c.name)))
         .collect();
     if changed.is_empty() {
@@ -191,7 +206,7 @@ fn replicated_change_sql(layout: &EntityLayout) -> String {
     }
 }
 
-fn trigger_sql(layout: &EntityLayout) -> AppResult<Vec<String>> {
+fn trigger_sql(layout: &EntityLayout, present: &[String]) -> AppResult<Vec<String>> {
     let table = quote(layout.table());
     let et = layout.def.entity_type;
     let name = |suffix: &str| quote(&format!("{TRIGGER_PREFIX}{}_{suffix}", layout.table()));
@@ -224,7 +239,7 @@ fn trigger_sql(layout: &EntityLayout) -> AppResult<Vec<String>> {
                      WHERE NEW.entity_sync_id IS NOT OLD.entity_sync_id AND {filter_old};
                  END",
                 au = name("au"),
-                changed = replicated_change_sql(layout),
+                changed = replicated_change_sql(layout, present),
                 owner_new = owner_sql(layout, "NEW"),
                 owner_old = owner_sql(layout, "OLD"),
                 filter_new = layout.filter_sql("NEW"),
@@ -268,7 +283,7 @@ fn trigger_sql(layout: &EntityLayout) -> AppResult<Vec<String>> {
                      WHERE {key_new} IS NOT {key_old} AND {filter_old};
                  END",
                 au = name("au"),
-                changed = replicated_change_sql(layout),
+                changed = replicated_change_sql(layout, present),
                 owner_new = owner_sql(layout, "NEW"),
                 owner_old = owner_sql(layout, "OLD"),
                 filter_new = layout.filter_sql("NEW"),

@@ -233,25 +233,40 @@ pub(crate) async fn may_clear_protected_requirement(
         .is_some())
 }
 
-/// A protected requirement (plant rule or safety request) that was cleared and is required again by
-/// the general edit is protected again: its clearing is withdrawn in the same transaction
-/// (`permit_rule_cleared_*` emptied), recorded in the action history and the audit trail with the
-/// withdrawn clearing, so unticking it again needs the permit-issue clearing. Called before the
-/// requirement is set; nothing happens when it is already required or was never cleared. Returns
-/// whether a clearing was withdrawn.
-pub async fn withdraw_clearing_on_retick(
+/// The sync id of a person here (the payloads keep it next to the local id, which another PC does
+/// not share).
+async fn user_sync_id(conn: &impl ConnectionTrait, user_id: Option<i64>) -> AppResult<Option<String>> {
+    let Some(id) = user_id else {
+        return Ok(None);
+    };
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+            [id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<String>>("", "entity_sync_id").ok().flatten()))
+}
+
+/// Empties the clearing of a protected requirement (plant rule or safety request) whose
+/// `requires_permit` is `required_now`, and records it (`permit_clearing_withdrawn`, with `cause`
+/// and the withdrawn who / when / why) in the action history and the audit trail.
+async fn withdraw_clearing(
     conn: &impl ConnectionTrait,
     wo_id: i64,
     actor_id: Option<i64>,
+    required_now: bool,
+    cause: &str,
 ) -> AppResult<bool> {
     let Some(row) = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT permit_rule_code, permit_rule_cleared_by_id, permit_rule_cleared_at, permit_rule_clear_reason \
                FROM work_orders \
-              WHERE id = ? AND requires_permit = 0 AND permit_rule_cleared_at IS NOT NULL \
+              WHERE id = ? AND requires_permit = ? AND permit_rule_cleared_at IS NOT NULL \
                 AND (permit_rule_code IS NOT NULL OR permit_from_safety_di = 1)",
-            [wo_id.into()],
+            [wo_id.into(), i64::from(required_now).into()],
         ))
         .await?
     else {
@@ -277,8 +292,10 @@ pub async fn withdraw_clearing_on_retick(
         "requires_permit": true,
         "rule": rule,
         "origin": origin.as_str(),
-        "reason": "retick",
+        "cause": cause,
+        "actor_sync_id": user_sync_id(conn, actor_id).await?,
         "withdrawn_cleared_by_id": cleared_by,
+        "withdrawn_cleared_by_sync_id": user_sync_id(conn, cleared_by).await?,
         "withdrawn_cleared_at": cleared_at,
         "withdrawn_clear_reason": reason,
     })
@@ -307,6 +324,120 @@ pub async fn withdraw_clearing_on_retick(
     )
     .await?;
     Ok(true)
+}
+
+/// A protected requirement (plant rule or safety request) that was cleared and is required again by
+/// the general edit is protected again: its clearing is withdrawn in the same transaction
+/// (`permit_rule_cleared_*` emptied), recorded in the action history and the audit trail with the
+/// withdrawn clearing, so unticking it again needs the permit-issue clearing. Called before the
+/// requirement is set; nothing happens when it is already required or was never cleared. Returns
+/// whether a clearing was withdrawn.
+pub async fn withdraw_clearing_on_retick(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    actor_id: Option<i64>,
+) -> AppResult<bool> {
+    withdraw_clearing(conn, wo_id, actor_id, false, "retick").await
+}
+
+/// A received protected work order required again but still carrying its clearing (a re-tick made
+/// by a build before the clearing was withdrawn with it): it ends protected here, its clearing
+/// withdrawn and recorded (`sync::apply_hooks::after_upsert`).
+pub(crate) async fn withdraw_received_clearing_of_required(conn: &impl ConnectionTrait, wo_id: i64) -> AppResult<bool> {
+    withdraw_clearing(conn, wo_id, None, true, "received_retick").await
+}
+
+/// Statuses of a work order whose permit requirement can still change (`permit_requirement_editable`).
+pub(crate) const NOT_STARTED_STATUS_CODES: &[&str] = &["draft", "planning", "ready"];
+
+/// A request flagged "sécurité" protects its work orders that have not started yet (draft, planning,
+/// ready) and do not carry that origin: they get `permit_from_safety_di = 1` and require a permit,
+/// and a clearing they carried (a plant rule's, decided without this concern) is withdrawn, in the
+/// caller's transaction, each recorded (`permit_safety_origin_raised`) in the action history and the
+/// audit trail. Called when a request is flagged here (`di::queries::update_di_draft_fields`) and
+/// when a request or work order is received (`sync::apply_hooks::after_upsert`): every PC derives the
+/// same protection from the same request. Work orders already started are left as they are (their
+/// start was judged on the PC that started them). Returns the work orders raised.
+pub async fn raise_work_orders_of_safety_request(
+    conn: &impl ConnectionTrait,
+    di_id: i64,
+    actor_id: Option<i64>,
+) -> AppResult<Vec<i64>> {
+    let marks = vec!["?"; NOT_STARTED_STATUS_CODES.len()].join(",");
+    let mut values: Vec<sea_orm::Value> = vec![di_id.into()];
+    values.extend(NOT_STARTED_STATUS_CODES.iter().map(|c| sea_orm::Value::from(*c)));
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wo.id, wo.requires_permit, wo.permit_rule_cleared_by_id, wo.permit_rule_cleared_at, \
+                        wo.permit_rule_clear_reason \
+                   FROM work_orders wo \
+                   JOIN intervention_requests ir ON ir.id = wo.source_di_id \
+                   JOIN work_order_statuses st ON st.id = wo.status_id \
+                  WHERE wo.source_di_id = ? AND ir.safety_flag = 1 AND wo.permit_from_safety_di = 0 \
+                    AND st.code IN ({marks}) \
+                  ORDER BY wo.id"
+            ),
+            values,
+        ))
+        .await?;
+    let mut raised = Vec::new();
+    for row in rows {
+        let wo_id: i64 = row.try_get("", "id")?;
+        let previous_requires: i64 = row.try_get("", "requires_permit")?;
+        let cleared_by: Option<i64> = row.try_get("", "permit_rule_cleared_by_id")?;
+        let cleared_at: Option<String> = row.try_get("", "permit_rule_cleared_at")?;
+        let reason: Option<String> = row.try_get("", "permit_rule_clear_reason")?;
+        conn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET permit_from_safety_di = 1, requires_permit = 1, \
+                    permit_rule_cleared_by_id = NULL, permit_rule_cleared_at = NULL, \
+                    permit_rule_clear_reason = NULL, row_version = row_version + 1 \
+              WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await?;
+        let (status, _, _) = load_wo_status(conn, wo_id).await?;
+        let payload = serde_json::json!({
+            "requires_permit": true,
+            "origin": ProtectedOrigin::SafetyRequest.as_str(),
+            "cause": "safety_request_flagged",
+            "request_id": di_id,
+            "actor_sync_id": user_sync_id(conn, actor_id).await?,
+            "previous_requires_permit": previous_requires != 0,
+            "withdrawn_cleared_by_id": cleared_by,
+            "withdrawn_cleared_by_sync_id": user_sync_id(conn, cleared_by).await?,
+            "withdrawn_cleared_at": cleared_at,
+            "withdrawn_clear_reason": reason,
+        })
+        .to_string();
+        emit_action_event(
+            conn,
+            wo_id,
+            "permit_safety_origin_raised",
+            actor_id,
+            Some(&status),
+            Some(&status),
+            Some(&payload),
+        )
+        .await?;
+        crate::wo::audit::insert_wo_change_event(
+            conn,
+            &crate::wo::audit::WoAuditInput {
+                wo_id: Some(wo_id),
+                action: "permit_safety_origin_raised".into(),
+                actor_id,
+                summary: Some("Permis exigé : la demande d'origine signale un risque sécurité".into()),
+                details_json: Some(payload),
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+        )
+        .await?;
+        raised.push(wo_id);
+    }
+    Ok(raised)
 }
 
 /// A safety request's requirement is cleared with the permit-issue right at the work order's site:
@@ -357,10 +488,12 @@ pub async fn void_clearing_on_site_change(
     let payload = serde_json::json!({
         "requires_permit": true,
         "origin": ProtectedOrigin::SafetyRequest.as_str(),
-        "reason": "site_change",
+        "cause": "site_change",
         "old_site": old,
         "new_site": new_site,
+        "actor_sync_id": user_sync_id(conn, actor_id).await?,
         "voided_cleared_by_id": cleared_by,
+        "voided_cleared_by_sync_id": user_sync_id(conn, cleared_by).await?,
         "voided_cleared_at": cleared_at,
         "voided_clear_reason": reason,
     })

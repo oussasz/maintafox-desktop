@@ -746,9 +746,11 @@ pub async fn create_intervention_request(
 // F) update_di_draft_fields — optimistic concurrency + status guard
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// `actor_id`: who makes the change (recorded on the work orders a newly set safety flag protects).
 pub async fn update_di_draft_fields(
     db: &DatabaseConnection,
     input: DiDraftUpdateInput,
+    actor_id: Option<i64>,
 ) -> AppResult<InterventionRequest> {
     let txn = db.begin().await?;
 
@@ -868,6 +870,13 @@ pub async fn update_di_draft_fields(
              Veuillez recharger et réessayer."
                 .into(),
         ]));
+    }
+
+    // A request flagged "sécurité" now: its work orders not started yet require a permit, protected
+    // like a converted one (audit finding AU-01, permit_from_safety_di), in this transaction.
+    if input.safety_flag == Some(true) && !current.safety_flag {
+        crate::wo::workflow::actions::permit_requirement::raise_work_orders_of_safety_request(&txn, input.id, actor_id)
+            .await?;
     }
 
     // 5. Re-fetch and return updated row

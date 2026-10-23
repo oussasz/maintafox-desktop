@@ -2348,40 +2348,58 @@ pub(crate) async fn inbound_permit_rule_check(
             );
         }
     }
-    // The safety origin is written once too: never turned off by a received row (a row without the
-    // field keeps the value held here).
-    if local.as_ref().is_some_and(|l| flag(l, SAFETY_ORIGIN)) && !flag(&wo, SAFETY_ORIGIN) {
-        return conflict(
-            "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
-            format!(
-                "work order {code}: the safety request its permit requirement comes from cannot be removed by \
-                 synchronisation"
-            ),
-        );
-    }
-    // A work order new here takes the origin its request here gives it: a row without the column
-    // (a PC without migration 255) gets it when applied (`sync::apply_hooks::after_upsert`); a row
-    // that says 0 for a request flagged "sécurité" lost that origin on the way (every PC with the
-    // column sets it at conversion and on a manual create from the request): refused, like an
-    // origin turned off, never applied unprotected.
+    // A request flagged "sécurité" here protects its work orders that have not started: each PC
+    // derives that protection itself from the request (`permit_requirement::
+    // raise_work_orders_of_safety_request`, after the apply here). A received row without that origin
+    // for such a work order comes from a PC that has not received the flag yet: it is applied and
+    // protected here in the same transaction, never stored unprotected, and that PC raises it too
+    // when the request reaches it. Except over a clearing recorded here (it is not replaced by a row
+    // that never saw it), and a row that turns the origin off without a flagged request (the origin
+    // is written once, at conversion or create).
+    let local_origin = local.as_ref().is_some_and(|l| flag(l, SAFETY_ORIGIN));
     let mut safety_origin = flag(&wo, SAFETY_ORIGIN);
-    if !safety_origin && local.is_none() {
-        match source_request_is_safety(conn, &wo).await? {
-            None => {
+    if !safety_origin && (local.is_none() || local_origin) {
+        let request_flagged = match source_request_is_safety(conn, &wo).await? {
+            Some(flagged) => flagged,
+            None if local.is_none() => {
                 return wait(format!(
                     "work order {code}: the request it was converted from is not applied yet"
                 ))
             }
-            Some(true) if received.contains_key(SAFETY_ORIGIN) => {
-                return conflict(
-                    "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
-                    format!(
-                        "work order {code}: its request is flagged as a safety concern here, but the received work \
-                         order does not carry that origin of its permit requirement"
-                    ),
-                );
+            None => false,
+        };
+        let origin_off = || {
+            conflict(
+                "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
+                format!(
+                    "work order {code}: the safety request its permit requirement comes from cannot be removed by \
+                     synchronisation"
+                ),
+            )
+        };
+        if request_flagged {
+            let Some(status_sync) = field(&wo, "status_sync_id") else {
+                return origin_off();
+            };
+            let Some(status) = status_code(conn, status_sync).await? else {
+                return wait(format!("work-order status {status_sync} is not applied yet"));
+            };
+            let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES
+                .contains(&status.as_str())
+                && time(&wo, "actual_start").is_none();
+            let cleared_here = local
+                .as_ref()
+                .is_some_and(|l| field(l, "permit_rule_cleared_at").is_some());
+            if not_started && !cleared_here {
+                return Ok(None);
             }
-            Some(flagged) => safety_origin = flagged,
+            if local_origin {
+                return origin_off();
+            }
+            // New here and started: judged with that origin (a clearing says who, when and why).
+            safety_origin = true;
+        } else if local_origin {
+            return origin_off();
         }
     }
     let origin = match field(&wo, "permit_rule_code") {
