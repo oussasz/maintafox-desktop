@@ -271,7 +271,7 @@ async fn close_outbox(conn: &impl ConnectionTrait, scope: OutboxScope<'_>, messa
     conflict_values.extend(values.iter().cloned());
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        &format!(
+        format!(
             "UPDATE sync_conflicts
              SET status = 'resolved_remote', resolution_action = 'same_count_kept', resolution_note = ?,
                  resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), row_version = row_version + 1,
@@ -286,7 +286,7 @@ async fn close_outbox(conn: &impl ConnectionTrait, scope: OutboxScope<'_>, messa
     outbox_values.extend(values);
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        &format!(
+        format!(
             "UPDATE sync_outbox
              SET status = 'superseded', rejection_code = ?, rejection_message = ?,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
