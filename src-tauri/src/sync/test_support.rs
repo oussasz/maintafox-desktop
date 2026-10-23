@@ -7,7 +7,7 @@
 //! per-user delivery), used to exercise the desktop engine quickly. The real API is exercised by
 //! the multi-device harness (Phase 2.5).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -138,6 +138,10 @@ pub(crate) struct TestServer {
     seq: i64,
     pub state: BTreeMap<(String, String), ServerRow>,
     cursors: HashMap<String, i64>,
+    /// Rows not sent to a device yet ([`TestServer::hold_back`]): rows that reach it late.
+    held_back: HashMap<String, BTreeSet<(String, String)>>,
+    /// Rows held back from a device and released: sent at its next exchange.
+    released: HashMap<String, BTreeSet<(String, String)>>,
 }
 
 #[derive(Debug)]
@@ -152,6 +156,25 @@ pub(crate) struct ExchangeReport {
 impl TestServer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Keeps from `device` the server's row `sync_id` and every row whose payload names it (the
+    /// rows that depend on it) until [`TestServer::release`], as when they reach it late. Only
+    /// rows already on the server are held.
+    pub fn hold_back(&mut self, device: &str, sync_id: &str) {
+        let held = self.held_back.entry(device.to_string()).or_default();
+        for (key, row) in &self.state {
+            if key.1 == sync_id || row.payload_json.contains(sync_id) {
+                held.insert(key.clone());
+            }
+        }
+    }
+
+    /// Sends what was held back from `device` at its next exchange.
+    pub fn release(&mut self, device: &str) {
+        if let Some(held) = self.held_back.remove(device) {
+            self.released.entry(device.to_string()).or_default().extend(held);
+        }
     }
 
     /// One exchange of `device` (push its outbox, receive what other devices changed), then the
@@ -229,10 +252,14 @@ impl TestServer {
         }
 
         let cursor = self.cursors.get(device).copied().unwrap_or(0);
+        let held = self.held_back.get(device).cloned().unwrap_or_default();
+        let released = self.released.remove(device).unwrap_or_default();
         let mut changed: Vec<(&(String, String), &ServerRow)> = self
             .state
             .iter()
-            .filter(|(_, r)| r.seq > cursor && r.origin_device != device)
+            .filter(|(key, r)| {
+                (r.seq > cursor && r.origin_device != device && !held.contains(*key)) || released.contains(*key)
+            })
             .filter(
                 |((entity_type, _), r)| match registry::entity(entity_type).map(|e| e.scope) {
                     Some(SyncScope::User) => r

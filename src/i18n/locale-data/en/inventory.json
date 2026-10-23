@@ -59,7 +59,6 @@
     "doublePosting": {
       "list": "Counts posted twice",
       "movementLine": "{{who}}, {{date}}: {{quantity}} (the stock ledger does not record the PC)",
-      "closedByCount": "closed by count {{session}} ({{who}}, {{date}})",
       "flagKind": {
         "posted_twice": "Count posted twice — to verify",
         "divergent": "Divergent count — to verify"
@@ -75,6 +74,31 @@
           "COUNT_REVERSAL": "The reversal of count {{session}} was posted on two PCs with different quantities: the version that reached the server first ({{variance}}) is kept on every PC and the stock follows it; the other differed by {{excess}} (now {{onHand}} on hand). Check the stock and record a new count."
         }
       }
+    },
+    "overQuantity": {
+      "list": "Over-issues and over-receipts to reconcile",
+      "flagKind": {
+        "over_issue": "Over-issue — to reconcile",
+        "over_receipt": "Over-receipt — to reconcile"
+      },
+      "explainKind": {
+        "over_issue": "{{document}}: {{expected}} reserved, {{actual}} issued in all (issues made on several PCs, returns deducted), {{excess}} too many. {{onHand}} on hand now. Check the stock and record a count on a PC that has received all these issues.",
+        "over_receipt": "Purchase order {{document}}: {{expected}} ordered, {{actual}} received in all (receipts made on several PCs), {{excess}} too many. {{onHand}} on hand now. Check the stock and record a count on a PC that has received all these receipts."
+      },
+      "documentWorkOrder": "Reservation for work order {{code}}",
+      "documentReservation": "Reservation {{ref}}",
+      "documentNone": "Reservation without work order",
+      "receiptRejected": "If these receipts were rejected in full at inspection, no stock moved: the count confirms the stock as it stands.",
+      "closedByReturn": "Regularised by return: {{quantity}} returned by {{who}}, {{date}}",
+      "closedByCount": "Closed by count {{session}} {{path}}: counted by {{who}}, {{date}}",
+      "closedByCountApproved": "Closed by count {{session}} {{path}}: counted by {{who}}, {{date}}, variance approved by {{approver}}",
+      "closedPath": {
+        "reconciliation": "from the stock-to-reconcile list",
+        "count_session": "from a count session or inventory campaign"
+      },
+      "movementLine": "{{movement}} — {{who}}, {{date}}: {{quantity}}",
+      "movementLineRef": "{{movement}} {{ref}} — {{who}}, {{date}}: {{quantity}}",
+      "syncNotice": "{{count}} over-issue(s) or over-receipt(s) (issues or receipts made on several PCs beyond the quantity reserved or ordered): to reconcile with a count (Inventory › Controls)."
     },
     "label": "Negative stock",
     "hint": "To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",

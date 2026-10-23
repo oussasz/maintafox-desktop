@@ -59,7 +59,6 @@
     "doublePosting": {
       "list": "Comptages passés deux fois",
       "movementLine": "{{who}}, {{date}} : {{quantity}} (le journal de stock n'enregistre pas le poste)",
-      "closedByCount": "clos par le comptage {{session}} ({{who}}, {{date}})",
       "flagKind": {
         "posted_twice": "Comptage passé deux fois — à vérifier",
         "divergent": "Comptage divergent — à vérifier"
@@ -75,6 +74,31 @@
           "COUNT_REVERSAL": "La contre-passation de l'inventaire {{session}} a été passée sur deux postes avec des quantités différentes : la version arrivée la première au serveur ({{variance}}) est gardée sur tous les postes et le stock la suit ; l'autre différait de {{excess}} (actuellement {{onHand}} en stock). Vérifiez le stock et enregistrez un nouveau comptage."
         }
       }
+    },
+    "overQuantity": {
+      "list": "Sur-sorties et sur-réceptions à rapprocher",
+      "flagKind": {
+        "over_issue": "Sur-sortie — à rapprocher",
+        "over_receipt": "Sur-réception — à rapprocher"
+      },
+      "explainKind": {
+        "over_issue": "{{document}} : {{expected}} réservé(s), {{actual}} sorti(s) au total (sorties faites sur plusieurs postes, retours déduits), soit {{excess}} de trop. Actuellement {{onHand}} en stock. Vérifiez le stock et enregistrez un comptage sur un poste qui a reçu toutes ces sorties.",
+        "over_receipt": "Commande {{document}} : {{expected}} commandé(s), {{actual}} réceptionné(s) au total (réceptions faites sur plusieurs postes), soit {{excess}} de trop. Actuellement {{onHand}} en stock. Vérifiez le stock et enregistrez un comptage sur un poste qui a reçu toutes ces réceptions."
+      },
+      "documentWorkOrder": "Réservation pour l'OT {{code}}",
+      "documentReservation": "Réservation {{ref}}",
+      "documentNone": "Réservation sans OT",
+      "receiptRejected": "Si ces réceptions ont été refusées en totalité au contrôle, aucun stock n'a bougé : le comptage confirme le stock tel qu'il est.",
+      "closedByReturn": "Régularisé par retour : {{quantity}} retourné(s) par {{who}}, {{date}}",
+      "closedByCount": "Clos par le comptage {{session}} {{path}} : compté par {{who}}, {{date}}",
+      "closedByCountApproved": "Clos par le comptage {{session}} {{path}} : compté par {{who}}, {{date}}, écart approuvé par {{approver}}",
+      "closedPath": {
+        "reconciliation": "depuis la liste du stock à rapprocher",
+        "count_session": "d'une session de comptage ou d'une campagne d'inventaire"
+      },
+      "movementLine": "{{movement}} — {{who}}, {{date}} : {{quantity}}",
+      "movementLineRef": "{{movement}} {{ref}} — {{who}}, {{date}} : {{quantity}}",
+      "syncNotice": "{{count}} sur-sortie(s) ou sur-réception(s) (sorties ou réceptions faites sur plusieurs postes au-delà de la quantité réservée ou commandée) : à rapprocher par un comptage (Stock › Contrôles)."
     },
     "label": "Stock négatif",
     "hint": "À corriger : un autre poste a peut-être enregistré un mouvement. Enregistrez un comptage dans « Stock à rapprocher » (Stock › Contrôles).",

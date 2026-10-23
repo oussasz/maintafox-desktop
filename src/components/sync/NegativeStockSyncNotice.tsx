@@ -1,6 +1,7 @@
 /**
  * Sync centre: stock locations left below zero by received movements, counted twice on two PCs,
- * and over-reservations.
+ * reservations issued or PO lines received beyond their quantity by several PCs, and
+ * over-reservations.
  *
  * They are not sync conflicts (the movements are applied: nothing to accept or reject); the
  * notice points to the list where they are reconciled (Inventory › Controls). The counts come
@@ -24,6 +25,8 @@ export interface NegativeStockSyncNoticeProps {
 
 export function NegativeStockSyncNotice({ onNavigate }: NegativeStockSyncNoticeProps) {
   const { t } = useTranslation("shell");
+  // The over-issue / over-receipt line is worded with the stock to reconcile (inventory texts).
+  const { t: ti } = useTranslation("inventory");
   const [summary, setSummary] = useState<NegativeStockSummary | null>(null);
 
   useEffect(() => {
@@ -46,6 +49,7 @@ export function NegativeStockSyncNotice({ onNavigate }: NegativeStockSyncNoticeP
     (summary.negative_count === 0 &&
       summary.double_count_count === 0 &&
       summary.double_posting_count === 0 &&
+      summary.over_quantity_count === 0 &&
       summary.over_reserved_count === 0)
   ) {
     return null;
@@ -60,6 +64,9 @@ export function NegativeStockSyncNotice({ onNavigate }: NegativeStockSyncNoticeP
       ) : null}
       {summary.double_posting_count > 0 ? (
         <p>{t("sync.doublePosting", { count: summary.double_posting_count })}</p>
+      ) : null}
+      {summary.over_quantity_count > 0 ? (
+        <p>{ti("negativeStock.overQuantity.syncNotice", { count: summary.over_quantity_count })}</p>
       ) : null}
       {summary.over_reserved_count > 0 ? (
         <p>{t("sync.overReserved", { count: summary.over_reserved_count })}</p>

@@ -22,6 +22,8 @@ mod benchmark_tests;
 #[cfg(test)]
 mod negative_stock_tests;
 #[cfg(test)]
+mod over_quantity_tests;
+#[cfg(test)]
 mod reservations_tests;
 #[cfg(test)]
 mod tests;

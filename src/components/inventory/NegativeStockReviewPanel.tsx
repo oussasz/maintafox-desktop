@@ -8,8 +8,13 @@
  * location recorded on different PCs without knowing each other are listed as "double comptage —
  * à vérifier", naming both, until a new count; a count whose movement is in the ledger twice (the
  * same count posted on two PCs by older versions) as "comptage passé deux fois — à vérifier",
- * naming the session and both movements, until a new count. Locations holding more reserved than on hand are
- * shown as warnings only. Nothing here can be rejected or accepted as is.
+ * naming the session and both movements, until a new count; a reservation issued, or a PO line
+ * received, beyond its quantity by several PCs as "sur-sortie / sur-réception — à rapprocher",
+ * naming the work order or PO and every movement, until a count made on a PC holding them all
+ * (from this list, a count session or an inventory campaign) or, for an over-issue, a return of
+ * the reservation back to its reserved quantity ("régularisé par retour"); closed ones name that
+ * return, or the count's session, counter and approver. Locations holding more reserved than on
+ * hand are shown as warnings only. Nothing here can be rejected or accepted as is.
  */
 import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -46,6 +51,8 @@ import {
   type DoublePostedMovement,
   type NegativeStockReview,
   type NegativeStockReviewList,
+  type OverQuantityMovement,
+  type OverQuantityReview,
   type ReconciliationCount,
   listNegativeStockReviews,
   resolveNegativeStockByCount,
@@ -130,6 +137,65 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
       },
     );
 
+  const overMovementLine = (m: OverQuantityMovement) =>
+    t(
+      m.document_ref
+        ? "negativeStock.overQuantity.movementLineRef"
+        : "negativeStock.overQuantity.movementLine",
+      {
+        movement: movementLabel(m.movement_type),
+        ref: m.document_ref ?? "",
+        who: m.posted_by ?? t("negativeStock.doubleCount.unknownUser"),
+        date: m.posted_at ? formatDateTime(m.posted_at) : "—",
+        quantity: qty(m.quantity),
+      },
+    );
+
+  /** The work order or reservation (over-issue), the purchase order (over-receipt). */
+  const overDocument = (item: OverQuantityReview) => {
+    if (item.kind === "over_receipt") return item.purchase_order_number ?? "—";
+    if (item.work_order_code) {
+      return t("negativeStock.overQuantity.documentWorkOrder", { code: item.work_order_code });
+    }
+    if (item.reservation_ref) {
+      return t("negativeStock.overQuantity.documentReservation", { ref: item.reservation_ref });
+    }
+    return t("negativeStock.overQuantity.documentNone");
+  };
+
+  /**
+   * The count that closed an item (over-issue, over-receipt, count posted twice): its session,
+   * path, who counted, when, and who approved its variance when it had one.
+   */
+  const countClosure = (by: ReconciliationCount | null) => {
+    const unknown = t("negativeStock.doubleCount.unknownUser");
+    return t(
+      by?.approved_by
+        ? "negativeStock.overQuantity.closedByCountApproved"
+        : "negativeStock.overQuantity.closedByCount",
+      {
+        session: by?.session_code ?? "—",
+        path: by ? t(`negativeStock.overQuantity.closedPath.${by.path}`) : "",
+        who: by?.counted_by ?? unknown,
+        date: by?.counted_at ? formatDateTime(by.counted_at) : "—",
+        approver: by?.approved_by ?? "",
+      },
+    );
+  };
+
+  /** How a closed over-issue or over-receipt was closed: the return, or the count. */
+  const overClosure = (item: OverQuantityReview) => {
+    const back = item.closed_by_return;
+    if (item.closure_kind === "return" && back) {
+      return t("negativeStock.overQuantity.closedByReturn", {
+        quantity: qty(back.quantity),
+        who: back.posted_by ?? t("negativeStock.doubleCount.unknownUser"),
+        date: back.posted_at ? formatDateTime(back.posted_at) : "—",
+      });
+    }
+    return countClosure(item.closed_by);
+  };
+
   const openCount = (item: CountTarget) => {
     setCounting(item);
     setCountedQty("");
@@ -199,7 +265,10 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
         </label>
       </div>
 
-      {open.length === 0 && list.double_counts.length === 0 && list.double_postings.length === 0 ? (
+      {open.length === 0 &&
+      list.double_counts.length === 0 &&
+      list.double_postings.length === 0 &&
+      list.over_quantities.length === 0 ? (
         <p className="text-sm text-text-muted">{t("negativeStock.noneOpen")}</p>
       ) : (
         <ul className="space-y-2" aria-label={t("negativeStock.openList")}>
@@ -326,6 +395,57 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
         </ul>
       ) : null}
 
+      {list.over_quantities.length > 0 ? (
+        <ul className="mt-2 space-y-2" aria-label={t("negativeStock.overQuantity.list")}>
+          {list.over_quantities.map((item, i) => (
+            <li
+              key={`${item.kind}-${item.article_id}-${item.location_id}-${item.movements[0]?.movement_sync_id ?? ""}-${i}`}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-status-warning/35 bg-status-warning/10 px-3 py-2"
+            >
+              <div className="min-w-0 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusChip
+                    label={t(`negativeStock.overQuantity.flagKind.${item.kind}`)}
+                    tone="warning"
+                    icon={AlertTriangle}
+                  />
+                  <span className="font-medium">
+                    {item.article_code} — {item.article_name}
+                  </span>
+                  <span className="text-text-muted">
+                    {item.warehouse_code}/{item.location_code}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-text-muted">
+                  {t(`negativeStock.overQuantity.explainKind.${item.kind}`, {
+                    document: overDocument(item),
+                    expected: qty(item.expected_qty),
+                    actual: qty(item.actual_qty),
+                    excess: qty(item.excess_qty),
+                    onHand: qty(item.on_hand_qty),
+                  })}
+                </p>
+                {item.kind === "over_receipt" ? (
+                  <p className="mt-1 text-xs text-text-muted">
+                    {t("negativeStock.overQuantity.receiptRejected")}
+                  </p>
+                ) : null}
+                <ul className="mt-1 list-disc ps-5 text-xs text-text-secondary">
+                  {item.movements.map((m) => (
+                    <li key={m.movement_sync_id}>{overMovementLine(m)}</li>
+                  ))}
+                </ul>
+              </div>
+              <PermissionGate permission={P.INV_MANAGE}>
+                <Button className="h-11" onClick={() => openCount(item)}>
+                  {t("negativeStock.recordCount")}
+                </Button>
+              </PermissionGate>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       {list.over_reservations.length > 0 ? (
         <div className={`${mfAlert.warning} mt-3`} role="status">
           <p className="font-medium">{t("negativeStock.overReservedTitle")}</p>
@@ -347,7 +467,8 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
       {includeClosed &&
       (closed.length > 0 ||
         list.closed_double_counts.length > 0 ||
-        list.closed_double_postings.length > 0) ? (
+        list.closed_double_postings.length > 0 ||
+        list.closed_over_quantities.length > 0) ? (
         <ul className="mt-3 space-y-1" aria-label={t("negativeStock.closedList")}>
           {closed.map((item) => (
             <li key={item.id} className="text-xs text-text-muted">
@@ -390,11 +511,19 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                 {item.article_code} — {item.warehouse_code}/{item.location_code}
               </span>{" "}
               · {t(`negativeStock.doublePosting.flagKind.${item.kind}`)} ·{" "}
-              {t("negativeStock.doublePosting.closedByCount", {
-                session: item.closed_by?.session_code ?? "—",
-                who: item.closed_by?.counted_by ?? t("negativeStock.doubleCount.unknownUser"),
-                date: item.closed_by?.counted_at ? formatDateTime(item.closed_by.counted_at) : "—",
-              })}
+              {countClosure(item.closed_by)}
+            </li>
+          ))}
+          {list.closed_over_quantities.map((item, i) => (
+            <li
+              key={`${item.kind}-${item.article_id}-${item.location_id}-${item.movements[0]?.movement_sync_id ?? ""}-${i}`}
+              className="text-xs text-text-muted"
+            >
+              <span className="font-medium text-text-secondary">
+                {item.article_code} — {item.warehouse_code}/{item.location_code}
+              </span>{" "}
+              · {t(`negativeStock.overQuantity.flagKind.${item.kind}`)} · {overDocument(item)} ·{" "}
+              {overClosure(item)}
             </li>
           ))}
         </ul>
