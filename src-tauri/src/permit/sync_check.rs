@@ -484,6 +484,13 @@ pub(crate) struct GroupRow {
     inbox_id: i64,
 }
 
+impl GroupRow {
+    /// The inbox row applied in the group.
+    pub(crate) fn inbox_id(&self) -> i64 {
+        self.inbox_id
+    }
+}
+
 /// Rows applied in the same transaction as a received permit or work order (`apply_group`).
 #[derive(Debug, Clone)]
 pub(crate) struct Group {

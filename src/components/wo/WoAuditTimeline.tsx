@@ -26,7 +26,7 @@ import { mfTone } from "@/design-system/tone";
 import { useLatestHistory } from "@/hooks/use-latest-history";
 import { formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
-import { listWoChangeEvents, type WoChangeEvent } from "@/services/wo-audit-service";
+import { type WoChangeEvent, listWoChangeEvents } from "@/services/wo-audit-service";
 
 /** Page of the history and backend maximum (`wo::audit::WO_CHANGE_EVENTS_MAX_LIMIT`). */
 const HISTORY_PAGE = 100;
@@ -62,6 +62,9 @@ const KNOWN_ACTIONS = new Set([
   "shutdown_required_set",
   "shutdown_required_cleared",
   "permit_rule_flag_cleared",
+  "task_reopened",
+  "labor_closed_by_cancellation",
+  "labor_closed_by_closeout",
 ]);
 
 function actionIcon(action: string) {

@@ -1770,3 +1770,336 @@ async fn a_change_applied_with_snapshot_history_is_judged() {
     let found = conflict_codes(&target).await;
     assert!(found.iter().any(|c| c == "SYNC_GROUP_REFUSED"), "{found:?}");
 }
+
+// ── Review round 3 (SF1, SF2) ───────────────────────────────────────────────────────────────────
+
+fn hours_from_now(h: i64) -> String {
+    (chrono::Utc::now() + chrono::Duration::hours(h))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+async fn rejection_message(db: &DatabaseConnection, entity_type: &str, sync_id: &str) -> Option<String> {
+    text(
+        db,
+        "SELECT rejection_message FROM sync_inbox WHERE entity_type = ? AND entity_sync_id = ? ORDER BY id DESC LIMIT 1",
+        vec![entity_type.into(), sync_id.into()],
+    )
+    .await
+}
+
+/// A WO completed here with one mandatory task recorded OK.
+async fn completed_here_with_task(db: &DatabaseConnection) -> (i64, String, String) {
+    let (wo_id, sync) = wo_ready_to_complete(db).await;
+    let actor = admin_id(db).await;
+    let task = add_task(db, wo_id, "Measure the vibration", true).await;
+    tasks_ok(db, task.id).await;
+    let rv = crate::wo::queries::get_work_order(db, wo_id)
+        .await
+        .expect("wo")
+        .expect("wo")
+        .row_version;
+    crate::wo::execution::complete_wo_mechanically(
+        db,
+        crate::wo::execution::WoMechCompleteInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            actual_end: None,
+            actual_duration_hours: None,
+            conclusion: None,
+        },
+    )
+    .await
+    .expect("completed here");
+    let tsync = task_sync(db, task.id).await;
+    (wo_id, sync, tsync)
+}
+
+/// SF1: reopened elsewhere, the task recorded again, completed again; the task arrives in one pass,
+/// the work order in the next. The task waits (recorded after this PC's completion), then comes
+/// with the return from execution and is judged with it (R3 refuses a task left open).
+#[tokio::test]
+async fn a_reopening_split_across_passes_is_judged_with_its_return() {
+    for (result, refused) in [("ok", false), ("cancelled", true)] {
+        let db = setup().await;
+        let (wo_id, sync, tsync) = completed_here_with_task(&db).await;
+        let task_row = with(
+            wire(&db, "work_order_tasks", &tsync).await,
+            &[
+                ("result_code", json!(result)),
+                ("completed_at", json!(hours_from_now(1))),
+            ],
+        );
+        inbox(&db, "b-reopen-1", "work_order_tasks", &tsync, 70, &task_row).await;
+        let first = materialize(&db).await;
+        assert_eq!(first.conflicts, 0, "{result}: {:?}", conflict_codes(&db).await);
+        assert_eq!(
+            inbox_status(&db, "work_order_tasks", &tsync).await.as_deref(),
+            Some("deferred")
+        );
+        assert!(
+            rejection_message(&db, "work_order_tasks", &tsync)
+                .await
+                .is_some_and(|m| m.contains("recorded after this PC's completion or close")),
+            "the reason is shown"
+        );
+
+        let again = with(
+            wire(&db, "work_orders", &sync).await,
+            &[
+                ("mechanically_completed_at", json!(hours_from_now(2))),
+                ("updated_at", json!(now())),
+            ],
+        );
+        inbox(&db, "b-reopen-2", "work_orders", &sync, 70, &again).await;
+        materialize(&db).await;
+        let found = conflict_codes(&db).await;
+        if refused {
+            assert!(found.iter().any(|c| c == codes::COMPLETION_GATE), "{result}: {found:?}");
+        } else {
+            assert!(found.is_empty(), "{result}: {found:?}");
+            assert_eq!(
+                inbox_status(&db, "work_order_tasks", &tsync).await.as_deref(),
+                Some("applied")
+            );
+        }
+        assert_eq!(wo_status(&db, wo_id).await, "completed");
+    }
+}
+
+/// SF1: the reopen counter alone (same stamps) marks the return from execution.
+#[tokio::test]
+async fn a_higher_reopen_count_marks_a_return_from_execution() {
+    let db = setup().await;
+    let (_, sync, tsync) = completed_here_with_task(&db).await;
+    let task_row = with(
+        wire(&db, "work_order_tasks", &tsync).await,
+        &[("completed_at", json!(hours_from_now(1)))],
+    );
+    let reopen_count = wire(&db, "work_orders", &sync)
+        .await
+        .get("reopen_count")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let again = with(
+        wire(&db, "work_orders", &sync).await,
+        &[("reopen_count", json!(reopen_count + 1)), ("updated_at", json!(now()))],
+    );
+    inbox(&db, "b-count-1", "work_order_tasks", &tsync, 70, &task_row).await;
+    materialize(&db).await;
+    assert_eq!(
+        inbox_status(&db, "work_order_tasks", &tsync).await.as_deref(),
+        Some("deferred")
+    );
+    inbox(&db, "b-count-2", "work_orders", &sync, 70, &again).await;
+    let second = materialize(&db).await;
+    assert_eq!(second.conflicts, 0, "{:?}", conflict_codes(&db).await);
+    assert_eq!(
+        inbox_status(&db, "work_order_tasks", &tsync).await.as_deref(),
+        Some("applied")
+    );
+}
+
+/// SF1: a WO closed here, reopened and closed again elsewhere; its new verification arrives in one
+/// pass, the close in the next: the verification waits, then the close is judged with it.
+#[tokio::test]
+async fn a_reclose_split_across_passes_is_judged_with_its_return() {
+    use crate::wo::closeout::{self, WoCloseInput};
+    let db = setup().await;
+    let actor = admin_id(&db).await;
+    let (wo_id, rv) = create_wo_in_progress(&db).await;
+    let rv = advance_to_completed_verified(&db, wo_id, rv).await;
+    closeout::close_wo(
+        &db,
+        WoCloseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("closed here");
+    let sync = wo_sync(&db, wo_id).await;
+    let verifier = super::closeout_tests::tests::create_second_user(&db).await;
+    let verification = with(
+        verification_row(&sync, &user_sync_of(&db, verifier).await),
+        &[("verified_at", json!(hours_from_now(1)))],
+    );
+    inbox(
+        &db,
+        "b-reclose-1",
+        "work_order_verifications",
+        "ver-reclose",
+        1,
+        &verification,
+    )
+    .await;
+    let first = materialize(&db).await;
+    assert_eq!(first.conflicts, 0, "{:?}", conflict_codes(&db).await);
+    assert_eq!(
+        inbox_status(&db, "work_order_verifications", "ver-reclose")
+            .await
+            .as_deref(),
+        Some("deferred")
+    );
+    let again = with(
+        wire(&db, "work_orders", &sync).await,
+        &[("closed_at", json!(hours_from_now(2))), ("updated_at", json!(now()))],
+    );
+    inbox(&db, "b-reclose-2", "work_orders", &sync, 80, &again).await;
+    let second = materialize(&db).await;
+    assert_eq!(second.conflicts, 0, "{:?}", conflict_codes(&db).await);
+    assert_eq!(wo_status(&db, wo_id).await, "closed");
+    assert_eq!(
+        inbox_status(&db, "work_order_verifications", "ver-reclose")
+            .await
+            .as_deref(),
+        Some("applied")
+    );
+}
+
+/// SF1: a row recorded after this PC's completion does not turn an ordinary close (completed →
+/// closed, no return from execution) into a refused group: the close is judged without it, and the
+/// row keeps waiting, visibly, never applied unjudged.
+#[tokio::test]
+async fn a_row_recorded_after_completion_does_not_block_the_close() {
+    let db = setup().await;
+    let (wo_id, sync, tsync) = completed_here_with_task(&db).await;
+    let verifier = super::closeout_tests::tests::create_second_user(&db).await;
+    exec(
+        &db,
+        "INSERT INTO work_order_verifications (work_order_id, verified_by_id, verified_at, result, \
+         return_to_service_confirmed) VALUES (?, ?, ?, 'pass', 1)",
+        vec![wo_id.into(), verifier.into(), now().into()],
+    )
+    .await;
+    let task_row = with(
+        wire(&db, "work_order_tasks", &tsync).await,
+        &[("result_code", json!("na")), ("completed_at", json!(hours_from_now(1)))],
+    );
+    inbox(&db, "b-after-1", "work_order_tasks", &tsync, 70, &task_row).await;
+    materialize(&db).await;
+    assert_eq!(
+        inbox_status(&db, "work_order_tasks", &tsync).await.as_deref(),
+        Some("deferred")
+    );
+    let closed = status_sync(&db, "closed").await;
+    let close = with(
+        wire(&db, "work_orders", &sync).await,
+        &[
+            ("status_sync_id", json!(closed)),
+            ("closed_at", json!(now())),
+            ("updated_at", json!(now())),
+        ],
+    );
+    inbox(&db, "b-after-2", "work_orders", &sync, 70, &close).await;
+    let second = materialize(&db).await;
+    assert_eq!(second.conflicts, 0, "{:?}", conflict_codes(&db).await);
+    assert_eq!(wo_status(&db, wo_id).await, "closed");
+    assert_eq!(
+        inbox_status(&db, "work_order_tasks", &tsync).await.as_deref(),
+        Some("deferred")
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT result_code FROM work_order_tasks WHERE entity_sync_id = ?",
+            vec![tsync.clone().into()]
+        )
+        .await
+        .as_deref(),
+        Some("ok"),
+        "never applied unjudged"
+    );
+}
+
+/// SF2: a WO cancelled on another PC with labour still open: the labour closure is written before
+/// the cancel, so it arrives first; in two passes, nothing is refused and the labour is closed here.
+#[tokio::test]
+async fn labour_closed_by_a_cancel_arrives_before_it() {
+    let source = setup().await;
+    let actor = admin_id(&source).await;
+    let (wo_id, rv) = create_wo_in_progress(&source).await;
+    crate::wo::labor::add_labor_entry(
+        &source,
+        crate::wo::labor::AddLaborInput {
+            wo_id,
+            intervener_id: actor,
+            skill_id: None,
+            started_at: Some("2026-04-10T08:00:00Z".into()),
+            ended_at: None,
+            hours_worked: None,
+            hourly_rate: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("open labour");
+    let sync = wo_sync(&source, wo_id).await;
+    let target = target_pc().await;
+    let rows = rows_of(&source, wo_id, CHILD_TABLES).await;
+    let first = receive(
+        &target,
+        "b-cancel-0",
+        (&sync, &wire(&source, "work_orders", &sync).await),
+        &rows,
+        5,
+    )
+    .await;
+    assert_eq!(first.conflicts, 0, "{:?}", conflict_codes(&target).await);
+
+    crate::wo::queries::cancel_work_order(
+        &source,
+        crate::wo::domain::WoCancelInput {
+            id: wo_id,
+            expected_row_version: rv,
+            actor_id: actor,
+            cancel_reason: "Equipment replaced instead".into(),
+        },
+    )
+    .await
+    .expect("cancelled on the other PC");
+    let labour_sync = text(
+        &source,
+        "SELECT entity_sync_id FROM work_order_interveners WHERE work_order_id = ?",
+        vec![wo_id.into()],
+    )
+    .await
+    .expect("labour sync id");
+    // Pass 1: the labour closure (written first); pass 2: the cancel.
+    inbox(
+        &target,
+        "b-cancel-1",
+        "work_order_interveners",
+        &labour_sync,
+        10,
+        &wire(&source, "work_order_interveners", &labour_sync).await,
+    )
+    .await;
+    let pass1 = materialize(&target).await;
+    assert_eq!(pass1.conflicts, 0, "{:?}", conflict_codes(&target).await);
+    inbox(
+        &target,
+        "b-cancel-2",
+        "work_orders",
+        &sync,
+        10,
+        &wire(&source, "work_orders", &sync).await,
+    )
+    .await;
+    let pass2 = materialize(&target).await;
+    assert_eq!(pass2.conflicts, 0, "{:?}", conflict_codes(&target).await);
+    assert_eq!(status_by_sync(&target, &sync).await.as_deref(), Some("cancelled"));
+    assert!(
+        text(
+            &target,
+            "SELECT ended_at FROM work_order_interveners WHERE entity_sync_id = ?",
+            vec![labour_sync.into()],
+        )
+        .await
+        .is_some(),
+        "labour closed here too"
+    );
+}

@@ -169,19 +169,22 @@ pub(crate) async fn closeout_entry(
     };
     if local.is_some() && previous_status.as_deref() == Some(to.as_str()) {
         // The same status here, but completed or closed again elsewhere after a reopening (its
-        // completion or close is stamped at another time): judged as coming back from execution, so
-        // the children re-recorded during that execution come with it and R3 / R4 run (review S2).
+        // completion or close is stamped at another time, or it was reopened more often there):
+        // judged as coming back from execution, so the children re-recorded during that execution
+        // come with it and R3 / R4 run (review S2, round 3 SF1).
         let stamp = match to.as_str() {
             "completed" => Some("mechanically_completed_at"),
             "closed" => Some("closed_at"),
             _ => None,
         };
-        let round_trip = stamp.is_some_and(|k| {
+        let restamped = stamp.is_some_and(|k| {
             let before = local.as_ref().and_then(|l| field(l, k));
             let after = field(received, k);
             before.is_some() && after.is_some() && before != after
         });
-        if !round_trip {
+        let count = |p: Option<&Payload>| p.and_then(|p| p.get("reopen_count")).and_then(Value::as_i64);
+        let reopened = matches!((count(local.as_ref()), count(Some(received))), (Some(l), Some(r)) if r > l);
+        if stamp.is_none() || !(restamped || reopened) {
             return Ok(Ok(None));
         }
         previous_status = Some("in_progress".to_string());
@@ -200,10 +203,21 @@ pub(crate) async fn closeout_entry(
     })))
 }
 
+/// The marker of a row waiting because it was recorded after this PC's completion or close of its
+/// work order ([`recorded_after`]): such a row comes only with that work order's return from
+/// execution (a round trip), never with a change from completed or closed.
+const RECORDED_AFTER_MARKER: &str = "recorded after this PC's completion or close";
+
 /// The waiting close-out children of a work order (in [`CLOSEOUT_CHILDREN`] order) and why one
 /// cannot be applied yet. A part line naming a reservation applied in the same group is not held
-/// back by it.
-async fn closeout_children(conn: &impl ConnectionTrait, wo_sync: &str) -> AppResult<(Vec<GroupRow>, Option<String>)> {
+/// back by it. With `from_end` (the work order was completed or closed here before this change, and
+/// the change is not a return from execution), a row waiting because it was recorded after that
+/// completion or close here is left out: it waits for the round trip, judged on its own meanwhile.
+async fn closeout_children(
+    conn: &impl ConnectionTrait,
+    wo_sync: &str,
+    from_end: bool,
+) -> AppResult<(Vec<GroupRow>, Option<String>)> {
     let mut rows = Vec::new();
     let mut applied_with: Vec<(&str, String)> = Vec::new();
     let mut blocked = None;
@@ -215,7 +229,28 @@ async fn closeout_children(conn: &impl ConnectionTrait, wo_sync: &str) -> AppRes
         applied_with.extend(children.rows.into_iter().map(|(sid, _)| (*table, sid)));
         rows.extend(children.counted);
     }
+    if from_end && !rows.is_empty() {
+        let ids: Vec<i64> = rows.iter().map(GroupRow::inbox_id).collect();
+        let after: std::collections::HashSet<i64> = conn
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM sync_inbox WHERE id IN (SELECT value FROM json_each(?)) \
+                 AND apply_status = 'deferred' AND instr(COALESCE(rejection_message, ''), ?) > 0",
+                [serde_json::to_string(&ids)?.into(), RECORDED_AFTER_MARKER.into()],
+            ))
+            .await?
+            .iter()
+            .filter_map(|r| r.try_get::<i64>("", "id").ok())
+            .collect();
+        rows.retain(|r| !after.contains(&r.inbox_id()));
+    }
     Ok((rows, blocked))
+}
+
+/// Whether the entry starts from the work order completed or closed here (not a return from
+/// execution): see [`closeout_children`].
+fn from_end(entry: &CloseoutEntry) -> bool {
+    matches!(entry.previous_status.as_deref(), Some("completed" | "closed"))
 }
 
 /// R1 / R2, before the received work order is written: waits while its status is not here, or
@@ -225,12 +260,12 @@ pub(crate) async fn inbound_closeout_check(
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
-    match closeout_entry(conn, entity_sync_id, received).await? {
+    let entry = match closeout_entry(conn, entity_sync_id, received).await? {
         Err(why) => return wait(why),
         Ok(None) => return Ok(None),
-        Ok(Some(_)) => {}
-    }
-    if let (_, Some(why)) = closeout_children(conn, entity_sync_id).await? {
+        Ok(Some(entry)) => entry,
+    };
+    if let (_, Some(why)) = closeout_children(conn, entity_sync_id, from_end(&entry)).await? {
         let code = field(received, "code").unwrap_or(entity_sync_id).to_string();
         return wait(format!("work order {code}: {why}"));
     }
@@ -248,7 +283,7 @@ pub(crate) async fn closeout_group(
     let Ok(Some(entry)) = closeout_entry(conn, entity_sync_id, received).await? else {
         return Ok(None);
     };
-    let (rows, _) = closeout_children(conn, entity_sync_id).await?;
+    let (rows, _) = closeout_children(conn, entity_sync_id, from_end(&entry)).await?;
     Ok(Some(Group::new(
         entity_sync_id.to_string(),
         entry.previous_status.clone(),
@@ -393,6 +428,41 @@ async fn parent_of(conn: &impl ConnectionTrait, wo_sync: &str) -> AppResult<Pare
     })
 }
 
+/// The times a close-out child records its own work at (a task's result, a labour line's start and
+/// end, a verification, a tool added).
+const RECORD_TIME_KEYS: &[&str] = &["completed_at", "started_at", "ended_at", "verified_at", "created_at"];
+
+/// Whether a received child was recorded after this PC's completion (work order `completed` here)
+/// or close (`closed` here) of its work order: then it belongs to a reopening made elsewhere whose
+/// return (the work order completed or closed again) is still on its way (review round 3, SF1).
+async fn recorded_after(conn: &impl ConnectionTrait, wo_sync: &str, status: &str, row: &Payload) -> AppResult<bool> {
+    let stamp_key = match status {
+        "completed" => "mechanically_completed_at",
+        "closed" => "closed_at",
+        _ => return Ok(false),
+    };
+    let Some(stamp) = local_wire(conn, "work_orders", wo_sync)
+        .await?
+        .as_ref()
+        .and_then(|wo| field(wo, stamp_key))
+        .and_then(crate::settings::site::instant)
+    else {
+        return Ok(false);
+    };
+    Ok(RECORD_TIME_KEYS
+        .iter()
+        .filter_map(|k| field(row, k).and_then(crate::settings::site::instant))
+        .any(|t| t > stamp))
+}
+
+/// Why a received child recorded after this PC's completion or close waits ([`RECORDED_AFTER_MARKER`]).
+fn after_end(what: &str, code: &str, status: &str) -> String {
+    format!(
+        "{what}: {RECORDED_AFTER_MARKER} of work order {code} (here '{status}'); waits for that work order to \
+         come back from the reopening it was recorded in, applied with it"
+    )
+}
+
 /// Why a received child waits: the status it was recorded in has not been reached here yet.
 fn behind(what: &str, code: &str, status: &str) -> String {
     format!(
@@ -469,6 +539,15 @@ pub(crate) async fn inbound_closeout_child_check(
         Parent::InGroup { judged: false, .. } if crate::sync::materialize::applying_snapshot_row() => return Ok(None),
         Parent::InGroup { code, .. } | Parent::Held { code, .. } => code.clone(),
     };
+    // Recorded after this PC's completion or close: part of a reopening made elsewhere whose return
+    // has not arrived yet (a page may end between them). It waits, visibly, and is judged with that
+    // return; if none ever comes it is never applied (review round 3, SF1).
+    if let Parent::Held { status, .. } = &parent {
+        if recorded_after(conn, &wo_sync, status, &row).await? {
+            let label = table.trim_start_matches("work_order_");
+            return wait(after_end(&format!("{label} {entity_sync_id} {what}"), &code, status));
+        }
+    }
     if table == "work_order_tasks" {
         // A mandatory task made optional, only while the work order is a draft or in planning.
         let downgraded = local.as_ref().is_some_and(|l| is_set(l, "is_mandatory")) && !is_set(&row, "is_mandatory");

@@ -1164,6 +1164,18 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
 
     let now = now_utc_z();
 
+    // Labour still open is closed at the cancel time (no entry stays open on a cancelled OT),
+    // before the OT row changes: captured first, so another PC receives the closed labour before
+    // the cancel (an entry arriving after it would be refused there).
+    crate::wo::labor::close_open_labor_at_end(
+        &txn,
+        input.id,
+        &now,
+        input.actor_id,
+        crate::wo::labor::LaborEnd::Cancelled,
+    )
+    .await?;
+
     // 4. Update
     let result = txn
         .execute(Statement::from_sql_and_values(
@@ -1202,16 +1214,6 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
         None,
         Some(input.cancel_reason.as_str()),
         &now,
-    )
-    .await?;
-
-    // Labour still open is closed at the cancel time (no entry stays open on a cancelled OT).
-    crate::wo::labor::close_open_labor_at_end(
-        &txn,
-        input.id,
-        &now,
-        input.actor_id,
-        crate::wo::labor::LaborEnd::Cancelled,
     )
     .await?;
 
