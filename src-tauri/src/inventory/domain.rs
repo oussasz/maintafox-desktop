@@ -1226,6 +1226,9 @@ pub struct UpsertInventoryCountLineInput {
     pub location_id: i64,
     pub counted_qty: f64,
     pub variance_reason_code: Option<String>,
+    /// Version of the line the entry is made against: `None` for the first entry of the article at
+    /// the location, the line's `row_version` to enter it again (AU-68).
+    pub expected_row_version: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

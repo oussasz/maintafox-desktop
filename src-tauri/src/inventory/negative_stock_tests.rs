@@ -302,6 +302,7 @@ pub(super) async fn enter_count(
             location_id,
             counted_qty: counted,
             variance_reason_code: Some("COUNT_ERROR".into()),
+            expected_row_version: None,
         },
     )
     .await
@@ -1548,6 +1549,7 @@ async fn a_count_entered_again_after_the_other_count_arrived_is_no_double_count(
             location_id: pairs[1].1,
             counted_qty: 0.0,
             variance_reason_code: Some("COUNT_ERROR".into()),
+            expected_row_version: Some(first.row_version),
         },
     )
     .await

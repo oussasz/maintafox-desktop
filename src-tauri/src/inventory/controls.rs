@@ -389,6 +389,14 @@ pub async fn transition_count_session(
     ensure_count_session(db, input.session_id).await
 }
 
+/// Refusal of a count line entered or approved against a version that is no longer the one on
+/// record (another entry was made in between).
+fn count_line_changed_elsewhere() -> AppError {
+    AppError::ValidationFailed(vec![
+        "GATE_RECORD_CHANGED_ELSEWHERE: count line row_version mismatch.".to_string()
+    ])
+}
+
 pub async fn upsert_count_line(
     db: &DatabaseConnection,
     input: UpsertInventoryCountLineInput,
@@ -430,47 +438,94 @@ pub async fn upsert_count_line(
     // shows as a double count (`inventory::negative_stock`, CMMS Advisor). Each entry refreshes it.
     let (replica_id, follows_json) =
         crate::inventory::negative_stock::count_mark(&tx, input.article_id, input.location_id).await?;
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO inventory_count_lines
-            (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
-             variance_reason_code, is_critical, approval_required, created_at, updated_at,
-             count_replica_id, count_follows_json, count_path)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(session_id, article_id, location_id) DO UPDATE SET
-             counted_qty = excluded.counted_qty,
-             system_qty = excluded.system_qty,
-             variance_qty = excluded.variance_qty,
-             variance_reason_code = excluded.variance_reason_code,
-             is_critical = excluded.is_critical,
-             approval_required = excluded.approval_required,
-             approved_by_id = NULL,
-             approved_at = NULL,
-             approval_note = NULL,
-             count_replica_id = excluded.count_replica_id,
-             count_follows_json = excluded.count_follows_json,
-             count_path = excluded.count_path,
-             row_version = inventory_count_lines.row_version + 1,
-             updated_at = excluded.updated_at",
-        [
-            input.session_id.into(),
-            input.article_id.into(),
-            warehouse_id.into(),
-            input.location_id.into(),
-            system_qty.into(),
-            input.counted_qty.into(),
-            variance_qty.into(),
-            input.variance_reason_code.map_or(Value::String(None), Value::from),
-            is_critical.into(),
-            approval_required.into(),
-            now_iso().into(),
-            now_iso().into(),
-            replica_id.into(),
-            follows_json.into(),
-            crate::inventory::negative_stock::COUNT_PATH_COUNT_SESSION.into(),
-        ],
-    ))
-    .await?;
+    // A line is entered again only against the version its author saw (AU-68): read in this
+    // transaction, and the update itself is guarded on it, so an entry made in between (another
+    // screen, another PC received by sync) is never overwritten silently.
+    let existing_version: Option<i64> = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT row_version FROM inventory_count_lines
+             WHERE session_id = ? AND article_id = ? AND location_id = ?",
+            [
+                input.session_id.into(),
+                input.article_id.into(),
+                input.location_id.into(),
+            ],
+        ))
+        .await?
+        .map(|row| row.try_get::<i64>("", "row_version"))
+        .transpose()?;
+    if existing_version != input.expected_row_version {
+        return Err(count_line_changed_elsewhere());
+    }
+    let now = now_iso();
+    let written = if let Some(expected) = existing_version {
+        // Entered again: the approval given to the previous quantity no longer holds.
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE inventory_count_lines SET
+                 counted_qty = ?, system_qty = ?, variance_qty = ?, variance_reason_code = ?,
+                 is_critical = ?, approval_required = ?,
+                 approved_by_id = NULL, approved_at = NULL, approval_note = NULL,
+                 count_replica_id = ?, count_follows_json = ?, count_path = ?,
+                 row_version = row_version + 1, updated_at = ?
+             WHERE session_id = ? AND article_id = ? AND location_id = ? AND row_version = ?",
+            [
+                input.counted_qty.into(),
+                system_qty.into(),
+                variance_qty.into(),
+                input
+                    .variance_reason_code
+                    .clone()
+                    .map_or(Value::String(None), Value::from),
+                is_critical.into(),
+                approval_required.into(),
+                replica_id.into(),
+                follows_json.into(),
+                crate::inventory::negative_stock::COUNT_PATH_COUNT_SESSION.into(),
+                now.clone().into(),
+                input.session_id.into(),
+                input.article_id.into(),
+                input.location_id.into(),
+                expected.into(),
+            ],
+        ))
+        .await?
+    } else {
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inventory_count_lines
+                (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
+                 variance_reason_code, is_critical, approval_required, created_at, updated_at,
+                 count_replica_id, count_follows_json, count_path)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(session_id, article_id, location_id) DO NOTHING",
+            [
+                input.session_id.into(),
+                input.article_id.into(),
+                warehouse_id.into(),
+                input.location_id.into(),
+                system_qty.into(),
+                input.counted_qty.into(),
+                variance_qty.into(),
+                input
+                    .variance_reason_code
+                    .clone()
+                    .map_or(Value::String(None), Value::from),
+                is_critical.into(),
+                approval_required.into(),
+                now.clone().into(),
+                now.clone().into(),
+                replica_id.into(),
+                follows_json.into(),
+                crate::inventory::negative_stock::COUNT_PATH_COUNT_SESSION.into(),
+            ],
+        ))
+        .await?
+    };
+    if written.rows_affected() != 1 {
+        return Err(count_line_changed_elsewhere());
+    }
     tx.commit().await?;
     let row = db
         .query_one(Statement::from_sql_and_values(

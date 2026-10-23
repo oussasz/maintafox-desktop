@@ -1255,6 +1255,7 @@ async fn count_session_requires_reviewer_evidence_for_posting() {
             location_id,
             counted_qty: 6.0,
             variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: None,
         },
     )
     .await
@@ -1428,6 +1429,7 @@ async fn a_count_session_is_never_posted_or_reversed_by_a_status_change() {
             location_id,
             counted_qty: 7.0,
             variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: None,
         },
     )
     .await
@@ -2012,6 +2014,7 @@ async fn count_tolerances_come_from_the_tenant_settings() {
             location_id,
             counted_qty: 6.0,
             variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: None,
         },
     )
     .await
@@ -2735,6 +2738,7 @@ async fn reconciliation_of_a_consistent_ledger_reports_no_drift_and_still_catche
             location_id: main_loc,
             counted_qty: on_hand - 2.0,
             variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: None,
         },
     )
     .await
@@ -3048,4 +3052,81 @@ async fn a_goods_receipt_into_a_negative_location_is_accepted_and_closes_it_once
     assert_eq!(list.items[0].closure_kind.as_deref(), Some(CLOSURE_RECEIPT));
     assert_eq!(list.items[0].closing_movement_type.as_deref(), Some("GR_ACCEPT"));
     assert!((list.items[0].on_hand_qty - 2.0).abs() < 1e-9);
+}
+
+/// AU-68: a count line is entered again only against the version its author saw; a stale version,
+/// or none on a line already entered, is refused and the line is left as it was.
+#[tokio::test]
+async fn a_count_line_is_entered_again_only_against_its_current_version() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-CC-AU68").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 10.0,
+            reason_code: Some("seed count".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed stock");
+    let session = controls::create_count_session(
+        &db,
+        CreateInventoryCountSessionInput {
+            warehouse_id: 1,
+            location_id: Some(location_id),
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("create session");
+    let entry = |counted_qty: f64, expected_row_version: Option<i64>| UpsertInventoryCountLineInput {
+        session_id: session.id,
+        article_id,
+        location_id,
+        counted_qty,
+        variance_reason_code: Some("COUNT_ERROR".to_string()),
+        expected_row_version,
+    };
+    let changed_elsewhere = |err: AppError| match err {
+        AppError::ValidationFailed(messages) => messages[0].starts_with("GATE_RECORD_CHANGED_ELSEWHERE"),
+        _ => false,
+    };
+
+    let refused_first = controls::upsert_count_line(&db, entry(9.0, Some(1)))
+        .await
+        .expect_err("a version given for a line not entered yet");
+    assert!(changed_elsewhere(refused_first));
+
+    let first = controls::upsert_count_line(&db, entry(9.0, None))
+        .await
+        .expect("first entry");
+    assert!((first.counted_qty - 9.0).abs() < 1e-9);
+
+    let without_version = controls::upsert_count_line(&db, entry(8.0, None))
+        .await
+        .expect_err("no version on a line already entered");
+    assert!(changed_elsewhere(without_version));
+
+    let again = controls::upsert_count_line(&db, entry(8.0, Some(first.row_version)))
+        .await
+        .expect("entered again against its version");
+    assert!((again.counted_qty - 8.0).abs() < 1e-9);
+    assert!(again.row_version > first.row_version);
+
+    let stale = controls::upsert_count_line(&db, entry(7.0, Some(first.row_version)))
+        .await
+        .expect_err("a stale version");
+    assert!(changed_elsewhere(stale));
+    let lines = controls::list_count_lines(&db, session.id).await.expect("lines");
+    assert_eq!(lines.len(), 1);
+    assert!(
+        (lines[0].counted_qty - 8.0).abs() < 1e-9,
+        "the refused entries changed nothing"
+    );
+    assert_eq!(lines[0].row_version, again.row_version);
 }

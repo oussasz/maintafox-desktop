@@ -286,6 +286,29 @@ describe("InventoryControlsPanel", () => {
     expect(screen.queryByText(/#42/)).not.toBeInTheDocument();
   });
 
+  it("enters a line again against the version shown (AU-68)", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "counting" })]);
+    mocks.listInventoryCountLines.mockResolvedValue([countLine({ row_version: 4 })]);
+    mocks.upsertInventoryCountLine.mockResolvedValue(countLine({ row_version: 5 }));
+
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Counting)");
+    await screen.findByText("A-21");
+
+    fireEvent.click(screen.getByLabelText("Article"));
+    fireEvent.click(await screen.findByText("A-21 - Bearing"));
+    fireEvent.click(screen.getByLabelText("Location"));
+    fireEvent.click((await screen.findAllByText("MAIN/BIN")).at(-1) as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Record count" }));
+
+    await waitFor(() =>
+      expect(mocks.upsertInventoryCountLine).toHaveBeenCalledWith(
+        expect.objectContaining({ article_id: 21, location_id: 10, expected_row_version: 4 }),
+      ),
+    );
+  });
+
   it("asks for confirmation before reversing a posted count", async () => {
     mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "posted" })]);
     mocks.reverseInventoryCountSession.mockResolvedValue(session({ status: "reversed" }));

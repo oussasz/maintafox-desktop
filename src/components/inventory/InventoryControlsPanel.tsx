@@ -719,12 +719,20 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                     disabled={saving || lineBlocker !== null}
                     onClick={() =>
                       void withSave(async () => {
+                        // Entered again against the version shown, so an entry made meanwhile
+                        // elsewhere is refused instead of overwritten (AU-68).
+                        const current = lines.find(
+                          (line) =>
+                            line.article_id === lineArticleId &&
+                            line.location_id === lineLocationId,
+                        );
                         await upsertInventoryCountLine({
                           session_id: selectedSession.id,
                           article_id: lineArticleId,
                           location_id: lineLocationId,
                           counted_qty: lineCountQty,
                           variance_reason_code: lineVarianceReasonCode || null,
+                          expected_row_version: current?.row_version ?? null,
                         });
                       })
                     }

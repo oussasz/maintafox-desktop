@@ -3400,6 +3400,8 @@ export interface UpsertInventoryCountLineInput {
   location_id: number;
   counted_qty: number;
   variance_reason_code?: string | null;
+  /** Version of the line entered again (its `row_version`); null for a first entry (AU-68). */
+  expected_row_version: number | null;
 }
 
 export interface TransitionInventoryCountSessionInput {
