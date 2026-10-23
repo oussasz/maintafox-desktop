@@ -247,7 +247,9 @@ fn normalize_email(raw: &str) -> AppResult<Option<String>> {
         && !normalized.ends_with('@')
         && normalized.rfind('.').is_some_and(|dot| dot > at_idx.unwrap_or(0) + 1);
     if !is_valid {
-        return Err(AppError::ValidationFailed(vec!["Email format is invalid.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ADMIN_EMAIL_INVALID: Email format is invalid.".into(),
+        ]));
     }
     Ok(Some(normalized))
 }
@@ -266,7 +268,7 @@ fn normalize_phone_e164(raw: &str) -> AppResult<Option<String>> {
                 out.push(ch);
             } else {
                 return Err(AppError::ValidationFailed(vec![
-                    "Phone number format is invalid.".into()
+                    "GATE_ADMIN_PHONE_INVALID: Phone number format is invalid.".into(),
                 ]));
             }
         } else if ch.is_ascii_digit() {
@@ -283,7 +285,7 @@ fn normalize_phone_e164(raw: &str) -> AppResult<Option<String>> {
     let digits = out.chars().filter(|c| c.is_ascii_digit()).count();
     if !(8..=15).contains(&digits) {
         return Err(AppError::ValidationFailed(vec![
-            "Phone number must be a valid E.164 number (8-15 digits).".into(),
+            "GATE_ADMIN_PHONE_INVALID: Phone number must be a valid E.164 number (8-15 digits).".into(),
         ]));
     }
 
@@ -403,7 +405,7 @@ pub(crate) async fn list_users_impl(
         Some("locked") => conditions.push("ua.locked_until IS NOT NULL".to_owned()),
         Some(other) => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Unknown user status filter '{other}' (expected active, inactive or locked)."
+                "GATE_ADMIN_STATUS_FILTER_INVALID: Unknown user status filter '{other}' (expected active, inactive or locked)."
             )]))
         }
     }
@@ -613,7 +615,7 @@ where
 {
     if role_id <= 0 {
         return Err(AppError::ValidationFailed(vec![
-            "role_id must be a positive integer.".into()
+            "GATE_ADMIN_ROLE_ID_INVALID: role_id must be a positive integer.".into(),
         ]));
     }
     let ok = conn
@@ -628,7 +630,7 @@ where
         .is_some();
     if !ok {
         return Err(AppError::ValidationFailed(vec![format!(
-            "The selected role (id {role_id}) is not available. It may have been deleted or retired."
+            "GATE_ADMIN_ROLE_UNAVAILABLE: The selected role (id {role_id}) is not available. It may have been deleted or retired."
         )]));
     }
     Ok(())
@@ -641,7 +643,7 @@ pub(crate) fn normalize_username(raw: &str) -> AppResult<String> {
     let count = username.chars().count();
     if !(3..=64).contains(&count) {
         return Err(AppError::ValidationFailed(vec![
-            "The username must be 3 to 64 characters long.".into(),
+            "GATE_ADMIN_USERNAME_LENGTH: The username must be 3 to 64 characters long.".into(),
         ]));
     }
     if !username
@@ -649,7 +651,7 @@ pub(crate) fn normalize_username(raw: &str) -> AppResult<String> {
         .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
     {
         return Err(AppError::ValidationFailed(vec![
-            "The username may contain letters, digits and . _ - @ only.".into(),
+            "GATE_ADMIN_USERNAME_FORMAT: The username may contain letters, digits and . _ - @ only.".into(),
         ]));
     }
     Ok(username.to_string())
@@ -710,7 +712,7 @@ pub(crate) async fn create_user_impl(
     // Validate identity_mode
     if !["local", "sso", "hybrid"].contains(&input.identity_mode.as_str()) {
         return Err(AppError::ValidationFailed(vec![
-            "identity_mode must be one of: local, sso, hybrid".into(),
+            "GATE_ADMIN_IDENTITY_MODE_INVALID: identity_mode must be one of: local, sso, hybrid".into(),
         ]));
     }
 
@@ -718,7 +720,9 @@ pub(crate) async fn create_user_impl(
     let password_hash = match input.identity_mode.as_str() {
         "local" => {
             let pw = input.initial_password.as_deref().ok_or_else(|| {
-                AppError::ValidationFailed(vec!["initial_password is required for local identity mode".into()])
+                AppError::ValidationFailed(vec![
+                    "GATE_ADMIN_PASSWORD_REQUIRED: initial_password is required for local identity mode".into(),
+                ])
             })?;
             validate_admin_set_password(&state.db, pw).await?;
             Some(crate::auth::password::hash_password(pw)?)
@@ -726,7 +730,8 @@ pub(crate) async fn create_user_impl(
         "sso" => {
             if input.initial_password.is_some() {
                 return Err(AppError::ValidationFailed(vec![
-                    "initial_password must not be provided for SSO identity mode".into(),
+                    "GATE_ADMIN_PASSWORD_NOT_ALLOWED: initial_password must not be provided for SSO identity mode"
+                        .into(),
                 ]));
             }
             None
@@ -753,7 +758,9 @@ pub(crate) async fn create_user_impl(
             ))
             .await?;
         if p_exists.is_none() {
-            return Err(AppError::ValidationFailed(vec!["Personnel record not found.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_ADMIN_PERSONNEL_NOT_FOUND: Personnel record not found.".into(),
+            ]));
         }
         let linked = state
             .db
@@ -765,7 +772,7 @@ pub(crate) async fn create_user_impl(
             .await?;
         if linked.is_some() {
             return Err(AppError::ValidationFailed(vec![
-                "This personnel record is already linked to another user account.".into(),
+                "GATE_ADMIN_PERSONNEL_LINKED: This personnel record is already linked to another user account.".into(),
             ]));
         }
     }
@@ -791,7 +798,7 @@ pub(crate) async fn create_user_impl(
         .await?;
     if exists.is_some() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Username '{username}' is already taken"
+            "GATE_ADMIN_USERNAME_TAKEN: Username '{username}' is already taken"
         )]));
     }
 
@@ -1027,7 +1034,7 @@ pub(crate) async fn update_user_impl(
     // reason, ledger); editing the account details cannot switch it on or off.
     if input.is_active.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Use Disable / Enable on the account to switch it off or on (a reason is required).".into(),
+            "GATE_ADMIN_USE_DISABLE: Use Disable / Enable on the account to switch it off or on (a reason is required).".into(),
         ]));
     }
     ensure_may_manage_account(&state.db, caller, input.user_id).await?;
@@ -1096,7 +1103,7 @@ pub(crate) async fn update_user_impl(
                 .await?;
             if dup.is_some() {
                 return Err(AppError::ValidationFailed(vec![
-                    "Email is already used by another account.".into(),
+                    "GATE_ADMIN_EMAIL_TAKEN: Email is already used by another account.".into(),
                 ]));
             }
         }
@@ -1172,7 +1179,7 @@ pub(crate) async fn update_user_impl(
             .await?;
         if dup.is_some() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Username '{username}' is already taken"
+                "GATE_ADMIN_USERNAME_TAKEN: Username '{username}' is already taken"
             )]));
         }
     }
@@ -1206,12 +1213,12 @@ fn required_reason(raw: &str, what: &str) -> AppResult<String> {
     let reason = raw.trim();
     if reason.is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "A reason is required to {what}."
+            "GATE_ADMIN_REASON_REQUIRED: A reason is required to {what}."
         )]));
     }
     if reason.chars().count() > 1000 {
         return Err(AppError::ValidationFailed(vec![
-            "The reason must not exceed 1000 characters.".into(),
+            "GATE_ADMIN_REASON_TOO_LONG: The reason must not exceed 1000 characters.".into(),
         ]));
     }
     Ok(reason.to_string())
@@ -1312,7 +1319,7 @@ pub(crate) async fn set_user_active_impl(
     let currently_active = row.try_get::<i32>("", "is_active")? == 1;
     if currently_active == active {
         return Err(AppError::ValidationFailed(vec![if active {
-            format!("The account '{username}' is already enabled.")
+            format!("GATE_ADMIN_ALREADY_ENABLED: The account '{username}' is already enabled.")
         } else {
             format!("The account '{username}' is already disabled.")
         }]));
@@ -1322,7 +1329,7 @@ pub(crate) async fn set_user_active_impl(
         // Guard: cannot deactivate self
         if i64::from(caller.user_id) == user_id {
             return Err(AppError::ValidationFailed(vec![
-                "Cannot deactivate your own account".into()
+                "GATE_ADMIN_SELF_DEACTIVATE: Cannot deactivate your own account".into(),
             ]));
         }
     }
@@ -1417,7 +1424,7 @@ pub(crate) async fn validate_tenant_reference(
         return Ok(());
     }
     Err(AppError::ValidationFailed(vec![format!(
-        "A plant-wide scope names no tenant or this plant's licence tenant; '{reference}' is not it."
+        "GATE_ADMIN_SCOPE_TENANT_MISMATCH: A plant-wide scope names no tenant or this plant's licence tenant; '{reference}' is not it."
     )]))
 }
 
@@ -1433,7 +1440,7 @@ where
 {
     if !ASSIGNMENT_SCOPE_TYPES.contains(&scope_type) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "scope_type must be one of: {} (got '{scope_type}')",
+            "GATE_ADMIN_SCOPE_TYPE_INVALID: scope_type must be one of: {} (got '{scope_type}')",
             ASSIGNMENT_SCOPE_TYPES.join(", ")
         )]));
     }
@@ -1442,12 +1449,12 @@ where
     }
     let Some(reference) = scope_reference.map(str::trim).filter(|r| !r.is_empty()) else {
         return Err(AppError::ValidationFailed(vec![format!(
-            "A {scope_type} scope needs the org node or team it applies to."
+            "GATE_ADMIN_SCOPE_REFERENCE_REQUIRED: A {scope_type} scope needs the org node or team it applies to."
         )]));
     };
     let Ok(id) = reference.parse::<i64>() else {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Scope reference '{reference}' is not a valid identifier."
+            "GATE_ADMIN_SCOPE_REFERENCE_INVALID: Scope reference '{reference}' is not a valid identifier."
         )]));
     };
     let sql = if scope_type == "team" {
@@ -1461,7 +1468,7 @@ where
         .is_some();
     if !exists {
         return Err(AppError::ValidationFailed(vec![format!(
-            "The {scope_type} '{reference}' does not exist (or was deleted)."
+            "GATE_ADMIN_SCOPE_TARGET_MISSING: The {scope_type} '{reference}' does not exist (or was deleted)."
         )]));
     }
     Ok(())
@@ -1488,7 +1495,11 @@ fn normalize_validity_bound(raw: Option<&str>, field: &str, end_of_day: bool) ->
     }
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|t| Some(t.with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string()))
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a date (YYYY-MM-DD), got '{value}'.")]))
+        .map_err(|_| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_ADMIN_DATE_INVALID: {field} must be a date (YYYY-MM-DD), got '{value}'."
+            )])
+        })
 }
 
 /// Validity window of an assignment: both bounds optional, start before end.
@@ -1501,7 +1512,7 @@ pub(crate) fn normalize_validity(
     if let (Some(f), Some(t)) = (&from, &to) {
         if f > t {
             return Err(AppError::ValidationFailed(vec![
-                "The validity start must be before its end.".into(),
+                "GATE_ADMIN_VALIDITY_ORDER: The validity start must be before its end.".into(),
             ]));
         }
     }
@@ -1669,7 +1680,9 @@ pub(crate) async fn assign_role_scope_impl(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE constraint failed") {
-            AppError::ValidationFailed(vec!["This user already has this role assigned at the same scope".into()])
+            AppError::ValidationFailed(vec![
+                "GATE_ADMIN_ROLE_ALREADY_ASSIGNED: This user already has this role assigned at the same scope".into(),
+            ])
         } else {
             AppError::Database(e)
         }
@@ -1893,7 +1906,7 @@ pub(crate) async fn revoke_assignment_impl(
 
     if emergency_only && !is_emergency {
         return Err(AppError::ValidationFailed(vec![
-            "Assignment is not an emergency elevation — use revoke_role_scope instead".into(),
+            "GATE_ADMIN_NOT_EMERGENCY: Assignment is not an emergency elevation — use revoke_role_scope instead".into(),
         ]));
     }
     ensure_may_manage_account(&state.db, caller, user_id).await?;
@@ -2162,7 +2175,9 @@ async fn insert_custom_role(
 ) -> AppResult<IdPayload> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Role name cannot be empty".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ADMIN_ROLE_NAME_REQUIRED: Role name cannot be empty".into(),
+        ]));
     }
     let description = description.map(str::trim).filter(|d| !d.is_empty());
 
@@ -2176,7 +2191,7 @@ async fn insert_custom_role(
         .await?;
     if dup.is_some() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Role name '{name}' is already taken"
+            "GATE_ADMIN_ROLE_NAME_TAKEN: Role name '{name}' is already taken"
         )]));
     }
 
@@ -2498,7 +2513,7 @@ pub(crate) async fn retire_role_impl(state: &AppState, user: &AuthenticatedUser,
 
     if assignment_count > 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Cannot retire role: {assignment_count} active user assignment(s) reference it"
+            "GATE_ADMIN_ROLE_IN_USE:count={assignment_count}: Cannot retire role: {assignment_count} active user assignment(s) reference it"
         )]));
     }
 
@@ -2676,12 +2691,12 @@ async fn ensure_emergency_within_limit(
         .and_then(|r| r.try_get("", "value").ok());
     let Some(max_minutes) = raw.and_then(|v| v.trim().parse::<i64>().ok()).filter(|m| *m > 0) else {
         return Err(AppError::ValidationFailed(vec![
-            "The maximum emergency access duration (emergency_max_minutes) is not configured.".into(),
+            "GATE_ADMIN_EMERGENCY_NOT_CONFIGURED: The maximum emergency access duration (emergency_max_minutes) is not configured.".into(),
         ]));
     };
     if expires > chrono::Utc::now() + chrono::Duration::minutes(max_minutes) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Emergency access may last at most {max_minutes} minutes."
+            "GATE_ADMIN_EMERGENCY_TOO_LONG:max={max_minutes}: Emergency access may last at most {max_minutes} minutes."
         )]));
     }
     Ok(())
@@ -2692,12 +2707,14 @@ async fn ensure_emergency_within_limit(
 fn normalize_emergency_expiry(raw: &str) -> AppResult<chrono::DateTime<chrono::Utc>> {
     let expires = chrono::DateTime::parse_from_rfc3339(raw.trim())
         .map_err(|_| {
-            AppError::ValidationFailed(vec![format!("The expiry '{raw}' is not a date and time (RFC 3339).")])
+            AppError::ValidationFailed(vec![format!(
+                "GATE_ADMIN_DATE_INVALID: The expiry '{raw}' is not a date and time (RFC 3339)."
+            )])
         })?
         .with_timezone(&chrono::Utc);
     if expires <= chrono::Utc::now() {
         return Err(AppError::ValidationFailed(vec![
-            "The emergency access must expire in the future.".into(),
+            "GATE_ADMIN_EMERGENCY_EXPIRY_PAST: The emergency access must expire in the future.".into(),
         ]));
     }
     Ok(expires)
@@ -2737,7 +2754,7 @@ pub(crate) async fn grant_emergency_elevation_impl(
         })?;
     if target.try_get::<i32>("", "is_active")? != 1 {
         return Err(AppError::ValidationFailed(vec![
-            "Emergency access cannot be granted to a disabled account.".into(),
+            "GATE_ADMIN_EMERGENCY_DISABLED_ACCOUNT: Emergency access cannot be granted to a disabled account.".into(),
         ]));
     }
     let username: String = target.try_get("", "username")?;
@@ -3071,21 +3088,21 @@ async fn admin_set_user_password_impl(
     let deleted_at: Option<String> = row.try_get("", "deleted_at").ok().flatten();
     if deleted_at.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot reset password for a deleted user account.".into(),
+            "GATE_ADMIN_RESET_DELETED: Cannot reset password for a deleted user account.".into(),
         ]));
     }
 
     let is_active: i32 = row.try_get("", "is_active").unwrap_or(0);
     if is_active != 1 {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot reset password for an inactive user account.".into(),
+            "GATE_ADMIN_RESET_INACTIVE: Cannot reset password for an inactive user account.".into(),
         ]));
     }
 
     let identity_mode: String = row.try_get("", "identity_mode").unwrap_or_else(|_| "local".into());
     if identity_mode == "sso" {
         return Err(AppError::ValidationFailed(vec![
-            "SSO-only accounts do not have a local password to reset.".into(),
+            "GATE_ADMIN_RESET_SSO: SSO-only accounts do not have a local password to reset.".into(),
         ]));
     }
 
@@ -3316,7 +3333,8 @@ where
     let bootstrap_role_id: i64 = bootstrap_role_row
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "Cannot create user: no active role is available for tenant membership.".into(),
+                "GATE_ADMIN_NO_ACTIVE_ROLE: Cannot create user: no active role is available for tenant membership."
+                    .into(),
             ])
         })?
         .try_get("", "id")?;
