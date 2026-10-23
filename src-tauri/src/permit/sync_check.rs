@@ -55,7 +55,9 @@
 //!   started, resumed or was reopened: a permit when it requires one (of the type a plant rule named,
 //!   when a rule flagged it), every permit live at that time active, not suspended, not expired, not
 //!   expiring before the end of the work (the planned end; without one, that time plus the
-//!   expected duration), with its isolations ready;
+//!   expected duration), with its isolations ready; the same gate judges a work order arriving
+//!   `completed` or `closed` that this PC never held in execution (new here, or draft, planning or
+//!   ready here: its start was made elsewhere), except plant history received by a snapshot;
 //! - a permit type whose three-person lock-removal setting changes (or a new type with it on), or
 //!   whose energy-isolation rule is switched off, or whose record of such a change changes, says who
 //!   changed it, when (later than the change recorded here) and why, and that person holds the
@@ -2352,7 +2354,11 @@ pub(crate) async fn status_code(conn: &impl ConnectionTrait, status_sync_id: &st
     .transpose()
 }
 
-/// The received work order, when it enters `in_progress` here (otherwise `None`), with its local copy.
+/// The received work order, when its start is judged here (otherwise `None`), with its local copy
+/// overlaid: when it enters `in_progress` here; or when it arrives `completed` or `closed` while
+/// this PC never held it in execution (new here, or draft / planning / ready here), so the start
+/// made elsewhere on the way is judged too (AU-99 review N4) — except plant history received by a
+/// snapshot as a work order new here (`sync::materialize::applying_snapshot_row`).
 async fn work_order_start(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -2366,15 +2372,21 @@ async fn work_order_start(
     let Some(to) = status_code(conn, status_sync).await? else {
         return Ok(Err(format!("work-order status {status_sync} is not applied yet")));
     };
-    if to != "in_progress" {
-        return Ok(Ok(None));
-    }
-    if let Some(from_sync) = local.as_ref().and_then(|l| field(l, "status_sync_id")) {
-        if status_code(conn, from_sync).await?.as_deref() == Some("in_progress") {
-            return Ok(Ok(None));
+    let from = match local.as_ref().and_then(|l| field(l, "status_sync_id")) {
+        Some(from_sync) => status_code(conn, from_sync).await?,
+        None => None,
+    };
+    let judged = match to.as_str() {
+        "in_progress" => from.as_deref() != Some("in_progress"),
+        "completed" | "closed" => {
+            !matches!(
+                from.as_deref(),
+                Some("in_progress" | "on_hold" | "completed" | "closed")
+            ) && (local.is_some() || !crate::sync::materialize::applying_snapshot_row())
         }
-    }
-    Ok(Ok(Some(wo)))
+        _ => false,
+    };
+    Ok(Ok(judged.then_some(wo)))
 }
 
 pub(crate) async fn wo_children(
