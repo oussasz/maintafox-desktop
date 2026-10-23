@@ -128,9 +128,11 @@ fn construction_body(text: &str) -> &str {
 fn scan_audit_constructions() -> Scan {
     let construct = regex::Regex::new(r"\bAuditEvent(?:Input)?\s*\{").expect("regex");
     // `target_type: Some("literal"`, `target_type: None`, anything else (`Some(kind.to_string())`,
-    // `target_type: value`, the shorthand `target_type,`) is a type set at run time.
+    // `target_type: value`, the shorthand `target_type,`) is a type set at run time. A field of
+    // the literal starts after whitespace, `{` or `,`, never after `.` (`row.entity_type,` is a
+    // value read inside the literal, not a field of it).
     let field = regex::Regex::new(
-        r#"\b(?:target_type|entity_type)\s*(?::\s*(?:Some\(\s*"(?P<ty>[A-Za-z0-9_]+)"|(?P<none>None))?|(?P<short>[,}]))"#,
+        r#"(?:^|[\s{,])(?:target_type|entity_type)\s*(?::\s*(?:Some\(\s*"(?P<ty>[A-Za-z0-9_]+)"|(?P<none>None))?|(?P<short>[,}]))"#,
     )
     .expect("regex");
     // Inline test modules sit at the end of their file (`mod x;` declarations do not count).
