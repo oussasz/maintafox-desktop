@@ -11,6 +11,16 @@ import { describe, it, expect } from "vitest";
 import { CompletionBlockedError, normalizePreflightCode } from "@/services/wo-service";
 
 describe("normalizePreflightCode", () => {
+  it("maps the coded completion refusals to their blocker codes", () => {
+    expect(normalizePreflightCode("GATE_COMPLETE_OPEN_LABOR: texte")).toBe("OPEN_LABOR");
+    expect(normalizePreflightCode("GATE_COMPLETE_TASKS_INCOMPLETE: texte")).toBe(
+      "INCOMPLETE_TASKS",
+    );
+    expect(normalizePreflightCode("GATE_COMPLETE_PARTS_UNDISPOSED: texte")).toBe("MISSING_PARTS");
+    expect(normalizePreflightCode("GATE_COMPLETE_PARTS_UNCONFIRMED: texte")).toBe("MISSING_PARTS");
+    expect(normalizePreflightCode("GATE_COMPLETE_OPEN_DOWNTIME: texte")).toBe("OPEN_DOWNTIME");
+  });
+
   it("maps English open-labor message to OPEN_LABOR", () => {
     expect(normalizePreflightCode("Open labor entries must be closed first.")).toBe("OPEN_LABOR");
   });

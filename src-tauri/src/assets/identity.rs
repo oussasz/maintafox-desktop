@@ -334,7 +334,7 @@ pub(crate) async fn resolve_class_code(db: &impl ConnectionTrait, class_code: &s
     let code = class_code.trim();
     if code.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Code de classe d'équipement obligatoire.".into(),
+            "GATE_ASSET_CLASS_CODE_REQUIRED: Code de classe d'équipement obligatoire.".into(),
         ]));
     }
     let row = db
@@ -346,7 +346,9 @@ pub(crate) async fn resolve_class_code(db: &impl ConnectionTrait, class_code: &s
         ))
         .await?
         .ok_or_else(|| {
-            AppError::ValidationFailed(vec![format!("Classe d'équipement '{code}' introuvable ou inactive.")])
+            AppError::ValidationFailed(vec![format!(
+                "GATE_ASSET_CLASS_UNKNOWN: Classe d'équipement '{code}' introuvable ou inactive."
+            )])
         })?;
     let id: i64 = row.try_get("", "id").map_err(|e| decode_err("class.id", e))?;
     let parent_id: Option<i64> = row
@@ -379,7 +381,7 @@ pub(crate) async fn validate_family_code(
             let code: String = row.try_get("", "code").map_err(|e| decode_err("code", e))?;
             if code != family_code {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "La classe '{code}' n'est liée à aucune famille. \
+                    "GATE_ASSET_CLASS_NO_FAMILY: La classe '{code}' n'est liée à aucune famille. \
                      Supprimez la famille sélectionnée ('{family_code}') ou choisissez une classe qui appartient à cette famille."
                 )]));
             }
@@ -397,12 +399,14 @@ pub(crate) async fn validate_family_code(
         ))
         .await?
         .ok_or_else(|| {
-            AppError::ValidationFailed(vec!["La classe parente (famille) est inactive ou supprimée.".into()])
+            AppError::ValidationFailed(vec![
+                "GATE_ASSET_FAMILY_INACTIVE: La classe parente (famille) est inactive ou supprimée.".into(),
+            ])
         })?;
     let parent_code: String = row.try_get("", "code").map_err(|e| decode_err("parent.code", e))?;
     if parent_code != family_code {
         return Err(AppError::ValidationFailed(vec![format!(
-            "La famille choisie ('{family_code}') ne correspond pas à la classe sélectionnée. \
+            "GATE_ASSET_FAMILY_CLASS_MISMATCH: La famille choisie ('{family_code}') ne correspond pas à la classe sélectionnée. \
              Famille attendue: '{parent_code}'."
         )]));
     }
@@ -429,7 +433,7 @@ pub(crate) fn normalize_criticality_to_canon(raw: &str) -> AppResult<String> {
         "D" | "NON_CRITIQUE" | "NON-CRITIQUE" => "D",
         _ => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Code criticité '{raw}' non reconnu (attendu A–D ou code historique CRITIQUE / IMPORTANT / STANDARD / NON_CRITIQUE)."
+                "GATE_ASSET_CRITICALITY_INVALID: Code criticité '{raw}' non reconnu (attendu A–D ou code historique CRITIQUE / IMPORTANT / STANDARD / NON_CRITIQUE)."
             )]));
         }
     };
@@ -440,7 +444,9 @@ pub(crate) fn normalize_criticality_to_canon(raw: &str) -> AppResult<String> {
 pub(crate) fn normalize_status_code_for_reference(raw: &str) -> AppResult<String> {
     let t = raw.trim();
     if t.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Statut obligatoire.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ASSET_STATUS_REQUIRED: Statut obligatoire.".into(),
+        ]));
     }
     let u = t.replace(' ', "_").to_ascii_uppercase();
     let mapped = match u.as_str() {
@@ -468,7 +474,7 @@ pub(crate) async fn resolve_criticality_code(db: &impl ConnectionTrait, code: &s
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "Code criticité '{code}' introuvable dans le domaine 'equipment.criticality'."
+                "GATE_ASSET_CRITICALITY_UNKNOWN: Code criticité '{code}' introuvable dans le domaine 'equipment.criticality'."
             )])
         })?;
     row.try_get::<i64>("", "id")
@@ -491,7 +497,7 @@ pub(crate) async fn resolve_criticality_ref_id(db: &impl ConnectionTrait, code: 
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "Code criticité '{code}' introuvable dans le domaine de référence EQUIPMENT.CRITICALITY."
+                "GATE_ASSET_CRITICALITY_UNKNOWN: Code criticité '{code}' introuvable dans le domaine de référence EQUIPMENT.CRITICALITY."
             )])
         })?;
     row.try_get::<i64>("", "id")
@@ -513,7 +519,7 @@ pub(crate) async fn resolve_status_ref_id(db: &impl ConnectionTrait, normalized_
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "Statut '{normalized_code}' introuvable dans le domaine de référence EQUIPMENT.STATUS."
+                "GATE_ASSET_STATUS_UNKNOWN: Statut '{normalized_code}' introuvable dans le domaine de référence EQUIPMENT.STATUS."
             )])
         })?;
     row.try_get::<i64>("", "id").map_err(|e| decode_err("status_ref.id", e))
@@ -535,7 +541,7 @@ pub(crate) async fn resolve_class_ref_id(db: &impl ConnectionTrait, class_code: 
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "Classe '{code}' introuvable dans le référentiel EQUIPMENT.CLASS."
+                "GATE_ASSET_CLASS_UNKNOWN: Classe '{code}' introuvable dans le référentiel EQUIPMENT.CLASS."
             )])
         })?;
     row.try_get::<i64>("", "id").map_err(|e| decode_err("class_ref.id", e))
@@ -559,7 +565,7 @@ async fn resolve_family_ref_id_and_parent(
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "Famille '{code}' introuvable dans le référentiel EQUIPMENT.FAMILY."
+                "GATE_ASSET_FAMILY_UNKNOWN: Famille '{code}' introuvable dans le référentiel EQUIPMENT.FAMILY."
             )])
         })?;
     let id: i64 = row.try_get("", "id").map_err(|e| decode_err("family_ref.id", e))?;
@@ -587,7 +593,7 @@ async fn resolve_subfamily_ref_id_and_parent(
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "Sous-famille '{code}' introuvable dans le référentiel EQUIPMENT.SUBFAMILY."
+                "GATE_ASSET_SUBFAMILY_UNKNOWN: Sous-famille '{code}' introuvable dans le référentiel EQUIPMENT.SUBFAMILY."
             )])
         })?;
     let id: i64 = row.try_get("", "id").map_err(|e| decode_err("subfamily_ref.id", e))?;
@@ -606,7 +612,7 @@ pub(crate) async fn validate_family_for_class_ref(
     match parent_id {
         Some(pid) if pid == class_ref_id => Ok(family_id),
         _ => Err(AppError::ValidationFailed(vec![
-            "La famille sélectionnée ne correspond pas à la classe choisie.".into(),
+            "GATE_ASSET_FAMILY_CLASS_MISMATCH: La famille sélectionnée ne correspond pas à la classe choisie.".into(),
         ])),
     }
 }
@@ -620,7 +626,7 @@ pub(crate) async fn validate_subfamily_for_family_ref(
     match parent_id {
         Some(pid) if pid == family_ref_id => Ok(subfamily_id),
         _ => Err(AppError::ValidationFailed(vec![
-            "La sous-famille sélectionnée ne correspond pas à la famille choisie.".into(),
+            "GATE_ASSET_SUBFAMILY_FAMILY_MISMATCH: La sous-famille sélectionnée ne correspond pas à la famille choisie.".into(),
         ])),
     }
 }
@@ -640,7 +646,7 @@ pub(crate) async fn validate_status_code(db: &impl ConnectionTrait, normalized_c
         .await?;
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Code statut '{normalized_code}' introuvable dans le domaine de référence EQUIPMENT.STATUS."
+            "GATE_ASSET_STATUS_UNKNOWN: Code statut '{normalized_code}' introuvable dans le domaine de référence EQUIPMENT.STATUS."
         )]));
     }
     Ok(())
@@ -656,7 +662,7 @@ fn normalize_utilization_factor(v: Option<f64>) -> AppResult<f64> {
     let ku = v.unwrap_or(1.0);
     if !ku.is_finite() || ku <= 0.0 || ku > 1.5 {
         return Err(AppError::ValidationFailed(vec![
-            "Le facteur d'utilisation RAMS (K_u) doit être > 0.0 et <= 1.5.".into(),
+            "GATE_ASSET_KU_RANGE: Le facteur d'utilisation RAMS (K_u) doit être > 0.0 et <= 1.5.".into(),
         ]));
     }
     Ok(ku)
@@ -667,12 +673,12 @@ pub(crate) fn validate_asset_code(code: &str) -> AppResult<String> {
     let trimmed = code.trim().to_string();
     if trimmed.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le code équipement ne peut pas être vide.".into(),
+            "GATE_ASSET_CODE_REQUIRED: Le code équipement ne peut pas être vide.".into(),
         ]));
     }
     if trimmed.len() > 64 {
         return Err(AppError::ValidationFailed(vec![
-            "Le code équipement ne peut pas dépasser 64 caractères.".into(),
+            "GATE_ASSET_CODE_TOO_LONG: Le code équipement ne peut pas dépasser 64 caractères.".into(),
         ]));
     }
     // Must be uppercase + digits + dashes + underscores
@@ -681,7 +687,7 @@ pub(crate) fn validate_asset_code(code: &str) -> AppResult<String> {
         .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-' || c == '_')
     {
         return Err(AppError::ValidationFailed(vec![
-            "Le code équipement ne peut contenir que des majuscules, chiffres, tirets et tirets bas.".into(),
+            "GATE_ASSET_CODE_FORMAT: Le code équipement ne peut contenir que des majuscules, chiffres, tirets et tirets bas.".into(),
         ]));
     }
     Ok(trimmed)
@@ -717,7 +723,7 @@ pub(crate) async fn assert_asset_code_unique(
     let cnt: i64 = row.try_get("", "cnt").map_err(|e| decode_err("cnt", e))?;
     if cnt > 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le code équipement '{code}' existe déjà."
+            "GATE_ASSET_CODE_TAKEN: Le code équipement '{code}' existe déjà."
         )]));
     }
     Ok(())
@@ -909,7 +915,7 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     let asset_name = payload.asset_name.trim().to_string();
     if asset_name.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le nom de l'équipement ne peut pas être vide.".into(),
+            "GATE_ASSET_NAME_REQUIRED: Le nom de l'équipement ne peut pas être vide.".into(),
         ]));
     }
 
@@ -939,7 +945,7 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
         if !subfamily_code.trim().is_empty() {
             let family_id = family_ref_id.ok_or_else(|| {
                 AppError::ValidationFailed(vec![
-                    "Sélectionnez d'abord une famille valide avant de choisir une sous-famille.".into(),
+                    "GATE_ASSET_SUBFAMILY_NEEDS_FAMILY: Sélectionnez d'abord une famille valide avant de choisir une sous-famille.".into(),
                 ])
             })?;
             subfamily_ref_id = Some(validate_subfamily_for_family_ref(&txn, subfamily_code, family_id).await?);
@@ -1112,7 +1118,7 @@ pub async fn update_asset_identity(
         .map_err(|e| decode_err("class_code", e))?;
     if current_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Conflit de version : version attendue {expected_row_version}, \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : version attendue {expected_row_version}, \
              version actuelle {current_version}. L'enregistrement a été modifié."
         )]));
     }
@@ -1160,7 +1166,7 @@ pub async fn update_asset_identity(
         let t = name.trim().to_string();
         if t.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "Le nom de l'équipement ne peut pas être vide.".into(),
+                "GATE_ASSET_NAME_REQUIRED: Le nom de l'équipement ne peut pas être vide.".into(),
             ]));
         }
         sets.push("name = ?".to_string());
@@ -1213,7 +1219,8 @@ pub async fn update_asset_identity(
             } else {
                 let class_ref_id = effective_class_ref_id.ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "Sélectionnez une classe valide avant de choisir une famille.".into()
+                        "GATE_ASSET_FAMILY_NEEDS_CLASS: Sélectionnez une classe valide avant de choisir une famille."
+                            .into(),
                     ])
                 })?;
                 effective_family_ref_id = Some(validate_family_for_class_ref(&txn, trimmed, class_ref_id).await?);
@@ -1233,7 +1240,7 @@ pub async fn update_asset_identity(
             } else {
                 let family_ref_id = effective_family_ref_id.ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "Sélectionnez une famille valide avant de choisir une sous-famille.".into(),
+                        "GATE_ASSET_SUBFAMILY_NEEDS_FAMILY: Sélectionnez une famille valide avant de choisir une sous-famille.".into(),
                     ])
                 })?;
                 Some(validate_subfamily_for_family_ref(&txn, trimmed, family_ref_id).await?)
@@ -1307,7 +1314,9 @@ pub async fn update_asset_identity(
     // identity edit can only send it back unchanged), so it is never rewritten here.
 
     if sets.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Aucun champ à mettre à jour.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ASSET_NOTHING_TO_UPDATE: Aucun champ à mettre à jour.".into(),
+        ]));
     }
 
     // Always bump version and timestamp
@@ -1329,7 +1338,8 @@ pub async fn update_asset_identity(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Mise à jour impossible : version obsolète ou enregistrement supprimé.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Mise à jour impossible : version obsolète ou enregistrement supprimé."
+                .into(),
         ]));
     }
 

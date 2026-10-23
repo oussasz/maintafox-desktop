@@ -10,6 +10,7 @@ import { create } from "zustand";
 
 import { appErrorReason } from "@/lib/app-error";
 import { createLatestRequestGuard } from "@/lib/latest-request";
+import { isStepUpCancelledError } from "@/lib/step-up-bridge";
 import { closeWo } from "@/services/wo-closeout-service";
 import {
   CompletionBlockedError,
@@ -25,6 +26,7 @@ import {
   startWo,
   updateWoDraft,
 } from "@/services/wo-service";
+import { isStepUpRequiredError } from "@/utils/errors";
 import type {
   AssetSearchResult,
   WoAssignInput,
@@ -421,7 +423,10 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
-      set({ error: appErrorReason(err) });
+      // A password request is not a failure to keep on screen (the dialog asks and retries).
+      if (!isStepUpRequiredError(err) && !isStepUpCancelledError(err)) {
+        set({ error: appErrorReason(err) });
+      }
       throw err;
     } finally {
       set({ saving: false });

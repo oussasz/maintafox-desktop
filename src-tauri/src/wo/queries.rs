@@ -153,7 +153,7 @@ const WO_COLS: &str = "\
     wo.service_cost_input, wo.reopen_count, wo.last_closed_at, \
     wo.requires_permit, \
     wo.permit_rule_code, wo.permit_rule_permit_type, wo.permit_rule_cleared_by_id, \
-    wo.permit_rule_cleared_at, wo.permit_rule_clear_reason, \
+    wo.permit_rule_cleared_at, wo.permit_rule_clear_reason, wo.permit_from_safety_di, \
     wo.entity_sync_id, wo.closeout_validation_profile_id, wo.closeout_validation_passed, \
     wo.no_downtime_attestation, wo.no_downtime_attestation_reason, \
     wo.row_version, wo.created_at, wo.updated_at";
@@ -581,20 +581,24 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
         None => None,
     };
 
-    // If source_di_id is provided, verify the DI exists
+    // If source_di_id is provided, verify the DI exists. A request flagged "sécurité" makes the
+    // permit / LOTO requirement mandatory and protected, whatever the input says (audit finding
+    // AU-01: the same origin as a conversion, `permit_from_safety_di`, migration 255).
+    let mut from_safety_di = false;
     if let Some(di_id) = input.source_di_id {
-        let di_exists = txn
+        let di_row = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT id FROM intervention_requests WHERE id = ?",
+                "SELECT safety_flag FROM intervention_requests WHERE id = ?",
                 [di_id.into()],
             ))
             .await?;
-        if di_exists.is_none() {
+        let Some(di_row) = di_row else {
             return Err(AppError::ValidationFailed(vec![format!(
                 "DI introuvable (source_di_id={di_id})."
             )]));
-        }
+        };
+        from_safety_di = di_row.try_get::<i64>("", "safety_flag")? != 0;
         let existing_wo = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -688,9 +692,9 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             entity_id, planner_id, requester_id, urgency_id, subtype_id, \
             title, description, notes, \
             planned_start, planned_end, shift, expected_duration_hours, \
-            requires_permit, entity_sync_id, \
+            requires_permit, permit_from_safety_di, entity_sync_id, \
             row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             type_id.into(),
@@ -763,12 +767,8 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
                 .expected_duration_hours
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<f64>)),
-            (if input.requires_permit.unwrap_or(false) {
-                1i64
-            } else {
-                0i64
-            })
-            .into(),
+            i64::from(from_safety_di || input.requires_permit.unwrap_or(false)).into(),
+            i64::from(from_safety_di).into(),
             entity_sync_id.into(),
             now.clone().into(),
             now.clone().into(),
@@ -890,9 +890,12 @@ async fn refuse_equipment_change_with_old_items(
     }
 }
 
+/// `actor_id`: who makes the change (recorded on the permit-requirement consequences: a clearing
+/// withdrawn by a re-tick or voided by a site move).
 pub async fn update_wo_draft_fields(
     db: &DatabaseConnection,
     input: super::domain::WoDraftUpdateInput,
+    actor_id: Option<i64>,
 ) -> AppResult<WorkOrder> {
     super::domain::validate_wo_shift(input.shift.as_deref())?;
     let txn = db.begin().await?;
@@ -947,6 +950,9 @@ pub async fn update_wo_draft_fields(
         }
         None => {}
     }
+    // The site the order moves to with its equipment, when it changes (a cleared safety requirement
+    // is void at another site: `permit_requirement::void_clearing_on_site_change`).
+    let mut moved_to_site: Option<i64> = None;
     if let Some(equipment_id) = input.equipment_id {
         sets.push("equipment_id = ?".into());
         values.push(equipment_id.into());
@@ -978,6 +984,9 @@ pub async fn update_wo_draft_fields(
             refuse_equipment_change_with_old_items(&txn, input.id, current.entity_id != Some(node)).await?;
             sets.push("entity_id = ?".into());
             values.push(node.into());
+            if current.entity_id != Some(node) {
+                moved_to_site = Some(node);
+            }
         }
     }
     if let Some(location_id) = input.location_id {
@@ -1018,8 +1027,12 @@ pub async fn update_wo_draft_fields(
         values.push(urgency_id.into());
     }
     if let Some(rp) = input.requires_permit {
-        // A flag set by a plant permit rule is cleared only by the clear command.
-        if !rp {
+        // A flag set by a plant permit rule (or a safety request) is cleared only by the clear
+        // command; required again after a clearing, it is protected again.
+        if rp {
+            crate::wo::workflow::actions::permit_requirement::withdraw_clearing_on_retick(&txn, input.id, actor_id)
+                .await?;
+        } else {
             crate::wo::workflow::actions::permit_requirement::assert_not_rule_flagged(&txn, input.id).await?;
         }
         sets.push("requires_permit = ?".into());
@@ -1057,6 +1070,17 @@ pub async fn update_wo_draft_fields(
              Veuillez recharger et réessayer."
                 .into(),
         ]));
+    }
+
+    if let Some(new_site) = moved_to_site {
+        crate::wo::workflow::actions::permit_requirement::void_clearing_on_site_change(
+            &txn,
+            input.id,
+            current.entity_id,
+            Some(new_site),
+            actor_id,
+        )
+        .await?;
     }
 
     // 5. Re-fetch and return updated row
@@ -1166,6 +1190,14 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
         })?;
     // Its schedule commitments are closed with it (`planning::lifecycle`).
     crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.id).await?;
+    // D13: the stock still reserved for it is released with the cancellation, each release audited.
+    crate::inventory::reservations::release_for_closed_wo(
+        &txn,
+        input.id,
+        input.actor_id,
+        crate::inventory::reservations::WoEnd::Cancelled,
+    )
+    .await?;
     txn.commit().await?;
     Ok(wo)
 }

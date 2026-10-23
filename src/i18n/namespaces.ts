@@ -56,6 +56,7 @@ export const MODULE_NAMESPACES = {
  */
 export const ISSUE_NAMESPACES = [
   "org",
+  "ot",
   "equipment",
   "di",
   "reference",
@@ -63,6 +64,9 @@ export const ISSUE_NAMESPACES = [
   "reliability",
   "settings",
   "inventory",
+  "inspections",
+  "pm",
+  "budget",
 ] as const;
 
 export type EagerNamespace = (typeof EAGER_NAMESPACES)[number];

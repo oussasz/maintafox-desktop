@@ -27,7 +27,20 @@ vi.mock("@/components/assets/AssetPicker", () => ({
 }));
 vi.mock("@/components/common/urgency/UrgencySelect", () => ({ UrgencySelect: () => null }));
 vi.mock("@/components/wo/WoPermitRequirementField", () => ({
-  WoPermitRequirementField: () => null,
+  WoPermitRequirementField: ({
+    disabled,
+    disabledReason,
+  }: {
+    disabled?: boolean;
+    disabledReason?: string | null;
+  }) => (
+    <input
+      type="checkbox"
+      data-testid="permit-box"
+      disabled={disabled}
+      aria-description={disabledReason ?? ""}
+    />
+  ),
 }));
 
 beforeEach(() => {
@@ -110,5 +123,63 @@ describe("WoCreateForm planned dates", () => {
         planned_end: new Date("2026-10-21T09:15").toISOString(),
       }),
     );
+  });
+});
+
+describe("WoCreateForm permit box in edit mode", () => {
+  const draft = (overrides: Partial<WorkOrder>) =>
+    ({
+      id: 9,
+      row_version: 1,
+      title: "Fuite pompe",
+      description: null,
+      type_code: "",
+      subtype_code: "",
+      urgency_code: "",
+      equipment_id: null,
+      planned_start: null,
+      planned_end: null,
+      expected_duration_hours: null,
+      notes: null,
+      requires_permit: true,
+      permit_rule_code: null,
+      permit_rule_permit_type: null,
+      permit_rule_cleared_by_id: null,
+      permit_rule_cleared_at: null,
+      permit_rule_clear_reason: null,
+      ...overrides,
+    }) as unknown as WorkOrder;
+
+  it("is locked for a requirement from a safety request or a plant rule, free otherwise", () => {
+    const { getByTestId, rerender } = render(
+      <WoCreateForm
+        initial={draft({ permit_from_safety_di: true })}
+        onSubmitted={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(getByTestId("permit-box")).toBeDisabled();
+    expect(getByTestId("permit-box")).toHaveAttribute("aria-description", "permitRule.clearHint");
+
+    rerender(
+      <WoCreateForm
+        initial={draft({ permit_rule_code: "PUMPS_LOTO" })}
+        onSubmitted={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(getByTestId("permit-box")).toBeDisabled();
+
+    rerender(
+      <WoCreateForm
+        initial={draft({
+          permit_from_safety_di: true,
+          permit_rule_cleared_at: "2026-10-22T10:00:00Z",
+        })}
+        onSubmitted={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(getByTestId("permit-box")).not.toBeDisabled();
   });
 });

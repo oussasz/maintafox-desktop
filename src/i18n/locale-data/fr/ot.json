@@ -27,6 +27,11 @@
     "reasonHint": "Au moins {{min}} caractères : pourquoi la règle ne s'applique pas à ce travail.",
     "cleared": "Exigence de la règle {{rule}} levée le {{date}} : {{reason}}"
   },
+  "permitSafety": {
+    "clearBody": "{{code}} pourra démarrer sans permis bien que la demande d'origine signale un risque sécurité. Le motif, la date et votre nom sont conservés sur l'OT et dans son historique.",
+    "reasonHint": "Au moins {{min}} caractères : pourquoi ce travail ne demande pas de permis.",
+    "cleared": "Exigence de la demande sécurité levée le {{date}} : {{reason}}"
+  },
   "shutdownRequirement": {
     "sectionTitle": "Arrêt de l'équipement",
     "label": "Nécessite un arrêt",

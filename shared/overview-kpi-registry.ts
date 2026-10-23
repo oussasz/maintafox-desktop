@@ -69,7 +69,15 @@ export interface OverviewKpiRegistryEntry {
   labelKey: string;
   contextKey: string;
   unitKey?: string;
+  /**
+   * Change below which the trend reads "stable": percentage points for a `percent` KPI, percent of
+   * the previous value for the others. Shown with the KPI definition; default `DEFAULT_KPI_STABLE_BELOW`.
+   */
+  stableBelow?: number;
 }
+
+/** Default "stable" threshold (see `OverviewKpiRegistryEntry.stableBelow`). */
+export const DEFAULT_KPI_STABLE_BELOW = 0.5;
 
 export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
   {
@@ -128,6 +136,7 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     permission: P.PM_VIEW,
     trendSense: "up-good",
     valueKind: "percent",
+    stableBelow: 0.5,
     vizKind: "gauge",
     drillPath: "/pm",
     labelKey: "overviewKpi.pmCompliance",
@@ -163,6 +172,7 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     permission: P.REP_VIEW,
     trendSense: "up-good",
     valueKind: "percent",
+    stableBelow: 0.1,
     vizKind: "areaWave",
     drillPath: "/analytics/dashboards",
     labelKey: "overviewKpi.availability",
@@ -198,6 +208,7 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     permission: P.REP_VIEW,
     trendSense: "up-good",
     valueKind: "percent",
+    stableBelow: 0.5,
     vizKind: "gauge",
     drillPath: analyticsRamsPath("data-quality"),
     labelKey: "overviewKpi.dataQuality",

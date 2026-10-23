@@ -291,9 +291,15 @@ async fn materialize_selection(
     selection: Selection<'_>,
     limit: i64,
 ) -> AppResult<MaterializeInboxResult> {
-    crate::sync::row_codec::REF_CACHE
+    let result = crate::sync::row_codec::REF_CACHE
         .scope(Default::default(), materialize_pass(db, selection, limit))
-        .await
+        .await;
+    // Safety net: marks the pass could not take (`inventory::reservations`); nothing is written when
+    // there is none. A failure keeps the marks for the next pass, cycle or start.
+    if let Err(e) = crate::inventory::reservations::recompute_dirty_reserved(db).await {
+        tracing::warn!(target: "maintafox::sync", "reserved stock recompute after apply failed: {e}");
+    }
+    result
 }
 
 async fn materialize_pass(
@@ -414,6 +420,11 @@ async fn materialize_pass(
             break;
         }
         queue = waiting_for_parent;
+    }
+    // Reserved stock of the pairs this pass wrote, once per pair, committed with the pass
+    // (`inventory::reservations`). A failure keeps the marks for the safety net below.
+    if let Err(e) = crate::inventory::reservations::recompute_dirty_reserved_in(&pass).await {
+        tracing::warn!(target: "maintafox::sync", "reserved stock recompute in the pass failed: {e}");
     }
     pass.commit().await?;
 
@@ -546,6 +557,8 @@ async fn apply_inbox_row<C: ConnectionTrait + TransactionTrait>(db: &C, item: &I
                 },
             )
             .await?;
+            // A reservation released on two PCs is settled without a person (`inventory::reservations`).
+            crate::inventory::reservations::settle_double_release(&tx, &item.entity_type, &item.entity_sync_id).await?;
         }
         ApplyOutcome::Applied | ApplyOutcome::Unchanged => {}
     }

@@ -103,6 +103,20 @@ describe("reference set presentation", () => {
     expect(referenceDomainLabel({ id: 5, code: "EQUIPMENT.CLASS", name: "Classes" }, t)).toBe(
       "Classes",
     );
+    // A list Maintafox provides is named from the translations when one exists.
+    const known = (key: string) =>
+      key === "domainLabels.EQUIPMENT_CLASS" ? "Equipment classes" : key;
+    expect(referenceDomainLabel({ id: 5, code: "EQUIPMENT.CLASS", name: "Classes" }, known)).toBe(
+      "Equipment classes",
+    );
+    expect(referenceDomainLabel({ id: 9, code: "PLANT.OWN_LIST", name: "Ma liste" }, known)).toBe(
+      "Ma liste",
+    );
+    // The app's i18n returns "[key]" for a missing key (parseMissingKeyHandler).
+    const bracketed = (key: string) => `[${key}]`;
+    expect(
+      referenceDomainLabel({ id: 9, code: "PLANT.OWN_LIST", name: "Ma liste" }, bracketed),
+    ).toBe("Ma liste");
   });
 
   it("hides the readiness checks the publish action takes care of", () => {

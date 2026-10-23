@@ -83,8 +83,11 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 }
 
 fn parse_rfc3339(value: &str, field: &str) -> AppResult<DateTime<Utc>> {
-    let parsed = DateTime::parse_from_rfc3339(value)
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")]))?;
+    let parsed = DateTime::parse_from_rfc3339(value).map_err(|_| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_PLAN_DATE_INVALID: {field} must be a valid RFC3339 timestamp."
+        )])
+    })?;
     Ok(parsed.with_timezone(&Utc))
 }
 
@@ -93,7 +96,7 @@ fn validate_window(start: &str, end: &str, start_field: &str, end_field: &str) -
     let end_dt = parse_rfc3339(end, end_field)?;
     if end_dt <= start_dt {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{end_field} must be strictly greater than {start_field}."
+            "GATE_PLAN_DATE_ORDER: {end_field} must be strictly greater than {start_field}."
         )]));
     }
     Ok(())
@@ -546,7 +549,8 @@ async fn enforce_candidate_ready(
     if let Some(expected) = expected_row_version {
         if expected != row_version {
             return Err(AppError::ValidationFailed(vec![
-                "Schedule candidate was modified elsewhere (stale row_version).".to_string(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: Schedule candidate was modified elsewhere (stale row_version)."
+                    .to_string(),
             ]));
         }
     }
@@ -841,7 +845,9 @@ pub(crate) async fn enforce_assignee_qualifications(
     let work_day = crate::wo::shifts::planned_instant(slot_start)
         .map(|t| t.with_timezone(&chrono::Local).date_naive())
         .ok_or_else(|| {
-            AppError::ValidationFailed(vec![format!("The slot start '{slot_start}' is not a date and time.")])
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PLAN_SLOT_START_INVALID: The slot start '{slot_start}' is not a date and time."
+            )])
         })?;
     match super::qualifications::check_assignee(db, source_type, source_id, personnel_id, work_day).await? {
         Some(check) if !check.qualified => Err(crate::qualification::gate::blocked_error(&check)),
@@ -1476,7 +1482,7 @@ pub async fn update_planning_window(
     let current = get_planning_window(db, window_id).await?;
     if current.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Planning window was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Planning window was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     let window_type = input
@@ -1523,7 +1529,7 @@ pub async fn update_planning_window(
         .await?;
     if updated.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Planning window was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Planning window was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     get_planning_window(db, window_id).await
@@ -1659,7 +1665,8 @@ pub async fn create_schedule_break_in(
     let current = get_commitment(&tx, input.schedule_commitment_id).await?;
     if current.row_version != input.expected_commitment_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Schedule commitment was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Schedule commitment was modified elsewhere (stale row_version)."
+                .to_string(),
         ]));
     }
     ensure_held(&current)?;
@@ -1669,13 +1676,14 @@ pub async fn create_schedule_break_in(
     if let Some(approver_user_id) = approved_by_user_id {
         if !user_has_plan_approval_scope(&tx, approver_user_id).await? {
             return Err(AppError::ValidationFailed(vec![
-                "approved_by_user_id must have plan.confirm or plan.windows permission.".to_string(),
+                "GATE_PLAN_APPROVER_NOT_ALLOWED: approved_by_user_id must have plan.confirm or plan.windows permission.".to_string(),
             ]));
         }
         approved_by_personnel_id = resolve_user_personnel_id(&tx, approver_user_id).await?;
         if approved_by_personnel_id.is_none() {
             return Err(AppError::ValidationFailed(vec![
-                "approved_by_user_id must be linked to a personnel record.".to_string(),
+                "GATE_PLAN_APPROVER_NO_PERSONNEL: approved_by_user_id must be linked to a personnel record."
+                    .to_string(),
             ]));
         }
     }
@@ -1816,7 +1824,7 @@ pub async fn create_schedule_break_in(
     let locked_window = find_locked_window(&tx, &input.new_slot_start, &input.new_slot_end, location).await?;
     if locked_window.is_some() && dangerous_override_reason.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Break-in intersects a locked window and requires dangerous_override_reason.".to_string(),
+            "GATE_PLAN_BREAKIN_LOCKED_WINDOW: Break-in intersects a locked window and requires dangerous_override_reason.".to_string(),
         ]));
     }
 
@@ -2072,7 +2080,7 @@ pub async fn create_schedule_commitment(
             if let Some(approver) = b.approved_by_user_id {
                 if !user_has_plan_approval_scope(&tx, approver).await? {
                     return Err(AppError::ValidationFailed(vec![
-                        "approved_by_user_id must have plan.confirm or plan.windows permission.".to_string(),
+                        "GATE_PLAN_APPROVER_NOT_ALLOWED: approved_by_user_id must have plan.confirm or plan.windows permission.".to_string(),
                     ]));
                 }
             }
@@ -2265,7 +2273,8 @@ pub async fn reschedule_schedule_commitment(
     let current = get_commitment(&tx, input.commitment_id).await?;
     if current.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Schedule commitment was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Schedule commitment was modified elsewhere (stale row_version)."
+                .to_string(),
         ]));
     }
     ensure_held(&current)?;
@@ -2298,7 +2307,7 @@ pub async fn reschedule_schedule_commitment(
         )
         .await;
         return Err(AppError::ValidationFailed(vec![
-            "Commitment is frozen and cannot be rescheduled.".to_string(),
+            "GATE_PLAN_COMMITMENT_FROZEN: Commitment is frozen and cannot be rescheduled.".to_string(),
         ]));
     }
 
@@ -2375,7 +2384,8 @@ pub async fn reschedule_schedule_commitment(
         .await?;
     if res.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Schedule commitment was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Schedule commitment was modified elsewhere (stale row_version)."
+                .to_string(),
         ]));
     }
     append_change_log(
@@ -2723,6 +2733,28 @@ pub async fn get_planning_gantt_snapshot(
     })
 }
 
+/// An instant stored in UTC, printed in this PC's local time in the report language; text that is
+/// not a timestamp is printed as it is.
+pub(crate) fn local_pdf_instant(locale: crate::reports::export::ReportLocale, value: &str) -> String {
+    let Ok(parsed) = DateTime::parse_from_rfc3339(value) else {
+        return value.to_string();
+    };
+    let local = parsed.with_timezone(&chrono::Local);
+    match locale {
+        crate::reports::export::ReportLocale::Fr => local.format("%d/%m/%Y %H:%M").to_string(),
+        crate::reports::export::ReportLocale::En => local.format("%Y-%m-%d %H:%M").to_string(),
+    }
+}
+
+/// Label for a commitment that has no code (its source type), in the report language.
+pub(crate) fn pdf_source_type_label(locale: crate::reports::export::ReportLocale, source_type: &str) -> String {
+    match source_type {
+        "work_order" => locale.pick("Ordre de travail", "Work order").to_string(),
+        "pm_occurrence" => locale.pick("Occurrence PM", "PM occurrence").to_string(),
+        other => other.to_string(),
+    }
+}
+
 pub async fn export_planning_gantt_pdf(
     db: &DatabaseConnection,
     input: ExportPlanningGanttPdfInput,
@@ -2739,6 +2771,8 @@ pub async fn export_planning_gantt_pdf(
     )
     .await?;
     let paper_size = input.paper_size.unwrap_or_else(|| "A4".to_string());
+    // The PDF follows the app language and prints times in this PC's local time.
+    let locale = crate::reports::export::ReportLocale::resolve(db, None).await;
     let font = crate::reports::pdf::load_system_font()?;
     let mut doc = crate::reports::pdf::PdfDocument::new(
         &font,
@@ -2747,27 +2781,38 @@ pub async fn export_planning_gantt_pdf(
     )?;
     doc.heading("Planning — Gantt");
     doc.paragraph(&format!(
-        "{} → {} · {} commitment(s)",
-        snapshot.period_start,
-        snapshot.period_end,
-        snapshot.commitments.len()
+        "{} → {} · {} {} · {}",
+        local_pdf_instant(locale, &snapshot.period_start),
+        local_pdf_instant(locale, &snapshot.period_end),
+        snapshot.commitments.len(),
+        locale.pick("engagement(s)", "commitment(s)"),
+        locale.pick("heures locales", "local time"),
     ));
     let rows: Vec<Vec<String>> = snapshot
         .commitments
         .iter()
         .map(|c| {
             vec![
-                c.source_code.clone().unwrap_or_else(|| c.source_type.clone()),
+                c.source_code
+                    .clone()
+                    .unwrap_or_else(|| pdf_source_type_label(locale, &c.source_type)),
                 c.source_title.clone().unwrap_or_default(),
-                c.committed_start.clone(),
-                c.committed_end.clone(),
+                local_pdf_instant(locale, &c.committed_start),
+                local_pdf_instant(locale, &c.committed_end),
                 c.assigned_team_label.clone().unwrap_or_default(),
                 c.assigned_personnel_name.clone().unwrap_or_else(|| "—".to_string()),
             ]
         })
         .collect();
     doc.table(
-        &["Ref.", "Title", "Start", "End", "Crew", "Assignee"],
+        &[
+            locale.pick("Réf.", "Ref."),
+            locale.pick("Titre", "Title"),
+            locale.pick("Début", "Start"),
+            locale.pick("Fin", "End"),
+            locale.pick("Équipe", "Crew"),
+            locale.pick("Intervenant", "Assignee"),
+        ],
         &rows,
         &[1.2, 3.0, 1.6, 1.6, 1.5, 1.6],
     );

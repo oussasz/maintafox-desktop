@@ -657,6 +657,7 @@ mod tests {
                 reported_urgency: None,
                 observed_at: None,
             },
+            None,
         )
         .await;
 

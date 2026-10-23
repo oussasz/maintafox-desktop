@@ -325,14 +325,14 @@ pub async fn stage_import_rows(
     crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "uploaded" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet le chargement.",
+            "GATE_REF_IMPORT_NOT_LOADABLE: Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet le chargement.",
             batch.status
         )]));
     }
 
     if rows.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Aucune ligne fournie pour le chargement.".into(),
+            "GATE_REF_IMPORT_NO_ROWS_GIVEN: Aucune ligne fournie pour le chargement.".into(),
         ]));
     }
 
@@ -394,13 +394,13 @@ pub async fn validate_import_batch(
     crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "uploaded" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet la validation.",
+            "GATE_REF_IMPORT_NOT_VALIDATABLE: Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet la validation.",
             batch.status
         )]));
     }
     if batch.total_rows == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Le lot d'import ne contient aucune ligne.".into(),
+            "GATE_REF_IMPORT_EMPTY: Le lot d'import ne contient aucune ligne.".into(),
         ]));
     }
 
@@ -711,7 +711,7 @@ pub async fn apply_import_batch(
     crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "validated" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le lot d'import est en statut '{}'; seul le statut 'validated' permet l'application.",
+            "GATE_REF_IMPORT_NOT_APPLICABLE: Le lot d'import est en statut '{}'; seul le statut 'validated' permet l'application.",
             batch.status
         )]));
     }
@@ -720,12 +720,12 @@ pub async fn apply_import_batch(
     let target_set = sets::get_reference_set(db, policy.target_set_id).await?;
     if target_set.status != "draft" {
         return Err(AppError::ValidationFailed(vec![
-            "Le jeu cible doit etre en statut 'draft'.".into(),
+            "GATE_REF_IMPORT_SET_NOT_DRAFT: Le jeu cible doit etre en statut 'draft'.".into(),
         ]));
     }
     if target_set.domain_id != batch.domain_id {
         return Err(AppError::ValidationFailed(vec![
-            "Le jeu cible doit appartenir au meme domaine que le lot d'import.".into(),
+            "GATE_REF_IMPORT_SET_DOMAIN: Le jeu cible doit appartenir au meme domaine que le lot d'import.".into(),
         ]));
     }
 

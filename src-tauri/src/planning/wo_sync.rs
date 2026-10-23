@@ -42,7 +42,7 @@ pub async fn sync_work_order_from_commitment(
         WoStatus::Ready => (WoAction::Reschedule, WoAction::Reassign, "reassigned"),
         _ => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Planning commitment cannot sync Work Order #{wo_id}: status must be planning or ready (actuel: {}).",
+                "GATE_PLAN_WO_STATUS_NOT_SYNCABLE:wo={wo_id}: Planning commitment cannot sync Work Order #{wo_id}: status must be planning or ready (actuel: {}).",
                 status.as_str()
             )]));
         }

@@ -384,6 +384,26 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         Err(e) => warn!("startup: retiring superseded reference lists failed (non-fatal): {e}"),
     }
 
+    // Phase 4a'': stock reservations, with capture on so what is written reaches the other devices:
+    // reserved stock recomputed from the reservations and their movements
+    // (`inventory::reservations`), then the D13 catch-up — reservations still open on
+    // closed or cancelled work orders released (audited, system actor). Never blocks the startup;
+    // what could not be done is logged and retried at the next start.
+    let (upkeep, upkeep_errors) = crate::inventory::reservations::startup_reservation_upkeep(&app_state.db).await;
+    info!(
+        pairs_recomputed = upkeep.pairs_recomputed,
+        recompute_ms = upkeep.recompute_ms,
+        work_orders = upkeep.sweep.work_orders,
+        reservations_released = upkeep.sweep.reservations,
+        "startup: stock reservations upkeep"
+    );
+    for (wo_id, error) in &upkeep.sweep.failures {
+        warn!(wo_id = *wo_id, error = %error, "startup: reservations of an ended work order not released (retried next start)");
+    }
+    for error in &upkeep_errors {
+        warn!("startup: stock reservations upkeep (non-fatal): {error}");
+    }
+
     // Phase 4b: sync worker (protocol v2), background task `sync`. Closing the main window only
     // hides it in the tray (window.rs), so the process and the worker keep running.
     start_sync_worker(&app, &app_state).await;

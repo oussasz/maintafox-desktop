@@ -19,6 +19,7 @@
     "totalAssets": "Assets",
     "overdueItems": "Overdue",
     "noChange": "no change",
+    "points": "{{change}} pts",
     "vsPrevious": "vs previous period",
     "stable": "Stable",
     "trendNew": "New vs empty prior window",

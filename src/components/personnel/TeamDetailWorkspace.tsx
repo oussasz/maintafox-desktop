@@ -206,7 +206,9 @@ export function TeamDetailWorkspace({
         accessorKey: "allocation_percent",
         header: t("crews.detail.allocation"),
         cell: ({ row }) => (
-          <span className="text-xs">{Math.round(row.original.allocation_percent)}%</span>
+          <span className="text-xs">
+            {formatPercent(Math.round(row.original.allocation_percent))}
+          </span>
         ),
       },
     ];
@@ -239,7 +241,7 @@ export function TeamDetailWorkspace({
     }
 
     return cols;
-  }, [t, canManage, leadBusyId, handleLeadToggle]);
+  }, [t, canManage, leadBusyId, handleLeadToggle, formatPercent]);
 
   const riskColumns = useMemo<ColumnDef<SuccessionRiskRow>[]>(
     () => [

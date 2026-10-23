@@ -397,7 +397,7 @@ pub async fn close_period(
     let end = parse_iso_date(&input.period_end, "period_end")?;
     if start > end {
         return Err(AppError::ValidationFailed(vec![
-            "The period start must be on or before its end.".to_string(),
+            "GATE_INV_PERIOD_RANGE: The period start must be on or before its end.".to_string(),
         ]));
     }
     let today_date = Utc::now().date_naive();

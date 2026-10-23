@@ -316,6 +316,7 @@
     "WO_PERMIT_RULE_CLEAR_REASON_REQUIRED": "Give a reason of at least {{min}} characters to clear the permit requirement.",
     "WO_PERMIT_RULE_FLAG_ABSENT": "This work order has no permit requirement set by a rule (or it is already cleared).",
     "WO_PERMIT_RULE_FLAG_NEEDS_CLEAR": "The permit requirement comes from the rule {{rule}}: it is cleared with the permit-issue right and a reason, not by editing the work order.",
+    "WO_PERMIT_SAFETY_FLAG_NEEDS_CLEAR": "The permit requirement comes from a request flagged as a safety risk: it is cleared with the permit-issue right at the work order's site and a reason, not by editing the work order.",
     "PERMIT_RULE_INVALID": "The permit requirement rule “{{code}}” cannot be used: {{detail}}",
     "CERT_TYPE_CODE_NAME_REQUIRED": "A code and a name are required.",
     "CERT_TYPE_CATEGORY_UNKNOWN": "Unknown certification family.",

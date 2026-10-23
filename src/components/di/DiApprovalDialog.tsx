@@ -281,10 +281,7 @@ export function DiApprovalDialog() {
       setConversionResult({
         woId: result.wo_id,
         woCode: result.wo_code,
-        conversionError: t(
-          "review.conversionMissingWoId",
-          "Conversion succeeded but work order id is missing — open Work Orders manually.",
-        ),
+        conversionError: t("review.conversionMissingWoId"),
       });
       setRetryRowVersion(result.di.row_version);
     } catch (err) {
@@ -535,7 +532,7 @@ export function DiApprovalDialog() {
               >
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
                 <span>
-                  {t("review.conversionSuccess", "Request converted to work order successfully.")}{" "}
+                  {t("review.conversionSuccess")}{" "}
                   <strong className="font-mono">{conversionResult.woCode}</strong>
                 </span>
               </div>
@@ -547,9 +544,7 @@ export function DiApprovalDialog() {
               >
                 <TriangleAlert className="h-4 w-4 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-medium">
-                    {t("review.conversionFailed", "Conversion to work order failed.")}
-                  </p>
+                  <p className="font-medium">{t("review.conversionFailed")}</p>
                   <p className="text-xs mt-1">{conversionResult.conversionError}</p>
                   {retryRowVersion != null && (
                     <div className="mt-2">

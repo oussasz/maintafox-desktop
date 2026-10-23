@@ -3,7 +3,8 @@
 //! `stock_balances` is a projection of the movement ledger (`inventory_transactions`). Each
 //! inventory command updates the balance and appends the movement in one transaction; this table
 //! states, per movement type, the balance change those commands make, so a movement received from
-//! another device (sync) changes the local balance exactly as it did on the device that made it.
+//! another device (sync) changes the local on-hand stock exactly as it did on the device that made
+//! it. Reserved stock is recomputed from the reservations (`inventory::reservations`).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -63,7 +64,12 @@ pub fn on_hand_delta_sql(alias: &str) -> String {
     sql
 }
 
-/// Apply a movement made on another device to the local balance of its location.
+/// Apply a movement made on another device to the local balance of its location: on-hand stock
+/// only. Reserved stock is not a running total: it is the projection of the reservation rows and
+/// their movements (`inventory::reservations`), recomputed for the pairs the triggers of migration
+/// 257 marked, in the same sync pass transaction before it commits. A received movement therefore
+/// never moves reserved stock by itself, and one received without its reservation link (legacy
+/// data) has no reserved effect at all, as the projection rule says.
 pub async fn apply_received_movement(
     conn: &impl ConnectionTrait,
     article_id: i64,
@@ -72,30 +78,28 @@ pub async fn apply_received_movement(
     movement_type: &str,
     quantity: f64,
 ) -> AppResult<()> {
-    let (on_hand_delta, reserved_delta) = movement_balance_effect(movement_type, quantity).ok_or_else(|| {
-        AppError::SyncError(format!(
-            "stock movement type '{movement_type}' has no known effect on stock balances"
-        ))
-    })?;
+    let (on_hand_delta, _reserved_by_projection) =
+        movement_balance_effect(movement_type, quantity).ok_or_else(|| {
+            AppError::SyncError(format!(
+                "stock movement type '{movement_type}' has no known effect on stock balances"
+            ))
+        })?;
     conn.execute(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "INSERT INTO stock_balances (
              article_id, warehouse_id, location_id, on_hand_qty, reserved_qty, available_qty, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+         ) VALUES (?, ?, ?, ?, 0, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
          ON CONFLICT(article_id, location_id) DO UPDATE SET
              warehouse_id = excluded.warehouse_id,
              on_hand_qty = stock_balances.on_hand_qty + excluded.on_hand_qty,
-             reserved_qty = stock_balances.reserved_qty + excluded.reserved_qty,
-             available_qty = (stock_balances.on_hand_qty + excluded.on_hand_qty)
-                           - (stock_balances.reserved_qty + excluded.reserved_qty),
+             available_qty = (stock_balances.on_hand_qty + excluded.on_hand_qty) - stock_balances.reserved_qty,
              updated_at = excluded.updated_at",
         [
             article_id.into(),
             warehouse_id.into(),
             location_id.into(),
             on_hand_delta.into(),
-            reserved_delta.into(),
-            (on_hand_delta - reserved_delta).into(),
+            on_hand_delta.into(),
         ],
     ))
     .await?;

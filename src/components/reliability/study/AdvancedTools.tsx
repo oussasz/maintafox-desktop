@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 
 import { KpiTile } from "@/components/metrics/KpiTile";
 import { Button } from "@/components/ui/button";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -442,8 +443,8 @@ function SimulationTool({
   const canReadCosts = can(P.FIN_VIEW);
   const [trials, setTrials] = useState("10000");
   const [seed, setSeed] = useState("");
-  const [costH, setCostH] = useState("");
-  const [costR, setCostR] = useState("");
+  const [costH, setCostH] = useState<number | null>(null);
+  const [costR, setCostR] = useState<number | null>(null);
   const [costSource, setCostSource] = useState<RepairCostSource | null>(null);
   const [costNote, setCostNote] = useState<string | null>(null);
   const [costBusy, setCostBusy] = useState(false);
@@ -478,7 +479,7 @@ function SimulationTool({
         setCostNote(t("rams.advanced.simulation.meanCostNone", { code: eq.asset_code }));
         return;
       }
-      setCostR(String(row.avg_corrective_cost));
+      setCostR(row.avg_corrective_cost);
       setCostSource({
         code: eq.asset_code,
         count: row.corrective_work_orders,
@@ -527,21 +528,16 @@ function SimulationTool({
         </label>
         <label className="grid gap-1 text-xs font-medium text-text-secondary">
           {t("rams.advanced.simulation.downtimeCost")}
-          <Input
-            className="h-10"
-            inputMode="decimal"
-            value={costH}
-            onChange={(e) => setCostH(e.target.value)}
-          />
+          <DecimalField className="h-10" min={0} value={costH} onValueChange={setCostH} />
         </label>
         <label className="grid gap-1 text-xs font-medium text-text-secondary">
           {t("rams.advanced.simulation.repairCost")}
-          <Input
+          <DecimalField
             className="h-10"
-            inputMode="decimal"
+            min={0}
             value={costR}
-            onChange={(e) => {
-              setCostR(e.target.value);
+            onValueChange={(v) => {
+              setCostR(v);
               // A typed value no longer comes from Finance.
               setCostSource(null);
               setCostNote(null);
@@ -609,8 +605,8 @@ function SimulationTool({
                   trials: trialsN,
                   seed: seed.trim() ? Math.round(num(seed)) : null,
                   spec: rbd,
-                  downtime_cost_per_hour: Number.isFinite(num(costH)) ? num(costH) : null,
-                  repair_cost: Number.isFinite(num(costR)) ? num(costR) : null,
+                  downtime_cost_per_hour: costH,
+                  repair_cost: costR,
                 }),
               );
             } catch {

@@ -476,7 +476,7 @@ fn awaits_approval(s: &WeeklySchedule) -> bool {
 fn check_version(schedule: &WeeklySchedule, expected: Option<i64>) -> AppResult<()> {
     match expected {
         Some(v) if v != schedule.row_version => Err(AppError::ValidationFailed(vec![
-            "Weekly schedule was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Weekly schedule was modified elsewhere (stale row_version).".to_string(),
         ])),
         _ => Ok(()),
     }

@@ -316,6 +316,7 @@
     "WO_PERMIT_RULE_CLEAR_REASON_REQUIRED": "Indiquez un motif d'au moins {{min}} caractères pour lever l'exigence de permis.",
     "WO_PERMIT_RULE_FLAG_ABSENT": "Cet OT n'a pas d'exigence de permis fixée par une règle (ou elle est déjà levée).",
     "WO_PERMIT_RULE_FLAG_NEEDS_CLEAR": "L'exigence de permis vient de la règle {{rule}} : elle se lève avec le droit de délivrer les permis et un motif, pas en modifiant l'OT.",
+    "WO_PERMIT_SAFETY_FLAG_NEEDS_CLEAR": "L'exigence de permis vient d'une demande signalée sécurité : elle se lève avec le droit de délivrer les permis sur le site de l'OT et un motif, pas en modifiant l'OT.",
     "PERMIT_RULE_INVALID": "La règle d'exigence de permis « {{code}} » n'est pas utilisable : {{detail}}",
     "CERT_TYPE_CODE_NAME_REQUIRED": "Le code et le libellé sont obligatoires.",
     "CERT_TYPE_CATEGORY_UNKNOWN": "Famille d'habilitation inconnue.",

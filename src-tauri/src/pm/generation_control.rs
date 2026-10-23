@@ -364,7 +364,7 @@ async fn advance_occurrence_to_in_progress(
     while occurrence.status != "in_progress" {
         let Some(next) = next_status_toward_in_progress(&occurrence.status) else {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Cannot advance PM occurrence {} from status '{}' to in_progress.",
+                "GATE_PM_OCCURRENCE_NOT_STARTABLE:status={1}: Cannot advance PM occurrence {} from status '{}' to in_progress.",
                 occurrence.id, occurrence.status
             )]));
         };

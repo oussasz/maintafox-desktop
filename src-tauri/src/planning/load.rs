@@ -48,7 +48,11 @@ pub fn validate_crew_size(crew: Option<i64>) -> AppResult<()> {
 fn parse_instant(raw: &str, field: &str) -> AppResult<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(raw)
         .map(|d| d.with_timezone(&Utc))
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be RFC3339 (got '{raw}').")]))
+        .map_err(|_| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PLAN_DATE_INVALID: {field} must be RFC3339 (got '{raw}')."
+            )])
+        })
 }
 
 /// A slot spans at most [`MAX_SLOT_DAYS`] days.

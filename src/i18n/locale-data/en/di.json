@@ -309,6 +309,8 @@
     "pausedDeferred": "Paused — deferred"
   },
   "reviewTimeline": {
+    "title": "Review timeline",
+    "slaDetails": "SLA details",
     "empty": "No review events recorded.",
     "slaTarget": "SLA target",
     "slaDeadline": "SLA deadline",
@@ -517,6 +519,8 @@
     "diScreen": "Triage incoming intervention requests (submitted → review queue)"
   },
   "review": {
+    "conversionSuccess": "Request converted to work order successfully.",
+    "conversionFailed": "Conversion to work order failed.",
     "view": "View details",
     "returnAction": "Return",
     "approvalTitle": "Approve & Convert to Work Order",

@@ -58,12 +58,12 @@ pub const INSTANT_DELIVERY_SQL: &str = concat!(
 pub fn validate_digest_mode(category_code: &str, mode: &str) -> AppResult<()> {
     if !matches!(mode, "instant" | "daily_digest" | "off") {
         return Err(AppError::ValidationFailed(vec![
-            "digest_mode must be one of: instant, daily_digest, off".to_string(),
+            "GATE_NOTIF_DIGEST_MODE_INVALID: digest_mode must be one of: instant, daily_digest, off".to_string(),
         ]));
     }
     if category_code == DIGEST_CATEGORY && mode != "instant" {
         return Err(AppError::ValidationFailed(vec![
-            "The daily digest category is always delivered instantly.".to_string(),
+            "GATE_NOTIF_DIGEST_ALWAYS_INSTANT: The daily digest category is always delivered instantly.".to_string(),
         ]));
     }
     Ok(())

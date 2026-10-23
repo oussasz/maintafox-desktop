@@ -16,6 +16,7 @@ import { fromDateTimeLocal, toDateTimeLocal } from "@/components/planning/planni
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { DateTimeField } from "@/components/ui/date-time-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -43,6 +44,7 @@ import type {
 } from "@shared/ipc-types";
 
 import { WoPermitRequirementField } from "./WoPermitRequirementField";
+import { permitRuleFlagActive } from "./WoPermitRuleNote";
 import { woNatureLabel, woTypeLabel } from "./use-wo-type-labels";
 
 const TITLE_MAX = 200;
@@ -143,11 +145,20 @@ export function WoCreateForm({
   const [plannedEnd, setPlannedEnd] = useState(
     initial?.planned_end ? toDateTimeLocal(initial.planned_end) : "",
   );
-  const [expectedDuration, setExpectedDuration] = useState(
-    initial?.expected_duration_hours?.toString() ?? "",
+  const [expectedDuration, setExpectedDuration] = useState<number | null>(
+    initial?.expected_duration_hours ?? null,
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [requiresPermit, setRequiresPermit] = useState<boolean>(initial?.requires_permit ?? false);
+  // A requirement set by a plant rule or carried from a request flagged "sécurité" is not an edit
+  // of the work order (the backend refuses the untick): cleared from the planning panel with the
+  // permit-issue right and a reason.
+  const permitLocked = initial != null && permitRuleFlagActive(initial);
+  const permitLockedReason = !permitLocked
+    ? null
+    : initial?.permit_rule_code != null
+      ? t("permitRule.checkboxLocked", { rule: initial.permit_rule_code })
+      : t("permitRule.clearHint");
 
   // Equipment selection (shared AssetPicker)
   const [selectedAsset, setSelectedAsset] = useState<AssetSearchResult | null>(null);
@@ -303,7 +314,7 @@ export function WoCreateForm({
           subtype_code: subtypeCode,
           planned_start: plannedStart ? fromDateTimeLocal(plannedStart) : null,
           planned_end: plannedEnd ? fromDateTimeLocal(plannedEnd) : null,
-          expected_duration_hours: expectedDuration ? Number(expectedDuration) : null,
+          expected_duration_hours: expectedDuration,
           notes: notes.trim() || null,
           requires_permit: requiresPermit,
         };
@@ -319,7 +330,7 @@ export function WoCreateForm({
           subtype_code: subtypeCode || null,
           planned_start: plannedStart ? fromDateTimeLocal(plannedStart) : null,
           planned_end: plannedEnd ? fromDateTimeLocal(plannedEnd) : null,
-          expected_duration_hours: expectedDuration ? Number(expectedDuration) : null,
+          expected_duration_hours: expectedDuration,
           notes: notes.trim() || null,
           creator_id: info.user_id,
           requires_permit: requiresPermit,
@@ -491,7 +502,12 @@ export function WoCreateForm({
         </FormField>
 
         {/* Safety: permit / LOTO gate on start */}
-        <WoPermitRequirementField checked={requiresPermit} onCheckedChange={setRequiresPermit} />
+        <WoPermitRequirementField
+          checked={requiresPermit}
+          onCheckedChange={setRequiresPermit}
+          disabled={permitLocked}
+          disabledReason={permitLockedReason}
+        />
       </section>
 
       <Separator />
@@ -523,13 +539,11 @@ export function WoCreateForm({
 
         {/* Expected Duration */}
         <FormField name="duration" label={t("form.duration.label")}>
-          <Input
+          <DecimalField
             id="wo-duration"
-            type="number"
             min={0}
-            step={0.5}
             value={expectedDuration}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => setExpectedDuration(e.target.value)}
+            onValueChange={setExpectedDuration}
           />
         </FormField>
 
