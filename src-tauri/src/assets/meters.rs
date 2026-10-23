@@ -152,7 +152,7 @@ pub fn next_meter_offset(
             current_offset + rollover_value.unwrap_or_default(),
         )),
         _ => Err(AppError::ValidationFailed(vec![format!(
-            "GATE_ASSET_METER_NO_ROLLOVER: Le releve ({reading}) est inferieur au precedent ({prev}). Indiquez s'il s'agit d'un \
+            "GATE_ASSET_METER_READING_LOWER: Le releve ({reading}) est inferieur au precedent ({prev}). Indiquez s'il s'agit d'un \
              retour a zero du compteur (valeur de retournement configuree) ou d'un remplacement \
              du compteur."
         )])),

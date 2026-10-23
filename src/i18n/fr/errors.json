@@ -323,7 +323,7 @@
     "GATE_ASSET_DOC_REFERENCE_REQUIRED": "Document refusé : indiquez la référence du document.",
     "GATE_ASSET_FAMILY_CLASS_MISMATCH": "Équipement refusé : la famille choisie ne correspond pas à la classe. Choisissez une famille de cette classe ou laissez-la vide.",
     "GATE_ASSET_FAMILY_INACTIVE": "Équipement refusé : la famille liée à cette classe est inactive ou supprimée.",
-    "GATE_ASSET_FAMILY_NEEDS_CLASS": "Équipement refusé : choisissez d'abord une classe valide avant la famille.",
+    "GATE_ASSET_FAMILY_NEEDS_CLASS": "Équipement refusé : choisissez une classe valide avant de choisir la famille.",
     "GATE_ASSET_FAMILY_UNKNOWN": "Équipement refusé : la famille choisie n'existe plus dans les données de référence.",
     "GATE_ASSET_HIER_CYCLE": "Relation refusée : elle créerait une boucle dans la hiérarchie des équipements.",
     "GATE_ASSET_HIER_MOVE_STATUS": "Déplacement refusé : l'équipement est au statut « {{status}} » et ne peut pas être déplacé dans la hiérarchie.",
@@ -373,7 +373,7 @@
     "GATE_ASSET_STATUS_REQUIRED": "Équipement refusé : choisissez un statut.",
     "GATE_ASSET_STATUS_UNKNOWN": "Équipement refusé : le statut choisi n'existe plus dans les données de référence.",
     "GATE_ASSET_SUBFAMILY_FAMILY_MISMATCH": "Équipement refusé : la sous-famille ne correspond pas à la famille choisie.",
-    "GATE_ASSET_SUBFAMILY_NEEDS_FAMILY": "Équipement refusé : choisissez d'abord une famille valide avant la sous-famille.",
+    "GATE_ASSET_SUBFAMILY_NEEDS_FAMILY": "Équipement refusé : choisissez une famille valide avant de choisir la sous-famille.",
     "GATE_ASSET_SUBFAMILY_UNKNOWN": "Équipement refusé : la sous-famille choisie n'existe plus dans les données de référence."
   },
   "scope": {
