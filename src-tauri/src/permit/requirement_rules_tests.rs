@@ -914,3 +914,146 @@ async fn the_site_right_is_permanent_and_held_on_the_node_or_a_parent() {
         .expect("a role on a parent of the site clears it");
     assert!(!cleared.requires_permit);
 }
+
+/// The withdrawn clearings of a work order: action events × 10 + audit trail entries.
+async fn withdrawn_count(db: &DatabaseConnection, wo_id: i64) -> i64 {
+    scalar(
+        db,
+        &format!(
+            "SELECT (SELECT COUNT(*) FROM wo_action_events WHERE wo_id = {wo_id} \
+                     AND action_code = 'permit_clearing_withdrawn') * 10 + \
+                    (SELECT COUNT(*) FROM wo_change_events WHERE wo_id = {wo_id} \
+                     AND action = 'permit_clearing_withdrawn')"
+        ),
+    )
+    .await
+}
+
+/// A cleared protected requirement required again by the general edit (the permit box, the draft
+/// form) is protected again: its clearing is withdrawn and audited, and unticking it again needs the
+/// permit-issue clearing. Both origins.
+#[tokio::test]
+async fn a_cleared_requirement_required_again_is_protected_again() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+
+    // A plant rule's flag, required again with the permit box.
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    let ruled = convert(&db, actor).await;
+    let wo = crate::wo::queries::get_work_order(&db, ruled.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    let cleared = req::clear_permit_rule_flag(
+        &db,
+        WoPermitRuleClearInput {
+            wo_id: wo.id,
+            expected_row_version: wo.row_version,
+            reason: "Inspection visuelle seulement".into(),
+        },
+        actor,
+    )
+    .await
+    .expect("cleared");
+    let again = req::set_permit_requirement(
+        &db,
+        WoPermitRequirementInput {
+            wo_id: wo.id,
+            expected_row_version: cleared.row_version,
+            requires_permit: true,
+        },
+        actor,
+    )
+    .await
+    .expect("required again");
+    assert!(again.requires_permit);
+    assert_eq!(again.permit_rule_cleared_at, None, "clearing withdrawn");
+    assert_eq!(again.permit_rule_cleared_by_id, None);
+    assert_eq!(again.permit_rule_clear_reason, None);
+    assert_eq!(
+        withdrawn_count(&db, wo.id).await,
+        11,
+        "in the history and the audit trail"
+    );
+    let err = req::set_permit_requirement(
+        &db,
+        WoPermitRequirementInput {
+            wo_id: wo.id,
+            expected_row_version: again.row_version,
+            requires_permit: false,
+        },
+        actor,
+    )
+    .await
+    .expect_err("protected again");
+    assert_eq!(code_of(&err), req::CODE_RULE_FLAG_NEEDS_CLEAR);
+
+    // A safety request's requirement (no plant rule: the rule is switched off), required again with
+    // the draft form.
+    exec(
+        &db,
+        "UPDATE reference_values SET is_active = 0 WHERE code = 'PUMPS_LOTO'",
+    )
+    .await;
+    let safety = convert_request(&db, actor, true).await;
+    let wo = crate::wo::queries::get_work_order(&db, safety.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert_eq!(wo.permit_rule_code, None, "safety origin only");
+    let wo = crate::wo::queries::get_work_order(&db, safety.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    let cleared = req::clear_permit_rule_flag(
+        &db,
+        WoPermitRuleClearInput {
+            wo_id: wo.id,
+            expected_row_version: wo.row_version,
+            reason: "Inspection visuelle seulement".into(),
+        },
+        actor,
+    )
+    .await
+    .expect("cleared");
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'draft') WHERE id = {}",
+            wo.id
+        ),
+    )
+    .await;
+    let draft = |rv: i64, requires: bool| crate::wo::domain::WoDraftUpdateInput {
+        id: wo.id,
+        expected_row_version: rv,
+        title: None,
+        type_code: None,
+        equipment_id: None,
+        location_id: None,
+        description: None,
+        planned_start: None,
+        planned_end: None,
+        shift: None,
+        expected_duration_hours: None,
+        notes: None,
+        urgency_code: None,
+        subtype_code: None,
+        requires_permit: Some(requires),
+    };
+    let again = crate::wo::queries::update_wo_draft_fields(&db, draft(cleared.row_version, true))
+        .await
+        .expect("required again");
+    assert!(again.requires_permit);
+    assert_eq!(again.permit_rule_cleared_at, None, "clearing withdrawn");
+    assert_eq!(withdrawn_count(&db, wo.id).await, 11);
+    let err = crate::wo::queries::update_wo_draft_fields(&db, draft(again.row_version, false))
+        .await
+        .expect_err("protected again");
+    assert_eq!(code_of(&err), req::CODE_SAFETY_FLAG_NEEDS_CLEAR);
+}

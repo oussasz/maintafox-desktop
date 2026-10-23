@@ -2153,7 +2153,8 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_removed_or_partly_rewritten
     let reflagged = with(cleared.clone(), &[("requires_permit", json!(1))]);
     let outcome = apply(&db, "work_orders", &wo_sync, &reflagged).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "re-flag: {outcome:?}");
-    // No local action removes a recorded clearing or a part of it: a received row doing so is refused.
+    // No local action removes a part of a recorded clearing, or removes it without requiring the
+    // permit again: a received row doing so is refused.
     for (what, changes) in [
         ("reason removed", vec![("permit_rule_clear_reason", json!(null))]),
         ("clearer removed", vec![("permit_rule_cleared_by_sync_id", json!(null))]),
@@ -2166,8 +2167,9 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_removed_or_partly_rewritten
             ],
         ),
         (
-            "removed",
+            "removed, not required",
             vec![
+                ("requires_permit", json!(0)),
                 ("permit_rule_cleared_by_sync_id", json!(null)),
                 ("permit_rule_cleared_at", json!(null)),
                 ("permit_rule_clear_reason", json!(null)),
@@ -2197,6 +2199,43 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_removed_or_partly_rewritten
         .await
         .as_deref(),
         Some("0")
+    );
+    // Required again on a PC that withdraws the clearing (`withdraw_clearing_on_retick`): the received
+    // re-tick, the whole clearing removed, is applied and the flag is protected again here.
+    let reticked = with(
+        cleared.clone(),
+        &[
+            ("requires_permit", json!(1)),
+            ("permit_rule_cleared_by_sync_id", json!(null)),
+            ("permit_rule_cleared_at", json!(null)),
+            ("permit_rule_clear_reason", json!(null)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &reticked).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "re-tick: {outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT CAST(requires_permit AS TEXT) || '|' || COALESCE(permit_rule_cleared_at, '') \
+                 FROM work_orders WHERE id = {wo_id}"
+            ),
+        )
+        .await
+        .as_deref(),
+        Some("1|")
+    );
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(reticked, &[("requires_permit", json!(0))]),
+    )
+    .await;
+    assert_eq!(
+        code(&outcome),
+        Some("WO_PERMIT_RULE_CLEAR_INVALID"),
+        "unticked again without a clearing: {outcome:?}"
     );
 }
 

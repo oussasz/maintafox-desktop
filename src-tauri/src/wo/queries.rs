@@ -1024,8 +1024,11 @@ pub async fn update_wo_draft_fields(
         values.push(urgency_id.into());
     }
     if let Some(rp) = input.requires_permit {
-        // A flag set by a plant permit rule is cleared only by the clear command.
-        if !rp {
+        // A flag set by a plant permit rule (or a safety request) is cleared only by the clear
+        // command; required again after a clearing, it is protected again.
+        if rp {
+            crate::wo::workflow::actions::permit_requirement::withdraw_clearing_on_retick(&txn, input.id, None).await?;
+        } else {
             crate::wo::workflow::actions::permit_requirement::assert_not_rule_flagged(&txn, input.id).await?;
         }
         sets.push("requires_permit = ?".into());

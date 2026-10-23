@@ -2408,19 +2408,12 @@ pub(crate) async fn inbound_permit_rule_check(
     // A clearing recorded here is never removed nor partly rewritten (who, when or why missing). A
     // different complete clearing (another PC that cleared the same order offline) is judged in full
     // below, like a new one, so both PCs converge on it when it is valid.
-    // A safety requirement's clearing withdrawn because the work order changed site (the requirement
-    // in force again, no who, when or why, another site): what the PC that moved it does in the same
-    // change (`permit_requirement::void_clearing_on_site_change`), the safe direction. Any other
-    // removal of a recorded clearing is refused below.
-    let site_changed = local.as_ref().is_some_and(|l| {
-        field(l, "entity_sync_id").is_some() && field(l, "entity_sync_id") != field(&wo, "entity_sync_id")
-    });
-    if origin == ProtectedOrigin::SafetyRequest
-        && site_changed
-        && clearing_changed
-        && clearing(&wo) == none
-        && flag(&wo, "requires_permit")
-    {
+    // A clearing withdrawn as a whole with the requirement in force again (no who, when or why): what
+    // a PC does when the requirement is required again (`permit_requirement::
+    // withdraw_clearing_on_retick`) or when a safety requirement changes site
+    // (`void_clearing_on_site_change`): the protected state, accepted. Removing a clearing without
+    // requiring the permit, or a part of it, is refused below.
+    if clearing_changed && clearing(&wo) == none && flag(&wo, "requires_permit") {
         return Ok(None);
     }
     // A safety requirement cleared at one site does not stay cleared at another: a received move of
