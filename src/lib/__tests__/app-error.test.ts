@@ -188,3 +188,23 @@ describe("details that carry their own code and parameters", () => {
     expect(lines).toEqual([String(i18n.t("errors:generic.unexpected"))]);
   });
 });
+
+describe("a GATE refusal's title uses the parameters the backend sent", () => {
+  it("fills the from and to of a status change", async () => {
+    await i18n.changeLanguage("fr");
+    const described = describeAppError({
+      code: "VALIDATION_FAILED",
+      message: "Validation failed: GATE_FIN_VERSION_TRANSITION:from=draft,to=closed: Invalid",
+      details: [
+        {
+          code: "GATE_FIN_VERSION_TRANSITION",
+          params: { from: "draft", to: "closed" },
+          message: "GATE_FIN_VERSION_TRANSITION:from=draft,to=closed: Invalid",
+        },
+      ],
+    });
+    expect(described.title).toContain("Brouillon");
+    expect(described.title).toContain("Clôturée");
+    expect(described.title).not.toContain("{{");
+  });
+});

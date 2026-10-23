@@ -546,7 +546,8 @@ async fn enforce_candidate_ready(
     if let Some(expected) = expected_row_version {
         if expected != row_version {
             return Err(AppError::ValidationFailed(vec![
-                "Schedule candidate was modified elsewhere (stale row_version).".to_string(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: Schedule candidate was modified elsewhere (stale row_version)."
+                    .to_string(),
             ]));
         }
     }
@@ -1476,7 +1477,7 @@ pub async fn update_planning_window(
     let current = get_planning_window(db, window_id).await?;
     if current.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Planning window was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Planning window was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     let window_type = input
@@ -1523,7 +1524,7 @@ pub async fn update_planning_window(
         .await?;
     if updated.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Planning window was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Planning window was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     get_planning_window(db, window_id).await
@@ -1659,7 +1660,8 @@ pub async fn create_schedule_break_in(
     let current = get_commitment(&tx, input.schedule_commitment_id).await?;
     if current.row_version != input.expected_commitment_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Schedule commitment was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Schedule commitment was modified elsewhere (stale row_version)."
+                .to_string(),
         ]));
     }
     ensure_held(&current)?;
@@ -2265,7 +2267,8 @@ pub async fn reschedule_schedule_commitment(
     let current = get_commitment(&tx, input.commitment_id).await?;
     if current.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Schedule commitment was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Schedule commitment was modified elsewhere (stale row_version)."
+                .to_string(),
         ]));
     }
     ensure_held(&current)?;
@@ -2375,7 +2378,8 @@ pub async fn reschedule_schedule_commitment(
         .await?;
     if res.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Schedule commitment was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Schedule commitment was modified elsewhere (stale row_version)."
+                .to_string(),
         ]));
     }
     append_change_log(

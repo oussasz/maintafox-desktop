@@ -1871,7 +1871,7 @@ pub async fn resolve_sync_conflict(
     let conflict = to_sync_conflict(&current)?;
     if conflict.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Sync conflict was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Sync conflict was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     if matches!(

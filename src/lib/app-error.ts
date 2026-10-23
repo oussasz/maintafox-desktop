@@ -12,6 +12,7 @@
  *  - a response that fails schema validation (ZodError) gets a plain message; the technical
  *    detail goes to the console, never on screen.
  */
+import type { TOptions } from "i18next";
 import { ZodError } from "zod";
 
 import { i18n } from "@/i18n/config";
@@ -79,14 +80,16 @@ export function describeAppError(err: unknown): AppErrorDescription {
   // An untranslated GATE code never reaches the user: the generic text of the error code
   // stands in and the raw text goes to the technical disclosure.
   const codeTitle = i18nKey && i18n.exists(i18nKey) ? String(i18n.t(i18nKey)) : "";
+  const details = extractIpcValidationDetails(err);
+  // The parameters the backend sent with the GATE code fill its text ("de {{from}} à {{to}}").
+  const gateParams = details.find((d) => d.code === gateCode)?.params ?? {};
   const title =
     gateI18nKey && i18n.exists(gateI18nKey)
-      ? String(i18n.t(gateI18nKey))
+      ? String(i18n.t(gateI18nKey, gateParams as TOptions))
       : gateCode
         ? codeTitle || String(i18n.t("errors:generic.unexpected"))
         : codeTitle || fallback || String(i18n.t("errors:generic.unexpected"));
 
-  const details = extractIpcValidationDetails(err);
   const coded = details.filter((d) => d.code);
   let description: string | null = null;
   if (coded.length > 0) {

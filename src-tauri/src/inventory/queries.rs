@@ -523,7 +523,7 @@ pub async fn update_inventory_tax_category(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Tax category update failed (not found or stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Tax category update failed (not found or stale row_version).".to_string(),
         ]));
     }
 
@@ -591,7 +591,8 @@ pub async fn deactivate_inventory_tax_category(
         .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Tax category deactivation failed (not found or stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Tax category deactivation failed (not found or stale row_version)."
+                .to_string(),
         ]));
     }
 
@@ -904,7 +905,7 @@ pub async fn update_stock_location(
     let current_rv: i64 = row.try_get("", "row_version")?;
     if current_rv != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Location was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Location was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
 
@@ -979,7 +980,7 @@ pub async fn update_stock_location(
     if result.rows_affected() == 0 {
         tx.rollback().await?;
         return Err(AppError::ValidationFailed(vec![
-            "Location update failed (not found or stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Location update failed (not found or stale row_version).".to_string(),
         ]));
     }
     tx.commit().await?;
@@ -1526,7 +1527,7 @@ pub async fn update_article(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Article update failed (not found or stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Article update failed (not found or stale row_version).".to_string(),
         ]));
     }
 

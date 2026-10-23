@@ -452,7 +452,7 @@ pub async fn update_pm_plan(
     let current = get_pm_plan(db, plan_id).await?;
     if current.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM plan was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM plan was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     let title = input.title.unwrap_or(current.title);
@@ -486,7 +486,7 @@ pub async fn transition_pm_plan_lifecycle(
     let current = get_pm_plan(db, input.plan_id).await?;
     if current.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM lifecycle transition failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM lifecycle transition failed (stale row_version).".to_string(),
         ]));
     }
     let next = normalize_lifecycle_status(&input.next_status)?;
@@ -585,7 +585,7 @@ pub async fn update_pm_plan_version(
     let rv: i64 = row.try_get("", "row_version")?;
     if rv != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM plan version was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM plan version was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     let plan_id: i64 = row.try_get("", "pm_plan_id")?;
@@ -629,7 +629,7 @@ pub async fn publish_pm_plan_version(
     let rv: i64 = row.try_get("", "row_version")?;
     if rv != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM version publish failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM version publish failed (stale row_version).".to_string(),
         ]));
     }
     let plan_id: i64 = row.try_get("", "pm_plan_id")?;
@@ -1429,7 +1429,7 @@ pub async fn transition_pm_occurrence(
     let current = get_pm_occurrence_by_id(db, input.occurrence_id).await?;
     if current.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM occurrence was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM occurrence was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
 
@@ -1555,7 +1555,7 @@ pub async fn transition_pm_occurrence(
 
     if update.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "PM occurrence transition failed due to stale row_version.".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM occurrence transition failed due to stale row_version.".to_string(),
         ]));
     }
 

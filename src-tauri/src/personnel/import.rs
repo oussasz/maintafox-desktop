@@ -379,7 +379,7 @@ pub async fn apply_import_batch(
                     .await?;
                 if result.rows_affected() == 0 {
                     return Err(AppError::ValidationFailed(vec![format!(
-                        "Concurrency conflict on personnel id={personnel_id}. Import was prepared with stale row_version."
+                        "GATE_RECORD_CHANGED_ELSEWHERE: Concurrency conflict on personnel id={personnel_id}. Import was prepared with stale row_version."
                     )]));
                 }
                 if let Some(team_id) = mapped.team_id {
