@@ -48,10 +48,8 @@ export function SupportBundleDialog({ open, onClose }: Props) {
     setSent(null);
     try {
       const trimmed = note.trim();
-      if (
-        trimmed.length > 0 &&
-        (trimmed.length < NOTE_MIN_CHARS || trimmed.length > NOTE_MAX_CHARS)
-      ) {
+      const noteChars = [...trimmed].length;
+      if (noteChars > 0 && (noteChars < NOTE_MIN_CHARS || noteChars > NOTE_MAX_CHARS)) {
         setError(
           t("errors:gateError.GATE_SUPPORT_NOTE_LENGTH", {
             min: NOTE_MIN_CHARS,

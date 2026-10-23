@@ -769,7 +769,7 @@ export function PlanningPage() {
 
           <div
             role="radiogroup"
-            aria-label={t("actions.exportPdf")}
+            aria-label="A4 / A3"
             className="flex items-center rounded-md border border-surface-border"
           >
             {(["A4", "A3"] as const).map((size) => (
