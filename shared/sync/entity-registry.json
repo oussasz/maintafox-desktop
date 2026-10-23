@@ -403,7 +403,7 @@
     {
       "entity_type": "di_review_events",
       "scope": "tenant",
-      "conflict_policy": "operator_review",
+      "conflict_policy": "append_only",
       "apply_priority": 11,
       "parents": [
         "intervention_requests"
@@ -1881,7 +1881,7 @@
     {
       "entity_type": "schedule_break_ins",
       "scope": "tenant",
-      "conflict_policy": "operator_review",
+      "conflict_policy": "append_only",
       "apply_priority": 15,
       "parents": [
         "personnel",
@@ -2320,7 +2320,7 @@
     {
       "entity_type": "work_order_verifications",
       "scope": "tenant",
-      "conflict_policy": "operator_review",
+      "conflict_policy": "append_only",
       "apply_priority": 12,
       "parents": [
         "user_accounts",
