@@ -54,6 +54,15 @@ describe("sync conflict kinds", () => {
       "SYNC_STATE_TIME_MISSING",
       "WO_PART_LINE_HAS_USE",
       "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
+      "WO_COMPLETION_GATE",
+      "WO_CLOSE_GATE",
+      "WO_TASK_AFTER_COMPLETION",
+      "WO_FAILURE_DETAIL_AFTER_CLOSE",
+      "WO_LABOUR_AFTER_CLOSE",
+      "WO_TOOL_AFTER_CLOSE",
+      "WO_VERIFICATION_WRONG_STATUS",
+      "WO_SELF_VERIFICATION",
+      "WO_VERIFIER_RECORDED_LABOUR",
     ]) {
       expect(KNOWN_CONFLICT_KINDS.has(code)).toBe(true);
     }
