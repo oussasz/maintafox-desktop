@@ -167,7 +167,7 @@ pub async fn get_pm_compliance(db: &impl ConnectionTrait, input: PmComplianceInp
     let to = parse(&input.to, "to")?;
     if to <= from {
         return Err(AppError::ValidationFailed(vec![
-            "GATE_PM_DATE_ORDER: to must be after from.".to_string(),
+            "GATE_PM_PERIOD_ORDER: to must be after from.".to_string(),
         ]));
     }
     compliance_between(
