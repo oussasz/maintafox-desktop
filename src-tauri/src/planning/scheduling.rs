@@ -2727,6 +2727,28 @@ pub async fn get_planning_gantt_snapshot(
     })
 }
 
+/// An instant stored in UTC, printed in this PC's local time in the report language; text that is
+/// not a timestamp is printed as it is.
+pub(crate) fn local_pdf_instant(locale: crate::reports::export::ReportLocale, value: &str) -> String {
+    let Ok(parsed) = DateTime::parse_from_rfc3339(value) else {
+        return value.to_string();
+    };
+    let local = parsed.with_timezone(&chrono::Local);
+    match locale {
+        crate::reports::export::ReportLocale::Fr => local.format("%d/%m/%Y %H:%M").to_string(),
+        crate::reports::export::ReportLocale::En => local.format("%Y-%m-%d %H:%M").to_string(),
+    }
+}
+
+/// Label for a commitment that has no code (its source type), in the report language.
+pub(crate) fn pdf_source_type_label(locale: crate::reports::export::ReportLocale, source_type: &str) -> String {
+    match source_type {
+        "work_order" => locale.pick("Ordre de travail", "Work order").to_string(),
+        "pm_occurrence" => locale.pick("Occurrence PM", "PM occurrence").to_string(),
+        other => other.to_string(),
+    }
+}
+
 pub async fn export_planning_gantt_pdf(
     db: &DatabaseConnection,
     input: ExportPlanningGanttPdfInput,
@@ -2743,6 +2765,8 @@ pub async fn export_planning_gantt_pdf(
     )
     .await?;
     let paper_size = input.paper_size.unwrap_or_else(|| "A4".to_string());
+    // The PDF follows the app language and prints times in this PC's local time.
+    let locale = crate::reports::export::ReportLocale::resolve(db, None).await;
     let font = crate::reports::pdf::load_system_font()?;
     let mut doc = crate::reports::pdf::PdfDocument::new(
         &font,
@@ -2751,27 +2775,38 @@ pub async fn export_planning_gantt_pdf(
     )?;
     doc.heading("Planning — Gantt");
     doc.paragraph(&format!(
-        "{} → {} · {} commitment(s)",
-        snapshot.period_start,
-        snapshot.period_end,
-        snapshot.commitments.len()
+        "{} → {} · {} {} · {}",
+        local_pdf_instant(locale, &snapshot.period_start),
+        local_pdf_instant(locale, &snapshot.period_end),
+        snapshot.commitments.len(),
+        locale.pick("engagement(s)", "commitment(s)"),
+        locale.pick("heures locales", "local time"),
     ));
     let rows: Vec<Vec<String>> = snapshot
         .commitments
         .iter()
         .map(|c| {
             vec![
-                c.source_code.clone().unwrap_or_else(|| c.source_type.clone()),
+                c.source_code
+                    .clone()
+                    .unwrap_or_else(|| pdf_source_type_label(locale, &c.source_type)),
                 c.source_title.clone().unwrap_or_default(),
-                c.committed_start.clone(),
-                c.committed_end.clone(),
+                local_pdf_instant(locale, &c.committed_start),
+                local_pdf_instant(locale, &c.committed_end),
                 c.assigned_team_label.clone().unwrap_or_default(),
                 c.assigned_personnel_name.clone().unwrap_or_else(|| "—".to_string()),
             ]
         })
         .collect();
     doc.table(
-        &["Ref.", "Title", "Start", "End", "Crew", "Assignee"],
+        &[
+            locale.pick("Réf.", "Ref."),
+            locale.pick("Titre", "Title"),
+            locale.pick("Début", "Start"),
+            locale.pick("Fin", "End"),
+            locale.pick("Équipe", "Crew"),
+            locale.pick("Intervenant", "Assignee"),
+        ],
         &rows,
         &[1.2, 3.0, 1.6, 1.6, 1.5, 1.6],
     );

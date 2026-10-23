@@ -82,6 +82,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { formatPersonLabel } from "@/lib/display";
 import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
+import { cn } from "@/lib/utils";
 import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
 import { cancelScheduleCommitment, releaseScheduleCommitment } from "@/services/planning-service";
 import { listUsers } from "@/services/rbac-service";
@@ -149,6 +150,7 @@ export function PlanningPage() {
   const freezeSchedule = usePlanningStore((s) => s.freezeSchedule);
   const notifyTeams = usePlanningStore((s) => s.notifyTeams);
   const exportGanttPdf = usePlanningStore((s) => s.exportGanttPdf);
+  const [pdfPaper, setPdfPaper] = useState<"A4" | "A3">("A4");
 
   const sessionUserId = useSessionStore((s) => s.info?.user_id ?? null);
 
@@ -765,10 +767,33 @@ export function PlanningPage() {
             </Button>
           </div>
 
+          <div
+            role="radiogroup"
+            aria-label={t("actions.exportPdf")}
+            className="flex items-center rounded-md border border-surface-border"
+          >
+            {(["A4", "A3"] as const).map((size) => (
+              <button
+                key={size}
+                type="button"
+                role="radio"
+                aria-checked={pdfPaper === size}
+                onClick={() => setPdfPaper(size)}
+                className={cn(
+                  "px-2 py-1 text-xs",
+                  pdfPaper === size
+                    ? "bg-surface-2 font-medium text-text-primary"
+                    : "text-text-muted hover:bg-surface-2",
+                )}
+              >
+                {size}
+              </button>
+            ))}
+          </div>
           <Button
             size="sm"
             variant="outline"
-            onClick={() => void exportGanttPdf(periodStartIso, periodEndIso, teamId)}
+            onClick={() => void exportGanttPdf(periodStartIso, periodEndIso, teamId, pdfPaper)}
             className="gap-1.5"
           >
             <Download className="h-3.5 w-3.5" />
