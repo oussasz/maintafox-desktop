@@ -309,6 +309,8 @@
     "pausedDeferred": "Paused — deferred"
   },
   "reviewTimeline": {
+    "title": "Review timeline",
+    "slaDetails": "SLA details",
     "empty": "No review events recorded.",
     "slaTarget": "SLA target",
     "slaDeadline": "SLA deadline",

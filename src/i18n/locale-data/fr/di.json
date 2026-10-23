@@ -309,6 +309,8 @@
     "pausedDeferred": "En pause — reportée"
   },
   "reviewTimeline": {
+    "title": "Historique de la revue",
+    "slaDetails": "Détails du SLA",
     "empty": "Aucun événement de revue enregistré.",
     "slaTarget": "Cible SLA",
     "slaDeadline": "Échéance SLA",

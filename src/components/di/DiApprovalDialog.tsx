@@ -281,10 +281,7 @@ export function DiApprovalDialog() {
       setConversionResult({
         woId: result.wo_id,
         woCode: result.wo_code,
-        conversionError: t(
-          "review.conversionMissingWoId",
-          "Conversion succeeded but work order id is missing — open Work Orders manually.",
-        ),
+        conversionError: t("review.conversionMissingWoId"),
       });
       setRetryRowVersion(result.di.row_version);
     } catch (err) {
