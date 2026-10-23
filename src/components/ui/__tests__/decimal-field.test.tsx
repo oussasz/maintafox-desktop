@@ -134,6 +134,28 @@ describe("rounding and parent reconciliation", () => {
     expect(input.value).toBe("7");
     fireEvent.change(input, { target: { value: "" } });
     fireEvent.blur(input);
-    expect(input.value).toBe("");
+    // What the parent holds (0) is what is saved, so it is what the field shows once left.
+    expect(input.value).toBe("0");
+  });
+
+  it("shows a change made from outside while the field had focus once it is left", () => {
+    function OutsideHarness() {
+      const [v, setV] = useState<number | null>(1);
+      return (
+        <>
+          <DecimalField aria-label="qty" value={v} onValueChange={setV} decimals={3} />
+          <button type="button" onClick={() => setV(9)}>
+            fill
+          </button>
+        </>
+      );
+    }
+    render(<OutsideHarness />);
+    const input = screen.getByLabelText("qty") as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.click(screen.getByText("fill"));
+    expect(input.value).toBe("1");
+    fireEvent.blur(input);
+    expect(input.value).toBe("9");
   });
 });

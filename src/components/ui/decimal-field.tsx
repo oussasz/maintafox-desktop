@@ -104,6 +104,15 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
 
     const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
       focused.current = false;
+      if (value !== last.current) {
+        // The parent holds something other than what was typed (an emptied field it keeps as 0,
+        // or a change made from outside while the field had focus): show what it holds.
+        last.current = value;
+        setDraft(show(value));
+        setInvalid(false);
+        onBlur?.(e);
+        return;
+      }
       const parsed = parseDecimal(draft, { allowNegative });
       if (parsed.kind === "number") {
         const rounded = roundDecimal(parsed.value, decimals);
