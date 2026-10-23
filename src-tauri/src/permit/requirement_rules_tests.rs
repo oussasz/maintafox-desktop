@@ -644,3 +644,273 @@ async fn without_a_site_or_with_a_plant_rule_a_site_right_does_not_clear() {
         .expect("plant-wide right");
     assert!(!cleared.requires_permit);
 }
+
+// ── Review of AU-01: manual create, site move, scope cases ────────────────────────────────────
+
+/// A submitted request on the pump flagged "sécurité" (not converted).
+async fn safety_request(db: &DatabaseConnection, actor: i64) -> i64 {
+    let symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+        .await
+        .expect("symptom")
+        .expect("seeded symptom");
+    create_intervention_request(
+        db,
+        DiCreateInput {
+            equipment_id: 1,
+            org_node_id: 1,
+            title: "Fuite".into(),
+            description: "Fuite sur la pompe".into(),
+            origin_type: "operator".into(),
+            request_type: "repair".into(),
+            symptom_code_id: Some(symptom),
+            impact_level: "unknown".into(),
+            production_impact: false,
+            safety_flag: true,
+            environmental_flag: false,
+            quality_flag: false,
+            reported_urgency: "normal".into(),
+            observed_at: None,
+            source_inspection_anomaly_id: None,
+            submitter_id: actor,
+        },
+    )
+    .await
+    .expect("request")
+    .id
+}
+
+/// A work order created by hand from a request flagged "sécurité" requires a permit and carries that
+/// origin, whatever the form sent: the general edit cannot untick it.
+#[tokio::test]
+async fn a_manual_work_order_from_a_safety_request_is_protected() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let di = safety_request(&db, actor).await;
+    let wo = crate::wo::queries::create_work_order(
+        &db,
+        crate::wo::domain::WoCreateInput {
+            type_code: "corrective".into(),
+            equipment_id: Some(1),
+            location_id: None,
+            source_di_id: Some(di),
+            source_inspection_anomaly_id: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+            source_rca_cause_text: None,
+            entity_id: Some(1),
+            planner_id: None,
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
+            title: "Fuite pompe".into(),
+            description: None,
+            notes: None,
+            planned_start: None,
+            planned_end: None,
+            shift: None,
+            expected_duration_hours: None,
+            creator_id: actor,
+            requires_permit: Some(false),
+        },
+    )
+    .await
+    .expect("create");
+    assert!(wo.requires_permit, "forced by the safety request");
+    assert!(wo.permit_from_safety_di);
+    assert_eq!(wo.permit_rule_code, None, "no plant rule on a manual create (AU-04)");
+    let err = req::set_permit_requirement(
+        &db,
+        WoPermitRequirementInput {
+            wo_id: wo.id,
+            expected_row_version: wo.row_version,
+            requires_permit: false,
+        },
+        actor,
+    )
+    .await
+    .expect_err("the general edit cannot clear it");
+    assert_eq!(code_of(&err), req::CODE_SAFETY_FLAG_NEEDS_CLEAR);
+}
+
+/// A safety requirement cleared at its site no longer holds when the work order moves to another
+/// site: the clearing is withdrawn in the same change and the move is in the history and the audit
+/// trail with both sites.
+#[tokio::test]
+async fn a_cleared_safety_requirement_is_reinstated_when_the_work_order_changes_site() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    add_second_site(&db).await;
+    exec(
+        &db,
+        "INSERT INTO equipment (id, entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+         equipment_class_ref_id, created_at, updated_at) \
+         SELECT 2, 'pr-eq-2', 'PR-PUMP-2', 'Pump 2', 'active_in_service', 2, equipment_class_ref_id, \
+                datetime('now'), datetime('now') FROM equipment WHERE id = 1",
+    )
+    .await;
+    let result = convert_request(&db, actor, true).await;
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    let issuer = site_holder(&db, "issuer1", 1, crate::rbac::permissions::PTW_ISSUE).await;
+    let cleared = req::clear_permit_rule_flag(
+        &db,
+        WoPermitRuleClearInput {
+            wo_id: wo.id,
+            expected_row_version: wo.row_version,
+            reason: "Inspection visuelle seulement".into(),
+        },
+        issuer,
+    )
+    .await
+    .expect("cleared at site 1");
+    assert!(!cleared.requires_permit);
+    // The clearing's audit entry names the site it was decided at.
+    let details = text_of(
+        &db,
+        &format!(
+            "SELECT details_json FROM wo_change_events WHERE wo_id = {} AND action = 'permit_rule_flag_cleared'",
+            wo.id
+        ),
+    )
+    .await;
+    assert!(details.contains("\"entity_id\":1"), "{details}");
+
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'draft') WHERE id = {}",
+            wo.id
+        ),
+    )
+    .await;
+    let moved = crate::wo::queries::update_wo_draft_fields(
+        &db,
+        crate::wo::domain::WoDraftUpdateInput {
+            id: wo.id,
+            expected_row_version: cleared.row_version,
+            title: None,
+            type_code: None,
+            equipment_id: Some(2),
+            location_id: None,
+            description: None,
+            planned_start: None,
+            planned_end: None,
+            shift: None,
+            expected_duration_hours: None,
+            notes: None,
+            urgency_code: None,
+            subtype_code: None,
+            requires_permit: None,
+        },
+    )
+    .await
+    .expect("moved to site 2");
+    assert_eq!(moved.entity_id, Some(2));
+    assert!(moved.requires_permit, "the requirement is in force again");
+    assert_eq!(moved.permit_rule_cleared_at, None);
+    assert_eq!(moved.permit_rule_cleared_by_id, None);
+    assert_eq!(moved.permit_rule_clear_reason, None);
+    let voided = text_of(
+        &db,
+        &format!(
+            "SELECT payload_json FROM wo_action_events WHERE wo_id = {} AND action_code = 'permit_clearing_voided'",
+            wo.id
+        ),
+    )
+    .await;
+    assert!(
+        voided.contains("\"old_site\":1") && voided.contains("\"new_site\":2"),
+        "{voided}"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_change_events WHERE wo_id = {} AND action = 'permit_clearing_voided'",
+                wo.id
+            ),
+        )
+        .await,
+        1,
+        "audited"
+    );
+    // Protected again: the general edit cannot untick it.
+    let err = req::set_permit_requirement(
+        &db,
+        WoPermitRequirementInput {
+            wo_id: wo.id,
+            expected_row_version: moved.row_version,
+            requires_permit: false,
+        },
+        actor,
+    )
+    .await
+    .expect_err("protected again");
+    assert_eq!(code_of(&err), req::CODE_SAFETY_FLAG_NEEDS_CLEAR);
+}
+
+async fn text_of(db: &DatabaseConnection, sql: &str) -> String {
+    db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+        .await
+        .unwrap_or_else(|e| panic!("{sql}: {e}"))
+        .unwrap_or_else(|| panic!("{sql}: no row"))
+        .try_get_by_index::<String>(0)
+        .unwrap_or_else(|e| panic!("{sql}: {e}"))
+}
+
+/// The right at the work order's site is a permanent role on its node or a parent: an emergency
+/// grant there does not count, nor a role on a node below it.
+#[tokio::test]
+async fn the_site_right_is_permanent_and_held_on_the_node_or_a_parent() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    for sql in [
+        // Site 1 sits under a region (3); a workshop (4) sits under site 1.
+        "INSERT INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, updated_at, \
+         structure_model_id) VALUES (3, 'pr-node-3', 'PR-REGION', 'Region', 1, 'active', datetime('now'), \
+         datetime('now'), 1)",
+        "UPDATE org_nodes SET parent_id = 3 WHERE id = 1",
+        "INSERT INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, parent_id, created_at, \
+         updated_at, structure_model_id) VALUES (4, 'pr-node-4', 'PR-WORKSHOP', 'Workshop', 1, 'active', 1, \
+         datetime('now'), datetime('now'), 1)",
+    ] {
+        exec(&db, sql).await;
+    }
+    let result = convert_request(&db, actor, true).await;
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    let clear = || WoPermitRuleClearInput {
+        wo_id: wo.id,
+        expected_row_version: wo.row_version,
+        reason: "Inspection visuelle seulement".into(),
+    };
+
+    let emergency = site_holder(&db, "emergency1", 1, crate::rbac::permissions::PTW_ISSUE).await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE user_scope_assignments SET is_emergency = 1, emergency_expires_at = '2099-01-01T00:00:00Z' \
+             WHERE user_id = {emergency}"
+        ),
+    )
+    .await;
+    let err = req::clear_permit_rule_flag(&db, clear(), emergency)
+        .await
+        .expect_err("an emergency grant does not clear it");
+    assert_eq!(code_of(&err), req::CODE_RULE_FLAG_RIGHT);
+
+    let below = site_holder(&db, "workshop4", 4, crate::rbac::permissions::PTW_ISSUE).await;
+    let err = req::clear_permit_rule_flag(&db, clear(), below)
+        .await
+        .expect_err("a role below the site does not clear it");
+    assert_eq!(code_of(&err), req::CODE_RULE_FLAG_RIGHT);
+
+    let above = site_holder(&db, "region3", 3, crate::rbac::permissions::PTW_ISSUE).await;
+    let cleared = req::clear_permit_rule_flag(&db, clear(), above)
+        .await
+        .expect("a role on a parent of the site clears it");
+    assert!(!cleared.requires_permit);
+}

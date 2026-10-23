@@ -609,43 +609,8 @@ pub async fn clear_wo_permit_rule_flag(
     // rule), at the work order's site for a safety request (CMMS Advisor decision D1).
     require_on_wo(&state, user.user_id, crate::rbac::permissions::PTW_ISSUE, input.wo_id).await?;
     let actor_id = i64::from(user.user_id);
-    let reason = input.reason.trim().to_string();
-    let wo =
-        crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await?;
-    let origin = if wo.permit_rule_code.is_some() {
-        "rule"
-    } else {
-        "safety_request"
-    };
-    audit::record_wo_change_event(
-        &state.db,
-        audit::WoAuditInput {
-            wo_id: Some(wo.id),
-            action: "permit_rule_flag_cleared".into(),
-            actor_id: Some(actor_id),
-            summary: Some(
-                if wo.permit_rule_code.is_some() {
-                    "Exigence de permis (règle) levée"
-                } else {
-                    "Exigence de permis (demande sécurité) levée"
-                }
-                .into(),
-            ),
-            details_json: Some(
-                serde_json::json!({
-                    "requires_permit": false,
-                    "rule": wo.permit_rule_code,
-                    "origin": origin,
-                    "reason": reason,
-                })
-                .to_string(),
-            ),
-            requires_step_up: false,
-            apply_result: "applied".into(),
-        },
-    )
-    .await;
-    Ok(wo)
+    // The action writes the audit trail entry (origin, reason, site) in its own transaction.
+    crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

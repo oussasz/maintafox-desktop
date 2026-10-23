@@ -231,6 +231,88 @@ pub(crate) async fn may_clear_protected_requirement(
         .is_some())
 }
 
+/// A safety request's requirement is cleared with the permit-issue right at the work order's site:
+/// when the work order then moves to another site (its equipment changes), that clearing no longer
+/// holds there. It is withdrawn in the same transaction: the requirement is in force again and
+/// `permit_rule_cleared_*` are emptied; the action history keeps the withdrawn clearing with both
+/// sites. A plant rule's flag is cleared with the plant-wide right, which holds at any site, and a
+/// work order that had no site was cleared with that right too: both are left as they are. Returns
+/// whether a clearing was withdrawn.
+pub async fn void_clearing_on_site_change(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    old_site: Option<i64>,
+    new_site: Option<i64>,
+    actor_id: Option<i64>,
+) -> AppResult<bool> {
+    let Some(old) = old_site.filter(|n| *n > 0) else {
+        return Ok(false);
+    };
+    if new_site == Some(old) {
+        return Ok(false);
+    }
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT permit_rule_cleared_by_id, permit_rule_cleared_at, permit_rule_clear_reason \
+               FROM work_orders \
+              WHERE id = ? AND permit_rule_code IS NULL AND permit_from_safety_di = 1 \
+                AND permit_rule_cleared_at IS NOT NULL",
+            [wo_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(false);
+    };
+    let cleared_by: Option<i64> = row.try_get("", "permit_rule_cleared_by_id")?;
+    let cleared_at: Option<String> = row.try_get("", "permit_rule_cleared_at")?;
+    let reason: Option<String> = row.try_get("", "permit_rule_clear_reason")?;
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET requires_permit = 1, permit_rule_cleared_by_id = NULL, \
+                permit_rule_cleared_at = NULL, permit_rule_clear_reason = NULL \
+          WHERE id = ?",
+        [wo_id.into()],
+    ))
+    .await?;
+    let (status, _, _) = load_wo_status(conn, wo_id).await?;
+    let payload = serde_json::json!({
+        "requires_permit": true,
+        "origin": ProtectedOrigin::SafetyRequest.as_str(),
+        "reason": "site_change",
+        "old_site": old,
+        "new_site": new_site,
+        "voided_cleared_by_id": cleared_by,
+        "voided_cleared_at": cleared_at,
+        "voided_clear_reason": reason,
+    })
+    .to_string();
+    emit_action_event(
+        conn,
+        wo_id,
+        "permit_clearing_voided",
+        actor_id,
+        Some(&status),
+        Some(&status),
+        Some(&payload),
+    )
+    .await?;
+    crate::wo::audit::insert_wo_change_event(
+        conn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "permit_clearing_voided".into(),
+            actor_id,
+            summary: Some("Levée de l'exigence de permis (demande sécurité) annulée : changement de site".into()),
+            details_json: Some(payload),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    Ok(true)
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct WoPermitRuleClearInput {
     pub wo_id: i64,
@@ -322,6 +404,7 @@ pub async fn clear_permit_rule_flag(
         "rule": rule,
         "origin": origin.as_str(),
         "reason": reason,
+        "entity_id": site,
     })
     .to_string();
     emit_action_event(
@@ -332,6 +415,26 @@ pub async fn clear_permit_rule_flag(
         Some(&from_code),
         Some(&from_code),
         Some(&payload),
+    )
+    .await?;
+    // The audit trail entry is written with the clearing, or not at all.
+    crate::wo::audit::insert_wo_change_event(
+        &txn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(input.wo_id),
+            action: "permit_rule_flag_cleared".into(),
+            actor_id: Some(actor_id),
+            summary: Some(
+                match origin {
+                    ProtectedOrigin::Rule(_) => "Exigence de permis (règle) levée",
+                    ProtectedOrigin::SafetyRequest => "Exigence de permis (demande sécurité) levée",
+                }
+                .into(),
+            ),
+            details_json: Some(payload.clone()),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
     )
     .await?;
 
