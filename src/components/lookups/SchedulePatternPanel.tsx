@@ -64,6 +64,7 @@ function IntegerDraftInput({
   min,
   max,
   emptyValue,
+  commitOnBlur = false,
   className,
   ...props
 }: {
@@ -72,6 +73,8 @@ function IntegerDraftInput({
   min: number;
   max?: number;
   emptyValue?: number;
+  /** Commit when the field is left, not on each keystroke (a value that resizes other fields). */
+  commitOnBlur?: boolean;
   className?: string;
 } & Omit<
   React.ComponentProps<typeof Input>,
@@ -95,6 +98,7 @@ function IntegerDraftInput({
       onChange={(e) => {
         const text = e.target.value;
         setDraft(text);
+        if (commitOnBlur) return;
         if (!/^\d+$/.test(text.trim())) return;
         const n = Number(text.trim());
         if (n < min || (max != null && n > max)) return;
@@ -102,6 +106,17 @@ function IntegerDraftInput({
         onCommit(n);
       }}
       onBlur={() => {
+        if (commitOnBlur && /^\d+$/.test(draft.trim())) {
+          const n = Number(draft.trim());
+          if (n >= min && (max == null || n <= max)) {
+            if (n !== value) {
+              last.current = n;
+              onCommit(n);
+            }
+            setDraft(String(n));
+            return;
+          }
+        }
         if (draft.trim() === "" && emptyValue !== undefined) {
           last.current = emptyValue;
           onCommit(emptyValue);
@@ -591,6 +606,7 @@ export function ClasseHoraireEditor({
                     id="tt-cycle"
                     min={1}
                     max={MAX_CYCLE_DAYS}
+                    commitOnBlur
                     value={draft.cycleLength}
                     onCommit={(n) => {
                       const length = Math.min(MAX_CYCLE_DAYS, Math.trunc(n));
