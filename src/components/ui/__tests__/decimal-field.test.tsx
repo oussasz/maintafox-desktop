@@ -117,4 +117,45 @@ describe("rounding and parent reconciliation", () => {
     expect(input).not.toHaveAttribute("aria-invalid");
     expect(screen.getByTestId("out").textContent).toBe("5");
   });
+
+  it("does not put a zero back while the user empties a field the parent keeps as 0", () => {
+    function ZeroHarness() {
+      const [v, setV] = useState<number>(5);
+      return (
+        <DecimalField aria-label="qty" value={v} onValueChange={(n) => setV(n ?? 0)} decimals={3} />
+      );
+    }
+    render(<ZeroHarness />);
+    const input = screen.getByLabelText("qty") as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "" } });
+    expect(input.value).toBe("");
+    fireEvent.change(input, { target: { value: "7" } });
+    expect(input.value).toBe("7");
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.blur(input);
+    // What the parent holds (0) is what is saved, so it is what the field shows once left.
+    expect(input.value).toBe("0");
+  });
+
+  it("shows a change made from outside while the field had focus once it is left", () => {
+    function OutsideHarness() {
+      const [v, setV] = useState<number | null>(1);
+      return (
+        <>
+          <DecimalField aria-label="qty" value={v} onValueChange={setV} decimals={3} />
+          <button type="button" onClick={() => setV(9)}>
+            fill
+          </button>
+        </>
+      );
+    }
+    render(<OutsideHarness />);
+    const input = screen.getByLabelText("qty") as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.click(screen.getByText("fill"));
+    expect(input.value).toBe("1");
+    fireEvent.blur(input);
+    expect(input.value).toBe("9");
+  });
 });

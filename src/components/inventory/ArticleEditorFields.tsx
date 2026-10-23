@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { unitOptionText } from "@/components/lookups/MeasureUnitPicker";
 import { Button } from "@/components/ui/button";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -301,55 +302,40 @@ export function ArticleEditorFields({
 
       {/* ── STOCK PARAMETERS ── */}
       <Field id="article-min-stock" label={t("detail.fields.minStock")}>
-        <Input
+        <DecimalField
           id="article-min-stock"
-          type="number"
-          step="0.01"
+          decimals={3}
           min={0}
           value={articleForm.min_stock}
-          onChange={(e) =>
-            setArticleForm((s) => ({ ...s, min_stock: Number(e.target.value || 0) }))
-          }
+          onValueChange={(v) => setArticleForm((s) => ({ ...s, min_stock: v ?? 0 }))}
         />
       </Field>
       <Field id="article-reorder-point" label={t("detail.fields.reorderPoint")}>
-        <Input
+        <DecimalField
           id="article-reorder-point"
-          type="number"
-          step="0.01"
+          decimals={3}
           min={0}
           value={articleForm.reorder_point}
-          onChange={(e) =>
-            setArticleForm((s) => ({ ...s, reorder_point: Number(e.target.value || 0) }))
-          }
+          onValueChange={(v) => setArticleForm((s) => ({ ...s, reorder_point: v ?? 0 }))}
         />
       </Field>
       <Field id="article-max-stock" label={t("article.form.maxStock")}>
-        <Input
+        <DecimalField
           id="article-max-stock"
-          type="number"
-          step="0.01"
+          decimals={3}
           min={0}
           placeholder={t("article.form.maxStockPlaceholder")}
-          value={articleForm.max_stock ?? ""}
-          onChange={(e) =>
-            setArticleForm((s) => ({
-              ...s,
-              max_stock: e.target.value === "" ? null : Number(e.target.value),
-            }))
-          }
+          value={articleForm.max_stock ?? null}
+          onValueChange={(v) => setArticleForm((s) => ({ ...s, max_stock: v }))}
         />
       </Field>
       <Field id="article-safety-stock" label={t("detail.fields.safetyStock")}>
-        <Input
+        <DecimalField
           id="article-safety-stock"
-          type="number"
-          step="0.01"
+          decimals={3}
           min={0}
           value={articleForm.safety_stock}
-          onChange={(e) =>
-            setArticleForm((s) => ({ ...s, safety_stock: Number(e.target.value || 0) }))
-          }
+          onValueChange={(v) => setArticleForm((s) => ({ ...s, safety_stock: v ?? 0 }))}
         />
       </Field>
 
@@ -440,74 +426,50 @@ export function ArticleEditorFields({
         <label htmlFor="article-field-eoq" className="text-xs text-text-muted">
           {t("article.fields.eoq")}
         </label>
-        <Input
+        <DecimalField
           id="article-field-eoq"
-          type="number"
-          step="0.01"
+          decimals={3}
           min={0}
           placeholder="0"
-          value={articleForm.economic_order_qty ?? ""}
-          onChange={(e) =>
-            setArticleForm((s) => ({
-              ...s,
-              economic_order_qty: e.target.value === "" ? null : Number(e.target.value),
-            }))
-          }
+          value={articleForm.economic_order_qty ?? null}
+          onValueChange={(v) => setArticleForm((s) => ({ ...s, economic_order_qty: v }))}
         />
       </div>
       <div className="space-y-1">
         <label htmlFor="article-field-moq" className="text-xs text-text-muted">
           {t("article.fields.moq")}
         </label>
-        <Input
+        <DecimalField
           id="article-field-moq"
-          type="number"
-          step="0.01"
+          decimals={3}
           min={0}
           placeholder="0"
-          value={articleForm.minimum_order_qty ?? ""}
-          onChange={(e) =>
-            setArticleForm((s) => ({
-              ...s,
-              minimum_order_qty: e.target.value === "" ? null : Number(e.target.value),
-            }))
-          }
+          value={articleForm.minimum_order_qty ?? null}
+          onValueChange={(v) => setArticleForm((s) => ({ ...s, minimum_order_qty: v }))}
         />
       </div>
       <div className="space-y-1">
         <label htmlFor="article-field-maxOrder" className="text-xs text-text-muted">
           {t("article.fields.maxOrder")}
         </label>
-        <Input
+        <DecimalField
           id="article-field-maxOrder"
-          type="number"
-          step="0.01"
+          decimals={3}
           min={0}
-          value={articleForm.maximum_order_qty ?? ""}
-          onChange={(e) =>
-            setArticleForm((s) => ({
-              ...s,
-              maximum_order_qty: e.target.value === "" ? null : Number(e.target.value),
-            }))
-          }
+          value={articleForm.maximum_order_qty ?? null}
+          onValueChange={(v) => setArticleForm((s) => ({ ...s, maximum_order_qty: v }))}
         />
       </div>
       <div className="space-y-1">
         <label htmlFor="article-field-orderMultiple" className="text-xs text-text-muted">
           {t("article.fields.orderMultiple")}
         </label>
-        <Input
+        <DecimalField
           id="article-field-orderMultiple"
-          type="number"
-          step="0.01"
+          decimals={3}
           min={0}
-          value={articleForm.order_multiple_qty ?? ""}
-          onChange={(e) =>
-            setArticleForm((s) => ({
-              ...s,
-              order_multiple_qty: e.target.value === "" ? null : Number(e.target.value),
-            }))
-          }
+          value={articleForm.order_multiple_qty ?? null}
+          onValueChange={(v) => setArticleForm((s) => ({ ...s, order_multiple_qty: v }))}
         />
       </div>
       <div className="space-y-1">
