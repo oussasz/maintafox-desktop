@@ -30,6 +30,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useFormatters } from "@/hooks/use-formatters";
+import { permissionDomain, usePermissionText } from "@/lib/permission-labels";
 import {
   adminSetUserPassword,
   deactivateUser,
@@ -49,6 +50,7 @@ import type {
   UserDetail,
   UserWithRoles,
 } from "@shared/ipc-types";
+import { isShownInPlantRoleScreens } from "@shared/rbac/permissions.generated";
 
 interface UserDetailDialogProps {
   userId: number | null;
@@ -74,11 +76,6 @@ type PendingAction =
   | { kind: "revoke"; assignment: RoleAssignmentSummary }
   | { kind: "session"; session: SessionSummary };
 
-/** Module prefix of a permission code (`ot.view` → `ot`). */
-function moduleOf(permission: string): string {
-  return permission.split(".")[0] ?? permission;
-}
-
 /** One account: identity and state, roles per scope, open sessions, permissions, history. */
 export function UserDetailDialog({
   userId,
@@ -97,6 +94,7 @@ export function UserDetailDialog({
   const { t: tErrors } = useTranslation("errors");
   const { formatDateTime, formatDate } = useFormatters();
   const scopeLabel = useScopeLabel();
+  const permissionText = usePermissionText();
   const [detail, setDetail] = useState<UserDetail | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -140,14 +138,19 @@ export function UserDetailDialog({
   const user = detail?.user ?? null;
   const isSelf = user != null && currentUserId === user.id;
 
+  /** Effective permissions shown by name; those unused in this version are left out. */
+  const shownPermissions = useMemo(
+    () => (detail?.effective_permissions ?? []).filter(isShownInPlantRoleScreens),
+    [detail],
+  );
   const permissionsByModule = useMemo(() => {
     const groups = new Map<string, string[]>();
-    for (const p of detail?.effective_permissions ?? []) {
-      const m = moduleOf(p);
+    for (const p of shownPermissions) {
+      const m = permissionDomain(p);
       groups.set(m, [...(groups.get(m) ?? []), p]);
     }
     return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [detail]);
+  }, [shownPermissions]);
 
   const openAction = (action: PendingAction) => {
     setReason("");
@@ -502,20 +505,21 @@ export function UserDetailDialog({
 
               <TabsContent value="permissions" className="space-y-3 pt-4 text-sm">
                 <p className="text-xs text-text-secondary">
-                  {t("console.permissions.hint", { count: detail.effective_permissions.length })}
+                  {t("console.permissions.hint", { count: shownPermissions.length })}
                 </p>
                 {permissionsByModule.map(([module, perms]) => (
                   <div key={module} className="space-y-1">
                     <h4 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                      {t(`permissions.domainLabels.${module}`, module.toUpperCase())}
+                      {permissionText.domainLabel(module)}
                     </h4>
                     <div className="flex flex-wrap gap-1">
                       {perms.map((p) => (
                         <span
                           key={p}
-                          className="rounded border border-surface-border bg-surface-1 px-1.5 py-0.5 font-mono text-[11px]"
+                          title={p}
+                          className="rounded border border-surface-border bg-surface-1 px-1.5 py-0.5 text-[11px]"
                         >
-                          {p}
+                          {permissionText.label(p)}
                         </span>
                       ))}
                     </div>
