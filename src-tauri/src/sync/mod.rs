@@ -32,6 +32,8 @@ mod convergence_tests;
 #[cfg(test)]
 mod foundation_tests;
 #[cfg(test)]
+mod grant_check_tests;
+#[cfg(test)]
 mod harness_tests;
 #[cfg(test)]
 mod history_ids_tests;
