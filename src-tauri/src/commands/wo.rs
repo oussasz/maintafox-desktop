@@ -1183,6 +1183,8 @@ pub async fn complete_task(
     actor_id: i64,
     result_code: String,
     notes: Option<String>,
+    finding_note: Option<String>,
+    follow_up_work_order_id: Option<i64>,
     state: State<'_, AppState>,
 ) -> AppResult<tasks::WoTask> {
     let user = require_session!(state);
@@ -1196,7 +1198,36 @@ pub async fn complete_task(
     .await?;
     // The actor is the signed-in user; the id the screen still sends is not used.
     let _ = actor_id;
-    tasks::complete_task(&state.db, task_id, i64::from(user.user_id), result_code, notes).await
+    tasks::complete_task_with(
+        &state.db,
+        task_id,
+        i64::from(user.user_id),
+        tasks::CompleteTaskInput {
+            result_code,
+            notes,
+            finding_note,
+            follow_up_work_order_id,
+        },
+    )
+    .await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// T2) reopen_task — "Rouvrir la tâche", same right as recording a result (ot.edit at the WO's site)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn reopen_task(task_id: i64, comment: String, state: State<'_, AppState>) -> AppResult<tasks::WoTask> {
+    let user = require_session!(state);
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Task,
+        task_id,
+    )
+    .await?;
+    tasks::reopen_task(&state.db, task_id, i64::from(user.user_id), comment).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
