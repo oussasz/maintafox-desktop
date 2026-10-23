@@ -114,8 +114,8 @@ pub async fn create_or_reuse_lot<C: ConnectionTrait>(
             let stored: Option<String> = row.try_get("", "expiry_date")?;
             if stored != expiry_date {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Lot {lot} is already recorded with expiry {}; a lot has one expiry date.",
-                    stored.unwrap_or_else(|| "—".to_string())
+                    "GATE_INV_LOT_EXPIRY_CONFLICT:expiry={expiry}: Lot {lot} is already recorded with expiry {expiry}; a lot has one expiry date.",
+                    expiry = stored.unwrap_or_else(|| "—".to_string())
                 )]));
             }
             return Ok(lot_id);
@@ -247,7 +247,7 @@ pub async fn list_lot_stock<C: ConnectionTrait>(
 pub async fn list_expiring_lots(db: &DatabaseConnection, within_days: i64) -> AppResult<Vec<LotStock>> {
     if within_days < 0 {
         return Err(AppError::ValidationFailed(vec![
-            "within_days cannot be negative.".to_string()
+            "GATE_INV_WITHIN_DAYS_NEGATIVE: within_days cannot be negative.".to_string(),
         ]));
     }
     let rows = db
@@ -322,13 +322,13 @@ pub async fn ensure_lot_available<C: ConnectionTrait>(
     let label: String = row.try_get("", "label")?;
     if lot_article != article_id {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Lot {label} belongs to another article."
+            "GATE_INV_LOT_OTHER_ARTICLE: Lot {label} belongs to another article."
         )]));
     }
     let available = lot_stock_at(db, lot_id, location_id).await?;
     if available + EPS < quantity {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Lot {label} holds {available:.3} at this location, less than {quantity:.3}."
+            "GATE_INV_LOT_INSUFFICIENT:available={available:.3},quantity={quantity:.3}: Lot {label} holds {available:.3} at this location, less than {quantity:.3}."
         )]));
     }
     Ok(())

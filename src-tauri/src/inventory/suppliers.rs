@@ -187,7 +187,7 @@ pub async fn upsert_supplier(
     let allowed_statuses = ["PREFERRED", "APPROVED", "BLOCKED", "UNDER_EVALUATION"];
     if !allowed_statuses.contains(&input.status_code.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Invalid status_code '{}'. Must be one of: PREFERRED, APPROVED, BLOCKED, UNDER_EVALUATION.",
+            "GATE_INV_SUPPLIER_STATUS_INVALID: Invalid status_code '{}'. Must be one of: PREFERRED, APPROVED, BLOCKED, UNDER_EVALUATION.",
             input.status_code
         )]));
     }
@@ -200,7 +200,9 @@ pub async fn upsert_supplier(
 
     if let Some(id) = supplier_id {
         let expected_rv = expected_row_version.ok_or_else(|| {
-            AppError::ValidationFailed(vec!["expected_row_version is required for updates.".to_string()])
+            AppError::ValidationFailed(vec![
+                "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version is required for updates.".to_string(),
+            ])
         })?;
         let row = db
             .query_one(Statement::from_sql_and_values(
@@ -275,7 +277,9 @@ pub async fn upsert_supplier(
                 "SELECT last_insert_rowid() AS id".to_string(),
             ))
             .await?
-            .ok_or_else(|| AppError::ValidationFailed(vec!["Failed to create supplier.".to_string()]))?
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Failed to create supplier.".to_string()])
+            })?
             .try_get("", "id")?;
         get_supplier(db, id).await
     }
@@ -439,9 +443,11 @@ pub async fn upsert_supplier_article_source(
     .await?;
 
     let rows = list_supplier_article_sources(db, Some(input.supplier_id), Some(input.article_id)).await?;
-    rows.into_iter()
-        .next()
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Failed to retrieve article source.".to_string()]))
+    rows.into_iter().next().ok_or_else(|| {
+        AppError::ValidationFailed(vec![
+            "GATE_INV_READ_FAILED: Failed to retrieve article source.".to_string()
+        ])
+    })
 }
 
 pub async fn delete_supplier_article_source(db: &DatabaseConnection, source_id: i64) -> AppResult<()> {
@@ -599,7 +605,7 @@ pub async fn upsert_supplier_price(
             "SELECT last_insert_rowid() AS id".to_string(),
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Failed to create price.".to_string()]))?
+        .ok_or_else(|| AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Failed to create price.".to_string()]))?
         .try_get("", "id")?
     };
 
@@ -858,9 +864,9 @@ pub async fn upsert_supplier_contact(
 ) -> AppResult<SupplierContact> {
     let _ = get_supplier(db, input.supplier_id).await?;
     if input.contact_name.trim().is_empty() {
-        return Err(AppError::ValidationFailed(
-            vec!["contact_name is required.".to_string()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_CONTACT_NAME_REQUIRED: contact_name is required.".to_string(),
+        ]));
     }
     let is_primary = input.is_primary.unwrap_or(false) as i64;
     if is_primary == 1 {
@@ -913,7 +919,11 @@ pub async fn upsert_supplier_contact(
         ))
         .await?
         .and_then(|r| r.try_get::<i64>("", "id").ok())
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Unable to create supplier contact.".to_string()]))?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_SAVE_FAILED: Unable to create supplier contact.".to_string()
+            ])
+        })?
     };
 
     list_supplier_contacts(db, input.supplier_id)

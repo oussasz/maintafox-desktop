@@ -102,8 +102,11 @@ pub async fn tenant_currency<C: ConnectionTrait>(db: &C) -> AppResult<String> {
 
 /// ISO date (YYYY-MM-DD) or an error naming the field.
 pub fn parse_iso_date(value: &str, field: &str) -> AppResult<chrono::NaiveDate> {
-    chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a date (YYYY-MM-DD), got '{value}'.")]))
+    chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d").map_err(|_| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_INV_DATE_INVALID: {field} must be a date (YYYY-MM-DD), got '{value}'."
+        )])
+    })
 }
 
 pub fn today() -> String {
@@ -214,7 +217,7 @@ pub async fn create_rate(
     };
     if from == to {
         return Err(AppError::ValidationFailed(vec![
-            "A rate converts between two different currencies.".to_string(),
+            "GATE_INV_FX_SAME_CURRENCY: A rate converts between two different currencies.".to_string(),
         ]));
     }
     if !input.rate.is_finite() || input.rate <= 0.0 {
@@ -233,8 +236,8 @@ pub async fn create_rate(
         .await?;
     if duplicate.is_some() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "A {from} → {to} rate already exists for {}; deactivate it first.",
-            input.valid_from.trim()
+            "GATE_INV_FX_RATE_EXISTS:from={from},to={to},date={date}: A {from} → {to} rate already exists for {date}; deactivate it first.",
+            date = input.valid_from.trim()
         )]));
     }
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
