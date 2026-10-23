@@ -592,7 +592,7 @@
     "GATE_INV_RECEIPT_LOTS_TOTAL": "Receipt refused: the lots add up to {{total}}, but {{accepted}} were accepted (in the stock unit). Correct the lots or the accepted quantity.",
     "GATE_INV_SERIAL_ONE_UNIT": "A serial number stands for exactly one unit: enter serialised items one at a time.",
     "GATE_INV_POSTING_ENTITY_UNSUPPORTED": "Update refused: this type of document has no posting status.",
-    "GATE_INV_REPAIR_COST_POSITIVE": "The repair cost must be an amount greater than zero.",
+    "GATE_INV_REPAIR_COST_POSITIVE": "The repair cost cannot be negative.",
     "GATE_INV_DUPLICATE_LINE": "The same article and location appear on two lines: merge them into one.",
     "GATE_INV_DEMAND_SOURCE_REQUIRED": "Specify where the need comes from (source type).",
     "GATE_INV_LOOKUP_DOMAIN_UNKNOWN": "Reference list not found: check that it exists in Reference data.",

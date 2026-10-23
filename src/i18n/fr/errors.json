@@ -592,7 +592,7 @@
     "GATE_INV_RECEIPT_LOTS_TOTAL": "Réception refusée : les lots totalisent {{total}}, mais {{accepted}} ont été acceptés (dans l'unité de stock). Corrigez les lots ou la quantité acceptée.",
     "GATE_INV_SERIAL_ONE_UNIT": "Un numéro de série correspond à une seule unité : saisissez les articles sérialisés un par un.",
     "GATE_INV_POSTING_ENTITY_UNSUPPORTED": "Mise à jour refusée : ce type de document n'a pas d'état de comptabilisation.",
-    "GATE_INV_REPAIR_COST_POSITIVE": "Le coût de réparation doit être un montant supérieur à zéro.",
+    "GATE_INV_REPAIR_COST_POSITIVE": "Le coût de réparation ne peut pas être négatif.",
     "GATE_INV_DUPLICATE_LINE": "Le même article et le même emplacement figurent sur deux lignes : regroupez-les en une seule.",
     "GATE_INV_DEMAND_SOURCE_REQUIRED": "Indiquez l'origine du besoin (type de source).",
     "GATE_INV_LOOKUP_DOMAIN_UNKNOWN": "Liste de référence introuvable : vérifiez qu'elle existe dans les Données de référence.",
