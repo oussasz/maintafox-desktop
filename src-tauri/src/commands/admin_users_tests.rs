@@ -656,8 +656,35 @@ async fn a_role_keeps_a_hidden_permission_it_holds_after_an_update() {
     ))
     .await
     .expect("grant hidden permission");
+    // ...and a legacy alias row still in the catalogue table (also left off the role screens).
+    let alias: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT name AS v FROM permissions WHERE name IN ({}) ORDER BY name LIMIT 1",
+                crate::rbac::permissions::ALIAS_MAP
+                    .iter()
+                    .map(|(a, _)| format!("'{a}'"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        ))
+        .await
+        .expect("query alias row")
+        .expect("a legacy alias row exists")
+        .try_get("", "v")
+        .expect("decode");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at) \
+         SELECT ?, id, datetime('now') FROM permissions WHERE name = ?",
+        [copy.into(), alias.clone().into()],
+    ))
+    .await
+    .expect("grant alias row");
     let before = load_role_permission_names(&db, copy).await.unwrap();
     assert!(before.iter().any(|p| p == hidden));
+    assert!(before.contains(&alias));
 
     let added = crate::rbac::permissions::REP_EXPORT.to_string();
     assert!(!before.contains(&added));
@@ -677,6 +704,7 @@ async fn a_role_keeps_a_hidden_permission_it_holds_after_an_update() {
 
     let after = load_role_permission_names(&db, copy).await.unwrap();
     assert!(after.iter().any(|p| p == hidden), "the hidden permission is kept");
+    assert!(after.contains(&alias), "the legacy alias row is kept");
     let mut expected = before.clone();
     expected.push(added);
     expected.sort();

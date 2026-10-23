@@ -344,9 +344,14 @@ function DependencyViewer({
 
 // ── Export helpers ───────────────────────────────────────────────────────────
 
-/** CSV text cell (quoted, inner quotes doubled). */
-function csvCell(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
+/**
+ * CSV text cell: quoted, inner quotes doubled, and a leading `=`, `+`, `-` or `@` prefixed
+ * with a single quote so a spreadsheet never reads the cell as a formula (a custom permission
+ * description is free text).
+ */
+export function csvCell(value: string): string {
+  const safe = /^[=+@-]/.test(value) ? `'${value}` : value;
+  return `"${safe.replace(/"/g, '""')}"`;
 }
 
 /** The catalogue as CSV: code, translated label and description, the domain shown on screen. */
@@ -354,11 +359,11 @@ function exportToCSV(permissions: PermissionWithSystem[], t: TFunction<"admin">)
   const header = "name,label,description,domain,category,is_dangerous,requires_step_up,is_system";
   const rows = permissions.map((p) =>
     [
-      p.name,
+      csvCell(p.name),
       csvCell(permissionLabel(t, p.name, p.description)),
       csvCell(permissionDescription(t, p.name, p.description)),
-      permissionDomain(p.name),
-      p.category,
+      csvCell(permissionDomain(p.name)),
+      csvCell(p.category),
       p.is_dangerous ? 1 : 0,
       p.requires_step_up ? 1 : 0,
       p.is_system ? 1 : 0,

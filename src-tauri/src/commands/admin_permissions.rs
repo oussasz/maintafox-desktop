@@ -556,4 +556,51 @@ mod tests {
             .expect("row");
         assert_eq!(row.try_get::<i64>("", "n").expect("n"), hidden.len() as i64);
     }
+
+    fn source_files(dir: &std::path::Path, exts: &[&str], out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("read source dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                source_files(&path, exts, out);
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| exts.contains(&e))
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    /// The legacy alias names left off the role screens are never checked anywhere: no backend
+    /// or UI permission check names one, so hiding them can never hide a live control. (Checks
+    /// use the generated constants; an alias has none, so it could only appear as a literal.)
+    #[test]
+    fn no_permission_check_names_a_legacy_alias() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("repo root")
+            .to_path_buf();
+        let mut files = Vec::new();
+        source_files(&root.join("src-tauri/src"), &["rs"], &mut files);
+        source_files(&root.join("src"), &["ts", "tsx"], &mut files);
+        source_files(&root.join("shared"), &["ts", "tsx"], &mut files);
+        let skipped = |p: &std::path::Path| {
+            let rel = p.strip_prefix(&root).unwrap_or(p).to_string_lossy().replace('\\', "/");
+            rel.starts_with("src-tauri/src/migrations/")
+                || rel == "src-tauri/src/rbac/permissions_generated.rs"
+                || rel == "shared/rbac/permissions.generated.ts"
+        };
+        assert!(files.len() > 100, "the source tree was found");
+        let mut found = Vec::new();
+        for file in files.iter().filter(|p| !skipped(p)) {
+            let text = std::fs::read_to_string(file).expect("read source");
+            for (alias, _) in ALIAS_MAP {
+                if text.contains(&format!("\"{alias}\"")) || text.contains(&format!("'{alias}'")) {
+                    found.push(format!("{alias} in {}", file.display()));
+                }
+            }
+        }
+        assert!(found.is_empty(), "legacy alias still checked: {found:?}");
+    }
 }

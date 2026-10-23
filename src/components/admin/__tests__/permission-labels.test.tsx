@@ -8,7 +8,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { RouterProvider, createMemoryRouter } from "react-router-dom";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { PermissionCatalogPanel } from "@/components/admin/PermissionCatalogPanel";
+import { PermissionCatalogPanel, csvCell } from "@/components/admin/PermissionCatalogPanel";
 import { RoleEditorPanel } from "@/components/admin/RoleEditorPanel";
 import { UserDetailDialog } from "@/components/admin/UserDetailDialog";
 import adminFr from "@/i18n/locale-data/fr/admin.json";
@@ -189,6 +189,17 @@ describe("role editor permission names", () => {
   });
 });
 
+describe("permission catalogue CSV cells", () => {
+  it("never lets a spreadsheet read a cell as a formula", () => {
+    expect(csvCell("=HYPERLINK(1)")).toBe(`"'=HYPERLINK(1)"`);
+    expect(csvCell("+1")).toBe(`"'+1"`);
+    expect(csvCell("-2")).toBe(`"'-2"`);
+    expect(csvCell("@SUM(A1)")).toBe(`"'@SUM(A1)"`);
+    expect(csvCell('Voir "tout"')).toBe(`"Voir ""tout"""`);
+    expect(csvCell("1 article, 2 lots")).toBe(`"1 article, 2 lots"`);
+  });
+});
+
 describe("permission catalogue", () => {
   it("lists goods-receipt validation under stores by label, and no empty IoT/ERP domain", async () => {
     svc.listPermissions.mockResolvedValue(CATALOG.permissions);
@@ -262,5 +273,7 @@ describe("account Permissions tab", () => {
     );
     expect(screen.queryByText(HIDDEN)).not.toBeInTheDocument();
     expect(screen.getByText(/^2 permissions effectives/)).toBeInTheDocument();
+    // The one left out is still counted, read-only.
+    expect(screen.getByText("1 droit non utilisé dans cette version conservé")).toBeInTheDocument();
   });
 });

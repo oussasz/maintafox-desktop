@@ -143,6 +143,8 @@ export function UserDetailDialog({
     () => (detail?.effective_permissions ?? []).filter(isShownInPlantRoleScreens),
     [detail],
   );
+  /** Held but not listed (unused in this version): said in a read-only line, never dropped. */
+  const hiddenHeld = (detail?.effective_permissions.length ?? 0) - shownPermissions.length;
   const permissionsByModule = useMemo(() => {
     const groups = new Map<string, string[]>();
     for (const p of shownPermissions) {
@@ -507,6 +509,11 @@ export function UserDetailDialog({
                 <p className="text-xs text-text-secondary">
                   {t("console.permissions.hint", { count: shownPermissions.length })}
                 </p>
+                {hiddenHeld > 0 ? (
+                  <p className="text-xs text-text-secondary">
+                    {t("console.roleEditor.hiddenRetained", { count: hiddenHeld })}
+                  </p>
+                ) : null}
                 {permissionsByModule.map(([module, perms]) => (
                   <div key={module} className="space-y-1">
                     <h4 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
