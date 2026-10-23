@@ -827,7 +827,9 @@ async fn refusals_of_non_administrators_go_to_the_security_journal() {
     let detail = &detail["detail"];
     assert_eq!(detail["action"], "user_deactivated");
     assert_eq!(detail["refusal"], "permission_denied");
-    assert!(detail["error"].as_str().is_some_and(|e| e.contains(crate::rbac::permissions::ADM_USERS)));
+    assert!(detail["error"]
+        .as_str()
+        .is_some_and(|e| e.contains(crate::rbac::permissions::ADM_USERS)));
 }
 
 // ── Anti-escalation, session revocation, forced password change ────────────────────────────
