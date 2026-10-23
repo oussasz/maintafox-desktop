@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
+import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
 import { appErrorText, describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
@@ -232,6 +233,7 @@ function blockingMessagesFromReport(result: WoReadinessResult): string[] {
 export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanelProps>(
   function WoPlanningPanel({ wo, canEdit, onReadinessChange }, ref) {
     const { t } = useTranslation("ot");
+    const { formatCurrency } = useFormatters();
     // Teams come from the personnel module and parts from the inventory: lists the user may not
     // read are not requested, and the planning form says which right is missing.
     const lists = useReadableLists(["teams", "articles"] as const);
@@ -1672,9 +1674,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                         : "flex items-end text-sm font-medium"
                     }
                   >
-                    {(
-                      (parseNumber(part.quantity_planned) ?? 0) * (parseNumber(part.unit_cost) ?? 0)
-                    ).toFixed(2)}
+                    {formatCurrency(
+                      (parseNumber(part.quantity_planned) ?? 0) *
+                        (parseNumber(part.unit_cost) ?? 0),
+                    )}
                   </div>
                   <div className="flex items-end gap-2">
                     {!part.persisted && isPlanningEditable && (
@@ -1752,7 +1755,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           </div>
 
           <div className="text-right text-sm font-semibold">
-            {t("planning.plannedTotalCost")}: {plannedCost.toFixed(2)}
+            {t("planning.plannedTotalCost")}: {formatCurrency(plannedCost)}
           </div>
           <ConfirmDialog
             open={partToCancel !== null}

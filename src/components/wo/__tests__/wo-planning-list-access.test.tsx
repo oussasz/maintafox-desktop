@@ -57,6 +57,9 @@ const stable = vi.hoisted(() => ({
   people: { options: [], loading: false, failed: false },
   typeLabels: { typeLabel: (code: string) => code },
 }));
+vi.mock("@/hooks/use-formatters", () => ({
+  useFormatters: () => ({ formatCurrency: (v: number) => `${v.toFixed(2)} DA` }),
+}));
 vi.mock("@/hooks/use-session", () => ({ useSession: () => stable.session }));
 // Rights at the work order’s site (`useWoAccess`): granted here.
 vi.mock("@/hooks/use-access-at", () => ({
@@ -269,7 +272,7 @@ describe("WoPlanningPanel — cancelling and switching saved part lines", () => 
 
     // The stock unit is shown next to the quantity; the total counts the line.
     expect(await screen.findByText(/planning\.parts\.plannedQty.*\(pc\)/)).toBeInTheDocument();
-    expect(screen.getByText("planning.plannedTotalCost: 20.00")).toBeInTheDocument();
+    expect(screen.getByText("planning.plannedTotalCost: 20.00 DA")).toBeInTheDocument();
     // A saved line is not "removed" locally any more.
     expect(screen.queryByRole("button", { name: "planning.removePart" })).toBeNull();
 
@@ -280,7 +283,7 @@ describe("WoPlanningPanel — cancelling and switching saved part lines", () => 
     await waitFor(() => expect(exec.cancelPlannedPart).toHaveBeenCalledWith(41));
     expect(await screen.findByText("planning.parts.cancelledStatus")).toBeInTheDocument();
     expect(screen.getByTestId("wo-part-line-part-41")).toHaveAttribute("data-status", "cancelled");
-    expect(screen.getByText("planning.plannedTotalCost: 0.00")).toBeInTheDocument();
+    expect(screen.getByText("planning.plannedTotalCost: 0.00 DA")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "planning.parts.cancelLine" })).toBeNull();
     expect(screen.queryByRole("radiogroup", { name: "partNecessity.legendFor" })).toBeNull();
   });
@@ -302,7 +305,7 @@ describe("WoPlanningPanel — cancelling and switching saved part lines", () => 
     expect(await screen.findByText("planning.parts.cancelledStatus")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "planning.parts.cancelLine" })).toBeNull();
     expect(screen.queryByText("planning.stockReserved")).toBeNull();
-    expect(screen.getByText("planning.plannedTotalCost: 0.00")).toBeInTheDocument();
+    expect(screen.getByText("planning.plannedTotalCost: 0.00 DA")).toBeInTheDocument();
   });
 
   it("switches a saved line to optional through the backend", async () => {
