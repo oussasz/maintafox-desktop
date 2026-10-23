@@ -2358,12 +2358,14 @@ pub async fn preview_sync_repair(
     validate_non_empty("reason", &input.reason, &mut validation_errors);
     if !supported_repair_mode(&input.mode) {
         validation_errors.push(
-            "Unsupported repair mode. Allowed: requeue_rejected_outbox, retry_operator_conflicts, checkpoint_realign."
+            "GATE_SYNC_REPAIR_MODE_BLOCKED: Unsupported repair mode. Allowed: requeue_rejected_outbox, retry_operator_conflicts, checkpoint_realign."
                 .to_string(),
         );
     }
     if input.mode.contains("reset") {
-        validation_errors.push("Destructive reset is disabled. Use scoped repair modes only.".to_string());
+        validation_errors.push(
+            "GATE_SYNC_REPAIR_MODE_BLOCKED: Destructive reset is disabled. Use scoped repair modes only.".to_string(),
+        );
     }
     if input.mode == "checkpoint_realign" {
         validate_non_empty(

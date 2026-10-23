@@ -1321,7 +1321,7 @@ pub(crate) async fn set_user_active_impl(
         return Err(AppError::ValidationFailed(vec![if active {
             format!("GATE_ADMIN_ALREADY_ENABLED: The account '{username}' is already enabled.")
         } else {
-            format!("The account '{username}' is already disabled.")
+            format!("GATE_ADMIN_ALREADY_DISABLED: The account '{username}' is already disabled.")
         }]));
     }
 

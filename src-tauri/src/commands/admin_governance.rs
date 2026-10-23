@@ -1058,7 +1058,7 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
         for dep in &deps {
             if dep.dependency_type == "hard" && !names.contains(&dep.required_permission_name) {
                 errors.push(format!(
-                    "{} requires {} (hard dependency)",
+                    "GATE_ADMIN_PERMISSION_DEPENDENCY:permission={0},required={1}: {} requires {} (hard dependency)",
                     dep.permission_name, dep.required_permission_name
                 ));
             }
