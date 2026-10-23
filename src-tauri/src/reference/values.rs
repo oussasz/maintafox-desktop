@@ -160,7 +160,7 @@ fn validate_code(code: &str) -> AppResult<()> {
         .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' || c == '.')
     {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de valeur ne peut contenir que des lettres majuscules ASCII, \
+            "GATE_REF_VALUE_CODE_CHARS: Le code de valeur ne peut contenir que des lettres majuscules ASCII, \
              des chiffres, des underscores et des points."
                 .into(),
         ]));
@@ -472,9 +472,11 @@ async fn detect_cycle(db: &DatabaseConnection, target_value_id: i64, start_paren
 
     while let Some(cid) = current_id {
         if cid == target_value_id {
-            return Err(AppError::ValidationFailed(vec!["Cycle détecté dans la hiérarchie. \
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_REF_CYCLE: Cycle détecté dans la hiérarchie. \
                  Impossible de déplacer une valeur sous l'un de ses descendants."
-                .into()]));
+                    .into(),
+            ]));
         }
         if !visited.insert(cid) {
             // Already visited — corrupt hierarchy, but not our target cycle

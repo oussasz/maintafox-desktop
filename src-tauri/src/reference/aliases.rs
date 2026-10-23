@@ -381,9 +381,11 @@ pub async fn update_alias(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec!["Un alias avec ce libellé existe déjà pour cette combinaison \
+            AppError::ValidationFailed(vec![
+                "GATE_REF_ALIAS_EXISTS: Un alias avec ce libellé existe déjà pour cette combinaison \
                  valeur/locale/type."
-                .into()])
+                    .into(),
+            ])
         } else {
             AppError::Database(e)
         }

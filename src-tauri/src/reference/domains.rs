@@ -157,7 +157,7 @@ fn validate_code(code: &str) -> AppResult<()> {
         .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' || c == '.')
     {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de domaine ne peut contenir que des lettres majuscules ASCII, \
+            "GATE_REF_DOMAIN_CODE_CHARS: Le code de domaine ne peut contenir que des lettres majuscules ASCII, \
              des chiffres, des underscores et des points."
                 .into(),
         ]));

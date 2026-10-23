@@ -13,16 +13,16 @@ import {
   DetailSectionCard,
   ENTITY_DETAIL_HEADER_ACTION_BTN,
   EntityDetailHeader,
-  EntitySummaryKpiStrip,
   type EntitySummaryKpi,
+  EntitySummaryKpiStrip,
 } from "@/components/detail";
 import { absenceBlockTitle } from "@/components/personnel/absence-block-display";
 import {
+  type AvailabilityCellState,
+  type AvailabilityPersonRow,
   CELL_STATE_CLASS,
   deriveCellState,
   eachDateInclusive,
-  type AvailabilityCellState,
-  type AvailabilityPersonRow,
 } from "@/components/personnel/availability-model";
 import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { Badge } from "@/components/ui/badge";

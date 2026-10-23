@@ -260,7 +260,7 @@ async fn clone_published_values_into_draft(
             }
             None => {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Impossible de cloner le jeu : parent_id={old_parent_id} \
+                    "GATE_REF_SET_ORPHAN_PARENT: Impossible de cloner le jeu : parent_id={old_parent_id} \
                      introuvable dans le jeu publié (hiérarchie orpheline)."
                 )]));
             }
@@ -360,7 +360,7 @@ async fn assert_no_active_draft(db: &DatabaseConnection, domain_id: i64) -> AppR
         .await?;
     if row.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Un brouillon existe déjà pour ce domaine. \
+            "GATE_REF_DRAFT_EXISTS: Un brouillon existe déjà pour ce domaine. \
              Finalisez ou supprimez le brouillon existant avant d'en créer un nouveau."
                 .into(),
         ]));
@@ -452,7 +452,7 @@ pub async fn discard_draft_set(db: &DatabaseConnection, set_id: i64) -> AppResul
 
     if set.status != SET_STATUS_DRAFT {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de supprimer un jeu en statut '{}'. \
+            "GATE_REF_SET_NOT_DELETABLE: Impossible de supprimer un jeu en statut '{}'. \
              Seul un brouillon ('draft') peut être abandonné.",
             set.status
         )]));
@@ -513,7 +513,7 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
 
     if set.status != SET_STATUS_DRAFT {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de valider un jeu en statut '{}'. \
+            "GATE_REF_SET_NOT_VALIDATABLE: Impossible de valider un jeu en statut '{}'. \
              Seul un brouillon ('draft') peut être validé.",
             set.status
         )]));
@@ -566,7 +566,7 @@ pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -
 
     if set.status != SET_STATUS_VALIDATED {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de publier un jeu en statut '{}'. \
+            "GATE_REF_SET_NOT_PUBLISHABLE: Impossible de publier un jeu en statut '{}'. \
              Seul un jeu validé ('validated') peut être publié.",
             set.status
         )]));
