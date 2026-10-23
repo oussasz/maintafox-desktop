@@ -384,30 +384,43 @@ pub async fn get_session_info(state: State<'_, AppState>) -> AppResult<session_m
     Ok(state.session.read().await.session_info())
 }
 
-/// Heartbeat: update in-memory + DB `last_activity_at` for the current session.
-/// The frontend calls this periodically so the presence query sees fresh activity.
+/// The user worked in the app: the shell sends this on real keyboard/mouse/touch input (at most
+/// about once a minute), never on a timer. It is the only call that keeps the session from
+/// idle-locking (in memory, and `app_sessions.last_activity_at` for presence). A session already
+/// past its idle deadline is refused with `SESSION_LOCKED` and stays locked until unlocked.
+/// Returns the session info, so the shell knows the new idle deadline.
 #[tauri::command]
-pub async fn touch_session(state: State<'_, AppState>) -> AppResult<()> {
-    let session_db_id = {
+pub async fn touch_session(state: State<'_, AppState>) -> AppResult<session_manager::SessionInfo> {
+    touch_session_impl(state.inner()).await
+}
+
+pub(crate) async fn touch_session_impl(state: &AppState) -> AppResult<session_manager::SessionInfo> {
+    let (session_db_id, info) = {
         let mut guard = state.session.write().await;
-        guard.touch();
-        match &guard.current {
-            Some(s) => s.session_db_id.clone(),
-            None => return Ok(()),
-        }
+        guard
+            .record_activity()
+            .map_err(session_manager::RequireSessionFailure::into_app_error)?;
+        let Some(current) = guard.current.as_ref() else {
+            return Err(session_manager::RequireSessionFailure::MissingOrExpired.into_app_error());
+        };
+        (current.session_db_id.clone(), guard.session_info())
     };
 
     let now = chrono::Utc::now().to_rfc3339();
-    let _ = state
+    if let Err(e) = state
         .db
         .execute(sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Sqlite,
             "UPDATE app_sessions SET last_activity_at = ? WHERE id = ?",
             [now.into(), session_db_id.into()],
         ))
-        .await;
+        .await
+    {
+        // Presence only: the in-memory activity (the idle lock) is already recorded.
+        warn!(error = %e, "touch_session::stored_activity_not_written");
+    }
 
-    Ok(())
+    Ok(info)
 }
 
 // ── Device trust IPC commands ─────────────────────────────────────────────────
@@ -483,11 +496,18 @@ pub async fn unlock_session(
     payload: UnlockSessionRequest,
     state: State<'_, AppState>,
 ) -> AppResult<session_manager::SessionInfo> {
+    unlock_session_impl(state.inner(), payload).await
+}
+
+pub(crate) async fn unlock_session_impl(
+    state: &AppState,
+    payload: UnlockSessionRequest,
+) -> AppResult<session_manager::SessionInfo> {
     // Read session to get the user — even locked sessions have a user
-    let user = {
+    let (user, session_db_id) = {
         let sm = state.session.read().await;
         match &sm.current {
-            Some(s) if !s.is_expired() => s.user.clone(),
+            Some(s) if !s.is_expired() => (s.user.clone(), s.session_db_id.clone()),
             _ => {
                 return Err(AppError::Auth(
                     "Session expir\u{00e9}e. Veuillez vous reconnecter.".into(),
@@ -496,35 +516,20 @@ pub async fn unlock_session(
         }
     };
 
-    // Verify password against the database
-    let user_record = session_manager::find_active_user(&state.db, &user.username).await?;
+    // The password, under the sign-in lockout (too many wrong ones end the session).
+    verify_password_in_session(
+        state,
+        &user,
+        &session_db_id,
+        &payload.password,
+        "Unlock failed: wrong password",
+    )
+    .await?;
 
-    let pw_hash = match user_record.and_then(|r| r.5) {
-        Some(h) => h,
-        None => {
-            return Err(AppError::Auth("Mot de passe incorrect.".into()));
-        }
-    };
-
-    let valid = password::verify_password(&payload.password, &pw_hash)?;
-    if !valid {
-        warn!(username = %user.username, "unlock_session::wrong_password");
-        crate::audit::emit(
-            &state.db,
-            crate::audit::AuditEvent {
-                event_type: crate::audit::event_type::STEP_UP_FAILURE,
-                actor_id: Some(user.user_id),
-                summary: "Unlock failed: wrong password",
-                ..Default::default()
-            },
-        )
-        .await;
-        return Err(AppError::Auth("Mot de passe incorrect.".into()));
-    }
-
-    // Unlock the session
+    // Unlock the session (the same one that was checked)
     let mut sm = state.session.write().await;
-    if !sm.unlock_session() {
+    let same_session = sm.current.as_ref().map(|s| s.session_db_id.as_str()) == Some(session_db_id.as_str());
+    if !same_session || !sm.unlock_session() {
         return Err(AppError::Auth(
             "Session expir\u{00e9}e. Veuillez vous reconnecter.".into(),
         ));
@@ -543,6 +548,163 @@ pub async fn unlock_session(
 
     let info = sm.session_info();
     Ok(info)
+}
+
+/// A password check made inside an open session (unlock after the idle lock, step-up before a
+/// sensitive action), under the same account lockout as sign-in (`lockout`, same policy
+/// settings): refused while the account is locked out; a wrong password counts as a failed
+/// attempt; a right one resets the count. When the account is (or becomes) locked out, the
+/// session ends here (stored row closed, in-memory session cleared, audited) and the refusal is
+/// `ACCOUNT_LOCKED`, as at sign-in, so the screen goes back to sign-in with that message.
+pub(crate) async fn verify_password_in_session(
+    state: &AppState,
+    user: &session_manager::AuthenticatedUser,
+    session_db_id: &str,
+    password_input: &str,
+    failure_summary: &'static str,
+) -> AppResult<()> {
+    let pw_hash = session_manager::find_active_user(&state.db, &user.username)
+        .await?
+        .and_then(|r| r.5)
+        .ok_or_else(|| AppError::Auth("Mot de passe incorrect.".into()))?;
+
+    let audit = WrongPasswordAudit {
+        event_type: crate::audit::event_type::STEP_UP_FAILURE,
+        summary: failure_summary,
+    };
+    if check_session_password(state, user, session_db_id, password_input, &pw_hash, audit).await? {
+        Ok(())
+    } else {
+        Err(AppError::Auth("Mot de passe incorrect.".into()))
+    }
+}
+
+/// The audit entry written for a wrong password by [`check_session_password`].
+pub(crate) struct WrongPasswordAudit {
+    pub event_type: &'static str,
+    pub summary: &'static str,
+}
+
+/// The signed-in user's password, checked against `stored_hash` under the sign-in account lockout
+/// (every password check made inside a session uses it: unlock, step-up, PIN set/clear, password
+/// change):
+/// - account locked out → the session ends (see [`end_session_after_lockout`]), `ACCOUNT_LOCKED`;
+/// - wrong password → counted (`lockout::record_failed_attempt`), logged and audited; if that
+///   locks the account, the session ends and `ACCOUNT_LOCKED`, otherwise `Ok(false)`, and the
+///   caller refuses with its own message;
+/// - right password → the count is reset, `Ok(true)`.
+pub(crate) async fn check_session_password(
+    state: &AppState,
+    user: &session_manager::AuthenticatedUser,
+    session_db_id: &str,
+    password_input: &str,
+    stored_hash: &str,
+    audit: WrongPasswordAudit,
+) -> AppResult<bool> {
+    if let Err(locked @ AppError::AccountLocked { .. }) = lockout::check_lockout(&state.db, user.user_id).await {
+        end_session_after_lockout(state, user, session_db_id).await;
+        return Err(locked);
+    }
+    let lockout_policy = lockout::LockoutPolicy::load(&state.db).await;
+
+    if !password::verify_password(password_input, stored_hash)? {
+        lockout::record_failed_attempt(&state.db, user.user_id, &lockout_policy).await?;
+        warn!(username = %user.username, summary = audit.summary, "session_password_check::wrong_password");
+        crate::audit::emit(
+            &state.db,
+            crate::audit::AuditEvent {
+                event_type: audit.event_type,
+                actor_id: Some(user.user_id),
+                summary: audit.summary,
+                ..Default::default()
+            },
+        )
+        .await;
+        if let Err(locked @ AppError::AccountLocked { .. }) = lockout::check_lockout(&state.db, user.user_id).await {
+            end_session_after_lockout(state, user, session_db_id).await;
+            return Err(locked);
+        }
+        return Ok(false);
+    }
+
+    lockout::clear_failed_attempts(&state.db, user.user_id).await?;
+    Ok(true)
+}
+
+/// The signed-in user's own account is locked out (a password of theirs was counted elsewhere,
+/// e.g. as the close-out override signer): the session ends, as in [`check_session_password`],
+/// and the refusal is `ACCOUNT_LOCKED` (sign-in shows why).
+pub(crate) async fn end_session_if_locked_out(
+    state: &AppState,
+    user: &session_manager::AuthenticatedUser,
+    session_db_id: &str,
+) -> AppResult<()> {
+    match lockout::check_lockout(&state.db, user.user_id).await {
+        Err(locked @ AppError::AccountLocked { .. }) => {
+            end_session_after_lockout(state, user, session_db_id).await;
+            Err(locked)
+        }
+        other => other,
+    }
+}
+
+/// The stored session id of the current session (after `require_session!`).
+pub(crate) async fn current_session_db_id(state: &AppState) -> AppResult<String> {
+    state
+        .session
+        .read()
+        .await
+        .current
+        .as_ref()
+        .map(|s| s.session_db_id.clone())
+        .ok_or_else(|| session_manager::RequireSessionFailure::MissingOrExpired.into_app_error())
+}
+
+/// The account is locked out after password failures made inside the session: the session ends
+/// (stored row closed, in-memory session cleared) and the end is audited.
+async fn end_session_after_lockout(state: &AppState, user: &session_manager::AuthenticatedUser, session_db_id: &str) {
+    let was_current = {
+        let mut guard = state.session.write().await;
+        let current = guard.current.as_ref().map(|s| s.session_db_id.as_str()) == Some(session_db_id);
+        if current {
+            guard.clear_session();
+        }
+        current
+    };
+    // The in-memory session is already gone (fail closed); the stored row is closed too.
+    if let Err(e) = state
+        .db
+        .execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            "UPDATE app_sessions SET is_revoked = 1 WHERE id = ?",
+            [session_db_id.into()],
+        ))
+        .await
+    {
+        warn!(error = %e, "lockout::stored_session_not_closed");
+    }
+    warn!(
+        user_id = user.user_id,
+        session_id = session_db_id,
+        reason = "account_locked",
+        "session ended: account locked out after wrong passwords"
+    );
+    if was_current {
+        crate::audit::emit(
+            &state.db,
+            crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::SESSION_CLOSED,
+                actor_id: Some(user.user_id),
+                actor_name: Some(&user.username),
+                entity_type: Some("app_session"),
+                entity_id: Some(session_db_id),
+                summary: "Session closed: account locked out after wrong passwords",
+                detail_json: Some(serde_json::json!({ "reason": "account_locked" }).to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
 }
 
 // ── PIN Commands ─────────────────────────────────────────────────────────────
@@ -570,7 +732,12 @@ pub struct PinUnlockInput {
 /// Requires current password verification.
 #[tauri::command]
 pub async fn set_pin(payload: SetPinInput, state: State<'_, AppState>) -> AppResult<()> {
+    set_pin_impl(state.inner(), payload).await
+}
+
+pub(crate) async fn set_pin_impl(state: &AppState, payload: SetPinInput) -> AppResult<()> {
     let user = require_session!(state);
+    let session_db_id = current_session_db_id(state).await?;
 
     let user_record = session_manager::find_active_user(&state.db, &user.username).await?;
     let pw_hash = match user_record.and_then(|r| r.5) {
@@ -582,8 +749,12 @@ pub async fn set_pin(payload: SetPinInput, state: State<'_, AppState>) -> AppRes
         }
     };
 
-    let password_ok = password::verify_password(&payload.current_password, &pw_hash)?;
-    if !password_ok {
+    // The password under the sign-in lockout (too many wrong ones end the session).
+    let audit = WrongPasswordAudit {
+        event_type: crate::audit::event_type::STEP_UP_FAILURE,
+        summary: "PIN setup refused: wrong password",
+    };
+    if !check_session_password(state, &user, &session_db_id, &payload.current_password, &pw_hash, audit).await? {
         return Err(AppError::Auth("Mot de passe incorrect.".into()));
     }
 
@@ -629,7 +800,12 @@ pub async fn set_pin(payload: SetPinInput, state: State<'_, AppState>) -> AppRes
 /// Requires current password verification.
 #[tauri::command]
 pub async fn clear_pin(payload: ClearPinInput, state: State<'_, AppState>) -> AppResult<()> {
+    clear_pin_impl(state.inner(), payload).await
+}
+
+pub(crate) async fn clear_pin_impl(state: &AppState, payload: ClearPinInput) -> AppResult<()> {
     let user = require_session!(state);
+    let session_db_id = current_session_db_id(state).await?;
 
     let user_record = session_manager::find_active_user(&state.db, &user.username).await?;
     let pw_hash = match user_record.and_then(|r| r.5) {
@@ -641,8 +817,12 @@ pub async fn clear_pin(payload: ClearPinInput, state: State<'_, AppState>) -> Ap
         }
     };
 
-    let password_ok = password::verify_password(&payload.current_password, &pw_hash)?;
-    if !password_ok {
+    // The password under the sign-in lockout (too many wrong ones end the session).
+    let audit = WrongPasswordAudit {
+        event_type: crate::audit::event_type::STEP_UP_FAILURE,
+        summary: "PIN removal refused: wrong password",
+    };
+    if !check_session_password(state, &user, &session_db_id, &payload.current_password, &pw_hash, audit).await? {
         return Err(AppError::Auth("Mot de passe incorrect.".into()));
     }
 
@@ -753,6 +933,13 @@ pub(crate) async fn unlock_session_with_pin_internal(
 pub async fn unlock_session_with_pin(
     payload: PinUnlockInput,
     state: State<'_, AppState>,
+) -> AppResult<session_manager::SessionInfo> {
+    unlock_session_with_pin_impl(state.inner(), payload).await
+}
+
+pub(crate) async fn unlock_session_with_pin_impl(
+    state: &AppState,
+    payload: PinUnlockInput,
 ) -> AppResult<session_manager::SessionInfo> {
     let pin_value = payload.pin.trim().to_string();
     pin::validate_pin_format(&pin_value)?;
@@ -1035,6 +1222,10 @@ pub(crate) async fn query_password_recovery_contacts(
 
     Ok(contacts)
 }
+
+#[cfg(test)]
+#[path = "auth_session_tests.rs"]
+mod auth_session_tests;
 
 #[cfg(test)]
 mod password_recovery_contacts_tests {

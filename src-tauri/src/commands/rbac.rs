@@ -9,7 +9,7 @@ use tauri::State;
 use crate::auth::password_policy::PasswordPolicy;
 use crate::auth::rbac;
 use crate::auth::rbac::PermissionScope;
-use crate::auth::{password, session_manager};
+use crate::auth::session_manager;
 use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
@@ -103,38 +103,23 @@ pub(crate) async fn password_policy_settings(db: &sea_orm::DatabaseConnection) -
 /// The step-up window (the session policy `step_up_window_minutes`) starts from this moment.
 #[tauri::command]
 pub async fn verify_step_up(payload: StepUpRequest, state: State<'_, AppState>) -> AppResult<StepUpResponse> {
+    verify_step_up_impl(state.inner(), payload).await
+}
+
+/// The password check runs under the sign-in lockout (`commands::auth::verify_password_in_session`):
+/// too many wrong passwords lock the account and end the session (`ACCOUNT_LOCKED`).
+pub(crate) async fn verify_step_up_impl(state: &AppState, payload: StepUpRequest) -> AppResult<StepUpResponse> {
     let user = require_session!(state);
+    let session_db_id = crate::commands::auth::current_session_db_id(state).await?;
 
-    // Look up the current password hash from the database
-    let user_record = session_manager::find_active_user(&state.db, &user.username).await?;
-
-    let pw_hash = match user_record {
-        Some(row) => match row.5 {
-            Some(hash) => hash,
-            None => {
-                return Err(AppError::Auth("Aucun mot de passe configuré.".into()));
-            }
-        },
-        None => {
-            return Err(AppError::Auth("Utilisateur introuvable.".into()));
-        }
-    };
-
-    // Verify the provided password against the stored hash
-    let valid = password::verify_password(&payload.password, &pw_hash)?;
-    if !valid {
-        crate::audit::emit(
-            &state.db,
-            crate::audit::AuditEvent {
-                event_type: crate::audit::event_type::STEP_UP_FAILURE,
-                actor_id: Some(user.user_id),
-                summary: "Step-up reauthentication failed: wrong password",
-                ..Default::default()
-            },
-        )
-        .await;
-        return Err(AppError::Auth("Mot de passe incorrect.".into()));
-    }
+    crate::commands::auth::verify_password_in_session(
+        state,
+        &user,
+        &session_db_id,
+        &payload.password,
+        "Step-up reauthentication failed: wrong password",
+    )
+    .await?;
 
     // Record the step-up timestamp in the session
     let mut sm = state.session.write().await;

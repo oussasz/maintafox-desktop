@@ -26,6 +26,7 @@ const sessionInfoSchema = z.object({
   force_password_change: z.boolean().nullable(),
   expires_at: z.string().nullable(),
   last_activity_at: z.string().nullable(),
+  idle_timeout_minutes: z.number().nullable().default(null),
   password_expires_in_days: z.number().nullable().default(null),
   pin_configured: z.boolean().nullable().default(null),
   tenant_id: z.string().nullable().default(null),
@@ -61,6 +62,17 @@ export async function logout(): Promise<void> {
 export async function getSessionInfo(): Promise<SessionInfo> {
   // Session polling should not create global toast side effects; UI layers decide how to surface.
   const raw = await invokeSilent<unknown>("get_session_info");
+  return sessionInfoSchema.parse(raw);
+}
+
+/**
+ * The user worked in the app (keyboard, mouse, touch): the only call that keeps the session
+ * from idle-locking. Refused with `SESSION_LOCKED` once the idle deadline has passed (the session
+ * then stays locked until unlocked). Returns the session info with the new activity time.
+ * Silent: the caller decides how a refusal is shown.
+ */
+export async function touchSession(): Promise<SessionInfo> {
+  const raw = await invokeSilent<unknown>("touch_session");
   return sessionInfoSchema.parse(raw);
 }
 

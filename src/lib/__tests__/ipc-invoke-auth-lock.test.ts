@@ -150,6 +150,36 @@ describe("ipc-invoke auth lock gating", () => {
     expect(useAuthInterceptorStore.getState().isLockOpen).toBe(false);
   });
 
+  // A password check inside the session (here: setting the PIN) locked the account; the server
+  // ended the session. Sign-in shows the lockout message; no lock dialog, no toast, no re-read.
+  it("sends the user to sign-in with the lockout message on ACCOUNT_LOCKED", async () => {
+    useSessionStore.setState({
+      info: {
+        ...fixtures.authenticatedSession,
+        password_expires_in_days: null,
+        pin_configured: null,
+      },
+      hasBootstrapped: true,
+    });
+    const lockout = {
+      code: "ACCOUNT_LOCKED",
+      message: "Account locked until 2026-10-22T09:15:00Z",
+    };
+    mockInvoke.mockRejectedValueOnce(lockout);
+
+    await expect(invoke("set_pin")).rejects.toEqual(lockout);
+
+    await vi.waitFor(() => {
+      expect(useSessionStore.getState().errorCode).toBe("ACCOUNT_LOCKED");
+    });
+    const state = useSessionStore.getState();
+    expect(state.info?.is_authenticated).toBe(false);
+    expect(state.error).toBe(lockout.message);
+    expect(useAuthInterceptorStore.getState().isLockOpen).toBe(false);
+    expect(useAppToastStore.getState().items).toHaveLength(0);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+  });
+
   it("still opens the lock, without a toast, for a lost session", async () => {
     mockInvoke
       .mockRejectedValueOnce({ code: "SESSION_CLAIM_INVALID", message: "Session claim invalid" })

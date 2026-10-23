@@ -832,4 +832,344 @@ mod tests {
         .expect("drop setting");
         assert!(closeout::reopen_window_days(&db).await.is_err());
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Override signer password: counted toward the signer's account lockout
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const SIGNER_PASSWORD: &str = "Signer-Pass-2026!";
+
+    async fn scalar(db: &sea_orm::DatabaseConnection, sql: &str, id: i64) -> i64 {
+        db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [id.into()]))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<i64>("", "v")
+            .expect("decode")
+    }
+
+    /// A completed, verified corrective WO whose failure mode has a critical FMECA item with a
+    /// suggested part that was not used: closing it needs the supervisor override (reason +
+    /// signer password). Returns (wo id, row version, signer id).
+    async fn wo_needing_signer_override(db: &sea_orm::DatabaseConnection) -> (i64, i64, i64) {
+        let (wo_id, rv) = create_wo_in_progress(db).await;
+        let rv = advance_to_completed_verified(db, wo_id, rv).await;
+        let now = chrono::Utc::now().to_rfc3339();
+        let hash = crate::auth::password::hash_password(SIGNER_PASSWORD).expect("hash");
+        // The failure mode and the suggested article are plain ids here (no catalogue rows).
+        db.execute_unprepared("PRAGMA foreign_keys = OFF")
+            .await
+            .expect("fk off");
+        for sql in [
+            "UPDATE closeout_validation_policies SET require_fmeca_parts_for_critical = 1, \
+             fmeca_parts_override_allowed_roles_json = '[\"Administrator\"]'"
+                .to_string(),
+            format!("UPDATE work_order_failure_details SET failure_mode_id = 9101 WHERE work_order_id = {wo_id}"),
+            "INSERT INTO fmeca_analyses (entity_sync_id, equipment_id, title, created_at, updated_at) \
+             VALUES ('fa-signer-test', 1, 'Pompe', datetime('now'), datetime('now'))"
+                .to_string(),
+            "INSERT INTO fmeca_items (entity_sync_id, analysis_id, failure_mode_id, severity, occurrence, \
+             detectability, rpn, review_required, updated_at) \
+             SELECT 'fi-signer-test', id, 9101, 10, 10, 10, 1000, 0, datetime('now') FROM fmeca_analyses \
+             WHERE entity_sync_id = 'fa-signer-test'"
+                .to_string(),
+            "INSERT INTO fmeca_item_parts (fmeca_item_id, article_id) \
+             SELECT id, 9202 FROM fmeca_items WHERE entity_sync_id = 'fi-signer-test'"
+                .to_string(),
+        ] {
+            db.execute_unprepared(&sql).await.expect("fixture");
+        }
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO user_accounts \
+             (entity_sync_id, username, identity_mode, password_hash, is_active, is_admin, \
+              force_password_change, password_changed_at, failed_login_attempts, created_at, updated_at, row_version) \
+             VALUES ('signer-sync', 'chef_equipe', 'local', ?, 1, 0, 0, ?, 0, ?, ?, 1)",
+            [hash.into(), now.clone().into(), now.clone().into(), now.clone().into()],
+        ))
+        .await
+        .expect("signer");
+        let signer = scalar(
+            db,
+            "SELECT id AS v FROM user_accounts WHERE username = 'chef_equipe' AND id > ?",
+            0,
+        )
+        .await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO user_scope_assignments \
+             (entity_sync_id, user_id, role_id, scope_type, scope_reference, created_at, updated_at, row_version) \
+             SELECT 'signer-assignment', ?, id, 'tenant', NULL, ?, ?, 1 FROM roles WHERE name = 'Administrator'",
+            [signer.into(), now.clone().into(), now.into()],
+        ))
+        .await
+        .expect("signer role");
+        (wo_id, rv, signer)
+    }
+
+    async fn close_with_signer(
+        db: &sea_orm::DatabaseConnection,
+        wo_id: i64,
+        rv: i64,
+        actor: i64,
+        signer: i64,
+        password: &str,
+    ) -> Result<(), Vec<String>> {
+        match closeout::close_wo(
+            db,
+            WoCloseInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                fmeca_parts_override_reason: Some("Piece suggeree indisponible, montage equivalent".into()),
+                fmeca_parts_override_signed_by_id: Some(signer),
+                fmeca_parts_override_signer_password: Some(password.into()),
+                ..Default::default()
+            },
+        )
+        .await
+        {
+            Ok(_) => Ok(()),
+            Err(AppError::ValidationFailed(errors)) => Err(errors),
+            Err(other) => panic!("unexpected close-out error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn wrong_override_signer_passwords_lock_the_signer_account() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv, signer) = wo_needing_signer_override(&db).await;
+        let max = i64::from(crate::auth::lockout::LockoutPolicy::load(&db).await.max_attempts);
+        let failed = "SELECT failed_login_attempts AS v FROM user_accounts WHERE id = ?";
+        let locked = "SELECT COUNT(*) AS v FROM user_accounts WHERE id = ? AND locked_until IS NOT NULL";
+
+        for attempt in 1..=max {
+            let errors = close_with_signer(&db, wo_id, rv, actor, signer, "mauvais")
+                .await
+                .unwrap_err();
+            assert!(
+                errors
+                    .iter()
+                    .any(|e| e == "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_AUTH_FAILED"),
+                "attempt {attempt}: {errors:?}"
+            );
+        }
+        assert_eq!(
+            scalar(&db, locked, signer).await,
+            1,
+            "the signer's account is locked out"
+        );
+        assert_eq!(scalar(&db, failed, actor).await, 0, "the user closing is not counted");
+        // Each wrong signer password is audited: actor = the user closing, target = the signer.
+        let audited = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS v FROM audit_events WHERE action_code = ? AND actor_id = ? \
+                 AND target_type = 'user_account' AND target_id = ?",
+                [
+                    crate::audit::event_type::STEP_UP_FAILURE.into(),
+                    actor.into(),
+                    signer.to_string().into(),
+                ],
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<i64>("", "v")
+            .expect("decode");
+        assert_eq!(audited, max);
+
+        // Locked out: even the right password is refused, without being checked or counted.
+        let attempts_before = scalar(&db, failed, signer).await;
+        let errors = close_with_signer(&db, wo_id, rv, actor, signer, SIGNER_PASSWORD)
+            .await
+            .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e == "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_LOCKED"),
+            "{errors:?}"
+        );
+        assert_eq!(scalar(&db, failed, signer).await, attempts_before);
+
+        // Once the lockout ends, the right password signs and the count starts afresh.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET locked_until = '2000-01-01T00:00:00Z' WHERE id = ?",
+            [signer.into()],
+        ))
+        .await
+        .expect("lockout over");
+        if let Err(errors) = close_with_signer(&db, wo_id, rv, actor, signer, SIGNER_PASSWORD).await {
+            assert!(
+                // No code of the FMECA-parts gate (a prefix here, not a code: the frontend
+                // gate-code scan reads quoted `GATE_…` literals).
+                !errors.iter().any(|e| e.contains("CLOSEOUT_FMECA_PARTS")),
+                "the override is accepted: {errors:?}"
+            );
+        }
+        assert_eq!(scalar(&db, failed, signer).await, 0);
+        assert_eq!(scalar(&db, locked, signer).await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_committed_close_stays_closed_when_the_signer_outcome_cannot_be_recorded() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv, signer) = wo_needing_signer_override(&db).await;
+        // Earlier failures to reset, and a database that refuses the reset after the commit.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET failed_login_attempts = 2 WHERE id = ?",
+            [signer.into()],
+        ))
+        .await
+        .expect("failures");
+        db.execute_unprepared(
+            "CREATE TRIGGER block_signer_reset BEFORE UPDATE OF failed_login_attempts ON user_accounts \
+             BEGIN SELECT RAISE(ABORT, 'blocked for the test'); END",
+        )
+        .await
+        .expect("trigger");
+
+        let closed = close_with_signer(&db, wo_id, rv, actor, signer, SIGNER_PASSWORD).await;
+        assert!(
+            closed.is_ok(),
+            "the close is committed and reported as such: {closed:?}"
+        );
+        let wo = queries::get_work_order(&db, wo_id).await.expect("read").expect("wo");
+        assert_eq!(wo.status_code.as_deref(), Some("closed"));
+    }
+
+    /// Self-signing allowed by the policy: the closer's own password is checked, so a lockout it
+    /// causes ends the closer's session (ACCOUNT_LOCKED → sign-in), as every password check in a
+    /// session does.
+    #[tokio::test]
+    async fn a_self_signed_override_locks_out_like_any_password_check_in_the_session() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv, _signer) = wo_needing_signer_override(&db).await;
+        let (state, session_id) = self_signing_session(&db, actor).await;
+
+        let max = i64::from(crate::auth::lockout::LockoutPolicy::load(&db).await.max_attempts);
+        let close = |password: &'static str| self_signed_close(wo_id, rv, actor, password);
+        for attempt in 1..max {
+            let refused = crate::commands::wo::close_wo_impl(&state, close("mauvais"))
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(refused, AppError::ValidationFailed(_)),
+                "attempt {attempt}: {refused:?}"
+            );
+            assert!(state.session.read().await.current.is_some());
+        }
+        let refused = crate::commands::wo::close_wo_impl(&state, close("mauvais"))
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
+        assert!(
+            state.session.read().await.current.is_none(),
+            "the closer's session ended"
+        );
+        assert_eq!(session_revoked(&db, &session_id).await, 1);
+    }
+
+    /// The signer password is checked and counted even when matched parts make the override
+    /// unnecessary, so the close goes through: a lockout it causes still ends the session, and
+    /// the committed close is still reported.
+    #[tokio::test]
+    async fn a_self_signed_lockout_ends_the_session_even_when_the_close_goes_through() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv, _signer) = wo_needing_signer_override(&db).await;
+        let (state, session_id) = self_signing_session(&db, actor).await;
+        let max = i64::from(crate::auth::lockout::LockoutPolicy::load(&db).await.max_attempts);
+        for sql in [
+            format!(
+                "INSERT INTO work_order_parts (work_order_id, article_id, quantity_planned, quantity_used, \
+                 unit_cost, is_required) VALUES ({wo_id}, 9202, 1.0, 1.0, 0, 1)"
+            ),
+            format!(
+                "UPDATE user_accounts SET failed_login_attempts = {} WHERE id = {actor}",
+                max - 1
+            ),
+        ] {
+            db.execute_unprepared(&sql).await.expect("fixture");
+        }
+
+        let closed = crate::commands::wo::close_wo_impl(&state, self_signed_close(wo_id, rv, actor, "mauvais")).await;
+        assert!(closed.is_ok(), "matched parts: the close goes through: {closed:?}");
+        assert!(
+            state.session.read().await.current.is_none(),
+            "the closer's account is locked: the session ended"
+        );
+        assert_eq!(session_revoked(&db, &session_id).await, 1);
+    }
+
+    fn self_signed_close(wo_id: i64, rv: i64, actor: i64, password: &str) -> WoCloseInput {
+        WoCloseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            fmeca_parts_override_reason: Some("Piece suggeree indisponible, montage equivalent".into()),
+            fmeca_parts_override_signed_by_id: Some(actor),
+            fmeca_parts_override_signer_password: Some(password.into()),
+            ..Default::default()
+        }
+    }
+
+    async fn session_revoked(db: &sea_orm::DatabaseConnection, session_id: &str) -> i64 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+            [session_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get::<i64>("", "v")
+        .expect("decode")
+    }
+
+    /// Self-signing allowed by the policy, and `actor` signed in with a stored session.
+    async fn self_signing_session(db: &sea_orm::DatabaseConnection, actor: i64) -> (crate::state::AppState, String) {
+        db.execute_unprepared(
+            "UPDATE closeout_validation_policies SET fmeca_parts_override_require_distinct_signer = 0",
+        )
+        .await
+        .expect("self-signing allowed");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET force_password_change = 0 WHERE id = ?",
+            [actor.into()],
+        ))
+        .await
+        .expect("password chosen");
+
+        let state = crate::state::AppState::new(db.clone());
+        let session_id = {
+            let mut guard = state.session.write().await;
+            guard.create_session(crate::auth::session_manager::AuthenticatedUser {
+                user_id: i32::try_from(actor).expect("fits"),
+                username: "admin".into(),
+                display_name: None,
+                is_admin: true,
+                force_password_change: false,
+                tenant_id: "tenant-test".into(),
+                token_tenant_id: "tenant-test".into(),
+            });
+            let current = guard.current.as_ref().expect("session");
+            (current.session_db_id.clone(), current.expires_at.to_rfc3339())
+        };
+        crate::auth::session_manager::create_session_record(
+            db,
+            &session_id.0,
+            i32::try_from(actor).expect("fits"),
+            &session_id.1,
+        )
+        .await
+        .expect("stored session");
+        (state, session_id.0)
+    }
 }

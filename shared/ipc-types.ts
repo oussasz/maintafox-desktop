@@ -81,6 +81,8 @@ export interface SessionInfo {
   force_password_change: boolean | null;
   expires_at: string | null;
   last_activity_at: string | null;
+  /** Minutes without user input before the session locks (session policy at sign-in). */
+  idle_timeout_minutes?: number | null;
   password_expires_in_days: number | null;
   pin_configured: boolean | null;
   tenant_id?: string | null;
