@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 
 import { KpiTile } from "@/components/metrics/KpiTile";
 import { Button } from "@/components/ui/button";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
@@ -410,18 +411,15 @@ export function SystemRbdEditor({
                     </label>
                     <label className="grid gap-1 text-xs font-medium text-text-secondary">
                       {t("rams.system.mttr")}
-                      <Input
+                      <DecimalField
                         className="h-10"
-                        inputMode="decimal"
-                        defaultValue={node.mttr_hours != null ? String(node.mttr_hours) : ""}
+                        decimals={3}
+                        min={0}
+                        value={node.mttr_hours ?? null}
                         disabled={!editable}
-                        onChange={(e) => {
-                          const v = Number(e.target.value.replace(",", "."));
-                          patch(node.id, {
-                            mttr_hours:
-                              e.target.value.trim() && Number.isFinite(v) && v > 0 ? v : null,
-                          });
-                        }}
+                        onValueChange={(v) =>
+                          patch(node.id, { mttr_hours: v != null && v > 0 ? v : null })
+                        }
                       />
                     </label>
                   </div>

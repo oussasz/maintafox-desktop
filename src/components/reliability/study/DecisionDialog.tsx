@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -69,7 +70,7 @@ export function DecisionDialog({
   const [kind, setKind] = useState<DecisionKind>("pm_interval");
   const [plans, setPlans] = useState<PmPlanCandidate[]>([]);
   const [planId, setPlanId] = useState<number | null>(null);
-  const [interval, setInterval] = useState("");
+  const [interval, setInterval] = useState<number | null>(null);
   const [equipmentId, setEquipmentId] = useState<number | null>(null);
   const [woTypes, setWoTypes] = useState<WorkOrderTypeOption[]>([]);
   const [woType, setWoType] = useState("");
@@ -86,7 +87,7 @@ export function DecisionDialog({
     setLoadError(null);
     setTitle(prefill?.title ?? "");
     setKind(prefill?.kind ?? "pm_interval");
-    setInterval(prefill?.intervalHours != null ? String(prefill.intervalHours) : "");
+    setInterval(prefill?.intervalHours ?? null);
     setEquipmentId(study.assets.length === 1 ? (study.assets[0]?.equipment_id ?? null) : null);
     setJustification("");
     setApprover(null);
@@ -124,7 +125,7 @@ export function DecisionDialog({
     };
   }, [open, prefill, study, loadRun]);
 
-  const intervalN = Number(interval.replace(",", "."));
+  const intervalN = interval ?? Number.NaN;
   const valid =
     loadError == null &&
     title.trim().length > 0 &&
@@ -220,11 +221,11 @@ export function DecisionDialog({
               </label>
               <label className={field}>
                 {t("rams.decision.interval")}
-                <Input
-                  inputMode="decimal"
+                <DecimalField
                   className="h-10"
+                  min={0}
                   value={interval}
-                  onChange={(e) => setInterval(e.target.value)}
+                  onValueChange={setInterval}
                 />
               </label>
             </div>
