@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { TimeInput } from "@/components/ui/time-input";
+import { isRecordingStatus } from "@/components/wo/wo-recording-status";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
@@ -408,6 +409,11 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
     const actorId = info?.user_id ?? null;
     const loggingEnabled = LOGGING_EDITABLE_STATUSES.has(statusCode);
     const controlsDisabled = !canEdit || !loggingEnabled || busy;
+    // Task results, NOK evidence, task reopening, tool use and labour are recorded in progress and on
+    // hold (backend `TASK_RECORDING_STATUSES`, CMMS Advisor O3); recording during a hold never
+    // resumes the work order.
+    const recordingEnabled = isRecordingStatus(statusCode);
+    const recordingDisabled = !canEdit || !recordingEnabled || busy;
 
     const handleRefreshState = useCallback(
       async (next: WorkOrder) => {
@@ -1003,7 +1009,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                 })}
               </p>
             </div>
-            <Button size="sm" onClick={openLaborDialog} disabled={controlsDisabled || !actorId}>
+            <Button size="sm" onClick={openLaborDialog} disabled={recordingDisabled || !actorId}>
               {t("execution.addLabor")}
             </Button>
           </div>
@@ -1031,7 +1037,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                 size="sm"
                 variant="outline"
                 onClick={openLaborDialog}
-                disabled={controlsDisabled || !actorId}
+                disabled={recordingDisabled || !actorId}
               >
                 {t("execution.addLabor")}
               </Button>
@@ -1387,7 +1393,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         [task.id]: v as TaskResultCode,
                       }))
                     }
-                    disabled={controlsDisabled || Boolean(task.completed_at)}
+                    disabled={recordingDisabled || Boolean(task.completed_at)}
                   >
                     <SelectTrigger className="h-8">
                       <SelectValue />
@@ -1408,7 +1414,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                       size="sm"
                       variant="outline"
                       onClick={() => void handleCompleteTask(task)}
-                      disabled={controlsDisabled || !actorId}
+                      disabled={recordingDisabled || !actorId}
                     >
                       {taskResultCodes[task.id] === "cancelled"
                         ? t("execution.cancelTask")
@@ -1423,7 +1429,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         setReopenTaskId(task.id);
                         setReopenComment("");
                       }}
-                      disabled={controlsDisabled}
+                      disabled={recordingDisabled}
                     >
                       {t("execution.reopenTask")}
                     </Button>
@@ -1438,7 +1444,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         onChange={(e) =>
                           setTaskFindingNotes((prev) => ({ ...prev, [task.id]: e.target.value }))
                         }
-                        disabled={controlsDisabled}
+                        disabled={recordingDisabled}
                       />
                       <Input
                         placeholder={t("execution.taskFollowUpPlaceholder")}
@@ -1447,7 +1453,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         onChange={(e) =>
                           setTaskFollowUpCodes((prev) => ({ ...prev, [task.id]: e.target.value }))
                         }
-                        disabled={controlsDisabled}
+                        disabled={recordingDisabled}
                       />
                       {task.is_mandatory ? (
                         <p className="text-xs text-muted-foreground md:col-span-2">
@@ -1470,7 +1476,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         size="sm"
                         variant="outline"
                         onClick={() => void handleReopenTask(task)}
-                        disabled={controlsDisabled || reopenComment.trim() === ""}
+                        disabled={recordingDisabled || reopenComment.trim() === ""}
                       >
                         {t("execution.reopenTaskConfirm")}
                       </Button>
@@ -1684,7 +1690,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                 setAddToolDialogError(null);
                 setShowAddToolDialog(true);
               }}
-              disabled={controlsDisabled}
+              disabled={recordingDisabled}
             >
               {t("execution.tools.add")}
             </Button>
@@ -1734,7 +1740,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         variant="outline"
                         className="h-6 px-2 text-xs"
                         onClick={() => void handleMarkToolUsed(tool.id)}
-                        disabled={controlsDisabled}
+                        disabled={recordingDisabled}
                       >
                         {t("execution.tools.markUsed")}
                       </Button>
@@ -1743,7 +1749,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         variant="ghost"
                         className="h-6 px-2 text-xs"
                         onClick={() => void handleMarkToolNotUsed(tool.id)}
-                        disabled={controlsDisabled}
+                        disabled={recordingDisabled}
                       >
                         {t("execution.tools.markNotUsed")}
                       </Button>
