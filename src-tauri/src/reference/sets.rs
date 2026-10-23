@@ -493,7 +493,7 @@ pub async fn discard_draft_set(db: &DatabaseConnection, set_id: i64) -> AppResul
 
     if deleted.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Le brouillon n'a pas pu être supprimé (statut modifié pendant l'opération).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Le brouillon n'a pas pu être supprimé (statut modifié pendant l'opération).".into(),
         ]));
     }
 

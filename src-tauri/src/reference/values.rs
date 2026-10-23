@@ -152,7 +152,7 @@ async fn get_value_by_id(db: &impl ConnectionTrait, value_id: i64) -> AppResult<
 fn validate_code(code: &str) -> AppResult<()> {
     if code.is_empty() || code.len() > 64 {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de valeur doit comporter entre 1 et 64 caractères.".into(),
+            "GATE_REF_VALUE_CODE_LENGTH: Le code de valeur doit comporter entre 1 et 64 caractères.".into(),
         ]));
     }
     if !code
@@ -167,7 +167,7 @@ fn validate_code(code: &str) -> AppResult<()> {
     }
     if !code.starts_with(|c: char| c.is_ascii_uppercase()) {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de valeur doit commencer par une lettre majuscule.".into(),
+            "GATE_REF_VALUE_CODE_FORMAT: Le code de valeur doit commencer par une lettre majuscule.".into(),
         ]));
     }
     Ok(())
@@ -177,7 +177,7 @@ fn validate_label(label: &str) -> AppResult<()> {
     let trimmed = label.trim();
     if trimmed.is_empty() || trimmed.len() > 255 {
         return Err(AppError::ValidationFailed(vec![
-            "Le libellé doit comporter entre 1 et 255 caractères.".into(),
+            "GATE_REF_LABEL_LENGTH: Le libellé doit comporter entre 1 et 255 caractères.".into(),
         ]));
     }
     Ok(())
@@ -231,7 +231,7 @@ pub fn code_from_label(label: &str) -> AppResult<String> {
     }
     if out.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Impossible de générer un code à partir du libellé. Utilisez des lettres ou chiffres.".into(),
+            "GATE_REF_CODE_NOT_GENERATED: Impossible de générer un code à partir du libellé. Utilisez des lettres ou chiffres.".into(),
         ]));
     }
     if !out.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
@@ -447,7 +447,7 @@ async fn validate_parent(db: &DatabaseConnection, set_id: i64, parent_id: i64) -
 
     match row {
         None => Err(AppError::ValidationFailed(vec![format!(
-            "La valeur parente (id={parent_id}) n'existe pas."
+            "GATE_REF_PARENT_UNKNOWN: La valeur parente (id={parent_id}) n'existe pas."
         )])),
         Some(r) => {
             let parent_set_id: i64 = r.try_get("", "set_id").map_err(|e| decode_err("set_id", e))?;
@@ -456,7 +456,7 @@ async fn validate_parent(db: &DatabaseConnection, set_id: i64, parent_id: i64) -
                 .map_err(|e| decode_err("parent.domain_code", e))?;
             if parent_set_id != set_id && !allows_cross_domain_parent(&child_domain_code, &parent_domain_code) {
                 return Err(AppError::ValidationFailed(vec![
-                    "La valeur parente n'est pas autorisée pour ce domaine.".into(),
+                    "GATE_REF_PARENT_NOT_ALLOWED: La valeur parente n'est pas autorisée pour ce domaine.".into(),
                 ]));
             }
             Ok(())
@@ -604,7 +604,9 @@ pub async fn create_value(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec![format!("Le code '{code}' existe déjà dans ce jeu de référence.")])
+            AppError::ValidationFailed(vec![format!(
+                "GATE_REF_CODE_EXISTS:code={code}: Le code '{code}' existe déjà dans ce jeu de référence."
+            )])
         } else {
             AppError::Database(e)
         }
@@ -642,7 +644,7 @@ pub async fn create_operational_value(
     let domain_code = normalize_code(&payload.domain_code);
     if domain_code.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de domaine est obligatoire.".into()
+            "GATE_REF_DOMAIN_CODE_REQUIRED: Le code de domaine est obligatoire.".into(),
         ]));
     }
 
@@ -727,7 +729,7 @@ pub async fn create_operational_value(
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
             AppError::ValidationFailed(vec![format!(
-                "Le code '{code}' existe déjà dans le jeu publié de '{domain_code}'."
+                "GATE_REF_CODE_EXISTS_PUBLISHED:code={code}: Le code '{code}' existe déjà dans le jeu publié de '{domain_code}'."
             )])
         } else {
             AppError::Database(e)
@@ -884,7 +886,7 @@ pub async fn deactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
 
     if !existing.is_active {
         return Err(AppError::ValidationFailed(vec![
-            "Cette valeur est déjà désactivée.".into()
+            "GATE_REF_VALUE_ALREADY_INACTIVE: Cette valeur est déjà désactivée.".into(),
         ]));
     }
     if crate::reference::currencies::is_currency_domain(&domain.code) {
@@ -914,7 +916,9 @@ pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
     crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
 
     if existing.is_active {
-        return Err(AppError::ValidationFailed(vec!["Cette valeur est déjà active.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REF_VALUE_ALREADY_ACTIVE: Cette valeur est déjà active.".into(),
+        ]));
     }
 
     db.execute(Statement::from_sql_and_values(
@@ -947,7 +951,7 @@ pub async fn move_value_parent(
         // Cannot parent to self
         if pid == value_id {
             return Err(AppError::ValidationFailed(vec![
-                "Une valeur ne peut pas être son propre parent.".into(),
+                "GATE_REF_PARENT_SELF: Une valeur ne peut pas être son propre parent.".into(),
             ]));
         }
         validate_parent(db, existing.set_id, pid).await?;
