@@ -62,12 +62,28 @@ const KEPT_BY_ACTION: &[(&str, &str)] = &[("notification", "notification.safety_
 /// Known gaps, reported to their domain leads (not decided here): written with a target the codec
 /// cannot encode, so their events stay on the PC that wrote them (stub only) and `seal` logs an
 /// error. Each must be mapped (if the target travels) or added to the row filter (if it is kept on
-/// purpose), then removed from this list.
+/// purpose), then removed from this list. Routed by the Coordinator to the lead that owns each one.
 const KNOWN_GAPS: &[(&str, &str)] = &[
-    ("work_order_type", "wo::types — work-order type changes"),
-    ("qualification_requirement", "qualification::requirements"),
-    ("personnel_availability_block", "personnel::availability"),
-    ("permit_role", "qualification::gate — override in a permit role"),
+    (
+        "work_order_type",
+        "wo::types — work-order type changes; routed by the Coordinator, pending",
+    ),
+    (
+        "qualification_requirement",
+        "qualification::requirements; routed by the Coordinator, pending",
+    ),
+    (
+        "personnel_availability_block",
+        "personnel::availability; routed by the Coordinator, pending",
+    ),
+    (
+        "permit_role",
+        "qualification::gate — override in a permit role; routed by the Coordinator, pending",
+    ),
+    (
+        "app_session",
+        "auth::session_manager — session closed by the stored-state check, clock anomaly; routed by the Coordinator, pending",
+    ),
 ];
 
 fn source_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
