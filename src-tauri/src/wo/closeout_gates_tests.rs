@@ -503,3 +503,41 @@ async fn verifier_without_responsible_must_not_have_recorded_labour() {
         .await
         .expect("an independent verifier");
 }
+
+#[tokio::test]
+async fn labour_is_booked_and_closed_only_during_execution() {
+    use crate::wo::labor::{self, labor_codes, AddLaborInput};
+    let db = setup().await;
+    let actor = admin_id(&db).await;
+    let (wo_id, _) = create_wo_in_progress(&db).await;
+    let booking = || AddLaborInput {
+        wo_id,
+        intervener_id: actor,
+        skill_id: None,
+        started_at: Some("2026-04-10T08:00:00Z".into()),
+        ended_at: None,
+        hours_worked: None,
+        hourly_rate: None,
+        notes: None,
+    };
+    let open = labor::add_labor_entry(&db, booking())
+        .await
+        .expect("booked in progress");
+    for status in ["planning", "ready", "completed", "closed", "cancelled"] {
+        set_wo_status(&db, wo_id, status).await;
+        assert_eq!(
+            refused(labor::add_labor_entry(&db, booking()).await),
+            labor_codes::WRONG_STATUS,
+            "{status}"
+        );
+        assert_eq!(
+            refused(labor::close_labor_entry(&db, open.id, "2026-04-10T10:00:00Z".into(), actor).await),
+            labor_codes::WRONG_STATUS,
+            "{status}"
+        );
+    }
+    set_wo_status(&db, wo_id, "on_hold").await;
+    labor::close_labor_entry(&db, open.id, "2026-04-10T10:00:00Z".into(), actor)
+        .await
+        .expect("closed during a hold");
+}

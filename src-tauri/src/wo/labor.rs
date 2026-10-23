@@ -16,8 +16,6 @@ use crate::errors::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
-use super::domain::WoStatus;
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -172,6 +170,25 @@ fn elapsed_hours(start: &str, end: &str) -> Option<f64> {
     Some(diff.num_seconds() as f64 / 3600.0)
 }
 
+/// Stable codes of the labour refusals (texts in `errors:gateError`).
+pub mod labor_codes {
+    pub const WRONG_STATUS: &str = "GATE_LABOR_WRONG_STATUS";
+}
+
+/// Labour is booked and closed only while the WO is in progress or on hold (as task results and
+/// tool use, `wo::tasks::TASK_RECORDING_STATUSES`).
+fn require_labor_recording_status(status_code: &str) -> AppResult<()> {
+    if crate::wo::tasks::TASK_RECORDING_STATUSES.contains(&status_code) {
+        return Ok(());
+    }
+    Err(AppError::ValidationFailed(vec![format!(
+        "{}:status={status_code}: La main-d'œuvre ne se saisit ou ne se clôture que pendant l'exécution (en cours ou \
+         en attente), pas au statut '{status_code}'. (Labour is recorded only while the work order is in progress or \
+         on hold.)",
+        labor_codes::WRONG_STATUS
+    )]))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) add_labor_entry
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -282,12 +299,7 @@ struct LaborBooking {
 async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<WoIntervener> {
     let txn = db.begin().await?;
     let status_code = load_wo_status_code(&txn, input.wo_id).await?;
-    let status = WoStatus::try_from_str(&status_code).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
-    if status.is_terminal() {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible d'ajouter une entrée de main-d'œuvre à un OT {status_code}."
-        )]));
-    }
+    require_labor_recording_status(&status_code)?;
 
     // Labour is recorded after the fact: a start or end later than now (5 min clock tolerance)
     // would book hours that have not been worked.
@@ -407,6 +419,7 @@ pub async fn close_labor_entry(
         })?;
 
     let entry = map_intervener(&row)?;
+    require_labor_recording_status(&load_wo_status_code(&txn, entry.work_order_id).await?)?;
 
     if entry.ended_at.is_some() {
         return Err(AppError::ValidationFailed(vec![

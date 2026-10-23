@@ -1429,43 +1429,51 @@ pub(crate) async fn close_preflight(
         }
     }
 
-    // (e) Technical verification
-    if is_failure_required && policy.require_verification_return_to_service {
-        let rts_row = conn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM work_order_verifications \
-                 WHERE work_order_id = ? AND result = 'pass' AND return_to_service_confirmed = 1",
-                [wo_id.into()],
-            ))
-            .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Verification RTS count returned no row")))?;
-        let rts_cnt: i64 = rts_row
-            .try_get::<i64>("", "cnt")
-            .map_err(|e| decode_err("rts_cnt", e))?;
-        if rts_cnt == 0 {
-            preflight.add(
-                "GATE_CLOSEOUT_RTS_VERIFICATION_REQUIRED: Verification avec retour en service confirme requis. \
-                 (Verification with return-to-service confirmed is required.)",
-            );
+    // (e) Technical verification, by a verifier the self-verification rules still accept now (the
+    // responsible and, without one, the labour recorded since the verification: D7, checked again
+    // at close).
+    let rts_required = is_failure_required && policy.require_verification_return_to_service;
+    let verifiers = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            if rts_required {
+                "SELECT verified_by_id FROM work_order_verifications \
+                 WHERE work_order_id = ? AND result = 'pass' AND return_to_service_confirmed = 1"
+            } else {
+                "SELECT verified_by_id FROM work_order_verifications \
+                 WHERE work_order_id = ? AND result IN ('pass', 'monitor')"
+            },
+            [wo_id.into()],
+        ))
+        .await?;
+    let mut accepted = 0;
+    for r in &verifiers {
+        let verifier: Option<i64> = r
+            .try_get("", "verified_by_id")
+            .map_err(|e| decode_err("verified_by_id", e))?;
+        let Some(verifier) = verifier else {
+            continue;
+        };
+        if verifier_conflict(conn, wo_id, verifier).await?.is_none() {
+            accepted += 1;
         }
-    } else {
-        let ver_row = conn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt \
-                 FROM work_order_verifications \
-                 WHERE work_order_id = ? AND result IN ('pass', 'monitor')",
-                [wo_id.into()],
-            ))
-            .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Verification count returned no row")))?;
-        let ver_cnt: i64 = ver_row
-            .try_get::<i64>("", "cnt")
-            .map_err(|e| decode_err("ver_cnt", e))?;
-        if ver_cnt == 0 {
-            preflight.add("GATE_CLOSEOUT_VERIFICATION_REQUIRED: Verification technique requise. (Technical verification required.)");
-        }
+    }
+    if accepted == 0 && !verifiers.is_empty() {
+        preflight.add(
+            "GATE_CLOSEOUT_VERIFIER_NOT_INDEPENDENT: La vérification a été faite par le responsable de l'OT ou, sans \
+             responsable, par une personne qui a saisi de la main-d'œuvre : une vérification indépendante est requise. \
+             (The verification was made by the responsible or by someone who recorded labour: an independent \
+             verification is required.)",
+        );
+    } else if accepted == 0 && rts_required {
+        preflight.add(
+            "GATE_CLOSEOUT_RTS_VERIFICATION_REQUIRED: Verification avec retour en service confirme requis. \
+             (Verification with return-to-service confirmed is required.)",
+        );
+    } else if accepted == 0 {
+        preflight.add(
+            "GATE_CLOSEOUT_VERIFICATION_REQUIRED: Verification technique requise. (Technical verification required.)",
+        );
     }
 
     // (f) Every mandatory task closed with an accepted result (D3; a legacy or received

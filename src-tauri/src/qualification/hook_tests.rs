@@ -106,6 +106,21 @@ async fn work_order(db: &DatabaseConnection) -> crate::wo::domain::WorkOrder {
     .expect("wo")
 }
 
+/// A work order being executed: labour is booked only in progress or on hold (`wo::labor`).
+async fn executing_work_order(db: &DatabaseConnection) -> crate::wo::domain::WorkOrder {
+    let wo = work_order(db).await;
+    exec(
+        db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress') \
+             WHERE id = {}",
+            wo.id
+        ),
+    )
+    .await;
+    wo
+}
+
 async fn require_on_wo(db: &DatabaseConnection, wo: i64, ct: i64) {
     upsert_requirement(
         db,
@@ -166,7 +181,7 @@ fn yesterday(hour: u32) -> String {
 async fn labour_for_a_person_without_login_is_gated_named_and_costed() {
     let db = setup().await;
     let contractor = person(&db, "EXT-9").await;
-    let wo = work_order(&db).await;
+    let wo = executing_work_order(&db).await;
     require_on_wo(&db, wo.id, cert(&db, "HAB-T").await).await;
     exec(
         &db,
@@ -478,12 +493,12 @@ async fn a_login_without_a_personnel_card_is_refused_where_qualifications_are_re
         notes: None,
     };
 
-    let free = work_order(&db).await;
+    let free = executing_work_order(&db).await;
     crate::wo::labor::add_labor_entry(&db, labour(free.id))
         .await
         .expect("no requirement: accepted");
 
-    let wo = work_order(&db).await;
+    let wo = executing_work_order(&db).await;
     require_on_wo(&db, wo.id, cert(&db, "HAB-T").await).await;
     let refused = crate::wo::labor::add_labor_entry(&db, labour(wo.id))
         .await
@@ -583,7 +598,7 @@ async fn an_account_without_a_personnel_card_can_be_overridden_on_a_work_order()
         hourly_rate: None,
         notes: None,
     };
-    let wo = work_order(&db).await;
+    let wo = executing_work_order(&db).await;
     require_on_wo(&db, wo.id, cert(&db, "HAB-T").await).await;
 
     // The refusal names both ways out.

@@ -1297,8 +1297,8 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             ] {
                 db.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
-                     VALUES (?, ?, ?, ?, 1, 1, ?, '2026-04-06T14:00:00Z')",
+                    "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at, result_code) \
+                     VALUES (?, ?, ?, ?, 1, 1, ?, '2026-04-06T14:00:00Z', 'ok')",
                     [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), task_desc.into(), seq.into(), admin_id.into()],
                 ))
                 .await?;
@@ -1361,16 +1361,16 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
         if *demo_key == "demo_009" {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
-                 VALUES (?, ?, 'Démonter vanne et remplacer garniture', 1, 1, 1, ?, '2026-04-08T14:00:00Z')",
+                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at, result_code) \
+                 VALUES (?, ?, 'Démonter vanne et remplacer garniture', 1, 1, 1, ?, '2026-04-08T14:00:00Z', 'ok')",
                 [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed) \
-                 VALUES (?, ?, 'Test étanchéité sous pression', 2, 1, 0)",
-                [crate::sync::identity::new_entity_sync_id().into(), wo_id.into()],
+                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at, result_code) \
+                 VALUES (?, ?, 'Test étanchéité sous pression', 2, 1, 1, ?, '2026-04-08T14:30:00Z', 'ok')",
+                [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
 
@@ -1396,22 +1396,22 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
         if *demo_key == "demo_011" {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
-                 VALUES (?, ?, 'Vidanger huile usagée', 1, 1, 1, ?, '2026-04-01T09:30:00Z')",
+                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at, result_code) \
+                 VALUES (?, ?, 'Vidanger huile usagée', 1, 1, 1, ?, '2026-04-01T09:30:00Z', 'ok')",
                 [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
-                 VALUES (?, ?, 'Remplacer filtre huile', 2, 1, 1, ?, '2026-04-01T10:00:00Z')",
+                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at, result_code) \
+                 VALUES (?, ?, 'Remplacer filtre huile', 2, 1, 1, ?, '2026-04-01T10:00:00Z', 'ok')",
                 [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
-                 VALUES (?, ?, 'Remplir huile neuve et vérifier niveau', 3, 1, 1, ?, '2026-04-01T10:30:00Z')",
+                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at, result_code) \
+                 VALUES (?, ?, 'Remplir huile neuve et vérifier niveau', 3, 1, 1, ?, '2026-04-01T10:30:00Z', 'ok')",
                 [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
@@ -1676,5 +1676,25 @@ mod tests {
         assert!(wo.is_empty(), "seeded OT with retired statuses: {wo:?}");
         let seeded_wo = codes(&db, "SELECT DISTINCT title FROM work_orders").await;
         assert!(!seeded_wo.is_empty(), "the demo seeds work orders");
+
+        // A completed, verified or closed demo OT has its mandatory tasks closed with an accepted
+        // result (D3), so the demo close-out goes through.
+        let done = db
+            .query_all(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT wo.id FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+                 WHERE s.code IN ('completed', 'closed')"
+                    .to_string(),
+            ))
+            .await
+            .expect("done work orders");
+        assert!(!done.is_empty(), "the demo seeds completed work orders");
+        for r in done {
+            let id: i64 = r.try_get_by_index(0).expect("id");
+            let open = crate::wo::tasks::open_mandatory_tasks(&db, id)
+                .await
+                .expect("open tasks");
+            assert!(open.is_empty(), "demo OT {id} has open mandatory tasks: {open:?}");
+        }
     }
 }
