@@ -1276,7 +1276,8 @@ async fn count_session_requires_reviewer_evidence_for_posting() {
     )
     .await
     .expect("submit");
-    session = controls::transition_count_session(
+    // AU-70: the count is not approved while a variance waits for its reviewer.
+    let not_approved = controls::transition_count_session(
         &db,
         TransitionInventoryCountSessionInput {
             session_id: session.id,
@@ -1287,8 +1288,24 @@ async fn count_session_requires_reviewer_evidence_for_posting() {
         },
     )
     .await
-    .expect("approve");
+    .expect_err("a variance without its reviewer's approval");
+    match not_approved {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, controls::REFUSED_COUNT_LINE_NOT_APPROVED);
+            assert_eq!(issues[0].params.get("lines").map(String::as_str), Some("1"));
+        }
+        other => panic!("expected COUNT_LINE_NOT_APPROVED, got {other:?}"),
+    }
 
+    // A session that reached `approved` some other way (for example received from a PC of an older
+    // version) still cannot post a variance without its reviewer's evidence.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inventory_count_sessions SET status = 'approved' WHERE id = ?",
+        [session.id.into()],
+    ))
+    .await
+    .expect("approved without the line approval");
     let missing_evidence_err = controls::post_count_session(
         &db,
         PostInventoryCountSessionInput {
@@ -1300,6 +1317,13 @@ async fn count_session_requires_reviewer_evidence_for_posting() {
     .await
     .expect_err("must not post without line evidence");
     assert!(matches!(missing_evidence_err, AppError::ValidationFailed(_)));
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inventory_count_sessions SET status = 'submitted' WHERE id = ?",
+        [session.id.into()],
+    ))
+    .await
+    .expect("back to submitted");
 
     let _approved_line = controls::approve_count_line(
         &db,
@@ -1312,6 +1336,18 @@ async fn count_session_requires_reviewer_evidence_for_posting() {
     )
     .await
     .expect("approve line");
+    session = controls::transition_count_session(
+        &db,
+        TransitionInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            next_status: "approved".to_string(),
+            reason: None,
+            actor_id: Some(2),
+        },
+    )
+    .await
+    .expect("approve once the variance is approved");
     let posted = controls::post_count_session(
         &db,
         PostInventoryCountSessionInput {
@@ -1336,6 +1372,123 @@ async fn count_session_requires_reviewer_evidence_for_posting() {
     .await
     .expect("reverse");
     assert_eq!(reversed.status, "reversed");
+}
+
+/// AU-70: `posted` and `reversed` are reached only by the posting and the reversal (the stock moves
+/// with them); a status change to either is refused and leaves the session and the stock as they
+/// were.
+#[tokio::test]
+async fn a_count_session_is_never_posted_or_reversed_by_a_status_change() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-CC-AU70").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 10.0,
+            reason_code: Some("seed count".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed stock");
+    let move_to =
+        |session: &crate::inventory::domain::InventoryCountSession, next: &str| TransitionInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            next_status: next.to_string(),
+            reason: None,
+            actor_id: Some(1),
+        };
+    let refused_code = |err: AppError| match err {
+        AppError::OrgValidationFailed(issues) => issues[0].code.clone(),
+        other => format!("{other:?}"),
+    };
+    let mut session = controls::create_count_session(
+        &db,
+        CreateInventoryCountSessionInput {
+            warehouse_id: 1,
+            location_id: Some(location_id),
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("create session");
+    session = controls::transition_count_session(&db, move_to(&session, "counting"))
+        .await
+        .expect("counting");
+    let line = controls::upsert_count_line(
+        &db,
+        UpsertInventoryCountLineInput {
+            session_id: session.id,
+            article_id,
+            location_id,
+            counted_qty: 7.0,
+            variance_reason_code: Some("COUNT_ERROR".to_string()),
+        },
+    )
+    .await
+    .expect("line");
+    session = controls::transition_count_session(&db, move_to(&session, "submitted"))
+        .await
+        .expect("submitted");
+    controls::approve_count_line(
+        &db,
+        ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: 2,
+            reviewer_evidence: "Recounted with the store keeper".to_string(),
+        },
+    )
+    .await
+    .expect("approve line");
+    session = controls::transition_count_session(&db, move_to(&session, "approved"))
+        .await
+        .expect("approved");
+
+    let posted_by_status = controls::transition_count_session(&db, move_to(&session, "posted"))
+        .await
+        .expect_err("posted only by the posting");
+    assert_eq!(
+        refused_code(posted_by_status),
+        controls::REFUSED_COUNT_STATUS_BY_POSTING_ONLY
+    );
+    let (on_hand, _) = balance_of(&db, article_id, location_id).await.expect("balance");
+    assert!((on_hand - 10.0).abs() < 1e-9, "the stock did not move");
+    let unchanged = controls::list_count_sessions(&db)
+        .await
+        .expect("sessions")
+        .into_iter()
+        .find(|s| s.id == session.id)
+        .expect("session");
+    assert_eq!(unchanged.status, "approved");
+
+    let posted = controls::post_count_session(
+        &db,
+        PostInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("post");
+    let (on_hand, _) = balance_of(&db, article_id, location_id).await.expect("balance");
+    assert!((on_hand - 7.0).abs() < 1e-9, "posted: 10 - 3");
+
+    let reversed_by_status = controls::transition_count_session(&db, move_to(&posted, "reversed"))
+        .await
+        .expect_err("reversed only by the reversal");
+    assert_eq!(
+        refused_code(reversed_by_status),
+        controls::REFUSED_COUNT_STATUS_BY_POSTING_ONLY
+    );
+    let (on_hand, _) = balance_of(&db, article_id, location_id).await.expect("balance");
+    assert!((on_hand - 7.0).abs() < 1e-9, "the stock did not move back");
 }
 
 #[tokio::test]
@@ -2586,20 +2739,19 @@ async fn reconciliation_of_a_consistent_ledger_reports_no_drift_and_still_catche
     )
     .await
     .expect("count line");
-    for next in ["submitted", "approved"] {
-        session = controls::transition_count_session(
-            &db,
-            TransitionInventoryCountSessionInput {
-                session_id: session.id,
-                expected_row_version: session.row_version,
-                next_status: next.to_string(),
-                reason: None,
-                actor_id: Some(if next == "approved" { 2 } else { 1 }),
-            },
-        )
-        .await
-        .expect("count transition");
-    }
+    session = controls::transition_count_session(
+        &db,
+        TransitionInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            next_status: "submitted".to_string(),
+            reason: None,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("submitted");
+    // The variance is approved before the count is (AU-70).
     controls::approve_count_line(
         &db,
         ApproveInventoryCountLineInput {
@@ -2611,6 +2763,18 @@ async fn reconciliation_of_a_consistent_ledger_reports_no_drift_and_still_catche
     )
     .await
     .expect("approve line");
+    session = controls::transition_count_session(
+        &db,
+        TransitionInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            next_status: "approved".to_string(),
+            reason: None,
+            actor_id: Some(2),
+        },
+    )
+    .await
+    .expect("approved");
     controls::post_count_session(
         &db,
         PostInventoryCountSessionInput {

@@ -4,7 +4,8 @@
  * A movement received from another PC is applied as received; a location left below zero gets one
  * review item per article and location, closed by a stock count recorded there (inv.manage, a
  * reason) or by a later stock entry. Two counts of the same location recorded on different PCs
- * without knowing each other are a double count to verify, closed by a new count. More reserved
+ * without knowing each other are a double count to verify, closed by a new count; so is a count
+ * whose movement is in the ledger twice (posted on two PCs by older versions). More reserved
  * than held is a warning only.
  *
  * IPC failures are passed on untouched so their coded reasons (`inventory:errors.*`) reach the
@@ -95,11 +96,54 @@ export const DoubleCountReviewSchema = z.object({
 });
 export type DoubleCountReview = z.infer<typeof DoubleCountReviewSchema>;
 
+/** One movement of a count posted twice. */
+export const DoublePostedMovementSchema = z.object({
+  movement_sync_id: z.string(),
+  posted_by: z.string().nullable(),
+  posted_at: z.string(),
+  quantity: z.number(),
+  /** The PC that posted it, when known (the audit of a divergent count names it). */
+  device_code: z.string().nullable(),
+});
+export type DoublePostedMovement = z.infer<typeof DoublePostedMovementSchema>;
+
+/**
+ * "Comptage passé deux fois — à vérifier": one count of a session, article and location whose
+ * movement is in the stock ledger more than once (the same count posted, or reversed, on two PCs
+ * by older versions). Closed only by a new count of that article and location.
+ */
+export const DoublePostedCountReviewSchema = z.object({
+  /** `posted_twice`: two movements in the ledger; `divergent`: posted on two PCs with different quantities. */
+  kind: z.enum(["posted_twice", "divergent"]),
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  location_id: z.number(),
+  location_code: z.string(),
+  warehouse_code: z.string(),
+  session_code: z.string(),
+  movement_type: z.enum(["COUNT_ADJUST", "COUNT_REVERSAL"]),
+  movements: z.array(DoublePostedMovementSchema),
+  /** The count's correction (one movement). */
+  variance_qty: z.number(),
+  /** What the stock moved beyond that correction. */
+  excess_qty: z.number(),
+  /** The count that closed it (null while it is to verify). */
+  closed_by: ReconciliationCountSchema.nullable(),
+  on_hand_qty: z.number(),
+  reserved_qty: z.number(),
+  available_qty: z.number(),
+});
+export type DoublePostedCountReview = z.infer<typeof DoublePostedCountReviewSchema>;
+
 const NegativeStockReviewListSchema = z.object({
   items: z.array(NegativeStockReviewSchema),
   double_counts: z.array(DoubleCountReviewSchema),
   /** Double counts closed by the reversal of one of their counts (when closed items are asked). */
   closed_double_counts: z.array(DoubleCountReviewSchema),
+  double_postings: z.array(DoublePostedCountReviewSchema),
+  /** Counts posted twice that a new count closed (when closed items are asked). */
+  closed_double_postings: z.array(DoublePostedCountReviewSchema),
   over_reservations: z.array(OverReservationWarningSchema),
 });
 export type NegativeStockReviewList = z.infer<typeof NegativeStockReviewListSchema>;
@@ -107,6 +151,8 @@ export type NegativeStockReviewList = z.infer<typeof NegativeStockReviewListSche
 const NegativeStockSummarySchema = z.object({
   negative_count: z.number(),
   double_count_count: z.number(),
+  /** Counts posted twice (same count on two PCs, older versions) still to verify. */
+  double_posting_count: z.number(),
   over_reserved_count: z.number(),
 });
 export type NegativeStockSummary = z.infer<typeof NegativeStockSummarySchema>;

@@ -56,6 +56,26 @@
         "count_session": "count session {{session}}"
       }
     },
+    "doublePosting": {
+      "list": "Counts posted twice",
+      "movementLine": "{{who}}, {{date}}: {{quantity}} (the stock ledger does not record the PC)",
+      "closedByCount": "closed by count {{session}} ({{who}}, {{date}})",
+      "flagKind": {
+        "posted_twice": "Count posted twice — to verify",
+        "divergent": "Divergent count — to verify"
+      },
+      "movementLineDevice": "{{who}} on PC {{device}}, {{date}}: {{quantity}}",
+      "explainKind": {
+        "posted_twice": {
+          "COUNT_ADJUST": "Count {{session}} was posted to stock more than once (the same count on two PCs, older version): beyond the count's correction of {{variance}}, the stock moved {{excess}} more (now {{onHand}} on hand). Check the stock and record a new count.",
+          "COUNT_REVERSAL": "The reversal of count {{session}} was posted more than once (on two PCs, older version): beyond the reversal of {{variance}}, the stock moved {{excess}} more (now {{onHand}} on hand). Check the stock and record a new count."
+        },
+        "divergent": {
+          "COUNT_ADJUST": "Count {{session}} was posted on two PCs with different quantities: the version that reached the server first ({{variance}}) is kept on every PC and the stock follows it; the other differed by {{excess}} (now {{onHand}} on hand). Its count line is a sync conflict on the PC whose version was replaced. Check the stock and record a new count.",
+          "COUNT_REVERSAL": "The reversal of count {{session}} was posted on two PCs with different quantities: the version that reached the server first ({{variance}}) is kept on every PC and the stock follows it; the other differed by {{excess}} (now {{onHand}} on hand). Check the stock and record a new count."
+        }
+      }
+    },
     "label": "Negative stock",
     "hint": "To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",
     "hintTotal": "Total over all stores is negative. To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls)."
@@ -1829,6 +1849,9 @@
     "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choose the variance reason of the count.",
     "NEGATIVE_STOCK_NOT_OPEN": "This location's stock is no longer below zero: nothing to reconcile. Refresh the list.",
     "NEGATIVE_STOCK_ENTRY_REASON_SHORT": "This location is below zero: an entry here reconciles it and needs a reason in the comment (at least {{min}} characters).",
-    "COUNT_SESSION_STALE_SNAPSHOT": "A count was posted for this article and location since this session was opened: cancel this session and count again in a new session."
+    "COUNT_SESSION_STALE_SNAPSHOT": "A count was posted for this article and location since this session was opened: cancel this session and count again in a new session.",
+    "COUNT_SESSION_STATUS_POSTING_ONLY": "A count is posted or reversed only with “Post variances to stock” or “Reverse posting”: the stock moves with them.",
+    "COUNT_LINE_NOT_APPROVED": "{{lines}} counted line(s) with a variance still need a reviewer's approval before the count is approved.",
+    "COUNT_ALREADY_POSTED": "Count {{session}} has already moved the stock of this article at this location (posted or reversed on another PC): refresh the session; nothing was moved twice."
   }
 }

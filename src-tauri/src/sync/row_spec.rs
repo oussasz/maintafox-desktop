@@ -946,9 +946,22 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // when and why), while these details hold local ids that mean nothing on another PC. The
         // choice made on a sync conflict (`sync::queries::resolve_sync_conflict`, its reason) stays
         // on the PC with the conflict, which is local-only; the data it changed travels on its row.
+        // The audits of stock to reconcile (`inventory::negative_stock`, `inventory::controls`,
+        // `inventory::queries`: target `stock_location_article`) name the article, location, count
+        // and movement by local ids: kept too; the stock state they describe travels on its rows.
+        // Likewise the audits of a reservation released at work-order close or cancel, or released
+        // on two PCs (`inventory::reservations`, target `stock_reservation`): local ids of the
+        // reservation, article, location, movement and work order; the release itself travels on
+        // the reservation row and its release movement.
+        // An event already sealed in its local form (`audit::chain`, hash `L1:` / `L2:`: kept on
+        // this device when written, its stub travels) never starts travelling later, even when a
+        // newer version can encode it: its hash covers its local form, which another PC cannot
+        // recompute. At sealing `chain_hash` is still empty, so a new event is judged by the rest of
+        // this filter and sealed in the matching form.
         row_filter: Some(
             "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved') \
-             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type')",
+             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation') \
+             AND substr(COALESCE({row}.chain_hash, ''), 1, 3) NOT IN ('L1:', 'L2:')",
         ),
         ..spec(
             "audit_events",
@@ -977,6 +990,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // A refused vendor recovery code: the target is the vendor's code id
                         // (`auth::recovery_code`), sent as it is.
                         ("admin_recovery_code", NOT_A_ROW),
+                        // A stock count posted on two PCs (`inventory::count_sync`): the target is
+                        // already the row's sync id, the same on every PC, sent as it is.
+                        ("inventory_transactions", NOT_A_ROW),
+                        ("inventory_mutation_audit_links", NOT_A_ROW),
+                        ("inventory_count_sessions", NOT_A_ROW),
                     ],
                 ),
             ],

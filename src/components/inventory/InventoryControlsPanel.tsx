@@ -579,7 +579,10 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                   <Button
                     variant="outline"
                     className="h-11"
-                    disabled={saving}
+                    // The count is approved once every variance has its reviewer's approval (the
+                    // server refuses it otherwise, and also requires the reviewer's note, which
+                    // the line approval always records); the pending count is shown above the lines.
+                    disabled={saving || pendingApprovals > 0}
                     onClick={() => transitionSession("approved")}
                   >
                     {t("controls.sessions.approve")}

@@ -5,6 +5,10 @@
 //! - `inventory_transactions`: a received movement changes `stock_balances` of its location
 //!   (`inventory::ledger`), never refused; a location left below zero gets its one review item
 //!   "négatif — à rapprocher", closed again by a count or a later entry (`inventory::negative_stock`);
+//!   the same count posted on two PCs by this version (one seeded id) keeps on every PC the version
+//!   the server received first, for the movement and its audit link, without moving the stock again
+//!   (`adopt_existing_append_only`, `inventory::count_sync`); one posted twice by older versions
+//!   (two ids) is applied like any movement and listed "comptage passé deux fois — à vérifier";
 //! - `org_nodes`: `ancestor_path` / `depth` (paths of local ids) are recomputed for the node and
 //!   its subtree;
 //! - `user_dismissals`: `scope_key` (`<issue_code>:<local equipment id>`) is rebuilt;
@@ -307,6 +311,25 @@ pub(crate) async fn before_upsert_checked(
             message: format!("{key}: {}", messages.join("; ")),
         })),
         Err(other) => Err(other),
+    }
+}
+
+/// An append-only row received while this PC holds a row with the same sync id: `true` when the
+/// received content replaces it instead of the replay being skipped. Only the same stock count
+/// posted on two PCs (seeded id): the version the server received first is kept on every PC, this
+/// PC's posting is audited (`inventory::count_sync::adopt_first_posted`).
+pub(crate) async fn adopt_existing_append_only(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<bool> {
+    match layout.def.entity_type {
+        "inventory_transactions" | "inventory_mutation_audit_links" => {
+            crate::inventory::count_sync::adopt_first_posted(conn, layout.def.entity_type, entity_sync_id, payload)
+                .await
+        }
+        _ => Ok(false),
     }
 }
 

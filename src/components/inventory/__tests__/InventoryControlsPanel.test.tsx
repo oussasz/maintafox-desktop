@@ -238,6 +238,35 @@ describe("InventoryControlsPanel", () => {
     expect(mocks.approveInventoryCountLine).toHaveBeenCalledTimes(1);
   });
 
+  it("approves the count only once every variance is approved", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "submitted" })]);
+    mocks.listInventoryCountLines.mockResolvedValue([countLine()]);
+
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Submitted)");
+    await screen.findByText("A-21");
+    expect(screen.getByRole("button", { name: "Approve count" })).toBeDisabled();
+  });
+
+  it("offers to approve the count once its variances are approved", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "submitted" })]);
+    mocks.listInventoryCountLines.mockResolvedValue([
+      countLine({
+        approved_by_id: 42,
+        approved_by_name: "Karim Benali",
+        approved_at: TS,
+        approval_note: "Recounted twice",
+      }),
+    ]);
+
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Submitted)");
+    await screen.findByText("A-21");
+    expect(screen.getByRole("button", { name: "Approve count" })).toBeEnabled();
+  });
+
   it("shows the reviewer's name, never a raw user id", async () => {
     mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "approved" })]);
     mocks.listInventoryCountLines.mockResolvedValue([

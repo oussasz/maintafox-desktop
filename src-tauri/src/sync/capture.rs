@@ -578,12 +578,12 @@ pub async fn drain_capture_journal(conn: &impl ConnectionTrait) -> AppResult<Cap
                 Ok(true) => {
                     report.staged += 1;
                     delete_journal_rows(conn, &group.ids).await?;
-                    close_stage_failure(conn, &group).await?;
+                    close_stage_failure(conn, &group, StageClose::Staged).await?;
                 }
                 Ok(false) => {
                     report.skipped += 1;
                     delete_journal_rows(conn, &group.ids).await?;
-                    close_stage_failure(conn, &group).await?;
+                    close_stage_failure(conn, &group, StageClose::NotSent).await?;
                 }
                 Err(e) => {
                     report.failed += 1;
@@ -656,30 +656,53 @@ async fn record_stage_failure(conn: &impl ConnectionTrait, group: &Group, error:
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE source_scope = 'outbox' AND conflict_type = 'STAGE_ERROR'
            AND entity_type = ? AND entity_sync_id = ?
-           AND status = 'resolved_local' AND resolution_action = 'auto_restaged'",
+           AND status = 'resolved_local' AND resolution_action IN ('auto_restaged', 'auto_not_sent')",
         [group.entity_type.clone().into(), group.entity_sync_id.clone().into()],
     ))
     .await?;
     Ok(())
 }
 
-/// A change that failed to stage earlier and now stages: its open `STAGE_ERROR` conflict is
-/// closed, so the conflict list (and the replay guard) no longer shows a problem that is gone.
-async fn close_stage_failure(conn: &impl ConnectionTrait, group: &Group) -> AppResult<()> {
+/// How a change that failed to stage earlier was settled by a later drain.
+#[derive(Clone, Copy)]
+enum StageClose {
+    /// Staged: it is on its way to the server.
+    Staged,
+    /// Nothing was sent: the row is kept on this PC (outside its entity's sync row filter), or it
+    /// was removed before it was ever sent. The note must not claim it was sent.
+    NotSent,
+}
+
+/// A change that failed to stage earlier and is now settled (staged, or with nothing to send): its
+/// open `STAGE_ERROR` conflict is closed with a note saying which, so the conflict list (and the
+/// replay guard) no longer shows a problem that is gone.
+async fn close_stage_failure(conn: &impl ConnectionTrait, group: &Group, how: StageClose) -> AppResult<()> {
+    let (action, note) = match how {
+        StageClose::Staged => ("auto_restaged", "The change was staged on a later attempt."),
+        StageClose::NotSent => (
+            "auto_not_sent",
+            "Not sent: kept on this PC (outside synchronisation), or removed before it was ever sent.",
+        ),
+    };
     conn.execute(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "UPDATE sync_conflicts
          SET status = 'resolved_local',
-             resolution_action = 'auto_restaged',
+             resolution_action = ?,
              resolved_by_id = NULL,
-             resolution_note = 'The change was staged on a later attempt.',
+             resolution_note = ?,
              resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
              row_version = row_version + 1,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE source_scope = 'outbox' AND conflict_type = 'STAGE_ERROR'
            AND entity_type = ? AND entity_sync_id = ?
            AND status IN ('new', 'triaged', 'escalated')",
-        [group.entity_type.clone().into(), group.entity_sync_id.clone().into()],
+        [
+            action.into(),
+            note.into(),
+            group.entity_type.clone().into(),
+            group.entity_sync_id.clone().into(),
+        ],
     ))
     .await?;
     Ok(())

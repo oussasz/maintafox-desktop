@@ -41,6 +41,7 @@ describe("NegativeStockSyncNotice", () => {
     mocks.getNegativeStockSummary.mockResolvedValue({
       negative_count: 2,
       double_count_count: 1,
+      double_posting_count: 1,
       over_reserved_count: 1,
     });
     renderNotice();
@@ -49,6 +50,7 @@ describe("NegativeStockSyncNotice", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/1 stock location\(s\) with more reserved/)).toBeInTheDocument();
     expect(screen.getByText(/1 stock location\(s\) counted on two PCs/)).toBeInTheDocument();
+    expect(screen.getByText(/1 stock count\(s\) posted twice/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open the stock to reconcile" })).toHaveAttribute(
       "href",
       "/inventory?stock=to_reconcile",
@@ -59,6 +61,7 @@ describe("NegativeStockSyncNotice", () => {
     mocks.getNegativeStockSummary.mockResolvedValue({
       negative_count: 0,
       double_count_count: 0,
+      double_posting_count: 0,
       over_reserved_count: 0,
     });
     const { container } = renderNotice();
@@ -70,6 +73,7 @@ describe("NegativeStockSyncNotice", () => {
     for (const key of [
       "negativeStock",
       "doubleCount",
+      "doublePosting",
       "overReserved",
       "openNegativeStock",
     ] as const) {

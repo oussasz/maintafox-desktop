@@ -142,6 +142,48 @@ pub(crate) async fn reseal_before_stubs(conn: &impl ConnectionTrait, entity_sync
     Ok(())
 }
 
+/// Test helper: re-seals the last event of this device's chain as an event kept on its device in
+/// the stub era (`L2:` over its local form, with its hash-only stub), as `seal` does for an event
+/// the codec cannot encode — to stand for an event an earlier version kept on its device.
+#[cfg(test)]
+pub(crate) async fn reseal_kept_on_device(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<()> {
+    let local = local_form(conn, entity_sync_id).await?;
+    let prev = local.get("chain_prev_hash").and_then(Value::as_str).map(str::to_string);
+    let origin = local
+        .get("chain_origin")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("audit event {entity_sync_id} is not chained")))?
+        .to_string();
+    let seq = local
+        .get("chain_seq")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("audit event {entity_sync_id} is not chained")))?;
+    let digest = content_digest(&local)?;
+    let hash = stub_era_hash(prev.as_deref(), &digest);
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE audit_events SET chain_hash = ? WHERE entity_sync_id = ?",
+        [hash.clone().into(), entity_sync_id.into()],
+    ))
+    .await?;
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO audit_chain_stubs \
+         (entity_sync_id, chain_origin, chain_seq, chain_prev_hash, chain_hash, content_digest) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            crate::sync::identity::new_entity_sync_id().into(),
+            origin.into(),
+            seq.into(),
+            prev.into(),
+            hash.into(),
+            digest.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
 /// A stub's hash: a local-form prefix and a SHA-256 in lowercase hex.
 fn is_local_form_hash(hash: &str) -> bool {
     local_prefix(hash).is_some_and(|p| is_hex_digest(&hash[p.len()..]))
@@ -259,6 +301,40 @@ async fn stubs_table_exists(conn: &impl ConnectionTrait) -> AppResult<bool> {
         .is_some())
 }
 
+/// An event about to be sealed in its local form (kept on this device) although the `audit_events`
+/// row filter (`sync::row_spec`) does not keep it there: the sync codec could not encode it — its
+/// target type has no mapping. It is still sealed and chained (its stub travels), but it is logged
+/// as an error: a business audit that silently never reaches the other PCs is a defect to fix in
+/// the mapping, not a choice. Read before `seal` writes the hash (`chain_hash` still empty, as the
+/// filter sees a new event).
+async fn report_unmapped_kept_event(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<()> {
+    let layout = crate::sync::row_layout::layout(conn, "audit_events").await?;
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT r.action_code, r.target_type FROM audit_events r WHERE r.entity_sync_id = ? AND {}",
+                layout.filter_sql("r")
+            ),
+            [entity_sync_id.into()],
+        ))
+        .await?;
+    if let Some(row) = row {
+        let action_code: Option<String> = row
+            .try_get("", "action_code")
+            .map_err(|e| decode_err("action_code", e))?;
+        let target_type: Option<String> = row
+            .try_get("", "target_type")
+            .map_err(|e| decode_err("target_type", e))?;
+        tracing::error!(
+            action_code = action_code.as_deref().unwrap_or_default(),
+            target_type = target_type.as_deref().unwrap_or_default(),
+            "audit chain: an event the sync filter does not keep on this device cannot be encoded (no mapping for its target type); kept on this device, only its stub travels"
+        );
+    }
+    Ok(())
+}
+
 /// Seals an event inserted at its chain position (same transaction as the insert). An event kept
 /// on this device (hashed in its local form) also gets its hash-only stub, which travels. An event
 /// written by a migration that runs before the stubs table exists is sealed as an event from
@@ -272,6 +348,12 @@ pub(crate) async fn seal(
 ) -> AppResult<()> {
     let with_stubs = stubs_table_exists(conn).await?;
     let (hash, digest) = event_hash(conn, entity_sync_id, prev_hash, with_stubs).await?;
+    if digest.is_some() {
+        // A diagnostic only: it never stops the event from being written.
+        if let Err(e) = report_unmapped_kept_event(conn, entity_sync_id).await {
+            tracing::warn!(error = %e, "audit chain: could not check why an event is kept on this device");
+        }
+    }
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE audit_events SET chain_hash = ? WHERE entity_sync_id = ?",

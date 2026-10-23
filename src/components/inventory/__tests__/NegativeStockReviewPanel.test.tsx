@@ -91,6 +91,8 @@ describe("NegativeStockReviewPanel", () => {
       items: [item()],
       double_counts: [],
       closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
       over_reservations: [
         {
           article_id: 22,
@@ -121,12 +123,16 @@ describe("NegativeStockReviewPanel", () => {
       items: [item()],
       double_counts: [],
       closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
       over_reservations: [],
     });
     mocks.listNegativeStockReviews.mockResolvedValue({
       items: [],
       double_counts: [],
       closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
       over_reservations: [],
     });
     mocks.resolveNegativeStockByCount.mockResolvedValue({
@@ -173,6 +179,8 @@ describe("NegativeStockReviewPanel", () => {
       ],
       double_counts: [],
       closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -225,6 +233,8 @@ describe("NegativeStockReviewPanel", () => {
         },
       ],
       closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -240,6 +250,111 @@ describe("NegativeStockReviewPanel", () => {
     expect(await screen.findByRole("button", { name: "Record the count" })).toBeDisabled();
   });
 
+  it("names the session and both movements of a count posted twice and offers a new count", async () => {
+    const posting = {
+      kind: "posted_twice",
+      article_id: 21,
+      article_code: "A-21",
+      article_name: "Bearing",
+      location_id: 10,
+      location_code: "BIN",
+      warehouse_code: "MAIN",
+      session_code: "CC-7",
+      movement_type: "COUNT_ADJUST",
+      movements: [
+        {
+          movement_sync_id: "m1",
+          posted_by: "Alice",
+          posted_at: TS,
+          quantity: -3,
+          device_code: null,
+        },
+        {
+          movement_sync_id: "m2",
+          posted_by: "Bob",
+          posted_at: TS,
+          quantity: -3,
+          device_code: null,
+        },
+      ],
+      variance_qty: -3,
+      excess_qty: -3,
+      closed_by: null,
+      on_hand_qty: 4,
+      reserved_qty: 0,
+      available_qty: 4,
+    };
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [posting],
+      closed_double_postings: [],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    expect(await screen.findByText("Count posted twice — to verify")).toBeInTheDocument();
+    expect(screen.getByText(/Count CC-7 was posted to stock more than once/)).toBeInTheDocument();
+    expect(screen.getByText(/^Alice, .*: .?3 /)).toBeInTheDocument();
+    expect(screen.getByText(/^Bob, .*: .?3 /)).toBeInTheDocument();
+    expect(screen.queryByText("No location below zero.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Record a count" }));
+    expect(await screen.findByRole("button", { name: "Record the count" })).toBeDisabled();
+  });
+
+  it("names both versions of a divergent count and the PC of the one replaced", async () => {
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [
+        {
+          kind: "divergent",
+          article_id: 21,
+          article_code: "A-21",
+          article_name: "Bearing",
+          location_id: 10,
+          location_code: "BIN",
+          warehouse_code: "MAIN",
+          session_code: "CC-8",
+          movement_type: "COUNT_ADJUST",
+          movements: [
+            {
+              movement_sync_id: "m1",
+              posted_by: "Alice",
+              posted_at: TS,
+              quantity: -3,
+              device_code: null,
+            },
+            {
+              movement_sync_id: "m1",
+              posted_by: "Bob",
+              posted_at: TS,
+              quantity: -4,
+              device_code: "M3XZ",
+            },
+          ],
+          variance_qty: -3,
+          excess_qty: -1,
+          closed_by: null,
+          on_hand_qty: 7,
+          reserved_qty: 0,
+          available_qty: 7,
+        },
+      ],
+      closed_double_postings: [],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    expect(await screen.findByText("Divergent count — to verify")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Count CC-8 was posted on two PCs with different quantities/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^Alice, .*: .?3 \(/)).toBeInTheDocument();
+    expect(screen.getByText(/^Bob on PC M3XZ, .*: .?4$/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Record a count" })).toBeInTheDocument();
+  });
+
   it("labels a manual entry as an adjustment, not a receipt", async () => {
     mocks.listNegativeStockReviews.mockResolvedValue({
       items: [
@@ -253,6 +368,8 @@ describe("NegativeStockReviewPanel", () => {
       ],
       double_counts: [],
       closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -276,6 +393,8 @@ describe("NegativeStockReviewPanel", () => {
       ],
       double_counts: [],
       closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -313,6 +432,8 @@ describe("NegativeStockReviewPanel", () => {
           counts: [],
         },
       ],
+      double_postings: [],
+      closed_double_postings: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);

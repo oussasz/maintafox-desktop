@@ -626,6 +626,18 @@ async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> App
             waits_for: None,
         });
     }
+    // The same stock count posted on two PCs: when the received session or line is the same posting
+    // as this PC's unsent one, that one is closed and audited and the received version is applied
+    // (it reached the server first; `inventory::count_sync`). Done here, not in
+    // `concurrency_check`, which also serves a side-effect-free admissibility check.
+    crate::inventory::count_sync::settle_concurrent_posting(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
+        item.row_version,
+        &item.payload_json,
+    )
+    .await?;
     if let Some(outcome) = concurrency_check(conn, def, item).await? {
         return Ok(outcome);
     }

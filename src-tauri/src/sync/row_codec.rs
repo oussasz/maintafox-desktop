@@ -1035,7 +1035,9 @@ pub(crate) async fn apply_row(
         _ => None,
     };
     let (local_row, inserted) = if let Some(locator) = existing {
-        if layout.def.conflict_policy == ConflictPolicy::AppendOnly {
+        if layout.def.conflict_policy == ConflictPolicy::AppendOnly
+            && !crate::sync::apply_hooks::adopt_existing_append_only(conn, layout, entity_sync_id, &payload).await?
+        {
             // History rows are never rewritten; a replayed row is a no-op.
             return Ok(ApplyOutcome::Unchanged);
         }

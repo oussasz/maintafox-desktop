@@ -13,6 +13,19 @@ use crate::inventory::domain::{
 /// was opened (its snapshot is stale).
 pub const REFUSED_COUNT_SESSION_STALE: &str = "COUNT_SESSION_STALE_SNAPSHOT";
 
+/// Refusal code: the count of this session, article and location already moved the stock on this
+/// PC (the same session posted or reversed on another PC first); also the code of a push of that
+/// movement closed because the server holds the same count (`inventory::count_sync`).
+pub const COUNT_ALREADY_POSTED: &str = "COUNT_ALREADY_POSTED";
+
+/// Refusal code: a count session is posted or reversed only by its posting or its reversal (the
+/// stock moves with them), never by a status change.
+pub const REFUSED_COUNT_STATUS_BY_POSTING_ONLY: &str = "COUNT_SESSION_STATUS_POSTING_ONLY";
+
+/// Refusal code: a count session is approved only once every line whose variance needs a
+/// reviewer's approval has it.
+pub const REFUSED_COUNT_LINE_NOT_APPROVED: &str = "COUNT_LINE_NOT_APPROVED";
+
 /// Tenant setting (catalog, decimal): a counted line whose variance is at least this much is
 /// critical. Each count session keeps the value it was opened with.
 pub const SETTING_COUNT_CRITICAL_VARIANCE: &str = "inventory.count_critical_variance";
@@ -128,6 +141,66 @@ async fn upsert_balance<C: ConnectionTrait>(
     Ok(())
 }
 
+/// Kind of the seeded sync id of each count movement type.
+pub(crate) fn count_movement_kind(movement_type: &str) -> Option<&'static str> {
+    match movement_type {
+        "COUNT_ADJUST" => Some("count_adjust"),
+        "COUNT_REVERSAL" => Some("count_reversal"),
+        _ => None,
+    }
+}
+
+/// Sync id of the count movement of a session, article and location: the same on every PC
+/// (`{session}:{article}:{location}` sync ids, all three immutable), so a session posted (or
+/// reversed) on two PCs gives one movement, received once and applied once (AU-100).
+///
+/// Every row has its sync id from its insert on (capture trigger, installed at every startup before
+/// any command). A database without capture (tests, tools) may hold rows without one; such a
+/// session was never synchronised, so no other PC can post it, and its movement gets a random id
+/// (`sync::identity::user_keyed_entity_sync_id` does the same).
+async fn count_movement_sync_id<C: ConnectionTrait>(
+    db: &C,
+    movement_type: &str,
+    session_id: i64,
+    article_id: i64,
+    location_id: i64,
+) -> AppResult<String> {
+    let kind = count_movement_kind(movement_type)
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("{movement_type} is not a count movement")))?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT (SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?) AS session_sync_id,
+                    (SELECT entity_sync_id FROM articles WHERE id = ?) AS article_sync_id,
+                    (SELECT entity_sync_id FROM stock_locations WHERE id = ?) AS location_sync_id",
+            [session_id.into(), article_id.into(), location_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("count movement identity query returned no row")))?;
+    let id = |column: &str| -> AppResult<Option<String>> {
+        Ok(row
+            .try_get::<Option<String>>("", column)?
+            .filter(|v| !v.trim().is_empty()))
+    };
+    Ok(
+        match (id("session_sync_id")?, id("article_sync_id")?, id("location_sync_id")?) {
+            (Some(session), Some(article), Some(location)) => {
+                crate::sync::identity::seeded_entity_sync_id(kind, &format!("{session}:{article}:{location}"))
+            }
+            _ => crate::sync::identity::new_entity_sync_id(),
+        },
+    )
+}
+
+/// Sync id of the audit link of a count movement: one link per movement on every PC.
+pub(crate) fn count_audit_link_sync_id(movement_sync_id: &str) -> String {
+    crate::sync::identity::seeded_entity_sync_id("count_audit_link", movement_sync_id)
+}
+
+/// Writes a count movement (`COUNT_ADJUST` or `COUNT_REVERSAL`) with its seeded sync id
+/// ([`count_movement_sync_id`]). Refused ([`COUNT_ALREADY_POSTED`]) when this PC already holds the
+/// movement of that count — received from a PC where the same session was posted or reversed first,
+/// whatever its id — so the stock never moves twice for one count. Returns `(local id, sync id)`.
 async fn insert_count_transaction<C: ConnectionTrait>(
     db: &C,
     article_id: i64,
@@ -139,10 +212,34 @@ async fn insert_count_transaction<C: ConnectionTrait>(
     source_ref: &str,
     reason: Option<&str>,
     actor_id: Option<i64>,
-) -> AppResult<i64> {
+) -> AppResult<(i64, String)> {
     // Count postings and reversals are dated today; refused when today falls in a closed period.
     crate::inventory::periods::ensure_posting_date_open(db, &crate::inventory::fx::today()).await?;
-    let entity_sync_id = uuid::Uuid::new_v4().to_string();
+    let already = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS held FROM inventory_transactions
+             WHERE movement_type = ? AND source_type = 'COUNT_SESSION' AND source_id = ?
+               AND article_id = ? AND location_id = ?
+             LIMIT 1",
+            [
+                movement_type.into(),
+                session_id.into(),
+                article_id.into(),
+                location_id.into(),
+            ],
+        ))
+        .await?;
+    if already.is_some() {
+        return Err(crate::errors::org_validation_failed(
+            COUNT_ALREADY_POSTED,
+            format!(
+                "The count {source_ref} already moved the stock of this article at this location on this PC (posted or reversed on another PC): refresh the session."
+            ),
+            crate::errors::issue_params(&[("session", source_ref.to_string())]),
+        ));
+    }
+    let entity_sync_id = count_movement_sync_id(db, movement_type, session_id, article_id, location_id).await?;
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_transactions
@@ -150,7 +247,7 @@ async fn insert_count_transaction<C: ConnectionTrait>(
              source_type, source_id, source_ref, reason, performed_by_id, performed_at, row_version)
          VALUES (?, ?, ?, ?, NULL, ?, ?, 'COUNT_SESSION', ?, ?, ?, ?, ?, 1)",
         [
-            entity_sync_id.into(),
+            entity_sync_id.clone().into(),
             article_id.into(),
             warehouse_id.into(),
             location_id.into(),
@@ -171,7 +268,7 @@ async fn insert_count_transaction<C: ConnectionTrait>(
         ))
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["Could not read transaction id.".to_string()]))?;
-    Ok(tx_row.try_get("", "id")?)
+    Ok((tx_row.try_get("", "id")?, entity_sync_id))
 }
 
 pub async fn create_count_session(
@@ -216,12 +313,28 @@ pub async fn transition_count_session(
             "GATE_RECORD_CHANGED_ELSEWHERE: count session row_version mismatch.".to_string(),
         ]));
     }
+    // Posted and reversed move the stock: only `post_count_session` and `reverse_count_session`
+    // (inv.manage for a reversal) reach them, never a status change (AU-70).
+    if input.next_status == "posted" || input.next_status == "reversed" {
+        return Err(crate::errors::org_validation_failed(
+            REFUSED_COUNT_STATUS_BY_POSTING_ONLY,
+            format!(
+                "A count session is {} only by its {} (the stock moves with it), not by a status change.",
+                input.next_status,
+                if input.next_status == "posted" {
+                    "posting"
+                } else {
+                    "reversal"
+                }
+            ),
+            crate::errors::issue_params(&[("status", input.next_status.clone())]),
+        ));
+    }
     let allowed = match current.status.as_str() {
         "draft" => ["counting", "cancelled"].as_slice(),
         "counting" => ["submitted", "cancelled"].as_slice(),
         "submitted" => ["approved", "cancelled"].as_slice(),
-        "approved" => ["posted", "cancelled"].as_slice(),
-        "posted" => ["reversed"].as_slice(),
+        "approved" => ["cancelled"].as_slice(),
         _ => [].as_slice(),
     };
     if !allowed.iter().any(|x| *x == input.next_status) {
@@ -229,6 +342,30 @@ pub async fn transition_count_session(
             "Invalid count-session transition: {} -> {}",
             current.status, input.next_status
         )]));
+    }
+    if input.next_status == "approved" {
+        // A variance is approved line by line by a reviewer (with evidence) before the count is.
+        let pending = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS pending FROM inventory_count_lines
+                 WHERE session_id = ? AND approval_required = 1
+                   AND (approved_by_id IS NULL OR trim(COALESCE(approval_note, '')) = '')",
+                [input.session_id.into()],
+            ))
+            .await?
+            .map(|row| row.try_get::<i64>("", "pending"))
+            .transpose()?
+            .unwrap_or(0);
+        if pending > 0 {
+            return Err(crate::errors::org_validation_failed(
+                REFUSED_COUNT_LINE_NOT_APPROVED,
+                format!(
+                    "{pending} counted line(s) with a variance still need a reviewer's approval before the count is approved."
+                ),
+                crate::errors::issue_params(&[("lines", pending.to_string())]),
+            ));
+        }
     }
     let next_status = input.next_status.clone();
     db.execute(Statement::from_sql_and_values(
@@ -512,7 +649,7 @@ pub async fn post_count_session(
             )]));
         }
         upsert_balance(&tx, line.article_id, line.warehouse_id, line.location_id, next_qty).await?;
-        let tx_id = insert_count_transaction(
+        let (tx_id, tx_sync_id) = insert_count_transaction(
             &tx,
             line.article_id,
             line.warehouse_id,
@@ -534,9 +671,10 @@ pub async fn post_count_session(
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO inventory_mutation_audit_links
-                (transaction_id, source_entity_type, source_entity_id, reviewer_id, reviewer_evidence, created_at)
-             VALUES (?, 'inventory_count_line', ?, ?, ?, ?)",
+                (entity_sync_id, transaction_id, source_entity_type, source_entity_id, reviewer_id, reviewer_evidence, created_at)
+             VALUES (?, ?, 'inventory_count_line', ?, ?, ?, ?)",
             [
+                count_audit_link_sync_id(&tx_sync_id).into(),
                 tx_id.into(),
                 line.id.into(),
                 line.approved_by_id.map_or(Value::BigInt(None), Value::from),
@@ -589,11 +727,26 @@ pub async fn reverse_count_session(
     let lines = list_count_lines(db, input.session_id).await?;
     let tx = db.begin().await?;
     for line in lines {
-        if line.posted_transaction_id.is_none() || line.variance_qty.abs() <= f64::EPSILON {
+        let Some(posted_transaction_id) = line.posted_transaction_id else {
+            continue;
+        };
+        // What the posting moved, as the ledger holds it: when the same count was posted on two PCs
+        // with different lines, the movement kept on every PC can differ from this PC's line until
+        // its line conflict is resolved (`inventory::count_sync`); the reversal undoes the movement.
+        let posted_qty: f64 = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT quantity FROM inventory_transactions WHERE id = ?",
+                [posted_transaction_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::ValidationFailed(vec![format!("Line {} has no posted movement.", line.id)]))?
+            .try_get("", "quantity")?;
+        if posted_qty.abs() <= f64::EPSILON {
             continue;
         }
         let (_, current_qty) = get_balance(&tx, line.article_id, line.location_id).await?;
-        let next_qty = current_qty - line.variance_qty;
+        let next_qty = current_qty - posted_qty;
         // A reversal never takes stock below zero, but one that raises a location already below
         // zero is accepted even if it stays there (CMMS Advisor): its item stays open until the
         // stock is zero or more, and it is audited.
@@ -606,12 +759,12 @@ pub async fn reverse_count_session(
             )]));
         }
         upsert_balance(&tx, line.article_id, line.warehouse_id, line.location_id, next_qty).await?;
-        let reverse_tx_id = insert_count_transaction(
+        let (reverse_tx_id, _) = insert_count_transaction(
             &tx,
             line.article_id,
             line.warehouse_id,
             line.location_id,
-            -line.variance_qty,
+            -posted_qty,
             "COUNT_REVERSAL",
             input.session_id,
             &session.session_code,
@@ -783,7 +936,7 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
     let mut transaction_id = None;
     if has_variance {
         upsert_balance(tx, count.article_id, warehouse_id, count.location_id, count.counted_qty).await?;
-        let tx_id = insert_count_transaction(
+        let (tx_id, tx_sync_id) = insert_count_transaction(
             tx,
             count.article_id,
             warehouse_id,
@@ -805,9 +958,10 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO inventory_mutation_audit_links
-                (transaction_id, source_entity_type, source_entity_id, reviewer_id, reviewer_evidence, created_at)
-             VALUES (?, 'inventory_count_line', ?, ?, ?, ?)",
+                (entity_sync_id, transaction_id, source_entity_type, source_entity_id, reviewer_id, reviewer_evidence, created_at)
+             VALUES (?, ?, 'inventory_count_line', ?, ?, ?, ?)",
             [
+                count_audit_link_sync_id(&tx_sync_id).into(),
                 tx_id.into(),
                 line_id.into(),
                 count.actor_id.into(),
