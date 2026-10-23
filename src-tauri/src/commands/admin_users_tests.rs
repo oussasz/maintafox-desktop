@@ -624,6 +624,67 @@ async fn roles_are_cloned_updated_and_retired_with_a_diff() {
     );
 }
 
+/// The role editor never shows the permissions unused in this version, and its save sends only
+/// what changed: a role holding one keeps it after an update, and nothing new is granted.
+#[tokio::test]
+async fn a_role_keeps_a_hidden_permission_it_holds_after_an_update() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let readonly = role_id(&db, "Readonly").await;
+    let copy = clone_role_impl(
+        &state,
+        &caller,
+        CloneRoleInput {
+            source_role_id: readonly,
+            name: "Readonly (hidden kept)".into(),
+            description: None,
+        },
+    )
+    .await
+    .expect("clone")
+    .id;
+
+    // The role holds a permission that is hidden from the plant role screens (the read-only
+    // defaults may already include it).
+    let hidden = crate::rbac::permissions::HIDDEN_FROM_PLANT_SCREENS[0];
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at) \
+         SELECT ?, id, datetime('now') FROM permissions WHERE name = ?",
+        [copy.into(), hidden.into()],
+    ))
+    .await
+    .expect("grant hidden permission");
+    let before = load_role_permission_names(&db, copy).await.unwrap();
+    assert!(before.iter().any(|p| p == hidden));
+
+    let added = crate::rbac::permissions::REP_EXPORT.to_string();
+    assert!(!before.contains(&added));
+    let changed = update_role_impl(
+        &state,
+        &caller,
+        UpdateRoleInput {
+            role_id: copy,
+            description: Some("Viewers who export reports".into()),
+            add_permissions: Some(vec![added.clone()]),
+            remove_permissions: Some(vec![]),
+        },
+    )
+    .await
+    .expect("update");
+    assert!(changed);
+
+    let after = load_role_permission_names(&db, copy).await.unwrap();
+    assert!(after.iter().any(|p| p == hidden), "the hidden permission is kept");
+    let mut expected = before.clone();
+    expected.push(added);
+    expected.sort();
+    let mut sorted_after = after.clone();
+    sorted_after.sort();
+    assert_eq!(sorted_after, expected, "only the requested permission was added");
+}
+
 async fn admin_assignment(db: &DatabaseConnection) -> i64 {
     scalar_i64(
         db,

@@ -1179,9 +1179,9 @@ export const HIDDEN_FROM_PLANT_SCREENS: ReadonlySet<string> = new Set([P.IOT_VIE
 /** Whole permission categories not shown on the plant's role screens. */
 export const HIDDEN_CATEGORIES_FROM_PLANT_SCREENS: ReadonlySet<string> = new Set(["vendor_console"]);
 
-/** Whether a permission appears on the plant's role screens (unknown/custom names do). */
+/** Whether a permission appears on the plant's role screens (custom names do; legacy aliases do not). */
 export function isShownInPlantRoleScreens(name: string): boolean {
-  if (HIDDEN_FROM_PLANT_SCREENS.has(name)) return false;
+  if (HIDDEN_FROM_PLANT_SCREENS.has(name) || name in PERMISSION_ALIAS_MAP) return false;
   const meta = PERMISSION_CATALOG.find((p) => p.name === name);
   return !meta || !HIDDEN_CATEGORIES_FROM_PLANT_SCREENS.has(meta.category);
 }

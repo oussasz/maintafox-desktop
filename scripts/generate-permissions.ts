@@ -323,10 +323,12 @@ function generateTs(registry: Registry): string {
   );
   lines.push("");
   lines.push(
-    "/** Whether a permission appears on the plant's role screens (unknown/custom names do). */",
+    "/** Whether a permission appears on the plant's role screens (custom names do; legacy aliases do not). */",
   );
   lines.push("export function isShownInPlantRoleScreens(name: string): boolean {");
-  lines.push("  if (HIDDEN_FROM_PLANT_SCREENS.has(name)) return false;");
+  lines.push(
+    "  if (HIDDEN_FROM_PLANT_SCREENS.has(name) || name in PERMISSION_ALIAS_MAP) return false;",
+  );
   lines.push("  const meta = PERMISSION_CATALOG.find((p) => p.name === name);");
   lines.push("  return !meta || !HIDDEN_CATEGORIES_FROM_PLANT_SCREENS.has(meta.category);");
   lines.push("}");
