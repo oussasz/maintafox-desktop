@@ -16,6 +16,7 @@ import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DateTimeField } from "@/components/ui/date-time-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
@@ -1205,12 +1206,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             />
             <div className="space-y-1">
               <Label>{t("planning.expectedDuration")}</Label>
-              <Input
-                type="number"
-                step="0.25"
-                min="0"
-                value={expectedHours}
-                onChange={(e) => setExpectedHours(e.target.value)}
+              <DecimalField
+                min={0}
+                value={parseNumber(expectedHours)}
+                onValueChange={(v) => setExpectedHours(v == null ? "" : String(v))}
                 disabled={allFieldsDisabled}
               />
             </div>
@@ -1228,12 +1227,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             </div>
             <div className="space-y-1">
               <Label>{t("planning.plannedDowntimeHours")}</Label>
-              <Input
-                type="number"
-                step="0.25"
-                min="0"
-                value={plannedDowntimeHours}
-                onChange={(e) => setPlannedDowntimeHours(e.target.value)}
+              <DecimalField
+                min={0}
+                value={parseNumber(plannedDowntimeHours)}
+                onValueChange={(v) => setPlannedDowntimeHours(v == null ? "" : String(v))}
                 disabled={allFieldsDisabled}
                 placeholder={t("planning.plannedDowntimeHoursPlaceholder")}
               />
@@ -1635,25 +1632,27 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       {t("planning.parts.plannedQty")}
                       {part.unit_symbol ? ` (${part.unit_symbol})` : ""}
                     </Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={part.quantity_planned}
-                      onChange={(e) =>
-                        updatePartRow(part.localId, { quantity_planned: e.target.value })
+                    <DecimalField
+                      decimals={3}
+                      min={0}
+                      value={parseNumber(part.quantity_planned)}
+                      onValueChange={(v) =>
+                        updatePartRow(part.localId, {
+                          quantity_planned: v == null ? "" : String(v),
+                        })
                       }
                       disabled={tasksPartsDisabled || part.persisted}
                     />
                   </div>
                   <div className="space-y-1">
                     <Label>{t("planning.parts.unitCost")}</Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={part.unit_cost}
-                      onChange={(e) => updatePartRow(part.localId, { unit_cost: e.target.value })}
+                    <DecimalField
+                      fixed
+                      min={0}
+                      value={parseNumber(part.unit_cost)}
+                      onValueChange={(v) =>
+                        updatePartRow(part.localId, { unit_cost: v == null ? "" : String(v) })
+                      }
                       disabled={tasksPartsDisabled || part.persisted}
                     />
                     {savedPending && part.reservation_id != null ? (
