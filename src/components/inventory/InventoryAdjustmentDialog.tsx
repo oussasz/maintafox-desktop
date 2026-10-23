@@ -7,6 +7,7 @@ import { WorkOrderReferencePicker } from "@/components/inventory/WorkOrderRefere
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
 import { DateField } from "@/components/ui/date-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -501,12 +502,12 @@ export function InventoryAdjustmentDialog({
             <label className="text-xs text-text-muted" htmlFor="adjust-qty">
               {t("adjustStock.fields.quantity")}
             </label>
-            <Input
+            <DecimalField
               id="adjust-qty"
-              type="number"
-              step="0.01"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
+              decimals={3}
+              allowNegative
+              value={quantity.trim() === "" ? null : qtyNumber}
+              onValueChange={(v) => setQuantity(v == null ? "" : String(v))}
               placeholder={
                 adjustType === "adjustment"
                   ? t("adjustStock.placeholders.quantitySigned")
@@ -588,13 +589,13 @@ export function InventoryAdjustmentDialog({
                   ? t("adjustStock.fields.unitCostRequired", { currency: currencyCode })
                   : t("adjustStock.fields.unitCost", { currency: currencyCode })}
               </label>
-              <Input
+              <DecimalField
                 id="adjust-unit-cost"
-                type="number"
+                decimals={2}
+                fixed
                 min={0}
-                step="0.01"
-                value={unitCost}
-                onChange={(e) => setUnitCost(e.target.value)}
+                value={unitCostNumber}
+                onValueChange={(v) => setUnitCost(v == null ? "" : String(v))}
                 aria-describedby="adjust-unit-cost-hint"
               />
               <p id="adjust-unit-cost-hint" className="text-xs text-text-muted">
