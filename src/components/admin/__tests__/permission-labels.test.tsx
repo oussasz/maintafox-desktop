@@ -194,6 +194,8 @@ describe("permission catalogue CSV cells", () => {
     expect(csvCell("=HYPERLINK(1)")).toBe(`"'=HYPERLINK(1)"`);
     expect(csvCell("+1")).toBe(`"'+1"`);
     expect(csvCell("-2")).toBe(`"'-2"`);
+    expect(csvCell("\t=1")).toBe(`"'\t=1"`);
+    expect(csvCell("\r=1")).toBe(`"'\r=1"`);
     expect(csvCell("@SUM(A1)")).toBe(`"'@SUM(A1)"`);
     expect(csvCell('Voir "tout"')).toBe(`"Voir ""tout"""`);
     expect(csvCell("1 article, 2 lots")).toBe(`"1 article, 2 lots"`);

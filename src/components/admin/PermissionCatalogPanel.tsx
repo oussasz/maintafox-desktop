@@ -350,7 +350,7 @@ function DependencyViewer({
  * description is free text).
  */
 export function csvCell(value: string): string {
-  const safe = /^[=+@-]/.test(value) ? `'${value}` : value;
+  const safe = /^[=+@\t\r-]/.test(value) ? `'${value}` : value;
   return `"${safe.replace(/"/g, '""')}"`;
 }
 
