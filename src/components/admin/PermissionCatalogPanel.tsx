@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import {
   AlertTriangle,
   Download,
@@ -28,6 +29,12 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { mfChip, mfPermissionDomainChip } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
+import {
+  permissionDescription,
+  permissionDomain,
+  permissionLabel,
+  usePermissionText,
+} from "@/lib/permission-labels";
 import { cn } from "@/lib/utils";
 import {
   createCustomPermission,
@@ -40,7 +47,7 @@ import { P } from "@shared/rbac/permissions.generated";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/** All standard permission domain prefixes in display order. */
+/** Standard permission domains in display order (a domain with nothing to show is left out). */
 const DOMAIN_GROUPS = [
   "eq",
   "di",
@@ -65,9 +72,6 @@ const DOMAIN_GROUPS = [
   "cfg",
   "adm",
 ] as const;
-
-/** Domains with a translated label under `admin:permissions.domainLabels.<domain>`. */
-const LABELLED_DOMAINS = new Set<string>([...DOMAIN_GROUPS, "cst"]);
 
 const SYSTEM_PREFIXES = [
   "eq.",
@@ -218,6 +222,7 @@ function DependencyViewer({
   onClose: () => void;
 }) {
   const { t } = useTranslation("admin");
+  const text = usePermissionText();
   const [deps, setDeps] = useState<PermissionDependencyRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -258,7 +263,8 @@ function DependencyViewer({
           <X className="h-4 w-4" aria-hidden />
         </Button>
       </div>
-      <p className="mt-1 font-mono text-xs text-text-secondary">{permissionName}</p>
+      <p className="mt-1 text-xs text-text-primary">{text.label(permissionName)}</p>
+      <p className="font-mono text-[11px] text-text-muted">{permissionName}</p>
 
       {loading && <LoadingState className="mt-3 py-4" />}
 
@@ -289,11 +295,14 @@ function DependencyViewer({
               {d.permission_name === permissionName ? (
                 <span>
                   {t("permissions.dependencies.requires")}{" "}
-                  <strong>{d.required_permission_name}</strong>
+                  <strong title={d.required_permission_name}>
+                    {text.label(d.required_permission_name)}
+                  </strong>
                 </span>
               ) : (
                 <span>
-                  {t("permissions.dependencies.requiredBy")} <strong>{d.permission_name}</strong>
+                  {t("permissions.dependencies.requiredBy")}{" "}
+                  <strong title={d.permission_name}>{text.label(d.permission_name)}</strong>
                 </span>
               )}
             </div>
@@ -315,11 +324,14 @@ function DependencyViewer({
               {d.permission_name === permissionName ? (
                 <span>
                   {t("permissions.dependencies.suggests")}{" "}
-                  <strong>{d.required_permission_name}</strong>
+                  <strong title={d.required_permission_name}>
+                    {text.label(d.required_permission_name)}
+                  </strong>
                 </span>
               ) : (
                 <span>
-                  {t("permissions.dependencies.suggestedBy")} <strong>{d.permission_name}</strong>
+                  {t("permissions.dependencies.suggestedBy")}{" "}
+                  <strong title={d.permission_name}>{text.label(d.permission_name)}</strong>
                 </span>
               )}
             </div>
@@ -332,13 +344,26 @@ function DependencyViewer({
 
 // ── Export helpers ───────────────────────────────────────────────────────────
 
-function exportToCSV(permissions: PermissionWithSystem[]) {
-  const header = "name,description,category,is_dangerous,requires_step_up,is_system";
+/**
+ * CSV text cell: quoted, inner quotes doubled, and a leading `=`, `+`, `-` or `@` prefixed
+ * with a single quote so a spreadsheet never reads the cell as a formula (a custom permission
+ * description is free text).
+ */
+export function csvCell(value: string): string {
+  const safe = /^[=+@\t\r-]/.test(value) ? `'${value}` : value;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
+/** The catalogue as CSV: code, translated label and description, the domain shown on screen. */
+function exportToCSV(permissions: PermissionWithSystem[], t: TFunction<"admin">) {
+  const header = "name,label,description,domain,category,is_dangerous,requires_step_up,is_system";
   const rows = permissions.map((p) =>
     [
-      p.name,
-      `"${(p.description ?? "").replace(/"/g, '""')}"`,
-      p.category,
+      csvCell(p.name),
+      csvCell(permissionLabel(t, p.name, p.description)),
+      csvCell(permissionDescription(t, p.name, p.description)),
+      csvCell(permissionDomain(p.name)),
+      csvCell(p.category),
       p.is_dangerous ? 1 : 0,
       p.requires_step_up ? 1 : 0,
       p.is_system ? 1 : 0,
@@ -368,8 +393,8 @@ export function PermissionCatalogPanel() {
   const [showCreate, setShowCreate] = useState(false);
   const [depViewerPerm, setDepViewerPerm] = useState<string | null>(null);
 
-  const domainLabel = (domain: string) =>
-    LABELLED_DOMAINS.has(domain) ? t(`permissions.domainLabels.${domain}`) : domain;
+  const text = usePermissionText();
+  const domainLabel = text.domainLabel;
 
   const fetchPermissions = useCallback(async () => {
     setLoading(true);
@@ -394,7 +419,7 @@ export function PermissionCatalogPanel() {
   const permissionsByDomain = useMemo(() => {
     const groups: Record<string, PermissionWithSystem[]> = {};
     for (const p of allPermissions) {
-      const domain = p.name.split(".")[0] ?? "_";
+      const domain = permissionDomain(p.name) || "_";
       (groups[domain] ??= []).push(p);
     }
     return groups;
@@ -402,7 +427,8 @@ export function PermissionCatalogPanel() {
 
   // Build sidebar domain list including custom domain if custom perms exist
   const domainList = useMemo(() => {
-    const list = [...DOMAIN_GROUPS] as string[];
+    // Domains with nothing in this version (e.g. IoT) are not listed.
+    const list = DOMAIN_GROUPS.filter((d) => (permissionsByDomain[d]?.length ?? 0) > 0) as string[];
     if (permissionsByDomain["cst"] && permissionsByDomain["cst"].length > 0) {
       list.push("cst");
     }
@@ -419,9 +445,12 @@ export function PermissionCatalogPanel() {
     if (!searchQuery.trim()) return domainPerms;
     const q = searchQuery.toLowerCase();
     return domainPerms.filter(
-      (p) => p.name.toLowerCase().includes(q) || (p.description ?? "").toLowerCase().includes(q),
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        text.label(p.name, p.description).toLowerCase().includes(q) ||
+        text.description(p.name, p.description).toLowerCase().includes(q),
     );
-  }, [permissionsByDomain, selectedDomain, searchQuery]);
+  }, [permissionsByDomain, selectedDomain, searchQuery, text]);
 
   return (
     <div className="flex gap-4">
@@ -433,7 +462,7 @@ export function PermissionCatalogPanel() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => exportToCSV(allPermissions)}
+              onClick={() => exportToCSV(allPermissions, t)}
               disabled={loading || loadError != null}
               title={t("permissions.export")}
             >
@@ -560,14 +589,21 @@ export function PermissionCatalogPanel() {
                       {/* The row action is a real button: reachable with Tab, opened with Enter. */}
                       <button
                         type="button"
-                        className="min-h-9 rounded text-start font-mono text-xs text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        aria-label={t("permissions.dependencies.open", { name: perm.name })}
+                        className="min-h-9 rounded text-start text-sm text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label={t("permissions.dependencies.open", {
+                          name: text.label(perm.name, perm.description),
+                        })}
                         onClick={() => setDepViewerPerm(perm.name)}
                       >
-                        {perm.name}
+                        {text.label(perm.name, perm.description)}
                       </button>
+                      <span className="block font-mono text-[11px] text-text-muted">
+                        {perm.name}
+                      </span>
                     </td>
-                    <td className="px-3 py-2 text-text-secondary">{perm.description ?? "—"}</td>
+                    <td className="px-3 py-2 text-text-secondary">
+                      {text.description(perm.name, perm.description) || "—"}
+                    </td>
                     <td className="px-3 py-2 text-center">
                       {perm.is_dangerous && (
                         <StatusChip

@@ -400,7 +400,410 @@
       "ins": "Inspection rounds",
       "cfg": "Configuration",
       "adm": "Administration",
-      "cst": "Custom"
+      "cst": "Custom",
+      "act": "Machine activation",
+      "ent": "Entitlements",
+      "lic": "License",
+      "integrity": "Data integrity",
+      "sync": "Synchronization"
+    },
+    "items": {
+      "eq_view": {
+        "label": "View equipment",
+        "description": "View the equipment registry."
+      },
+      "eq_manage": {
+        "label": "Create and edit equipment",
+        "description": "Create and edit equipment records."
+      },
+      "eq_import": {
+        "label": "Import equipment",
+        "description": "Import equipment from a CSV file or an ERP."
+      },
+      "eq_delete": {
+        "label": "Delete equipment",
+        "description": "Delete equipment records (recoverable from the archive). Sensitive action: password re-confirmation required."
+      },
+      "di_view": {
+        "label": "View intervention requests",
+        "description": "View the list and details of intervention requests (DR)."
+      },
+      "di_create": {
+        "label": "Create intervention requests",
+        "description": "Submit intervention requests for any asset."
+      },
+      "di_create_own": {
+        "label": "Create requests for own entity only",
+        "description": "Submit intervention requests for the user's own entity only."
+      },
+      "di_screen": {
+        "label": "Triage incoming requests",
+        "description": "Move submitted requests into the review queue."
+      },
+      "di_review": {
+        "label": "Review intervention requests",
+        "description": "Screen, return or reject intervention requests."
+      },
+      "di_approve": {
+        "label": "Approve intervention requests",
+        "description": "Approve, defer or reactivate intervention requests. Sensitive action."
+      },
+      "di_convert": {
+        "label": "Convert a request into a work order",
+        "description": "Turn an approved request into a work order (WO). Sensitive action."
+      },
+      "di_admin": {
+        "label": "Administer intervention requests",
+        "description": "Override, archive and reopen requests and manage their settings. Sensitive action."
+      },
+      "di_delete": {
+        "label": "Delete draft requests",
+        "description": "Delete intervention requests that are still drafts. Sensitive action."
+      },
+      "ot_view": {
+        "label": "View work orders",
+        "description": "View work orders (WO) and their details."
+      },
+      "ot_create": {
+        "label": "Create work orders",
+        "description": "Create new work orders."
+      },
+      "ot_edit": {
+        "label": "Plan and execute work orders",
+        "description": "Edit, plan, assign and execute work orders."
+      },
+      "ot_emergency_assign": {
+        "label": "Reassign a work order in an emergency",
+        "description": "Change the crew or technician on a WO without planning capacity checks. Sensitive action."
+      },
+      "ot_approve": {
+        "label": "Approve work orders",
+        "description": "Approve work orders from draft or planning."
+      },
+      "ot_close": {
+        "label": "Close work orders",
+        "description": "Close technically verified work orders. Sensitive action."
+      },
+      "ot_reopen": {
+        "label": "Reopen work orders",
+        "description": "Reopen a recently closed work order. Sensitive action: password re-confirmation required."
+      },
+      "ot_admin": {
+        "label": "Administer work orders",
+        "description": "Override, archive work orders and manage their settings. Sensitive action."
+      },
+      "ot_delete": {
+        "label": "Delete draft work orders",
+        "description": "Delete work orders that are still drafts. Sensitive action: password re-confirmation required."
+      },
+      "org_view": {
+        "label": "View the organization",
+        "description": "View the organizational structure."
+      },
+      "org_manage": {
+        "label": "Manage organization nodes",
+        "description": "Create and edit organization nodes and entities."
+      },
+      "org_admin": {
+        "label": "Publish and merge units",
+        "description": "Publish, archive and merge organizational units. Sensitive action: password re-confirmation required."
+      },
+      "per_view": {
+        "label": "View personnel",
+        "description": "View personnel records."
+      },
+      "per_manage": {
+        "label": "Manage personnel",
+        "description": "Create and edit personnel records."
+      },
+      "per_report": {
+        "label": "View workforce reports",
+        "description": "View and export workforce reports."
+      },
+      "per_sensitiveview": {
+        "label": "View sensitive personnel data",
+        "description": "View confidential fields on personnel records."
+      },
+      "per_position_view": {
+        "label": "View positions",
+        "description": "View positions and requirement profiles."
+      },
+      "per_position_manage": {
+        "label": "Manage positions",
+        "description": "Create, update and archive positions and requirement profiles."
+      },
+      "ref_view": {
+        "label": "View reference data",
+        "description": "View reference lists and values."
+      },
+      "ref_manage": {
+        "label": "Manage reference data",
+        "description": "Create and edit governed reference values."
+      },
+      "ref_publish": {
+        "label": "Publish reference data",
+        "description": "Publish new versions of reference domains. Sensitive action: password re-confirmation required."
+      },
+      "inv_view": {
+        "label": "View stock",
+        "description": "View items and stock levels."
+      },
+      "inv_manage": {
+        "label": "Manage stock movements",
+        "description": "Issue, return, adjust and transfer stock between warehouses."
+      },
+      "inv_procure": {
+        "label": "Manage purchasing",
+        "description": "Create and approve purchase requisitions and orders. Sensitive action."
+      },
+      "inv_count": {
+        "label": "Run stock counts",
+        "description": "Run and post physical stock count sessions. Sensitive action."
+      },
+      "pm_view": {
+        "label": "View preventive maintenance",
+        "description": "View preventive maintenance plans and occurrences."
+      },
+      "pm_create": {
+        "label": "Create PM plans",
+        "description": "Create new preventive maintenance plans."
+      },
+      "pm_edit": {
+        "label": "Edit PM plans",
+        "description": "Edit preventive maintenance plans and their versions."
+      },
+      "pm_delete": {
+        "label": "Delete draft PM plans",
+        "description": "Delete preventive maintenance plans that are still drafts. Sensitive action."
+      },
+      "pm_approve": {
+        "label": "Approve PM plans",
+        "description": "Approve changes to preventive maintenance plans."
+      },
+      "ram_view": {
+        "label": "View reliability (RAMS)",
+        "description": "View RAMS and reliability data."
+      },
+      "ram_manage": {
+        "label": "Manage reliability data",
+        "description": "Edit RAMS records and failure modes."
+      },
+      "ram_analyze": {
+        "label": "Run reliability analyses",
+        "description": "Run advanced RAMS analyses."
+      },
+      "ram_export": {
+        "label": "Export reliability analyses",
+        "description": "Export RAMS analysis results."
+      },
+      "rep_view": {
+        "label": "View reports",
+        "description": "View standard reports and analytics."
+      },
+      "rep_export": {
+        "label": "Export reports",
+        "description": "Export report data."
+      },
+      "rep_manage": {
+        "label": "Manage custom reports",
+        "description": "Create and edit custom reports."
+      },
+      "arc_view": {
+        "label": "View the archive",
+        "description": "Browse archived entries."
+      },
+      "arc_restore": {
+        "label": "Restore archived records",
+        "description": "Restore archived records. Sensitive action: password re-confirmation required."
+      },
+      "arc_export": {
+        "label": "Export the archive",
+        "description": "Export archived data."
+      },
+      "arc_purge": {
+        "label": "Permanently purge the archive",
+        "description": "Permanently delete archived records, with no way back. Sensitive action: password re-confirmation required."
+      },
+      "doc_view": {
+        "label": "View documentation",
+        "description": "View documentation and library content."
+      },
+      "doc_manage": {
+        "label": "Manage documentation",
+        "description": "Create and edit documentation articles."
+      },
+      "plan_view": {
+        "label": "View planning",
+        "description": "View planning and scheduling data."
+      },
+      "plan_edit": {
+        "label": "Edit planning",
+        "description": "Edit schedules and commitments."
+      },
+      "plan_confirm": {
+        "label": "Confirm planning",
+        "description": "Confirm planning commitments."
+      },
+      "plan_windows": {
+        "label": "Manage planning windows",
+        "description": "Manage planning windows."
+      },
+      "log_view": {
+        "label": "View the activity feed",
+        "description": "View the activity feed and audit events within one's scope."
+      },
+      "log_export": {
+        "label": "Export the audit log",
+        "description": "Export audit log data. Sensitive action: password re-confirmation required."
+      },
+      "log_admin": {
+        "label": "Administer the audit log",
+        "description": "Manage audit log retention and policy. Sensitive action: password re-confirmation required."
+      },
+      "trn_view": {
+        "label": "View training",
+        "description": "View training and certification records."
+      },
+      "trn_manage": {
+        "label": "Manage training",
+        "description": "Manage training records and plans."
+      },
+      "trn_certify": {
+        "label": "Issue or revoke certifications",
+        "description": "Issue or revoke staff certifications. Sensitive action: password re-confirmation required."
+      },
+      "erp_reconcile": {
+        "label": "Validate goods receipts (reconciliation)",
+        "description": "Reconcile the ERP posting state of goods receipts. Sensitive action."
+      },
+      "ptw_view": {
+        "label": "View work permits",
+        "description": "View work permits."
+      },
+      "ptw_issue": {
+        "label": "Issue work permits",
+        "description": "Issue work permits."
+      },
+      "ptw_close": {
+        "label": "Close or cancel work permits",
+        "description": "Close and cancel work permits. Sensitive action: password re-confirmation required."
+      },
+      "fin_view": {
+        "label": "View budgets and costs",
+        "description": "View budgets and cost data."
+      },
+      "fin_budget": {
+        "label": "Manage baseline budgets",
+        "description": "Manage governed budget baselines. Sensitive action."
+      },
+      "fin_report": {
+        "label": "Export budget reports",
+        "description": "Export governed budget reports."
+      },
+      "fin_manage": {
+        "label": "Manage budgets and cost centers",
+        "description": "Manage budgets and cost centers (legacy umbrella right)."
+      },
+      "fin_post": {
+        "label": "Post actual costs to the ERP",
+        "description": "Post actual costs to the ERP. Sensitive action: password re-confirmation required."
+      },
+      "fin_approve": {
+        "label": "Approve costs and commitments",
+        "description": "Approve cost events and commitments. Sensitive action: password re-confirmation required."
+      },
+      "ins_view": {
+        "label": "View inspection rounds",
+        "description": "View inspection rounds and checklists."
+      },
+      "ins_execute": {
+        "label": "Carry out inspection rounds",
+        "description": "Run inspection rounds and record results."
+      },
+      "ins_admin": {
+        "label": "Manage inspection templates",
+        "description": "Manage inspection templates and schedules. Sensitive action."
+      },
+      "cfg_view": {
+        "label": "View configuration",
+        "description": "View the tenant configuration."
+      },
+      "cfg_manage": {
+        "label": "Manage configuration",
+        "description": "Manage tenant configuration rules. Sensitive action: password re-confirmation required."
+      },
+      "cfg_publish": {
+        "label": "Publish configuration",
+        "description": "Publish configuration changes to all users. Sensitive action: password re-confirmation required."
+      },
+      "adm_users": {
+        "label": "Manage user accounts",
+        "description": "Manage user accounts and scope assignments. Sensitive action: password re-confirmation required."
+      },
+      "adm_roles": {
+        "label": "Manage roles",
+        "description": "Manage roles and their permissions. Sensitive action: password re-confirmation required."
+      },
+      "adm_permissions": {
+        "label": "Manage the permission catalog",
+        "description": "View and govern the permission catalog. Sensitive action: password re-confirmation required."
+      },
+      "adm_settings": {
+        "label": "Manage application settings",
+        "description": "Manage application settings and diagnostics. Sensitive action: password re-confirmation required."
+      },
+      "adm_audit": {
+        "label": "View the full audit log",
+        "description": "View the complete audit log."
+      },
+      "sync_view": {
+        "label": "View sync status",
+        "description": "View sync health, conflicts and replay history."
+      },
+      "sync_manage": {
+        "label": "Manage synchronization",
+        "description": "Apply sync batches and stage outgoing envelopes. Sensitive action."
+      },
+      "sync_resolve": {
+        "label": "Resolve sync conflicts",
+        "description": "Resolve synchronization conflicts. Sensitive action."
+      },
+      "sync_replay": {
+        "label": "Replay synchronization",
+        "description": "Run a sync replay or roll back to a checkpoint. Sensitive action: password re-confirmation required."
+      },
+      "sync_repair": {
+        "label": "Repair synchronization",
+        "description": "Preview and run targeted sync repairs. Sensitive action: password re-confirmation required."
+      },
+      "integrity_repair": {
+        "label": "Repair data integrity",
+        "description": "Fix data integrity findings. Sensitive action: password re-confirmation required."
+      },
+      "act_view": {
+        "label": "View machine activation",
+        "description": "View the activation state of this machine."
+      },
+      "act_manage": {
+        "label": "Manage machine activation",
+        "description": "Manage the activation of this machine. Sensitive action: password re-confirmation required."
+      },
+      "lic_view": {
+        "label": "View license status",
+        "description": "View the license enforcement state."
+      },
+      "lic_manage": {
+        "label": "Manage the license",
+        "description": "Manage the license enforcement matrix. Sensitive action: password re-confirmation required."
+      },
+      "ent_view": {
+        "label": "View entitlements",
+        "description": "View entitlement envelopes."
+      },
+      "ent_manage": {
+        "label": "Manage entitlements",
+        "description": "Manage entitlement envelopes. Sensitive action: password re-confirmation required."
+      }
     }
   },
   "sessions": {
@@ -806,7 +1209,9 @@
       "common": "In common",
       "loadError": "The roles could not be loaded.",
       "validationError": "The dependency check could not run. The server checks again when you save.",
-      "templateUnreadable": "This role template is unreadable: the role was not created. Choose another template or none."
+      "templateUnreadable": "This role template is unreadable: the role was not created. Choose another template or none.",
+      "hiddenRetained_one": "{{count}} permission unused in this version kept",
+      "hiddenRetained_other": "{{count}} permissions unused in this version kept"
     },
     "choicesLoadError": "The role and site lists could not be loaded: role and site filters and role assignment are unavailable.",
     "usersLoadError": "The accounts could not be loaded."

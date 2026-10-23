@@ -40,6 +40,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { UnsavedChangesGuard } from "@/components/ui/unsaved-changes-guard";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
+import { permissionDomain, usePermissionText } from "@/lib/permission-labels";
 import { cn } from "@/lib/utils";
 import {
   cloneRole,
@@ -62,10 +63,8 @@ import type {
 } from "@shared/ipc-types";
 import { P, ROLE_TEMPLATES } from "@shared/rbac/permissions.generated";
 
-/** Module of a permission code (`ot.view` → `ot`). */
-function moduleOf(permission: string): string {
-  return permission.split(".")[0] ?? permission;
-}
+/** Module of a permission code (`ot.view` → `ot`; goods-receipt validation → stores). */
+const moduleOf = permissionDomain;
 
 function useModuleLabel() {
   const { t } = useTranslation("admin");
@@ -301,14 +300,23 @@ function CloneRoleDialog({
 function CompareRolesDialog({
   base,
   roles,
+  catalog,
   onClose,
 }: {
   base: RoleWithPermissions | null;
   roles: RoleWithPermissions[];
+  /** Only the permissions the role editor shows are compared. */
+  catalog: RoleEditorCatalog | null;
   onClose: () => void;
 }) {
   const { t } = useTranslation("admin");
   const moduleLabel = useModuleLabel();
+  const text = usePermissionText();
+  const shown = useMemo(
+    () => new Map((catalog?.permissions ?? []).map((p) => [p.name, p.description] as const)),
+    [catalog],
+  );
+  const labelOf = (p: string) => text.label(p, shown.get(p));
   const [otherId, setOtherId] = useState("");
 
   useEffect(() => {
@@ -318,8 +326,8 @@ function CompareRolesDialog({
   const other = roles.find((r) => String(r.id) === otherId) ?? null;
   const rows = useMemo(() => {
     if (!base || !other) return [];
-    const a = new Set(base.permissions);
-    const b = new Set(other.permissions);
+    const a = new Set(base.permissions.filter((p) => shown.has(p)));
+    const b = new Set(other.permissions.filter((p) => shown.has(p)));
     const modules = new Set([...a, ...b].map(moduleOf));
     return [...modules].sort().map((m) => {
       const onlyA = [...a].filter((p) => moduleOf(p) === m && !b.has(p)).sort();
@@ -327,7 +335,7 @@ function CompareRolesDialog({
       const both = [...a].filter((p) => moduleOf(p) === m && b.has(p)).length;
       return { module: m, onlyA, onlyB, both };
     });
-  }, [base, other]);
+  }, [base, other, shown]);
 
   return (
     <Dialog open={base !== null} onOpenChange={(v) => !v && onClose()}>
@@ -375,9 +383,9 @@ function CompareRolesDialog({
                   <td className="py-1.5 pr-2 font-medium text-text-primary">
                     {moduleLabel(r.module)}
                   </td>
-                  <td className="py-1.5 pr-2 font-mono">{r.onlyA.join(", ") || "—"}</td>
+                  <td className="py-1.5 pr-2">{r.onlyA.map(labelOf).join(", ") || "—"}</td>
                   <td className="py-1.5 pr-2">{r.both}</td>
-                  <td className="py-1.5 font-mono">{r.onlyB.join(", ") || "—"}</td>
+                  <td className="py-1.5">{r.onlyB.map(labelOf).join(", ") || "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -410,6 +418,15 @@ function PermissionMatrix({
 }) {
   const { t } = useTranslation("admin");
   const moduleLabel = useModuleLabel();
+  const text = usePermissionText();
+  const descriptions = useMemo(
+    () => new Map(catalog.permissions.map((p) => [p.name, p.description] as const)),
+    [catalog.permissions],
+  );
+  const labelOf = useCallback(
+    (name: string) => text.label(name, descriptions.get(name)),
+    [text, descriptions],
+  );
 
   const requires = useMemo(() => {
     const map = new Map<string, PermissionDependencyRow[]>();
@@ -426,7 +443,8 @@ function PermissionMatrix({
       if (
         q &&
         !p.name.toLowerCase().includes(q) &&
-        !(p.description ?? "").toLowerCase().includes(q)
+        !labelOf(p.name).toLowerCase().includes(q) &&
+        !text.description(p.name, p.description).toLowerCase().includes(q)
       ) {
         continue;
       }
@@ -434,7 +452,7 @@ function PermissionMatrix({
       map.set(m, [...(map.get(m) ?? []), p]);
     }
     return [...map.entries()].sort(([a], [b]) => moduleLabel(a).localeCompare(moduleLabel(b)));
-  }, [catalog.permissions, filter, moduleLabel]);
+  }, [catalog.permissions, filter, moduleLabel, labelOf, text]);
 
   if (groups.length === 0) {
     return <p className="text-sm text-text-secondary">{t("console.roleEditor.noMatch")}</p>;
@@ -463,11 +481,15 @@ function PermissionMatrix({
                 const missing = enabled
                   ? deps.filter((d) => !active.has(d.required_permission_name))
                   : [];
+                const label = labelOf(p.name);
+                const description = text.description(p.name, p.description);
                 return (
                   <li key={p.name} className="flex items-start justify-between gap-3 px-3 py-2">
                     <div className="min-w-0 space-y-0.5">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="font-mono text-xs text-text-primary">{p.name}</span>
+                        <span className="text-sm text-text-primary" title={p.name}>
+                          {label}
+                        </span>
                         {p.is_dangerous ? (
                           <StatusChip
                             label={t("console.roleEditor.sensitive")}
@@ -483,8 +505,8 @@ function PermissionMatrix({
                           />
                         ) : null}
                       </div>
-                      {p.description ? (
-                        <p className="text-xs text-text-secondary">{p.description}</p>
+                      {description && description !== label ? (
+                        <p className="text-xs text-text-secondary">{description}</p>
                       ) : null}
                       {deps.length > 0 ? (
                         <p className="flex flex-wrap items-center gap-1 text-[11px] text-text-secondary">
@@ -492,17 +514,17 @@ function PermissionMatrix({
                           {deps.map((d) => (
                             <span
                               key={d.id}
+                              title={d.required_permission_name}
                               className={cn(
-                                "font-mono",
                                 missing.includes(d) && "font-semibold text-tone-attention-fg",
                               )}
                             >
                               {d.dependency_type === "hard"
                                 ? t("console.roleEditor.requires", {
-                                    perm: d.required_permission_name,
+                                    perm: labelOf(d.required_permission_name),
                                   })
                                 : t("console.roleEditor.suggests", {
-                                    perm: d.required_permission_name,
+                                    perm: labelOf(d.required_permission_name),
                                   })}
                             </span>
                           ))}
@@ -519,7 +541,7 @@ function PermissionMatrix({
                       <Switch
                         checked={enabled}
                         onCheckedChange={(checked) => onToggle(p.name, checked)}
-                        aria-label={t("roles.togglePermission", { perm: p.name })}
+                        aria-label={t("roles.togglePermission", { perm: label })}
                       />
                     )}
                   </li>
@@ -690,6 +712,15 @@ export function RoleEditorPanel() {
   };
 
   const hardMissing = validation?.missing_hard_deps ?? [];
+  const text = usePermissionText();
+  const catalogDescriptions = useMemo(
+    () => new Map((catalog?.permissions ?? []).map((p) => [p.name, p.description] as const)),
+    [catalog],
+  );
+  /** Permissions the role holds that this version does not offer: kept on save, never shown. */
+  const hiddenHeld = selected
+    ? selected.permissions.filter((p) => !catalogDescriptions.has(p)).length
+    : 0;
   const holderCount = selected ? (holders.get(selected.id) ?? 0) : 0;
 
   return (
@@ -829,8 +860,14 @@ export function RoleEditorPanel() {
                   {hardMissing.map((d) => (
                     <li key={`${d.permission_name}-${d.required_permission_name}`}>
                       {t("console.roleEditor.missingDependency", {
-                        perm: d.permission_name,
-                        required: d.required_permission_name,
+                        perm: text.label(
+                          d.permission_name,
+                          catalogDescriptions.get(d.permission_name),
+                        ),
+                        required: text.label(
+                          d.required_permission_name,
+                          catalogDescriptions.get(d.required_permission_name),
+                        ),
                       })}
                     </li>
                   ))}
@@ -879,6 +916,12 @@ export function RoleEditorPanel() {
               ) : null}
             </div>
 
+            {hiddenHeld > 0 ? (
+              <p className="text-xs text-text-secondary">
+                {t("console.roleEditor.hiddenRetained", { count: hiddenHeld })}
+              </p>
+            ) : null}
+
             <PermissionMatrix
               catalog={catalog}
               active={active}
@@ -907,7 +950,12 @@ export function RoleEditorPanel() {
         }}
         withStepUp={withStepUp}
       />
-      <CompareRolesDialog base={compareBase} roles={roles} onClose={() => setCompareBase(null)} />
+      <CompareRolesDialog
+        base={compareBase}
+        roles={roles}
+        catalog={catalog}
+        onClose={() => setCompareBase(null)}
+      />
       <ConfirmDialog
         open={retireTarget !== null}
         onOpenChange={(v) => !v && setRetireTarget(null)}
