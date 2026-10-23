@@ -34,6 +34,8 @@ mod audit_tests;
 #[cfg(test)]
 mod backlog_tests;
 #[cfg(test)]
+mod closeout_gates_tests;
+#[cfg(test)]
 mod closeout_tests;
 #[cfg(test)]
 mod execution_tests;

@@ -901,6 +901,53 @@ pub async fn save_failure_coding(db: &DatabaseConnection, input: SaveFailureCodi
     map_failure_detail(&row)
 }
 
+/// A verifier who is the WO's primary responsible.
+pub(crate) const VERIFIER_IS_RESPONSIBLE: &str = "WO_SELF_VERIFICATION";
+/// Without a responsible, a verifier who recorded labour on the WO (CMMS Advisor D7).
+pub(crate) const VERIFIER_RECORDED_LABOUR: &str = "WO_VERIFIER_RECORDED_LABOUR";
+
+/// Why `verifier_user_id` may not verify the WO, if so: they are its primary responsible; or the
+/// WO has no responsible and they recorded labour on it (as the intervener user, or as the
+/// personnel record of their account). Used by the local save and by the re-check of a received
+/// verification (`wo::closeout_sync`).
+pub(crate) async fn verifier_conflict(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    verifier_user_id: i64,
+) -> AppResult<Option<&'static str>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT primary_responsible_id FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: wo_id.to_string(),
+        })?;
+    let responsible: Option<i64> = row
+        .try_get("", "primary_responsible_id")
+        .map_err(|e| decode_err("primary_responsible_id", e))?;
+    if let Some(resp_id) = responsible {
+        return Ok((resp_id == verifier_user_id).then_some(VERIFIER_IS_RESPONSIBLE));
+    }
+    let worked = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS w FROM work_order_interveners i \
+             WHERE i.work_order_id = ? \
+               AND (i.intervener_id = ? \
+                    OR (i.personnel_id IS NOT NULL AND i.personnel_id = \
+                        (SELECT ua.personnel_id FROM user_accounts ua WHERE ua.id = ?))) \
+             LIMIT 1",
+            [wo_id.into(), verifier_user_id.into(), verifier_user_id.into()],
+        ))
+        .await?
+        .is_some();
+    Ok(worked.then_some(VERIFIER_RECORDED_LABOUR))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // B) save_verification — supervisor review on completed (no status change)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -948,31 +995,24 @@ pub async fn save_verification(
     assert_action_allowed(&current_status, WoAction::SupervisorReview)
         .map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    // ── No self-verification ──────────────────────────────────────────────
-    let responsible_row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT primary_responsible_id FROM work_orders WHERE id = ?",
-            [input.wo_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: input.wo_id.to_string(),
-        })?;
-
-    let primary_responsible_id: Option<i64> = responsible_row
-        .try_get::<Option<i64>>("", "primary_responsible_id")
-        .map_err(|e| decode_err("primary_responsible_id", e))?;
-
-    if let Some(resp_id) = primary_responsible_id {
-        if resp_id == input.verified_by_id {
+    // ── No self-verification (D7: without a responsible, nobody who recorded labour) ──
+    match verifier_conflict(&txn, input.wo_id, input.verified_by_id).await? {
+        Some(VERIFIER_IS_RESPONSIBLE) => {
             return Err(AppError::ValidationFailed(vec![
                 "GATE_CLOSEOUT_SELF_VERIFICATION: L'auto-verification n'est pas autorisee : le verificateur doit etre different \
                  du responsable principal. (Self-verification is not allowed.)"
                     .to_string(),
             ]));
         }
+        Some(_) => {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_CLOSEOUT_VERIFIER_RECORDED_LABOUR: Sans responsable principal, le vérificateur doit être différent \
+                 de chaque personne qui a saisi de la main-d'œuvre sur l'OT. \
+                 (Without a responsible person, the verifier must not have recorded labour on the work order.)"
+                    .to_string(),
+            ]));
+        }
+        None => {}
     }
 
     // ── Insert verification record ────────────────────────────────────────
@@ -1065,73 +1105,64 @@ pub async fn save_verification(
     Ok((verification, wo))
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// C) close_wo — quality-gated closure with cost roll-up
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Pre-flight result accumulating all blocking conditions.
-#[derive(Debug, Default)]
-struct PreflightResult {
-    errors: Vec<String>,
+/// The signature password of a FMECA parts override, as the close can check it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SignerPassword<'a> {
+    /// Typed by the signer for this close, on this PC: verified (`close_preflight` returns the
+    /// outcome; `close_wo` counts it toward the signer's lockout after its transaction).
+    Given(Option<&'a str>),
+    /// Typed for this close, but the signer's account is locked out here (`auth::lockout`, read
+    /// before the transaction): not checked, refused with the LOCKED code.
+    Locked,
+    /// A close received by synchronisation: the password was checked on the PC that closed and
+    /// cannot be checked again here (the other rules of the override still are).
+    NotVerifiableHere,
 }
 
-impl PreflightResult {
-    fn add(&mut self, msg: impl Into<String>) {
-        self.errors.push(msg.into());
-    }
-    fn is_ok(&self) -> bool {
-        self.errors.is_empty()
-    }
+/// What a close brings besides the stored work order: the closer, the no-downtime attestation and
+/// the FMECA parts override. For a received close, read from the work order row just written and
+/// from its `close` transition (`wo::closeout_sync`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CloseEvidence<'a> {
+    /// Who closes; `None` when not known here (a received close without its transition): a
+    /// signer then cannot be shown distinct from the closer.
+    pub closer_user_id: Option<i64>,
+    pub no_downtime_attestation: Option<bool>,
+    pub no_downtime_attestation_reason: Option<&'a str>,
+    pub fmeca_override_reason: Option<&'a str>,
+    pub fmeca_override_signer_id: Option<i64>,
+    pub fmeca_override_signer_password: SignerPassword<'a>,
 }
 
-/// Close a WO after passing the mandatory quality gate.
-///
-/// All blocking conditions are collected and returned together so the
-/// user sees every issue at once, not one-at-a-time.
-pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult<WorkOrder> {
-    // Load settings before opening the transaction — SQLite single-connection pools
-    // deadlock if we call back into `db` while `txn` holds the only connection.
-    let rpn_critical = advanced_rams_queries::fmeca_rpn_critical_threshold_i64(db).await?;
-
-    // The override signer's password counts toward the signer's account lockout, as at sign-in
-    // (`auth::lockout`): a locked-out signer is not checked at all. Read before the transaction
-    // (the lockout check may write); the outcome is recorded after it.
-    let signer_for_password = signer_password_account(&input);
-    let signer_locked = match signer_for_password {
-        Some(id) => match crate::auth::lockout::check_lockout(db, id).await {
-            Ok(()) => false,
-            Err(AppError::AccountLocked { .. }) => true,
-            Err(e) => return Err(e),
-        },
-        None => false,
-    };
+/// The close quality gate on the stored state of a WO: every blocking reason (empty: the close may
+/// go on), the validation profile it was judged with, and the outcome of the override signer's
+/// password check when it was checked (`Some(ok)`; counted toward the signer's account lockout by
+/// `close_wo`, outside its transaction). The same function judges a close made here (`close_wo`)
+/// and one received by synchronisation (`wo::closeout_sync`), so the two never drift. Reads only.
+pub(crate) async fn close_preflight(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    ev: &CloseEvidence<'_>,
+    rpn_critical: i64,
+) -> AppResult<(Vec<String>, i64, Option<bool>)> {
     // Some(true/false) once the signer's password was actually checked.
     let mut signer_password_checked: Option<bool> = None;
-
-    let txn = db.begin().await?;
-
-    // ── Guard: completed → closed ─────────────────────────────────────────
-    let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
-    use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
-    assert_action_allowed(&current_status, WoAction::Close).map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    guard_wo_transition(&current_status, &WoStatus::Closed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
-
     // ── Corrective work (EN 13306 nature) requires failure coding and root cause ──
-    let is_failure_required = crate::wo::types::work_order_nature(&txn, input.wo_id)
+    let is_failure_required = crate::wo::types::work_order_nature(conn, wo_id)
         .await?
         .is_some_and(|n| n.is_corrective());
 
-    let wo_scope = txn
+    let wo_scope = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT closeout_validation_profile_id, production_impact_id \
              FROM work_orders WHERE id = ?",
-            [input.wo_id.into()],
+            [wo_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
-            id: input.wo_id.to_string(),
+            id: wo_id.to_string(),
         })?;
     let profile_id: i64 = wo_scope
         .try_get::<Option<i64>>("", "closeout_validation_profile_id")
@@ -1141,25 +1172,25 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         .try_get::<Option<i64>>("", "production_impact_id")
         .map_err(|e| decode_err("production_impact_id", e))?;
 
-    let policy = load_closeout_policy(&txn, profile_id).await?;
+    let policy = load_closeout_policy(conn, profile_id).await?;
 
     // ── Quality gate — collect ALL blocking errors ────────────────────────
     let mut preflight = PreflightResult::default();
 
     // (a) Labor actuals required
-    let labor_row = txn
+    let labor_row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT \
                 COALESCE(wo.active_labor_hours, 0) AS alh, \
                 (SELECT COUNT(*) FROM work_order_interveners WHERE work_order_id = wo.id) AS labor_cnt \
              FROM work_orders wo WHERE wo.id = ?",
-            [input.wo_id.into()],
+            [wo_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
-            id: input.wo_id.to_string(),
+            id: wo_id.to_string(),
         })?;
     let alh: f64 = labor_row.try_get::<f64>("", "alh").map_err(|e| decode_err("alh", e))?;
     let labor_cnt: i64 = labor_row
@@ -1170,19 +1201,19 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     }
 
     // (b) Parts actuals required
-    let parts_row = txn
+    let parts_row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT \
                 wo.parts_actuals_confirmed AS pac, \
                 (SELECT COUNT(*) FROM work_order_parts WHERE work_order_id = wo.id AND quantity_used > 0) AS parts_cnt \
              FROM work_orders wo WHERE wo.id = ?",
-            [input.wo_id.into()],
+            [wo_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
-            id: input.wo_id.to_string(),
+            id: wo_id.to_string(),
         })?;
     let pac: i64 = parts_row.try_get::<i64>("", "pac").map_err(|e| decode_err("pac", e))?;
     let parts_cnt: i64 = parts_row
@@ -1194,12 +1225,12 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
 
     // (c) Failure coding + RCA for corrective/emergency (ISO 14224 close-out)
     if is_failure_required {
-        let fd_row = txn
+        let fd_row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT failure_mode_id, failure_cause_id, cause_not_determined, notes \
                  FROM work_order_failure_details WHERE work_order_id = ?",
-                [input.wo_id.into()],
+                [wo_id.into()],
             ))
             .await?;
 
@@ -1239,7 +1270,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                          (Failure mode is required.)",
                     );
                 }
-                if let Some(gov_err) = validate_failure_mode_governance(&txn, failure_mode_id).await? {
+                if let Some(gov_err) = validate_failure_mode_governance(conn, failure_mode_id).await? {
                     preflight.add(gov_err);
                 }
                 if failure_cause_id.is_none() && !policy.allow_close_with_cause_mode_only {
@@ -1257,16 +1288,16 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         }
 
         // (d) Root cause summary
-        let rcs_row = txn
+        let rcs_row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT root_cause_summary FROM work_orders WHERE id = ?",
-                [input.wo_id.into()],
+                [wo_id.into()],
             ))
             .await?
             .ok_or_else(|| AppError::NotFound {
                 entity: "WorkOrder".into(),
-                id: input.wo_id.to_string(),
+                id: wo_id.to_string(),
             })?;
         let rcs: Option<String> = rcs_row
             .try_get::<Option<String>>("", "root_cause_summary")
@@ -1280,19 +1311,19 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
 
     // (c3) Critical FMECA suggested-part requirement
     if is_failure_required && policy.require_fmeca_parts_for_critical {
-        let row = txn
+        let row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT wo.equipment_id, fd.failure_mode_id
                  FROM work_orders wo
                  LEFT JOIN work_order_failure_details fd ON fd.work_order_id = wo.id
                  WHERE wo.id = ?",
-                [input.wo_id.into()],
+                [wo_id.into()],
             ))
             .await?
             .ok_or_else(|| AppError::NotFound {
                 entity: "WorkOrder".into(),
-                id: input.wo_id.to_string(),
+                id: wo_id.to_string(),
             })?;
         let equipment_id: Option<i64> = row
             .try_get::<Option<i64>>("", "equipment_id")
@@ -1302,32 +1333,37 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             .map_err(|e| decode_err("failure_mode_id", e))?;
 
         if let (Some(eq_id), Some(mode_id)) = (equipment_id, failure_mode_id) {
-            let has_suggestions = has_critical_fmeca_part_suggestions(&txn, eq_id, mode_id, rpn_critical).await?;
+            let has_suggestions = has_critical_fmeca_part_suggestions(conn, eq_id, mode_id, rpn_critical).await?;
             if has_suggestions {
                 let has_matched_consumed_parts =
-                    has_consumed_critical_suggested_part(&txn, input.wo_id, eq_id, mode_id, rpn_critical).await?;
+                    has_consumed_critical_suggested_part(conn, wo_id, eq_id, mode_id, rpn_critical).await?;
                 let reason_min = policy.fmeca_parts_override_reason_min_length.max(1) as usize;
-                let override_reason_ok = input
-                    .fmeca_parts_override_reason
-                    .as_deref()
+                let override_reason_ok = ev
+                    .fmeca_override_reason
                     .map(|s| s.trim().len() >= reason_min)
                     .unwrap_or(false);
-                let signer_id_opt = input.fmeca_parts_override_signed_by_id;
+                let signer_id_opt = ev.fmeca_override_signer_id;
                 let signer_id = signer_id_opt.unwrap_or_default();
-                let signer_exists = signer_id > 0 && has_active_user(&txn, signer_id).await?;
+                let signer_exists = signer_id > 0 && has_active_user(conn, signer_id).await?;
                 let signer_has_role = signer_exists
-                    && has_supervisor_override_role(&txn, signer_id, &policy.fmeca_parts_override_allowed_roles)
+                    && has_supervisor_override_role(conn, signer_id, &policy.fmeca_parts_override_allowed_roles)
                         .await?;
                 let signer_is_distinct = !policy.fmeca_parts_override_require_distinct_signer
-                    || (signer_id > 0 && signer_id != input.actor_id);
+                    || (signer_id > 0 && ev.closer_user_id.is_some_and(|closer| closer != signer_id));
                 let signer_password_ok = if signer_exists {
-                    match input.fmeca_parts_override_signer_password.as_deref() {
-                        Some(raw) if !raw.trim().is_empty() && !signer_locked => {
-                            let ok = verify_user_password(&txn, signer_id, raw).await?;
+                    match ev.fmeca_override_signer_password {
+                        SignerPassword::Given(Some(raw)) if !raw.trim().is_empty() => {
+                            let ok = verify_user_password(conn, signer_id, raw).await?;
                             signer_password_checked = Some(ok);
                             ok
                         }
-                        _ => false,
+                        SignerPassword::Given(_) => false,
+                        // The signer's account is locked out here: the password is not checked.
+                        SignerPassword::Locked => false,
+                        // A received close: the signer typed the password on the PC that closed;
+                        // it cannot be checked again here (docs/KNOWN_LIMITS.md), and no lockout
+                        // counter of this PC is touched.
+                        SignerPassword::NotVerifiableHere => true,
                     }
                 } else {
                     false
@@ -1345,7 +1381,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 if !has_matched_consumed_parts && !signer_ok {
                     preflight.add("GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNATURE_REQUIRED");
                 }
-                if !has_matched_consumed_parts && signer_id_opt == Some(input.actor_id) {
+                if !has_matched_consumed_parts && signer_id_opt.is_some() && signer_id_opt == ev.closer_user_id {
                     preflight.add("GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_MUST_DIFFER");
                 }
                 if !has_matched_consumed_parts && signer_exists && !signer_has_role {
@@ -1357,7 +1393,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                     && signer_is_distinct
                     && !signer_password_ok
                 {
-                    preflight.add(if signer_locked {
+                    preflight.add(if matches!(ev.fmeca_override_signer_password, SignerPassword::Locked) {
                         "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_LOCKED"
                     } else {
                         "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_AUTH_FAILED"
@@ -1369,20 +1405,19 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
 
     // (c2) Downtime or attestation when production impact is recorded
     if policy.require_downtime_if_production_impact && production_impact_id.is_some() {
-        let dt_row = txn
+        let dt_row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT COUNT(*) AS cnt FROM work_order_downtime_segments \
                  WHERE work_order_id = ?",
-                [input.wo_id.into()],
+                [wo_id.into()],
             ))
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("downtime count")))?;
         let dt_cnt: i64 = dt_row.try_get::<i64>("", "cnt").map_err(|e| decode_err("dt_cnt", e))?;
-        let attest = input.no_downtime_attestation == Some(true);
-        let reason_ok = input
+        let attest = ev.no_downtime_attestation == Some(true);
+        let reason_ok = ev
             .no_downtime_attestation_reason
-            .as_deref()
             .map(|s| s.trim().len() >= 8)
             .unwrap_or(false);
         if dt_cnt == 0 && !(attest && reason_ok) {
@@ -1396,12 +1431,12 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
 
     // (e) Technical verification
     if is_failure_required && policy.require_verification_return_to_service {
-        let rts_row = txn
+        let rts_row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT COUNT(*) AS cnt FROM work_order_verifications \
                  WHERE work_order_id = ? AND result = 'pass' AND return_to_service_confirmed = 1",
-                [input.wo_id.into()],
+                [wo_id.into()],
             ))
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Verification RTS count returned no row")))?;
@@ -1415,13 +1450,13 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             );
         }
     } else {
-        let ver_row = txn
+        let ver_row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT COUNT(*) AS cnt \
                  FROM work_order_verifications \
                  WHERE work_order_id = ? AND result IN ('pass', 'monitor')",
-                [input.wo_id.into()],
+                [wo_id.into()],
             ))
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Verification count returned no row")))?;
@@ -1433,11 +1468,91 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         }
     }
 
+    // (f) Every mandatory task closed with an accepted result (D3; a legacy or received
+    // cancelled / deferred / bare NOK mandatory task counts as open).
+    let open_tasks = crate::wo::tasks::open_mandatory_tasks(conn, wo_id).await?;
+    if !open_tasks.is_empty() {
+        preflight.add(format!(
+            "GATE_CLOSEOUT_TASKS_OPEN: Tâches obligatoires non clôturées avec un résultat accepté : {}. \
+             (Mandatory tasks not closed with OK, N/A or NOK with a finding or follow-up.)",
+            open_tasks.join(", ")
+        ));
+    }
+
+    Ok((preflight.errors, profile_id, signer_password_checked))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// C) close_wo — quality-gated closure with cost roll-up
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Pre-flight result accumulating all blocking conditions.
+#[derive(Debug, Default)]
+struct PreflightResult {
+    errors: Vec<String>,
+}
+
+impl PreflightResult {
+    fn add(&mut self, msg: impl Into<String>) {
+        self.errors.push(msg.into());
+    }
+}
+
+/// Close a WO after passing the mandatory quality gate.
+///
+/// All blocking conditions are collected and returned together so the
+/// user sees every issue at once, not one-at-a-time.
+pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult<WorkOrder> {
+    // Load settings before opening the transaction — SQLite single-connection pools
+    // deadlock if we call back into `db` while `txn` holds the only connection.
+    let rpn_critical = advanced_rams_queries::fmeca_rpn_critical_threshold_i64(db).await?;
+
+    // The override signer's password counts toward the signer's account lockout, as at sign-in
+    // (`auth::lockout`): a locked-out signer is not checked at all. Read before the transaction
+    // (the lockout check may write); the outcome is recorded after it.
+    let signer_for_password = signer_password_account(&input);
+    let signer_locked = match signer_for_password {
+        Some(id) => match crate::auth::lockout::check_lockout(db, id).await {
+            Ok(()) => false,
+            Err(AppError::AccountLocked { .. }) => true,
+            Err(e) => return Err(e),
+        },
+        None => false,
+    };
+
+    let txn = db.begin().await?;
+
+    // ── Guard: completed → closed ─────────────────────────────────────────
+    let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
+    use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
+    assert_action_allowed(&current_status, WoAction::Close).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_wo_transition(&current_status, &WoStatus::Closed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+
+    // ── Quality gate — collect ALL blocking errors (`close_preflight`) ────
+    let (preflight_errors, profile_id, signer_password_checked) = close_preflight(
+        &txn,
+        input.wo_id,
+        &CloseEvidence {
+            closer_user_id: Some(input.actor_id),
+            no_downtime_attestation: input.no_downtime_attestation,
+            no_downtime_attestation_reason: input.no_downtime_attestation_reason.as_deref(),
+            fmeca_override_reason: input.fmeca_parts_override_reason.as_deref(),
+            fmeca_override_signer_id: input.fmeca_parts_override_signed_by_id,
+            fmeca_override_signer_password: if signer_locked {
+                SignerPassword::Locked
+            } else {
+                SignerPassword::Given(input.fmeca_parts_override_signer_password.as_deref())
+            },
+        },
+        rpn_critical,
+    )
+    .await?;
+
     // ── Return all blocking errors at once ────────────────────────────────
-    if !preflight.is_ok() {
+    if !preflight_errors.is_empty() {
         txn.rollback().await?;
         record_signer_password_outcome(db, &input, signer_for_password, signer_password_checked).await?;
-        return Err(AppError::ValidationFailed(preflight.errors));
+        return Err(AppError::ValidationFailed(preflight_errors));
     }
 
     // ── Compute final costs ───────────────────────────────────────────────
