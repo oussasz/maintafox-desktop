@@ -255,14 +255,16 @@
     "profile": "My Profile",
     "notifications": "Notifications",
     "general": "General",
-    "security": "Security & Logs",
+    "security": "Security",
     "backup": "Backup & Ops",
     "integrations": "System & Sync",
+    "activity": "Activity log",
     "profileHint": "Account details, password, PIN, trusted devices, and session history.",
     "notificationsHint": "Inbox, acknowledgements, snoozes, and per-category preferences.",
     "generalHint": "Language, currency and fiscal year, work orders, reliability, printed document header. Each setting shows its shipped value, who may change it and its history.",
-    "securityHint": "Password policy, session policy, activity feed, and audit log.",
-    "integrationsHint": "Sync status, license, connections, and diagnostics."
+    "securityHint": "Password and session policy.",
+    "integrationsHint": "Sync status, license, connections, and diagnostics.",
+    "activityHint": "What was done in the application, by whom and when, and the audit log."
   },
   "backupOps": {
     "title": "Backup operations",
@@ -404,6 +406,25 @@
     "edition": "Edition {{edition}}",
     "pendingWrites": "Changes waiting to be sent:",
     "lastAction": "Last administrator action:",
+    "traceEvent": {
+      "activation_applied": "Activation applied",
+      "activation_contract_applied": "Activation contract applied",
+      "activation_revocation_applied": "Activation revocation applied",
+      "activation_secret_rotated": "Binding secret renewed",
+      "activation_rebind_requested": "New binding requested",
+      "entitlement_envelope_applied": "Licence rights received",
+      "license_admin_action_applied": "Licence administration action applied",
+      "license_admin_action_reconciled": "Licence administration action reconciled",
+      "license_compromise_response_applied": "Compromise response applied",
+      "other": "Licence event"
+    },
+    "traceOutcome": {
+      "accepted": "accepted",
+      "applied": "applied",
+      "requested": "requested",
+      "rejected": "rejected",
+      "other": "outcome recorded"
+    },
     "traces_one": "{{count}} recent licence event (technical details)",
     "traces_other": "{{count}} recent licence events (technical details)",
     "reason": "Reason",

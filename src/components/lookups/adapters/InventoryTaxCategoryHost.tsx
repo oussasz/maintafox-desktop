@@ -232,7 +232,7 @@ export function InventoryTaxCategoryHost() {
                   onChange={(e) =>
                     setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), code: e.target.value }))
                   }
-                  className="h-7 text-sm"
+                  className="h-10 text-sm"
                   autoFocus
                 />
               </ReferenceValueTableCell>
@@ -243,7 +243,7 @@ export function InventoryTaxCategoryHost() {
                   onChange={(e) =>
                     setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), label: e.target.value }))
                   }
-                  className="h-7 text-sm"
+                  className="h-10 text-sm"
                 />
               </ReferenceValueTableCell>
               <ReferenceValueTableCell>
@@ -253,7 +253,7 @@ export function InventoryTaxCategoryHost() {
                   onChange={(e) =>
                     setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), fr_label: e.target.value }))
                   }
-                  className="h-7 text-sm"
+                  className="h-10 text-sm"
                 />
               </ReferenceValueTableCell>
               <ReferenceValueTableCell>
@@ -263,7 +263,7 @@ export function InventoryTaxCategoryHost() {
                   onChange={(e) =>
                     setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), en_label: e.target.value }))
                   }
-                  className="h-7 text-sm"
+                  className="h-10 text-sm"
                 />
               </ReferenceValueTableCell>
               <ReferenceValueTableCell>
@@ -305,7 +305,7 @@ export function InventoryTaxCategoryHost() {
                 <ReferenceValueTableCell>
                   {isEditing ? (
                     <Input
-                      className="h-7 text-sm"
+                      className="h-10 text-sm"
                       value={editingDraft.code}
                       onChange={(e) => setEditingDraft((s) => ({ ...s, code: e.target.value }))}
                     />
@@ -316,7 +316,7 @@ export function InventoryTaxCategoryHost() {
                 <ReferenceValueTableCell>
                   {isEditing ? (
                     <Input
-                      className="h-7 text-sm"
+                      className="h-10 text-sm"
                       value={editingDraft.label}
                       onChange={(e) => setEditingDraft((s) => ({ ...s, label: e.target.value }))}
                     />
@@ -327,7 +327,7 @@ export function InventoryTaxCategoryHost() {
                 <ReferenceValueTableCell>
                   {isEditing ? (
                     <Input
-                      className="h-7 text-sm"
+                      className="h-10 text-sm"
                       value={editingDraft.fr_label ?? ""}
                       onChange={(e) => setEditingDraft((s) => ({ ...s, fr_label: e.target.value }))}
                     />
@@ -338,7 +338,7 @@ export function InventoryTaxCategoryHost() {
                 <ReferenceValueTableCell>
                   {isEditing ? (
                     <Input
-                      className="h-7 text-sm"
+                      className="h-10 text-sm"
                       value={editingDraft.en_label ?? ""}
                       onChange={(e) => setEditingDraft((s) => ({ ...s, en_label: e.target.value }))}
                     />

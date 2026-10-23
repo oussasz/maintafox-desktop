@@ -461,7 +461,7 @@ async fn validate_family_exists(db: &impl ConnectionTrait, family_code: &str, cl
         .await?;
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "The selected family ('{}') does not match class '{}'. Please choose a matching family or leave family empty.",
+            "GATE_ASSET_FAMILY_CLASS_MISMATCH: The selected family ('{}') does not match class '{}'. Please choose a matching family or leave family empty.",
             family_code, class_code
         )]));
     }

@@ -26,11 +26,13 @@ import {
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { DateTimeLocalField } from "@/components/ui/date-time-local-field";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import { StatusChip } from "@/components/ui/status-chip";
 import { toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { appErrorText } from "@/lib/app-error";
+import { useCanReadList } from "@/lib/list-access";
 import {
   listInspectionRoundPage,
   listInspectionTemplates,
@@ -451,6 +453,8 @@ export function PersonnelPicker({ id, value, onChange }: PersonnelPickerProps) {
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The search is `list_personnel` (per.view): without it there is no search, the field says why.
+  const canSearch = useCanReadList("people");
 
   useEffect(
     () => () => {
@@ -504,6 +508,14 @@ export function PersonnelPicker({ id, value, onChange }: PersonnelPickerProps) {
             {t("schedule.clearAssignee")}
           </Button>
         </div>
+      </FormField>
+    );
+  }
+
+  if (!canSearch) {
+    return (
+      <FormField name={id} label={t("schedule.assignee")}>
+        <ListAccessNote list="people" />
       </FormField>
     );
   }
@@ -569,8 +581,7 @@ interface TeamSelectProps {
 /** Team picked by name among the active teams (needs the right to list personnel). */
 export function TeamSelect({ id, value, onChange }: TeamSelectProps) {
   const { t } = useTranslation("inspections");
-  const { can } = usePermissions();
-  const allowed = can(P.PER_VIEW);
+  const allowed = useCanReadList("teams");
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [failed, setFailed] = useState(false);
 
@@ -584,7 +595,7 @@ export function TeamSelect({ id, value, onChange }: TeamSelectProps) {
   if (!allowed) {
     return (
       <FormField name={id} label={t("schedule.team")}>
-        <p className="text-sm text-text-muted">{t("schedule.teamNotAllowed")}</p>
+        <ListAccessNote list="teams" />
       </FormField>
     );
   }

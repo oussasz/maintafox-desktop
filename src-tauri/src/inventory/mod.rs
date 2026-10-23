@@ -11,6 +11,7 @@ pub mod negative_stock;
 pub mod periods;
 pub mod procurement;
 pub mod queries;
+pub mod reservations;
 pub mod suppliers;
 pub mod unit_conversions;
 pub mod valuation;
@@ -19,5 +20,7 @@ pub mod valuation;
 mod benchmark_tests;
 #[cfg(test)]
 mod negative_stock_tests;
+#[cfg(test)]
+mod reservations_tests;
 #[cfg(test)]
 mod tests;

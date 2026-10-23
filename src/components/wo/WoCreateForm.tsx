@@ -43,6 +43,7 @@ import type {
 } from "@shared/ipc-types";
 
 import { WoPermitRequirementField } from "./WoPermitRequirementField";
+import { permitRuleFlagActive } from "./WoPermitRuleNote";
 import { woNatureLabel, woTypeLabel } from "./use-wo-type-labels";
 
 const TITLE_MAX = 200;
@@ -148,6 +149,15 @@ export function WoCreateForm({
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [requiresPermit, setRequiresPermit] = useState<boolean>(initial?.requires_permit ?? false);
+  // A requirement set by a plant rule or carried from a request flagged "sécurité" is not an edit
+  // of the work order (the backend refuses the untick): cleared from the planning panel with the
+  // permit-issue right and a reason.
+  const permitLocked = initial != null && permitRuleFlagActive(initial);
+  const permitLockedReason = !permitLocked
+    ? null
+    : initial?.permit_rule_code != null
+      ? t("permitRule.checkboxLocked", { rule: initial.permit_rule_code })
+      : t("permitRule.clearHint");
 
   // Equipment selection (shared AssetPicker)
   const [selectedAsset, setSelectedAsset] = useState<AssetSearchResult | null>(null);
@@ -491,7 +501,12 @@ export function WoCreateForm({
         </FormField>
 
         {/* Safety: permit / LOTO gate on start */}
-        <WoPermitRequirementField checked={requiresPermit} onCheckedChange={setRequiresPermit} />
+        <WoPermitRequirementField
+          checked={requiresPermit}
+          onCheckedChange={setRequiresPermit}
+          disabled={permitLocked}
+          disabledReason={permitLockedReason}
+        />
       </section>
 
       <Separator />

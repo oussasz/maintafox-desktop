@@ -309,8 +309,11 @@ fn extract_claim_and_envelope(
     ProductActivationClaimRecord,
     Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
 )> {
-    let mut value: serde_json::Value = serde_json::from_str(raw)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("claimJson must be valid JSON: {e}")]))?;
+    let mut value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_LICENSE_PAYLOAD_INVALID: claimJson must be valid JSON: {e}"
+        )])
+    })?;
 
     let envelope = match value
         .as_object_mut()
@@ -318,8 +321,13 @@ fn extract_claim_and_envelope(
         .filter(|v| !v.is_null())
     {
         Some(env_value) => Some(
-            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(env_value)
-                .map_err(|e| AppError::ValidationFailed(vec![format!("entitlement_envelope is invalid: {e}")]))?,
+            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(env_value).map_err(
+                |e| {
+                    AppError::ValidationFailed(vec![format!(
+                        "GATE_LICENSE_ENVELOPE_INVALID: entitlement_envelope is invalid: {e}"
+                    )])
+                },
+            )?,
         ),
         None => None,
     };
@@ -330,7 +338,7 @@ fn extract_claim_and_envelope(
 
     let mut claim: ProductActivationClaimRecord = serde_json::from_value(value).map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "claimJson must be valid ProductActivationClaimRecord JSON: {e}"
+            "GATE_LICENSE_PAYLOAD_INVALID: claimJson must be valid ProductActivationClaimRecord JSON: {e}"
         )])
     })?;
     // Prefer explicit edition fields for display when plan/tier missing.
@@ -1013,7 +1021,9 @@ pub(crate) async fn get_activation_bootstrap_state_in(
 #[tauri::command]
 pub async fn request_plant_join(state: State<'_, AppState>) -> AppResult<()> {
     if get_activation_claim_tenant_id(&state.db).await?.is_none() {
-        return Err(AppError::ValidationFailed(vec!["Device is not activated.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LICENSE_NOT_ACTIVATED: Device is not activated.".into(),
+        ]));
     }
     if plant_has_administrator(&state.db).await? {
         return Err(first_admin_exists());
@@ -1119,9 +1129,9 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
     db: &DatabaseConnection,
     input: BootstrapInitialAdminInput,
 ) -> AppResult<()> {
-    let tenant_id = get_activation_claim_tenant_id(db)
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Device is not activated.".into()]))?;
+    let tenant_id = get_activation_claim_tenant_id(db).await?.ok_or_else(|| {
+        AppError::ValidationFailed(vec!["GATE_LICENSE_NOT_ACTIVATED: Device is not activated.".into()])
+    })?;
     if plant_has_administrator(db).await? {
         return Err(first_admin_exists());
     }
@@ -1133,11 +1143,15 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
 
     let username = input.username.trim();
     if username.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["username is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LICENSE_USERNAME_REQUIRED: username is required.".into(),
+        ]));
     }
     let email = input.email.trim();
     if email.is_empty() || !email.contains('@') || !email.contains('.') {
-        return Err(AppError::ValidationFailed(vec!["A valid email is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LICENSE_EMAIL_REQUIRED: A valid email is required.".into(),
+        ]));
     }
     crate::auth::builtin_admin::validate_first_admin_password(db, &input.password).await?;
     let password_hash = crate::auth::password::hash_password(&input.password)?;
@@ -1160,7 +1174,7 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
             .await?;
         if exists.is_some() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Username '{username}' is already taken"
+                "GATE_ADMIN_USERNAME_TAKEN: Username '{username}' is already taken"
             )]));
         }
 
@@ -2107,16 +2121,24 @@ pub(crate) async fn check_product_license_key_entry_in(
     caller: LicenceCaller,
     preview_json: &str,
 ) -> AppResult<()> {
-    let mut value: serde_json::Value = serde_json::from_str(preview_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("previewJson must be valid JSON: {e}")]))?;
+    let mut value: serde_json::Value = serde_json::from_str(preview_json).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_LICENSE_PAYLOAD_INVALID: previewJson must be valid JSON: {e}"
+        )])
+    })?;
     let envelope = match value
         .as_object_mut()
         .and_then(|obj| obj.remove("entitlement_envelope"))
         .filter(|v| !v.is_null())
     {
         Some(env_value) => Some(
-            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(env_value)
-                .map_err(|e| AppError::ValidationFailed(vec![format!("entitlement_envelope is invalid: {e}")]))?,
+            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(env_value).map_err(
+                |e| {
+                    AppError::ValidationFailed(vec![format!(
+                        "GATE_LICENSE_ENVELOPE_INVALID: entitlement_envelope is invalid: {e}"
+                    )])
+                },
+            )?,
         ),
         None => None,
     };
@@ -2125,7 +2147,7 @@ pub(crate) async fn check_product_license_key_entry_in(
     }
     let mut target: LicenceChangeTarget = serde_json::from_value(value).map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "previewJson must name the tenant, licence and machine: {e}"
+            "GATE_LICENSE_PAYLOAD_INVALID: previewJson must name the tenant, licence and machine: {e}"
         )])
     })?;
     // As `extract_claim_and_envelope` does for the claim.
@@ -2176,7 +2198,7 @@ pub(crate) async fn submit_product_license_key_in(
     let trimmed = key.trim();
     if trimmed.len() < 8 {
         return Err(AppError::ValidationFailed(vec![
-            "License key must be at least 8 characters.".into(),
+            "GATE_LICENSE_KEY_SHORT: License key must be at least 8 characters.".into(),
         ]));
     }
     let mut entitlement_envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput> = None;
@@ -2315,11 +2337,16 @@ pub(crate) async fn apply_product_license_reconciliation_in(
 ) -> AppResult<ProductLicenseOnboardingState> {
     let changed_by_id = caller.user_id;
     let _record_lock = LICENCE_RECORD_LOCK.lock().await;
-    let mut record = load_state_record_from_db(db)
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["No local product license state found.".into()]))?;
-    let outcome_value: serde_json::Value = serde_json::from_str(outcome_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("outcomeJson must be valid JSON: {e}")]))?;
+    let mut record = load_state_record_from_db(db).await?.ok_or_else(|| {
+        AppError::ValidationFailed(vec![
+            "GATE_LICENSE_NO_STATE: No local product license state found.".into()
+        ])
+    })?;
+    let outcome_value: serde_json::Value = serde_json::from_str(outcome_json).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_LICENSE_PAYLOAD_INVALID: outcomeJson must be valid JSON: {e}"
+        )])
+    })?;
     let entitlement_envelope = match outcome_value
         .get("entitlement_envelope")
         .cloned()
@@ -2349,7 +2376,7 @@ pub(crate) async fn apply_product_license_reconciliation_in(
     }
     let mut outcome: ProductLicenseReconciliationInput = serde_json::from_value(outcome_for_meta).map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "outcomeJson must be valid ProductLicenseReconciliationInput JSON: {e}"
+            "GATE_LICENSE_PAYLOAD_INVALID: outcomeJson must be valid ProductLicenseReconciliationInput JSON: {e}"
         )])
     })?;
     outcome.entitlement_envelope = entitlement_envelope;
@@ -2373,7 +2400,9 @@ pub(crate) async fn apply_product_license_reconciliation_in(
     match outcome.kind {
         ProductLicenseReconciliationOutcomeKind::Success => {
             let claim = outcome.claim.ok_or_else(|| {
-                AppError::ValidationFailed(vec!["Reconciliation success requires claim payload.".into()])
+                AppError::ValidationFailed(vec![
+                    "GATE_LICENSE_PAYLOAD_INVALID: Reconciliation success requires claim payload.".into(),
+                ])
             })?;
             // Signed out, `keep_stored_display` already put back the stored name (None when none
             // was stored), so the company name shown is only replaced by a name the claim states.

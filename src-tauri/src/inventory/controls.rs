@@ -89,7 +89,11 @@ async fn get_balance<C: ConnectionTrait>(db: &C, article_id: i64, location_id: i
                 [location_id.into()],
             ))
             .await?
-            .ok_or_else(|| AppError::ValidationFailed(vec!["location_id does not exist.".to_string()]))?;
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "GATE_INV_LOCATION_UNKNOWN: location_id does not exist.".to_string()
+                ])
+            })?;
         Ok((wh_row.try_get("", "warehouse_id")?, 0.0))
     }
 }
@@ -209,7 +213,7 @@ pub async fn transition_count_session(
     let current = ensure_count_session(db, input.session_id).await?;
     if current.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "count session row_version mismatch.".to_string()
+            "GATE_RECORD_CHANGED_ELSEWHERE: count session row_version mismatch.".to_string(),
         ]));
     }
     let allowed = match current.status.as_str() {
@@ -260,7 +264,7 @@ pub async fn upsert_count_line(
     let session = ensure_count_session(db, input.session_id).await?;
     if session.status != "draft" && session.status != "counting" {
         return Err(AppError::ValidationFailed(vec![
-            "Count lines can only be edited in draft/counting status.".to_string(),
+            "GATE_INV_COUNT_NOT_EDITABLE: Count lines can only be edited in draft/counting status.".to_string(),
         ]));
     }
     // The stock the count is set against and the counts it knows are read in one transaction (one
@@ -276,7 +280,7 @@ pub async fn upsert_count_line(
     let variance_qty = input.counted_qty - system_qty;
     if variance_qty.abs() > f64::EPSILON && input.variance_reason_code.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "variance_reason_code is mandatory when variance exists.".to_string(),
+            "GATE_INV_COUNT_VARIANCE_REASON: variance_reason_code is mandatory when variance exists.".to_string(),
         ]));
     }
     if let Some(code) = input.variance_reason_code.as_deref() {
@@ -354,13 +358,13 @@ pub async fn approve_count_line(
 ) -> AppResult<InventoryCountLine> {
     if input.reviewer_evidence.trim().chars().count() < crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS {
         return Err(AppError::ValidationFailed(vec![
-            "reviewer_evidence must be explicit and at least 8 characters.".to_string(),
+            "GATE_INV_COUNT_EVIDENCE: reviewer_evidence must be explicit and at least 8 characters.".to_string(),
         ]));
     }
     let line = get_count_line(db, input.line_id).await?;
     if line.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "count line row_version mismatch.".to_string()
+            "GATE_RECORD_CHANGED_ELSEWHERE: count line row_version mismatch.".to_string(),
         ]));
     }
     if line.approval_required == 0 {
@@ -392,31 +396,31 @@ pub async fn post_count_session(
     let session = ensure_count_session(db, input.session_id).await?;
     if session.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "count session row_version mismatch.".to_string()
+            "GATE_RECORD_CHANGED_ELSEWHERE: count session row_version mismatch.".to_string(),
         ]));
     }
     if session.status != "approved" {
         return Err(AppError::ValidationFailed(vec![
-            "Count session must be approved before posting.".to_string(),
+            "GATE_INV_COUNT_NOT_APPROVED: Count session must be approved before posting.".to_string(),
         ]));
     }
     let lines = list_count_lines(db, input.session_id).await?;
     if lines.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Count session has no lines.".to_string()
+            "GATE_INV_COUNT_NO_LINES: Count session has no lines.".to_string(),
         ]));
     }
     for line in &lines {
         if line.variance_qty.abs() > f64::EPSILON {
             if line.variance_reason_code.is_none() {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Line {} has variance but no variance reason.",
+                    "GATE_INV_COUNT_VARIANCE_REASON: Line {} has variance but no variance reason.",
                     line.id
                 )]));
             }
             if line.approved_by_id.is_none() || line.approval_note.as_deref().unwrap_or("").trim().is_empty() {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Line {} cannot post without reviewer evidence.",
+                    "GATE_INV_COUNT_EVIDENCE: Line {} cannot post without reviewer evidence.",
                     line.id
                 )]));
             }
@@ -503,7 +507,7 @@ pub async fn post_count_session(
         let next_qty = current_qty + line.variance_qty;
         if next_qty < 0.0 {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Posting would produce negative stock for line {}.",
+                "GATE_INV_NEGATIVE_STOCK: Posting would produce negative stock for line {}.",
                 line.id
             )]));
         }
@@ -567,19 +571,19 @@ pub async fn reverse_count_session(
     // which closes its item as an adjustment (`inventory::negative_stock`).
     if input.reason.trim().chars().count() < crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Reversal reason must be explicit (at least {} characters).",
+            "GATE_INV_REVERSAL_REASON:min={0}: Reversal reason must be explicit (at least {0} characters).",
             crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS
         )]));
     }
     let session = ensure_count_session(db, input.session_id).await?;
     if session.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "count session row_version mismatch.".to_string()
+            "GATE_RECORD_CHANGED_ELSEWHERE: count session row_version mismatch.".to_string(),
         ]));
     }
     if session.status != "posted" {
         return Err(AppError::ValidationFailed(vec![
-            "Only posted count sessions can be reversed.".to_string(),
+            "GATE_INV_COUNT_NOT_POSTED: Only posted count sessions can be reversed.".to_string(),
         ]));
     }
     let lines = list_count_lines(db, input.session_id).await?;
@@ -597,7 +601,7 @@ pub async fn reverse_count_session(
             current_qty < -crate::inventory::negative_stock::QTY_TOLERANCE && next_qty > current_qty;
         if next_qty < 0.0 && !improves_negative {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Reversal would produce negative stock for line {}.",
+                "GATE_INV_NEGATIVE_STOCK: Reversal would produce negative stock for line {}.",
                 line.id
             )]));
         }

@@ -5,6 +5,12 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import { i18n } from "@/i18n/config";
 import { describeAppError } from "@/lib/app-error";
+import {
+  hasStepUpRequester,
+  isLocalStepUpActive,
+  requestGlobalStepUp,
+  STEP_UP_CANCELLED_MESSAGE,
+} from "@/lib/step-up-bridge";
 import { pushAppToast } from "@/store/app-toast-store";
 import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 import { toErrorMessage } from "@/utils/errors";
@@ -16,8 +22,6 @@ const SILENT_IPC_COMMANDS = new Set([
   "get_task_status",
   "set_window_mode",
 ]);
-
-type AuthLockMode = "session" | "permission" | "unknown";
 
 /** Server code (`AppError::PasswordChangeRequired`): the password must be changed first. */
 export const PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED";
@@ -31,33 +35,15 @@ function extractIpcErrorMeta(err: unknown): { code: string; rawMsg: string } {
   return { code, rawMsg };
 }
 
-function classifyAuthLock(code: string): AuthLockMode | null {
-  // These align with `AppError` serialization in `src-tauri/src/errors.rs`.
-  if (!code) return null;
-
-  // `STEP_UP_REQUIRED` is *not* a lost session: the user remains logged in and must
-  // re-enter the password in `StepUpDialog` (via `useStepUp`).
-  // `SESSION_LOCKED` is idle-lock: AuthGuard shows LockScreen after a silent refresh.
-
-  if (
-    code === "AUTH_ERROR" ||
-    code === "SESSION_CLAIM_INVALID" ||
-    code === "TENANT_SCOPE_VIOLATION" ||
-    code === "ACCOUNT_LOCKED"
-  ) {
-    return "session";
-  }
-
-  if (code === "PERMISSION_DENIED") {
-    return "permission";
-  }
-
-  return null;
-}
-
-function isSessionConfirmCode(code: string): boolean {
+/**
+ * Codes that mean the session is lost (sign in again), aligned with `AppError` serialization in
+ * `src-tauri/src/errors.rs`. `STEP_UP_REQUIRED` is not one (the user stays signed in and confirms
+ * the password in `StepUpDialog`); `SESSION_LOCKED` is the idle lock (AuthGuard's LockScreen).
+ * `PERMISSION_DENIED` is not one either: a refused right never opens the lock, it is one toast
+ * with the reason and the app stays usable (AU-35).
+ */
+function isLostSessionCode(code: string): boolean {
   return (
-    code === "SESSION_LOCKED" ||
     code === "AUTH_ERROR" ||
     code === "SESSION_CLAIM_INVALID" ||
     code === "TENANT_SCOPE_VIOLATION" ||
@@ -65,15 +51,8 @@ function isSessionConfirmCode(code: string): boolean {
   );
 }
 
-function shouldOpenAuthLock(cmd: string, code: string): boolean {
-  if (SILENT_IPC_COMMANDS.has(cmd)) {
-    return false;
-  }
-  // Login failures should remain local to the login form.
-  if (cmd === "login") {
-    return false;
-  }
-  return classifyAuthLock(code) !== null;
+function isSessionConfirmCode(code: string): boolean {
+  return code === "SESSION_LOCKED" || isLostSessionCode(code);
 }
 
 /**
@@ -97,7 +76,7 @@ async function refreshSessionStoreSilent(): Promise<{
 
 /** The error says the session is lost (sign in again), not a permission or data problem. */
 export function isLostSessionError(err: unknown): boolean {
-  return classifyAuthLock(extractIpcErrorMeta(err).code) === "session";
+  return isLostSessionCode(extractIpcErrorMeta(err).code);
 }
 
 /** Opens the sign-in-again dialog for a command refused because the session is lost. */
@@ -135,8 +114,9 @@ export async function confirmSessionAfterSilentFailure(err: unknown): Promise<vo
 /**
  * Confirm session state before opening AuthLock. Idle-lock routes to LockScreen
  * via AuthGuard after refresh — never AuthLock. True session loss opens AuthLock.
+ * Anything else (a refused right included) is left to the caller and the toast.
  */
-function handleAuthAndPermissionFailures(cmd: string, err: unknown): void {
+function handleSessionFailures(cmd: string, err: unknown): void {
   const { code, rawMsg } = extractIpcErrorMeta(err);
 
   if (SILENT_IPC_COMMANDS.has(cmd) || cmd === "login") {
@@ -205,23 +185,7 @@ function handleAuthAndPermissionFailures(cmd: string, err: unknown): void {
         },
       });
     })();
-    return;
   }
-
-  if (!shouldOpenAuthLock(cmd, code)) {
-    return;
-  }
-
-  const mode = classifyAuthLock(code) ?? "unknown";
-  useAuthInterceptorStore.getState().openFromAuthFailure({
-    mode,
-    failure: {
-      atMs: Date.now(),
-      command: cmd,
-      code: code || null,
-      message: rawMsg,
-    },
-  });
 }
 
 function notifyInvokeFailure(cmd: string, err: unknown): void {
@@ -230,8 +194,8 @@ function notifyInvokeFailure(cmd: string, err: unknown): void {
   }
   const { code, rawMsg } = extractIpcErrorMeta(err);
 
-  if (isSessionConfirmCode(code) || shouldOpenAuthLock(cmd, code)) {
-    // AuthLock / LockScreen replace toast spam for auth/permission surfacing.
+  if (isSessionConfirmCode(code)) {
+    // AuthLock / LockScreen replace toast spam for a lost or locked session.
     return;
   }
 
@@ -275,7 +239,8 @@ export async function invokeSilent<T>(cmd: string, args?: Record<string, unknown
 export interface InvokeOptions {
   /**
    * Show the global error toast on failure (default true). Set false when the caller shows
-   * the failure itself (inline, in plain language); session/permission handling still runs.
+   * the failure itself (inline, in plain language) or for calls the user did not ask for: a
+   * refused right then only reaches the caller. Session-loss handling (the lock) still runs.
    */
   notifyOnError?: boolean;
 }
@@ -284,11 +249,25 @@ export async function invoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
   options?: InvokeOptions,
+  afterStepUp = false,
 ): Promise<T> {
   try {
     return await tauriInvoke<T>(cmd, args);
   } catch (e) {
-    handleAuthAndPermissionFailures(cmd, e);
+    // A caller without its own `withStepUp` still gets the password prompt, then a retry.
+    if (
+      extractIpcErrorMeta(e).code === "STEP_UP_REQUIRED" &&
+      !afterStepUp &&
+      !isLocalStepUpActive() &&
+      hasStepUpRequester()
+    ) {
+      if (!(await requestGlobalStepUp())) {
+        throw new Error(STEP_UP_CANCELLED_MESSAGE);
+      }
+      // One retry only: a second refusal after a verified password is shown as a refusal.
+      return await invoke<T>(cmd, args, options, true);
+    }
+    handleSessionFailures(cmd, e);
     if (options?.notifyOnError !== false) {
       notifyInvokeFailure(cmd, e);
     }

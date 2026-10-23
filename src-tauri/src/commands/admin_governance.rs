@@ -465,7 +465,7 @@ pub async fn revoke_session(session_id: String, state: State<'_, AppState>) -> A
 
     if session_id == current_session_id {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot revoke your own current session".into(),
+            "GATE_ADMIN_SELF_REVOKE: Cannot revoke your own current session".into(),
         ]));
     }
 
@@ -604,7 +604,7 @@ pub async fn create_delegation_policy(
     // ── Validate allowed_domains against known categories ────────────────
     if input.allowed_domains.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "At least one allowed domain is required".into(),
+            "GATE_ADMIN_DOMAINS_REQUIRED: At least one allowed domain is required".into(),
         ]));
     }
 
@@ -617,7 +617,7 @@ pub async fn create_delegation_policy(
     }
     if !invalid_domains.is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Unknown permission domains: {}",
+            "GATE_ADMIN_DOMAINS_UNKNOWN: Unknown permission domains: {}",
             invalid_domains.join(", ")
         )]));
     }
@@ -742,7 +742,7 @@ pub async fn update_delegation_policy(input: UpdateDelegationInput, state: State
         }
         if !invalid.is_empty() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Unknown permission domains: {}",
+                "GATE_ADMIN_DOMAINS_UNKNOWN: Unknown permission domains: {}",
                 invalid.join(", ")
             )]));
         }
@@ -951,7 +951,7 @@ pub async fn export_role_model(role_ids: Vec<i64>, state: State<'_, AppState>) -
 
     if role_ids.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "At least one role must be selected for export".into(),
+            "GATE_ADMIN_EXPORT_ROLE_REQUIRED: At least one role must be selected for export".into(),
         ]));
     }
 
@@ -1046,7 +1046,7 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
 
     if input.roles.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Import payload contains no roles".into()
+            "GATE_ADMIN_IMPORT_EMPTY: Import payload contains no roles".into(),
         ]));
     }
 
@@ -1082,7 +1082,7 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
         for dep in &deps {
             if dep.dependency_type == "hard" && !names.contains(&dep.required_permission_name) {
                 errors.push(format!(
-                    "{} requires {} (hard dependency)",
+                    "GATE_ADMIN_PERMISSION_DEPENDENCY:permission={0},required={1}: {} requires {} (hard dependency)",
                     dep.permission_name, dep.required_permission_name
                 ));
             }

@@ -19,6 +19,7 @@
     "totalAssets": "Équipements",
     "overdueItems": "En retard",
     "noChange": "aucun changement",
+    "points": "{{change}} pts",
     "vsPrevious": "vs période précédente",
     "stable": "Stable",
     "trendNew": "Nouveau vs période précédente vide",

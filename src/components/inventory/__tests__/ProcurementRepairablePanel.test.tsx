@@ -311,7 +311,7 @@ describe("ProcurementRepairablePanel", () => {
     // Opening the form again starts from an empty requisition.
     act(() => ref.current?.openCreateRequisition());
     const again = await screen.findByRole("dialog", { name: "New purchase requisition" });
-    expect(within(again).getByLabelText("Requested quantity")).toHaveValue(0);
+    expect(within(again).getByLabelText("Requested quantity")).toHaveValue("0");
     expect(within(again).getByRole("button", { name: "Create requisition" })).toBeDisabled();
     expect(within(again).getByText("Choose the article to purchase.")).toBeInTheDocument();
   });
@@ -530,7 +530,7 @@ describe("ProcurementRepairablePanel", () => {
     fireEvent.change(within(dialog).getByLabelText("Requested quantity"), {
       target: { value: "2" },
     });
-    expect(within(dialog).getByLabelText(/Estimated unit cost/)).toHaveValue("12");
+    expect(within(dialog).getByLabelText(/Estimated unit cost/)).toHaveValue("12,00");
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Add a line" }));
     const line2 = within(dialog).getByRole("group", { name: "Line 2" });

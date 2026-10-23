@@ -335,7 +335,7 @@ pub async fn validate_hard_dependencies(db: &impl ConnectionTrait, names: &HashS
         .filter(|d| d.dependency_type == "hard" && !names.contains(&d.required_permission_name))
         .map(|d| {
             format!(
-                "'{}' requires '{}' (hard dependency)",
+                "GATE_ADMIN_PERMISSION_DEPENDENCY:permission={0},required={1}: '{}' requires '{}' (hard dependency)",
                 d.permission_name, d.required_permission_name
             )
         })

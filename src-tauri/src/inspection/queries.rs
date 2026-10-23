@@ -455,7 +455,9 @@ pub async fn list_inspection_checkpoints(
     filter: InspectionCheckpointsFilter,
 ) -> AppResult<Vec<InspectionCheckpoint>> {
     let tid = filter.template_version_id.ok_or_else(|| {
-        AppError::ValidationFailed(vec!["template_version_id is required for listing checkpoints.".into()])
+        AppError::ValidationFailed(vec![
+            "GATE_INSP_LIST_FILTER_REQUIRED: template_version_id is required for listing checkpoints.".into(),
+        ])
     })?;
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -502,7 +504,9 @@ pub async fn create_inspection_template(
     input: CreateInspectionTemplateInput,
 ) -> AppResult<(InspectionTemplate, InspectionTemplateVersion, Vec<InspectionCheckpoint>)> {
     if input.code.trim().is_empty() || input.name.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["code and name are required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INSP_TEMPLATE_CODE_NAME_REQUIRED: code and name are required.".into(),
+        ]));
     }
     validate_drafts(&input.checkpoints)?;
     let pkg = package_json_from_drafts(&input.checkpoints)?;
@@ -602,7 +606,7 @@ pub async fn publish_inspection_template_version(
         })?;
     if current.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "row_version mismatch on inspection_templates.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_templates.".into(),
         ]));
     }
     let max_row = db
@@ -664,7 +668,7 @@ pub async fn publish_inspection_template_version(
         .await?;
     if upd.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Concurrent update on inspection_templates.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on inspection_templates.".into(),
         ]));
     }
     let template = get_template(&txn, input.template_id).await?.expect("row");
@@ -691,7 +695,11 @@ pub async fn schedule_inspection_round(
     let scheduled_at = match trimmed(input.scheduled_at.as_deref()) {
         Some(raw) => Some(
             chrono::DateTime::parse_from_rfc3339(&raw)
-                .map_err(|_| AppError::ValidationFailed(vec!["scheduled_at must be an RFC 3339 timestamp.".into()]))?
+                .map_err(|_| {
+                    AppError::ValidationFailed(vec![
+                        "GATE_INSP_DATE_INVALID: scheduled_at must be an RFC 3339 timestamp.".into(),
+                    ])
+                })?
                 .with_timezone(&Utc)
                 .to_rfc3339(),
         ),
@@ -708,7 +716,9 @@ pub async fn schedule_inspection_round(
         v
     } else {
         tpl.current_version_id.ok_or_else(|| {
-            AppError::ValidationFailed(vec!["Template has no current_version_id; cannot schedule.".into()])
+            AppError::ValidationFailed(vec![
+                "GATE_INSP_TEMPLATE_NO_VERSION: Template has no current_version_id; cannot schedule.".into(),
+            ])
         })?
     };
     let row = txn
@@ -720,7 +730,7 @@ pub async fn schedule_inspection_round(
         .await?;
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "template_version_id does not belong to this template.".into(),
+            "GATE_INSP_VERSION_MISMATCH: template_version_id does not belong to this template.".into(),
         ]));
     }
     let rs = Uuid::new_v4().to_string();

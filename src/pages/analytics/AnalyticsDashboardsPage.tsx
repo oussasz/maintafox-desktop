@@ -49,6 +49,12 @@ import {
   DASHBOARD_KPI_KEYS,
   RELIABILITY_RAM_EVIDENCE_HASH,
 } from "@shared/kpi-definitions";
+import {
+  DEFAULT_KPI_STABLE_BELOW,
+  OVERVIEW_KPI_REGISTRY_BY_KEY,
+  OVERVIEW_KPI_SEMANTIC_KEYS,
+  type OverviewKpiSemanticKey,
+} from "@shared/overview-kpi-registry";
 import { P } from "@shared/rbac/permissions.generated";
 
 type Horizon = 7 | 30 | 90;
@@ -200,7 +206,19 @@ export function AnalyticsDashboardsPage() {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [orgRows]);
 
+  /** The "stable" threshold of a percentage KPI, set with its definition in the KPI registry. */
+  const stableOf = (key: OverviewKpiSemanticKey) => ({
+    stablePoints: OVERVIEW_KPI_REGISTRY_BY_KEY.get(key)?.stableBelow ?? DEFAULT_KPI_STABLE_BELOW,
+  });
+
   const trendLabel = (trend: KpiTrend) => {
+    if (trend.points !== undefined) {
+      if (trend.points === 0) return t("hub.dashboards.trend.stable");
+      const shown = Math.round(trend.points * 10) / 10;
+      return t("hub.dashboards.trend.points", {
+        change: `${shown > 0 ? "+" : ""}${formatDecimal(shown, 1)}`,
+      });
+    }
     if (trend.percent === 0) return t("hub.dashboards.trend.stable");
     const rounded =
       Math.abs(trend.percent) >= 10
@@ -243,41 +261,45 @@ export function AnalyticsDashboardsPage() {
       case ANALYTICS_DASHBOARD_WIDGET_IDS.OPS_KPIS:
         return (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {renderKpi({
-              title: td("kpi.openDis"),
-              context: now,
-              value: count(data?.open_dis.value),
-              available: data?.open_dis.available ?? false,
-              trend: periodTrend(data?.open_dis, "up-bad"),
-              onOpen: () => navigate(listLinks.requests({ scope: "open" })),
-            })}
-            {renderKpi({
-              title: td("kpi.openWos"),
-              context: openWosRule ? `${now} · ${openWosRule.label}` : now,
-              value: count(data?.open_wos.value),
-              available: data?.open_wos.available ?? false,
-              trend: periodTrend(data?.open_wos, "up-bad"),
-              ...(openWosRule
-                ? { onOpen: () => navigate(listLinks.workOrders({ scope: openWosRule.scope })) }
-                : {}),
-            })}
-            {renderKpi({
-              title: td("kpi.totalAssets"),
-              context: t("hub.dashboards.context.inService"),
-              value: count(data?.total_assets.value),
-              available: data?.total_assets.available ?? false,
-              trend: periodTrend(data?.total_assets, "up-good"),
-              onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.TOTAL_ASSETS]),
-            })}
-            {renderKpi({
-              title: td("kpi.overdueItems"),
-              context: t("hub.dashboards.context.overdue"),
-              value: count(data?.overdue_items.value),
-              available: data?.overdue_items.available ?? false,
-              trend: periodTrend(data?.overdue_items, "up-bad"),
-              // Three lists stand behind this figure: the user picks which one to open.
-              onOpen: () => setOverdueChooserOpen(true),
-            })}
+            {can(P.DI_VIEW) &&
+              renderKpi({
+                title: td("kpi.openDis"),
+                context: now,
+                value: count(data?.open_dis.value),
+                available: data?.open_dis.available ?? false,
+                trend: periodTrend(data?.open_dis, "up-bad"),
+                onOpen: () => navigate(listLinks.requests({ scope: "open" })),
+              })}
+            {can(P.OT_VIEW) &&
+              renderKpi({
+                title: td("kpi.openWos"),
+                context: openWosRule ? `${now} · ${openWosRule.label}` : now,
+                value: count(data?.open_wos.value),
+                available: data?.open_wos.available ?? false,
+                trend: periodTrend(data?.open_wos, "up-bad"),
+                ...(openWosRule
+                  ? { onOpen: () => navigate(listLinks.workOrders({ scope: openWosRule.scope })) }
+                  : {}),
+              })}
+            {can(P.EQ_VIEW) &&
+              renderKpi({
+                title: td("kpi.totalAssets"),
+                context: t("hub.dashboards.context.inService"),
+                value: count(data?.total_assets.value),
+                available: data?.total_assets.available ?? false,
+                trend: periodTrend(data?.total_assets, "up-good"),
+                onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.TOTAL_ASSETS]),
+              })}
+            {canAny(P.DI_VIEW, P.PM_VIEW, P.OT_VIEW) &&
+              renderKpi({
+                title: td("kpi.overdueItems"),
+                context: t("hub.dashboards.context.overdue"),
+                value: count(data?.overdue_items.value),
+                available: data?.overdue_items.available ?? false,
+                trend: periodTrend(data?.overdue_items, "up-bad"),
+                // Three lists stand behind this figure: the user picks which one to open.
+                onOpen: () => setOverdueChooserOpen(true),
+              })}
           </div>
         );
       case ANALYTICS_DASHBOARD_WIDGET_IDS.PM_DUE:
@@ -351,7 +373,11 @@ export function AnalyticsDashboardsPage() {
                   context: horizonText,
                   value: ratio(data?.avg_availability.value),
                   available: data?.avg_availability.available ?? false,
-                  trend: periodTrend(data?.avg_availability, "up-good"),
+                  trend: periodTrend(
+                    data?.avg_availability,
+                    "up-good",
+                    stableOf(OVERVIEW_KPI_SEMANTIC_KEYS.AVAILABILITY),
+                  ),
                   onOpen: openRamsDashboard,
                 })}
                 {renderKpi({
@@ -359,7 +385,11 @@ export function AnalyticsDashboardsPage() {
                   context: horizonText,
                   value: ratio(data?.avg_data_quality.value),
                   available: data?.avg_data_quality.available ?? false,
-                  trend: periodTrend(data?.avg_data_quality, "up-good"),
+                  trend: periodTrend(
+                    data?.avg_data_quality,
+                    "up-good",
+                    stableOf(OVERVIEW_KPI_SEMANTIC_KEYS.DATA_QUALITY),
+                  ),
                   onOpen: openRamsEvidence,
                 })}
                 {renderKpi({
@@ -488,7 +518,7 @@ export function AnalyticsDashboardsPage() {
         <LoadingState label={t("hub.dashboards.loading")} />
       ) : (
         <div className="space-y-4">
-          <SmrpIndicatorsSection smrp={data?.smrp ?? null} />
+          <SmrpIndicatorsSection smrp={data?.smrp ?? null} can={can} />
           {visibleWidgets.map((w) => (
             <Fragment key={w.id}>{renderWidget(w.id)}</Fragment>
           ))}

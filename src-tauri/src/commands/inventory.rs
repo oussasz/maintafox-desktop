@@ -467,7 +467,7 @@ pub async fn return_inventory_stock(
         crate::rbac::permissions::INV_MANAGE,
         PermissionScope::Global
     );
-    let reservation = queries::return_reserved_stock(&state.db, input).await?;
+    let reservation = queries::return_reserved_stock_as(&state.db, input, Some(i64::from(user.user_id))).await?;
     // A return to an already settled OT is a late credit (finance settlement).
     if let Some(wo_id) =
         crate::finance::settlement::work_order_of_source(&reservation.source_type, reservation.source_id)

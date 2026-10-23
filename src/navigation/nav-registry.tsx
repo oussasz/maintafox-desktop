@@ -167,9 +167,10 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.admin",
     path: "/admin",
     icon: <ShieldCheck className="h-4 w-4" />,
-    // Route allows adm.users OR adm.roles (PermissionRoute anyOf): the entry follows the same rule.
+    // Route allows adm.users, adm.roles or adm.permissions (PermissionRoute anyOf): the entry
+    // follows the same rule (the Permissions tab is reachable with adm.permissions alone).
     requiredPermission: P.ADM_USERS,
-    alsoVisibleWith: [P.ADM_ROLES],
+    alsoVisibleWith: [P.ADM_ROLES, P.ADM_PERMISSIONS],
   },
   {
     key: "org",

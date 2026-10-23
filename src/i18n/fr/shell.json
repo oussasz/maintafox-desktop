@@ -144,8 +144,9 @@
       "SYNC_GROUP_REFUSED": "Une modification est arrivée avec des lignes dont elle dépend, et l'une d'elles enfreint une règle",
       "SYNC_TIME_INCONSISTENT": "Une modification reçue porte des dates incohérentes (ou dans le futur)",
       "QUALIFICATION_REQUIREMENT_DELETE_REFUSED": "Une exigence de qualification a été supprimée ailleurs (elle se désactive, elle ne se supprime pas)",
-      "WO_PERMIT_RULE_CLEAR_INVALID": "Un permis exigé par une règle de l'usine a été levé sans qui, quand ou pourquoi, après le début des travaux, ou sa levée enregistrée a été modifiée",
-      "WO_PERMIT_RULE_CLEAR_UNAUTHORISED": "Un permis exigé par une règle de l'usine a été levé par une personne sans le droit de délivrer des permis",
+      "WO_PERMIT_RULE_CLEAR_INVALID": "Un permis exigé par une règle de l'usine ou par une demande signalée sécurité a été levé sans qui, quand ou pourquoi, après le début des travaux, ou sa levée enregistrée a été modifiée",
+      "WO_PERMIT_RULE_CLEAR_UNAUTHORISED": "Un permis exigé par une règle de l'usine ou par une demande signalée sécurité a été levé par une personne sans le droit de délivrer des permis (sur le site de l'OT)",
+      "WO_PERMIT_SAFETY_ORIGIN_CHANGED": "L'origine sécurité de l'exigence de permis d'un OT a été retirée ailleurs",
       "PERMIT_TYPE_REQUIRED_TO_START": "Un ordre de travail démarré sans permis du type exigé par une règle de l'usine",
       "WO_PERMIT_RULE_CHANGED": "La règle de l'usine qui exige le permis d'un ordre de travail a été retirée ou modifiée ailleurs",
       "PERMIT_THREE_PERSON_REMOVAL": "Un retrait de cadenas vérifié par la personne qui avait vérifié l'isolement, alors que le type de permis exige une troisième personne",
@@ -300,6 +301,7 @@
     "recordUnidentified": "(numéro non disponible)",
     "technicalDetails": "Détails techniques",
     "noRemoteVersion": "Le serveur n'a envoyé aucune version de cet enregistrement",
+    "resolveNeedsRight": "Vous pouvez consulter ce conflit. Choisir une version demande le droit de résoudre les conflits de synchronisation.",
     "recommendedShort": "recommandé",
     "status": {
       "escalated": "Escaladé"

@@ -325,13 +325,17 @@ export function parseDocumentHeaderValue(
 export async function uploadDocumentBrandingLogo(
   sourcePath: string,
 ): Promise<DocumentBrandingLogoUploadResult> {
-  const raw = await invoke<unknown>("upload_document_branding_logo", { sourcePath });
+  const raw = await invoke<unknown>(
+    "upload_document_branding_logo",
+    { sourcePath },
+    { notifyOnError: false },
+  );
   return DocumentBrandingLogoUploadResultSchema.parse(raw);
 }
 
 /** Clear tenant document branding logo. Requires `adm.settings`. */
 export async function clearDocumentBrandingLogo(): Promise<void> {
-  await invoke<void>("clear_document_branding_logo");
+  await invoke<void>("clear_document_branding_logo", undefined, { notifyOnError: false });
 }
 
 /** Read tenant document branding logo preview for a `data:` URL. */

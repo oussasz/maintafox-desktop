@@ -255,14 +255,16 @@
     "profile": "Mon profil",
     "notifications": "Notifications",
     "general": "Général",
-    "security": "Sécurité & Logs",
+    "security": "Sécurité",
     "backup": "Sauvegarde & Ops",
     "integrations": "Système & Sync",
+    "activity": "Journal d'activité",
     "profileHint": "Informations du compte, mot de passe, PIN, appareils de confiance et historique de session.",
     "notificationsHint": "Boîte de réception, accusés, reports et préférences par catégorie.",
     "generalHint": "Langue, devise et exercice fiscal, ordres de travail, fiabilité, en-tête des documents imprimés. Chaque paramètre montre sa valeur livrée, qui peut le modifier et son historique.",
-    "securityHint": "Politique mot de passe, session, journal d'activité et audit.",
-    "integrationsHint": "État de sync, licence, connexions et diagnostics."
+    "securityHint": "Politique mot de passe et session.",
+    "integrationsHint": "État de sync, licence, connexions et diagnostics.",
+    "activityHint": "Ce qui a été fait dans l'application, par qui et quand, et le journal d'audit."
   },
   "backupOps": {
     "title": "Opérations de sauvegarde",
@@ -404,6 +406,25 @@
     "edition": "Édition {{edition}}",
     "pendingWrites": "Modifications en attente d'envoi :",
     "lastAction": "Dernière action d'administration :",
+    "traceEvent": {
+      "activation_applied": "Activation appliquée",
+      "activation_contract_applied": "Contrat d'activation appliqué",
+      "activation_revocation_applied": "Révocation d'activation appliquée",
+      "activation_secret_rotated": "Secret de liaison renouvelé",
+      "activation_rebind_requested": "Nouvelle liaison demandée",
+      "entitlement_envelope_applied": "Droits de licence reçus",
+      "license_admin_action_applied": "Action d'administration de licence appliquée",
+      "license_admin_action_reconciled": "Action d'administration de licence rapprochée",
+      "license_compromise_response_applied": "Réponse à une compromission appliquée",
+      "other": "Événement de licence"
+    },
+    "traceOutcome": {
+      "accepted": "accepté",
+      "applied": "appliqué",
+      "requested": "demandé",
+      "rejected": "rejeté",
+      "other": "résultat enregistré"
+    },
     "traces_one": "{{count}} événement de licence récent (détails techniques)",
     "traces_other": "{{count}} événements de licence récents (détails techniques)",
     "reason": "Motif",

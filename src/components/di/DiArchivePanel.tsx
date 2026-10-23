@@ -14,6 +14,7 @@ import { DataTable } from "@/components/data/DataTable";
 import { dispositionLabelKey } from "@/components/di/disposition-meta";
 import { diStatusToI18nKey, DI_STATUS_STYLE } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
+import { useFormatters } from "@/hooks/use-formatters";
 import { listDis } from "@/services/di-service";
 import type { InterventionRequest } from "@shared/ipc-types";
 
@@ -25,6 +26,7 @@ interface DiArchivePanelProps {
 
 export function DiArchivePanel({ refreshKey = 0, onRowClick }: DiArchivePanelProps) {
   const { t } = useTranslation("di");
+  const { formatDate } = useFormatters();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<InterventionRequest[]>([]);
   const [total, setTotal] = useState(0);
@@ -102,7 +104,7 @@ export function DiArchivePanel({ refreshKey = 0, onRowClick }: DiArchivePanelPro
         ),
       },
     ],
-    [t],
+    [t, formatDate],
   );
 
   return (
@@ -139,16 +141,4 @@ export function DiArchivePanel({ refreshKey = 0, onRowClick }: DiArchivePanelPro
       )}
     </div>
   );
-}
-
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  } catch {
-    return iso;
-  }
 }

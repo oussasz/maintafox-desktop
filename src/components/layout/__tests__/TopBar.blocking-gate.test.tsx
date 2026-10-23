@@ -53,4 +53,17 @@ describe("TopBar Ctrl+K under a blocking screen", () => {
     pressCtrlK();
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
   });
+
+  it("has no sync centre button for a user without sync.view (AU-45)", async () => {
+    render(
+      <MemoryRouter>
+        <PermissionProvider>
+          <TopBar />
+        </PermissionProvider>
+      </MemoryRouter>,
+    );
+    // The bridge answers no permission: the button that opens the conflict list is not offered.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole("button", { name: "sync.syncCenter" })).not.toBeInTheDocument();
+  });
 });

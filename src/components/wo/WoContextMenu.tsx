@@ -24,7 +24,8 @@ import { P } from "@shared/rbac/permissions.generated";
 
 // ── Status sets — Option B lifecycle ────────────────────────────────────────
 
-const EDITABLE_STATES = new Set(["draft", "planning"]);
+// The backend edits a draft only; a planning WO changes through its planning tab.
+const EDITABLE_STATES = new Set(["draft"]);
 const STARTABLE_STATES = new Set(["ready"]);
 const COMPLETABLE_STATES = new Set(["in_progress"]);
 const CANCELLABLE_DENY = new Set(["closed", "cancelled"]);

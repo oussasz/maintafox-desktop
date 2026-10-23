@@ -1,10 +1,22 @@
-import { Bell, Globe, Link2, Monitor, Palette, Search, Shield, User, Wrench } from "lucide-react";
+import {
+  Bell,
+  Globe,
+  History,
+  Link2,
+  Monitor,
+  Palette,
+  Search,
+  Shield,
+  User,
+  Wrench,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
 export type SettingsTabId =
   | "profile"
@@ -12,13 +24,16 @@ export type SettingsTabId =
   | "general"
   | "security"
   | "backup"
-  | "integrations";
+  | "integrations"
+  | "activity";
 
 export interface SettingsNavItem {
   id: SettingsTabId;
   icon: LucideIcon;
   /** When true, tab requires `adm.settings` (admin/tenant configuration). */
   requiresAdmSettings?: boolean;
+  /** Right the tab needs on its own (the server's read right for what it shows). */
+  permission?: PermissionName;
 }
 
 export const SETTINGS_TABS: SettingsNavItem[] = [
@@ -28,6 +43,8 @@ export const SETTINGS_TABS: SettingsNavItem[] = [
   { id: "security", icon: Shield, requiresAdmSettings: true },
   { id: "backup", icon: Wrench, requiresAdmSettings: true },
   { id: "integrations", icon: Link2, requiresAdmSettings: true },
+  // Activity journal and audit log: `log.view` (activity_feed), not the settings right.
+  { id: "activity", icon: History, permission: P.LOG_VIEW },
 ];
 
 const LEGACY_CATEGORY_ICONS: Record<string, LucideIcon> = {
@@ -90,7 +107,7 @@ export function SettingsCategorySidebar({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t("sidebar.search")}
-          className="h-8 pl-8 text-xs"
+          className="h-10 pl-8 text-xs"
         />
       </div>
       <div className="space-y-1">

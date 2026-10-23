@@ -218,6 +218,9 @@
     "create.scopeHint": "Toute l'usine, ou un seul site / nœud et ce qui est en dessous. Un utilisateur limité à un site ne voit et n'agit que sur ce site. Les rôles d'administrateur s'appliquent toujours à toute l'usine."
   },
   "profile": {
+    "loadError": "Le profil n'a pas pu être chargé.",
+    "retry": "Réessayer",
+    "selectSkill": "Choisir une compétence",
     "memberSince": "Membre depuis",
     "personalInfo": "Informations personnelles",
     "edit": "Modifier",

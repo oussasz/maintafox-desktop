@@ -218,6 +218,9 @@
     "create.scopeHint": "The whole plant, or one site / node and everything below it. A user limited to a site sees and acts only on that site. Administrator roles always apply to the whole plant."
   },
   "profile": {
+    "loadError": "Failed to load the profile.",
+    "retry": "Retry",
+    "selectSkill": "Select a skill",
     "memberSince": "Member since",
     "personalInfo": "Personal Information",
     "edit": "Edit",

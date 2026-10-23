@@ -201,7 +201,7 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
             <Button
               variant="outline"
               size="sm"
-              className="gap-1.5 h-7 text-xs"
+              className="gap-1.5 h-10 text-xs"
               onClick={startAdd}
               disabled={!!newRow || saving}
             >

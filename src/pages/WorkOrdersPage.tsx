@@ -128,6 +128,7 @@ export function WorkOrdersPage() {
   // ── Search / filters (SmartFilterBar) ─────────────────────────────────
 
   const [searchInput, setSearchInput] = useState("");
+  const [dashboardTick, setDashboardTick] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
@@ -696,12 +697,21 @@ export function WorkOrdersPage() {
             </Button>
           </PermissionGate>
           <ViewToggle value={activeView} options={viewOptions} onChange={switchView} />
-          <FilterToggleButton
-            open={showFilters}
-            onToggle={toggleFilters}
-            activeCount={activeFilterCount}
+          {recordView ? (
+            <FilterToggleButton
+              open={showFilters}
+              onToggle={toggleFilters}
+              activeCount={activeFilterCount}
+            />
+          ) : null}
+          <RefreshButton
+            onRefresh={() => {
+              // The dashboard reads its own figures: reload those, not the hidden list.
+              if (activeView === "dashboard") setDashboardTick((n) => n + 1);
+              else void loadWos();
+            }}
+            loading={loading}
           />
-          <RefreshButton onRefresh={() => void loadWos()} loading={loading} />
         </>
       }
       filterBar={
@@ -714,7 +724,7 @@ export function WorkOrdersPage() {
               {t("print.failed", { message: printError })}
             </p>
           ) : null}
-          {showFilters && (
+          {showFilters && recordView && (
             <SmartFilterBar
               searchPlaceholder={t("search.placeholder")}
               searchValue={searchInput}
@@ -777,7 +787,7 @@ export function WorkOrdersPage() {
       {activeView === "calendar" && !showListError && (
         <WoCalendarView items={items} onSelect={(wo) => void openWo(wo.id)} />
       )}
-      {activeView === "dashboard" && <WoDashboardView />}
+      {activeView === "dashboard" && <WoDashboardView reloadSignal={dashboardTick} />}
 
       {/* ── Archive panel ────────────────────────────────────────── */}
       <WoArchivePanel onRowClick={(wo) => void openWo(wo.id)} />

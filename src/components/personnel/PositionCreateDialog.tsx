@@ -188,7 +188,7 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
               id="pos-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Senior Maintenance Technician"
+              placeholder={t("position.field.namePlaceholder")}
               aria-invalid={error !== null && !name.trim()}
             />
           </div>

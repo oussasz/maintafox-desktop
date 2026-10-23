@@ -26,6 +26,7 @@ import type {
   WoCostSettlement,
   WoCostView,
 } from "@/services/finance-cost-service";
+import { formatDecimalInput } from "@/utils/decimal";
 import { P } from "@shared/rbac/permissions.generated";
 
 const svc = vi.hoisted(() => ({
@@ -739,11 +740,14 @@ describe("BudgetCockpitView", () => {
   });
 
   it("exports the rows as semicolon CSV", () => {
-    const csv = cockpitCsv(cockpit(), ["cc", "name", "cat", "b", "c", "a", "f", "v"], (b) =>
-      b.toUpperCase(),
+    const csv = cockpitCsv(
+      cockpit(),
+      ["cc", "name", "cat", "b", "c", "a", "f", "v"],
+      (b) => b.toUpperCase(),
+      (n) => formatDecimalInput(n, "fr", { decimals: 2, fixed: true }),
     );
     expect(csv.split("\n")[1]).toBe(
-      "CC-MNT-PMP;Maintenance pompes;SERVICES;200.00;0.00;300.00;300.00;-100.00",
+      "CC-MNT-PMP;Maintenance pompes;SERVICES;200,00;0,00;300,00;300,00;-100,00",
     );
   });
 });

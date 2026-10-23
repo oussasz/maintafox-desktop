@@ -42,6 +42,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { TimeInput } from "@/components/ui/time-input";
 import { useFormatters } from "@/hooks/use-formatters";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import {
   elapsedMinutesBetween,
@@ -97,6 +98,7 @@ import type {
   WoExecTask,
   WorkOrder,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { WoAddExecutionPartDialog } from "./WoAddExecutionPartDialog";
 import { mergeLaborPeople, useWoLaborPeople } from "./use-wo-labor-people";
@@ -394,6 +396,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       setRowVersion(wo.row_version);
     }, [wo.status_code, wo.row_version]);
 
+    const { can } = usePermissions();
     const actorId = info?.user_id ?? null;
     const loggingEnabled = LOGGING_EDITABLE_STATUSES.has(statusCode);
     const controlsDisabled = !canEdit || !loggingEnabled || busy;
@@ -1263,14 +1266,17 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                     {formatAssetLabel(reservation.article_code, reservation.article_name)} ·{" "}
                     {reservation.quantity_reserved}
                   </span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void handleReleaseReservation(reservation.id)}
-                    disabled={controlsDisabled}
-                  >
-                    {t("execution.releaseReservation")}
-                  </Button>
+                  {/* Releasing stock needs the stock management right (backend: inv.manage). */}
+                  {can(P.INV_MANAGE) ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void handleReleaseReservation(reservation.id)}
+                      disabled={controlsDisabled}
+                    >
+                      {t("execution.releaseReservation")}
+                    </Button>
+                  ) : null}
                 </div>
               ))}
             </div>

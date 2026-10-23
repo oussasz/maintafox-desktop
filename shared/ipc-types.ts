@@ -5262,6 +5262,8 @@ export interface WorkOrder {
   permit_rule_cleared_by_id: number | null;
   permit_rule_cleared_at: string | null;
   permit_rule_clear_reason: string | null;
+  /** The requirement came from the request it was converted from, flagged "sécurité" (cleared like a rule flag). */
+  permit_from_safety_di?: boolean;
   entity_sync_id?: string | null;
   closeout_validation_profile_id?: number | null;
   closeout_validation_passed?: boolean;

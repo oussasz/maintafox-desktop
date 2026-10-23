@@ -22,7 +22,7 @@ import type { WoStatsPayload } from "@shared/ipc-types";
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function WoDashboardView() {
+export function WoDashboardView({ reloadSignal = 0 }: { reloadSignal?: number }) {
   const { t } = useTranslation("ot");
   const { labelOf: urgencyLabel } = useUrgencyScale();
   const [stats, setStats] = useState<WoStatsPayload | null>(null);
@@ -43,9 +43,10 @@ export function WoDashboardView() {
     }
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `reloadSignal` is the page Refresh button.
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadSignal]);
 
   if (loading && !stats) {
     return <LoadingState label={t("dashboard.loading")} />;

@@ -42,6 +42,7 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
       max,
       className,
       onBlur,
+      onFocus,
       "aria-invalid": ariaInvalid,
       ...props
     },
@@ -55,10 +56,14 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
     const [draft, setDraft] = React.useState(() => show(value));
     const [invalid, setInvalid] = React.useState(false);
     const last = React.useRef<number | null>(value);
+    const focused = React.useRef(false);
 
     // The value changed from outside (a reset, a loaded record): show it. Typing that already
     // produced this value leaves the draft alone.
     React.useEffect(() => {
+      // While the user is typing, the field is theirs: a parent that turns an emptied field into
+      // 0 must not put "0" back under the cursor. The blur shows what the parent holds.
+      if (focused.current) return;
       if (value !== last.current) {
         last.current = value;
         setDraft(show(value));
@@ -92,7 +97,22 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
       onValueChange(parsed.value);
     };
 
+    const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+      focused.current = true;
+      onFocus?.(e);
+    };
+
     const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+      focused.current = false;
+      if (value !== last.current) {
+        // The parent holds something other than what was typed (an emptied field it keeps as 0,
+        // or a change made from outside while the field had focus): show what it holds.
+        last.current = value;
+        setDraft(show(value));
+        setInvalid(false);
+        onBlur?.(e);
+        return;
+      }
       const parsed = parseDecimal(draft, { allowNegative });
       if (parsed.kind === "number") {
         const rounded = roundDecimal(parsed.value, decimals);
@@ -119,6 +139,7 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
         autoComplete="off"
         value={draft}
         onChange={handleChange}
+        onFocus={handleFocus}
         onBlur={handleBlur}
         aria-invalid={ariaInvalid ?? (invalid || undefined)}
         className={cn("tabular-nums", invalid && "border-status-danger", className)}

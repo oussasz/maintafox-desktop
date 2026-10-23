@@ -176,12 +176,12 @@ pub async fn upsert_supplier(
 ) -> AppResult<InventorySupplier> {
     if input.code.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Supplier code is required.".to_string()
+            "GATE_INV_CODE_NAME_REQUIRED: Supplier code is required.".to_string(),
         ]));
     }
     if input.name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Supplier name is required.".to_string()
+            "GATE_INV_CODE_NAME_REQUIRED: Supplier name is required.".to_string(),
         ]));
     }
     let allowed_statuses = ["PREFERRED", "APPROVED", "BLOCKED", "UNDER_EVALUATION"];
@@ -216,7 +216,7 @@ pub async fn upsert_supplier(
         let current_rv: i64 = row.try_get("", "row_version")?;
         if current_rv != expected_rv {
             return Err(AppError::ValidationFailed(vec![
-                "Supplier row_version mismatch.".to_string()
+                "GATE_RECORD_CHANGED_ELSEWHERE: Supplier row_version mismatch.".to_string(),
             ]));
         }
         db.execute(Statement::from_sql_and_values(
@@ -300,7 +300,7 @@ pub async fn soft_delete_supplier(
     let current_rv: i64 = row.try_get("", "row_version")?;
     if current_rv != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Supplier row_version mismatch.".to_string()
+            "GATE_RECORD_CHANGED_ELSEWHERE: Supplier row_version mismatch.".to_string(),
         ]));
     }
     db.execute(Statement::from_sql_and_values(
@@ -369,7 +369,9 @@ pub async fn upsert_supplier_article_source(
         })?;
     let is_active: i64 = sup_row.try_get("", "is_active")?;
     if is_active == 0 {
-        return Err(AppError::ValidationFailed(vec!["Supplier is inactive.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_SUPPLIER_INACTIVE: Supplier is inactive.".to_string(),
+        ]));
     }
     // Validate article exists
     let art_exists: bool = db
@@ -501,7 +503,7 @@ pub async fn upsert_supplier_price(
 ) -> AppResult<SupplierPrice> {
     if input.unit_price < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "unit_price cannot be negative.".to_string()
+            "GATE_INV_PRICE_NEGATIVE: unit_price cannot be negative.".to_string(),
         ]));
     }
     let sup_exists = db

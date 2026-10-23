@@ -425,7 +425,7 @@ pub async fn update_wo_draft(
     )
     .await?;
     let before = queries::get_work_order(&state.db, input.id).await?;
-    let wo = queries::update_wo_draft_fields(&state.db, input).await?;
+    let wo = queries::update_wo_draft_fields(&state.db, input, Some(i64::from(user.user_id))).await?;
     // Every change of a draft's equipment is recorded (who, when, old and new equipment), and
     // whether the order moved with it to another location (org node).
     if let Some(before) = before.filter(|b| b.equipment_id != wo.equipment_id) {
@@ -593,48 +593,24 @@ pub async fn set_wo_permit_requirement(
     Ok(wo)
 }
 
-/// Clear the permit flag a plant rule set when the work order was converted from a request.
-/// Needs the permit-issue right (`ptw.issue`) — editing the work order is not enough — and a
-/// reason of 10 characters or more; recorded on the work order and in its audit trail.
+/// Clear the permit flag a plant rule set when the work order was converted from a request, or the
+/// permit requirement carried from a request flagged "sécurité" (migration 255). Needs the
+/// permit-issue right (`ptw.issue`) — editing the work order is not enough — and a reason of 10
+/// characters or more; recorded on the work order and in its audit trail.
 #[tauri::command]
 pub async fn clear_wo_permit_rule_flag(
     input: crate::wo::workflow::actions::permit_requirement::WoPermitRuleClearInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    // A safety gate: clearing a permit requirement set by a plant rule stays plant-wide (the
-    // action itself re-checks the plant-wide right in its transaction).
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::PTW_ISSUE,
-        PermissionScope::Global
-    );
+    // A safety gate: `ptw.issue` at the work order's site (plant-wide for a work order without a
+    // site), with the entitlement and licence checks. The action re-checks, in its transaction,
+    // the right its origin needs: plant-wide for a plant rule (a site role does not lift a plant
+    // rule), at the work order's site for a safety request (CMMS Advisor decision D1).
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::PTW_ISSUE, input.wo_id).await?;
     let actor_id = i64::from(user.user_id);
-    let reason = input.reason.trim().to_string();
-    let wo =
-        crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await?;
-    audit::record_wo_change_event(
-        &state.db,
-        audit::WoAuditInput {
-            wo_id: Some(wo.id),
-            action: "permit_rule_flag_cleared".into(),
-            actor_id: Some(actor_id),
-            summary: Some("Exigence de permis (règle) levée".into()),
-            details_json: Some(
-                serde_json::json!({
-                    "requires_permit": false,
-                    "rule": wo.permit_rule_code,
-                    "reason": reason,
-                })
-                .to_string(),
-            ),
-            requires_step_up: false,
-            apply_result: "applied".into(),
-        },
-    )
-    .await;
-    Ok(wo)
+    // The action writes the audit trail entry (origin, reason, site) in its own transaction.
+    crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

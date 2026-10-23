@@ -179,7 +179,7 @@ export function VarianceReviewsPanel({
                     <Button
                       size="sm"
                       variant="outline"
-                      className="h-7 text-xs"
+                      className="h-10 text-xs"
                       onClick={() => {
                         setComment("");
                         setActing({ review: r, next });
@@ -192,7 +192,7 @@ export function VarianceReviewsPanel({
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7 text-xs"
+                      className="h-10 text-xs"
                       onClick={() => {
                         setComment("");
                         setActing({ review: r, next: "open" });

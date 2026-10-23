@@ -7,6 +7,7 @@
 
 import { create } from "zustand";
 
+import { appErrorReason } from "@/lib/app-error";
 import {
   archiveDi,
   approveDi,
@@ -20,7 +21,6 @@ import {
   screenDi,
 } from "@/services/di-review-service";
 import { getDi, listDis } from "@/services/di-service";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   DiApproveInput,
   DiCancelOwnInput,
@@ -104,7 +104,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       });
       set({ reviewQueue: page.items });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
     }
   },
 
@@ -118,7 +118,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
         similarDis: detail.similar,
       });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
     }
   },
 
@@ -137,7 +137,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       await get().loadReviewQueue();
       return updated;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -151,7 +151,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       set({ activeReviewDi: updated });
       await get().loadReviewQueue();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -177,7 +177,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       set({ activeReviewDi: updated });
       await get().loadReviewQueue();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -191,7 +191,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       set({ activeReviewDi: updated });
       await get().loadReviewQueue();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -216,7 +216,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
         approvedRowVersion: updated.row_version,
       };
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -230,7 +230,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       set({ activeReviewDi: updated });
       await get().loadReviewQueue();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -244,7 +244,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       set({ activeReviewDi: updated });
       await get().loadReviewQueue();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -263,7 +263,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       set({ activeReviewDi: updated });
       await get().loadReviewQueue();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -282,7 +282,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       set({ activeReviewDi: updated });
       await get().loadReviewQueue();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });

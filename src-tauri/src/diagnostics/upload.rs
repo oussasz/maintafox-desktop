@@ -33,7 +33,7 @@ pub fn ticket_from_note(note: Option<&str>) -> Result<Option<DiagnosticTicketReq
     let chars = note.chars().count();
     if !(TICKET_NOTE_MIN_CHARS..=TICKET_NOTE_MAX_CHARS).contains(&chars) {
         return Err(format!(
-            "The note must be {TICKET_NOTE_MIN_CHARS} to {TICKET_NOTE_MAX_CHARS} characters long."
+            "GATE_SUPPORT_NOTE_LENGTH:min={TICKET_NOTE_MIN_CHARS},max={TICKET_NOTE_MAX_CHARS}: The note must be {TICKET_NOTE_MIN_CHARS} to {TICKET_NOTE_MAX_CHARS} characters long."
         ));
     }
     Ok(Some(DiagnosticTicketRequest {

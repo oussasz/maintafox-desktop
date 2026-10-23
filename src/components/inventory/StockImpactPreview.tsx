@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel, formatOrDash } from "@/lib/display";
 import { cn } from "@/lib/utils";
@@ -19,10 +20,6 @@ export interface StockImpactPreviewProps {
   className?: string;
 }
 
-function fmtQty(n: number): string {
-  return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—";
-}
-
 export function StockImpactPreview({
   articleId,
   warehouseId = null,
@@ -31,6 +28,9 @@ export function StockImpactPreview({
   className,
 }: StockImpactPreviewProps) {
   const { t } = useTranslation("inventory");
+  const { formatNumber } = useFormatters();
+  const fmtQty = (n: number): string =>
+    Number.isFinite(n) ? formatNumber(n, { maximumFractionDigits: 2 }) : "—";
   const [projection, setProjection] = useState<StockImpactProjection | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

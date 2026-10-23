@@ -74,7 +74,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
     const [rows, setRows] = useState<TeamCapacitySummaryRow[]>([]);
     const [crews, setCrews] = useState<TeamSummary[]>([]);
     const [loading, setLoading] = useState(false);
-    const { formatNumber } = useFormatters();
+    const { formatNumber, formatPercent } = useFormatters();
     const [error, setError] = useState<unknown>(null);
     const [reloadToken, setReloadToken] = useState(0);
     const [dateFrom, setDateFrom] = useState(() => toIsoDate(new Date()));
@@ -388,7 +388,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
           header: t("crews.list.availabilityPct"),
           cell: ({ row }) => {
             const ratio = row.original.avg_availability_ratio;
-            return ratio == null ? "—" : `${Math.round(ratio * 100)}%`;
+            return ratio == null ? "—" : formatPercent(Math.round(ratio * 100));
           },
         },
         {
@@ -409,7 +409,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
             ) : null,
         },
       ],
-      [t, canManage, unknownOr],
+      [t, canManage, unknownOr, formatPercent],
     );
 
     const detailCapacity = detailTeamId != null ? (capacityByTeam.get(detailTeamId) ?? null) : null;

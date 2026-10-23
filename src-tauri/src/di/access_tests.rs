@@ -648,7 +648,7 @@ async fn the_draft_edit_cannot_move_a_request_to_another_site() {
         "equipment_id": f.eq_b,
     }))
     .expect("draft input");
-    let updated = queries::update_di_draft_fields(&f.db, input).await.expect("edit");
+    let updated = queries::update_di_draft_fields(&f.db, input, None).await.expect("edit");
     assert_eq!(updated.title, "Edited");
     assert_eq!(updated.org_node_id, f.t.site_a, "the request stays on its site");
     assert_eq!(updated.equipment_id, f.eq_a);

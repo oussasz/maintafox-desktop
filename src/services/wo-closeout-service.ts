@@ -5,6 +5,7 @@
  * Phase 2 â€“ Sub-phase 05 â€“ File 03 â€“ Sprint S3.
  */
 
+import { appErrorLines } from "@/lib/app-error";
 import { invoke } from "@/lib/ipc-invoke";
 import { VersionConflictError, WorkOrderSchema } from "@/services/wo-service";
 import type { WorkOrder } from "@shared/ipc-types";
@@ -227,19 +228,9 @@ export class CloseoutBlockingError extends Error {
   }
 }
 
+/** The reasons of a refused close-out, one translated line each (read from the error's `details`). */
 function extractBlockingErrors(error: unknown): string[] {
-  if (typeof error === "string") return [error];
-  if (error && typeof error === "object") {
-    const obj = error as Record<string, unknown>;
-    if (Array.isArray(obj["errors"])) {
-      return obj["errors"].filter((x): x is string => typeof x === "string");
-    }
-    if (Array.isArray(obj["blockingErrors"])) {
-      return obj["blockingErrors"].filter((x): x is string => typeof x === "string");
-    }
-    if (typeof obj["message"] === "string") return [obj["message"]];
-  }
-  return ["Unknown error."];
+  return appErrorLines(error);
 }
 
 function maybeWrapBlockingError(error: unknown): never {

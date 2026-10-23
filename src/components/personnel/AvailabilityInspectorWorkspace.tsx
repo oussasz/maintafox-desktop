@@ -13,21 +13,22 @@ import {
   DetailSectionCard,
   ENTITY_DETAIL_HEADER_ACTION_BTN,
   EntityDetailHeader,
-  EntitySummaryKpiStrip,
   type EntitySummaryKpi,
+  EntitySummaryKpiStrip,
 } from "@/components/detail";
 import { absenceBlockTitle } from "@/components/personnel/absence-block-display";
 import {
+  type AvailabilityCellState,
+  type AvailabilityPersonRow,
   CELL_STATE_CLASS,
   deriveCellState,
   eachDateInclusive,
-  type AvailabilityCellState,
-  type AvailabilityPersonRow,
 } from "@/components/personnel/availability-model";
 import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
@@ -81,19 +82,6 @@ function isBlockActiveNow(block: PersonnelAvailabilityBlock): boolean {
   return start < now && now < end;
 }
 
-function formatHorizonInstant(iso: string): string {
-  const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return iso;
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "short",
-      timeStyle: "short",
-    }).format(new Date(ms));
-  } catch {
-    return iso;
-  }
-}
-
 export function AvailabilityInspectorWorkspace({
   person,
   selectedBlock,
@@ -111,6 +99,8 @@ export function AvailabilityInspectorWorkspace({
   onBlocksChanged,
 }: AvailabilityInspectorWorkspaceProps) {
   const { t } = useTranslation("personnel");
+  const { formatDateTime } = useFormatters();
+  const formatHorizonInstant = (iso: string) => formatDateTime(iso);
   const woOpenRuleText = useWoOpenRuleText();
   // Absence types are named from the plant's list (Données de référence), by exact code.
   const lists = usePersonnelLists();
