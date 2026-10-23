@@ -207,6 +207,19 @@ fn replicated_change_sql(layout: &EntityLayout, present: &[String]) -> String {
 }
 
 fn trigger_sql(layout: &EntityLayout, present: &[String]) -> AppResult<Vec<String>> {
+    // In the app every replicated column exists once the migrations have run (capture is installed
+    // after them, `startup`): a missing one would silently leave it out of change capture, so it
+    // fails loudly instead. Only test databases built before a migration may lack one.
+    #[cfg(not(test))]
+    if let Some(missing) = layout.columns.iter().find(|c| {
+        matches!(c.role, Role::Identity | Role::Value { .. } | Role::Ref { .. }) && !present.contains(&c.name)
+    }) {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "sync capture: column {}.{} is in the sync layout but not in the database",
+            layout.table(),
+            missing.name
+        )));
+    }
     let table = quote(layout.table());
     let et = layout.def.entity_type;
     let name = |suffix: &str| quote(&format!("{TRIGGER_PREFIX}{}_{suffix}", layout.table()));

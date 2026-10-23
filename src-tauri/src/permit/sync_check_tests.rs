@@ -6244,6 +6244,24 @@ async fn an_explicit_origin_0_is_judged_the_same_on_every_row() {
             "as sent, required"
         );
     }
+    // Its later row unticking it without who, when or why: refused, although its stored origin is 0
+    // (the request is flagged here, so it is judged as a safety work order on every row).
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-explicit-0-flagged",
+        &with(
+            row("OT-X0-1", &flagged, "Fuite pompe"),
+            &[("requires_permit", json!(0))],
+        ),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    assert_eq!(
+        stored("wo-explicit-0-flagged").await.as_deref(),
+        Some("0|1"),
+        "still required"
+    );
     // Past "ready", unticked without who, when or why: refused.
     let outcome = apply(
         &db,

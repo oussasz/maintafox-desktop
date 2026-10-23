@@ -2355,10 +2355,12 @@ pub(crate) async fn inbound_permit_rule_check(
     // protected here in the same transaction, never stored unprotected, and that PC raises it too
     // when the request reaches it. Except over a clearing recorded here (it is not replaced by a row
     // that never saw it), and a row that turns the origin off without a flagged request (the origin
-    // is written once, at conversion or create).
+    // is written once, at conversion or create). A work order stored here with origin 0 while its
+    // request is flagged here (received started, as sent) is judged with that origin on every later
+    // row too, so a later untick still needs who, when and why.
     let local_origin = local.as_ref().is_some_and(|l| flag(l, SAFETY_ORIGIN));
     let mut safety_origin = flag(&wo, SAFETY_ORIGIN);
-    if !safety_origin && (local.is_none() || local_origin) {
+    if !safety_origin {
         let request_flagged = match source_request_is_safety(conn, &wo).await? {
             Some(flagged) => flagged,
             None if local.is_none() => {
