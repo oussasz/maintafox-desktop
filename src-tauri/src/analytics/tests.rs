@@ -868,6 +868,30 @@ async fn executive_dashboard_fleet_wide_values() {
 }
 
 #[tokio::test]
+async fn executive_dashboard_without_finance_view_shows_no_cost() {
+    let db = setup().await;
+    let d = seed_dataset(&db).await;
+    // Every view except the finance one.
+    let x = build_executive_dashboard(&db, &filter(30, None), true, true, true, true, true, false)
+        .await
+        .expect("dashboard");
+    assert!(!x.maintenance_cost.available);
+    let smrp = x.smrp.expect("smrp");
+    assert!(
+        smrp.work_mix.is_some() && smrp.backlog.is_some(),
+        "work-order indicators stay"
+    );
+    assert!(
+        smrp.cost_to_rav.is_none(),
+        "cost / replacement value needs the finance view"
+    );
+    let top = x.bad_actor_assets.first().expect("bad actor");
+    assert_eq!(top.equipment_id, d.e1);
+    assert!(!top.cost_available);
+    assert_eq!(top.maintenance_cost, 0.0, "no closed-WO cost without the finance view");
+}
+
+#[tokio::test]
 async fn executive_dashboard_scoped_to_one_site() {
     let db = setup().await;
     let d = seed_dataset(&db).await;

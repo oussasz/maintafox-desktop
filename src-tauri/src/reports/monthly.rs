@@ -1,7 +1,8 @@
 //! Monthly management report (`monthly_management`): fleet reliability, SMRP indicators, top bad
 //! actors and maintenance cost for the last complete calendar month, under the company document
 //! header configured for prints (`documents.default_header`, text only — the PDF engine draws no
-//! images).
+//! images). Each figure follows the reader's rights ([`ReportAudience`]): work-order and PM
+//! indicators as on the SMRP dashboard, every cost only with the finance view.
 
 use anyhow::anyhow;
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
@@ -14,7 +15,7 @@ use crate::errors::{AppError, AppResult};
 use crate::planning::domain::ExportedBinaryDocument;
 use crate::reliability::fleet::{pooled_fleet_kpis, FleetPooledKpis, FleetWindow};
 use crate::reliability::readiness::DQ_GREEN_THRESHOLD;
-use crate::reports::export::ReportLocale;
+use crate::reports::export::{ReportAudience, ReportLocale};
 
 pub const TEMPLATE_CODE: &str = "monthly_management";
 
@@ -232,20 +233,27 @@ async fn cost_by_wo_type(db: &DatabaseConnection, w: SmrpWindow) -> AppResult<Ve
         .collect())
 }
 
-/// Everything the report shows, gathered once for PDF and XLSX.
+/// Everything the report shows, gathered once for PDF and XLSX. The cost sections are `None` when
+/// the reader may not see them (left out of the report, not shown empty).
 pub struct MonthlyData {
     pub title: String,
     pub month: String,
     pub header: Vec<String>,
     pub currency: String,
+    pub audience: ReportAudience,
     pub fleet: FleetPooledKpis,
     pub smrp: SmrpKpis,
     pub bad_actors: Vec<AnalyticsBadActorAsset>,
-    pub cost_centres: Vec<CostLine>,
-    pub cost_by_type: Vec<(String, String, f64, i64)>,
+    pub cost_centres: Option<Vec<CostLine>>,
+    pub cost_by_type: Option<Vec<(String, String, f64, i64)>>,
 }
 
-pub async fn gather(db: &DatabaseConnection, locale: ReportLocale, now: DateTime<Utc>) -> AppResult<MonthlyData> {
+pub async fn gather(
+    db: &DatabaseConnection,
+    locale: ReportLocale,
+    now: DateTime<Utc>,
+    audience: ReportAudience,
+) -> AppResult<MonthlyData> {
     let (window, year, month) = previous_month(now);
     let days_ago = |d: DateTime<Utc>| ((now - d).num_seconds() as f64 / 86_400.0).ceil() as i64;
     let fleet = pooled_fleet_kpis(
@@ -258,8 +266,13 @@ pub async fn gather(db: &DatabaseConnection, locale: ReportLocale, now: DateTime
         DQ_GREEN_THRESHOLD,
     )
     .await?;
-    let smrp = build_smrp_kpis(db, window, now, None, true, true).await?;
-    let bad_actors = load_bad_actors(db, window.from, window.to, None, true, 5).await?;
+    let ReportAudience {
+        can_ot,
+        can_pm,
+        can_fin,
+    } = audience;
+    let smrp = build_smrp_kpis(db, window, now, None, can_ot, can_pm, can_fin).await?;
+    let bad_actors = load_bad_actors(db, window.from, window.to, None, can_ot && can_fin, 5).await?;
     Ok(MonthlyData {
         title: locale
             .pick(
@@ -270,11 +283,21 @@ pub async fn gather(db: &DatabaseConnection, locale: ReportLocale, now: DateTime
         month: month_name(locale, year, month),
         header: company_header(db, locale).await?,
         currency: tenant_currency(db).await,
+        audience,
         fleet,
         smrp,
         bad_actors,
-        cost_centres: cost_by_cost_centre(db, window).await?,
-        cost_by_type: cost_by_wo_type(db, window).await?,
+        cost_centres: if can_fin {
+            Some(cost_by_cost_centre(db, window).await?)
+        } else {
+            None
+        },
+        // Work-order cost: both the work-order and the finance view.
+        cost_by_type: if can_ot && can_fin {
+            Some(cost_by_wo_type(db, window).await?)
+        } else {
+            None
+        },
     })
 }
 
@@ -420,61 +443,81 @@ pub fn indicator_rows(locale: ReportLocale, d: &MonthlyData) -> (Vec<Vec<String>
     (reliability, smrp)
 }
 
+/// Bad-actor rows; the cost column only when the reader may see costs ([`bad_actor_headers`]).
 fn bad_actor_rows(locale: ReportLocale, d: &MonthlyData) -> Vec<Vec<String>> {
+    let with_cost = bad_actor_cost_shown(d);
     d.bad_actors
         .iter()
         .map(|a| {
-            vec![
+            let mut row = vec![
                 format!("{} — {}", a.asset_code, a.asset_label),
                 a.event_count.to_string(),
                 a.mtbf_hours
                     .map(|h| format!("{} h", locale.decimal(h, 1)))
                     .unwrap_or_else(|| "—".into()),
                 a.availability.map(|v| locale.percent(v)).unwrap_or_else(|| "—".into()),
-                money(locale, a.maintenance_cost, &d.currency),
-            ]
+            ];
+            if with_cost {
+                row.push(money(locale, a.maintenance_cost, &d.currency));
+            }
+            row
         })
         .collect()
+}
+
+/// The bad-actor cost (closed work orders) needs the work-order and the finance view.
+fn bad_actor_cost_shown(d: &MonthlyData) -> bool {
+    d.audience.can_ot && d.audience.can_fin
+}
+
+fn bad_actor_headers(locale: ReportLocale, d: &MonthlyData) -> Vec<&'static str> {
+    let mut h = vec![
+        locale.pick("Équipement", "Asset"),
+        locale.pick("Défaillances", "Failures"),
+        "MTBF",
+        locale.pick("Disponibilité", "Availability"),
+    ];
+    if bad_actor_cost_shown(d) {
+        h.push(locale.pick("Coût", "Cost"));
+    }
+    h
 }
 
 pub async fn export_monthly_management(
     db: &DatabaseConnection,
     fmt: &str,
     locale: ReportLocale,
+    audience: ReportAudience,
 ) -> AppResult<ExportedBinaryDocument> {
     let now = Utc::now();
-    let d = gather(db, locale, now).await?;
+    let d = gather(db, locale, now, audience).await?;
     let (reliability, smrp) = indicator_rows(locale, &d);
     let bad = bad_actor_rows(locale, &d);
-    let cc: Vec<Vec<String>> = d
-        .cost_centres
-        .iter()
-        .map(|c| vec![c.label.clone(), money(locale, c.amount, &c.currency)])
-        .collect();
-    let by_type: Vec<Vec<String>> = d
-        .cost_by_type
-        .iter()
-        .map(|(label_fr, label_en, total, n)| {
-            vec![
-                locale.pick_owned(label_fr, label_en),
-                n.to_string(),
-                money(locale, *total, &d.currency),
-            ]
-        })
-        .collect();
+    let cc: Option<Vec<Vec<String>>> = d.cost_centres.as_ref().map(|lines| {
+        lines
+            .iter()
+            .map(|c| vec![c.label.clone(), money(locale, c.amount, &c.currency)])
+            .collect()
+    });
+    let by_type: Option<Vec<Vec<String>>> = d.cost_by_type.as_ref().map(|lines| {
+        lines
+            .iter()
+            .map(|(label_fr, label_en, total, n)| {
+                vec![
+                    locale.pick_owned(label_fr, label_en),
+                    n.to_string(),
+                    money(locale, *total, &d.currency),
+                ]
+            })
+            .collect()
+    });
     let h_ind = [locale.pick("Indicateur", "Indicator"), locale.pick("Valeur", "Value")];
     let h_smrp = [
         locale.pick("Indicateur", "Indicator"),
         locale.pick("Valeur", "Value"),
         locale.pick("Calcul", "Computed from"),
     ];
-    let h_bad = [
-        locale.pick("Équipement", "Asset"),
-        locale.pick("Défaillances", "Failures"),
-        "MTBF",
-        locale.pick("Disponibilité", "Availability"),
-        locale.pick("Coût", "Cost"),
-    ];
+    let h_bad = bad_actor_headers(locale, &d);
     let h_cc = [
         locale.pick("Centre de coût", "Cost centre"),
         locale.pick("Montant", "Amount"),
@@ -520,19 +563,24 @@ pub async fn export_monthly_management(
                 "No reliability snapshot this month.",
             ));
         } else {
-            doc.table(&h_bad, &bad, &[3.0, 1.0, 1.2, 1.2, 1.6]);
+            let widths = [3.0, 1.0, 1.2, 1.2, 1.6];
+            doc.table(&h_bad, &bad, &widths[..h_bad.len()]);
         }
-        doc.subheading(s_cc);
-        if cc.is_empty() {
-            doc.paragraph(no_cc);
-        } else {
-            doc.table(&h_cc, &cc, &[3.0, 2.0]);
+        if let Some(cc) = &cc {
+            doc.subheading(s_cc);
+            if cc.is_empty() {
+                doc.paragraph(no_cc);
+            } else {
+                doc.table(&h_cc, cc, &[3.0, 2.0]);
+            }
         }
-        doc.subheading(s_type);
-        if by_type.is_empty() {
-            doc.paragraph(locale.pick("Aucun OT clôturé sur le mois.", "No work order closed this month."));
-        } else {
-            doc.table(&h_type, &by_type, &[2.5, 1.0, 2.0]);
+        if let Some(by_type) = &by_type {
+            doc.subheading(s_type);
+            if by_type.is_empty() {
+                doc.paragraph(locale.pick("Aucun OT clôturé sur le mois.", "No work order closed this month."));
+            } else {
+                doc.table(&h_type, by_type, &[2.5, 1.0, 2.0]);
+            }
         }
         doc.paragraph(locale.pick(
             "Définitions : voir Analytique → Tableaux de bord → Indicateurs SMRP (bouton d'information de chaque indicateur).",
@@ -571,8 +619,12 @@ pub async fn export_monthly_management(
     write_sheet(s_rel, &h_ind, &reliability, none)?;
     write_sheet(s_smrp, &h_smrp, &smrp, none)?;
     write_sheet(&truncate_sheet(s_bad), &h_bad, &bad, none)?;
-    write_sheet(&truncate_sheet(s_cc), &h_cc, &cc, no_cc)?;
-    write_sheet(&truncate_sheet(s_type), &h_type, &by_type, none)?;
+    if let Some(cc) = &cc {
+        write_sheet(&truncate_sheet(s_cc), &h_cc, cc, no_cc)?;
+    }
+    if let Some(by_type) = &by_type {
+        write_sheet(&truncate_sheet(s_type), &h_type, by_type, none)?;
+    }
     let bytes = wb.save_to_buffer().map_err(xlsx_e)?;
     Ok(ExportedBinaryDocument {
         file_name: format!("{base}.xlsx"),
@@ -592,6 +644,12 @@ fn truncate_sheet(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const EVERYTHING: ReportAudience = ReportAudience {
+        can_ot: true,
+        can_pm: true,
+        can_fin: true,
+    };
 
     #[test]
     fn previous_month_handles_january() {
@@ -654,7 +712,9 @@ mod tests {
             .expect("c");
         assert_eq!(n, 1);
 
-        let data = gather(&db, ReportLocale::Fr, Utc::now()).await.expect("gather");
+        let data = gather(&db, ReportLocale::Fr, Utc::now(), EVERYTHING)
+            .await
+            .expect("gather");
         assert_eq!(data.header, ["ACME Industries", "Oran"]);
         assert!(data.smrp.schedule_compliance.is_some());
         let (_, smrp_rows) = indicator_rows(ReportLocale::Fr, &data);
@@ -664,7 +724,7 @@ mod tests {
             "wrench time is never invented"
         );
 
-        let doc = export_monthly_management(&db, "xlsx", ReportLocale::En)
+        let doc = export_monthly_management(&db, "xlsx", ReportLocale::En, EVERYTHING)
             .await
             .expect("xlsx");
         assert!(doc.file_name.starts_with("monthly-report-") && doc.file_name.ends_with(".xlsx"));
@@ -677,11 +737,53 @@ mod tests {
         )
         .await
         .expect("corrupt header");
-        let data = gather(&db, ReportLocale::En, Utc::now()).await.expect("gather");
+        let data = gather(&db, ReportLocale::En, Utc::now(), EVERYTHING)
+            .await
+            .expect("gather");
         assert_eq!(
             data.header,
             ["[Invalid document header: fix it in Settings › Documents]"]
         );
+    }
+
+    #[tokio::test]
+    async fn without_the_finance_view_the_report_shows_no_cost() {
+        let db = crate::db::test_db::seeded().await;
+        let no_fin = ReportAudience {
+            can_fin: false,
+            ..EVERYTHING
+        };
+        let data = gather(&db, ReportLocale::En, Utc::now(), no_fin).await.expect("gather");
+        assert!(data.smrp.schedule_compliance.is_some(), "work-order indicators stay");
+        assert!(data.smrp.cost_to_rav.is_none(), "no cost / replacement value");
+        assert!(data.cost_centres.is_none(), "no cost-centre section");
+        assert!(data.cost_by_type.is_none(), "no work-order cost section");
+        assert!(data.bad_actors.iter().all(|a| !a.cost_available));
+        assert_eq!(bad_actor_headers(ReportLocale::En, &data).len(), 4, "no cost column");
+        let (_, smrp_rows) = indicator_rows(ReportLocale::En, &data);
+        assert!(smrp_rows.iter().all(|r| r[0] != "Cost / replacement value"));
+        export_monthly_management(&db, "xlsx", ReportLocale::En, no_fin)
+            .await
+            .expect("xlsx without cost sheets");
+
+        let full = gather(&db, ReportLocale::En, Utc::now(), EVERYTHING)
+            .await
+            .expect("gather");
+        assert!(full.smrp.cost_to_rav.is_some() && full.cost_centres.is_some() && full.cost_by_type.is_some());
+        assert_eq!(bad_actor_headers(ReportLocale::En, &full).len(), 5);
+
+        // Without the work-order view, the work-order indicators and costs follow the dashboard.
+        let fin_only = ReportAudience {
+            can_ot: false,
+            can_pm: false,
+            can_fin: true,
+        };
+        let data = gather(&db, ReportLocale::En, Utc::now(), fin_only)
+            .await
+            .expect("gather");
+        assert!(data.smrp.schedule_compliance.is_none() && data.smrp.pm_compliance.is_none());
+        assert!(data.smrp.cost_to_rav.is_none() && data.cost_by_type.is_none());
+        assert!(data.cost_centres.is_some(), "posted budget actuals are finance data");
     }
 
     #[test]
