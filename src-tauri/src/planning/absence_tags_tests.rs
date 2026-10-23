@@ -517,6 +517,19 @@ async fn changing_a_blocks_critical_flag_is_audited_without_type_or_reason() {
         .await
         .expect("clear critical");
 
+    // The block and the person are named by their sync ids (the audit travels, and outlives a block
+    // deleted later); a database without capture keeps a device-marked key.
+    let sync_ref = |table: &'static str, id: i64| {
+        let db = &db;
+        async move {
+            crate::sync::identity::optional_entity_sync_id(db, table, id)
+                .await
+                .expect("sync id")
+                .unwrap_or_else(|| format!("local-{id}"))
+        }
+    };
+    let block_ref = sync_ref("personnel_availability_blocks", block_id).await;
+    let person_ref = sync_ref("personnel", person).await;
     let rows = critical_audits(&db).await;
     assert_eq!(rows.len(), 2);
     let mut details: Vec<Value> = Vec::new();
@@ -524,14 +537,14 @@ async fn changing_a_blocks_critical_flag_is_audited_without_type_or_reason() {
         assert_eq!(r.try_get::<Option<i64>>("", "actor_id").expect("actor"), Some(actor));
         assert_eq!(
             r.try_get::<Option<String>>("", "target_id").expect("target"),
-            Some(block_id.to_string())
+            Some(block_ref.clone())
         );
         let raw: String = r.try_get("", "details_json").expect("details");
         assert!(!raw.contains("leave") && !raw.contains(SECRET_REASON), "{raw}");
         details.push(serde_json::from_str(&raw).expect("json"));
     }
-    assert_eq!(details[0]["personnel_id"], person);
-    assert_eq!(details[0]["block_id"], block_id);
+    assert_eq!(details[0]["personnel_sync_id"], person_ref.as_str());
+    assert_eq!(details[0]["block_sync_id"], block_ref.as_str());
     assert_eq!(
         (
             details[0]["is_critical_before"].as_bool(),

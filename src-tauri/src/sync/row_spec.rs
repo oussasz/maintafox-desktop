@@ -938,6 +938,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
             // The site before and after a site given to an old record (`org::site_assignment`).
             json_ref_hist("details_json", "$.site_before", "org_nodes"),
             json_ref_hist("details_json", "$.site_after", "org_nodes"),
+            // The work order of a qualification requirement before and after its change
+            // (`qualification::requirements::audit_view`).
+            json_ref_hist("details_json", "$.before.work_order_id", "work_orders"),
+            json_ref_hist("details_json", "$.after.work_order_id", "work_orders"),
         ],
         // Audits kept on the device on purpose (never staged, so never a stage error): the
         // acknowledgement of a safety rule notice (`settings::received_notice`, the notice itself
@@ -958,9 +962,13 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // newer version can encode it: its hash covers its local form, which another PC cannot
         // recompute. At sealing `chain_hash` is still empty, so a new event is judged by the rest of
         // this filter and sealed in the matching form.
+        // The audits of a session of this PC (`auth::session_manager`, target `app_session`: a
+        // session closed by the stored-state check, a clock anomaly) stay on it too: the session
+        // record is local to the device (`app_sessions`) and its id means nothing on another PC; the
+        // actor is recorded in the event, on this PC.
         row_filter: Some(
             "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved') \
-             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation') \
+             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation', 'app_session') \
              AND substr(COALESCE({row}.chain_hash, ''), 1, 3) NOT IN ('L1:', 'L2:')",
         ),
         ..spec(
@@ -977,6 +985,16 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // A site given to an old record without one (`org::site_assignment`).
                         ("intervention_request", "intervention_requests"),
                         ("planning_window", "planning_windows"),
+                        // A work-order type given its maintenance nature (`wo::types`): the type is
+                        // a value of the WORK.ORDER_TYPES list (`reference_values` id).
+                        ("work_order_type", "reference_values"),
+                        // A qualification requirement created or changed
+                        // (`qualification::requirements`; requirements are never deleted).
+                        ("qualification_requirement", "qualification_requirements"),
+                        // A block's critical flag changed (`personnel::availability`): the target
+                        // is already the block's sync id, the same on every PC, sent as it is, so
+                        // the audit is unchanged when the block is deleted later.
+                        ("personnel_availability_block", NOT_A_ROW),
                         // Device, licence, activation, export, repair and import records stay on
                         // the device they belong to.
                         ("trusted_device", LOCAL_ROW),
