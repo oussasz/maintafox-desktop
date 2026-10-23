@@ -23,22 +23,19 @@ pub struct ReportAudience {
 }
 
 impl ReportAudience {
-    /// The plant-wide view rights of `user_id`: through the session's permission cache when one is
-    /// given, else read from the database as they are now.
+    /// The plant-wide view rights of `user_id`, with the rules of a session (elevated admins hold
+    /// every right): through the session's permission cache, or a fresh one for a scheduled run.
     pub async fn of_user(
         db: &DatabaseConnection,
-        cache: Option<&tokio::sync::RwLock<crate::rbac::cache::PermissionCache>>,
+        cache: &tokio::sync::RwLock<crate::rbac::cache::PermissionCache>,
         user_id: i32,
     ) -> AppResult<Self> {
-        use crate::auth::rbac::{check_permission, check_permission_cached, PermissionScope};
+        use crate::auth::rbac::{check_permission_cached, PermissionScope};
         use crate::rbac::permissions::{FIN_VIEW, OT_VIEW, PM_VIEW};
         let scope = PermissionScope::Global;
         let mut held = [false; 3];
         for (slot, perm) in held.iter_mut().zip([OT_VIEW, PM_VIEW, FIN_VIEW]) {
-            *slot = match cache {
-                Some(cache) => check_permission_cached(db, cache, user_id, perm, &scope).await?,
-                None => check_permission(db, user_id, perm, &scope).await?,
-            };
+            *slot = check_permission_cached(db, cache, user_id, perm, &scope).await?;
         }
         Ok(Self {
             can_ot: held[0],

@@ -90,17 +90,43 @@ async fn run_due_schedules(db: &DatabaseConnection, app_data_dir: &std::path::Pa
     Ok(())
 }
 
-/// The subscriber's rights read from the database at run time (no session, no cache).
+/// The subscriber's rights read from the database at run time (no session), with the rules of a
+/// session. A run is refused (recorded as failed) when the subscriber's account is disabled or
+/// deleted, or does not hold the right a report export needs on demand (`commands::reports`).
 pub(crate) async fn subscriber_audience(db: &DatabaseConnection, user_id: i64) -> AppResult<ReportAudience> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
     let uid = i32::try_from(user_id)
         .map_err(|_| AppError::ValidationFailed(vec![format!("report subscriber id out of range: {user_id}")]))?;
-    ReportAudience::of_user(db, None, uid).await
+    let active = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS v FROM user_accounts WHERE id = ? AND is_active = 1 AND deleted_at IS NULL",
+            [user_id.into()],
+        ))
+        .await?
+        .is_some();
+    if !active {
+        return Err(AppError::PermissionDenied(format!(
+            "report subscriber {user_id}: account disabled or deleted"
+        )));
+    }
+    let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
+    let export = crate::rbac::permissions::REP_EXPORT;
+    if !crate::auth::rbac::check_permission_cached(db, &cache, uid, export, &crate::auth::rbac::PermissionScope::Global)
+        .await?
+    {
+        return Err(AppError::PermissionDenied(format!(
+            "report subscriber {user_id}: export right {export} no longer held"
+        )));
+    }
+    ReportAudience::of_user(db, &cache, uid).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::subscriber_audience;
     use crate::auth::scope_tests::{assign, exec, role, user};
+    use crate::errors::AppError;
     use crate::rbac::permissions::{FIN_VIEW, OT_VIEW, PM_VIEW, REP_EXPORT};
 
     #[tokio::test]
@@ -129,5 +155,41 @@ mod tests {
                 .await
                 .expect("gather");
         assert!(data.cost_centres.is_none() && data.smrp.cost_to_rav.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_scheduled_run_is_refused_without_the_export_right_or_an_active_account() {
+        let db = crate::db::test_db::seeded().await;
+        let subscriber = user(&db, "report.subscriber").await;
+        let r = role(&db, "monthly readers", &[OT_VIEW, PM_VIEW, FIN_VIEW]).await;
+        assign(&db, subscriber, r, "tenant", None).await;
+        let refused = subscriber_audience(&db, i64::from(subscriber)).await.unwrap_err();
+        assert!(matches!(refused, AppError::PermissionDenied(_)), "{refused:?}");
+
+        let exporters = role(&db, "report exporters", &[REP_EXPORT]).await;
+        assign(&db, subscriber, exporters, "tenant", None).await;
+        assert!(subscriber_audience(&db, i64::from(subscriber)).await.is_ok());
+
+        exec(
+            &db,
+            &format!("UPDATE user_accounts SET is_active = 0 WHERE id = {subscriber}"),
+        )
+        .await;
+        let refused = subscriber_audience(&db, i64::from(subscriber)).await.unwrap_err();
+        assert!(matches!(refused, AppError::PermissionDenied(_)), "{refused:?}");
+    }
+
+    /// The rules of a session: an elevated administrator holds every right, cost figures included.
+    #[tokio::test]
+    async fn a_scheduled_run_for_an_administrator_carries_every_figure() {
+        let db = crate::db::test_db::seeded().await;
+        let admin = user(&db, "report.admin").await;
+        exec(
+            &db,
+            &format!("UPDATE user_accounts SET is_admin = 1 WHERE id = {admin}"),
+        )
+        .await;
+        let audience = subscriber_audience(&db, i64::from(admin)).await.expect("audience");
+        assert!(audience.can_ot && audience.can_pm && audience.can_fin);
     }
 }
