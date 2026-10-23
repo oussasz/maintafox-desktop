@@ -321,7 +321,7 @@
     "actor": "Par",
     "systemActor": "Système",
     "eventType": {
-      "sla_initialized": "SLA initialized",
+      "sla_initialized": "SLA initialisé",
       "screened": "Trié",
       "advanced_to_approval": "Transmis pour approbation",
       "returned_for_clarification": "Renvoyé pour clarification",
