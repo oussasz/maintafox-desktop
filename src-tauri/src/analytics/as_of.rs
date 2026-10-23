@@ -99,7 +99,7 @@ pub async fn di_open_at(
         "SELECT COUNT(*) AS cnt FROM intervention_requests ir \
          WHERE datetime(COALESCE(ir.submitted_at, ir.created_at)) <= datetime(?) \
            AND ({DI_END} IS NULL OR datetime({DI_END}) > datetime(?)) \
-           AND (? IS NULL OR ir.org_node_id = ?)"
+           AND (? IS NULL OR ir.org_node_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))"
     );
     count(
         db,
@@ -117,7 +117,7 @@ pub async fn wo_open_at(db: &DatabaseConnection, at: DateTime<Utc>, org: Option<
         "SELECT COUNT(*) AS cnt FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
          WHERE datetime(wo.created_at) <= datetime(?) \
            AND ({WO_END_OPEN} IS NULL OR datetime({WO_END_OPEN}) > datetime(?)) \
-           AND (? IS NULL OR wo.entity_id = ?)"
+           AND (? IS NULL OR wo.entity_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))"
     );
     count(db, &sql, vec![at_s.clone().into(), at_s.into(), org.into(), org.into()]).await
 }
@@ -132,7 +132,7 @@ pub async fn wo_overdue_at(db: &DatabaseConnection, at: DateTime<Utc>, org: Opti
          WHERE wo.planned_end IS NOT NULL AND datetime(wo.planned_end) < datetime(?) \
            AND datetime(wo.created_at) <= datetime(?) \
            AND ({WO_END_WORK} IS NULL OR datetime({WO_END_WORK}) > datetime(?)) \
-           AND (? IS NULL OR wo.entity_id = ?)"
+           AND (? IS NULL OR wo.entity_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))"
     );
     count(
         db,
@@ -156,7 +156,7 @@ pub async fn wo_backlog_hours_at(db: &DatabaseConnection, at: DateTime<Utc>, org
          FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
          WHERE datetime(wo.created_at) <= datetime(?) \
            AND ({WO_END_WORK} IS NULL OR datetime({WO_END_WORK}) > datetime(?)) \
-           AND (? IS NULL OR wo.entity_id = ?)"
+           AND (? IS NULL OR wo.entity_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))"
     );
     total(db, &sql, vec![at_s.clone().into(), at_s.into(), org.into(), org.into()]).await
 }
@@ -167,7 +167,7 @@ pub async fn wo_in_progress_at(db: &DatabaseConnection, at: DateTime<Utc>, org: 
     let at_s = instant(at);
     let sql = "SELECT COUNT(*) AS cnt FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
          WHERE datetime(wo.created_at) <= datetime(?) \
-           AND (? IS NULL OR wo.entity_id = ?) \
+           AND (? IS NULL OR wo.entity_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?)) \
            AND COALESCE( \
              (SELECT l.to_status FROM wo_state_transition_log l \
                WHERE l.wo_id = wo.id AND datetime(l.acted_at) <= datetime(?) \
@@ -191,7 +191,7 @@ pub async fn pm_overdue_at(db: &DatabaseConnection, at: DateTime<Utc>, org: Opti
          WHERE po.due_at IS NOT NULL AND datetime({overdue_from}) < datetime(?) \
            AND datetime(po.created_at) <= datetime(?) \
            AND ({PM_END} IS NULL OR datetime({PM_END}) > datetime(?)) \
-           AND (? IS NULL OR e.installed_at_node_id = ?)"
+           AND (? IS NULL OR e.installed_at_node_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))"
     );
     count(
         db,
@@ -232,7 +232,7 @@ pub async fn pm_due_at(
         ),
     };
     let sql = format!(
-        "SELECT COUNT(*) AS cnt FROM pm_occurrences po          JOIN pm_plans pp ON pp.id = po.pm_plan_id          LEFT JOIN equipment e ON e.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment'          WHERE po.due_at IS NOT NULL AND {window_sql}            AND datetime(po.created_at) <= datetime(?)            AND ({PM_END} IS NULL OR datetime({PM_END}) > datetime(?))            AND (? IS NULL OR e.installed_at_node_id = ?)"
+        "SELECT COUNT(*) AS cnt FROM pm_occurrences po          JOIN pm_plans pp ON pp.id = po.pm_plan_id          LEFT JOIN equipment e ON e.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment'          WHERE po.due_at IS NOT NULL AND {window_sql}            AND datetime(po.created_at) <= datetime(?)            AND ({PM_END} IS NULL OR datetime({PM_END}) > datetime(?))            AND (? IS NULL OR e.installed_at_node_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))"
     );
     binds.extend([at_s.clone().into(), at_s.into(), org.into(), org.into()]);
     count(db, &sql, binds).await
@@ -246,7 +246,7 @@ pub async fn assets_at(db: &DatabaseConnection, at: DateTime<Utc>, org: Option<i
         "SELECT COUNT(*) AS cnt FROM equipment e \
          WHERE datetime(e.created_at) <= datetime(?) \
            AND (e.deleted_at IS NULL OR datetime(e.deleted_at) > datetime(?)) \
-           AND (? IS NULL OR e.installed_at_node_id = ?)",
+           AND (? IS NULL OR e.installed_at_node_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))",
         vec![at_s.clone().into(), at_s.into(), org.into(), org.into()],
     )
     .await

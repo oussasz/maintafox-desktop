@@ -25,6 +25,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { describeAdminEvent } from "@/components/admin/admin-event-text";
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
@@ -104,6 +105,8 @@ function formatDiffJson(raw: string): string {
     return raw;
   }
 }
+
+type AdminTranslate = (key: string, options?: Record<string, unknown>) => string;
 
 function targetLabel(evt: AdminChangeEventDetail): string | null {
   const parts: string[] = [];
@@ -270,7 +273,7 @@ export function AdminAuditTimeline({ fixedFilter, compact = false }: AdminAuditT
           id: String(evt.id),
           title: actionLabel(evt.action),
           subtitle: subtitleParts.length ? subtitleParts.join(" · ") : undefined,
-          description: evt.summary ?? undefined,
+          description: describeAdminEvent(evt, target, t as unknown as AdminTranslate),
           timestamp: evt.acted_at,
           actor: evt.actor_username
             ? evt.actor_username

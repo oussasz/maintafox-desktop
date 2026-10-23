@@ -84,6 +84,13 @@ vi.mock("@/services/auth-service", () => ({
   unlockSession: vi.fn(),
   unlockSessionWithPin: vi.fn(),
   forceChangePassword: vi.fn(),
+  getPasswordRequirements: vi.fn().mockResolvedValue({
+    min_length: 8,
+    require_uppercase: false,
+    require_lowercase: false,
+    require_digit: false,
+    require_special: false,
+  }),
 }));
 
 vi.mock("@/services/app.service", () => ({

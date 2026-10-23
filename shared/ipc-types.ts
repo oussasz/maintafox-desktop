@@ -5470,6 +5470,9 @@ export interface WoListFilter {
   overdue_only?: boolean | null;
   /** Only OTs not yet closed: the reports' / analytics "open OT" rule (`wo::backlog::NOT_CLOSED_SQL`). */
   not_closed_only?: boolean | null;
+  /** Only work completed in `[completed_from, completed_to)` (ISO instants): the SMRP work-mix population. */
+  completed_from?: string | null;
+  completed_to?: string | null;
   limit: number;
   offset: number;
 }

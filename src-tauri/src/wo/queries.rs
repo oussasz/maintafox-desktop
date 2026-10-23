@@ -98,6 +98,13 @@ pub struct WoListFilter {
     /// "open OT" count: also the completed OTs waiting for close-out).
     #[serde(default)]
     pub not_closed_only: Option<bool>,
+    /// Only the work orders completed in `[completed_from, completed_to)` (ISO instants): the
+    /// population of the SMRP work-mix indicators (`analytics::smrp::work_mix_totals`) — mechanical
+    /// completion, else closing, falling in the window; cancelled work excluded.
+    #[serde(default)]
+    pub completed_from: Option<String>,
+    #[serde(default)]
+    pub completed_to: Option<String>,
     pub limit: i64,
     pub offset: i64,
 }
@@ -346,6 +353,26 @@ pub async fn list_work_orders_in_scope(
             crate::wo::backlog::WO_OVERDUE_SQL
         ));
         binds.push(crate::analytics::as_of::instant(chrono::Utc::now()).into());
+    }
+
+    // ── Completed in a window (the work-mix indicators' own predicate) ───────────────────
+    let completed_from = filter
+        .completed_from
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let completed_to = filter.completed_to.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    if completed_from.is_some() || completed_to.is_some() {
+        where_clauses.push("wos.code <> 'cancelled'".to_string());
+        where_clauses.push("COALESCE(wo.mechanically_completed_at, wo.closed_at) IS NOT NULL".to_string());
+    }
+    if let Some(from) = completed_from {
+        where_clauses.push("datetime(COALESCE(wo.mechanically_completed_at, wo.closed_at)) >= datetime(?)".to_string());
+        binds.push(from.to_string().into());
+    }
+    if let Some(to) = completed_to {
+        where_clauses.push("datetime(COALESCE(wo.mechanically_completed_at, wo.closed_at)) < datetime(?)".to_string());
+        binds.push(to.to_string().into());
     }
 
     // ── Free-text search (code + title + equipment name) ─────────────────

@@ -1,5 +1,5 @@
 import { Lock } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { BuiltinAdminWarning } from "@/components/auth/BuiltinAdminWarning";
@@ -8,14 +8,12 @@ import { AuthAlert, AuthButton } from "@/components/auth/shell/AuthPrimitives";
 import { AuthShell } from "@/components/auth/shell/AuthShell";
 import { mfAuth } from "@/design-system/tokens";
 import { describeAppError } from "@/lib/app-error";
+import { getPasswordRequirements, type PasswordRequirements } from "@/services/auth-service";
 import { useSessionStore } from "@/store/session-store";
 
 interface ForcePasswordChangePageProps {
   onComplete: (newPassword: string) => Promise<void>;
 }
-
-/** Minimum length checked here before the request; the server applies the full policy. */
-const MIN_LENGTH = 8;
 
 /**
  * Mandatory password change (account flagged by an administrator, or the server answered
@@ -33,16 +31,42 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
   );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // The plant's own password rules. Until they are read, the screen checks nothing itself and the
+  // server decides (no guessed minimum).
+  const [requirements, setRequirements] = useState<PasswordRequirements | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPasswordRequirements()
+      .then((r) => {
+        if (!cancelled) setRequirements(r);
+      })
+      .catch(() => {
+        // The server still refuses a weak password with its own explanation.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const rules = requirements
+    ? [
+        requirements.require_uppercase && t("session.forcePasswordChange.rule.uppercase"),
+        requirements.require_lowercase && t("session.forcePasswordChange.rule.lowercase"),
+        requirements.require_digit && t("session.forcePasswordChange.rule.digit"),
+        requirements.require_special && t("session.forcePasswordChange.rule.special"),
+      ].filter(Boolean)
+    : [];
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
     setFieldError(null);
 
-    if (newPassword.length < MIN_LENGTH) {
+    if (requirements && newPassword.length < requirements.min_length) {
       setFieldError({
         field: "new",
-        text: t("session.forcePasswordChange.tooShort", { min: MIN_LENGTH }),
+        text: t("session.forcePasswordChange.tooShort", { min: requirements.min_length }),
       });
       return;
     }
@@ -87,7 +111,18 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
           disabled={loading}
-          hint={t("session.forcePasswordChange.hint", { min: MIN_LENGTH })}
+          hint={
+            requirements
+              ? [
+                  t("session.forcePasswordChange.hint", { min: requirements.min_length }),
+                  rules.length > 0
+                    ? t("session.forcePasswordChange.rulesLine", { rules: rules.join(", ") })
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" ")
+              : t("session.forcePasswordChange.hintGeneric")
+          }
           error={fieldError?.field === "new" ? fieldError.text : null}
         />
 

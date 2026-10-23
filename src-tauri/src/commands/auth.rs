@@ -922,6 +922,43 @@ pub(crate) async fn force_change_password_impl(
     Ok(ForceChangePasswordResponse { session_info: info })
 }
 
+/// What a new password must satisfy: the plant's password policy, as the change screen shows it.
+#[derive(Debug, Serialize)]
+pub struct PasswordRequirements {
+    pub min_length: usize,
+    pub require_uppercase: bool,
+    pub require_lowercase: bool,
+    pub require_digit: bool,
+    pub require_special: bool,
+}
+
+/// The plant's password requirements, for the "change your password" screen.
+///
+/// Any signed-in user may read them, including one who must change the password before anything
+/// else (so `require_session!`, which refuses that state, is not used). They are the rules the user
+/// is about to be held to, not a secret; the ageing and lock-out settings stay behind
+/// `get_password_policy` (`adm.settings`).
+#[tauri::command]
+pub async fn get_password_requirements(state: State<'_, AppState>) -> AppResult<PasswordRequirements> {
+    let (user, session_db_id) = {
+        let sm = state.session.read().await;
+        match &sm.current {
+            Some(s) if !s.is_expired() => (s.user.clone(), s.session_db_id.clone()),
+            _ => return Err(AppError::Auth("Non authentifi\u{00e9}.".into())),
+        }
+    };
+    // A revoked session or a disabled account reads nothing.
+    session_manager::enforce_session_alive(&state.db, &state.session, &user, Some(&session_db_id)).await?;
+    let policy = crate::commands::rbac::password_policy_settings(&state.db).await;
+    Ok(PasswordRequirements {
+        min_length: policy.min_length,
+        require_uppercase: policy.require_uppercase,
+        require_lowercase: policy.require_lowercase,
+        require_digit: policy.require_digit,
+        require_special: policy.require_special,
+    })
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Password recovery contacts (pre-login, unauthenticated)
 // ═══════════════════════════════════════════════════════════════════════════════

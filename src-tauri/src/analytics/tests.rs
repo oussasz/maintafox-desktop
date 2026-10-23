@@ -101,11 +101,11 @@ async fn seed_dataset(db: &DatabaseConnection) -> Data {
         "INSERT OR IGNORE INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active, \
          created_at, updated_at) VALUES (1, 'an-type', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'))",
         "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, \
-         updated_at, structure_model_id) VALUES (1, 'an-node-1', 'SITE-A', 'Site A', 1, 'active', \
-         datetime('now'), datetime('now'), 1)",
+         updated_at, structure_model_id, ancestor_path) VALUES (1, 'an-node-1', 'SITE-A', 'Site A', 1, 'active', \
+         datetime('now'), datetime('now'), 1, '/1/')",
         "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, \
-         updated_at, structure_model_id) VALUES (2, 'an-node-2', 'SITE-B', 'Site B', 1, 'active', \
-         datetime('now'), datetime('now'), 1)",
+         updated_at, structure_model_id, ancestor_path) VALUES (2, 'an-node-2', 'SITE-B', 'Site B', 1, 'active', \
+         datetime('now'), datetime('now'), 1, '/2/')",
         "INSERT INTO equipment (entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
          created_at, updated_at) VALUES ('an-eq-1', 'PMP-01', 'Pompe 1', 'active_in_service', 1, \
          datetime('now'), datetime('now'))",

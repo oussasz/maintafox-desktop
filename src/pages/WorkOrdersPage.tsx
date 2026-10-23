@@ -59,6 +59,7 @@ import {
   type ListScope,
   type WorkMix,
   idParam,
+  instantParam,
   mixParam,
   natureInMix,
   scopeParam,
@@ -184,6 +185,8 @@ export function WorkOrdersPage() {
   const [scopeFilter, setScopeFilter] = useState<ListScope | null>(null);
   /** From a work-mix link (SMRP / home): every type of that nature group (chip, clearable). */
   const [mixFilter, setMixFilter] = useState<WorkMix | null>(null);
+  /** With a work-mix link: the period the indicator counted (completed in it); chip, clearable. */
+  const [completedWindow, setCompletedWindow] = useState<{ from: string; to: string } | null>(null);
   /** From an equipment link: one asset (chip shows its code). */
   const [equipmentFilter, setEquipmentFilter] = useState<{ id: number; label: string } | null>(
     null,
@@ -247,6 +250,7 @@ export function WorkOrdersPage() {
     setScopeFilter(null);
     setEquipmentFilter(null);
     setMixFilter(null);
+    setCompletedWindow(null);
     setFilter({
       search: null,
       status_codes: null,
@@ -279,7 +283,18 @@ export function WorkOrdersPage() {
     (val: string | null) => {
       if (val) return; // only clearing is offered: the mix comes from the link
       setMixFilter(null);
-      setFilter({ type_codes: null });
+      setCompletedWindow(null);
+      setFilter({ type_codes: null, completed_from: null, completed_to: null });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
+
+  const handleCompletedFilter = useCallback(
+    (val: string | null) => {
+      if (val) return; // only clearing is offered: the period comes from the link
+      setCompletedWindow(null);
+      setFilter({ completed_from: null, completed_to: null });
       void loadWos();
     },
     [setFilter, loadWos],
@@ -305,6 +320,10 @@ export function WorkOrdersPage() {
     const equipmentId = idParam(searchParams.get(LIST_PARAM.equipment));
     const type = textParam(searchParams.get(LIST_PARAM.type));
     const mix = mixParam(searchParams.get(LIST_PARAM.mix));
+    const completedFrom = instantParam(searchParams.get(LIST_PARAM.completedFrom));
+    const completedTo = instantParam(searchParams.get(LIST_PARAM.completedTo));
+    const completed =
+      mix && completedFrom && completedTo ? { from: completedFrom, to: completedTo } : null;
     if (!scope && !status && !urgency && equipmentId == null && !type && !mix) return;
     // The mix is resolved through the type catalogue: wait for it before applying the link.
     if (mix && woTypes.length === 0) return;
@@ -316,6 +335,7 @@ export function WorkOrdersPage() {
     setLifecycleFilter(null);
     setTypeFilter(mix ? null : type);
     setMixFilter(mix);
+    setCompletedWindow(completed);
     setPriorityFilter(urgency);
     setScopeFilter(scope);
     setEquipmentFilter(equipmentId != null ? { id: equipmentId, label: `#${equipmentId}` } : null);
@@ -331,6 +351,8 @@ export function WorkOrdersPage() {
       type_codes: mixCodes ? (mixCodes.length > 0 ? mixCodes : ["__none__"]) : type ? [type] : null,
       urgency_code: urgency ? (urgency as UrgencyCode) : null,
       equipment_id: equipmentId,
+      completed_from: completed?.from ?? null,
+      completed_to: completed?.to ?? null,
     });
     void loadWos();
     if (equipmentId != null) {
@@ -352,6 +374,8 @@ export function WorkOrdersPage() {
         LIST_PARAM.equipment,
         LIST_PARAM.type,
         LIST_PARAM.mix,
+        LIST_PARAM.completedFrom,
+        LIST_PARAM.completedTo,
       ),
       { replace: true },
     );
@@ -425,6 +449,26 @@ export function WorkOrdersPage() {
             },
           ]
         : []),
+      ...(completedWindow
+        ? [
+            {
+              id: "completed",
+              kind: "select" as const,
+              label: t("list.filters.completed"),
+              options: [
+                {
+                  value: "window",
+                  label: t("list.filters.completedValue", {
+                    from: formatDate(completedWindow.from, i18n.language),
+                    to: formatDate(completedWindow.to, i18n.language),
+                  }),
+                },
+              ],
+              value: "window",
+              onChange: handleCompletedFilter,
+            },
+          ]
+        : []),
       ...(equipmentFilter
         ? [
             {
@@ -455,6 +499,9 @@ export function WorkOrdersPage() {
       scopeFilter,
       equipmentFilter,
       mixFilter,
+      completedWindow,
+      i18n.language,
+      handleCompletedFilter,
       handleScopeFilter,
       handleEquipmentFilter,
       handleMixFilter,
