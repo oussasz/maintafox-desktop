@@ -37,14 +37,17 @@ pub async fn list_team_capacity_summary(
     filter: TeamCapacityFilter,
 ) -> AppResult<Vec<TeamCapacitySummaryRow>> {
     let parse = |raw: &str, field: &str| {
-        NaiveDate::parse_from_str(raw.get(..10).unwrap_or(raw), "%Y-%m-%d")
-            .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be YYYY-MM-DD.")]))
+        NaiveDate::parse_from_str(raw.get(..10).unwrap_or(raw), "%Y-%m-%d").map_err(|_| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PERS_DATE_FORMAT:field={field}: {field} must be YYYY-MM-DD."
+            )])
+        })
     };
     let from = parse(&filter.date_from, "date_from")?;
     let to = parse(&filter.date_to, "date_to")?;
     if from > to {
         return Err(AppError::ValidationFailed(vec![
-            "date_from must be <= date_to.".to_string()
+            "GATE_PERS_DATE_RANGE_ORDER: date_from must be <= date_to.".to_string(),
         ]));
     }
 
