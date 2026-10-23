@@ -480,7 +480,9 @@
     "GATE_PM_VERSION_NOT_DRAFT_EDIT": "Modification refusée : seule une version en brouillon peut être modifiée.",
     "GATE_PM_WO_MISMATCH": "Occurrence refusée : l'OT indiqué n'est pas celui déjà lié à cette occurrence.",
     "GATE_PM_WO_TYPE_UNKNOWN": "Suite refusée : le type d'OT choisi n'existe pas ou est inactif.",
-    "GATE_PM_WO_UNKNOWN": "Occurrence refusée : l'OT indiqué n'existe pas."
+    "GATE_PM_WO_UNKNOWN": "Occurrence refusée : l'OT indiqué n'existe pas.",
+    "GATE_SUPPORT_NOT_ACTIVATED": "Envoi impossible : ce poste n'est pas activé auprès de Maintafox. Activez la licence, puis réessayez.",
+    "GATE_SUPPORT_NOTE_LENGTH": "La note doit contenir entre {{min}} et {{max}} caractères."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "Cet enregistrement appartient à un site hors de vos rôles.",

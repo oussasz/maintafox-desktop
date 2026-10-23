@@ -150,7 +150,8 @@ pub async fn upload_support_bundle(
         .filter(|t| !t.trim().is_empty())
         .ok_or_else(|| {
             crate::errors::AppError::ValidationFailed(vec![
-                "This device is not activated: the support bundle cannot be sent.".to_string(),
+                "GATE_SUPPORT_NOT_ACTIVATED: This device is not activated: the support bundle cannot be sent."
+                    .to_string(),
             ])
         })?;
     let bundle = crate::diagnostics::generate_support_bundle(&app, &state.db).await;

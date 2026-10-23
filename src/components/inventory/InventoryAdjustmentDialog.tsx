@@ -100,7 +100,7 @@ export function InventoryAdjustmentDialog({
 }: InventoryAdjustmentDialogProps) {
   const { t, i18n } = useTranslation("inventory");
   const { t: tc } = useTranslation("common");
-  const { formatNumber, formatCurrency, currencyCode } = useFormatters();
+  const { formatNumber, formatCurrency, currencyCode, formatDate } = useFormatters();
   const warehouses = useInventoryStore((s) => s.warehouses);
   const formatQty = (n: number) => formatNumber(n, { maximumFractionDigits: 3 });
   const formatDelta = (n: number) =>
@@ -641,7 +641,7 @@ export function InventoryAdjustmentDialog({
                       <SelectItem key={l.lot_id} value={String(l.lot_id)}>
                         {(l.serial_number ?? l.lot_number ?? "") +
                           ` · ${formatQty(l.quantity)}` +
-                          (l.expiry_date ? ` · ${l.expiry_date}` : "")}
+                          (l.expiry_date ? ` · ${formatDate(l.expiry_date)}` : "")}
                       </SelectItem>
                     ))}
                   </SelectContent>
