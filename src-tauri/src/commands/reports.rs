@@ -9,7 +9,7 @@ use crate::errors::{AppError, AppResult};
 use crate::planning::domain::ExportedBinaryDocument;
 use crate::reports::artifacts::{persist_run_artifact, read_run_document};
 use crate::reports::domain::{ExportReportInput, ReportRun, ReportSchedule, ReportTemplate, UpsertReportScheduleInput};
-use crate::reports::export::{export_report_document, ReportLocale};
+use crate::reports::export::{export_report_document, ReportAudience, ReportLocale};
 use crate::reports::queries::{
     delete_schedule, get_template_by_code, get_template_by_id, insert_run, list_my_runs, list_my_schedules,
     list_report_templates as query_list_report_templates, upsert_schedule,
@@ -140,7 +140,8 @@ pub async fn export_report_now(
     }
     let fmt = input.export_format.to_ascii_lowercase();
     let locale = ReportLocale::resolve(&state.db, input.locale.as_deref()).await;
-    let doc = export_report_document(&state.db, &t.code, &fmt, locale).await?;
+    let audience = ReportAudience::of_user(&state.db, &state.permission_cache, user.user_id).await?;
+    let doc = export_report_document(&state.db, &t.code, &fmt, locale, audience).await?;
     let run_id = insert_run(&state.db, None, t.id, i64::from(user.user_id), "running", &fmt).await?;
     let data_dir = app_data_dir(&app)?;
     if let Err(e) = persist_run_artifact(&state.db, &data_dir, run_id, &fmt, &doc.file_name, &doc.bytes).await {

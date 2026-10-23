@@ -535,13 +535,25 @@ pub async fn build_executive_dashboard(
 
     // ── Top 5 bad-actor assets (latest snapshot in horizon, most events) ──
     let bad_actor_assets = if can_rep {
-        load_bad_actors(db, start, now, org, can_ot, 5).await?
+        // Their closed-WO cost is a finance figure.
+        load_bad_actors(db, start, now, org, can_ot && can_fin, 5).await?
     } else {
         Vec::new()
     };
 
     let smrp = if can_ot || can_pm {
-        Some(build_smrp_kpis(db, SmrpWindow::last_days(now, horizon), now, org, can_ot, can_pm).await?)
+        Some(
+            build_smrp_kpis(
+                db,
+                SmrpWindow::last_days(now, horizon),
+                now,
+                org,
+                can_ot,
+                can_pm,
+                can_fin,
+            )
+            .await?,
+        )
     } else {
         None
     };

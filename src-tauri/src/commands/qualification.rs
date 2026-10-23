@@ -38,25 +38,31 @@ pub(crate) async fn require_any_permission(
     user: &crate::auth::session_manager::AuthenticatedUser,
     perms: &[&str],
 ) -> AppResult<()> {
-    for perm in perms {
-        if crate::auth::rbac::check_permission_cached(
-            &state.db,
-            &state.permission_cache,
-            user.user_id,
-            perm,
-            &PermissionScope::Global,
-        )
-        .await?
-        {
-            crate::entitlements::queries::enforce_capability_for_permission(&state.db, perm).await?;
-            crate::license::queries::enforce_permission_matrix(&state.db, user.user_id, perm).await?;
-            return Ok(());
-        }
+    if let Some(perm) = first_held_permission(&state.db, &state.permission_cache, user.user_id, perms).await? {
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, perm).await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user.user_id, perm).await?;
+        return Ok(());
     }
     Err(crate::errors::AppError::PermissionDenied(format!(
         "Permission requise : {}",
         perms.join(" / ")
     )))
+}
+
+/// The first of `perms` the user holds plant-wide (RBAC only, before the entitlement and licence
+/// checks of [`require_any_permission`]).
+pub(crate) async fn first_held_permission<'p>(
+    db: &sea_orm::DatabaseConnection,
+    cache: &tokio::sync::RwLock<crate::rbac::cache::PermissionCache>,
+    user_id: i32,
+    perms: &[&'p str],
+) -> AppResult<Option<&'p str>> {
+    for perm in perms {
+        if crate::auth::rbac::check_permission_cached(db, cache, user_id, perm, &PermissionScope::Global).await? {
+            return Ok(Some(perm));
+        }
+    }
+    Ok(None)
 }
 
 /// Training or personnel view: who holds what.

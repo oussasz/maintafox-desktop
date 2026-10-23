@@ -476,7 +476,8 @@ pub async fn cost_to_rav(db: &DatabaseConnection, window: SmrpWindow, org: Optio
 
 // ── All together ───────────────────────────────────────────────────────────────────────────
 
-/// SMRP indicators over `window` (and its previous window), within what the caller may see.
+/// SMRP indicators over `window` (and its previous window), within what the caller may see: the
+/// cost indicator (cost / replacement value) needs the finance view on top of the OT view.
 pub async fn build_smrp_kpis(
     db: &DatabaseConnection,
     window: SmrpWindow,
@@ -484,6 +485,7 @@ pub async fn build_smrp_kpis(
     org: Option<i64>,
     can_ot: bool,
     can_pm: bool,
+    can_fin: bool,
 ) -> AppResult<SmrpKpis> {
     let metric = |current: SmrpRatio, previous: SmrpRatio| SmrpMetric { current, previous };
     let schedule = if can_ot {
@@ -518,7 +520,7 @@ pub async fn build_smrp_kpis(
         } else {
             None
         },
-        cost_to_rav: if can_ot {
+        cost_to_rav: if can_ot && can_fin {
             Some(cost_to_rav(db, window, org).await?)
         } else {
             None
