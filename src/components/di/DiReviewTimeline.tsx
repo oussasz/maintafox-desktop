@@ -129,7 +129,7 @@ export function DiReviewTimeline({ diId }: DiReviewTimelineProps) {
               ) : null}
             </div>
           ) : undefined,
-          detailsLabel: t("reviewTimeline.slaDetails", { defaultValue: "SLA details" }),
+          detailsLabel: t("reviewTimeline.slaDetails"),
         };
       }),
     [events, t, dateLocale, returnReasonLabel, deferralReasonLabel],
@@ -142,7 +142,7 @@ export function DiReviewTimeline({ diId }: DiReviewTimelineProps) {
       locale={dateLocale}
       density="compact"
       empty={t("reviewTimeline.empty")}
-      aria-label={t("reviewTimeline.title", { defaultValue: "Review timeline" })}
+      aria-label={t("reviewTimeline.title")}
     />
   );
 }

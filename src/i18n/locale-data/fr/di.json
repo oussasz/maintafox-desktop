@@ -309,6 +309,8 @@
     "pausedDeferred": "En pause — reportée"
   },
   "reviewTimeline": {
+    "title": "Historique de la revue",
+    "slaDetails": "Détails du SLA",
     "empty": "Aucun événement de revue enregistré.",
     "slaTarget": "Cible SLA",
     "slaDeadline": "Échéance SLA",
@@ -319,7 +321,7 @@
     "actor": "Par",
     "systemActor": "Système",
     "eventType": {
-      "sla_initialized": "SLA initialized",
+      "sla_initialized": "SLA initialisé",
       "screened": "Trié",
       "advanced_to_approval": "Transmis pour approbation",
       "returned_for_clarification": "Renvoyé pour clarification",
