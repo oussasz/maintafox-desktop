@@ -56,9 +56,14 @@ const SYNTHETIC_DOMAIN_NAME_KEY: Record<string, string> = {
   "NOTIFICATION.RULES": "synthetic.domains.notificationRules",
   "NOTIFICATION.CATEGORIES": "synthetic.domains.notificationCategories",
   "PERMIT.TYPES": "synthetic.domains.permitTypes",
+  "RELIABILITY.FMECA_SCALES": "synthetic.domains.fmecaScales",
 };
 
-/** Name shown for a domain: translated for the synthetic live tables, stored name otherwise. */
+/**
+ * Name shown for a domain: translated for the synthetic live tables and for the lists Maintafox
+ * provides (`domainLabels.<CODE with dots as underscores>`); the stored name for a company's own
+ * list, or for a provided list with no translation yet.
+ */
 export function referenceDomainLabel(
   domain: { id: number; code: string; name: string },
   t: (key: string) => string,
@@ -67,5 +72,7 @@ export function referenceDomainLabel(
     const key = SYNTHETIC_DOMAIN_NAME_KEY[domain.code];
     if (key) return t(key);
   }
-  return domain.name;
+  const key = `domainLabels.${domain.code.replace(/\./g, "_")}`;
+  const translated = t(key);
+  return translated && translated !== key && !translated.endsWith(key) ? translated : domain.name;
 }

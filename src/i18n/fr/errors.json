@@ -94,7 +94,7 @@
     "GATE_PROC_NO_APPROVAL_LIMIT": "Approbation refusée : aucun de vos rôles n'a de plafond d'approbation pour ce type de document.",
     "GATE_PROC_AMOUNT_UNKNOWN": "Approbation refusée : le montant du document ne peut pas être établi. Saisissez d'abord les prix unitaires de ses lignes.",
     "GATE_PROC_NO_EXCHANGE_RATE": "Réception refusée : aucun taux de change pour la devise de la commande à la date de réception. Saisissez le taux ou ajoutez-le dans Taux et approbations.",
-    "GATE_FMECA_REFERENCE_MODES_NOT_PUBLISHED": "Mise à jour FMECA bloquée : publiez d'abord des valeurs actives dans WORK.FAILURE_MODES.",
+    "GATE_FMECA_REFERENCE_MODES_NOT_PUBLISHED": "Mise à jour FMECA bloquée : publiez d'abord des valeurs actives dans la liste « Modes de défaillance » des données de référence.",
     "GATE_FMECA_FAILURE_MODE_NOT_GOVERNED": "Mise à jour FMECA bloquée : le mode de défaillance sélectionné n'est pas gouverné par WORK.FAILURE_MODES publié.",
     "GATE_CLOSEOUT_REFERENCE_MODES_NOT_PUBLISHED": "Clôture bloquée : WORK.FAILURE_MODES ne contient aucune valeur active publiée.",
     "GATE_CLOSEOUT_FAILURE_MODE_NOT_GOVERNED": "Clôture bloquée : le mode de défaillance sélectionné n'est pas gouverné par WORK.FAILURE_MODES publié.",

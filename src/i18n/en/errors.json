@@ -92,7 +92,7 @@
     "GATE_PROC_NO_APPROVAL_LIMIT": "Approval refused: none of your roles has an approval limit for this document type.",
     "GATE_PROC_AMOUNT_UNKNOWN": "Approval refused: the document amount cannot be established. Enter the unit prices of its lines first.",
     "GATE_PROC_NO_EXCHANGE_RATE": "Receipt refused: no exchange rate for the order currency on the receipt date. Enter the rate or add it under Rates & approvals.",
-    "GATE_FMECA_REFERENCE_MODES_NOT_PUBLISHED": "FMECA update blocked: publish active values in WORK.FAILURE_MODES first.",
+    "GATE_FMECA_REFERENCE_MODES_NOT_PUBLISHED": "FMECA update blocked: publish active values in the \"Failure modes\" reference list first.",
     "GATE_FMECA_FAILURE_MODE_NOT_GOVERNED": "FMECA update blocked: selected failure mode is not governed by published WORK.FAILURE_MODES.",
     "GATE_CLOSEOUT_REFERENCE_MODES_NOT_PUBLISHED": "Closeout blocked: WORK.FAILURE_MODES has no published active values.",
     "GATE_CLOSEOUT_FAILURE_MODE_NOT_GOVERNED": "Closeout blocked: selected failure mode is not governed by published WORK.FAILURE_MODES.",
