@@ -1,4 +1,4 @@
-import { Bell, Camera, KeyRound, Lock, Shield, Smartphone, Trash2 } from "lucide-react";
+import { Bell, KeyRound, Lock, Shield, Smartphone, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -208,11 +208,9 @@ export function ProfileSettingsPanel() {
   if (loadError || !profile) {
     return (
       <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/10 p-4">
-        <p className="text-sm text-destructive">
-          {loadError ?? t("profile.loadError", "Failed to load profile.")}
-        </p>
+        <p className="text-sm text-destructive">{loadError ?? t("profile.loadError")}</p>
         <Button type="button" variant="outline" size="sm" onClick={() => void loadData()}>
-          {t("profile.retry", "Retry")}
+          {t("profile.retry")}
         </Button>
       </div>
     );
@@ -233,13 +231,6 @@ export function ProfileSettingsPanel() {
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-xl font-semibold text-primary">
             {initials}
           </div>
-          <button
-            type="button"
-            className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-surface-1 border border-surface-border text-text-muted hover:text-text-primary"
-            aria-label="Change avatar"
-          >
-            <Camera className="h-3 w-3" />
-          </button>
         </div>
         <div>
           <h2 className="text-lg font-semibold text-text-primary">
@@ -350,7 +341,7 @@ export function ProfileSettingsPanel() {
                 value={selectedSkillRef != null ? String(selectedSkillRef) : null}
                 onChange={(idStr) => setSelectedSkillRef(idStr ? Number(idStr) : null)}
                 allowClear={false}
-                placeholder={t("profile.selectSkill", "Select a skill")}
+                placeholder={t("profile.selectSkill")}
               />
               <select
                 aria-label={t("profile.level", "Level")}
