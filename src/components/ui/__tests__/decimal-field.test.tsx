@@ -117,4 +117,23 @@ describe("rounding and parent reconciliation", () => {
     expect(input).not.toHaveAttribute("aria-invalid");
     expect(screen.getByTestId("out").textContent).toBe("5");
   });
+
+  it("does not put a zero back while the user empties a field the parent keeps as 0", () => {
+    function ZeroHarness() {
+      const [v, setV] = useState<number>(5);
+      return (
+        <DecimalField aria-label="qty" value={v} onValueChange={(n) => setV(n ?? 0)} decimals={3} />
+      );
+    }
+    render(<ZeroHarness />);
+    const input = screen.getByLabelText("qty") as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "" } });
+    expect(input.value).toBe("");
+    fireEvent.change(input, { target: { value: "7" } });
+    expect(input.value).toBe("7");
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.blur(input);
+    expect(input.value).toBe("");
+  });
 });
