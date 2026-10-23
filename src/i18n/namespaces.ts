@@ -64,6 +64,7 @@ export const ISSUE_NAMESPACES = [
   "reliability",
   "settings",
   "inventory",
+  "inspections",
   "budget",
 ] as const;
 

@@ -58,7 +58,7 @@ pub async fn route_inspection_anomaly_to_di(
     let a = load_anomaly(db, anomaly_id).await?;
     if a.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "row_version mismatch on inspection_anomalies.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_anomalies.".into(),
         ]));
     }
     assert_routable(&a)?;
@@ -173,7 +173,7 @@ pub async fn route_inspection_anomaly_to_wo(
     let a = load_anomaly(db, anomaly_id).await?;
     if a.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "row_version mismatch on inspection_anomalies.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_anomalies.".into(),
         ]));
     }
     assert_routable(&a)?;
@@ -288,7 +288,7 @@ pub async fn defer_inspection_anomaly(
     let a = load_anomaly(&txn, anomaly_id).await?;
     if a.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "row_version mismatch on inspection_anomalies.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_anomalies.".into(),
         ]));
     }
     assert_routable(&a)?;
