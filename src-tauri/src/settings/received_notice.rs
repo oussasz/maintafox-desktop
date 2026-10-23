@@ -736,6 +736,22 @@ async fn send(
     }
 }
 
+/// Writes the review notice of grants made by someone whose right to give access was withdrawn on
+/// another PC (`sync::grant_check::after_rights_change`), to the administrators (the audience of
+/// [`RECEIVED_RULE_CATEGORY`]: `adm.settings` holders and plant administrators, kept until each
+/// acknowledges it), in a savepoint of the apply of the received row. The withdrawal only takes
+/// access away: it is never held back by its notice; a notice that cannot be written is logged.
+pub(crate) async fn send_grant_review_notice(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+    title: String,
+    body: String,
+    message: NotificationMessage,
+) -> AppResult<()> {
+    send(conn, entity_type, entity_sync_id, true, title, body, "/admin", message).await
+}
+
 /// Writes a notice of concurrent PM plan versions (`pm::version_clash`) in a savepoint of the apply
 /// of the received row. A notice that cannot be written is logged and the row still applies: a
 /// version or an occurrence is never held back by its notice (nothing is changed by either).

@@ -959,6 +959,7 @@ pub(crate) async fn apply_row(
         let Some(locator) = locator else {
             return Ok(ApplyOutcome::Unchanged);
         };
+        let rights_before = crate::sync::grant_check::rights_before(conn, layout).await?;
         let (where_sql, values) = locator.where_sql("");
         let sql = format!("DELETE FROM \"{table}\" WHERE {where_sql}");
         let result = conn
@@ -969,6 +970,7 @@ pub(crate) async fn apply_row(
         }
         clear_ref_cache();
         crate::sync::apply_hooks::after_delete(conn, layout, entity_sync_id).await?;
+        crate::sync::grant_check::after_rights_change(conn, layout, entity_sync_id, None, rights_before).await?;
         return Ok(ApplyOutcome::Applied);
     }
 
@@ -981,6 +983,7 @@ pub(crate) async fn apply_row(
         return Ok(outcome);
     }
     let group = crate::sync::apply_hooks::upsert_group(conn, layout, entity_sync_id, &payload).await?;
+    let rights_before = crate::sync::grant_check::rights_before(conn, layout).await?;
 
     let mut assignments: Vec<(String, SqlValue)> = Vec::new();
     let mut unresolved_soft: Vec<(String, &'static str, String)> = Vec::new();
@@ -1121,6 +1124,7 @@ pub(crate) async fn apply_row(
     }
     complete_pending_refs_to(conn, layout.def.entity_type, entity_sync_id).await?;
     crate::sync::apply_hooks::after_upsert(conn, layout, &local_row, inserted, &payload).await?;
+    crate::sync::grant_check::after_rights_change(conn, layout, entity_sync_id, Some(&payload), rights_before).await?;
     if let Some(group) = group {
         if let Some(outcome) = crate::sync::apply_hooks::after_upsert_group(conn, group).await? {
             return Ok(outcome);

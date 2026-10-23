@@ -9,6 +9,7 @@ pub mod code_clash;
 pub mod conflicts;
 pub mod device_code;
 pub mod domain;
+pub(crate) mod grant_check;
 pub mod identity;
 pub mod materialize;
 pub mod media;

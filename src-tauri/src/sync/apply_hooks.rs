@@ -72,6 +72,11 @@
 //! - `user_accounts` / `user_scope_assignments` / `roles`: a received change or delete that would
 //!   leave this PC without an active administrator is refused as a conflict
 //!   (`auth::last_admin::inbound_change_check`, `before_upsert_checked`, `before_delete_checked`).
+//! - `user_scope_assignments` / `role_permissions` / `user_accounts`: a received grant (new, or
+//!   widened) whose author does not hold the right to make it here, now, is refused as a
+//!   `GRANT_BY_UNAUTHORISED_ADMIN` conflict, waiting while its author is not applied yet; after the
+//!   apply, a change that took that right away from someone lists the grants they made since in one
+//!   review notice to the administrators (`sync::grant_check`, from `row_codec::apply_row`).
 //! - `admin_recovery_notices` / `admin_recovery_acknowledgements`: a notice or acknowledgement
 //!   already here is never changed, and an acknowledgement made by anyone but the notice's
 //!   recipient is refused as a conflict (`auth::recovery_code::inbound_notice_check`,
@@ -144,6 +149,11 @@ pub(crate) async fn before_upsert_checked(
         {
             return Ok(Some(outcome));
         }
+    }
+    // `user_scope_assignments` / `role_permissions` / `user_accounts`: a grant whose author does not
+    // hold the right to make it here, now, is a conflict (`sync::grant_check`).
+    if let Some(outcome) = crate::sync::grant_check::inbound_grant_check(conn, layout, entity_sync_id, payload).await? {
+        return Ok(Some(outcome));
     }
     // `user_accounts` / `user_scope_assignments` / `roles`: a change that would leave this PC
     // without an active administrator is a conflict (`auth::last_admin`).
