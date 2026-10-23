@@ -569,7 +569,7 @@ async fn validate_row(
             "error",
             "PERSONNEL_IMPORT_FULL_NAME_REQUIRED",
             &[],
-            "GATE_PERS_IMPORT_FULL_NAME_REQUIRED: full_name is required when creating a personnel record.",
+            "full_name is required when creating a personnel record.",
         );
     }
 
