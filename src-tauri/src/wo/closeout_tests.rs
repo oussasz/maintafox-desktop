@@ -1003,7 +1003,9 @@ mod tests {
         .expect("lockout over");
         if let Err(errors) = close_with_signer(&db, wo_id, rv, actor, signer, SIGNER_PASSWORD).await {
             assert!(
-                !errors.iter().any(|e| e.starts_with("GATE_CLOSEOUT_FMECA_PARTS")),
+                // No code of the FMECA-parts gate (a prefix here, not a code: the frontend
+                // gate-code scan reads quoted `GATE_…` literals).
+                !errors.iter().any(|e| e.contains("CLOSEOUT_FMECA_PARTS")),
                 "the override is accepted: {errors:?}"
             );
         }
