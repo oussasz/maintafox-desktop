@@ -3108,19 +3108,6 @@ pub async fn refresh_product_activation_policy(
     .await
 }
 
-/// Device-local activation token for policy refresh before/without an app session.
-#[tauri::command]
-pub async fn get_product_activation_token(state: State<'_, AppState>) -> AppResult<Option<String>> {
-    let record = load_state_record(&state).await?;
-    let Some(rec) = record else {
-        return Ok(None);
-    };
-    if !record_has_valid_activation_claim(&rec) {
-        return Ok(None);
-    }
-    Ok(rec.activation_claim.map(|c| c.activation_token))
-}
-
 #[cfg(test)]
 mod claim_json_tests {
     use super::{extract_claim_and_envelope, sanitize_activation_claim_object};
