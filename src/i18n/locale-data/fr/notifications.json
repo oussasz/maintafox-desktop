@@ -190,6 +190,7 @@
     "pm_concurrent_versions": "Versions concurrentes d’un plan préventif",
     "permit_suspended_work_held": "OT mis en attente par la suspension de son permis",
     "permit_ended_under_work": "Permis terminé sur un autre poste pendant ou avant le travail",
+    "wo_permit_rule_missing": "OT reçu démarré sans sa règle de permis de l'usine",
     "stock_to_reconcile": "Stock à rapprocher après synchronisation"
   },
   "messages": {
@@ -306,7 +307,7 @@
     },
     "wo_permit_rule_missing_on_arrival": {
       "title": "OT {{code}} reçu démarré sans la règle de permis {{rule}}",
-      "body": "L'OT {{code}} a été démarré sur un autre poste qui n'appliquait pas la règle {{rule}} de l'usine : un permis {{permit_type}} est exigé pour son équipement et son travail. Vérifiez comment ce travail a été protégé."
+      "body": "L'OT {{code}} a été reçu démarré sans la règle {{rule}} que l'usine applique ici : un permis {{permit_type}} pour son équipement et son travail. Vérifiez comment ce travail a été protégé."
     },
     "pm_concurrent_versions": {
       "title": "Deux versions concurrentes du plan {{plan}} — vérifier la version en vigueur",
@@ -420,7 +421,8 @@
       "loto_forced_removal": "Toujours les personnes qui détiennent le droit de clôture des permis sur le site du permis.",
       "pm_concurrent_versions": "Toujours les personnes qui détiennent le droit de planification préventive (pm.edit) sur tout le site industriel, et celles qui le détiennent sur le site de l’équipement du plan.",
       "permit_suspended_work_held": "Toujours le responsable de l’OT lié au permis ; s’il n’en a pas, les personnes qui détiennent le droit de clôture des permis sur le site du permis.",
-      "permit_ended_under_work": "Toujours le responsable de l’OT lié au permis et les personnes qui détiennent le droit de clôture des permis sur le site du permis."
+      "permit_ended_under_work": "Toujours le responsable de l’OT lié au permis et les personnes qui détiennent le droit de clôture des permis sur le site du permis.",
+      "wo_permit_rule_missing": "Toujours les personnes qui détiennent le droit d’émission des permis sur le site de l’OT (et sur toute l’usine) ; si personne ne le détient, les administrateurs des paramètres."
     },
     "minutes": "min",
     "minutesAfterAlert": "min après l'alerte",
