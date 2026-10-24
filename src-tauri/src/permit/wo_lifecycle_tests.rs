@@ -634,3 +634,220 @@ async fn a_suspension_received_over_held_work_is_not_a_conflict() {
     assert!(review_conflicts(&db, &wp.entity_sync_id).await.is_empty());
     assert_eq!(notices(&db, "permit_suspended_work_held").await, before + 1);
 }
+
+// ── Review follow-ups: notice audiences, review-only conflicts, arrival cases ──────────
+
+/// Permit close-right holders: one at the permit's site (node 1 of `setup`), one on another site,
+/// and an account without the right. Returns (here, elsewhere, without).
+async fn close_right_holders(db: &DatabaseConnection, tag: &str) -> (i64, i64, i64) {
+    use crate::auth::scope_tests::{assign, node, role, user};
+    let other_site = node(db, &format!("{tag}-OTHER"), None).await;
+    let closer = role(db, &format!("{tag} closer"), &[crate::rbac::permissions::PTW_CLOSE]).await;
+    let here = user(db, &format!("{tag}_closer_here")).await;
+    let elsewhere = user(db, &format!("{tag}_closer_elsewhere")).await;
+    let without = user(db, &format!("{tag}_no_right")).await;
+    assign(db, here, closer, "org_node", Some(1)).await;
+    assign(db, elsewhere, closer, "org_node", Some(other_site)).await;
+    (i64::from(here), i64::from(elsewhere), i64::from(without))
+}
+
+/// S1: a running work order without a responsible, held by its permit's suspension: the notice goes
+/// to the permit close-right holders of the permit's site (never to nobody).
+#[tokio::test]
+async fn a_suspension_holding_work_without_a_responsible_tells_the_close_right_holders_of_the_site() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-S1-1").await;
+    let (here, elsewhere, without) = close_right_holders(&db, "s1").await;
+    db.execute_unprepared(&format!(
+        "UPDATE work_orders SET primary_responsible_id = NULL WHERE id = {wo_id}"
+    ))
+    .await
+    .expect("no responsible");
+
+    suspend(&db, &wp, "Fuite détectée").await;
+    assert_eq!(wo_status(&db, wo_id).await, "on_hold");
+    assert_eq!(notices_to(&db, "permit_suspended_work_held", here).await, 1);
+    assert_eq!(notices_to(&db, "permit_suspended_work_held", elsewhere).await, 0);
+    assert_eq!(notices_to(&db, "permit_suspended_work_held", without).await, 0);
+}
+
+/// S1: with a responsible, the notice stays theirs (the fallback is not added).
+#[tokio::test]
+async fn a_suspension_holding_work_with_a_responsible_does_not_use_the_fallback() {
+    let db = setup().await;
+    let (_, wp) = running_work(&db, "EQ-S1-2").await;
+    let (here, _, _) = close_right_holders(&db, "s1b").await;
+    suspend(&db, &wp, "Fuite détectée").await;
+    assert_eq!(
+        notices_to(&db, "permit_suspended_work_held", admin_id(&db).await).await,
+        1
+    );
+    assert_eq!(notices_to(&db, "permit_suspended_work_held", here).await, 0);
+}
+
+/// N7: the hold made with a suspension is staged for the other PCs before the permit's change.
+#[tokio::test]
+async fn a_suspension_stages_the_work_order_hold_before_the_permit() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-N7-1").await;
+    for sql in ["DELETE FROM sync_capture_journal", "DELETE FROM sync_outbox"] {
+        db.execute_unprepared(sql).await.expect("clear");
+    }
+    suspend(&db, &wp, "Alarme gaz").await;
+    crate::sync::capture::drain_capture_journal(&db).await.expect("drain");
+    let first = |entity: &str, sync: &str| {
+        format!(
+            "SELECT COALESCE(MIN(id), 0) FROM sync_outbox WHERE entity_type = '{entity}' AND entity_sync_id = '{sync}'"
+        )
+    };
+    let wo_row = scalar_i64(&db, &first("work_orders", &wo_sync(&db, wo_id).await)).await;
+    let permit_row = scalar_i64(&db, &first("work_permits", &wp.entity_sync_id)).await;
+    assert!(wo_row > 0 && permit_row > 0, "both staged: {wo_row} {permit_row}");
+    assert!(wo_row < permit_row, "the hold goes first: {wo_row} {permit_row}");
+}
+
+async fn resolve(db: &DatabaseConnection, conflict_id: i64, action: &str) -> Result<(), AppError> {
+    let version = scalar_i64(
+        db,
+        &format!("SELECT row_version FROM sync_conflicts WHERE id = {conflict_id}"),
+    )
+    .await;
+    crate::sync::queries::resolve_sync_conflict(
+        db,
+        admin_id(db).await,
+        crate::sync::domain::ResolveSyncConflictInput {
+            conflict_id,
+            expected_row_version: version,
+            action: action.into(),
+            resolution_note: Some("Travail arrêté et vérifié sur place".into()),
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
+async fn text_of(db: &DatabaseConnection, sql: &str) -> String {
+    db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get_by_index::<String>(0)
+        .expect("text")
+}
+
+/// S2: a permit-ended review conflict accepts only "dismiss" and "escalate", refused before anything
+/// is changed; dismissing is the recommended choice.
+#[tokio::test]
+async fn a_permit_ended_review_conflict_is_only_dismissed_or_escalated() {
+    let db = setup().await;
+    let (_, wp) = running_work(&db, "EQ-S2-1").await;
+    let cancelled = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("cancelled"))],
+    );
+    assert!(matches!(
+        apply(&db, "work_permits", &wp.entity_sync_id, &cancelled).await,
+        ApplyOutcome::Applied
+    ));
+    let conflict_id = scalar_i64(
+        &db,
+        &format!(
+            "SELECT id FROM sync_conflicts WHERE entity_type = 'work_permits' AND entity_sync_id = '{}'",
+            wp.entity_sync_id
+        ),
+    )
+    .await;
+    assert_eq!(
+        text_of(
+            &db,
+            &format!("SELECT recommended_action FROM sync_conflicts WHERE id = {conflict_id}")
+        )
+        .await,
+        "dismiss"
+    );
+    let outbox_before = scalar_i64(&db, "SELECT COUNT(*) FROM sync_outbox").await;
+    for action in ["accept_local", "accept_remote", "renumber_local", "retry_later"] {
+        let msgs = messages(resolve(&db, conflict_id, action).await.expect_err(action));
+        assert!(has(&msgs, "GATE_SYNC_CONFLICT_REVIEW_ONLY"), "{action}: {msgs:?}");
+    }
+    assert_eq!(review_conflicts(&db, &wp.entity_sync_id).await[0].1, "new", "unchanged");
+    assert_eq!(reread(&db, &wp).await.status, "cancelled");
+    assert_eq!(scalar_i64(&db, "SELECT COUNT(*) FROM sync_outbox").await, outbox_before);
+
+    resolve(&db, conflict_id, "escalate").await.expect("escalated");
+    resolve(&db, conflict_id, "dismiss").await.expect("dismissed");
+    assert_eq!(review_conflicts(&db, &wp.entity_sync_id).await[0].1, "dismissed");
+}
+
+/// S5.1: the permit-ended notice goes to the responsible and to the permit close-right holders of
+/// the permit's site only.
+#[tokio::test]
+async fn a_permit_ended_notice_reaches_the_close_right_holders_of_the_permit_site_only() {
+    let db = setup().await;
+    let (_, wp) = running_work(&db, "EQ-S5-1").await;
+    let (here, elsewhere, without) = close_right_holders(&db, "s5").await;
+    let closed = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("closed")), ("closed_at", json!(ago(60)))],
+    );
+    assert!(matches!(
+        apply(&db, "work_permits", &wp.entity_sync_id, &closed).await,
+        ApplyOutcome::Applied
+    ));
+    assert_eq!(notices_to(&db, "permit_ended_under_work", admin_id(&db).await).await, 1);
+    assert_eq!(notices_to(&db, "permit_ended_under_work", here).await, 1);
+    assert_eq!(notices_to(&db, "permit_ended_under_work", elsewhere).await, 0);
+    assert_eq!(notices_to(&db, "permit_ended_under_work", without).await, 0);
+}
+
+/// S5.2: a closure dated after the start here, received while the work runs: ENDED_DURING_WORK.
+#[tokio::test]
+async fn a_timed_closure_after_the_start_received_while_the_work_runs_is_raised_during_work() {
+    let db = setup().await;
+    let (_, wp) = running_work(&db, "EQ-S5-2").await;
+    let later = (chrono::Utc::now() + chrono::Duration::minutes(5))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let closed = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("closed")), ("closed_at", json!(later))],
+    );
+    assert!(matches!(
+        apply(&db, "work_permits", &wp.entity_sync_id, &closed).await,
+        ApplyOutcome::Applied
+    ));
+    assert_eq!(
+        review_conflicts(&db, &wp.entity_sync_id).await,
+        vec![(
+            crate::permit::ended_under_work::codes::ENDED_DURING_WORK.to_string(),
+            "new".to_string()
+        )]
+    );
+    assert_eq!(notices_to(&db, "permit_ended_under_work", admin_id(&db).await).await, 1);
+}
+
+/// S5.3: a received end then left waiting (a parent not here yet) leaves no conflict and no notice;
+/// once it applies, both come.
+#[tokio::test]
+async fn a_received_end_left_waiting_raises_nothing_until_it_applies() {
+    let db = setup().await;
+    let (_, wp) = running_work(&db, "EQ-S5-3").await;
+    let closed = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("closed")), ("closed_at", json!(ago(60)))],
+    );
+    let waiting = with(
+        closed.clone(),
+        &[("created_by_sync_id", json!("user-not-received-yet"))],
+    );
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &waiting).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    assert_eq!(reread(&db, &wp).await.status, "active");
+    assert!(review_conflicts(&db, &wp.entity_sync_id).await.is_empty());
+    assert_eq!(notices(&db, "permit_ended_under_work").await, 0);
+
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &closed).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(review_conflicts(&db, &wp.entity_sync_id).await.len(), 1);
+    assert_eq!(notices(&db, "permit_ended_under_work").await, 1);
+}

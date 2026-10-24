@@ -1054,8 +1054,10 @@ async fn send_permit_work_notice(
 
 /// A running work order put on hold because its permit was suspended (owner decision D5), in the
 /// transaction of the suspension (or of its apply here): its responsible is told, and kept told
-/// until they acknowledge it. `permit_id` is the permit's local id (its work order and site route
-/// the notice).
+/// until they acknowledge it; a work order without a responsible (or whose responsible is not an
+/// active user here) tells the permit close-right holders of the permit's site instead
+/// (`notifications::catalog::ALWAYS_DELIVERED_FALLBACK`). `permit_id` is the permit's local id (its
+/// work order and site route the notice).
 pub(crate) async fn announce_work_held_by_suspension_of(
     conn: &impl ConnectionTrait,
     permit_id: i64,

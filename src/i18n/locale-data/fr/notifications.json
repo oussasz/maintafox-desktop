@@ -391,7 +391,7 @@
       "safety_rule_received": "Toujours les administrateurs des paramètres de toute l’usine.",
       "loto_forced_removal": "Toujours les personnes qui détiennent le droit de clôture des permis sur le site du permis.",
       "pm_concurrent_versions": "Toujours les personnes qui détiennent le droit de planification préventive (pm.edit) sur tout le site industriel, et celles qui le détiennent sur le site de l’équipement du plan.",
-      "permit_suspended_work_held": "Toujours le responsable de l’OT lié au permis.",
+      "permit_suspended_work_held": "Toujours le responsable de l’OT lié au permis ; s’il n’en a pas, les personnes qui détiennent le droit de clôture des permis sur le site du permis.",
       "permit_ended_under_work": "Toujours le responsable de l’OT lié au permis et les personnes qui détiennent le droit de clôture des permis sur le site du permis."
     },
     "minutes": "min",

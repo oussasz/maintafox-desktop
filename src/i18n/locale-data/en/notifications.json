@@ -391,7 +391,7 @@
       "safety_rule_received": "Always the plant-wide settings administrators.",
       "loto_forced_removal": "Always the people holding the permit close right at the permit's site.",
       "pm_concurrent_versions": "Always the people holding the PM planning right (pm.edit) plant-wide, and those holding it at the site of the plan's equipment.",
-      "permit_suspended_work_held": "Always the responsible of the permit’s work order.",
+      "permit_suspended_work_held": "Always the responsible of the permit’s work order; when it has none, the people holding the permit close right at the permit’s site.",
       "permit_ended_under_work": "Always the responsible of the permit’s work order and the people holding the permit close right at the permit’s site."
     },
     "minutes": "min",

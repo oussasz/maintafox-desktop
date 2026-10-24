@@ -17,7 +17,9 @@
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
-use crate::notifications::catalog::{always_delivered_audiences, normalize_severity, rule_audiences};
+use crate::notifications::catalog::{
+    always_delivered_audiences, always_delivered_fallback, normalize_severity, rule_audiences,
+};
 use crate::notifications::{delivery, router, Result};
 use crate::sync::identity::{new_entity_sync_id, optional_entity_sync_id, seeded_entity_sync_id};
 
@@ -300,7 +302,15 @@ pub(crate) async fn emit(
         let audiences_json = rule_row.try_get::<Option<String>>("", "audiences_json")?;
         rule_audiences(audiences_json.as_deref(), &routing_mode)
     };
-    let recipients = router::resolve_audiences(pool, &audiences, &ctx).await?;
+    let mut recipients = router::resolve_audiences(pool, &audiences, &ctx).await?;
+    // A safety notice whose fixed audiences reach nobody here goes to its fallback
+    // (`catalog::ALWAYS_DELIVERED_FALLBACK`).
+    if fixed && recipients.is_empty() {
+        let fallback = always_delivered_fallback(&input.category_code);
+        if !fallback.is_empty() {
+            recipients = router::resolve_audiences(pool, &fallback, &ctx).await?;
+        }
+    }
 
     for recipient in recipients {
         if !fixed && unsubscribed(pool, recipient.user_id, &input.category_code).await? {

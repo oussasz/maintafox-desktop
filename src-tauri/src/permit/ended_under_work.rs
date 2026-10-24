@@ -33,6 +33,12 @@
 //! Not covered (known limit): a permit suspended and reinstated on another PC, both before this PC
 //! receives either, arrives `active` as held here; the suspension rows are applied without a check
 //! of the work recorded here meanwhile.
+//!
+//! Known limit (two clocks): the end time is the sending PC's clock, the start time this PC's. When
+//! the sender's clock runs ahead of this one by more than the gap between them, an end really
+//! before the start is judged after it: on a work order running here it is still raised (during
+//! the work), on one on hold or completed here it is not raised. The other D9 checks share this
+//! model.
 
 use chrono::{DateTime, Utc};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};

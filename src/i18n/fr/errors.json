@@ -451,6 +451,7 @@
     "GATE_SYNC_CHECKPOINT_REQUIRED": "Synchronisation refusée : le jeton de point de contrôle est obligatoire.",
     "GATE_SYNC_CHECKPOINT_STALE": "Synchronisation refusée : le point de contrôle a changé entre-temps. Relancez la synchronisation.",
     "GATE_SYNC_CONFLICT_CLOSED": "Conflit de synchronisation : il est déjà clos.",
+    "GATE_SYNC_CONFLICT_REVIEW_ONLY": "Conflit de synchronisation à examiner seulement : rien à garder ni à reprendre. Choisissez « Ignorer » avec le motif une fois le travail arrêté, ou « Escalader ».",
     "GATE_SYNC_DATE_INVALID": "Synchronisation refusée : une date n'est pas valide.",
     "GATE_SYNC_PROTOCOL_VERSION": "Synchronisation refusée : la version du protocole n'est pas prise en charge. Mettez l'application à jour.",
     "GATE_SYNC_REPAIR_MODE_BLOCKED": "Réparation refusée : ce mode de réparation n'est pas permis.",

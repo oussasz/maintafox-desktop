@@ -2,7 +2,7 @@
  * How a sync conflict is named on screen: a translated record type and the record's own number
  * and name taken from its payload — never the uuid or the table name.
  */
-import type { SyncConflictRecord } from "@shared/ipc-types";
+import type { ResolveSyncConflictInput, SyncConflictRecord } from "@shared/ipc-types";
 
 /**
  * Shortest reason the server accepts for a choice on a conflict: `MIN_REASON_CHARS` in
@@ -279,6 +279,37 @@ export const KNOWN_WAIT_REASONS = new Set([
   "NO_MATERIALIZER",
   "UNKNOWN_ENTITY_TYPE",
 ]);
+
+/**
+ * Conflicts raised for review over a received row that was applied (a permit ended on another PC
+ * under work held here, AU-101): nothing to keep or take. The server accepts only "dismiss" and
+ * "escalate" on them (`REVIEW_ONLY_CONFLICTS` in `src-tauri/src/sync/queries.rs`).
+ */
+export const REVIEW_ONLY_CONFLICT_KINDS = new Set([
+  "PERMIT_ENDED_BEFORE_START",
+  "PERMIT_ENDED_DURING_WORK",
+]);
+
+/**
+ * The choices offered on a conflict, in order. `withTriage`: also "retry later" and "escalate"
+ * (Settings → sync diagnostics); a review-only conflict always offers "escalate".
+ */
+export function conflictActions(
+  conflictType: string,
+  withTriage: boolean,
+): ResolveSyncConflictInput["action"][] {
+  if (REVIEW_ONLY_CONFLICT_KINDS.has(conflictType)) return ["escalate", "dismiss"];
+  // A username created on two PCs: no merge tool (CMMS Advisor decision). One account is renamed
+  // on the PC that created it; here the received account is then taken (refused, with the reason,
+  // while its username is still used here). No local version to keep.
+  const primary: ResolveSyncConflictInput["action"][] =
+    conflictType === "CODE_CLASH"
+      ? ["renumber_local"]
+      : conflictType === "USERNAME_CLASH"
+        ? ["accept_remote"]
+        : ["accept_local", "accept_remote"];
+  return [...primary, ...(withTriage ? (["retry_later", "escalate"] as const) : []), "dismiss"];
+}
 
 /** The number a received record carries (`code` or `employee_code`) — for CODE_CLASH. */
 export function clashingNumber(c: SyncConflictRecord): string | null {

@@ -432,6 +432,11 @@ pub const PERMIT_SUSPENDED_DELAY_REASON: &str = "permit_suspended";
 /// row recorded as `actor_id`'s, the same writes as a hold made on screen. The reason is found by its
 /// code whatever its active flag (a plant hiding it from the hold screen never blocks a suspension);
 /// it is created first when the plant's list lacks it.
+///
+/// The hold is the suspending user's action (D5), whatever their own work-order rights: the history
+/// row and the delay segment name them, and the segment's comment names the permit and the reason.
+/// That comment is stored as written, in French ("Permis <code> suspendu : <motif>"), like any
+/// comment typed on the hold screen; it is not translated on display.
 pub(crate) async fn hold_for_permit_suspension(
     txn: &impl ConnectionTrait,
     wo_id: i64,
@@ -443,7 +448,11 @@ pub(crate) async fn hold_for_permit_suspension(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT rv.id AS id FROM reference_values rv              INNER JOIN reference_sets rs ON rs.id = rv.set_id              INNER JOIN reference_domains rd ON rd.id = rs.domain_id              WHERE rv.code = ? AND UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS'              ORDER BY (rs.status = 'published') DESC, rs.version_no DESC, rv.id LIMIT 1",
+            "SELECT rv.id AS id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id \
+             WHERE rv.code = ? AND UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' \
+             ORDER BY (rs.status = 'published') DESC, rs.version_no DESC, rv.id LIMIT 1",
             [PERMIT_SUSPENDED_DELAY_REASON.into()],
         ))
         .await?

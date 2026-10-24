@@ -435,7 +435,11 @@ pub(crate) async fn permit_holds(db: &impl ConnectionTrait, wo_id: i64) -> AppRe
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT (SELECT COUNT(*) FROM work_permits p WHERE p.linked_work_order_id = ?                        AND p.status NOT IN ('closed', 'handed_back', 'cancelled', 'expired')) AS permits,                     (SELECT COUNT(*) FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id                      WHERE p.linked_work_order_id = ? AND pi.applied_at IS NOT NULL                        AND pi.removal_verified_at IS NULL) AS locks",
+            "SELECT (SELECT COUNT(*) FROM work_permits p WHERE p.linked_work_order_id = ? \
+             AND p.status NOT IN ('closed', 'handed_back', 'cancelled', 'expired')) AS permits, \
+             (SELECT COUNT(*) FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id \
+             WHERE p.linked_work_order_id = ? AND pi.applied_at IS NOT NULL \
+             AND pi.removal_verified_at IS NULL) AS locks",
             [wo_id.into(), wo_id.into()],
         ))
         .await?
@@ -470,24 +474,28 @@ pub(crate) fn end_of_work_refusals(holds: PermitHolds, end: WorkOrderEnd) -> Vec
         WorkOrderEnd::Close => {
             if permits > 0 {
                 out.push(format!(
-                    "GATE_CLOSEOUT_PERMIT_OPEN: Clôture bloquée : {permits} permis de travail de cet OT pas encore                      clôturé(s) ou restitué(s). ({permits} permit(s) of this work order not closed or handed back yet.)"
+                    "GATE_CLOSEOUT_PERMIT_OPEN: Clôture bloquée : {permits} permis de travail de cet OT pas encore \
+                     clôturé(s) ou restitué(s). ({permits} permit(s) of this work order not closed or handed back yet.)"
                 ));
             }
             if locks > 0 {
                 out.push(format!(
-                    "GATE_CLOSEOUT_LOCKS_FITTED: Clôture bloquée : {locks} cadenas posé(s) sous les permis de cet OT                      sans dépose vérifiée. ({locks} lock(s) still fitted under this work order's permits.)"
+                    "GATE_CLOSEOUT_LOCKS_FITTED: Clôture bloquée : {locks} cadenas posé(s) sous les permis de cet OT \
+                     sans dépose vérifiée. ({locks} lock(s) still fitted under this work order's permits.)"
                 ));
             }
         }
         WorkOrderEnd::Cancel => {
             if permits > 0 {
                 out.push(format!(
-                    "GATE_WO_CANCEL_PERMIT_OPEN: Annulation bloquée : {permits} permis de travail de cet OT pas                      encore clôturé(s), restitué(s) ou annulé(s). ({permits} permit(s) of this work order still open.)"
+                    "GATE_WO_CANCEL_PERMIT_OPEN: Annulation bloquée : {permits} permis de travail de cet OT pas \
+                     encore clôturé(s), restitué(s) ou annulé(s). ({permits} permit(s) of this work order still open.)"
                 ));
             }
             if locks > 0 {
                 out.push(format!(
-                    "GATE_WO_CANCEL_LOCKS_FITTED: Annulation bloquée : {locks} cadenas posé(s) sous les permis de cet                      OT sans dépose vérifiée. ({locks} lock(s) still fitted under this work order's permits.)"
+                    "GATE_WO_CANCEL_LOCKS_FITTED: Annulation bloquée : {locks} cadenas posé(s) sous les permis de cet \
+                     OT sans dépose vérifiée. ({locks} lock(s) still fitted under this work order's permits.)"
                 ));
             }
         }

@@ -3112,7 +3112,8 @@ pub(crate) async fn linked_work_running(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wos.code AS status_code, wo.code AS wo_code FROM work_orders wo              JOIN work_order_statuses wos ON wos.id = wo.status_id WHERE wo.id = ?",
+            "SELECT wos.code AS status_code, wo.code AS wo_code FROM work_orders wo \
+             JOIN work_order_statuses wos ON wos.id = wo.status_id WHERE wo.id = ?",
             [wo_id.into()],
         ))
         .await?;

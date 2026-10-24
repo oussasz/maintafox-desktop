@@ -87,8 +87,26 @@ fn conflict_policy(conflict_type: &str) -> (&'static str, bool, &'static str, &'
         "STALE_INBOUND" => ("local", true, "accept_local", "manual_review_required"),
         "CODE_CLASH" => ("mixed", true, "renumber_local", "manual_review_required"),
         "OUTBOX_DEAD_LETTER" => ("local", true, "retry_later", "manual_review_required"),
+        t if review_only_conflict(t) => ("remote", true, "dismiss", "manual_review_required"),
         _ => ("mixed", true, "review", "manual_review_required"),
     }
+}
+
+/// Conflicts raised for review over a received row that was applied (`permit::ended_under_work`,
+/// AU-101): not linked to their inbox row, nothing to keep or take. "Keep mine" would send the
+/// received end again, "take theirs" would drop this PC's unsent permit changes and put back the
+/// recorded version; only "dismiss" (with its reason, once the work is stopped) and "escalate" are
+/// accepted ([`resolve_sync_conflict`]).
+const REVIEW_ONLY_CONFLICTS: &[&str] = &[
+    crate::permit::ended_under_work::codes::ENDED_BEFORE_START,
+    crate::permit::ended_under_work::codes::ENDED_DURING_WORK,
+];
+
+/// Actions accepted on a [`REVIEW_ONLY_CONFLICTS`] conflict.
+const REVIEW_ONLY_ACTIONS: &[&str] = &["dismiss", "escalate"];
+
+fn review_only_conflict(conflict_type: &str) -> bool {
+    REVIEW_ONLY_CONFLICTS.contains(&conflict_type)
 }
 
 fn map_resolution_to_status(action: &str) -> Option<&'static str> {
@@ -1894,6 +1912,15 @@ pub async fn resolve_sync_conflict(
         return Err(AppError::ValidationFailed(vec![format!(
             "GATE_SYNC_CONFLICT_CLOSED: Sync conflict {} is already closed ({}).",
             conflict.id, conflict.status
+        )]));
+    }
+
+    if review_only_conflict(&conflict.conflict_type) && !REVIEW_ONLY_ACTIONS.contains(&input.action.as_str()) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} est à examiner seulement : choisissez « Ignorer » avec le motif une \
+             fois le travail arrêté, ou « Escalader ». (Conflict {} is for review only: dismiss it with the \
+             reason once the work is stopped, or escalate it.)",
+            conflict.id, conflict.id
         )]));
     }
 
