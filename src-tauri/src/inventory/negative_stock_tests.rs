@@ -158,11 +158,79 @@ async fn sync_clean(server: &mut TestServer, device: &str, db: &DatabaseConnecti
     assert_eq!(report.materialized.deferred, 0, "{device}: deferred rows");
 }
 
-/// A plant-wide role holding `permissions`, given to a new account on `db`.
+/// The plant administrator who gives roles on `db`: the first administrator (bootstrap flag) created
+/// here, or one received from another PC. Every grant names its author, as the screens record it,
+/// so that other PCs accept it (`sync::grant_check`).
+async fn grant_author(db: &DatabaseConnection) -> i64 {
+    let held = scalar_i64(
+        db,
+        "SELECT COALESCE((SELECT id FROM user_accounts WHERE username LIKE 'grant-author-%' AND is_admin = 1
+                            AND deleted_at IS NULL ORDER BY id LIMIT 1), 0)",
+        vec![],
+    )
+    .await;
+    if held != 0 {
+        return held;
+    }
+    let sync_id = uuid::Uuid::new_v4().to_string();
+    exec(
+        db,
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin,
+            force_password_change, failed_login_attempts, created_at, updated_at, row_version)
+         VALUES (?, ?, 'Grant author', 'local', 1, 1, 0, 0, datetime('now'), datetime('now'), 1)",
+        vec![sync_id.clone().into(), format!("grant-author-{}", &sync_id[..8]).into()],
+    )
+    .await;
+    scalar_i64(
+        db,
+        "SELECT id FROM user_accounts WHERE entity_sync_id = ?",
+        vec![sync_id.into()],
+    )
+    .await
+}
+
+/// A plant-wide role holding `permissions`, given to a new account on `db` by the plant
+/// administrator ([`grant_author`]).
 pub(super) async fn user_with(db: &DatabaseConnection, name: &str, permissions: &[&str]) -> i32 {
+    let author = grant_author(db).await;
     let user = crate::auth::scope_tests::user(db, name).await;
-    let role = crate::auth::scope_tests::role(db, &format!("{name}-role"), permissions).await;
-    crate::auth::scope_tests::assign(db, user, role, "tenant", None).await;
+    let role_sync = format!("negstock-role-{name}");
+    exec(
+        db,
+        "INSERT INTO roles (entity_sync_id, name, description, role_type, status, is_system, created_at, updated_at,
+            row_version)
+         VALUES (?, ?, NULL, 'custom', 'active', 0, datetime('now'), datetime('now'), 1)",
+        vec![role_sync.clone().into(), format!("{name}-role").into()],
+    )
+    .await;
+    let role = scalar_i64(
+        db,
+        "SELECT id FROM roles WHERE entity_sync_id = ?",
+        vec![role_sync.into()],
+    )
+    .await;
+    for permission in permissions {
+        exec(
+            db,
+            "INSERT INTO role_permissions (role_id, permission_id, granted_at, granted_by_id)
+             SELECT ?, id, datetime('now'), ? FROM permissions WHERE name = ?",
+            vec![role.into(), author.into(), (*permission).into()],
+        )
+        .await;
+    }
+    exec(
+        db,
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference,
+            assigned_by_id, created_at, updated_at, row_version)
+         VALUES (?, ?, ?, 'tenant', NULL, ?, datetime('now'), datetime('now'), 1)",
+        vec![
+            format!("negstock-usa-{name}").into(),
+            user.into(),
+            role.into(),
+            author.into(),
+        ],
+    )
+    .await;
     user
 }
 
