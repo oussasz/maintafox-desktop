@@ -87,6 +87,7 @@
       "STALE_INBOUND": "The server sent an older version than the one here",
       "EQUAL_VERSION_DIVERGENCE": "Same version number with different content",
       "CODE_CLASH": "The same number is used here by another record",
+      "GRANT_BY_UNAUTHORISED_ADMIN": "Right granted by someone who no longer holds it",
       "USERNAME_CLASH": "The same username was created on two PCs",
       "MATERIALIZE_ERROR": "A received change could not be applied",
       "INVALID_INBOUND_PAYLOAD": "A received change was invalid",

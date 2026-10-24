@@ -267,6 +267,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             &[
                 r("role_id", "roles"),
                 catalog("permission_id", "permissions", "name"),
+                // Hard: a natural-key table cannot hold soft references. A permission whose author
+                // never arrives waits as any row with a missing parent (`sync::grant_check`).
                 r("granted_by_id", USER),
             ],
         )
@@ -294,7 +296,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
         &[
             r("user_id", USER),
             r("role_id", "roles"),
-            r("assigned_by_id", USER),
+            // Soft: an assignment whose author a complete pull did not bring is applied for review
+            // (`sync::grant_check`, which makes it wait for the author until then); the link is
+            // completed if the author arrives later.
+            soft("assigned_by_id", USER),
             poly("scope_reference", "scope_type", SCOPE_TARGETS),
         ],
     ),
