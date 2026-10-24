@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import type { TFunction } from "i18next";
 import { describe, expect, it } from "vitest";
 
@@ -101,5 +103,66 @@ describe("notification text", () => {
     expect(localDayBounds("bad", false)).toBeUndefined();
     const m = tomorrowMorning(new Date(2026, 9, 15, 17, 30), 8);
     expect([m.getDate(), m.getHours(), m.getMinutes()]).toEqual([16, 8, 0]);
+  });
+
+  describe.each(["fr", "en"] as const)("grant review messages (%s)", (lang) => {
+    const messages = (
+      JSON.parse(readFileSync(`src/i18n/locale-data/${lang}/notifications.json`, "utf-8")) as {
+        messages: Record<string, { title: string; body: string }>;
+      }
+    ).messages;
+    const render = (s: string, p: Record<string, string>) =>
+      s.replace(/\{\{(\w+)\}\}/g, (_, k: string) => p[k] ?? `{{${k}}}`);
+    const params = {
+      people: "A. Martin",
+      rights: "adm.users",
+      since: "2026-10-20T08:00:00Z",
+      grants: "x",
+      count: 2,
+    };
+
+    it("shows the date of the removal formatted, and a dash when unknown", () => {
+      const dated = notificationText(
+        { title: "s", body: null, message_key: "admin_grants_to_review", message_params: params },
+        t,
+        fmt,
+      );
+      expect(dated.body).toContain('"since":"DT(2026-10-20T08:00:00Z)"');
+      const unknown = notificationText(
+        {
+          title: "s",
+          body: null,
+          message_key: "admin_grants_to_review",
+          message_params: { ...params, since: null },
+        },
+        t,
+        fmt,
+      );
+      expect(unknown.body).toContain('"since":"—"');
+      expect(render(messages.admin_grants_to_review.body, { since: "—" })).toContain("—");
+    });
+
+    it("has every parameter the backend sends, and none left unfilled", () => {
+      const sent = { people: "P", rights: "R", since: "S", grants: "G", count: "2" };
+      for (const key of ["admin_grants_to_review", "grants_from_former_authors"]) {
+        const m = messages[key];
+        if (!m) throw new Error(key);
+        expect(m.title.length).toBeGreaterThan(0);
+        expect(render(m.title, sent)).not.toMatch(/\{\{/);
+        expect(render(m.body, sent)).not.toMatch(/\{\{/);
+      }
+      const former = notificationText(
+        {
+          title: "s",
+          body: null,
+          message_key: "grants_from_former_authors",
+          message_params: { grants: "g", count: 3 },
+        },
+        t,
+        fmt,
+      );
+      expect(former.title).toContain("messages.grants_from_former_authors.title");
+      expect(former.body).toContain('"count":"N(3)"');
+    });
   });
 });
