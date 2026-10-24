@@ -946,7 +946,7 @@ pub async fn update_wo_draft_fields(
     // 2. Guard: only allow draft edits
     let status_code = current.status_code.as_deref().unwrap_or("unknown");
     if status_code != "draft" {
-        let status_key = status_i18n_key(&status_code);
+        let status_key = status_i18n_key(status_code);
         return Err(AppError::ValidationFailed(vec![format!(
             "GATE_WO_DRAFT_ONLY:status={status_key}: Les champs ne peuvent être modifiés qu'au statut 'draft'. \
              Statut actuel : '{status_code}'."
