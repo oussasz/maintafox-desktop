@@ -1076,7 +1076,7 @@ pub(crate) async fn force_change_password_impl(
             session.user.force_password_change = false;
         }
         return Err(AppError::ValidationFailed(vec![
-            "Le changement de mot de passe n'est plus requis : continuez avec votre mot de passe actuel.".into(),
+            "GATE_AUTH_PASSWORD_CHANGE_NOT_REQUIRED: Le changement de mot de passe n'est plus requis : continuez avec votre mot de passe actuel.".into(),
         ]));
     }
 
