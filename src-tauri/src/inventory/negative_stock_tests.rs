@@ -160,7 +160,9 @@ async fn sync_clean(server: &mut TestServer, device: &str, db: &DatabaseConnecti
 
 /// The plant administrator who gives roles on `db`: the first administrator (bootstrap flag) created
 /// here, or one received from another PC. Every grant names its author, as the screens record it,
-/// so that other PCs accept it (`sync::grant_check`).
+/// so that other PCs accept it (`sync::grant_check`). On a second PC, sync with the first before
+/// giving roles there: a PC that has not received the author yet creates its own, and a second
+/// account with the bootstrap flag is refused once the plant has its first administrator.
 async fn grant_author(db: &DatabaseConnection) -> i64 {
     let held = scalar_i64(
         db,
