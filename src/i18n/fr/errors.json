@@ -424,6 +424,7 @@
     "GATE_ADMIN_RESET_DELETED": "Réinitialisation refusée : le compte est supprimé.",
     "GATE_ADMIN_RESET_INACTIVE": "Réinitialisation refusée : le compte est inactif.",
     "GATE_ADMIN_RESET_SSO": "Réinitialisation refusée : un compte SSO n'a pas de mot de passe local.",
+    "GATE_ADMIN_RESET_SELF": "Vous ne réinitialisez pas votre propre mot de passe ici : changez-le dans « Mon profil », à la ligne « Mot de passe » (bouton « Changer »), avec le mot de passe actuel.",
     "GATE_ADMIN_ROLE_ALREADY_ASSIGNED": "Attribution refusée : l'utilisateur a déjà ce rôle sur la même portée.",
     "GATE_ADMIN_ROLE_ID_INVALID": "Rôle refusé : le rôle choisi n'est pas valide.",
     "GATE_ADMIN_ROLE_IN_USE": "Retrait du rôle refusé : {{count}} utilisateur(s) ont encore ce rôle. Retirez-le d'abord de leurs comptes.",

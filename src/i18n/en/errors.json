@@ -424,6 +424,7 @@
     "GATE_ADMIN_RESET_DELETED": "Reset refused: the account is deleted.",
     "GATE_ADMIN_RESET_INACTIVE": "Reset refused: the account is inactive.",
     "GATE_ADMIN_RESET_SSO": "Reset refused: an SSO account has no local password.",
+    "GATE_ADMIN_RESET_SELF": "You don't reset your own password here: change it in 'My profile', on the 'Password' line ('Change' button), with your current password.",
     "GATE_ADMIN_ROLE_ALREADY_ASSIGNED": "Assignment refused: the user already has this role on the same scope.",
     "GATE_ADMIN_ROLE_ID_INVALID": "Role refused: the chosen role is not valid.",
     "GATE_ADMIN_ROLE_IN_USE": "Role retirement refused: {{count}} user(s) still have this role. Remove it from their accounts first.",

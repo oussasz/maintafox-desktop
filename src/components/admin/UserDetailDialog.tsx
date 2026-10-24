@@ -359,7 +359,9 @@ export function UserDetailDialog({
                     <Pencil className="mr-1.5 h-3.5 w-3.5" aria-hidden />
                     {t("console.user.edit")}
                   </Button>
-                  {user.identity_mode !== "sso" && user.is_active ? (
+                  {/* Your own password is changed in your profile: a reset would close your
+                      session before its temporary password is shown (the server refuses it). */}
+                  {user.identity_mode !== "sso" && user.is_active && !isSelf ? (
                     <Button
                       variant="outline"
                       size="sm"
