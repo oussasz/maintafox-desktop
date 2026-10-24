@@ -779,9 +779,16 @@ async fn after_received_work_order(
         ))
         .await?;
     }
-    // Two PCs that derived different rules for a work order not started: the same rule kept on each.
-    if let Some(HeldRule::Differs { code, permit_type }) = held_rule {
-        crate::permit::requirement_rules::converge_received_rule(conn, wo_id, code, permit_type.as_deref()).await?;
+    // A row that named a rule other than the one held here, or a rule while none is held here, on a
+    // work order not started: each PC keeps the rule its own list gives (R2-S1, R3-B1, R4-B1).
+    match held_rule {
+        Some(HeldRule::Differs { held }) => {
+            crate::permit::requirement_rules::converge_received_rule(conn, wo_id, Some(held)).await?;
+        }
+        Some(HeldRule::Received) => {
+            crate::permit::requirement_rules::converge_received_rule(conn, wo_id, None).await?;
+        }
+        _ => {}
     }
     crate::wo::workflow::actions::permit_requirement::withdraw_received_clearing_of_required(conn, wo_id).await?;
     crate::permit::requirement_rules::stamp_matching_rule(
@@ -796,8 +803,13 @@ async fn after_received_work_order(
             Some(HeldRule::Kept { received_requires }) => Some(*received_requires),
             _ => None,
         };
-        crate::permit::requirement_rules::finding_for_started_without_rule(conn, wo_id, received_without_held_rule)
-            .await?;
+        crate::permit::requirement_rules::finding_for_started_without_rule(
+            conn,
+            wo_id,
+            received_without_held_rule,
+            matches!(held_rule, Some(HeldRule::Received)),
+        )
+        .await?;
     }
     Ok(())
 }

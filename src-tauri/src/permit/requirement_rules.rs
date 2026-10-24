@@ -744,6 +744,7 @@ pub async fn finding_for_started_without_rule(
     conn: &impl ConnectionTrait,
     wo_id: i64,
     received_without_held_rule: Option<bool>,
+    received_named_rule: bool,
 ) -> AppResult<Option<String>> {
     let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
     let Some(row) = conn
@@ -768,10 +769,28 @@ pub async fn finding_for_started_without_rule(
     if !started || found > 0 {
         return Ok(None);
     }
+    let mut received_rule: Option<(String, Option<String>)> = None;
     let (rule, permit_type, requires, held_here) = match (held, received_without_held_rule) {
         (Some(rule), Some(received_requires)) => {
             let permit_type: Option<String> = row.try_get("", "permit_rule_permit_type")?;
             (rule, permit_type.unwrap_or_default(), received_requires, true)
+        }
+        // Received started naming a rule (none held here): a finding when the list here asks for
+        // another rule or permit type (audit finding AU-04 R4-B1); the row is applied as received.
+        (Some(named), None) if received_named_rule => {
+            let named_type: Option<String> = row.try_get("", "permit_rule_permit_type")?;
+            let equipment: Option<i64> = row.try_get("", "equipment_id")?;
+            let type_id: i64 = row.try_get("", "type_id")?;
+            let outcome = evaluate(conn, equipment, type_id, false).await?;
+            let (Some(rule), Some(permit_type)) = (outcome.rule_code, outcome.permit_type_code) else {
+                return Ok(None);
+            };
+            if rule == named && Some(&permit_type) == named_type.as_ref() {
+                return Ok(None);
+            }
+            received_rule = Some((named, named_type));
+            let requires: i64 = row.try_get("", "requires_permit")?;
+            (rule, permit_type, requires != 0, false)
         }
         (Some(_), None) => return Ok(None),
         (None, _) => {
@@ -794,6 +813,8 @@ pub async fn finding_for_started_without_rule(
         "status": status,
         "requires_permit": requires,
         "rule_held_here": held_here,
+        "received_rule_code": received_rule.as_ref().map(|r| r.0.clone()),
+        "received_permit_type_code": received_rule.as_ref().and_then(|r| r.1.clone()),
     })
     .to_string();
     crate::wo::workflow::events::emit_action_event(
@@ -835,25 +856,39 @@ pub async fn finding_for_started_without_rule(
     Ok(Some(rule))
 }
 
-/// A work order not started yet, received naming another rule (or another permit type) than the
-/// one held here (`held_code`, `held_permit_type`): two PCs that derived the rule from two versions
-/// of the list, or from different equipment data (audit finding AU-04 R2-S1). Applied, never
-/// refused; then this PC's own evaluation decides, never the received row (audit finding AU-04
-/// R3-B1): the first rule of the list here that matches the work order here, with the list's permit
-/// type; with none, the rule held here, with its permit type. A received rule or permit type that
-/// does not match here, or is unknown or retired here, never wins. Every PC with the same list and
-/// the same equipment data keeps the same rule, with no conflict; a requirement is never removed
-/// (`requires_permit` stays 1). Written with capture suppressed (each PC derives it; this runs in
-/// the apply): when the row written is not the rule kept, the rule kept is written and a clearing
-/// the row carried (decided for another rule) is withdrawn; every change of the rule held here
-/// (rule or permit type) is recorded (`permit_rule_applied`, cause `rules_converged`, the previous
-/// and the new rule and permit type, and the received ones) in the work order's history and audit
-/// trail. Returns the rule kept when it changed.
+/// The plant rule held here on a work order before a received row was written over it, with the
+/// clearing it carried (`permit::sync_check::keep_held_rule_trace`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldTrace {
+    pub code: String,
+    pub permit_type: Option<String>,
+    pub cleared_by_sync_id: Option<String>,
+    pub cleared_at: Option<String>,
+    pub clear_reason: Option<String>,
+}
+
+/// A work order not started yet, received naming a rule (or a permit type) other than the one held
+/// here (`held`), or naming a rule while none is held here (`held` = `None`: a work order new here,
+/// or not stamped yet): two PCs that derived the rule from two versions of the list or from
+/// different equipment data, or a row that names a weaker rule or type (audit findings AU-04 R2-S1,
+/// R3-B1, R4-B1). Applied, never refused; then this PC's own evaluation decides, never the received
+/// row: the first rule of the list here that matches the work order here, with the list's permit
+/// type; with none, the rule held here with its permit type; with none held either, the received
+/// rule as sent (it only adds a requirement where nothing here asks for one). A received rule or
+/// permit type that does not match here, or is unknown or retired here, never replaces a rule this
+/// PC derives or holds. Every PC with the same list and the same equipment data keeps the same rule,
+/// with no conflict; a requirement is never removed (`requires_permit` stays 1). Written with capture
+/// suppressed (each PC derives it; this runs in the apply): when the row written is not the rule
+/// kept, the rule kept is written and a clearing the row carried (decided for another rule) is
+/// withdrawn. Recorded (`permit_rule_applied`, cause `rules_converged`, the rule and permit type
+/// before (the held ones, else the received ones), after and received, and the clearings withdrawn)
+/// in the work order's history and audit trail whenever the rule or type changes from that "before",
+/// or a clearing (held here, or carried by the row) is withdrawn (audit finding AU-04 R4-S1).
+/// Returns the rule kept when something was recorded.
 pub async fn converge_received_rule(
     conn: &impl ConnectionTrait,
     wo_id: i64,
-    held_code: &str,
-    held_permit_type: Option<&str>,
+    held: Option<&HeldTrace>,
 ) -> AppResult<Option<String>> {
     let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
     let Some(row) = conn
@@ -875,65 +910,65 @@ pub async fn converge_received_rule(
     let (Some(received_code), true) = (received_code, not_started.contains(&status.as_str())) else {
         return Ok(None);
     };
-    // This PC's own evaluation decides, never the received row (audit finding AU-04 R3-B1): the
-    // first rule of the list here that matches the work order here, else the rule held here. A
-    // received rule (or permit type) that does not match here, or is unknown or retired here, never
-    // wins.
     let rules = PublishedRules::load(conn).await?;
     let equipment: Option<i64> = row.try_get("", "equipment_id")?;
     let type_id: i64 = row.try_get("", "type_id")?;
     let first_match = evaluate_with(conn, &rules, equipment, type_id, false).await?;
-    let (kept_code, kept_type) = match (first_match.rule_code, first_match.permit_type_code) {
+    let received = (received_code.clone(), received_type.clone());
+    let before = held.map_or_else(|| received.clone(), |h| (h.code.clone(), h.permit_type.clone()));
+    let kept = match (first_match.rule_code, first_match.permit_type_code) {
         (Some(code), Some(permit_type)) => (code, Some(permit_type)),
-        _ => (held_code.to_string(), held_permit_type.map(str::to_string)),
+        _ => before.clone(),
     };
-    let held_type = held_permit_type.map(str::to_string);
-    let rule_changed = kept_code != held_code || kept_type != held_type;
-    let row_differs = kept_code != received_code || kept_type != received_type;
+    let rule_changed = kept != before;
+    let row_differs = kept != received;
+    let row_cleared_by: Option<i64> = row.try_get("", "permit_rule_cleared_by_id")?;
+    let row_cleared_at: Option<String> = row.try_get("", "permit_rule_cleared_at")?;
+    let row_reason: Option<String> = row.try_get("", "permit_rule_clear_reason")?;
+    use crate::wo::workflow::actions::permit_requirement::user_sync_id;
+    // A clearing held here that the row did not keep, and one the row carried for another rule.
+    let held_withdrawn = held.filter(|h| h.cleared_at.is_some() && (row_differs || row_cleared_at != h.cleared_at));
+    let row_withdrawn =
+        row_differs && row_cleared_at.is_some() && held.and_then(|h| h.cleared_at.clone()) != row_cleared_at;
     if row_differs {
-        // The row written is not the rule kept: the rule kept is written, the permit required, and a
-        // clearing the row carried (decided for another rule) withdrawn.
         conn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_orders SET requires_permit = 1, permit_rule_code = ?, permit_rule_permit_type = ?, \
                     permit_rule_cleared_by_id = NULL, permit_rule_cleared_at = NULL, \
                     permit_rule_clear_reason = NULL, row_version = row_version + 1 \
               WHERE id = ?",
-            [kept_code.clone().into(), kept_type.clone().into(), wo_id.into()],
+            [kept.0.clone().into(), kept.1.clone().into(), wo_id.into()],
         ))
         .await?;
     }
-    // Every change of the rule held here is recorded; keeping it is not a change.
-    if !rule_changed {
+    if !rule_changed && held_withdrawn.is_none() && !row_withdrawn {
         return Ok(None);
     }
-    let previous_requires: i64 = row.try_get("", "requires_permit")?;
-    let (cleared_by, cleared_at, reason): (Option<i64>, Option<String>, Option<String>) = if row_differs {
-        (
-            row.try_get("", "permit_rule_cleared_by_id")?,
-            row.try_get("", "permit_rule_cleared_at")?,
-            row.try_get("", "permit_rule_clear_reason")?,
-        )
+    let received_requires: i64 = row.try_get("", "requires_permit")?;
+    let (row_by_sync, row_at, row_why) = if row_withdrawn {
+        (user_sync_id(conn, row_cleared_by).await?, row_cleared_at, row_reason)
     } else {
         (None, None, None)
     };
-    use crate::wo::workflow::actions::permit_requirement::user_sync_id;
     let payload = serde_json::json!({
         "requires_permit": true,
         "origin": "rule",
         "cause": stamp_causes::RULES_CONVERGED,
-        "rule_code": kept_code,
-        "permit_type_code": kept_type,
-        "previous_rule_code": held_code,
-        "previous_permit_type_code": held_permit_type,
-        "received_rule_code": received_code,
-        "received_permit_type_code": received_type,
+        "rule_code": kept.0,
+        "permit_type_code": kept.1,
+        "previous_rule_code": before.0,
+        "previous_permit_type_code": before.1,
+        "held_rule_code": held.map(|h| h.code.clone()),
+        "received_rule_code": received.0,
+        "received_permit_type_code": received.1,
         "rule_set_version": published_rule_set_version(conn).await?,
-        "previous_requires_permit": previous_requires != 0,
-        "withdrawn_cleared_by_id": cleared_by,
-        "withdrawn_cleared_by_sync_id": user_sync_id(conn, cleared_by).await?,
-        "withdrawn_cleared_at": cleared_at,
-        "withdrawn_clear_reason": reason,
+        "received_requires_permit": received_requires != 0,
+        "withdrawn_cleared_by_sync_id": held_withdrawn.and_then(|h| h.cleared_by_sync_id.clone()),
+        "withdrawn_cleared_at": held_withdrawn.and_then(|h| h.cleared_at.clone()),
+        "withdrawn_clear_reason": held_withdrawn.and_then(|h| h.clear_reason.clone()),
+        "received_withdrawn_cleared_by_sync_id": row_by_sync,
+        "received_withdrawn_cleared_at": row_at,
+        "received_withdrawn_clear_reason": row_why,
     })
     .to_string();
     crate::wo::workflow::events::emit_action_event(
@@ -946,25 +981,32 @@ pub async fn converge_received_rule(
         Some(&payload),
     )
     .await?;
+    let mut summary = format!(
+        "Permis exigé : la règle {} (permis {}) de l'usine s'applique à cet OT (avant : {} permis {} ; reçu : {} permis {})",
+        kept.0,
+        kept.1.as_deref().unwrap_or("?"),
+        before.0,
+        before.1.as_deref().unwrap_or("?"),
+        received.0,
+        received.1.as_deref().unwrap_or("?"),
+    );
+    if held_withdrawn.is_some() || row_withdrawn {
+        summary.push_str(" ; levée de l'exigence retirée");
+    }
     crate::wo::audit::insert_wo_change_event(
         conn,
         &crate::wo::audit::WoAuditInput {
             wo_id: Some(wo_id),
             action: "permit_rule_applied".into(),
             actor_id: None,
-            summary: Some(format!(
-                "Permis exigé : la règle {kept_code} (permis {}) de l'usine remplace la règle {held_code} (permis {}) \
-                 sur cet OT (reçu avec la règle {received_code})",
-                kept_type.as_deref().unwrap_or("?"),
-                held_permit_type.unwrap_or("?")
-            )),
+            summary: Some(summary),
             details_json: Some(payload),
             requires_step_up: false,
             apply_result: "applied".into(),
         },
     )
     .await?;
-    Ok(Some(kept_code))
+    Ok(Some(kept.0))
 }
 
 /// A rule added to the plant's published list, as the editor would have saved it (tests of every

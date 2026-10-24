@@ -7616,3 +7616,203 @@ async fn an_origin_0_row_with_an_unauthorised_clearing_ends_protected() {
         "protected, the clearing withdrawn"
     );
 }
+
+// ── AU-04 round 4: a row naming a rule while none is held here never chooses it (R4-B1); a
+// clearing withdrawn by the convergence is recorded (R4-S1) ─────────────────────────────────────
+
+/// A work order new here as its sender sends it: not started (planning), naming `rule` / `permit_type`
+/// and requiring the permit. The list here may hold `CORRECTIVE_LOTO` (`with_rule`).
+async fn new_row_naming(
+    db: &DatabaseConnection,
+    equipment: &str,
+    wo_sync: &str,
+    rule: &str,
+    permit_type: &str,
+    with_rule: bool,
+) -> Payload {
+    let asset = insert_equipment(db, equipment).await;
+    let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+    let template_sync = text(
+        db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    if with_rule
+        && text(db, "SELECT code FROM reference_values WHERE code = 'CORRECTIVE_LOTO'")
+            .await
+            .is_none()
+    {
+        crate::permit::requirement_rules::add_published_rule(
+            db,
+            "CORRECTIVE_LOTO",
+            json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+        )
+        .await;
+    }
+    wo_row(
+        &wire(db, "work_orders", &template_sync).await,
+        &[
+            ("code", json!(format!("OT-{wo_sync}"))),
+            ("status_sync_id", status_sync(db, "planning").await),
+            ("requires_permit", json!(1)),
+            ("permit_rule_code", json!(rule)),
+            ("permit_rule_permit_type", json!(permit_type)),
+            ("actual_start", Value::Null),
+        ],
+    )
+}
+
+/// The `rules_converged` events of a work order, as JSON.
+async fn converged_events(db: &DatabaseConnection, wo_sync: &str) -> Vec<Value> {
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = '{wo_sync}' AND e.action_code = 'permit_rule_applied' \
+               AND json_extract(e.payload_json, '$.cause') = 'rules_converged' ORDER BY e.id"
+        ),
+    ))
+    .await
+    .expect("events")
+    .iter()
+    .map(|r| serde_json::from_str(&r.try_get_by_index::<String>(0).expect("json")).expect("json"))
+    .collect()
+}
+
+/// R4-B1: a work order new here naming the rule that matches here with a weaker permit type gets
+/// the rule's own type here, recorded; a live hot-work permit does not satisfy the start gate.
+#[tokio::test]
+async fn a_new_work_order_naming_a_weaker_permit_type_gets_the_rule_type_here() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R4B1-1", "wo-r4-1", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let outcome = apply(&db, "work_orders", "wo-r4-1", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r4-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let events = converged_events(&db, "wo-r4-1").await;
+    assert_eq!(events.len(), 1, "recorded");
+    assert_eq!(
+        (&events[0]["previous_permit_type_code"], &events[0]["permit_type_code"]),
+        (&json!("hot_work"), &json!("loto"))
+    );
+    let wo_id = wo_id_of(&db, "wo-r4-1").await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "hot_work", wo_id).await.expect("permit")).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let gate = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await;
+    assert!(
+        format!("{gate:?}").contains("PERMIT_TYPE_REQUIRED_TO_START"),
+        "a hot-work permit is not a LOTO: {gate:?}"
+    );
+}
+
+/// R4-B1: a work order new here naming a rule that does not match it here gets the rule that does;
+/// naming a rule while nothing matches here, it keeps the rule as sent (it only adds).
+#[tokio::test]
+async fn a_new_work_order_naming_a_rule_gets_this_pcs_rule_or_keeps_its_own_when_none_matches() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R4B1-2", "wo-r4-2", "R0_WELD", "hot_work", true).await;
+    let outcome = apply(&db, "work_orders", "wo-r4-2", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r4-2").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(converged_events(&db, "wo-r4-2").await.len(), 1, "recorded");
+
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R4B1-3", "wo-r4-3", "SOME_RULE", "loto", false).await;
+    let outcome = apply(&db, "work_orders", "wo-r4-3", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r4-3").await, ruled("SOME_RULE", "loto"));
+    assert!(converged_events(&db, "wo-r4-3").await.is_empty(), "nothing changed");
+}
+
+/// R4-B1: a work order new here received started, naming the rule here with a weaker permit type, is
+/// applied as received (its history) and recorded once as a finding naming both, the permit issuers
+/// of its site told.
+#[tokio::test]
+async fn a_started_new_work_order_naming_a_weaker_type_raises_the_finding() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R4B1-4", "wo-r4-4", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let started = wo_row(
+        &row,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r4-4", &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        rule_state(&db, "wo-r4-4").await,
+        ruled("CORRECTIVE_LOTO", "hot_work"),
+        "applied as received"
+    );
+    let finding: Value = serde_json::from_str(
+        &text(
+            &db,
+            "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = 'wo-r4-4' AND e.action_code = 'permit_rule_missing_on_arrival'",
+        )
+        .await
+        .expect("finding"),
+    )
+    .expect("json");
+    assert_eq!(
+        (
+            &finding["rule_code"],
+            &finding["permit_type_code"],
+            &finding["received_permit_type_code"]
+        ),
+        (&json!("CORRECTIVE_LOTO"), &json!("loto"), &json!("hot_work"))
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE category_code = 'wo_permit_rule_missing' \
+             AND json_extract(payload_json, '$.entity_sync_id') = 'wo-r4-4'"
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
+
+/// R4-S1: a clearing held here, withdrawn by a row naming another rule while the convergence keeps
+/// the rule held here, is recorded with who cleared it, when and why.
+#[tokio::test]
+async fn a_clearing_withdrawn_by_the_convergence_is_recorded() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R4S1-1", "wo-r4s1").await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET requires_permit = 0, permit_rule_cleared_by_id = {APPLIER}, \
+             permit_rule_cleared_at = '2026-10-01T07:00:00Z', permit_rule_clear_reason = 'Consignation faite par l''exploitant' \
+             WHERE entity_sync_id = 'wo-r4s1'"
+        ),
+    )
+    .await;
+    let other = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("OTHER_RULE")),
+            ("permit_rule_permit_type", json!("hot_work")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r4s1", &other).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r4s1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let events = converged_events(&db, "wo-r4s1").await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(
+        (
+            &events[0]["withdrawn_cleared_at"],
+            &events[0]["withdrawn_cleared_by_sync_id"],
+            &events[0]["withdrawn_clear_reason"],
+        ),
+        (
+            &json!("2026-10-01T07:00:00Z"),
+            &json!(user_sync(&db, APPLIER).await),
+            &json!("Consignation faite par l'exploitant")
+        )
+    );
+}

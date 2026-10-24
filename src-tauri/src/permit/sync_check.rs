@@ -2748,9 +2748,16 @@ pub(crate) enum HeldRule {
     /// carries no clearing, the requirement and the clearing held here are kept. `received_requires`:
     /// whether the row required the permit (recorded in the finding of a started work order).
     Kept { received_requires: bool },
-    /// The row named another rule (or permit type) on a work order not started: applied, then the
-    /// same rule is kept on every PC (`requirement_rules::converge_received_rule`).
-    Differs { code: String, permit_type: Option<String> },
+    /// The row named another rule (or permit type) on a work order not started: applied, then each
+    /// PC keeps the rule its own list gives (`requirement_rules::converge_received_rule`). `held`:
+    /// the rule and the clearing held here before the write.
+    Differs {
+        held: crate::permit::requirement_rules::HeldTrace,
+    },
+    /// The row named a rule while none is held here (a work order new here, or not stamped yet):
+    /// judged the same way after the write, never adopted as sent when the list here asks for
+    /// another rule or permit type (audit finding AU-04 R4-B1).
+    Received,
 }
 
 /// Before a received work order is written (it passed [`inbound_permit_rule_check`]), audit
@@ -2771,11 +2778,13 @@ pub(crate) async fn keep_held_rule_trace(
     if !payload.contains_key("permit_rule_code") {
         return Ok(None);
     }
-    let Some(local) = local_wire(conn, "work_orders", entity_sync_id).await? else {
-        return Ok(None);
-    };
-    let Some(held) = field(&local, "permit_rule_code").map(str::to_string) else {
-        return Ok(None);
+    let local = local_wire(conn, "work_orders", entity_sync_id).await?;
+    let held = local
+        .as_ref()
+        .and_then(|l| field(l, "permit_rule_code").map(str::to_string));
+    let (Some(local), Some(held)) = (local, held) else {
+        // Nothing held here: a row that names a rule is judged after the write (R4-B1).
+        return Ok(field(payload, "permit_rule_code").map(|_| HeldRule::Received));
     };
     let held_type = field(&local, "permit_rule_permit_type").map(str::to_string);
     match field(payload, "permit_rule_code").map(str::to_string) {
@@ -2787,9 +2796,15 @@ pub(crate) async fn keep_held_rule_trace(
             if received == held && received_type == held_type {
                 return Ok(None);
             }
+            let text = |k: &str| field(&local, k).map(str::to_string);
             Ok(Some(HeldRule::Differs {
-                code: held,
-                permit_type: held_type,
+                held: crate::permit::requirement_rules::HeldTrace {
+                    code: held,
+                    permit_type: held_type,
+                    cleared_by_sync_id: text("permit_rule_cleared_by_sync_id"),
+                    cleared_at: text("permit_rule_cleared_at"),
+                    clear_reason: text("permit_rule_clear_reason"),
+                },
             }))
         }
         None => {
