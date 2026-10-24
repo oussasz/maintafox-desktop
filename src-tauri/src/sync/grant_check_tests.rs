@@ -514,3 +514,361 @@ async fn a_received_withdrawal_lists_the_grants_made_since_in_one_notice() {
     .await;
     assert_eq!(recipients, Some(1), "the plant administrator is told");
 }
+
+// ── Review round 1 ──────────────────────────────────────────────────────────────────────────────
+
+/// A received row waiting in the inbox, as the transport stores it.
+async fn inbox(db: &DatabaseConnection, entity_type: &str, sync_id: &str, row: &Payload) {
+    exec(
+        db,
+        "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
+         row_version, payload_json, payload_hash, apply_status) VALUES (?, 'c1', ?, ?, 'upsert', 1, ?, ?, 'pending')",
+        vec![
+            format!("b-{sync_id}").into(),
+            entity_type.into(),
+            sync_id.into(),
+            Value::Object(row.clone()).to_string().into(),
+            format!("h-{sync_id}").into(),
+        ],
+    )
+    .await;
+}
+
+async fn inbox_status(db: &DatabaseConnection, sync_id: &str) -> String {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT apply_status FROM sync_inbox WHERE entity_sync_id = ?",
+        [sync_id.into()],
+    ))
+    .await
+    .unwrap()
+    .expect("inbox row")
+    .try_get::<String>("", "apply_status")
+    .expect("status")
+}
+
+async fn count(db: &DatabaseConnection, sql: &str) -> i64 {
+    scalar(db, sql, vec![]).await.unwrap_or(0)
+}
+
+/// The wire form of an assignment made on another PC at `created_at`.
+async fn remote_assignment_at(
+    db: &DatabaseConnection,
+    sync_id: &str,
+    user: i64,
+    role: i64,
+    by: Option<i64>,
+    created_at: &str,
+) -> Payload {
+    assign(db, sync_id, user, role, by, created_at).await;
+    let row = payload(db, "user_scope_assignments", sync_id).await;
+    exec(
+        db,
+        "DELETE FROM user_scope_assignments WHERE entity_sync_id = ?",
+        vec![sync_id.into()],
+    )
+    .await;
+    row
+}
+
+/// The first pull of a new PC replays old grants whose authors lost the right since: an author
+/// disabled since (loss known here: grants made before it apply, nothing to review), an author whose
+/// role lost the right (a role permission deleted: loss unknown here, grants apply and are listed
+/// in ONE notice). No conflict.
+#[tokio::test]
+async fn a_first_pull_replays_old_grants_of_authors_who_lost_the_right() {
+    let p = plant().await;
+    let three_days_ago = stamp(chrono::Duration::days(-3));
+    let managers = role_id(&p.db, "user-managers").await;
+    let former = user(&p.db, "former").await;
+    assign(&p.db, "former-role", former, managers, Some(p.chef), &three_days_ago).await;
+    exec(
+        &p.db,
+        "UPDATE user_accounts SET is_active = 0, updated_at = ? WHERE id = ?",
+        vec![now().into(), former.into()],
+    )
+    .await;
+    let legacy = user(&p.db, "legacy").await;
+    let old_managers = custom_role(&p.db, "old-managers", &["ot.view"]).await;
+    assign(
+        &p.db,
+        "legacy-role",
+        legacy,
+        old_managers,
+        Some(p.chef),
+        &three_days_ago,
+    )
+    .await;
+
+    for (sync_id, who, by) in [
+        ("old-by-former-1", "hire-1", former),
+        ("old-by-former-2", "hire-2", former),
+        ("old-by-legacy-1", "hire-3", legacy),
+        ("old-by-legacy-2", "hire-4", legacy),
+    ] {
+        let hire = user(&p.db, who).await;
+        let row = remote_assignment_at(&p.db, sync_id, hire, p.operator, Some(by), &three_days_ago).await;
+        inbox(&p.db, "user_scope_assignments", sync_id, &row).await;
+    }
+    crate::sync::materialize::materialize_inbox(&p.db, 200, true)
+        .await
+        .expect("materialize");
+
+    for sync_id in [
+        "old-by-former-1",
+        "old-by-former-2",
+        "old-by-legacy-1",
+        "old-by-legacy-2",
+    ] {
+        assert!(assignment_held(&p.db, sync_id).await, "{sync_id} applied");
+    }
+    assert_eq!(
+        count(&p.db, "SELECT COUNT(*) FROM sync_conflicts").await,
+        0,
+        "no conflict"
+    );
+    let notices =
+        p.db.query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(message_params_json, '') AS params FROM notification_events \
+              WHERE message_key = 'grants_from_former_authors'"
+                .to_string(),
+        ))
+        .await
+        .expect("events");
+    assert_eq!(notices.len(), 1, "one review notice");
+    let params: String = notices[0].try_get("", "params").expect("params");
+    assert!(
+        params.contains("hire-3-sync") && params.contains("hire-4-sync"),
+        "{params}"
+    );
+    assert!(!params.contains("hire-1-sync"), "known loss, made before: {params}");
+}
+
+/// An author never received waits while sync catches up; after a complete pull it waits no longer
+/// (applied, listed for review). Two grants whose authors' rights wait on each other end too.
+#[tokio::test]
+async fn waits_end_after_a_complete_pull() {
+    let p = plant().await;
+    let mut ghost = remote_assignment(&p.db, "by-ghost", p.worker, p.operator, Some(p.manager)).await;
+    ghost.insert("assigned_by_sync_id".into(), "ghost-sync".into());
+    inbox(&p.db, "user_scope_assignments", "by-ghost", &ghost).await;
+
+    let managers = role_id(&p.db, "user-managers").await;
+    let x = user(&p.db, "mutual-x").await;
+    let y = user(&p.db, "mutual-y").await;
+    let x_row = remote_assignment(&p.db, "x-by-y", x, managers, Some(y)).await;
+    let y_row = remote_assignment(&p.db, "y-by-x", y, managers, Some(x)).await;
+    inbox(&p.db, "user_scope_assignments", "x-by-y", &x_row).await;
+    inbox(&p.db, "user_scope_assignments", "y-by-x", &y_row).await;
+
+    crate::sync::materialize::materialize_inbox(&p.db, 200, true)
+        .await
+        .expect("materialize");
+    for sync_id in ["by-ghost", "x-by-y", "y-by-x"] {
+        assert_eq!(inbox_status(&p.db, sync_id).await, "deferred", "{sync_id} waits");
+    }
+
+    crate::sync::grant_check::release_after_complete_pull(&p.db)
+        .await
+        .expect("release");
+    assert!(assignment_held(&p.db, "by-ghost").await, "applied for review");
+    assert_eq!(
+        count(
+            &p.db,
+            "SELECT COUNT(*) FROM notification_events WHERE message_key = 'grants_from_former_authors'"
+        )
+        .await,
+        1
+    );
+    for sync_id in ["x-by-y", "y-by-x"] {
+        assert_ne!(
+            inbox_status(&p.db, sync_id).await,
+            "deferred",
+            "{sync_id} waits no longer"
+        );
+    }
+}
+
+/// An author whose rights are still in the inbox: the grant waits for them.
+#[tokio::test]
+async fn a_grant_waits_while_its_authors_rights_are_still_arriving() {
+    let p = plant().await;
+    let managers = role_id(&p.db, "user-managers").await;
+    let newcomer = user(&p.db, "newcomer").await;
+    let rights = remote_assignment(&p.db, "newcomer-role", newcomer, managers, Some(p.chef)).await;
+    inbox(&p.db, "user_scope_assignments", "newcomer-role", &rights).await;
+    let row = remote_assignment(&p.db, "by-newcomer", p.worker, p.operator, Some(newcomer)).await;
+    let outcome = receive(&p.db, "user_scope_assignments", "by-newcomer", "upsert", row).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Deferred { ref waits_for, .. } if waits_for.is_none()),
+        "{outcome:?}"
+    );
+}
+
+/// Widening a held assignment is a grant: validity extended, scope changed, emergency made
+/// permanent, each by a demoted author, is a conflict.
+#[tokio::test]
+async fn widening_a_held_assignment_is_checked() {
+    let p = plant().await;
+    assign(&p.db, "widen", p.worker, p.operator, Some(p.manager), &now()).await;
+    exec(
+        &p.db,
+        "UPDATE user_scope_assignments SET valid_to = ? WHERE entity_sync_id = 'widen'",
+        vec![stamp(chrono::Duration::days(3)).into()],
+    )
+    .await;
+    let night_role = custom_role(&p.db, "night-cover", &["ot.view"]).await;
+    exec(
+        &p.db,
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, assigned_by_id, \
+         is_emergency, emergency_reason, emergency_expires_at, created_at, updated_at, row_version) \
+         VALUES ('emergency', ?, ?, 'tenant', ?, 1, 'night shift', ?, ?, ?, 1)",
+        vec![
+            p.worker.into(),
+            night_role.into(),
+            p.manager.into(),
+            stamp(chrono::Duration::hours(4)).into(),
+            now().into(),
+            now().into(),
+        ],
+    )
+    .await;
+    let held = payload(&p.db, "user_scope_assignments", "widen").await;
+    let emergency = payload(&p.db, "user_scope_assignments", "emergency").await;
+    demote_manager(&p).await;
+
+    let mut longer = held.clone();
+    longer.insert("valid_to".into(), stamp(chrono::Duration::days(300)).into());
+    let outcome = receive(&p.db, "user_scope_assignments", "widen", "upsert", longer).await;
+    assert!(is_grant_conflict(&outcome), "validity: {outcome:?}");
+
+    let mut moved = held;
+    moved.insert("scope_type".into(), "site".into());
+    moved.insert("scope_reference_sync_id".into(), "some-site".into());
+    let outcome = receive(&p.db, "user_scope_assignments", "widen", "upsert", moved).await;
+    assert!(is_grant_conflict(&outcome), "scope: {outcome:?}");
+
+    let mut permanent = emergency;
+    let off = match permanent.get("is_emergency") {
+        Some(Value::Bool(_)) => Value::Bool(false),
+        _ => Value::from(0),
+    };
+    permanent.insert("is_emergency".into(), off);
+    let outcome = receive(&p.db, "user_scope_assignments", "emergency", "upsert", permanent).await;
+    assert!(is_grant_conflict(&outcome), "emergency made permanent: {outcome:?}");
+}
+
+/// "Take the received version" in the Sync centre runs the check again: still refused.
+#[tokio::test]
+async fn accepting_the_remote_version_runs_the_check_again() {
+    let p = plant().await;
+    let row = remote_assignment(&p.db, "remote-late", p.worker, p.operator, Some(p.manager)).await;
+    demote_manager(&p).await;
+    inbox(&p.db, "user_scope_assignments", "remote-late", &row).await;
+    crate::sync::materialize::materialize_inbox(&p.db, 200, true)
+        .await
+        .expect("materialize");
+    let conflict =
+        p.db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, row_version FROM sync_conflicts WHERE conflict_type = ? AND entity_sync_id = 'remote-late'",
+            [GRANT_BY_UNAUTHORISED_ADMIN.into()],
+        ))
+        .await
+        .unwrap()
+        .expect("conflict recorded");
+    let result = crate::sync::queries::resolve_sync_conflict(
+        &p.db,
+        p.chef,
+        crate::sync::domain::ResolveSyncConflictInput {
+            conflict_id: conflict.try_get("", "id").unwrap(),
+            expected_row_version: conflict.try_get("", "row_version").unwrap(),
+            action: "accept_remote".into(),
+            resolution_note: Some("Taking the version from the other PC".into()),
+        },
+    )
+    .await;
+    assert!(result.is_err(), "{result:?}");
+    assert!(!assignment_held(&p.db, "remote-late").await);
+}
+
+/// An account holding administration rights re-enabled or restored on another PC (the row names
+/// nobody) is a conflict; a plain account is re-enabled.
+#[tokio::test]
+async fn re_enabling_an_account_with_administration_rights_is_a_conflict() {
+    let p = plant().await;
+    let flag = |row: &Payload, on: bool| match row.get("is_active") {
+        Some(Value::Bool(_)) => Value::Bool(on),
+        _ => Value::from(i64::from(on)),
+    };
+    let mut enabled = payload(&p.db, "user_accounts", "manager-sync").await;
+    let on = flag(&enabled, true);
+    enabled.insert("is_active".into(), on);
+    exec(
+        &p.db,
+        "UPDATE user_accounts SET is_active = 0 WHERE id = ?",
+        vec![p.manager.into()],
+    )
+    .await;
+    let outcome = receive(&p.db, "user_accounts", "manager-sync", "upsert", enabled.clone()).await;
+    assert!(is_grant_conflict(&outcome), "re-enabled: {outcome:?}");
+
+    exec(
+        &p.db,
+        "UPDATE user_accounts SET is_active = 1, deleted_at = ? WHERE id = ?",
+        vec![now().into(), p.manager.into()],
+    )
+    .await;
+    let mut restored = enabled;
+    restored.insert("deleted_at".into(), Value::Null);
+    let outcome = receive(&p.db, "user_accounts", "manager-sync", "upsert", restored).await;
+    assert!(is_grant_conflict(&outcome), "restored: {outcome:?}");
+
+    let mut worker = payload(&p.db, "user_accounts", "worker-sync").await;
+    let on = flag(&worker, true);
+    worker.insert("is_active".into(), on);
+    exec(
+        &p.db,
+        "UPDATE user_accounts SET is_active = 0 WHERE id = ?",
+        vec![p.worker.into()],
+    )
+    .await;
+    let outcome = receive(&p.db, "user_accounts", "worker-sync", "upsert", worker).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "plain account: {outcome:?}");
+}
+
+/// A new account with the bootstrap flag: received on a PC joining the plant (no first
+/// administrator here yet) it applies; on a PC that has its first administrator it is a conflict.
+#[tokio::test]
+async fn a_new_bootstrap_account_is_refused_once_this_pc_has_its_first_administrator() {
+    let p = plant().await;
+    let first = user(&p.db, "first-elsewhere").await;
+    exec(
+        &p.db,
+        "UPDATE user_accounts SET is_admin = 1 WHERE id = ?",
+        vec![first.into()],
+    )
+    .await;
+    let row = payload(&p.db, "user_accounts", "first-elsewhere-sync").await;
+    exec(&p.db, "DELETE FROM user_accounts WHERE id = ?", vec![first.into()]).await;
+
+    // Joining the plant: no first administrator recorded here.
+    assert!(!crate::auth::builtin_admin::first_admin_marker_closes(&p.db)
+        .await
+        .unwrap());
+    let outcome = receive(&p.db, "user_accounts", "first-elsewhere-sync", "upsert", row.clone()).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "join: {outcome:?}");
+    exec(
+        &p.db,
+        "DELETE FROM user_accounts WHERE entity_sync_id = 'first-elsewhere-sync'",
+        vec![],
+    )
+    .await;
+
+    crate::auth::builtin_admin::record_first_administrator_in(&p.db, "chef-sync")
+        .await
+        .expect("marker");
+    let outcome = receive(&p.db, "user_accounts", "first-elsewhere-sync", "upsert", row).await;
+    assert!(is_grant_conflict(&outcome), "second first administrator: {outcome:?}");
+}
