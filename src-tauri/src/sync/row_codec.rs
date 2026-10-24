@@ -1022,6 +1022,8 @@ pub(crate) async fn apply_row(
     }
     let group = crate::sync::apply_hooks::upsert_group(conn, layout, entity_sync_id, &payload).await?;
     let rights_before = crate::sync::grant_check::rights_before(conn, layout).await?;
+    // Columns the row passed its checks with but that are kept as held here (`apply_hooks::before_write`).
+    let written_note = crate::sync::apply_hooks::before_write(conn, layout, entity_sync_id, &mut payload).await?;
 
     let mut assignments: Vec<(String, SqlValue)> = Vec::new();
     let mut unresolved_soft: Vec<(String, &'static str, String)> = Vec::new();
@@ -1159,7 +1161,7 @@ pub(crate) async fn apply_row(
         .await?;
     }
     complete_pending_refs_to(conn, layout.def.entity_type, entity_sync_id).await?;
-    crate::sync::apply_hooks::after_upsert(conn, layout, &local_row, inserted, &payload).await?;
+    crate::sync::apply_hooks::after_upsert(conn, layout, &local_row, inserted, &payload, written_note.as_ref()).await?;
     crate::sync::grant_check::after_rights_change(conn, layout, entity_sync_id, Some(&payload), rights_before).await?;
     if let Some(group) = group {
         if let Some(outcome) = crate::sync::apply_hooks::after_upsert_group(conn, group).await? {

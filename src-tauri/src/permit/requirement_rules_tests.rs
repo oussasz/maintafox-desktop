@@ -1635,3 +1635,81 @@ async fn a_rule_published_here_flags_the_open_work_orders_it_matches() {
         "captured to be sent"
     );
 }
+
+/// R2-S2: the catch-up run at start-up and after each synchronisation pass flags the work orders not
+/// started yet that a rule matches but that missed it (here a rule written to the list without
+/// its stamp, as a failed or older run would leave it), derived here (never sent), once; a started
+/// work order is left as it is.
+#[tokio::test]
+async fn the_catch_up_after_a_restart_flags_the_open_work_orders_a_rule_matches() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let open = crate::wo::queries::create_work_order(&db, direct_input(actor, None))
+        .await
+        .expect("create");
+    let started = crate::wo::queries::create_work_order(&db, direct_input(actor, None))
+        .await
+        .expect("create");
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress'), \
+             actual_start = '2026-10-01T08:00:00Z' WHERE id = {}",
+            started.id
+        ),
+    )
+    .await;
+    // The rule is in the published list, its stamp missed (no rule-list hook ran).
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    crate::sync::capture::install_capture(&db).await.expect("capture");
+    exec(
+        &db,
+        "DELETE FROM sync_capture_journal WHERE entity_type = 'work_orders'",
+    )
+    .await;
+    // The start-up run (`startup.rs`, and the end of each pass, `sync::materialize`).
+    assert_eq!(rules::catch_up(&db).await, 1);
+    let open = crate::wo::queries::get_work_order(&db, open.id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert!(open.requires_permit);
+    assert_eq!(open.permit_rule_code.as_deref(), Some("PUMPS_LOTO"));
+    assert_eq!(open.permit_rule_permit_type.as_deref(), Some("loto"));
+    let cause = scalar(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM wo_action_events WHERE wo_id = {} AND action_code = 'permit_rule_applied' \
+             AND json_extract(payload_json, '$.cause') = 'catch_up'",
+            open.id
+        ),
+    )
+    .await;
+    assert_eq!(cause, 1, "recorded with its cause");
+    let started = crate::wo::queries::get_work_order(&db, started.id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert_eq!(started.permit_rule_code, None, "a started work order is left as it is");
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'work_orders'",
+        )
+        .await,
+        0,
+        "derived on every PC: never sent"
+    );
+    assert_eq!(
+        scalar(&db, "SELECT COUNT(*) FROM sync_capture_suppression").await,
+        0,
+        "capture back on"
+    );
+    // Run again: nothing more.
+    assert_eq!(rules::catch_up(&db).await, 0);
+}

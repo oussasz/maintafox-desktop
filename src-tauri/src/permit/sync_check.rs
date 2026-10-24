@@ -2431,14 +2431,25 @@ pub(crate) async fn wo_children_with(
 ///
 /// A plant rule is recorded when the work order is created, or later on a work order not started yet
 /// that a rule matches (`permit::requirement_rules::stamp_matching_rule`: each PC derives the same
-/// from the same work order and rule list). A received row that names another rule, or another
-/// permit type for the rule, is refused. A received row that carries no rule (its sender has not
-/// applied the rule list that matches it here yet, owner decision D2 (a), audit finding AU-04 B2) is
-/// applied: a work order not started gets the rule again after the apply, and one already started is
-/// recorded as a safety finding (`sync::apply_hooks::after_received_work_order`). The safety origin
-/// is never turned off by a received row. A work order new here sent by a PC without migration 255
-/// (no `permit_from_safety_di` in the row) is judged with the safety flag of its source request here,
-/// and gets that origin when it is applied (`sync::apply_hooks::after_upsert`).
+/// from the same work order and rule list). A received row that carries no rule does not speak for
+/// the rule (audit finding AU-04 R2-B1):
+/// - with no rule held here (its sender has not applied the rule list that matches it here yet, owner
+///   decision D2 (a), audit finding AU-04 B2), it is applied: a work order not started gets the rule
+///   after the apply, and one already started is recorded as a safety finding
+///   (`sync::apply_hooks::after_received_work_order`);
+/// - over a rule held here, it is judged with that rule: a clearing it carries is judged as a
+///   clearing of that rule (the permit-issue right plant-wide, who, when and why), and one without a
+///   clearing (a PC that never had the rule) is applied with the rule, its permit type, the
+///   requirement and a clearing held here kept ([`keep_held_rule_trace`]), a started work order
+///   recorded once as a safety finding.
+///
+/// A received row that names another rule, or another permit type for the rule, is refused once the
+/// work order has started; before (two PCs that derived different rules), it is applied and both
+/// PCs keep the same rule (`requirement_rules::converge_received_rule`, audit finding AU-04 R2-S1).
+/// The safety origin is never turned off by a received row. A work order new here sent by a PC
+/// without migration 255 (no `permit_from_safety_di` in the row) is judged with the safety flag of
+/// its source request here, and gets that origin when it is applied (`sync::apply_hooks::
+/// after_upsert`).
 pub(crate) async fn inbound_permit_rule_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -2446,16 +2457,21 @@ pub(crate) async fn inbound_permit_rule_check(
 ) -> AppResult<Option<InboundVerdict>> {
     use crate::wo::workflow::actions::permit_requirement::{self as requirement, ProtectedOrigin};
     let local = local_wire(conn, "work_orders", entity_sync_id).await?;
-    let wo = overlay(local.as_ref(), received);
+    let mut wo = overlay(local.as_ref(), received);
     let code = field(&wo, "code").unwrap_or(entity_sync_id).to_string();
-    // The rule trace is written once and never changes (`wo::queries::create_work_order_in`,
-    // `di::conversion`, `requirement_rules::stamp_matching_rule`): a received row that names another
-    // rule or permit type is refused. One without a rule comes from a PC that has not applied the rule
-    // list that matches it here: applied, the rule derived again after (see above).
-    if let Some(l) = local
-        .as_ref()
-        .filter(|l| field(l, "permit_rule_code").is_some() && field(&wo, "permit_rule_code").is_some())
-    {
+    // A row without a rule over a rule held here is judged with the rule held here (R2-B1).
+    let held_rule = local.as_ref().filter(|l| field(l, "permit_rule_code").is_some());
+    let blank_over_held = held_rule.is_some() && field(&wo, "permit_rule_code").is_none();
+    if let Some(l) = held_rule.filter(|_| blank_over_held) {
+        for key in RULE_TRACE_KEYS {
+            wo.insert(key.to_string(), l.get(key).cloned().unwrap_or(Value::Null));
+        }
+    }
+    // The rule trace is written once (`wo::queries::create_work_order_in`, `di::conversion`,
+    // `requirement_rules::stamp_matching_rule`): a received row that names another rule or permit
+    // type is refused once the work order has started. Before, it comes from a PC that derived its
+    // rule from another version of the list: applied, and both PCs keep the same rule (see above).
+    if let Some(l) = held_rule {
         let trace = |p: &Payload| {
             (
                 field(p, "permit_rule_code").map(str::to_string),
@@ -2463,10 +2479,21 @@ pub(crate) async fn inbound_permit_rule_check(
             )
         };
         if trace(l) != trace(&wo) {
-            return conflict(
-                "WO_PERMIT_RULE_CHANGED",
-                format!("work order {code}: the plant rule that requires its permit cannot be removed or changed"),
-            );
+            let changed = || {
+                conflict(
+                    "WO_PERMIT_RULE_CHANGED",
+                    format!("work order {code}: the plant rule that requires its permit cannot be removed or changed"),
+                )
+            };
+            let Some(status_sync) = field(&wo, "status_sync_id") else {
+                return changed();
+            };
+            let Some(status) = status_code(conn, status_sync).await? else {
+                return wait(format!("work-order status {status_sync} is not applied yet"));
+            };
+            if !requirement::NOT_STARTED_STATUS_CODES.contains(&status.as_str()) {
+                return changed();
+            }
         }
     }
     // A request flagged "sécurité" here protects its work orders that have not started: each PC
@@ -2524,6 +2551,12 @@ pub(crate) async fn inbound_permit_rule_check(
         } else if local_origin {
             return origin_off();
         }
+    }
+    // Over a rule held here, a row without a rule and without a clearing comes from a PC that never
+    // had the rule: applied, the rule's trace, requirement and clearing held here kept
+    // ([`keep_held_rule_trace`]).
+    if blank_over_held && CLEARING_KEYS.iter().all(|k| field(received, k).is_none()) {
+        return Ok(None);
     }
     let origin = match field(&wo, "permit_rule_code") {
         Some(rule) => ProtectedOrigin::Rule(rule.to_string()),
@@ -2690,6 +2723,86 @@ pub(crate) async fn inbound_permit_rule_check(
 
 /// The column that records a permit requirement carried from a request flagged "sécurité".
 pub(crate) const SAFETY_ORIGIN: &str = "permit_from_safety_di";
+
+/// The keys of a work order's plant rule trace (the rule and the permit type it calls for).
+const RULE_TRACE_KEYS: [&str; 2] = ["permit_rule_code", "permit_rule_permit_type"];
+
+/// The keys of the clearing of a protected permit requirement (who, when, why).
+const CLEARING_KEYS: [&str; 3] = [
+    "permit_rule_cleared_by_sync_id",
+    "permit_rule_cleared_at",
+    "permit_rule_clear_reason",
+];
+
+/// What the apply of a received work order does with the plant rule held here, decided before its
+/// row is written ([`keep_held_rule_trace`]) and finished after (`sync::apply_hooks::
+/// after_received_work_order`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HeldRule {
+    /// The row carried no rule over the rule held here: the rule, its permit type and, when the row
+    /// carries no clearing, the requirement and the clearing held here are kept. `received_requires`:
+    /// whether the row required the permit (recorded in the finding of a started work order).
+    Kept { received_requires: bool },
+    /// The row named another rule (or permit type) on a work order not started: applied, then the
+    /// same rule is kept on every PC (`requirement_rules::converge_received_rule`).
+    Differs { code: String, permit_type: Option<String> },
+}
+
+/// Before a received work order is written (it passed [`inbound_permit_rule_check`]), audit
+/// findings AU-04 R2-B1 / R2-S1. A row that carries no rule (the key sent empty) over a rule held
+/// here does not speak for the rule: the rule and its permit type held here are written instead of
+/// the empty ones; when the row carries no clearing either (a PC that never had the rule), the
+/// clearing held here is kept too and the permit stays required if either side requires it (a
+/// clearing held here then withdrawn as a re-tick, `permit_requirement::
+/// withdraw_received_clearing_of_required`, recorded). A row with a clearing, judged as a clearing of
+/// the rule held here, writes that clearing. The apply runs with capture suppressed: nothing of this
+/// is sent, and every PC keeps its rule the same way. A row that names another rule is noted, to
+/// converge after the write. A row without the rule keys (an older sender) leaves them as they are.
+pub(crate) async fn keep_held_rule_trace(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &mut Payload,
+) -> AppResult<Option<HeldRule>> {
+    if !payload.contains_key("permit_rule_code") {
+        return Ok(None);
+    }
+    let Some(local) = local_wire(conn, "work_orders", entity_sync_id).await? else {
+        return Ok(None);
+    };
+    let Some(held) = field(&local, "permit_rule_code").map(str::to_string) else {
+        return Ok(None);
+    };
+    let held_type = field(&local, "permit_rule_permit_type").map(str::to_string);
+    match field(payload, "permit_rule_code").map(str::to_string) {
+        Some(received) => {
+            let received_type = match payload.get("permit_rule_permit_type") {
+                Some(_) => field(payload, "permit_rule_permit_type").map(str::to_string),
+                None => held_type.clone(),
+            };
+            if received == held && received_type == held_type {
+                return Ok(None);
+            }
+            Ok(Some(HeldRule::Differs {
+                code: held,
+                permit_type: held_type,
+            }))
+        }
+        None => {
+            let received_requires = flag(payload, "requires_permit");
+            for key in RULE_TRACE_KEYS {
+                payload.insert(key.to_string(), local.get(key).cloned().unwrap_or(Value::Null));
+            }
+            if CLEARING_KEYS.iter().all(|k| field(payload, k).is_none()) {
+                for key in CLEARING_KEYS {
+                    payload.insert(key.to_string(), local.get(key).cloned().unwrap_or(Value::Null));
+                }
+                let requires = received_requires || flag(&local, "requires_permit");
+                payload.insert("requires_permit".into(), Value::from(i64::from(requires)));
+            }
+            Ok(Some(HeldRule::Kept { received_requires }))
+        }
+    }
+}
 
 /// Whether the source request of a received work order (`source_di_sync_id`) is flagged "sécurité"
 /// here: `Some(false)` when it has none, `None` when it is not applied here yet.

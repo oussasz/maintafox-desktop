@@ -86,6 +86,14 @@ pub const PERMIT_SUSPENDED_WORK_HELD_CATEGORY: &str = "permit_suspended_work_hel
 /// applies it ([`announce_permit_ended_under_work`]).
 pub const PERMIT_ENDED_UNDER_WORK_CATEGORY: &str = "permit_ended_under_work";
 
+/// Notification category of a work order received already started without the plant permit rule
+/// that concerns it here (owner decision D2 (a), audit finding AU-04 R2-S3;
+/// `permit::requirement_rules::finding_for_started_without_rule`): told to the permit-issue right
+/// holders (`ptw.issue`) of the work order's site, plant-wide ones included; nobody there: the
+/// settings administrators (`notifications::catalog::ALWAYS_DELIVERED_FALLBACK`), on each PC that
+/// applies it ([`notify_work_order_without_rule`]).
+pub const WO_PERMIT_RULE_MISSING_CATEGORY: &str = "wo_permit_rule_missing";
+
 /// Every category of a persistent safety notice: kept for each recipient until they acknowledge it,
 /// never muted, re-routed, expired, archived or deleted before, and local to each PC. The SQL of
 /// the notification modules names them through [`safety_notice_categories_sql`].
@@ -95,6 +103,7 @@ pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
     PM_CONCURRENT_VERSIONS_CATEGORY,
     PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
     PERMIT_ENDED_UNDER_WORK_CATEGORY,
+    WO_PERMIT_RULE_MISSING_CATEGORY,
 ];
 
 /// SQL list of [`SAFETY_NOTICE_CATEGORIES`], for the constant SQL of the notification modules
@@ -103,7 +112,7 @@ pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
 macro_rules! safety_notice_categories_sql {
     () => {
         "('safety_rule_received', 'loto_forced_removal', 'pm_concurrent_versions', 'permit_suspended_work_held', \
-         'permit_ended_under_work')"
+         'permit_ended_under_work', 'wo_permit_rule_missing')"
     };
 }
 
@@ -394,6 +403,10 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
         (
             PERMIT_ENDED_UNDER_WORK_CATEGORY,
             "Permit ended on another PC before or during the work",
+        ),
+        (
+            WO_PERMIT_RULE_MISSING_CATEGORY,
+            "Work order received started without its plant permit rule",
         ),
     ] {
         ensure_category_rows(conn, category, label).await?;
@@ -788,10 +801,13 @@ pub(crate) async fn send_grant_review_notice(
     .await
 }
 
-/// A work order received already started without the plant rule that matches it here
-/// (`permit::requirement_rules::finding_for_started_without_rule`): the settings administrators are
-/// told, like a safety rule changed on another PC. The work order is applied whatever happens to the
-/// notice (its history is never held back): a notice that cannot be written is logged.
+/// A work order received already started without the plant rule that concerns it here
+/// (`permit::requirement_rules::finding_for_started_without_rule`): the permit-issue right holders
+/// of its site are told, each until they acknowledge it ([`WO_PERMIT_RULE_MISSING_CATEGORY`],
+/// routed by the work order's site; nobody there: the settings administrators). The work order is
+/// applied whatever happens to the notice (its history is never held back): a notice that cannot be
+/// written is logged. The text does not say why the rule was missing there (a PC without the rule
+/// list, or an edited row): it says what is known.
 pub(crate) async fn notify_work_order_without_rule(
     conn: &impl ConnectionTrait,
     wo_id: i64,
@@ -811,31 +827,63 @@ pub(crate) async fn notify_work_order_without_rule(
          permit rule {rule}"
     );
     let body = format!(
-        "Reçu par synchronisation : l'OT {wo_code} a été démarré sur un autre poste {required_fr}, alors que la règle \
-         {rule} de l'usine exige ici un permis {permit_type} pour son équipement et son travail. Vérifiez comment ce \
-         travail a été protégé. / Received by sync: work order {wo_code} was started on another PC {required_en}, \
-         while plant rule {rule} here requires a {permit_type} permit for its equipment and work. Check how this work \
-         was protected."
+        "Reçu par synchronisation : l'OT {wo_code} a été reçu démarré {required_fr}, sans la règle {rule} que l'usine \
+         applique ici (un permis {permit_type} pour son équipement et son travail). Vérifiez comment ce travail a été \
+         protégé. / Received by sync: work order {wo_code} was received started {required_en}, without plant rule \
+         {rule} that applies here (a {permit_type} permit for its equipment and work). Check how this work was \
+         protected."
     );
-    send(
-        conn,
-        "work_orders",
-        wo_sync_id,
-        true,
-        title,
-        body,
-        &format!("/work-orders?openWo={wo_id}"),
-        NotificationMessage::new(
-            "wo_permit_rule_missing_on_arrival",
-            json!({
-                "code": wo_code,
-                "rule": rule,
-                "permit_type": permit_type,
-                "requires_permit": requires_permit,
-            }),
-        ),
-    )
-    .await
+    let route = NoticeRoute {
+        category: WO_PERMIT_RULE_MISSING_CATEGORY,
+        // The work order's site routes the permit-issue right holders (`notifications::router`).
+        source_module: "work_orders",
+        source_record_id: wo_id.to_string(),
+        entity_type: "work_orders",
+        entity_sync_id: wo_sync_id,
+        org_node_id: None,
+    };
+    let message = NotificationMessage::new(
+        "wo_permit_rule_missing_on_arrival",
+        json!({
+            "code": wo_code,
+            "rule": rule,
+            "permit_type": permit_type,
+            "requires_permit": requires_permit,
+        }),
+    );
+    let written = async {
+        conn.execute_unprepared("SAVEPOINT wo_permit_rule_notice").await?;
+        match emit_notice(
+            conn,
+            &route,
+            title,
+            body,
+            &format!("/work-orders?openWo={wo_id}"),
+            &message,
+        )
+        .await
+        {
+            Ok(()) => {
+                conn.execute_unprepared("RELEASE wo_permit_rule_notice").await?;
+                Ok(())
+            }
+            Err(err) => {
+                conn.execute_unprepared("ROLLBACK TO wo_permit_rule_notice").await?;
+                conn.execute_unprepared("RELEASE wo_permit_rule_notice").await?;
+                Err(err)
+            }
+        }
+    }
+    .await;
+    if let Err(err) = written {
+        tracing::error!(
+            category = route.category,
+            entity_sync_id = wo_sync_id,
+            error = %err,
+            "permit rule finding notice not written; the work order and its finding are kept"
+        );
+    }
+    Ok(())
 }
 
 /// Writes a notice of concurrent PM plan versions (`pm::version_clash`) in a savepoint of the apply

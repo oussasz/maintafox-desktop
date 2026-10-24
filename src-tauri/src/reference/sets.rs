@@ -598,12 +598,11 @@ pub async fn publish_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) ->
     if super::currencies::is_currency_domain(&domain.code) {
         super::currencies::mirror_into_lookup(&txn).await?;
     }
+    // A permit rule list published: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, set_id, Some(actor_id)).await?;
 
     txn.commit().await?;
-
-    // A permit rule list published: the work orders not started yet that it matches get it
-    // (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
-    crate::permit::requirement_rules::after_rule_list_change(db, set_id, Some(actor_id)).await?;
     get_set_by_id(db, set_id).await
 }
 

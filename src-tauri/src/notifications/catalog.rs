@@ -153,6 +153,7 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
     "pm_concurrent_versions",
     "permit_suspended_work_held",
     "permit_ended_under_work",
+    "wo_permit_rule_missing",
 ];
 
 /// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
@@ -180,13 +181,21 @@ pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     // work order's responsible and the permit close-right holders of the permit's site.
     ("permit_ended_under_work", "assignee"),
     ("permit_ended_under_work", "permission:ptw.close"),
+    // A work order received started without the plant permit rule that concerns it here (owner
+    // decision D2 (a), audit finding AU-04 R2-S3): the permit-issue right holders of its site.
+    ("wo_permit_rule_missing", "permission:ptw.issue"),
 ];
 
 /// The audience of an [`ALWAYS_DELIVERED`] category when its fixed audiences reach nobody here: a
 /// safety notice must reach someone. A running work order held by its permit's suspension (D5)
 /// whose responsible is unset, or not an active user here, goes to the permit close-right holders of
-/// the permit's site, the audience of a permit ended under work (D9).
-pub const ALWAYS_DELIVERED_FALLBACK: &[(&str, &str)] = &[("permit_suspended_work_held", "permission:ptw.close")];
+/// the permit's site, the audience of a permit ended under work (D9). A work order received started
+/// without its plant permit rule, at a site where nobody holds the permit-issue right here, goes to
+/// the settings administrators (who keep the rule list).
+pub const ALWAYS_DELIVERED_FALLBACK: &[(&str, &str)] = &[
+    ("permit_suspended_work_held", "permission:ptw.close"),
+    ("wo_permit_rule_missing", "permission:adm.settings"),
+];
 
 /// The fallback audiences of an [`ALWAYS_DELIVERED`] category ([`ALWAYS_DELIVERED_FALLBACK`]).
 pub fn always_delivered_fallback(category: &str) -> Vec<Audience> {

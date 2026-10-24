@@ -359,12 +359,11 @@ pub async fn publish_reference_set(
     if crate::reference::currencies::is_currency_domain(&domain_probe.code) {
         crate::reference::currencies::mirror_into_lookup(&txn).await?;
     }
+    // A permit rule list published: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, set_id, Some(actor_id)).await?;
 
     txn.commit().await?;
-
-    // A permit rule list published: the work orders not started yet that it matches get it
-    // (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
-    crate::permit::requirement_rules::after_rule_list_change(db, set_id, Some(actor_id)).await?;
     let published_set = sets::get_reference_set(db, set_id).await?;
 
     Ok(ReferencePublishResult {

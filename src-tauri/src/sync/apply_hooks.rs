@@ -44,16 +44,19 @@
 //!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`); so
 //!   does one whose requirement came from a request flagged "sécurité" (`permit_from_safety_di`,
 //!   migration 255: the right at its site), and that origin is never turned off by a received row;
-//!   a received work order that names another rule than the one held here is refused; one that
-//!   carries no rule is applied (see the plant rules below);
+//!   a received work order that names another rule than the one held here is refused once started,
+//!   and applied before, both PCs keeping the same rule (`requirement_rules::converge_received_rule`);
+//!   one that carries no rule is applied (see the plant rules below), and over a rule held here it
+//!   is judged with that rule and keeps it, with its permit type, requirement and clearing held here
+//!   (`before_write`, `permit::sync_check::keep_held_rule_trace`, audit finding AU-04 R2-B1);
 //! - `work_orders` / `reference_values` / `reference_sets`: after the apply, the plant's permit rules
 //!   held here are applied to a received work order not started yet that has no rule, and to every
 //!   such work order when the rule list is received (`permit::requirement_rules::stamp_matching_rule`,
 //!   owner decision D2 (a), audit finding AU-04: each PC derives the same rule from the same work order
-//!   and list); a received work order already started without the rule that matches it here is
-//!   applied and recorded once as a safety finding, the settings administrators told
-//!   (`requirement_rules::finding_for_started_without_rule`; not for plant history received by a
-//!   snapshot);
+//!   and list); a received work order already started without the rule that matches it here, or
+//!   without the rule held here, is applied and recorded once as a safety finding, the permit-issue
+//!   right holders of its site told (`requirement_rules::finding_for_started_without_rule`; not for
+//!   plant history received by a snapshot);
 //! - `work_orders` / `intervention_requests`: after the apply, a request flagged "sécurité" here
 //!   protects its work orders not started yet (origin, permit required, a clearing withdrawn); a
 //!   work order new here received without the column and already started takes that origin; a
@@ -577,13 +580,33 @@ fn hook_err(table: &str, e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("{table} apply hook: {e}"))
 }
 
-/// After an inbound row was inserted (`inserted`) or updated; `payload` is the row as received.
+/// After an inbound row passed its checks, before it is written: columns of the row that are kept
+/// as held here instead of the received values, in the apply's transaction (capture suppressed: the
+/// other PCs do the same). `work_orders`: a row that carries no plant rule over the rule held here
+/// keeps the rule, its permit type and, without a clearing in the row, the requirement and the
+/// clearing held here; a row that names another rule is noted (`permit::sync_check::
+/// keep_held_rule_trace`, audit finding AU-04 R2-B1 / R2-S1). The note goes to [`after_upsert`].
+pub(crate) async fn before_write(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    payload: &mut serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<crate::permit::sync_check::HeldRule>> {
+    match layout.def.entity_type {
+        "work_orders" => crate::permit::sync_check::keep_held_rule_trace(conn, entity_sync_id, payload).await,
+        _ => Ok(None),
+    }
+}
+
+/// After an inbound row was inserted (`inserted`) or updated; `payload` is the row as written
+/// (received, with the columns [`before_write`] kept as held here, `held_rule` its note).
 pub(crate) async fn after_upsert(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
     row: &RowLocator,
     inserted: bool,
     payload: &serde_json::Map<String, serde_json::Value>,
+    held_rule: Option<&crate::permit::sync_check::HeldRule>,
 ) -> AppResult<()> {
     match layout.def.entity_type {
         "inventory_transactions" if inserted => {
@@ -657,7 +680,7 @@ pub(crate) async fn after_upsert(
                 .await?
                 .ok_or_else(|| hook_err(layout.table(), "work order not found after apply"))?;
             let sent_without_origin = inserted && !payload.contains_key(crate::permit::sync_check::SAFETY_ORIGIN);
-            after_received_work_order(conn, id, sent_without_origin).await
+            after_received_work_order(conn, id, sent_without_origin, held_rule).await
         }
         // A request received flagged "sécurité" protects its work orders not started yet, as the PC
         // that flagged it did (`permit_requirement::raise_work_orders_of_safety_request`).
@@ -718,17 +741,22 @@ pub(crate) async fn after_upsert(
 ///   in the row), already started, its request flagged: it carries that origin;
 /// - protected, required again but still carrying its clearing (a re-tick made by an older build):
 ///   its clearing is withdrawn, recorded (`withdraw_received_clearing_of_required`);
+/// - not started yet and received naming another rule than the one held here (`held_rule`
+///   `Differs`): the same rule kept on every PC (`requirement_rules::converge_received_rule`);
 /// - not started yet with no plant rule: the rule of the list here that matches its equipment and work
 ///   type is recorded on it (`requirement_rules::stamp_matching_rule`; a row that changed them is
 ///   judged the same way, audit finding AU-04 S3);
-/// - already started with no plant rule while one here matches it: recorded once as a safety finding
+/// - already started with no plant rule while one here matches it, or received without the rule
+///   held here (`held_rule` `Kept`, the rule kept): recorded once as a safety finding
 ///   (`requirement_rules::finding_for_started_without_rule`), not for plant history received by a
 ///   snapshot.
 async fn after_received_work_order(
     conn: &impl ConnectionTrait,
     wo_id: i64,
     sent_without_origin: bool,
+    held_rule: Option<&crate::permit::sync_check::HeldRule>,
 ) -> AppResult<()> {
+    use crate::permit::sync_check::HeldRule;
     let source_di: Option<i64> = conn
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -751,6 +779,10 @@ async fn after_received_work_order(
         ))
         .await?;
     }
+    // Two PCs that derived different rules for a work order not started: the same rule kept on each.
+    if let Some(HeldRule::Differs { code, permit_type }) = held_rule {
+        crate::permit::requirement_rules::converge_received_rule(conn, wo_id, code, permit_type.as_deref()).await?;
+    }
     crate::wo::workflow::actions::permit_requirement::withdraw_received_clearing_of_required(conn, wo_id).await?;
     crate::permit::requirement_rules::stamp_matching_rule(
         conn,
@@ -760,7 +792,12 @@ async fn after_received_work_order(
     )
     .await?;
     if !crate::sync::materialize::applying_snapshot_row() {
-        crate::permit::requirement_rules::finding_for_started_without_rule(conn, wo_id).await?;
+        let received_without_held_rule = match held_rule {
+            Some(HeldRule::Kept { received_requires }) => Some(*received_requires),
+            _ => None,
+        };
+        crate::permit::requirement_rules::finding_for_started_without_rule(conn, wo_id, received_without_held_rule)
+            .await?;
     }
     Ok(())
 }
