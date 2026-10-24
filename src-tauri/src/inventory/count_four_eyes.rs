@@ -358,6 +358,9 @@ pub(crate) async fn inbound_count_line_check(
     if field(&line, "reversed_transaction_sync_id").is_some() {
         return Ok(None);
     }
+    // "Above the tolerance" is judged here again, from this PC's tolerance and the line's own
+    // quantities: a received flag can make a line stricter, never more lenient.
+    let above = above || above_here(conn, &line).await?;
     let by_counter = approver.is_some() && counter.is_some() && approver == counter;
     let second = field(&line, "second_approved_by_sync_id");
     if second.is_some() && !(by_counter && above) {
@@ -430,6 +433,52 @@ pub(crate) async fn inbound_count_line_check(
                  exactly one site, so four-eyes applies to the stores"
             ),
         ),
+    }
+}
+
+/// Whether a received line's variance is above this PC's four-eyes tolerance, judged on its own
+/// quantities and this PC's unit cost at its location (`evaluate`, as at entry). Quantities that
+/// cannot be read are above (strict).
+async fn above_here(conn: &impl ConnectionTrait, line: &serde_json::Map<String, serde_json::Value>) -> AppResult<bool> {
+    let number = |key: &str| line.get(key).and_then(serde_json::Value::as_f64);
+    let (Some(variance), Some(system)) = (number("variance_qty"), number("system_qty")) else {
+        return Ok(true);
+    };
+    let local = |table: &'static str, key: &'static str| async move {
+        match field(line, key) {
+            Some(sync_id) => crate::permit::sync_check::local_id(conn, table, sync_id).await,
+            None => Ok(None),
+        }
+    };
+    let unit_cost = match (
+        local("articles", "article_sync_id").await?,
+        local("stock_locations", "location_sync_id").await?,
+    ) {
+        (Some(article), Some(location)) => {
+            crate::inventory::valuation::location_average_cost(conn, article, location).await?
+        }
+        _ => None,
+    };
+    Ok(CountTolerance::read(conn).await?.is_above(variance, system, unit_cost))
+}
+
+/// The four-eyes rule of the count screens: the plant's tolerance and whether the stores' site
+/// opted out of four-eyes (the counter may then approve, flagged "auto-approbation").
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct CountToleranceView {
+    pub value_threshold: Option<f64>,
+    pub percent_threshold: Option<f64>,
+    pub self_approval_allowed: bool,
+}
+
+impl CountToleranceView {
+    pub async fn read<C: ConnectionTrait>(db: &C) -> AppResult<Self> {
+        let tolerance = CountTolerance::read(db).await?;
+        Ok(Self {
+            value_threshold: tolerance.value_threshold,
+            percent_threshold: tolerance.percent_threshold,
+            self_approval_allowed: store_rule(db).await?.rule == SelfApprovalRule::Allowed,
+        })
     }
 }
 

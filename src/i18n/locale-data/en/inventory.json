@@ -109,6 +109,7 @@
       "line": "Counted by {{who}} on {{date}} ({{session}}): system {{system}}, counted {{counted}}, variance {{variance}}.",
       "rule": "Above the four-eyes tolerance: someone other than the counter approves it; that posts it and closes the item.",
       "approve": "Approve the count",
+      "notByCounter": "You counted it: another person approves it.",
       "dialogTitle": "Approve the count",
       "dialogDescription": "{{article}} at {{location}}, counted by {{who}}: {{counted}} (variance {{variance}}). Approving posts the count: the stock becomes the counted quantity.",
       "note": "Approval note",
@@ -1616,6 +1617,7 @@
       "evidencePlaceholder": "What was checked (recount, document, photo…)",
       "confirm": "Approve variance",
       "aboveTolerance": "Above the four-eyes tolerance: counted by {{counter}}, approved by someone else.",
+      "aboveToleranceOptOut": "Above the four-eyes tolerance (counted by {{counter}}): the site lifted four-eyes, the counter may approve it (self-approval).",
       "withinTolerance": "Within the four-eyes tolerance (counted by {{counter}})."
     },
     "secondApproval": {

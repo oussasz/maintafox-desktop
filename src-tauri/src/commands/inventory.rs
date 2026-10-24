@@ -932,11 +932,11 @@ pub async fn upsert_inventory_count_line(
 }
 
 /// The plant's four-eyes tolerance of a count variance (Settings > Inventory), shown on the count
-/// screens; blank thresholds are `null`.
+/// screens; blank thresholds are `null`; whether the stores' site opted out of four-eyes.
 #[tauri::command]
 pub async fn get_inventory_count_tolerance(
     state: State<'_, AppState>,
-) -> AppResult<crate::inventory::count_four_eyes::CountTolerance> {
+) -> AppResult<crate::inventory::count_four_eyes::CountToleranceView> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -944,7 +944,7 @@ pub async fn get_inventory_count_tolerance(
         crate::rbac::permissions::INV_VIEW,
         PermissionScope::Global
     );
-    crate::inventory::count_four_eyes::CountTolerance::read(&state.db).await
+    crate::inventory::count_four_eyes::CountToleranceView::read(&state.db).await
 }
 
 #[tauri::command]

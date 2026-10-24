@@ -235,6 +235,8 @@ const NegativeStockReviewListSchema = z.object({
   over_reservations: z.array(OverReservationWarningSchema),
   /** Counts above the four-eyes tolerance waiting for a second person's approval. */
   pending_counts: z.array(PendingReconciliationCountSchema),
+  /** The stores' site opted out of four-eyes: the counter may approve a waiting count. */
+  self_approval_allowed: z.boolean(),
 });
 export type NegativeStockReviewList = z.infer<typeof NegativeStockReviewListSchema>;
 

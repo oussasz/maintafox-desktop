@@ -59,6 +59,7 @@ import {
   listNegativeStockReviews,
   resolveNegativeStockByCount,
 } from "@/services/negative-stock-service";
+import { useSessionStore } from "@/store/session-store";
 import { P } from "@shared/rbac/permissions.generated";
 
 /** The article and location a count is recorded for (a negative item or a double count). */
@@ -84,6 +85,8 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
   const { formatDateTime, formatNumber } = useFormatters();
   const varianceReasons = useLookupOptions("inventory.variance_reason");
   const [includeClosed, setIncludeClosed] = useState(false);
+  /** The signed-in user: the counter of a waiting count is not offered its approval. */
+  const userId = useSessionStore((s) => s.info?.user_id ?? null);
   const [list, setList] = useState<NegativeStockReviewList | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [counting, setCounting] = useState<CountTarget | null>(null);
@@ -337,19 +340,27 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                 </p>
                 <p className="mt-1 text-xs text-text-muted">{t("negativeStock.pending.rule")}</p>
               </div>
-              <PermissionGate permission={P.INV_MANAGE}>
-                <Button
-                  variant="outline"
-                  className="h-11"
-                  onClick={() => {
-                    setApproving(p);
-                    setApprovalNote("");
-                    setSaveError(null);
-                  }}
-                >
-                  {t("negativeStock.pending.approve")}
-                </Button>
-              </PermissionGate>
+              {p.counted_by_id !== null &&
+              p.counted_by_id === userId &&
+              !list.self_approval_allowed ? (
+                <span className="text-xs text-text-muted">
+                  {t("negativeStock.pending.notByCounter")}
+                </span>
+              ) : (
+                <PermissionGate permission={P.INV_MANAGE}>
+                  <Button
+                    variant="outline"
+                    className="h-11"
+                    onClick={() => {
+                      setApproving(p);
+                      setApprovalNote("");
+                      setSaveError(null);
+                    }}
+                  >
+                    {t("negativeStock.pending.approve")}
+                  </Button>
+                </PermissionGate>
+              )}
             </li>
           ))}
         </ul>

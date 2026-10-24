@@ -434,6 +434,9 @@ pub struct NegativeStockReviewList {
     /// Counts recorded here above the four-eyes tolerance, waiting for a second person: the item of
     /// their article and location shows "comptage en attente d'approbation".
     pub pending_counts: Vec<PendingReconciliationCount>,
+    /// The stores' site opted out of four-eyes: the counter may approve a count waiting here
+    /// (flagged "auto-approbation"); otherwise someone else approves it.
+    pub self_approval_allowed: bool,
 }
 
 /// Counts for the sync centre, derived from the balances and the count sessions.
@@ -2027,6 +2030,8 @@ pub async fn list_reviews(db: &DatabaseConnection, include_closed: bool) -> AppR
         closed_over_quantities,
         over_reservations,
         pending_counts,
+        self_approval_allowed: crate::inventory::count_four_eyes::store_rule(db).await?.rule
+            == crate::reliability::study::decisions::SelfApprovalRule::Allowed,
     })
 }
 
@@ -2432,6 +2437,20 @@ async fn notify_recount(
     };
     let text = |col: &str| row.try_get::<String>("", col).unwrap_or_default();
     let (code, name) = (text("article_code"), text("article_name"));
+    let line_sync_id = match db
+        .query_one(sqlite(
+            "SELECT COALESCE(NULLIF(TRIM(entity_sync_id), ''), CAST(id AS TEXT)) AS sid FROM inventory_count_lines WHERE id = ?",
+            vec![pending.line_id.into()],
+        ))
+        .await
+    {
+        Ok(Some(r)) => r.try_get::<String>("", "sid").unwrap_or_default(),
+        Ok(None) => return,
+        Err(err) => {
+            tracing::warn!(error = %err, line_id = pending.line_id, "recount notice: line not read");
+            return;
+        }
+    };
     let location = format!("{}/{}", text("warehouse_code"), text("location_code"));
     let input = crate::notifications::emitter::NotificationEventInput {
         source_module: "inventory_count_lines".into(),
@@ -2439,7 +2458,8 @@ async fn notify_recount(
         event_code: "stock_count_stale".into(),
         category_code: RECOUNT_CATEGORY.into(),
         severity: "warning".into(),
-        dedupe_key: Some(format!("stock-count-recount-{}", pending.line_id)),
+        // Named by the line's sync id (the same on every PC), never its local id.
+        dedupe_key: Some(format!("stock-count-recount|{line_sync_id}")),
         payload_json: None,
         title: format!("Recomptage demandé — {code} à {location}"),
         body: Some(format!(

@@ -8,6 +8,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
 import enCommon from "@/i18n/en/common.json";
 import enInventory from "@/i18n/locale-data/en/inventory.json";
+import frInventory from "@/i18n/locale-data/fr/inventory.json";
 
 const mocks = vi.hoisted(() => ({
   approveInventoryCountLine: vi.fn(),
@@ -164,6 +165,7 @@ describe("InventoryControlsPanel", () => {
     mocks.getInventoryCountTolerance.mockResolvedValue({
       value_threshold: null,
       percent_threshold: null,
+      self_approval_allowed: false,
     });
   });
 
@@ -328,6 +330,7 @@ describe("InventoryControlsPanel", () => {
     mocks.getInventoryCountTolerance.mockResolvedValue({
       value_threshold: null,
       percent_threshold: 5,
+      self_approval_allowed: false,
     });
     renderPanel();
     await waitFor(() =>
@@ -335,6 +338,44 @@ describe("InventoryControlsPanel", () => {
         "a variance is critical when it is above 5 % of the system quantity.",
       ),
     );
+  });
+
+  it("states the value threshold in the plant currency and joins both thresholds", async () => {
+    mocks.getInventoryCountTolerance.mockResolvedValue({
+      value_threshold: 1250,
+      percent_threshold: 5,
+      self_approval_allowed: false,
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId("inv-cc-four-eyes-tolerance").textContent ?? "").toMatch(
+        /its value is above .*1.?250.* or it is above 5 % of the system quantity\./,
+      ),
+    );
+    // French joins them with "ou" and agrees "non définie" with "tolérance".
+    expect(frInventory.controls.fourEyes.or).toBe(" ou ");
+    expect(frInventory.controls.fourEyes.notSet).toMatch(/: non définie —/);
+  });
+
+  it("never says 'approved by someone else' when the site lifted four-eyes", async () => {
+    mocks.getInventoryCountTolerance.mockResolvedValue({
+      value_threshold: null,
+      percent_threshold: null,
+      self_approval_allowed: true,
+    });
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "submitted" })]);
+    mocks.listInventoryCountLines.mockResolvedValue([countLine({ id: 1 })]);
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Submitted)");
+    const row = (await screen.findByText("A-21")).closest("tr");
+    if (!row) throw new Error("expected the A-21 row");
+    await waitFor(() => expect(mocks.getInventoryCountTolerance).toHaveBeenCalled());
+    fireEvent.click(within(row).getByRole("button", { name: "Approve variance" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("the counter may approve it (self-approval)");
+    expect(dialog).not.toHaveTextContent("approved by someone else");
+    expect(frInventory.controls.approval.aboveToleranceOptOut).not.toMatch(/autre personne/);
   });
 
   it("names the counter and flags a self-approval", async () => {

@@ -3417,6 +3417,8 @@ export interface InventoryCountLine {
 export interface InventoryCountTolerance {
   value_threshold: number | null;
   percent_threshold: number | null;
+  /** The stores' site opted out of four-eyes: the counter may approve ("auto-approbation"). */
+  self_approval_allowed: boolean;
 }
 
 export interface CreateInventoryCountSessionInput {

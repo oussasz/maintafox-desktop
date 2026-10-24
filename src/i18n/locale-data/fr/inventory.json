@@ -109,6 +109,7 @@
       "line": "Compté par {{who}} le {{date}} ({{session}}) : théorique {{system}}, compté {{counted}}, écart {{variance}}.",
       "rule": "Au-dessus de la tolérance de double validation : une autre personne que celle qui a compté l'approuve ; cela le passe en stock et clôt l'élément.",
       "approve": "Approuver le comptage",
+      "notByCounter": "Vous avez compté : une autre personne l'approuve.",
       "dialogTitle": "Approuver le comptage",
       "dialogDescription": "{{article}} à {{location}}, compté par {{who}} : {{counted}} (écart {{variance}}). L'approbation passe le comptage en stock : le stock devient la quantité comptée.",
       "note": "Note d'approbation",
@@ -1616,6 +1617,7 @@
       "evidencePlaceholder": "Ce qui a été vérifié (recomptage, document, photo…)",
       "confirm": "Approuver l'écart",
       "aboveTolerance": "Au-dessus de la tolérance de double validation : compté par {{counter}}, approuvé par une autre personne.",
+      "aboveToleranceOptOut": "Au-dessus de la tolérance de double validation (compté par {{counter}}) : le site a levé la double validation, la personne qui a compté peut l'approuver (auto-approbation).",
       "withinTolerance": "Dans la tolérance de double validation (compté par {{counter}})."
     },
     "secondApproval": {
@@ -1672,7 +1674,7 @@
       "or": " ou ",
       "value": "sa valeur dépasse {{value}}",
       "percent": "il dépasse {{value}} % de la quantité théorique",
-      "notSet": "Tolérance de double validation : non défini — tout écart exige une double validation."
+      "notSet": "Tolérance de double validation : non définie — tout écart exige une double validation."
     }
   },
   "issueDesk": {

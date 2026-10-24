@@ -3585,6 +3585,58 @@ async fn a_movement_received_from_another_pc_makes_a_waiting_count_stale_and_the
     assert_eq!(list.items.len(), 1, "the item stays open");
 }
 
+/// D11 review: "above the tolerance" of a received line is judged here from this PC's tolerance and
+/// the line's quantities: a line received marked within it, approved by its counter, is still a
+/// four-eyes conflict where it is above here (the tests' tolerance is blank: every variance is).
+#[tokio::test]
+async fn a_received_line_marked_within_the_tolerance_is_judged_on_its_quantities_here() {
+    use crate::sync::materialize::ApplyOutcome;
+    use sea_orm::TransactionTrait;
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    let counter = user_with(db, "foureyesrecomputecounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, line) = enter_count(db, counter, art, loc, 2.0).await;
+    let sync_of = |sql: &'static str, id: i64| crate::sync::test_support::scalar_opt_text(db, sql, vec![id.into()]);
+    let line_sync = sync_of("SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?", line.id)
+        .await
+        .expect("line");
+    let counter_sync = sync_of(
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        i64::from(counter),
+    )
+    .await
+    .expect("counter");
+    // The same line as another PC would send it, new here, marked within the tolerance.
+    let mut payload = crate::permit::sync_check::local_wire(db, "inventory_count_lines", &line_sync)
+        .await
+        .expect("wire")
+        .expect("line");
+    payload.insert("is_critical".into(), serde_json::json!(0));
+    payload.insert("approved_by_sync_id".into(), serde_json::json!(counter_sync));
+    payload.insert("approved_at".into(), serde_json::json!("2026-10-23T10:00:00Z"));
+    payload.insert("approval_note".into(), serde_json::json!("Recompté avec le magasinier"));
+    let fresh = crate::sync::identity::new_entity_sync_id();
+    let layout = crate::sync::row_layout::layout(db, "inventory_count_lines")
+        .await
+        .expect("layout");
+    let tx = db.begin().await.expect("begin");
+    let outcome = crate::sync::row_codec::apply_row(
+        &tx,
+        &layout,
+        &fresh,
+        "upsert",
+        &serde_json::to_string(&payload).expect("json"),
+    )
+    .await
+    .expect("apply");
+    tx.rollback().await.expect("rollback");
+    assert!(
+        matches!(&outcome, ApplyOutcome::Conflict { code, .. } if code == "COUNT_SELF_APPROVAL"),
+        "{outcome:?}"
+    );
+}
+
 /// D11 review (B2): a received count line cannot clear the counter held here, nor change it or
 /// lower its "above the tolerance" flag without a new entry; with a new entry it is judged as
 /// received.

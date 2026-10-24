@@ -1032,6 +1032,7 @@ const InventoryCountLineSchema = z.object({
 const InventoryCountToleranceSchema = z.object({
   value_threshold: z.number().nullable(),
   percent_threshold: z.number().nullable(),
+  self_approval_allowed: z.boolean(),
 });
 
 /** Count line with the display name of the reviewer who approved its variance. */

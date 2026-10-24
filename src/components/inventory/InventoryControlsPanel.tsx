@@ -991,7 +991,9 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                     approvalKind === "second"
                       ? "controls.secondApproval.description"
                       : approvalLine.is_critical === 1
-                        ? "controls.approval.aboveTolerance"
+                        ? tolerance?.self_approval_allowed
+                          ? "controls.approval.aboveToleranceOptOut"
+                          : "controls.approval.aboveTolerance"
                         : "controls.approval.withinTolerance",
                     {
                       counter:

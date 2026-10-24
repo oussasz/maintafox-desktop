@@ -624,6 +624,22 @@ pub async fn approve_count_line(
         ]));
     }
     refuse_reconciliation_list_count(&tx, line.session_id).await?;
+    // A line is approved once, while its session is still being counted or reviewed: the approver
+    // of a line already approved, or of a posted, reversed or cancelled count, is never rewritten.
+    let session = ensure_count_session(&tx, line.session_id).await?;
+    if !["draft", "counting", "submitted"].contains(&session.status.as_str()) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{REFUSED_COUNT_LINE_APPROVAL_CLOSED}:status={0}: the count session is {0}: its lines are no longer \
+             approved.",
+            session.status
+        )]));
+    }
+    if line.approved_by_id.is_some() {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{REFUSED_COUNT_LINE_ALREADY_APPROVED}: this line is already approved; enter the counted quantity again \
+             to have it approved anew."
+        )]));
+    }
     // Above the four-eyes tolerance, someone other than the counter approves, unless the site
     // opted out (then it is an "auto-approbation", flagged).
     let self_approved = crate::inventory::count_four_eyes::check_approval(
@@ -694,6 +710,12 @@ pub async fn approve_count_line(
     tx.commit().await?;
     get_count_line(db, input.line_id).await
 }
+
+/// Refusal: a line of a count session that is posted, reversed, approved or cancelled is not
+/// approved (its approver is never rewritten).
+pub const REFUSED_COUNT_LINE_APPROVAL_CLOSED: &str = "GATE_INV_COUNT_APPROVAL_CLOSED";
+/// Refusal: the line is already approved (entered again, it is approved anew).
+pub const REFUSED_COUNT_LINE_ALREADY_APPROVED: &str = "GATE_INV_COUNT_ALREADY_APPROVED";
 
 /// Refusal: the line has no self-approval to approve a second time (not posted, reversed, within
 /// the tolerance, approved by someone other than its counter, or approved a second time already).

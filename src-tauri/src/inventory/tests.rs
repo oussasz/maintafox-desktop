@@ -3268,6 +3268,21 @@ async fn a_variance_above_the_tolerance_is_approved_by_someone_other_than_its_co
         .try_get::<String>("", "details_json")
         .expect("details");
     assert!(flagged.contains("\"self_approved\":false"));
+    // The approval keeps the tolerance: the line's flag judged at entry and the thresholds now.
+    let audit: serde_json::Value = serde_json::from_str(&flagged).expect("json");
+    assert_eq!(
+        audit["four_eyes_tolerance"]["above_tolerance_at_entry"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        audit["four_eyes_tolerance"]["at_approval"]["percent_threshold"],
+        serde_json::json!(25.0)
+    );
+    assert_eq!(
+        audit["four_eyes_tolerance"]["at_approval"]["value_threshold"],
+        serde_json::Value::Null,
+        "blank stays blank"
+    );
 
     let within = counted_line(&db, "INV-4E-WITHIN", 8.0, Some(1)).await;
     assert_eq!(within.is_critical, 0, "20 % is within 25 %");
@@ -3479,6 +3494,54 @@ async fn a_variance_without_a_recorded_counter_is_entered_again_whatever_its_fla
     assert_eq!(
         gate_code(refused),
         crate::inventory::count_four_eyes::REFUSED_COUNTER_UNKNOWN
+    );
+}
+
+/// D11 review: a line is approved once, while its session is still counted or reviewed: approving
+/// it again, or approving a line of a cancelled count, is refused (its approver is never rewritten).
+#[tokio::test]
+async fn a_count_line_is_approved_once_and_only_while_its_session_is_open() {
+    let db = setup_db().await;
+    let reviewer = count_reviewer(&db).await;
+    let line = counted_line(&db, "INV-4E-ONCE", 6.0, Some(1)).await;
+    let approved = controls::approve_count_line(&db, approval(&line, reviewer))
+        .await
+        .expect("approved");
+    assert_eq!(
+        gate_code(
+            controls::approve_count_line(&db, approval(&approved, reviewer))
+                .await
+                .expect_err("twice")
+        ),
+        controls::REFUSED_COUNT_LINE_ALREADY_APPROVED
+    );
+
+    let other = counted_line(&db, "INV-4E-CANCELLED", 6.0, Some(1)).await;
+    let session = controls::list_count_sessions(&db)
+        .await
+        .expect("sessions")
+        .into_iter()
+        .find(|s| s.id == other.session_id)
+        .expect("session");
+    controls::transition_count_session(
+        &db,
+        TransitionInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            next_status: "cancelled".to_string(),
+            reason: None,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("cancelled");
+    assert_eq!(
+        gate_code(
+            controls::approve_count_line(&db, approval(&other, reviewer))
+                .await
+                .expect_err("cancelled count")
+        ),
+        controls::REFUSED_COUNT_LINE_APPROVAL_CLOSED
     );
 }
 

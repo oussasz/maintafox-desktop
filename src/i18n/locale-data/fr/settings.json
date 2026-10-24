@@ -346,7 +346,7 @@
   },
   "catalog": {
     "shipped": "Valeur livrée",
-    "notSet": "Non défini",
+    "notSet": "Non définie",
     "changed": "Modifiée",
     "lastChange": "Modifiée par {{who}} le {{when}}",
     "restoreShipped": "Revenir à la valeur livrée",

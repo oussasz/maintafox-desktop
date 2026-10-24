@@ -9,6 +9,7 @@ import enCommon from "@/i18n/en/common.json";
 import enInventory from "@/i18n/locale-data/en/inventory.json";
 import frInventory from "@/i18n/locale-data/fr/inventory.json";
 import type * as NegativeStockService from "@/services/negative-stock-service";
+import { useSessionStore } from "@/store/session-store";
 
 const mocks = vi.hoisted(() => ({
   listNegativeStockReviews: vi.fn(),
@@ -852,6 +853,55 @@ describe("NegativeStockReviewPanel", () => {
       }),
     );
     expect(await screen.findByText("No location below zero.")).toBeInTheDocument();
+  });
+
+  it("does not offer a waiting count's approval to its counter, except under the opt-out", async () => {
+    const pending = {
+      line_id: 7,
+      row_version: 3,
+      session_code: "CC-7",
+      article_id: 21,
+      article_code: "A-21",
+      article_name: "Bearing",
+      location_id: 10,
+      location_code: "BIN",
+      warehouse_code: "MAIN",
+      counted_by_id: 4,
+      counted_by: "Karim",
+      counted_at: TS,
+      system_qty: -5,
+      counted_qty: 2,
+      variance_qty: 7,
+      variance_reason_code: "COUNT_ERROR",
+    };
+    const list = (selfApprovalAllowed: boolean) => ({
+      items: [item()],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
+      over_reservations: [],
+      pending_counts: [pending],
+      self_approval_allowed: selfApprovalAllowed,
+    });
+    useSessionStore.setState({ info: { user_id: 4 } as never });
+    try {
+      mocks.listNegativeStockReviews.mockResolvedValue(list(false));
+      const { unmount } = render(<NegativeStockReviewPanel />);
+      expect(
+        await screen.findByText("You counted it: another person approves it."),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Approve the count" })).toBeNull();
+      unmount();
+
+      mocks.listNegativeStockReviews.mockResolvedValue(list(true));
+      render(<NegativeStockReviewPanel />);
+      expect(await screen.findByRole("button", { name: "Approve the count" })).toBeInTheDocument();
+    } finally {
+      useSessionStore.setState({ info: null });
+    }
   });
 
   it("says a count above the tolerance waits for a second person", async () => {
