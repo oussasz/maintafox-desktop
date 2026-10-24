@@ -1967,6 +1967,10 @@ async fn a_reclose_split_across_passes_is_judged_with_its_return() {
 /// A reopening of the WO made on another PC, received here (its `reopen` transition, applied in a
 /// pass of its own, dated after this PC's completion or close).
 async fn receive_reopen(db: &DatabaseConnection, wo_id: i64, from: &str, batch: &str) {
+    receive_reopen_at(db, wo_id, from, batch, &hours_from_now(0)).await;
+}
+
+async fn receive_reopen_at(db: &DatabaseConnection, wo_id: i64, from: &str, batch: &str, acted_at: &str) {
     exec(
         db,
         "UPDATE wo_state_transition_log SET entity_sync_id = 'transition-' || id WHERE entity_sync_id IS NULL",
@@ -1987,7 +1991,7 @@ async fn receive_reopen(db: &DatabaseConnection, wo_id: i64, from: &str, batch: 
             ("action", json!("reopen")),
             ("from_status", json!(from)),
             ("to_status", json!("in_progress")),
-            ("acted_at", json!(hours_from_now(0))),
+            ("acted_at", json!(acted_at)),
         ],
     );
     inbox(db, batch, "wo_state_transition_log", &sid, 1, &reopen).await;
@@ -2200,4 +2204,106 @@ async fn labour_closed_by_a_cancel_arrives_before_it() {
         .is_some(),
         "labour closed here too"
     );
+}
+
+/// Final-2 SF1: only a reopening of this PC's current completion counts. Two reopenings received
+/// (this PC's count stays 1 behind), then this PC completes the work order again itself: those
+/// reopenings are of the earlier completion, so a task recorded later is refused (R5), not kept
+/// waiting for a return that will never come.
+#[tokio::test]
+async fn a_local_re_completion_resets_the_reopening_signal() {
+    let db = setup().await;
+    let (wo_id, _, tsync) = completed_here_with_task(&db).await;
+    let actor = admin_id(&db).await;
+    exec(
+        &db,
+        "UPDATE work_orders SET mechanically_completed_at = '2026-01-01T00:00:00Z' WHERE id = ?",
+        vec![wo_id.into()],
+    )
+    .await;
+    receive_reopen_at(&db, wo_id, "completed", "b-f2-1", "2026-02-01T00:00:00Z").await;
+    receive_reopen_at(&db, wo_id, "completed", "b-f2-2", "2026-02-02T00:00:00Z").await;
+    exec(
+        &db,
+        "UPDATE work_orders SET reopen_count = 1 WHERE id = ?",
+        vec![wo_id.into()],
+    )
+    .await;
+    let task_row = with(
+        wire(&db, "work_order_tasks", &tsync).await,
+        &[("result_code", json!("na")), ("completed_at", json!(hours_from_now(1)))],
+    );
+    let outcome = apply(&db, "work_order_tasks", &tsync, &task_row).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Deferred { .. }),
+        "signal on: {outcome:?}"
+    );
+    // This PC takes the work order back into execution and completes it again.
+    set_wo_status(&db, wo_id, "in_progress").await;
+    let rv = crate::wo::queries::get_work_order(&db, wo_id)
+        .await
+        .expect("wo")
+        .expect("wo")
+        .row_version;
+    crate::wo::execution::complete_wo_mechanically(
+        &db,
+        crate::wo::execution::WoMechCompleteInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            actual_end: None,
+            actual_duration_hours: None,
+            conclusion: None,
+        },
+    )
+    .await
+    .expect("completed again here");
+    let task_row = with(
+        wire(&db, "work_order_tasks", &tsync).await,
+        &[("result_code", json!("na")), ("completed_at", json!(hours_from_now(1)))],
+    );
+    let outcome = apply(&db, "work_order_tasks", &tsync, &task_row).await;
+    assert_eq!(code(&outcome), Some(codes::TASK_AFTER_COMPLETION), "{outcome:?}");
+}
+
+/// Final-2 note: failure coding has no time of its own, so even after a received reopening it is
+/// refused on a work order closed here (R7).
+#[tokio::test]
+async fn failure_coding_is_refused_after_a_received_reopening() {
+    use crate::wo::closeout::{self, WoCloseInput};
+    let db = setup().await;
+    let actor = admin_id(&db).await;
+    let (wo_id, rv) = create_wo_in_progress(&db).await;
+    let rv = advance_to_completed_verified(&db, wo_id, rv).await;
+    closeout::close_wo(
+        &db,
+        WoCloseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("closed here");
+    receive_reopen(&db, wo_id, "closed", "b-f2-fd").await;
+    exec(
+        &db,
+        "UPDATE work_order_failure_details SET entity_sync_id = 'fd-f2-' || id WHERE entity_sync_id IS NULL",
+        vec![],
+    )
+    .await;
+    let fd_sync = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_failure_details WHERE work_order_id = ?",
+        vec![wo_id.into()],
+    )
+    .await
+    .expect("failure detail");
+    let fd = with(
+        wire(&db, "work_order_failure_details", &fd_sync).await,
+        &[("notes", json!("Recoded during the reopening on another PC"))],
+    );
+    let outcome = apply(&db, "work_order_failure_details", &fd_sync, &fd).await;
+    assert_eq!(code(&outcome), Some(codes::FAILURE_DETAIL_AFTER_CLOSE), "{outcome:?}");
 }

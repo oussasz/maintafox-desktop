@@ -122,7 +122,6 @@ const TASK_RESULT_KEYS: &[&str] = &[
     "follow_up_work_order_sync_id",
 ];
 
-/// Work-order statuses in which a task result is recorded (`wo::tasks::TASK_RECORDING_STATUSES`).
 /// Work-order statuses before execution: a task result received then waits for the start.
 const BEFORE_EXECUTION: &[&str] = &["draft", "planning", "ready"];
 /// Work-order statuses outside execution in which labour and tool use received wait for the next
@@ -451,11 +450,13 @@ fn record_time_keys(table: &str) -> &'static [&'static str] {
 }
 
 /// Whether a child that a rule would refuse belongs to a reopening of its work order made on
-/// another PC whose return has not arrived yet (review round 3 SF1, final B2): a reopening has been
-/// received here — the work order's log holds more `reopen` transitions than this PC's
-/// `reopen_count` (the log is applied whatever the work order's status, and captured before the
-/// records re-made during the reopening) — and the row was recorded after this PC's completion
-/// (work order `completed` here) or close (`closed` here). A later time alone is no evidence.
+/// another PC whose return has not arrived yet (review round 3 SF1, final B2, final-2 SF1): a
+/// reopening of this PC's completion or close has been received here — a `reopen` transition from
+/// the status held here (`completed` or `closed`), dated at or after this PC's completion or close
+/// stamp (the log is applied whatever the work order's status, and captured before the records
+/// re-made during the reopening; each local completion or close resets the signal, a reopening of
+/// an earlier one never counts) — and the row was recorded after that stamp. A later time alone is
+/// no evidence.
 async fn awaiting_return(
     conn: &impl ConnectionTrait,
     table: &str,
@@ -471,10 +472,13 @@ async fn awaiting_return(
     let reopened = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT (SELECT COUNT(*) FROM wo_state_transition_log t WHERE t.wo_id = w.id AND t.action = 'reopen') \
-                    > COALESCE(w.reopen_count, 0) AS pending \
-             FROM work_orders w WHERE w.entity_sync_id = ?",
-            [wo_sync.into()],
+            format!(
+                "SELECT EXISTS (SELECT 1 FROM wo_state_transition_log t \
+                   WHERE t.wo_id = w.id AND t.action = 'reopen' AND t.from_status = ? \
+                     AND w.{stamp_key} IS NOT NULL AND julianday(t.acted_at) >= julianday(w.{stamp_key})) AS pending \
+                 FROM work_orders w WHERE w.entity_sync_id = ?"
+            ),
+            [status.into(), wo_sync.into()],
         ))
         .await?
         .map(|r| r.try_get::<bool>("", "pending").map_err(sync_err))
@@ -570,13 +574,13 @@ pub(crate) async fn inbound_closeout_child_check(
     if same_state(local.as_ref(), &row) {
         return Ok(None);
     }
-    // A history row already here (append-only, e.g. a verification) is never rewritten by the apply
-    // (`row_codec::apply_row` skips it): nothing to judge.
-    if local.is_some()
-        && crate::sync::registry::entity(table)
-            .is_some_and(|d| d.conflict_policy == crate::sync::registry::ConflictPolicy::AppendOnly)
-    {
-        return Ok(None);
+    // A history row already here (append-only, e.g. a verification) that the apply skips: nothing
+    // to judge (same test as the apply, `row_codec::append_only_replay_skipped`).
+    if local.is_some() {
+        let layout = crate::sync::row_layout::layout(conn, table).await?;
+        if crate::sync::row_codec::append_only_replay_skipped(conn, &layout, entity_sync_id, received).await? {
+            return Ok(None);
+        }
     }
     let Some(wo_sync) = field(&row, "work_order_sync_id").map(str::to_string) else {
         return Ok(None);
