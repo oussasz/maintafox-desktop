@@ -213,6 +213,15 @@ export function SyncConflictList({
               {SETTLED_AT_ORIGIN_CONFLICT_KINDS.has(c.conflict_type) ? (
                 <p className="mt-1 text-xs text-text-primary">{t("sync.countSettledAtOrigin")}</p>
               ) : null}
+              {c.count_hold ? (
+                <p className="mt-1 text-xs text-text-secondary">
+                  {t("sync.countHeldRecord", {
+                    session: c.count_hold.session_code ?? "?",
+                    counter: c.count_hold.counter ?? "?",
+                    postedAt: c.count_hold.posted_at ? formatDateTime(c.count_hold.posted_at) : "?",
+                  })}
+                </p>
+              ) : null}
               {c.conflict_type === "USERNAME_CLASH" ? (
                 <p className="mt-1 text-xs text-text-primary">
                   {t("sync.usernameClash", {

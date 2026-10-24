@@ -28,6 +28,12 @@
 //!   on a PC where the count is applied, to a variance above the tolerance its counter approved
 //!   ("auto-approbation"), so that a PC where four-eyes applies accepts the count it holds back
 //!   (`inventory::count_four_eyes`, CMMS Advisor Q8).
+//! - `inventory_count_lines.entry_unit_cost`, `entry_variance_value` (synced): the location's unit
+//!   cost read when the counted quantity was entered and the variance's value at that cost
+//!   (variance quantity × unit cost; both blank when the article had no unit cost there). A PC
+//!   receiving the line judges "above the tolerance" with that cost when it is consistent and close
+//!   to its own, so a cost that drifted between PCs does not make a legitimate approval a conflict
+//!   (`inventory::count_four_eyes`, CMMS Advisor Q10). Lines entered before have none.
 //! - The notification category `stock_count_second_approval` and its rule (audience
 //!   `permission:inv.manage`): the count-approval holders are told once per count held back here.
 //! - The notification category `stock_count_recount` and its rule (audience `assignee`: the counter
@@ -315,6 +321,8 @@ impl MigrationTrait for Migration {
             ("second_approved_by_id", "INTEGER NULL REFERENCES user_accounts(id)"),
             ("second_approved_at", "TEXT NULL"),
             ("second_approval_note", "TEXT NULL"),
+            ("entry_unit_cost", "REAL NULL"),
+            ("entry_variance_value", "REAL NULL"),
         ] {
             if !has_column(db, "inventory_count_lines", column).await? {
                 db.execute_unprepared(&format!(
@@ -548,7 +556,8 @@ mod tests {
         .await;
         exec(
             &db,
-            "UPDATE inventory_count_lines SET counted_by_id = NULL, self_approved = 0",
+            "UPDATE inventory_count_lines SET counted_by_id = NULL, self_approved = 0, entry_unit_cost = NULL,
+                    entry_variance_value = NULL",
             vec![],
         )
         .await;

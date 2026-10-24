@@ -461,6 +461,9 @@ pub async fn upsert_count_line(
         crate::inventory::count_four_eyes::evaluate(&tx, input.article_id, input.location_id, variance_qty, system_qty)
             .await?;
     let is_critical = i64::from(verdict.above_tolerance);
+    // The unit cost it was judged with and the variance's value, kept on the line for the PCs that
+    // receive it (CMMS Advisor Q10, `count_four_eyes::judged_unit_cost`).
+    let (entry_unit_cost, entry_variance_value) = verdict.entry_values(variance_qty);
     let approval_required = i64::from(variance_qty.abs() > f64::EPSILON);
     // The count's mark is taken now, with the stock on record its variance is set against: the
     // counts this PC knows at this moment, not at posting, so a count received in between still
@@ -496,6 +499,7 @@ pub async fn upsert_count_line(
                  counted_qty = ?, system_qty = ?, variance_qty = ?, variance_reason_code = ?,
                  is_critical = ?, approval_required = ?, counted_by_id = ?,
                  approved_by_id = NULL, approved_at = NULL, approval_note = NULL, self_approved = 0,
+                 entry_unit_cost = ?, entry_variance_value = ?,
                  count_replica_id = ?, count_follows_json = ?, count_path = ?,
                  row_version = row_version + 1, updated_at = ?
              WHERE session_id = ? AND article_id = ? AND location_id = ? AND row_version = ?",
@@ -510,6 +514,8 @@ pub async fn upsert_count_line(
                 is_critical.into(),
                 approval_required.into(),
                 input.actor_id.map_or(Value::BigInt(None), Value::from),
+                entry_unit_cost.into(),
+                entry_variance_value.into(),
                 replica_id.into(),
                 follows_json.into(),
                 crate::inventory::negative_stock::COUNT_PATH_COUNT_SESSION.into(),
@@ -527,8 +533,8 @@ pub async fn upsert_count_line(
             "INSERT INTO inventory_count_lines
                 (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
                  variance_reason_code, is_critical, approval_required, counted_by_id, created_at, updated_at,
-                 count_replica_id, count_follows_json, count_path)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 count_replica_id, count_follows_json, count_path, entry_unit_cost, entry_variance_value)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(session_id, article_id, location_id) DO NOTHING",
             [
                 input.session_id.into(),
@@ -550,6 +556,8 @@ pub async fn upsert_count_line(
                 replica_id.into(),
                 follows_json.into(),
                 crate::inventory::negative_stock::COUNT_PATH_COUNT_SESSION.into(),
+                entry_unit_cost.into(),
+                entry_variance_value.into(),
             ],
         ))
         .await?
@@ -1251,6 +1259,8 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
         crate::inventory::count_four_eyes::evaluate(tx, count.article_id, count.location_id, variance_qty, system_qty)
             .await?;
     let above_tolerance = has_variance && verdict.above_tolerance;
+    // Kept on the line for the PCs that receive it (CMMS Advisor Q10).
+    let (entry_unit_cost, entry_variance_value) = verdict.entry_values(variance_qty);
     let (self_approved, pending_approval) = if above_tolerance {
         let allowed = crate::inventory::count_four_eyes::store_rule(tx).await?.rule
             == crate::reliability::study::decisions::SelfApprovalRule::Allowed;
@@ -1343,8 +1353,9 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
         "INSERT INTO inventory_count_lines
             (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
              variance_reason_code, is_critical, approval_required, approved_by_id, approved_at, approval_note,
-             counted_by_id, self_approved, created_at, updated_at, count_replica_id, count_follows_json, count_path)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             counted_by_id, self_approved, created_at, updated_at, count_replica_id, count_follows_json, count_path,
+             entry_unit_cost, entry_variance_value)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             session_id.into(),
             count.article_id.into(),
@@ -1378,6 +1389,8 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
             count.mark.0.into(),
             count.mark.1.into(),
             crate::inventory::negative_stock::COUNT_PATH_RECONCILIATION.into(),
+            entry_unit_cost.into(),
+            entry_variance_value.into(),
         ],
     ))
     .await?;

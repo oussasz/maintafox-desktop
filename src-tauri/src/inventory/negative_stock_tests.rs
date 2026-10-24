@@ -3595,6 +3595,22 @@ async fn a_movement_received_from_another_pc_makes_a_waiting_count_stale_and_the
         params.contains(&pending.session_code) && params.contains(&pending.location_code),
         "{params}"
     );
+    // The notice is named by the line's sync id (the same on every PC), not its local id.
+    let line_sync = text_of(
+        a,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![pending.line_id.into()],
+    )
+    .await;
+    assert_eq!(
+        text_of(
+            a,
+            "SELECT dedupe_key FROM notification_events WHERE category_code = ?",
+            vec![negative_stock::RECOUNT_CATEGORY.into()],
+        )
+        .await,
+        format!("stock-count-recount|{line_sync}")
+    );
     let list = negative_stock::list_reviews(a, false).await.expect("list");
     assert_eq!(list.items.len(), 1, "the item stays open");
 }
@@ -3853,6 +3869,17 @@ async fn a_self_approved_count_is_held_with_its_movement_until_its_second_approv
         1,
         "the count-approval holders are told"
     );
+    // The sync centre names the count held: its reference, its counter, when it was posted (Q12).
+    let listed = crate::sync::queries::list_sync_conflicts(&b, Default::default())
+        .await
+        .expect("conflicts");
+    let hold = listed
+        .iter()
+        .find_map(|c| c.count_hold.clone())
+        .expect("the held count is named");
+    assert_eq!(hold.session_code.as_deref(), Some(session_code.as_str()));
+    assert_eq!(hold.counter.as_deref(), Some("heldsecondcounter"));
+    assert!(hold.posted_at.is_some(), "{hold:?}");
 
     // "Keep mine" / "take theirs" are refused: settled where the count is applied.
     use sea_orm::ConnectionTrait;
@@ -4323,6 +4350,23 @@ async fn a_held_count_reversed_where_it_is_applied_nets_to_zero_and_closes() {
         1,
         "the counter is told to count again"
     );
+    let line_sync = text_of(
+        &b,
+        "SELECT cl.entity_sync_id FROM inventory_count_lines cl
+         JOIN inventory_count_sessions s ON s.id = cl.session_id WHERE s.session_code = ?",
+        vec![session_code.clone().into()],
+    )
+    .await;
+    assert_eq!(
+        text_of(
+            &b,
+            "SELECT dedupe_key FROM notification_events WHERE message_key = ?",
+            vec![crate::inventory::count_four_eyes::RECOUNT_AFTER_REVERSAL_MESSAGE.into()],
+        )
+        .await,
+        format!("count-recount|{line_sync}"),
+        "named by the line's sync id"
+    );
     let list = negative_stock::list_reviews(&b, false).await.expect("list");
     assert_eq!(list.items.len(), 1, "the stock to reconcile stays open");
 }
@@ -4353,4 +4397,176 @@ async fn a_self_approved_count_is_accepted_where_the_site_opted_out_here_too() {
     );
     assert!(conflict_kinds(&b).await.is_empty());
     assert_eq!(line_of(&b, &done.session_code).await.self_approved, 1, "flagged");
+}
+
+// ── Received lines judged on their quantities and entry cost; first join (CMMS Advisor Q9, Q10) ──
+
+/// Review of 9ebd482c (blocking) and CMMS Advisor Q10: a received line approved by its counter is
+/// judged on its own quantities — its variance must be its counted less its system quantity, or the
+/// record is refused — with a value threshold set: at the unit cost it was entered with when that
+/// cost is consistent with its stored value and within 10 % of the average cost here, otherwise at
+/// the cost here (a forged or inconsistent cost never makes it more lenient).
+#[tokio::test]
+async fn a_received_line_is_judged_on_its_quantities_and_the_cost_it_was_entered_with() {
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    // The average cost here; the value threshold set, the percent blank.
+    exec(
+        &db,
+        "UPDATE stock_balances SET moving_avg_unit_cost = 10.5 WHERE article_id = ? AND location_id = ?",
+        vec![article.rowid.into(), location.rowid.into()],
+    )
+    .await;
+    crate::settings::set_setting(
+        &db,
+        crate::inventory::count_four_eyes::SETTING_VALUE_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("value threshold");
+    let counter = user_with(&db, "entrycostcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, line) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    assert_eq!(line.is_critical, 1, "5 × 10.5 = 52.5 is above 50 here");
+    let line_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![line.id.into()],
+    )
+    .await;
+    let counter_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        vec![counter.into()],
+    )
+    .await;
+    let entered = crate::permit::sync_check::local_wire(&db, "inventory_count_lines", &line_sync)
+        .await
+        .expect("wire")
+        .expect("line");
+    assert_eq!(
+        entered.get("entry_unit_cost"),
+        Some(&serde_json::json!(10.5)),
+        "kept at entry"
+    );
+    assert_eq!(entered.get("entry_variance_value"), Some(&serde_json::json!(-52.5)));
+    // The same line as another PC would send it, new here: approved by its counter, judged within
+    // the tolerance there (not flagged as a self-approval).
+    let received = |changes: Vec<(&'static str, serde_json::Value)>| {
+        let mut p = entered.clone();
+        for (k, v) in [
+            ("is_critical", serde_json::json!(0)),
+            ("approved_by_sync_id", serde_json::json!(counter_sync)),
+            ("approved_at", serde_json::json!("2026-10-24T10:00:00Z")),
+            ("approval_note", serde_json::json!("Recompté avec le magasinier")),
+            ("self_approved", serde_json::json!(0)),
+        ] {
+            p.insert(k.into(), v);
+        }
+        for (k, v) in changes {
+            p.insert(k.into(), v);
+        }
+        let db = &db;
+        async move {
+            let fresh = crate::sync::identity::new_entity_sync_id();
+            let verdict = crate::inventory::count_four_eyes::inbound_count_line_check(db, &fresh, &p)
+                .await
+                .expect("judged");
+            verdict_code(verdict.as_ref())
+        }
+    };
+    let entry = |cost: f64, value: f64| {
+        vec![
+            ("entry_unit_cost", serde_json::json!(cost)),
+            ("entry_variance_value", serde_json::json!(value)),
+        ]
+    };
+    let held = crate::inventory::count_four_eyes::SYNC_SELF_APPROVAL;
+    // Entered at a cost of 10 (5 × 10 = 50: within), 10.5 here: a drift within 10 %.
+    assert_eq!(received(entry(10.0, -50.0)).await, "pass", "no false conflict");
+    // A cost far from the one here (5, value 25): not trusted, judged at 10.5.
+    assert_eq!(received(entry(5.0, -25.0)).await, held, "a forged cost");
+    // A value that is not the variance × the stored cost: judged at the cost here.
+    assert_eq!(received(entry(10.0, -10.0)).await, held, "an inconsistent value");
+    // No cost stored (a PC before the update): judged at the cost here.
+    assert_eq!(
+        received(vec![
+            ("entry_unit_cost", serde_json::Value::Null),
+            ("entry_variance_value", serde_json::Value::Null),
+        ])
+        .await,
+        held,
+        "judged at the cost here"
+    );
+    // A variance of 0 although the counted quantity is not the system quantity: refused.
+    let mut zero = entry(10.0, 0.0);
+    zero.push(("variance_qty", serde_json::json!(0.0)));
+    assert_eq!(
+        received(zero).await,
+        crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_INVALID,
+        "variance 0, counted 5 of 10"
+    );
+}
+
+/// CMMS Advisor Q9: a PC joining the plant receives its history in the snapshot of its first join:
+/// a count self-approved on another PC, where four-eyes applies on the PC joining, is applied as
+/// history (no four-eyes judgement) with its movement, its self-approval flag kept for review.
+#[tokio::test]
+async fn a_self_approved_count_received_in_a_first_join_snapshot_is_applied_as_history() {
+    let HeldCount {
+        server, session_code, ..
+    } = held_count("firstjoincounter").await;
+    let c = started_device_db().await;
+    crate::sync::capture::begin_suppression(&c).await.expect("suppress");
+    crate::inventory::tests::single_site_opting_out(&c, &mut RowFactory::for_device(9), false).await;
+    crate::sync::capture::end_suppression(&c).await.expect("unsuppress");
+    // The snapshot of C's first join: every plant row on the server, in its order.
+    let mut rows: Vec<_> = server
+        .state
+        .iter()
+        .filter(|((entity_type, _), _)| {
+            crate::sync::registry::entity(entity_type).map(|e| e.scope) != Some(crate::sync::registry::SyncScope::User)
+        })
+        .collect();
+    rows.sort_by_key(|(_, row)| row.seq);
+    for ((entity_type, sync_id), row) in rows {
+        exec(
+            &c,
+            "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                                     row_version, payload_json, payload_hash, apply_status)
+             VALUES ('snapshot-all-firstjoin', 'c1', ?, ?, ?, ?, ?, ?, 'pending')",
+            vec![
+                entity_type.clone().into(),
+                sync_id.clone().into(),
+                row.operation.clone().into(),
+                row.row_version.into(),
+                row.payload_json.clone().into(),
+                row.payload_hash.clone().into(),
+            ],
+        )
+        .await;
+    }
+    crate::sync::materialize::materialize_inbox(&c, 200, true)
+        .await
+        .expect("materialize");
+    let kinds = conflict_kinds(&c).await;
+    assert!(
+        !kinds.iter().any(|k| k.starts_with("inventory_")),
+        "no count held on a first join: {kinds:?}"
+    );
+    let line = line_of(&c, &session_code).await;
+    assert_eq!(
+        line.self_approved, 1,
+        "the self-approval flag is kept, shown for review"
+    );
+    assert!(line.posted_transaction_id.is_some(), "applied with its movement");
+    let (art, loc) = (line.article_id, line.location_id);
+    assert_eq!(
+        on_hand_milli(&c, art, loc).await,
+        0,
+        "the count's stock, as on the other PCs"
+    );
 }

@@ -80,6 +80,7 @@
     "resolveFailed": "The choice could not be applied: {{message}}",
     "codeClash": "Number {{number}} is already used on this device by another record (numbered on two devices before device codes existed, or two devices share a code). Renumbering gives the record on this device a new number of this device; the received record keeps {{number}}. Nothing is renamed without your choice.",
     "usernameClash": "The same username “{{username}}” was created on two PCs. Rename one of the two accounts (Users) on the PC that created it, then synchronise. If you renamed this PC’s account, then take the received account.",
+    "countHeldRecord": "Count {{session}} — counted and approved by {{counter}}, posted on {{postedAt}}",
     "countSettledAtOrigin": "To settle on the PC where the count was made (where it is applied): a second approval by another person, or the count's cancellation (reversal). This conflict closes by itself when either arrives here.",
     "renumberLocal": "Renumber the record on this device",
     "conflictKind": {

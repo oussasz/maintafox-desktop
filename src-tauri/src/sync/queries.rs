@@ -382,6 +382,7 @@ pub(crate) fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConf
             .map_err(|e| decode_err("inbound_row_version", e))?,
         detail_message,
         reason,
+        count_hold: None,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -1858,7 +1859,21 @@ pub async fn list_sync_conflicts(
         ))
         .await?;
 
-    rows.into_iter().map(|row| to_sync_conflict(&row)).collect()
+    let mut conflicts = Vec::with_capacity(rows.len());
+    for row in rows {
+        conflicts.push(with_count_hold(db, to_sync_conflict(&row)?).await?);
+    }
+    Ok(conflicts)
+}
+
+/// A conflict as the sync centre shows it: a stock count held back here names its count, counter
+/// and posting time (CMMS Advisor Q12, `inventory::count_four_eyes::count_hold_context`).
+async fn with_count_hold(db: &impl ConnectionTrait, mut conflict: SyncConflictRecord) -> AppResult<SyncConflictRecord> {
+    if conflict.conflict_type == crate::inventory::count_four_eyes::SYNC_SELF_APPROVAL {
+        conflict.count_hold =
+            crate::inventory::count_four_eyes::count_hold_context(db, conflict.inbound_payload_json.as_deref()).await?;
+    }
+    Ok(conflict)
 }
 
 /// Action code of the audit event written for every choice made on a sync conflict. The event
@@ -2071,7 +2086,7 @@ pub async fn resolve_sync_conflict(
             entity: "sync_conflict".to_string(),
             id: input.conflict_id.to_string(),
         })?;
-    to_sync_conflict(&row)
+    with_count_hold(db, to_sync_conflict(&row)?).await
 }
 
 pub async fn replay_sync_failures(

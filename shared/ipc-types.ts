@@ -10592,8 +10592,23 @@ export interface SyncConflictRecord {
   detail_message: string | null;
   /** That text as a coded reason, for a row the database refused (`sync::apply_reason`). */
   reason: SyncConflictReason | null;
+  /** A stock count held back here for a second approval (`COUNT_SELF_APPROVAL`): what it is. */
+  count_hold?: SyncConflictCountHold | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * The count a `COUNT_SELF_APPROVAL` conflict holds back (CMMS Advisor Q12), read from what this PC
+ * holds (`inventory::count_four_eyes::count_hold_context`); `null`: not here yet.
+ */
+export interface SyncConflictCountHold {
+  /** The count's reference (`CC-…`). */
+  session_code: string | null;
+  /** Who counted it (and approved it). */
+  counter: string | null;
+  /** When it was posted where it is applied. */
+  posted_at: string | null;
 }
 
 /** `UNIQUE_TAKEN` | `REQUIRED_MISSING` | `LINK_MISSING` | `RULE_REFUSED` | `INVALID_DATA` | `TECHNICAL`. */

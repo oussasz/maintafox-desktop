@@ -891,9 +891,12 @@ describe("NegativeStockReviewPanel", () => {
       mocks.listNegativeStockReviews.mockResolvedValue(list(false));
       const { unmount } = render(<NegativeStockReviewPanel />);
       expect(
-        await screen.findByText("You counted it: another person approves it."),
+        await screen.findByText("You made this count: another person must approve it."),
       ).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Approve the count" })).toBeNull();
+      expect(frInventory.negativeStock.pending.notByCounter).toBe(
+        "Vous avez effectué ce comptage : une autre personne doit l'approuver.",
+      );
       unmount();
 
       mocks.listNegativeStockReviews.mockResolvedValue(list(true));

@@ -3742,3 +3742,112 @@ async fn a_second_approval_needs_the_right_a_note_and_a_posted_self_approval() {
         not_needed
     );
 }
+
+/// Review of 9ebd482c: the approval guard holds on a posted count and on a reversed one, not only
+/// on a cancelled one: the approver of the line is never rewritten.
+#[tokio::test]
+async fn a_line_of_a_posted_or_reversed_count_is_never_approved_again() {
+    let db = setup_db().await;
+    let reviewer = count_reviewer(&db).await;
+    let line = counted_line(&db, "INV-4E-POSTED", 6.0, Some(1)).await;
+    let approved = controls::approve_count_line(&db, approval(&line, reviewer))
+        .await
+        .expect("approved");
+    let posted = post_line_session(&db, &approved).await;
+    let refused_on = |line: crate::inventory::domain::InventoryCountLine, status: &'static str| {
+        let db = &db;
+        async move {
+            let refused = controls::approve_count_line(db, approval(&line, 1))
+                .await
+                .expect_err(status);
+            let message = format!("{refused:?}");
+            assert_eq!(
+                gate_code(refused),
+                controls::REFUSED_COUNT_LINE_APPROVAL_CLOSED,
+                "{status}"
+            );
+            assert!(message.contains(&format!("status={status}")), "{message}");
+            let kept = &controls::list_count_lines(db, line.session_id).await.expect("lines")[0];
+            assert_eq!(kept.approved_by_id, Some(reviewer), "{status}: the approver is kept");
+        }
+    };
+    refused_on(posted.clone(), "posted").await;
+    let reversed = reverse_line_session(&db, &posted).await;
+    refused_on(reversed, "reversed").await;
+}
+
+/// CMMS Advisor Q10: a count line keeps the unit cost it was judged with at entry and the
+/// variance's value at that cost (none without a unit cost), for the PCs that receive it.
+#[tokio::test]
+async fn a_count_line_keeps_the_unit_cost_and_value_it_was_entered_with() {
+    let db = setup_db().await;
+    set_tenant_setting(&db, crate::inventory::count_four_eyes::SETTING_VALUE_THRESHOLD, "9").await;
+    let without = counted_line(&db, "INV-4E-NOCOST", 6.0, Some(1)).await;
+    let article_id = create_test_article(&db, "INV-4E-COST").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 10.0,
+            reason_code: Some("seed count".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed stock");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE stock_balances SET moving_avg_unit_cost = 2.5 WHERE article_id = ? AND location_id = ?",
+        [article_id.into(), location_id.into()],
+    ))
+    .await
+    .expect("cost");
+    let session = controls::create_count_session(
+        &db,
+        CreateInventoryCountSessionInput {
+            warehouse_id: 1,
+            location_id: Some(location_id),
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("session");
+    let with = controls::upsert_count_line(
+        &db,
+        UpsertInventoryCountLineInput {
+            session_id: session.id,
+            article_id,
+            location_id,
+            counted_qty: 6.0,
+            variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: None,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("line");
+    assert_eq!(with.is_critical, 1, "4 × 2.5 = 10 is above 9");
+    let entry = |id: i64| {
+        let db = &db;
+        async move {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT entry_unit_cost, entry_variance_value FROM inventory_count_lines WHERE id = ?",
+                    [id.into()],
+                ))
+                .await
+                .expect("query")
+                .expect("line");
+            (
+                row.try_get::<Option<f64>>("", "entry_unit_cost").expect("cost"),
+                row.try_get::<Option<f64>>("", "entry_variance_value").expect("value"),
+            )
+        }
+    };
+    assert_eq!(entry(with.id).await, (Some(2.5), Some(-10.0)));
+    assert_eq!(entry(without.id).await, (None, None), "no unit cost: none kept");
+}

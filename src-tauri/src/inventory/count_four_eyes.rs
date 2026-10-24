@@ -36,7 +36,19 @@
 //! counter of a line held here, nor give it another counter or lower its "above the tolerance" flag
 //! without a new entry (another counted or system quantity) — `COUNT_APPROVAL_RECORD_CHANGED`. A
 //! re-entry by another person of the same quantity on another PC is therefore a conflict for a
-//! person to decide, the safe direction.
+//! person to decide, the safe direction (CMMS Advisor Q11).
+//!
+//! "Above the tolerance" is judged again on arrival, from the line's own quantities (its variance
+//! must be its counted less its system quantity, or the record is refused) and this PC's tolerance;
+//! the received flag can only make it stricter. The unit cost is the one the line was entered with
+//! (`entry_unit_cost`, kept with the variance's value `entry_variance_value`, migration 259) when
+//! that value is the variance × that cost and the cost lies within [`ENTRY_COST_DRIFT`] (±10 %) of
+//! this PC's average cost; otherwise this PC's cost (CMMS Advisor Q10). Thresholds differing
+//! between PCs can still make a legitimate approval a conflict here: the safe direction.
+//!
+//! First join (CMMS Advisor Q9): a line new here received with the snapshot of a PC's first join is
+//! the plant's history: applied as it is, with its movements, without a four-eyes judgement; its
+//! self-approval flag is kept and shown with the other self-approved lines.
 //!
 //! Held with its stock movement (CMMS Advisor Q8). Where this PC judges a received count line
 //! four-eyes (its current site rule; under the opt-out here it is accepted on arrival, flagged), the
@@ -90,6 +102,20 @@ const LINES: &str = "inventory_count_lines";
 /// Quantities closer than this are no variance.
 const QTY_TOLERANCE: f64 = 1e-9;
 
+/// A received line's quantities agree when its variance and its counted minus system quantity are
+/// closer than this (a variance is always written as counted − system).
+const QUANTITY_AGREEMENT: f64 = 1e-6;
+
+/// CMMS Advisor Q10 (decision register 2026-10-24): the unit cost a received count line was judged
+/// with at entry (`entry_unit_cost`) is used again here only when it lies within ±10 % of this PC's
+/// average cost of the article at the location (average costs differ a little between PCs, as each
+/// averages the movements it holds); further off, it is not trusted and this PC's cost judges.
+pub const ENTRY_COST_DRIFT: f64 = 0.10;
+
+/// A received line's stored variance value agrees with its quantity × stored unit cost when they
+/// differ by less than this share of the value (or than [`QUANTITY_AGREEMENT`], for a small one).
+const VALUE_AGREEMENT: f64 = 1e-6;
+
 /// The plant's four-eyes tolerance (`None`: blank).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct CountTolerance {
@@ -141,6 +167,13 @@ pub struct ToleranceVerdict {
 }
 
 impl ToleranceVerdict {
+    /// What the line keeps of its entry for the PCs that receive it (CMMS Advisor Q10): the unit
+    /// cost read at the location (`entry_unit_cost`) and the variance's value at that cost
+    /// (`entry_variance_value`, variance quantity × unit cost); both blank without a unit cost.
+    pub fn entry_values(&self, variance_qty: f64) -> (Option<f64>, Option<f64>) {
+        (self.unit_cost, self.unit_cost.map(|cost| variance_qty * cost))
+    }
+
     pub fn audit_json(&self) -> serde_json::Value {
         serde_json::json!({
             "value_threshold": self.tolerance.value_threshold,
@@ -277,13 +310,22 @@ fn conflict(code: &'static str, message: String) -> AppResult<Option<InboundVerd
 /// - a line whose counter or approver is not recorded (entered on a PC before the update) passes;
 /// - an approval held here as received passes (judged when it arrived);
 /// - the record held here is kept: its counter is never cleared, and is changed, like its "above the
-///   tolerance" flag is lowered, only with a new entry (another counted or system quantity).
+///   tolerance" flag is lowered, only with a new entry (another counted or system quantity);
+/// - its quantities agree (variance = counted − system), or the record contradicts itself;
+/// - a line new here received with the snapshot of a first join is the plant's history (CMMS
+///   Advisor Q9): applied as it is, no four-eyes judgement, its `self_approved` flag kept and shown
+///   with the other self-approved lines for a manager to review.
 pub(crate) async fn inbound_count_line_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     received: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<Option<InboundVerdict>> {
     let local = crate::permit::sync_check::local_wire(conn, LINES, entity_sync_id).await?;
+    // CMMS Advisor Q9: the snapshot of a first join brings the plant's history, judged where it
+    // was made (as `wo::closeout_sync` takes a work order new here from a snapshot).
+    if local.is_none() && crate::sync::materialize::applying_snapshot_row() {
+        return Ok(None);
+    }
     let line = crate::permit::sync_check::overlay(local.as_ref(), received);
     let approver = field(&line, "approved_by_sync_id");
     let counter = field(&line, "counted_by_sync_id");
@@ -352,6 +394,14 @@ pub(crate) async fn inbound_count_line_check(
         if same {
             return Ok(None);
         }
+    }
+    // The variance is what "above the tolerance" is judged on: it must be the counted quantity less
+    // the system quantity (a variance of 0 with another counted quantity would hide a variance).
+    if let Some(why) = quantities_disagree(&line) {
+        return conflict(
+            SYNC_APPROVAL_RECORD_INVALID,
+            format!("count line {entity_sync_id}: {why}"),
+        );
     }
     // A count reversed (its reversal movement is applied before the line, a reference it needs, or
     // with its held adjustment, [`count_movement_group`]): nothing it moved is kept, four-eyes has
@@ -437,14 +487,49 @@ pub(crate) async fn inbound_count_line_check(
     }
 }
 
+/// Why a received line's variance is not its counted less its system quantity (`None`: they
+/// agree, or one of them is not given — then judged strictly, [`above_here`]).
+fn quantities_disagree(line: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    let number = |key: &str| line.get(key).and_then(serde_json::Value::as_f64);
+    let (Some(counted), Some(system), Some(variance)) =
+        (number("counted_qty"), number("system_qty"), number("variance_qty"))
+    else {
+        return None;
+    };
+    ((variance - (counted - system)).abs() > QUANTITY_AGREEMENT).then(|| {
+        format!("its variance {variance} is not its counted quantity {counted} less its system quantity {system}")
+    })
+}
+
+/// The unit cost a received line is judged with here (CMMS Advisor Q10): the cost stored on the line
+/// at entry when it is consistent — its stored variance value is the variance × that cost — and
+/// within [`ENTRY_COST_DRIFT`] of this PC's average cost; otherwise this PC's cost (the strict side:
+/// a cost not trusted never judges). No cost here: none (the percent alone judges, as at entry).
+fn judged_unit_cost(
+    line: &serde_json::Map<String, serde_json::Value>,
+    variance: f64,
+    cost_here: Option<f64>,
+) -> Option<f64> {
+    let here = cost_here?;
+    let number = |key: &str| line.get(key).and_then(serde_json::Value::as_f64);
+    let (Some(stored_cost), Some(stored_value)) = (number("entry_unit_cost"), number("entry_variance_value")) else {
+        return Some(here);
+    };
+    let expected = variance * stored_cost;
+    let consistent = (stored_value - expected).abs() <= QUANTITY_AGREEMENT.max(VALUE_AGREEMENT * expected.abs());
+    let close = (stored_cost - here).abs() <= ENTRY_COST_DRIFT * here.abs();
+    Some(if consistent && close { stored_cost } else { here })
+}
+
 /// Whether a received line's variance is above this PC's four-eyes tolerance, judged on its own
-/// quantities and this PC's unit cost at its location (`evaluate`, as at entry). Quantities that
-/// cannot be read are above (strict).
+/// quantities (its counted less its system quantity) and the unit cost [`judged_unit_cost`] gives
+/// (`evaluate`, as at entry). Quantities that cannot be read are above (strict).
 async fn above_here(conn: &impl ConnectionTrait, line: &serde_json::Map<String, serde_json::Value>) -> AppResult<bool> {
     let number = |key: &str| line.get(key).and_then(serde_json::Value::as_f64);
-    let (Some(variance), Some(system)) = (number("variance_qty"), number("system_qty")) else {
+    let (Some(counted), Some(system)) = (number("counted_qty"), number("system_qty")) else {
         return Ok(true);
     };
+    let variance = counted - system;
     let local = |table: &'static str, key: &'static str| async move {
         match field(line, key) {
             Some(sync_id) => crate::permit::sync_check::local_id(conn, table, sync_id).await,
@@ -460,6 +545,7 @@ async fn above_here(conn: &impl ConnectionTrait, line: &serde_json::Map<String, 
         }
         _ => None,
     };
+    let unit_cost = judged_unit_cost(line, variance, unit_cost);
     Ok(CountTolerance::read(conn).await?.is_above(variance, system, unit_cost))
 }
 
@@ -603,13 +689,22 @@ async fn waiting_movement(
     conn: &impl ConnectionTrait,
     movement_sync_id: &str,
 ) -> AppResult<Option<(i64, serde_json::Map<String, serde_json::Value>)>> {
+    waiting_version(conn, "inventory_transactions", movement_sync_id).await
+}
+
+/// The latest version of a row of `entity_type` waiting in the inbox: `(inbox id, payload)`.
+async fn waiting_version(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    sync_id: &str,
+) -> AppResult<Option<(i64, serde_json::Map<String, serde_json::Value>)>> {
     let row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, payload_json FROM sync_inbox WHERE entity_type = 'inventory_transactions' AND entity_sync_id = ?
+            "SELECT id, payload_json FROM sync_inbox WHERE entity_type = ? AND entity_sync_id = ?
                AND apply_status IN ('pending', 'deferred') AND operation NOT IN ('delete', 'archive')
              ORDER BY row_version DESC, id DESC LIMIT 1",
-            [movement_sync_id.into()],
+            [entity_type.into(), sync_id.into()],
         ))
         .await?;
     let Some(row) = row else {
@@ -817,6 +912,56 @@ async fn notice_params(
         )
         .await?
         .unwrap_or_else(unknown),
+    }))
+}
+
+/// What the sync centre shows of a count held back here (CMMS Advisor Q12): its reference, who
+/// counted (and approved) it and when it was posted, from the session and person held here (or the
+/// session's version waiting in the inbox); `None` where it is not known here yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct CountHoldContext {
+    pub session_code: Option<String>,
+    pub counter: Option<String>,
+    pub posted_at: Option<String>,
+}
+
+/// The [`CountHoldContext`] of a `COUNT_SELF_APPROVAL` conflict, from its received line.
+pub(crate) async fn count_hold_context(
+    conn: &impl ConnectionTrait,
+    inbound_payload_json: Option<&str>,
+) -> AppResult<Option<CountHoldContext>> {
+    let Some(Ok(serde_json::Value::Object(line))) = inbound_payload_json.map(serde_json::from_str::<serde_json::Value>)
+    else {
+        return Ok(None);
+    };
+    let session = match field(&line, "session_sync_id") {
+        Some(sync_id) => {
+            match crate::permit::sync_check::local_wire(conn, "inventory_count_sessions", sync_id).await? {
+                Some(here) => Some(here),
+                None => waiting_version(conn, "inventory_count_sessions", sync_id)
+                    .await?
+                    .map(|(_, waiting)| waiting),
+            }
+        }
+        None => None,
+    };
+    let of_session = |key: &str| session.as_ref().and_then(|s| field(s, key)).map(str::to_string);
+    let counter = match field(&line, "counted_by_sync_id") {
+        Some(sync_id) => conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COALESCE(NULLIF(TRIM(display_name), ''), username) AS v FROM user_accounts
+                 WHERE entity_sync_id = ?",
+                [sync_id.into()],
+            ))
+            .await?
+            .and_then(|r| r.try_get::<Option<String>>("", "v").ok().flatten()),
+        None => None,
+    };
+    Ok(Some(CountHoldContext {
+        session_code: of_session("session_code"),
+        counter,
+        posted_at: of_session("posted_at"),
     }))
 }
 
@@ -1043,6 +1188,50 @@ mod tests {
         assert!(tolerance(Some(1.0), Some(20.0)).is_above(3.0, 10.0, Some(0.0)));
         // Percent blank: strict, although 3 × 0 = 0 would be within any value threshold.
         assert!(tolerance(Some(1_000.0), None).is_above(3.0, 10.0, Some(0.0)));
+    }
+
+    /// CMMS Advisor Q10: the cost a line was entered with judges it again only when its stored value
+    /// is the variance × that cost and the cost is within 10 % of the cost here.
+    #[test]
+    fn the_entry_cost_judges_only_when_consistent_and_close_to_the_cost_here() {
+        let line = |cost: Option<f64>, value: Option<f64>| {
+            let mut p = serde_json::Map::new();
+            p.insert("entry_unit_cost".into(), serde_json::json!(cost));
+            p.insert("entry_variance_value".into(), serde_json::json!(value));
+            p
+        };
+        let judged = super::judged_unit_cost;
+        assert_eq!(judged(&line(Some(10.0), Some(-50.0)), -5.0, Some(10.5)), Some(10.0));
+        assert_eq!(
+            judged(&line(Some(10.0), Some(-50.0)), -5.0, Some(11.0)),
+            Some(10.0),
+            "1 of 11: within 10 % of the cost here"
+        );
+        assert_eq!(
+            judged(&line(Some(10.0), Some(-50.0)), -5.0, Some(11.2)),
+            Some(11.2),
+            "beyond 10 %"
+        );
+        assert_eq!(
+            judged(&line(Some(10.0), Some(-40.0)), -5.0, Some(10.4)),
+            Some(10.4),
+            "value ≠ 5 × 10"
+        );
+        assert_eq!(
+            judged(&line(Some(9.0), Some(-50.0)), -5.0, Some(10.0)),
+            Some(10.0),
+            "inconsistent value"
+        );
+        assert_eq!(
+            judged(&line(None, None), -5.0, Some(10.0)),
+            Some(10.0),
+            "nothing stored"
+        );
+        assert_eq!(
+            judged(&line(Some(10.0), Some(-50.0)), -5.0, None),
+            None,
+            "no cost here: percent only"
+        );
     }
 
     #[test]
