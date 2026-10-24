@@ -101,8 +101,9 @@ fn opt_string(v: Option<String>) -> sea_orm::Value {
 }
 
 fn validate_asset_scope_json(raw: &str) -> AppResult<()> {
-    serde_json::from_str::<serde_json::Value>(raw)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("asset_scope JSON: {e}")]))?;
+    serde_json::from_str::<serde_json::Value>(raw).map_err(|e| {
+        AppError::ValidationFailed(vec![format!("GATE_REL_ASSET_SCOPE_INVALID: asset_scope JSON: {e}")])
+    })?;
     Ok(())
 }
 
@@ -189,14 +190,18 @@ pub async fn upsert_failure_hierarchy(
     validate_asset_scope_json(&input.asset_scope_json)?;
     let name = input.name.trim().to_string();
     if name.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["name required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_NAME_REQUIRED: name required.".into(),
+        ]));
     }
 
     let txn = db.begin().await?;
     let row = if let Some(id) = input.id {
-        let exp = input
-            .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required.".into()]))?;
+        let exp = input.expected_row_version.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required.".into()
+            ])
+        })?;
         let n = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -216,7 +221,7 @@ pub async fn upsert_failure_hierarchy(
             .rows_affected();
         if n == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "failure_hierarchies update conflict or not found.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: failure_hierarchies update conflict or not found.".into(),
             ]));
         }
         txn.query_one(Statement::from_sql_and_values(
@@ -274,11 +279,11 @@ async fn verify_parent_hierarchy(
                 [pid.into(), FAILURE_MODES_DOMAIN_CODE.into()],
             ))
             .await?
-            .ok_or_else(|| AppError::ValidationFailed(vec!["parent_id not found.".into()]))?;
+            .ok_or_else(|| AppError::ValidationFailed(vec!["GATE_REL_PARENT_UNKNOWN: parent_id not found.".into()]))?;
         let _present: i64 = row.try_get("", "present").map_err(|e| decode_err("present", e))?;
         if hierarchy_id != SYNTHETIC_FAILURE_HIERARCHY_ID {
             return Err(AppError::ValidationFailed(vec![
-                "parent_id must belong to the same hierarchy.".into(),
+                "GATE_REL_PARENT_OTHER_HIERARCHY: parent_id must belong to the same hierarchy.".into(),
             ]));
         }
     }
@@ -288,7 +293,7 @@ async fn verify_parent_hierarchy(
 pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpsertInput) -> AppResult<FailureCode> {
     if input.hierarchy_id != SYNTHETIC_FAILURE_HIERARCHY_ID {
         return Err(AppError::ValidationFailed(vec![
-            "Only unified WORK.FAILURE_MODES hierarchy is supported.".into(),
+            "GATE_REL_HIERARCHY_UNSUPPORTED: Only unified WORK.FAILURE_MODES hierarchy is supported.".into(),
         ]));
     }
 
@@ -296,7 +301,7 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
     let ct = input.code_type.trim().to_string();
     if ct != "mode" {
         return Err(AppError::ValidationFailed(vec![
-            "Only code_type='mode' is supported in unified failure modes.".into(),
+            "GATE_REL_CODE_TYPE_UNSUPPORTED: Only code_type='mode' is supported in unified failure modes.".into(),
         ]));
     }
     verify_parent_hierarchy(&txn, input.hierarchy_id, input.parent_id).await?;
@@ -304,13 +309,15 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
     let code = input.code.trim().to_string();
     let label = input.label.trim().to_string();
     if code.is_empty() || label.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["code and label required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_CODE_LABEL_REQUIRED: code and label required.".into(),
+        ]));
     }
 
     let row = if let Some(id) = input.id {
         let exp = input
             .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required.".into()]))?;
+            .ok_or_else(|| AppError::ValidationFailed(vec!["GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required.".into()]))?;
         let n = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -338,7 +345,7 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
             .rows_affected();
         if n == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "failure_codes update conflict or not found.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: failure_codes update conflict or not found.".into(),
             ]));
         }
         txn.query_one(Statement::from_sql_and_values(
@@ -385,7 +392,7 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
             .await?
             .ok_or_else(|| {
                 AppError::ValidationFailed(vec![
-                    "No reference set found for WORK.FAILURE_MODES. Create/publish one in Reference Data.".into(),
+                    "GATE_REL_FAILURE_MODES_SET_MISSING: No reference set found for WORK.FAILURE_MODES. Create/publish one in Reference Data.".into(),
                 ])
             })?;
         let set_id: i64 = target_set.try_get("", "set_id").map_err(|e| decode_err("set_id", e))?;
@@ -408,7 +415,7 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
         .map_err(|e| {
             let msg = e.to_string();
             if msg.contains("UNIQUE") {
-                AppError::ValidationFailed(vec!["duplicate (hierarchy_id, code).".into()])
+                AppError::ValidationFailed(vec!["GATE_REL_CODE_DUPLICATE: duplicate (hierarchy_id, code).".into()])
             } else {
                 AppError::SyncError(msg)
             }
@@ -483,9 +490,9 @@ pub async fn deactivate_failure_code(
 
     let current: FailureCode = map_code(&row)?;
     if current.row_version != input.expected_row_version {
-        return Err(AppError::ValidationFailed(
-            vec!["expected_row_version mismatch.".into()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: expected_row_version mismatch.".into(),
+        ]));
     }
 
     if !current.is_active {
@@ -515,7 +522,9 @@ pub async fn deactivate_failure_code(
         .await?
         .rows_affected();
     if n == 0 {
-        return Err(AppError::ValidationFailed(vec!["deactivate conflict.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: deactivate conflict.".into(),
+        ]));
     }
 
     let updated = txn
@@ -666,7 +675,9 @@ async fn assert_equipment_exists(db: &impl ConnectionTrait, equipment_id: i64) -
         .try_get("", "c")
         .map_err(|e| decode_err("c", e))?;
     if n == 0 {
-        return Err(AppError::ValidationFailed(vec!["equipment_id not found.".into()]));
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_REL_EQUIPMENT_UNKNOWN:equipment_id={equipment_id}: equipment_id not found."
+        )]));
     }
     Ok(())
 }
@@ -699,11 +710,16 @@ pub async fn list_cost_of_failure(
 }
 
 pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureEventInput) -> AppResult<FailureEvent> {
-    serde_json::from_str::<serde_json::Value>(&input.eligible_flags_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("eligible_flags_json: {e}")]))?;
+    serde_json::from_str::<serde_json::Value>(&input.eligible_flags_json).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_REL_ELIGIBLE_FLAGS_INVALID: eligible_flags_json: {e}"
+        )])
+    })?;
     let st = input.source_type.trim().to_string();
     if st.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["source_type required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_SOURCE_TYPE_REQUIRED: source_type required.".into(),
+        ]));
     }
 
     let txn = db.begin().await?;
@@ -716,7 +732,7 @@ pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureE
     let row = if let Some(id) = input.id {
         let exp = input
             .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required.".into()]))?;
+            .ok_or_else(|| AppError::ValidationFailed(vec!["GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required.".into()]))?;
         let now = utc_now_rfc3339();
         let n = txn
             .execute(Statement::from_sql_and_values(
@@ -762,7 +778,7 @@ pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureE
             .rows_affected();
         if n == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "failure_events update conflict or not found.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: failure_events update conflict or not found.".into(),
             ]));
         }
         txn.query_one(Statement::from_sql_and_values(
@@ -1124,7 +1140,9 @@ fn parse_dt_utc(s: &str) -> AppResult<chrono::DateTime<Utc>> {
         let n = d.and_hms_opt(0, 0, 0).unwrap();
         return Ok(chrono::DateTime::from_naive_utc_and_offset(n, Utc));
     }
-    Err(AppError::ValidationFailed(vec![format!("invalid datetime: {s}")]))
+    Err(AppError::ValidationFailed(vec![format!(
+        "GATE_REL_DATE_INVALID: invalid datetime: {s}"
+    )]))
 }
 
 fn validate_exposure_type(t: &str) -> AppResult<()> {
@@ -1132,7 +1150,7 @@ fn validate_exposure_type(t: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "exposure_type must be one of: {EXPOSURE_TYPES:?}"
+            "GATE_REL_EXPOSURE_TYPE_INVALID: exposure_type must be one of: {EXPOSURE_TYPES:?}"
         )]))
     }
 }
@@ -1142,7 +1160,7 @@ fn validate_runtime_source_type(t: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "source_type must be one of: {RUNTIME_SOURCE_TYPES:?}"
+            "GATE_REL_RUNTIME_SOURCE_INVALID: source_type must be one of: {RUNTIME_SOURCE_TYPES:?}"
         )]))
     }
 }
@@ -1258,14 +1276,16 @@ pub async fn upsert_runtime_exposure_log(
     validate_exposure_type(&input.exposure_type)?;
     validate_runtime_source_type(&input.source_type)?;
     if !input.value.is_finite() {
-        return Err(AppError::ValidationFailed(vec!["value must be finite.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_EXPOSURE_VALUE_INVALID: value must be finite.".into(),
+        ]));
     }
 
     let txn = db.begin().await?;
     let row = if let Some(id) = input.id {
         let exp = input
             .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required.".into()]))?;
+            .ok_or_else(|| AppError::ValidationFailed(vec!["GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required.".into()]))?;
         let n = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -1286,7 +1306,7 @@ pub async fn upsert_runtime_exposure_log(
             .rows_affected();
         if n == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "runtime_exposure_logs update conflict or not found.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: runtime_exposure_logs update conflict or not found.".into(),
             ]));
         }
         txn.query_one(Statement::from_sql_and_values(
@@ -1413,7 +1433,7 @@ async fn kpi_refresh_core(
     let p1 = parse_dt_utc(&input.period_end)?;
     if p1 < p0 {
         return Err(AppError::ValidationFailed(vec![
-            "period_end before period_start.".into()
+            "GATE_REL_PERIOD_ORDER: period_end before period_start.".into(),
         ]));
     }
     let lookback = input.repeat_lookback_days.unwrap_or(30).max(1);
@@ -2121,7 +2141,9 @@ pub async fn dismiss_ram_data_quality_issue(
 ) -> AppResult<UserDismissal> {
     let issue_code = input.issue_code.trim();
     if issue_code.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["issue_code required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_ISSUE_CODE_REQUIRED: issue_code required.".into(),
+        ]));
     }
     let scope_key = ram_scope_key(issue_code, input.equipment_id);
     let ts = utc_now_rfc3339();

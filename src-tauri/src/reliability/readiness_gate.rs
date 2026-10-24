@@ -102,7 +102,7 @@ pub fn decide(report: &AssetReadinessReport, min_sample_n: i64) -> (bool, Vec<St
 fn parse_dt(s: &str) -> AppResult<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(s.trim())
         .map(|d| d.with_timezone(&Utc))
-        .map_err(|e| AppError::ValidationFailed(vec![format!("invalid timestamp '{s}': {e}")]))
+        .map_err(|e| AppError::ValidationFailed(vec![format!("GATE_REL_DATE_INVALID: invalid timestamp '{s}': {e}")]))
 }
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
@@ -191,7 +191,7 @@ pub async fn evaluate_equipment_readiness(
     };
     if p1 < p0 {
         return Err(AppError::ValidationFailed(vec![
-            "period_end before period_start.".into()
+            "GATE_REL_PERIOD_ORDER: period_end before period_start.".into(),
         ]));
     }
     // A caller may ask for a stricter sample, never a looser one than the governed default.

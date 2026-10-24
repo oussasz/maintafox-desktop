@@ -73,13 +73,16 @@ pub async fn get_failure_mode_pareto(
 ) -> AppResult<FailureModePareto> {
     if !METRICS.contains(&input.metric.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "metric must be one of {METRICS:?}."
+            "GATE_REL_PARETO_METRIC_INVALID: metric must be one of {METRICS:?}."
         )]));
     }
     for (name, v) in [("period_start", &input.period_start), ("period_end", &input.period_end)] {
         if let Some(s) = v {
-            chrono::DateTime::parse_from_rfc3339(s)
-                .map_err(|_| AppError::ValidationFailed(vec![format!("{name} must be an RFC 3339 timestamp.")]))?;
+            chrono::DateTime::parse_from_rfc3339(s).map_err(|_| {
+                AppError::ValidationFailed(vec![format!(
+                    "GATE_REL_DATE_INVALID: {name} must be an RFC 3339 timestamp."
+                )])
+            })?;
         }
     }
     let rows = db
