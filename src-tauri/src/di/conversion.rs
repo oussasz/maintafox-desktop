@@ -55,7 +55,7 @@ pub struct WoConversionResult {
 fn check_concurrency(rows_affected: u64) -> AppResult<()> {
     if rows_affected == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
@@ -131,7 +131,7 @@ pub async fn convert_di_to_work_order(
 
     if current_status != DiStatus::Approved {
         return Err(AppError::ValidationFailed(vec![format!(
-            "La conversion n'est possible qu'au statut 'approved'. Statut actuel : '{}'.",
+            "GATE_DI_CONVERT_STATUS_INVALID: La conversion n'est possible qu'au statut 'approved'. Statut actuel : '{}'.",
             current_status.as_str()
         )]));
     }
@@ -142,14 +142,14 @@ pub async fn convert_di_to_work_order(
     let mut errors: Vec<String> = Vec::new();
 
     if di.equipment_id == 0 {
-        errors.push("Contexte d'actif requis pour la conversion.".into());
+        errors.push("GATE_DI_CONVERT_ASSET_REQUIRED: Contexte d'actif requis pour la conversion.".into());
     }
     if di.org_node_id == 0 {
-        errors.push("Contexte d'entité requis pour la conversion.".into());
+        errors.push("GATE_DI_CONVERT_ORG_NODE_REQUIRED: Contexte d'entité requis pour la conversion.".into());
     }
 
     if di.classification_code_id.is_none() {
-        errors.push("Classification requise pour la conversion.".into());
+        errors.push("GATE_DI_CONVERT_CLASSIFICATION_REQUIRED: Classification requise pour la conversion.".into());
     }
 
     if !errors.is_empty() {
@@ -178,7 +178,7 @@ pub async fn convert_di_to_work_order(
         let existing_id: i64 = row.try_get("", "id").unwrap_or_default();
         let existing_code: String = row.try_get("", "code").unwrap_or_else(|_| "N/A".to_string());
         return Err(AppError::ValidationFailed(vec![format!(
-            "Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
+            "GATE_DI_WO_ACTIVE_EXISTS:id={existing_id},code={existing_code}: Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
         )]));
     }
 
@@ -263,7 +263,9 @@ pub async fn convert_di_to_work_order(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec!["Code OT en doublon. Veuillez réessayer.".into()])
+            AppError::ValidationFailed(vec![
+                "GATE_DI_WO_CODE_DUPLICATE: Code OT en doublon. Veuillez réessayer.".into(),
+            ])
         } else {
             AppError::Database(e)
         }

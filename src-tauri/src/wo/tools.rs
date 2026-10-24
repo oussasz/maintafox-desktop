@@ -2,7 +2,7 @@
 
 use crate::errors::{AppError, AppResult};
 use crate::wo::execution_log::{emit_execution_event, part_label_json};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,14 +149,51 @@ pub async fn add_tool(db: &DatabaseConnection, input: AddToolInput) -> AppResult
     Ok(tool)
 }
 
-pub async fn mark_tool_used(db: &DatabaseConnection, tool_id: i64) -> AppResult<WoTool> {
-    db.execute(Statement::from_sql_and_values(
+/// Stable codes of the tool refusals (texts in `errors:gateError`).
+pub mod tool_codes {
+    pub const WRONG_STATUS: &str = "GATE_TOOL_WRONG_STATUS";
+}
+
+/// Marks a tool used or not used: only while its WO is in progress or on hold (AU-15, CMMS Advisor
+/// O3), checked and written in one transaction. Never changes the WO's status.
+async fn set_tool_usage(
+    db: &DatabaseConnection,
+    tool_id: i64,
+    usage: &str,
+    event_type: &str,
+    summary_key: &str,
+) -> AppResult<WoTool> {
+    let txn = db.begin().await?;
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT wos.code AS status_code FROM work_order_tools t \
+             JOIN work_orders wo ON wo.id = t.work_order_id \
+             JOIN work_order_statuses wos ON wos.id = wo.status_id WHERE t.id = ?",
+            [tool_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WoTool".into(),
+            id: tool_id.to_string(),
+        })?;
+    let status: String = row
+        .try_get("", "status_code")
+        .map_err(|e| decode_err("status_code", e))?;
+    if !crate::wo::tasks::TASK_RECORDING_STATUSES.contains(&status.as_str()) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{}:status={status}: L'utilisation d'un outil n'est saisie que pendant l'exécution (en cours ou en attente), \
+             pas au statut '{status}'. (Tool use is recorded only while the work order is in progress or on hold.)",
+            tool_codes::WRONG_STATUS
+        )]));
+    }
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE work_order_tools SET usage_status = 'used' WHERE id = ?",
-        [tool_id.into()],
+        "UPDATE work_order_tools SET usage_status = ? WHERE id = ?",
+        [usage.into(), tool_id.into()],
     ))
     .await?;
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, work_order_id, origin, tool_code, tool_label, usage_status, notes, created_at \
@@ -170,49 +207,24 @@ pub async fn mark_tool_used(db: &DatabaseConnection, tool_id: i64) -> AppResult<
         })?;
     let tool = map_tool(&row)?;
     let _ = emit_execution_event(
-        db,
+        &txn,
         tool.work_order_id,
-        "tool_used",
-        "executionLog.toolUsed",
+        event_type,
+        summary_key,
         part_label_json(&tool.tool_label),
         Some("tool"),
         Some(tool.id),
         None,
     )
     .await;
+    txn.commit().await?;
     Ok(tool)
 }
 
+pub async fn mark_tool_used(db: &DatabaseConnection, tool_id: i64) -> AppResult<WoTool> {
+    set_tool_usage(db, tool_id, "used", "tool_used", "executionLog.toolUsed").await
+}
+
 pub async fn mark_tool_not_used(db: &DatabaseConnection, tool_id: i64) -> AppResult<WoTool> {
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE work_order_tools SET usage_status = 'not_used' WHERE id = ?",
-        [tool_id.into()],
-    ))
-    .await?;
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, work_order_id, origin, tool_code, tool_label, usage_status, notes, created_at \
-               FROM work_order_tools WHERE id = ?",
-            [tool_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WoTool".into(),
-            id: tool_id.to_string(),
-        })?;
-    let tool = map_tool(&row)?;
-    let _ = emit_execution_event(
-        db,
-        tool.work_order_id,
-        "tool_not_used",
-        "executionLog.toolNotUsed",
-        part_label_json(&tool.tool_label),
-        Some("tool"),
-        Some(tool.id),
-        None,
-    )
-    .await;
-    Ok(tool)
+    set_tool_usage(db, tool_id, "not_used", "tool_not_used", "executionLog.toolNotUsed").await
 }

@@ -29,6 +29,8 @@ export const DATE_TIME_PARAMS: ReadonlySet<string> = new Set([
   "other_created_at",
   // When an administrator lost rights received from another PC (notifications; may be absent).
   "since",
+  // When a suspension made on another PC was lifted (permit suspended around a start, notices).
+  "reinstated_at",
 ]);
 
 /**

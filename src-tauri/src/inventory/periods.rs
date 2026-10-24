@@ -56,7 +56,7 @@ pub async fn resolve_posting_date<C: ConnectionTrait>(db: &C, posting_date: Opti
             parse_iso_date(d, "posting_date")?;
             if d > today().as_str() {
                 return Err(AppError::ValidationFailed(vec![
-                    "A posting cannot be dated in the future.".to_string(),
+                    "GATE_INV_DATE_FUTURE: A posting cannot be dated in the future.".to_string(),
                 ]));
             }
             d.to_string()
@@ -222,7 +222,7 @@ pub async fn valuation_report(
     parse_iso_date(&as_at, "as_at")?;
     if !matches!(group_by.as_str(), "article" | "warehouse" | "family") {
         return Err(AppError::ValidationFailed(vec![
-            "group_by must be article, warehouse or family.".to_string(),
+            "GATE_INV_GROUP_BY_INVALID: group_by must be article, warehouse or family.".to_string(),
         ]));
     }
     let currency_code = tenant_currency(db).await?;
@@ -403,7 +403,7 @@ pub async fn close_period(
     let today_date = Utc::now().date_naive();
     if end >= today_date {
         return Err(AppError::ValidationFailed(vec![format!(
-            "A period can be closed once it has ended: {end} is not in the past."
+            "GATE_FIN_PERIOD_NOT_ENDED:end={end}: A period can be closed once it has ended: {end} is not in the past."
         )]));
     }
     let start_s = start.to_string();
@@ -419,7 +419,7 @@ pub async fn close_period(
     if let Some(row) = overlap {
         let code: String = row.try_get("", "period_code")?;
         return Err(AppError::ValidationFailed(vec![format!(
-            "Period {code} is already closed on or after {start_s}: periods are closed in order and never overlap."
+            "GATE_INV_PERIOD_OVERLAP:period={code},start={start_s}: Period {code} is already closed on or after {start_s}: periods are closed in order and never overlap."
         )]));
     }
     let currency_code = tenant_currency(db).await?;

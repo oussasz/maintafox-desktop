@@ -464,7 +464,7 @@ pub async fn close_di(
         }
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "La fermeture n'est possible qu'au statut 'in_review', 'awaiting_approval' ou 'approved'. \
+                "GATE_DI_CLOSE_STATUS_INVALID: La fermeture n'est possible qu'au statut 'in_review', 'awaiting_approval' ou 'approved'. \
                  Statut actuel : '{}'.",
                 other
             )]));

@@ -7,6 +7,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NegativeStockSyncNotice } from "@/components/sync/NegativeStockSyncNotice";
 import enShell from "@/i18n/en/shell.json";
 import frShell from "@/i18n/fr/shell.json";
+import enInventory from "@/i18n/locale-data/en/inventory.json";
+import frInventory from "@/i18n/locale-data/fr/inventory.json";
 
 const mocks = vi.hoisted(() => ({ getNegativeStockSummary: vi.fn() }));
 vi.mock("@/services/negative-stock-service", () => mocks);
@@ -25,13 +27,14 @@ describe("NegativeStockSyncNotice", () => {
       await i18next.use(initReactI18next).init({
         lng: "en",
         fallbackLng: "en",
-        ns: ["shell"],
+        ns: ["shell", "inventory"],
         defaultNS: "shell",
-        resources: { en: { shell: enShell } },
+        resources: { en: { shell: enShell, inventory: enInventory } },
         interpolation: { escapeValue: false },
       });
     } else {
       i18next.addResourceBundle("en", "shell", enShell, true, true);
+      i18next.addResourceBundle("en", "inventory", enInventory, true, true);
     }
   });
 
@@ -42,6 +45,7 @@ describe("NegativeStockSyncNotice", () => {
       negative_count: 2,
       double_count_count: 1,
       double_posting_count: 1,
+      over_quantity_count: 2,
       over_reserved_count: 1,
     });
     renderNotice();
@@ -51,6 +55,7 @@ describe("NegativeStockSyncNotice", () => {
     expect(screen.getByText(/1 stock location\(s\) with more reserved/)).toBeInTheDocument();
     expect(screen.getByText(/1 stock location\(s\) counted on two PCs/)).toBeInTheDocument();
     expect(screen.getByText(/1 stock count\(s\) posted twice/)).toBeInTheDocument();
+    expect(screen.getByText(/^2 over-issue\(s\) or over-receipt\(s\)/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open the stock to reconcile" })).toHaveAttribute(
       "href",
       "/inventory?stock=to_reconcile",
@@ -62,6 +67,7 @@ describe("NegativeStockSyncNotice", () => {
       negative_count: 0,
       double_count_count: 0,
       double_posting_count: 0,
+      over_quantity_count: 0,
       over_reserved_count: 0,
     });
     const { container } = renderNotice();
@@ -79,5 +85,8 @@ describe("NegativeStockSyncNotice", () => {
     ] as const) {
       expect(frShell.sync[key].trim()).not.toBe("");
     }
+    expect(frInventory.negativeStock.overQuantity.syncNotice).toMatch(
+      /sur-sortie\(s\) ou sur-réception\(s\).*à rapprocher/,
+    );
   });
 });

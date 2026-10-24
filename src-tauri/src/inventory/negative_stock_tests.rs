@@ -16,7 +16,11 @@ use crate::inventory::queries;
 use crate::sync::test_support::{exec, scalar_i64, started_device_db, CreatedRow, RowFactory, TestServer};
 
 /// An untracked, non-critical article and a location created on `a`, with `qty` in stock there.
-async fn stocked_pair(a: &DatabaseConnection, factory: &mut RowFactory, qty: f64) -> (CreatedRow, CreatedRow) {
+pub(super) async fn stocked_pair(
+    a: &DatabaseConnection,
+    factory: &mut RowFactory,
+    qty: f64,
+) -> (CreatedRow, CreatedRow) {
     let article = factory.create(a, "articles").await.expect("article");
     let location = factory.create(a, "stock_locations").await.expect("location");
     // The factory fills every flag; these tests are about balances, not lots or critical spares.
@@ -106,7 +110,7 @@ async fn issue(db: &DatabaseConnection, article_id: i64, location_id: i64, qty: 
 }
 
 /// The local ids of an article and a location on `db`, from their sync ids.
-async fn local_pair(db: &DatabaseConnection, article: &CreatedRow, location: &CreatedRow) -> (i64, i64) {
+pub(super) async fn local_pair(db: &DatabaseConnection, article: &CreatedRow, location: &CreatedRow) -> (i64, i64) {
     (
         scalar_i64(
             db,
@@ -123,7 +127,7 @@ async fn local_pair(db: &DatabaseConnection, article: &CreatedRow, location: &Cr
     )
 }
 
-async fn on_hand_milli(db: &DatabaseConnection, article_id: i64, location_id: i64) -> i64 {
+pub(super) async fn on_hand_milli(db: &DatabaseConnection, article_id: i64, location_id: i64) -> i64 {
     scalar_i64(
         db,
         "SELECT CAST(ROUND(on_hand_qty * 1000) AS INTEGER) FROM stock_balances WHERE article_id = ? AND location_id = ?",
@@ -155,14 +159,14 @@ async fn sync_clean(server: &mut TestServer, device: &str, db: &DatabaseConnecti
 }
 
 /// A plant-wide role holding `permissions`, given to a new account on `db`.
-async fn user_with(db: &DatabaseConnection, name: &str, permissions: &[&str]) -> i32 {
+pub(super) async fn user_with(db: &DatabaseConnection, name: &str, permissions: &[&str]) -> i32 {
     let user = crate::auth::scope_tests::user(db, name).await;
     let role = crate::auth::scope_tests::role(db, &format!("{name}-role"), permissions).await;
     crate::auth::scope_tests::assign(db, user, role, "tenant", None).await;
     user
 }
 
-fn resolution(article_id: i64, location_id: i64, counted: f64, reason: &str) -> ResolveNegativeStockInput {
+pub(super) fn resolution(article_id: i64, location_id: i64, counted: f64, reason: &str) -> ResolveNegativeStockInput {
     ResolveNegativeStockInput {
         article_id,
         location_id,
@@ -172,7 +176,7 @@ fn resolution(article_id: i64, location_id: i64, counted: f64, reason: &str) -> 
     }
 }
 
-fn refusal_code(err: AppError) -> String {
+pub(super) fn refusal_code(err: AppError) -> String {
     match err {
         AppError::OrgValidationFailed(issues) => issues.first().map(|i| i.code.clone()).unwrap_or_default(),
         other => format!("{other:?}"),
@@ -180,7 +184,12 @@ fn refusal_code(err: AppError) -> String {
 }
 
 /// A second location of the same article with `qty` in stock, created on `a`.
-async fn second_location(a: &DatabaseConnection, factory: &mut RowFactory, article_id: i64, qty: f64) -> CreatedRow {
+pub(super) async fn second_location(
+    a: &DatabaseConnection,
+    factory: &mut RowFactory,
+    article_id: i64,
+    qty: f64,
+) -> CreatedRow {
     let location = factory.create(a, "stock_locations").await.expect("location");
     exec(
         a,
@@ -254,7 +263,7 @@ async fn notified(db: &DatabaseConnection, user: i32) -> i64 {
 
 /// A count session of the location on `db`, in counting, with its line entered at `counted` (the
 /// variance and the count's mark are fixed now).
-async fn enter_count(
+pub(super) async fn enter_count(
     db: &DatabaseConnection,
     user: i32,
     article_id: i64,
@@ -315,9 +324,22 @@ fn move_to(
 }
 
 /// Submits, approves (when the line has a variance) and posts a session from [`enter_count`].
-async fn post_count(
+pub(super) async fn post_count(
     db: &DatabaseConnection,
     user: i32,
+    counted: (
+        crate::inventory::domain::InventoryCountSession,
+        crate::inventory::domain::InventoryCountLine,
+    ),
+) -> crate::inventory::domain::InventoryCountSession {
+    post_count_approved_by(db, user, user, counted).await
+}
+
+/// [`post_count`], the line's variance approved by `approver`.
+pub(super) async fn post_count_approved_by(
+    db: &DatabaseConnection,
+    user: i32,
+    approver: i32,
     (session, line): (
         crate::inventory::domain::InventoryCountSession,
         crate::inventory::domain::InventoryCountLine,
@@ -334,7 +356,7 @@ async fn post_count(
             ApproveInventoryCountLineInput {
                 line_id: line.id,
                 expected_row_version: line.row_version,
-                reviewer_id: i64::from(user),
+                reviewer_id: i64::from(approver),
                 reviewer_evidence: "Bac vérifié au comptage".into(),
             },
         )
@@ -1445,7 +1467,10 @@ async fn exec_unsent(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Va
 }
 
 /// The count session `code` on `db`.
-async fn session_by_code(db: &DatabaseConnection, code: &str) -> crate::inventory::domain::InventoryCountSession {
+pub(super) async fn session_by_code(
+    db: &DatabaseConnection,
+    code: &str,
+) -> crate::inventory::domain::InventoryCountSession {
     crate::inventory::controls::list_count_sessions(db)
         .await
         .expect("sessions")

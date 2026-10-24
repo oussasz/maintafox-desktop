@@ -93,7 +93,9 @@ export function InventoryValuationPanel({ reloadToken = 0 }: InventoryValuationP
   const today = isoDay(new Date());
 
   const [groupBy, setGroupBy] = useState<ValuationGroupBy>("warehouse");
-  const [asAt, setAsAt] = useState(today);
+  // `null` is the live stock (today), whatever the clock says later: a screen left open past
+  // midnight stays live instead of turning into "as at yesterday". A date is a chosen past day.
+  const [asAt, setAsAt] = useState<string | null>(null);
   const [report, setReport] = useState<ValuationReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -111,11 +113,12 @@ export function InventoryValuationPanel({ reloadToken = 0 }: InventoryValuationP
   const [closeError, setCloseError] = useState<unknown>(null);
 
   useEffect(() => {
-    if (!asAt) return;
+    // A cleared date field reads nothing until a date is entered.
+    if (asAt === "") return;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    getInventoryValuationReport(groupBy, asAt === today ? null : asAt)
+    getInventoryValuationReport(groupBy, asAt)
       .then((r) => {
         if (!cancelled) setReport(r);
       })
@@ -128,7 +131,7 @@ export function InventoryValuationPanel({ reloadToken = 0 }: InventoryValuationP
     return () => {
       cancelled = true;
     };
-  }, [groupBy, asAt, today, version, reloadToken]);
+  }, [groupBy, asAt, version, reloadToken]);
 
   const loadPeriods = useCallback(async () => {
     setPeriodsLoading(true);
@@ -356,8 +359,8 @@ export function InventoryValuationPanel({ reloadToken = 0 }: InventoryValuationP
                 id="inv-valuation-asat"
                 className="h-11 w-44"
                 max={today}
-                value={asAt}
-                onChange={(v) => setAsAt(v)}
+                value={asAt ?? today}
+                onChange={(v) => setAsAt(v === today ? null : v)}
               />
             </div>
           </div>

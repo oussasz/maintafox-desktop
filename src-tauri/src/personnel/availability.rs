@@ -162,14 +162,17 @@ pub async fn list_availability_calendar(
     filter: AvailabilityCalendarFilter,
 ) -> AppResult<Vec<AvailabilityCalendarEntry>> {
     let parse = |raw: &str, field: &str| {
-        chrono::NaiveDate::parse_from_str(raw.get(..10).unwrap_or(raw), "%Y-%m-%d")
-            .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be YYYY-MM-DD.")]))
+        chrono::NaiveDate::parse_from_str(raw.get(..10).unwrap_or(raw), "%Y-%m-%d").map_err(|_| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PERS_DATE_FORMAT:field={field}: {field} must be YYYY-MM-DD."
+            )])
+        })
     };
     let from = parse(&filter.date_from, "date_from")?;
     let to = parse(&filter.date_to, "date_to")?;
     if from > to {
         return Err(AppError::ValidationFailed(vec![
-            "date_from must be <= date_to.".to_string()
+            "GATE_PERS_DATE_RANGE_ORDER: date_from must be <= date_to.".to_string(),
         ]));
     }
 
@@ -320,7 +323,7 @@ pub async fn create_availability_block(
 ) -> AppResult<PersonnelAvailabilityBlock> {
     if input.start_at >= input.end_at {
         return Err(AppError::ValidationFailed(vec![
-            "start_at must be before end_at.".to_string()
+            "GATE_PERS_BLOCK_TIME_ORDER: start_at must be before end_at.".to_string(),
         ]));
     }
     // A value of the plant's absence-type list; its tag decides whether it is always critical.
@@ -386,7 +389,7 @@ pub async fn update_availability_block(
 ) -> AppResult<PersonnelAvailabilityBlock> {
     if input.start_at >= input.end_at {
         return Err(AppError::ValidationFailed(vec![
-            "start_at must be before end_at.".to_string()
+            "GATE_PERS_BLOCK_TIME_ORDER: start_at must be before end_at.".to_string(),
         ]));
     }
     let existing = fetch_block_by_id(db, input.id).await?;
@@ -453,12 +456,23 @@ pub async fn update_availability_block(
     ))
     .await?;
     if is_critical != existing.is_critical {
+        // The block and the person are named by their sync ids, the same on every PC: the audit
+        // travels (`sync::row_spec`, audit_events), and a block can be deleted later while its
+        // audit stays, unchanged, in the audit chain (`audit::chain`). A row without a sync id
+        // (no capture installed) keeps a device-marked key.
+        let block_ref =
+            crate::sync::identity::optional_entity_sync_id(&txn, "personnel_availability_blocks", existing.id)
+                .await?
+                .unwrap_or_else(|| format!("local-{}", existing.id));
+        let person_ref = crate::sync::identity::optional_entity_sync_id(&txn, "personnel", existing.personnel_id)
+            .await?
+            .unwrap_or_else(|| format!("local-{}", existing.personnel_id));
         crate::audit::writer::write_audit_event_in(
             &txn,
             crate::audit::writer::AuditEventInput {
                 action_code: AUDIT_BLOCK_CRITICAL_CHANGED.to_string(),
                 target_type: Some("personnel_availability_block".to_string()),
-                target_id: Some(existing.id.to_string()),
+                target_id: Some(block_ref.clone()),
                 actor_id: Some(actor_id),
                 auth_context: "session".to_string(),
                 result: "success".to_string(),
@@ -467,8 +481,8 @@ pub async fn update_availability_block(
                 retention_class: "standard".to_string(),
                 // Who (actor), which block and person, before → after; never the type or reason.
                 details_json: Some(serde_json::json!({
-                    "block_id": existing.id,
-                    "personnel_id": existing.personnel_id,
+                    "block_sync_id": block_ref,
+                    "personnel_sync_id": person_ref,
                     "is_critical_before": existing.is_critical,
                     "is_critical_after": is_critical,
                 })),
@@ -517,13 +531,14 @@ pub async fn end_availability_block(db: &DatabaseConnection, id: i64) -> AppResu
 
     let (Some(start_dt), Some(end_dt)) = (start, end) else {
         return Err(AppError::ValidationFailed(vec![
-            "Block start_at/end_at could not be parsed.".to_string(),
+            "GATE_PERS_BLOCK_TIME_UNPARSEABLE: Block start_at/end_at could not be parsed.".to_string(),
         ]));
     };
 
     if !(start_dt < now && now < end_dt) {
         return Err(AppError::ValidationFailed(vec![
-            "Block can only be ended while it is currently active (start < now < end).".to_string(),
+            "GATE_PERS_BLOCK_NOT_ACTIVE: Block can only be ended while it is currently active (start < now < end)."
+                .to_string(),
         ]));
     }
 

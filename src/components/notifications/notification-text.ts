@@ -54,6 +54,16 @@ export const MESSAGE_KEYS = [
   // Grants received by sync from an author who lost the right (administrators).
   "admin_grants_to_review",
   "grants_from_former_authors",
+  // A running work order put on hold by its permit's suspension (its responsible).
+  "permit_suspended_work_held",
+  // A permit ended on another PC before or while its work ran here (responsible, close-right holders).
+  "permit_ended_before_start",
+  "permit_ended_during_work",
+  // The same when the end has no time (a cancellation), and a suspension lifted around a start.
+  "permit_ended_before_start_untimed",
+  "permit_ended_during_work_untimed",
+  "permit_suspended_around_start",
+  "permit_suspended_during_work",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;

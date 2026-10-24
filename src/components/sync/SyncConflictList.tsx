@@ -31,6 +31,7 @@ import {
   KNOWN_SYNC_ENTITY_TYPES,
   clashingNumber,
   clashingUsername,
+  conflictActions,
   conflictRecordIdentity,
 } from "./sync-conflict-display";
 
@@ -157,20 +158,7 @@ export function SyncConflictList({
         {conflictInbox.map((c) => {
           const id = conflictRecordIdentity(c);
           const recommended = c.recommended_action;
-          // A username created on two PCs: no merge tool (CMMS Advisor decision). One account is
-          // renamed on the PC that created it; here the received account is then taken (refused,
-          // with the reason, while its username is still used here). No local version to keep.
-          const primary: ConflictAction[] =
-            c.conflict_type === "CODE_CLASH"
-              ? ["renumber_local"]
-              : c.conflict_type === "USERNAME_CLASH"
-                ? ["accept_remote"]
-                : ["accept_local", "accept_remote"];
-          const actions: ConflictAction[] = [
-            ...primary,
-            ...(showTriageActions ? (["retry_later", "escalate"] as ConflictAction[]) : []),
-            "dismiss",
-          ];
+          const actions = conflictActions(c.conflict_type, showTriageActions);
           return (
             <li
               key={c.id}

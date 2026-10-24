@@ -168,10 +168,17 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
         n += 1;
     }
 
+    // A segment left open while a lock is fitted under its work order's permits is not a defect:
+    // the equipment is isolated, its downtime ends when the last removal is verified (owner
+    // decision D4; `permit::wo_gate::downtime_held_by_locks_sql`).
     let unclosed = txn
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, work_order_id FROM work_order_downtime_segments WHERE ended_at IS NULL".to_string(),
+            format!(
+                "SELECT d.id, d.work_order_id FROM work_order_downtime_segments d \
+                 WHERE d.ended_at IS NULL AND NOT {}",
+                crate::permit::wo_gate::downtime_held_by_locks_sql("d.work_order_id")
+            ),
         ))
         .await?;
     for row in &unclosed {

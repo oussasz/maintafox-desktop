@@ -966,7 +966,8 @@ async fn a_nature_written_meanwhile_is_never_overwritten_and_nothing_is_recorded
         id_of(
             &db,
             &format!(
-                "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' AND target_id = '{raced}'"
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' AND target_id = '{}'",
+                crate::wo::types::audit_type_ref(&db, raced).await.expect("type ref")
             )
         )
         .await,
@@ -1058,7 +1059,8 @@ async fn the_reference_manage_right_sets_a_nature_and_an_unknown_type_is_refused
             &db,
             &format!(
                 "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' \
-                 AND target_id = '{own}' AND actor_id = {manager}"
+                 AND target_id = '{}' AND actor_id = {manager}",
+                crate::wo::types::audit_type_ref(&db, own).await.expect("type ref")
             )
         )
         .await,

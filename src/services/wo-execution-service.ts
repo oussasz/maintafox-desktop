@@ -200,13 +200,32 @@ export async function addTask(input: AddTaskInput): Promise<WoExecTask> {
   return invoke<WoExecTask>("add_task", { input });
 }
 
+/** What a NOK result found: a finding note and/or the follow-up work order (D3). */
+export interface TaskEvidence {
+  findingNote?: string | null;
+  followUpWorkOrderId?: number | null;
+}
+
 export async function completeTask(
   taskId: number,
   actorId: number,
   resultCode: TaskResultCode,
   notes?: string | null,
+  evidence?: TaskEvidence,
 ): Promise<WoExecTask> {
-  return invoke<WoExecTask>("complete_task", { taskId, actorId, resultCode, notes: notes ?? null });
+  return invoke<WoExecTask>("complete_task", {
+    taskId,
+    actorId,
+    resultCode,
+    notes: notes ?? null,
+    findingNote: evidence?.findingNote ?? null,
+    followUpWorkOrderId: evidence?.followUpWorkOrderId ?? null,
+  });
+}
+
+/** "Rouvrir la tâche": only while the WO is executed; the comment is kept with the previous result. */
+export async function reopenTask(taskId: number, comment: string): Promise<WoExecTask> {
+  return invoke<WoExecTask>("reopen_task", { taskId, comment });
 }
 
 export async function listTasks(woId: number): Promise<WoExecTask[]> {

@@ -1,6 +1,8 @@
 pub mod access;
 pub mod contact_methods;
 pub mod domain;
+pub(crate) mod ended_hold;
+pub(crate) mod ended_under_work;
 pub mod energy_reference;
 pub mod handover_roles;
 pub mod queries;
@@ -18,3 +20,5 @@ mod requirement_rules_tests;
 mod sync_check_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wo_lifecycle_tests;

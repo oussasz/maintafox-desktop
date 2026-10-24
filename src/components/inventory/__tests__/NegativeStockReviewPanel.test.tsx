@@ -93,6 +93,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [
         {
           article_id: 22,
@@ -125,6 +127,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     mocks.listNegativeStockReviews.mockResolvedValue({
@@ -133,6 +137,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     mocks.resolveNegativeStockByCount.mockResolvedValue({
@@ -181,6 +187,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -213,6 +221,7 @@ describe("NegativeStockReviewPanel", () => {
               system_qty: -5,
               session_code: "CC-1",
               counted_by: "Alice",
+              approved_by: "Alice",
               device_code: "7KQ2",
               counted_at: TS,
               counted_qty: 0,
@@ -224,6 +233,7 @@ describe("NegativeStockReviewPanel", () => {
               system_qty: -5,
               session_code: "CC-2",
               counted_by: "Bob",
+              approved_by: "Bob",
               device_code: "M3XZ",
               counted_at: TS,
               counted_qty: 0,
@@ -235,6 +245,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -290,6 +302,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [posting],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -343,6 +357,8 @@ describe("NegativeStockReviewPanel", () => {
         },
       ],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -370,6 +386,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -395,6 +413,8 @@ describe("NegativeStockReviewPanel", () => {
       closed_double_counts: [],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -434,6 +454,8 @@ describe("NegativeStockReviewPanel", () => {
       ],
       double_postings: [],
       closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
       over_reservations: [],
     });
     render(<NegativeStockReviewPanel />);
@@ -444,6 +466,293 @@ describe("NegativeStockReviewPanel", () => {
     expect(frInventory.negativeStock.doubleCount.closedByReversal).toMatch(
       /^clos par annulation du comptage/,
     );
+  });
+
+  it("names the work order, the purchase order and every movement of an over-issue and an over-receipt", async () => {
+    const over = (overrides: Record<string, unknown>) => ({
+      article_id: 21,
+      article_code: "A-21",
+      article_name: "Bearing",
+      location_id: 10,
+      location_code: "BIN",
+      warehouse_code: "MAIN",
+      work_order_code: null,
+      reservation_ref: null,
+      purchase_order_number: null,
+      expected_qty: 5,
+      actual_qty: 10,
+      excess_qty: 5,
+      closure_kind: null,
+      closed_by_return: null,
+      closed_by: null,
+      on_hand_qty: 0,
+      reserved_qty: 0,
+      available_qty: 0,
+      ...overrides,
+    });
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
+      over_quantities: [
+        over({
+          kind: "over_issue",
+          work_order_code: "OT-0042",
+          movements: [
+            {
+              movement_sync_id: "i1",
+              movement_type: "ISSUE",
+              document_ref: null,
+              posted_by: "Alice",
+              posted_at: TS,
+              quantity: 5,
+            },
+            {
+              movement_sync_id: "i2",
+              movement_type: "ISSUE",
+              document_ref: null,
+              posted_by: "Bob",
+              posted_at: TS,
+              quantity: 5,
+            },
+          ],
+        }),
+        over({
+          kind: "over_receipt",
+          purchase_order_number: "PO-77",
+          on_hand_qty: 10,
+          available_qty: 10,
+          movements: [
+            {
+              movement_sync_id: "g1",
+              movement_type: "GR_ACCEPT",
+              document_ref: "GR-1",
+              posted_by: null,
+              posted_at: TS,
+              quantity: 5,
+            },
+          ],
+        }),
+      ],
+      closed_over_quantities: [],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    expect(await screen.findByText("Over-issue — to reconcile")).toBeInTheDocument();
+    expect(screen.getByText("Over-receipt — to reconcile")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /^Reservation for work order OT-0042: 5 reserved, 10 issued in all .*5 too many/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/^Purchase order PO-77: 5 ordered, 10 received in all .*5 too many/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^Issue to work order — Alice, .*: 5$/)).toBeInTheDocument();
+    expect(screen.getByText(/^Issue to work order — Bob, .*: 5$/)).toBeInTheDocument();
+    expect(screen.getByText(/^Goods receipt GR-1 — Unknown user, .*: 5$/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/^If these receipts were rejected in full at inspection, no stock moved/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No location below zero.")).not.toBeInTheDocument();
+    const buttons = screen.getAllByRole("button", { name: "Record a count" });
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[0] as HTMLElement);
+    expect(await screen.findByRole("button", { name: "Record the count" })).toBeDisabled();
+    expect(frInventory.negativeStock.overQuantity.flagKind.over_issue).toBe(
+      "Sur-sortie — à rapprocher",
+    );
+    expect(frInventory.negativeStock.overQuantity.flagKind.over_receipt).toBe(
+      "Sur-réception — à rapprocher",
+    );
+  });
+
+  it("shows an over-receipt closed by a count with the closed items", async () => {
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [
+        {
+          kind: "over_receipt",
+          article_id: 21,
+          article_code: "A-21",
+          article_name: "Bearing",
+          location_id: 10,
+          location_code: "BIN",
+          warehouse_code: "MAIN",
+          work_order_code: null,
+          reservation_ref: null,
+          purchase_order_number: "PO-77",
+          expected_qty: 5,
+          actual_qty: 10,
+          excess_qty: 5,
+          movements: [],
+          closure_kind: "count",
+          closed_by_return: null,
+          closed_by: {
+            count_sync_id: "c1",
+            session_code: "CC-9",
+            path: "reconciliation",
+            counted_by: "Alice",
+            approved_by: "Alice",
+            device_code: "7KQ2",
+            counted_at: TS,
+            system_qty: 10,
+            counted_qty: 5,
+            variance_qty: -5,
+          },
+          on_hand_qty: 5,
+          reserved_qty: 0,
+          available_qty: 5,
+        },
+      ],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    fireEvent.click(await screen.findByLabelText("Show reconciled items"));
+    expect(
+      await screen.findByText(
+        /Over-receipt — to reconcile · PO-77 · Closed by count CC-9 from the stock-to-reconcile list: counted by Alice, .+, variance approved by Alice$/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an over-issue regularised by return, and one closed by a count session, with the closed items", async () => {
+    const closedIssue = (overrides: Record<string, unknown>) => ({
+      kind: "over_issue",
+      article_id: 21,
+      article_code: "A-21",
+      article_name: "Bearing",
+      location_id: 10,
+      location_code: "BIN",
+      warehouse_code: "MAIN",
+      work_order_code: null,
+      reservation_ref: null,
+      purchase_order_number: null,
+      expected_qty: 5,
+      actual_qty: 10,
+      excess_qty: 5,
+      movements: [],
+      closure_kind: null,
+      closed_by_return: null,
+      closed_by: null,
+      on_hand_qty: 5,
+      reserved_qty: 0,
+      available_qty: 5,
+      ...overrides,
+    });
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [
+        closedIssue({
+          closure_kind: "return",
+          closed_by_return: {
+            movement_sync_id: "r1",
+            movement_type: "RETURN",
+            document_ref: null,
+            posted_by: "Carol",
+            posted_at: TS,
+            quantity: 5,
+          },
+        }),
+        closedIssue({
+          reservation_ref: "RES-12",
+          closure_kind: "count",
+          closed_by: {
+            count_sync_id: "c2",
+            session_code: "CC-31",
+            path: "count_session",
+            counted_by: "Dan",
+            approved_by: null,
+            device_code: "M3XZ",
+            counted_at: TS,
+            system_qty: 5,
+            counted_qty: 5,
+            variance_qty: 0,
+          },
+        }),
+      ],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    fireEvent.click(await screen.findByLabelText("Show reconciled items"));
+    expect(
+      await screen.findByText(
+        /Over-issue — to reconcile · Reservation without work order · Regularised by return: 5 returned by Carol, .+$/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Over-issue — to reconcile · Reservation RES-12 · Closed by count CC-31 from a count session or inventory campaign: counted by Dan, (?!.*approved).+$/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record a count" })).not.toBeInTheDocument();
+    expect(frInventory.negativeStock.overQuantity.documentNone).toBe("Réservation sans OT");
+    expect(frInventory.negativeStock.overQuantity.closedByReturn).toMatch(/^Régularisé par retour/);
+    expect(frInventory.negativeStock.overQuantity.closedPath.count_session).toBe(
+      "d'une session de comptage ou d'une campagne d'inventaire",
+    );
+  });
+
+  it("shows a closed count posted twice with the count's path and approver", async () => {
+    mocks.listNegativeStockReviews.mockResolvedValue({
+      items: [],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [
+        {
+          kind: "posted_twice",
+          article_id: 21,
+          article_code: "A-21",
+          article_name: "Bearing",
+          location_id: 10,
+          location_code: "BIN",
+          warehouse_code: "MAIN",
+          session_code: "CC-4",
+          movement_type: "COUNT_ADJUST",
+          movements: [],
+          variance_qty: -2,
+          excess_qty: -2,
+          closed_by: {
+            count_sync_id: "c3",
+            session_code: "CC-12",
+            path: "count_session",
+            counted_by: "Erin",
+            approved_by: "Frank",
+            device_code: "Q8LW",
+            counted_at: TS,
+            system_qty: 6,
+            counted_qty: 8,
+            variance_qty: 2,
+          },
+          on_hand_qty: 8,
+          reserved_qty: 0,
+          available_qty: 8,
+        },
+      ],
+      over_quantities: [],
+      closed_over_quantities: [],
+      over_reservations: [],
+    });
+    render(<NegativeStockReviewPanel />);
+    fireEvent.click(await screen.findByLabelText("Show reconciled items"));
+    expect(
+      await screen.findByText(
+        /Count posted twice — to verify · Closed by count CC-12 from a count session or inventory campaign: counted by Erin, .+, variance approved by Frank$/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("has every text in French too", () => {

@@ -143,6 +143,28 @@ describe("InventoryValuationPanel", () => {
     );
   });
 
+  it("stays on the live stock when the screen is left open past midnight", async () => {
+    // Only the clock is faked: the screen opens one second before midnight and is used after it.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(2026, 9, 23, 23, 59, 59));
+      render(<InventoryValuationPanel />);
+      expect(await screen.findByText("Main store")).toBeInTheDocument();
+      vi.setSystemTime(new Date(2026, 9, 24, 0, 0, 3));
+
+      fireEvent.click(screen.getByLabelText("Group by"));
+      fireEvent.click(await screen.findByRole("option", { name: "Family" }));
+      await waitFor(() =>
+        expect(svc.getInventoryValuationReport).toHaveBeenLastCalledWith("family", null),
+      );
+      expect(svc.getInventoryValuationReport.mock.calls.every(([, asAt]) => asAt === null)).toBe(
+        true,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reads frozen figures at the end of a closed period (row click)", async () => {
     render(<InventoryValuationPanel />);
     fireEvent.click(await screen.findByText("Amina Haddad"));

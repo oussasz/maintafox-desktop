@@ -21,7 +21,9 @@
 //!   quantity, or stock issued from the store against its reservation): only a line with no
 //!   recorded use is cancelled (`wo::parts::inbound_part_line_check`, `before_upsert_checked`);
 //! - `app_settings`: a tenant setting whose change is locked here (fiscal start month, currency
-//!   once postings exist) is refused as a conflict (`before_upsert_checked`);
+//!   once postings exist) is refused as a conflict (`before_upsert_checked`); a received row that is
+//!   not a tenant setting, or that would change or delete a setting of this device, is refused as a
+//!   `SETTING_DEVICE_SCOPE` conflict (`inbound_device_setting_check`);
 //! - `reliability_study_decisions`: an approval by the decision's own proposer is refused as a
 //!   conflict unless the decision's site opted out of four-eyes; a study, equipment or site not
 //!   applied yet makes it wait (`reliability::study::decisions::inbound_self_approval_check`);
@@ -47,6 +49,14 @@
 //!   work order new here received without the column and already started takes that origin; a
 //!   protected work order required again but still carrying its clearing ends protected
 //!   (`after_received_work_order`, recorded in its history and audit trail);
+//! - `work_orders` changing status (or new here): applied with its waiting reservations, tasks,
+//!   failure coding, labour, parts, downtime, tools, verifications and status changes; entering
+//!   `completed` or `closed`, then judged by the local completion and close gates on the written
+//!   state; `work_order_tasks` / `work_order_failure_details` / `work_order_interveners` /
+//!   `work_order_tools` / `work_order_verifications` (changes and deletes): refused after the
+//!   completion or close here, a task result outside execution and a mandatory task removed past
+//!   planning refused, and a verification keeps the self-verification rules
+//!   (`wo::closeout_sync`); snapshot history is applied, not judged;
 //! - `permit_types`: a change of the three-person lock-removal setting, or a switch-off of the
 //!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
 //!   here), when and why; the shipped LOTO type's isolation rule is never switched off
@@ -54,6 +64,10 @@
 //! - `site_settings` (the four-eyes opt-out) / `permit_types` (the three-person setting): a change
 //!   accepted by those checks is announced to the settings administrators in the same transaction
 //!   (`settings::received_notice`);
+//! - `work_permits`: a permit received closed, handed back, cancelled or suspended while its work
+//!   order runs here, or dated before the work order's last start here, is applied and raised for
+//!   review (`PERMIT_ENDED_DURING_WORK` / `PERMIT_ENDED_BEFORE_START`), its work order's responsible
+//!   and the site's permit close-right holders told (`permit::ended_under_work`);
 //! - `permit_handover_logs`: a hand-over received by the person who signed it is refused as a
 //!   conflict (`permit::sync_check::inbound_handover_check`); one without a signer is accepted;
 //! - `permit_handover_logs`: after the apply, the log's "from" / "to" role that is not in the
@@ -123,7 +137,8 @@ pub(crate) const AUDIT_STUB_REFUSED: &str = "AUDIT_STUB_REFUSED";
 /// outcome (recorded like every other sync conflict, for a person to decide).
 /// - `app_settings`: the fiscal-year start month and the tenant currency cannot change once this
 ///   device stores postings that depend on them (`finance::fiscal`, `inventory::fx`). A change
-///   made on a device where they were still free is refused here, as it is in Settings.
+///   made on a device where they were still free is refused here, as it is in Settings. A setting
+///   of one device is never received (`inbound_device_setting_check`).
 /// - `weekly_schedules`: a week never moves backwards in its lifecycle by synchronisation.
 /// - `audit_chain_stubs`: never this PC's own chain, never malformed (`audit::chain`).
 pub(crate) async fn before_upsert_checked(
@@ -183,6 +198,12 @@ pub(crate) async fn before_upsert_checked(
                 },
             }));
     }
+    // A suspension made and lifted on another PC around a start here: raised for review and told
+    // (`permit::ended_under_work::after_suspension_check`, CMMS Advisor answer to S3). Rolled back
+    // with the row when it is then refused or left waiting.
+    if layout.def.entity_type == "permit_suspensions" {
+        crate::permit::ended_under_work::after_suspension_check(conn, entity_sync_id, payload).await?;
+    }
     let safety_check = match layout.def.entity_type {
         "site_settings" => {
             Some(crate::settings::site::inbound_site_setting_check(conn, entity_sync_id, payload).await?)
@@ -207,6 +228,10 @@ pub(crate) async fn before_upsert_checked(
             Some(crate::permit::sync_check::inbound_permit_type_check(conn, entity_sync_id, payload).await?)
         }
         "work_permits" => Some(crate::permit::sync_check::inbound_permit_check(conn, entity_sync_id, payload).await?),
+        // A downtime end received while a lock is fitted here (owner decision D4, condition 2).
+        "work_order_downtime_segments" => {
+            Some(crate::permit::ended_hold::inbound_downtime_end_check(conn, entity_sync_id, payload).await?)
+        }
         "permit_isolations" => {
             Some(crate::permit::sync_check::inbound_isolation_check(conn, entity_sync_id, payload).await?)
         }
@@ -219,7 +244,11 @@ pub(crate) async fn before_upsert_checked(
                 None => {
                     let permit_gate =
                         crate::permit::sync_check::inbound_work_order_check(conn, entity_sync_id, payload).await?;
-                    match permit_gate {
+                    let closeout = match permit_gate {
+                        Some(verdict) => Some(verdict),
+                        None => crate::wo::closeout_sync::inbound_closeout_check(conn, entity_sync_id, payload).await?,
+                    };
+                    match closeout {
                         Some(verdict) => Some(verdict),
                         None => {
                             crate::org::site_assignment::inbound_site_assignment_check(
@@ -256,6 +285,21 @@ pub(crate) async fn before_upsert_checked(
             Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)
         }
         "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
+        // A task, failure coding, labour line, tool or verification changed after its work order's
+        // completion or close here (`wo::closeout_sync`, R5-R7).
+        "work_order_tasks"
+        | "work_order_failure_details"
+        | "work_order_interveners"
+        | "work_order_tools"
+        | "work_order_verifications" => Some(
+            crate::wo::closeout_sync::inbound_closeout_child_check(
+                conn,
+                layout.def.entity_type,
+                entity_sync_id,
+                payload,
+            )
+            .await?,
+        ),
         crate::auth::recovery_code::NOTICE_ENTITY => {
             Some(crate::auth::recovery_code::inbound_notice_check(conn, entity_sync_id, payload).await?)
         }
@@ -277,6 +321,11 @@ pub(crate) async fn before_upsert_checked(
                 payload,
             )
             .await?;
+            // A permit ended on another PC while its work ran here, or before it started here:
+            // applied, raised for review and told (`permit::ended_under_work`, AU-101, D9).
+            if layout.def.entity_type == "work_permits" {
+                crate::permit::ended_under_work::after_permit_check(conn, entity_sync_id, payload).await?;
+            }
         }
         return Ok(verdict.map(|v| match v {
             InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
@@ -303,13 +352,13 @@ pub(crate) async fn before_upsert_checked(
     if layout.def.entity_type != "app_settings" {
         return Ok(None);
     }
+    if let Some(outcome) = inbound_device_setting_check(conn, entity_sync_id, Some(payload)).await? {
+        return Ok(Some(outcome));
+    }
     let text = |k: &str| payload.get(k).and_then(serde_json::Value::as_str);
     let (Some(key), Some(value)) = (text("setting_key"), text("setting_value_json")) else {
         return Ok(None);
     };
-    if text("setting_scope") != Some("tenant") {
-        return Ok(None);
-    }
     let guard = async {
         crate::finance::fiscal::guard_fiscal_start_write(conn, key, value).await?;
         crate::inventory::fx::guard_currency_write(conn, key, value).await
@@ -321,6 +370,56 @@ pub(crate) async fn before_upsert_checked(
             message: format!("{key}: {}", messages.join("; ")),
         })),
         Err(other) => Err(other),
+    }
+}
+
+/// Conflict code of an `app_settings` row received for a setting of one device (`setting_scope`
+/// other than `tenant`).
+pub(crate) const SETTING_DEVICE_SCOPE: &str = "SETTING_DEVICE_SCOPE";
+
+/// `app_settings` mixes tenant settings (synchronised) and settings of this device (licence
+/// onboarding, bootstrap state, updater, diagnostics), which never leave the PC: the outbound row
+/// filter of `sync::row_spec` sends tenant rows only. A received row that is not a tenant setting
+/// (`payload`, or no scope at all), or that would change or delete a device setting held here
+/// under its sync id, comes from an abnormal sender: it is refused as a conflict for a person to
+/// see, never written.
+async fn inbound_device_setting_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
+    use crate::sync::materialize::ApplyOutcome;
+    let refused = |message: String| {
+        Ok(Some(ApplyOutcome::Conflict {
+            code: SETTING_DEVICE_SCOPE.into(),
+            message,
+        }))
+    };
+    if let Some(payload) = payload {
+        let scope = payload.get("setting_scope").and_then(serde_json::Value::as_str);
+        if scope != Some("tenant") {
+            return refused(format!(
+                "app_settings: a setting of scope {scope:?} belongs to one device and is never received by synchronisation"
+            ));
+        }
+    }
+    let local_scope = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT setting_scope FROM app_settings WHERE entity_sync_id = ? LIMIT 1",
+            [entity_sync_id.into()],
+        ))
+        .await?
+        .map(|row| row.try_get::<Option<String>>("", "setting_scope"))
+        .transpose()
+        .map_err(|e| hook_err("app_settings", e))?
+        .flatten();
+    match local_scope {
+        Some(scope) if scope != "tenant" => refused(format!(
+            "app_settings: the row held here under this sync id is a setting of this device (scope {scope:?}): \
+             it is never changed or deleted by synchronisation"
+        )),
+        _ => Ok(None),
     }
 }
 
@@ -353,18 +452,36 @@ pub(crate) async fn upsert_group(
 ) -> AppResult<Option<crate::permit::sync_check::Group>> {
     match layout.def.entity_type {
         "work_permits" => crate::permit::sync_check::permit_group(conn, entity_sync_id, payload).await,
-        "work_orders" => crate::permit::sync_check::work_order_group(conn, entity_sync_id, payload).await,
+        // A start (or resume, reopen) brings its permits, waits and status changes; every status
+        // change (and a work order new here) brings its close-out children too: one group.
+        "work_orders" => {
+            let start = crate::permit::sync_check::work_order_group(conn, entity_sync_id, payload).await?;
+            let closeout = crate::wo::closeout_sync::closeout_group(conn, entity_sync_id, payload).await?;
+            Ok(match (start, closeout) {
+                (Some(start), Some(closeout)) => Some(start.followed_by(closeout)),
+                (start, closeout) => start.or(closeout),
+            })
+        }
         _ => Ok(None),
     }
 }
 
-/// Applies a group (`upsert_group`) after its row was written; `Some` (a conflict) makes the caller
-/// roll the whole transaction back: nothing of the group is kept.
+/// Applies a group (`upsert_group`) after its row was written, then, for a received work-order
+/// completion or close, judges it on the written state (`wo::closeout_sync::judge_closeout`);
+/// `Some` (a conflict, or a child that waits) makes the caller roll the whole transaction back:
+/// nothing of the group is kept.
 pub(crate) async fn after_upsert_group(
     conn: &impl ConnectionTrait,
     group: crate::permit::sync_check::Group,
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
-    crate::permit::sync_check::apply_group(conn, group).await
+    let closeout = group.closeout.clone();
+    if let Some(outcome) = crate::permit::sync_check::apply_group(conn, group).await? {
+        return Ok(Some(outcome));
+    }
+    match closeout {
+        Some(entry) => crate::wo::closeout_sync::judge_closeout(conn, &entry).await,
+        None => Ok(None),
+    }
 }
 
 /// Checks of an inbound delete before it is applied; `Some` stops it with that outcome. A permit
@@ -388,6 +505,12 @@ pub(crate) async fn before_delete_checked(
     {
         return Ok(Some(outcome));
     }
+    // A setting of this device is never deleted by sync (`inbound_device_setting_check`).
+    if layout.def.entity_type == "app_settings" {
+        if let Some(outcome) = inbound_device_setting_check(conn, entity_sync_id, None).await? {
+            return Ok(Some(outcome));
+        }
+    }
     let verdict = match layout.def.entity_type {
         "work_permits" | "permit_isolations" | "permit_suspensions" | "permit_types" | "qualification_requirements" => {
             crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?
@@ -406,6 +529,16 @@ pub(crate) async fn before_delete_checked(
                 None,
             )
             .await?
+        }
+        // A task, failure coding, labour line, tool or verification of a work order completed or
+        // closed here is kept (`wo::closeout_sync`, R5 / R7).
+        "work_order_tasks"
+        | "work_order_failure_details"
+        | "work_order_interveners"
+        | "work_order_tools"
+        | "work_order_verifications" => {
+            crate::wo::closeout_sync::inbound_closeout_child_delete_check(conn, layout.def.entity_type, entity_sync_id)
+                .await?
         }
         _ => None,
     };

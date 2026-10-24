@@ -939,6 +939,19 @@ async fn row_exists(conn: &impl ConnectionTrait, layout: &EntityLayout, locator:
         .is_some())
 }
 
+/// Whether a received row of an append-only entity, already held here, is skipped by the apply
+/// (history is never rewritten) rather than adopted (`apply_hooks::adopt_existing_append_only`).
+/// The apply and the hooks that skip judging such a row (`wo::closeout_sync`) share this test.
+pub(crate) async fn append_only_replay_skipped(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<bool> {
+    Ok(layout.def.conflict_policy == ConflictPolicy::AppendOnly
+        && !crate::sync::apply_hooks::adopt_existing_append_only(conn, layout, entity_sync_id, payload).await?)
+}
+
 fn is_delete(operation: &str) -> bool {
     operation == "delete" || operation == "archive"
 }
@@ -1063,9 +1076,7 @@ pub(crate) async fn apply_row(
         _ => None,
     };
     let (local_row, inserted) = if let Some(locator) = existing {
-        if layout.def.conflict_policy == ConflictPolicy::AppendOnly
-            && !crate::sync::apply_hooks::adopt_existing_append_only(conn, layout, entity_sync_id, &payload).await?
-        {
+        if append_only_replay_skipped(conn, layout, entity_sync_id, &payload).await? {
             // History rows are never rewritten; a replayed row is a no-op.
             return Ok(ApplyOutcome::Unchanged);
         }
