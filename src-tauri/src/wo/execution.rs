@@ -564,6 +564,89 @@ async fn hold_wo_in(
         })
 }
 
+/// Audit action: the downtime of a mechanically complete work order ended because the removal of
+/// its last fitted lock was verified (owner decision D4, CMMS Advisor condition 2).
+pub const AUDIT_DOWNTIME_ENDED_BY_LOCK_REMOVAL: &str = "wo.downtime_ended_by_lock_removal";
+
+/// After a lock removal was verified (here, `actor_id` the verifier; or received by sync and
+/// applied, `actor_id` `None`: the system), in the caller's transaction: when work order `wo_id` is
+/// mechanically complete ("Terminé") and no lock is fitted under its permits any more, its open
+/// downtime segments end at `verified_at`, the moment of that verification — the equipment goes
+/// back in service only now, never at "Terminé" while a lock is fitted. Audited, and shown in the
+/// execution log. Nothing to do otherwise (work still running or on hold, another lock still
+/// fitted, no open downtime). Returns the number of segments ended.
+pub(crate) async fn end_downtime_after_lock_removal(
+    txn: &impl ConnectionTrait,
+    wo_id: i64,
+    verified_at: &str,
+    actor_id: Option<i64>,
+    isolation_sync_id: &str,
+) -> AppResult<u64> {
+    let (status_code, _, _) = load_wo_status(txn, wo_id).await?;
+    if status_code != "completed" || crate::permit::wo_gate::permit_holds(txn, wo_id).await?.fitted_locks > 0 {
+        return Ok(0);
+    }
+    let open = txn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, downtime_type FROM work_order_downtime_segments WHERE work_order_id = ? AND ended_at IS NULL",
+            [wo_id.into()],
+        ))
+        .await?;
+    if open.is_empty() {
+        return Ok(0);
+    }
+    let ended = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_order_downtime_segments SET ended_at = ? WHERE work_order_id = ? AND ended_at IS NULL",
+            [verified_at.into(), wo_id.into()],
+        ))
+        .await?
+        .rows_affected();
+    let mut segment_ids = Vec::with_capacity(open.len());
+    for row in &open {
+        let id: i64 = row.try_get("", "id").map_err(|e| decode_err("downtime id", e))?;
+        let kind: Option<String> = row
+            .try_get("", "downtime_type")
+            .map_err(|e| decode_err("downtime_type", e))?;
+        crate::wo::execution_log::emit_execution_event(
+            txn,
+            wo_id,
+            "downtime_closed",
+            "executionLog.downtimeClosed",
+            serde_json::json!({ "downtime_type": kind, "ended_by": "lock_removal_verified" }),
+            Some("downtime"),
+            Some(id),
+            actor_id,
+        )
+        .await?;
+        segment_ids.push(id);
+    }
+    crate::audit::writer::write_audit_event_in(
+        txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: AUDIT_DOWNTIME_ENDED_BY_LOCK_REMOVAL.to_string(),
+            target_type: Some("work_order".to_string()),
+            target_id: Some(wo_id.to_string()),
+            actor_id,
+            auth_context: if actor_id.is_some() { "session" } else { "system" }.to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "summary": "Downtime ended: removal of the last fitted lock verified",
+                "ended_at": verified_at,
+                "segment_ids": segment_ids,
+                "isolation_sync_id": isolation_sync_id,
+            })),
+        },
+    )
+    .await?;
+    Ok(ended)
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // E) resume_wo — on_hold → in_progress (closes delay segment, recomputes waiting hours)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -822,11 +905,21 @@ pub(crate) async fn collect_completion_gates(
     let open_dt: i64 = open_dt_row
         .try_get::<i64>("", "cnt")
         .map_err(|e| decode_err("open_dt cnt", e))?;
+    // A lock still fitted under the work order's permits keeps the equipment down past "Terminé"
+    // (owner decision D4, CMMS Advisor condition 2): its downtime stays open and ends when the
+    // removal of the last fitted lock is verified (`end_downtime_after_lock_removal`). Without a
+    // fitted lock, open downtime must be ended first, as before.
+    let downtime_held_by_locks =
+        open_dt > 0 && crate::permit::wo_gate::permit_holds(conn, wo_id).await?.fitted_locks > 0;
     gates.push(WoCompletionGate {
         code: "OPEN_DOWNTIME".into(),
-        passed: open_dt == 0,
+        passed: open_dt == 0 || downtime_held_by_locks,
         required: true,
-        detail: if open_dt > 0 {
+        detail: if downtime_held_by_locks {
+            Some(format!(
+                "{open_dt} open downtime segments, ended when the removal of the last fitted lock is verified"
+            ))
+        } else if open_dt > 0 {
             Some(format!("{open_dt} open downtime segments"))
         } else {
             None

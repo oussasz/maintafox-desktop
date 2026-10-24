@@ -4820,6 +4820,12 @@ export interface HomeMyWorkOrders {
   today: number;
   by_urgency: HomeUrgencyCount[];
   items: HomeMyWorkOrderItem[];
+  /**
+   * "Déconsignation à faire": completed work orders with a lock still fitted, for their permit
+   * holders (responsible, or who fitted one of the locks); not counted in `open`.
+   */
+  deisolation_pending: number;
+  deisolation_items: HomeMyWorkOrderItem[];
 }
 
 export interface HomeMyRequests {
@@ -5312,6 +5318,11 @@ export interface WorkOrder {
   schedule_frozen?: boolean | null;
   /** PRD §6.5 lifecycle state derived from the WO's facts (Rust `wo::lifecycle`). */
   lifecycle_state?: string | null;
+  /**
+   * "Déconsignation à faire": mechanically complete with a lock still fitted under one of its
+   * permits (Rust `permit::wo_gate::deisolation_pending_sql`); derived on read.
+   */
+  deisolation_pending?: boolean;
   /** Inspection round of the finding the OT comes from (directly or through its request). */
   source_inspection_round_id?: number | null;
   source_inspection_round_code?: string | null;

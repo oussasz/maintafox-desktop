@@ -3398,6 +3398,18 @@ async fn verify_permit_isolation_removal_in(
         ),
     )
     .await?;
+    // The last lock of a mechanically complete work order: its downtime ends now, in this
+    // transaction (owner decision D4, CMMS Advisor condition 2).
+    if let Some(wo_id) = permit.linked_work_order_id {
+        crate::wo::execution::end_downtime_after_lock_removal(
+            db,
+            wo_id,
+            &verified_at,
+            Some(actor_id),
+            &iso.entity_sync_id,
+        )
+        .await?;
+    }
     Ok(out)
 }
 

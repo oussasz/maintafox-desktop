@@ -174,6 +174,7 @@ export const WorkOrderSchema = z.object({
   schedule_commitment_id: z.number().nullable().optional(),
   schedule_frozen: z.boolean().nullable().optional(),
   lifecycle_state: z.string().nullable().optional(),
+  deisolation_pending: z.boolean().optional(),
   source_inspection_round_id: z.number().nullable().optional(),
   source_inspection_round_code: z.string().nullable().optional(),
   source_inspection_round_title: z.string().nullable().optional(),

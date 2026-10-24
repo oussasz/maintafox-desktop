@@ -60,6 +60,8 @@ const myWork = {
         overdue: true,
       },
     ],
+    deisolation_pending: 0,
+    deisolation_items: [],
   },
   requests: { open: 3, awaiting_my_answer: 1 },
   rounds: {

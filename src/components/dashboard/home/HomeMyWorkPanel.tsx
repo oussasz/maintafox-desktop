@@ -65,6 +65,7 @@ function MyWorkBody({ data }: { data: HomeMyWork }) {
             { label: t("home.myWork.wo.open"), text: t("home.def.myWoOpen") },
             { label: t("home.myWork.wo.overdue"), text: t("home.def.woOverdue") },
             { label: t("home.myWork.wo.today"), text: t("home.def.myWoToday") },
+            { label: t("home.myWork.wo.deisolation"), text: t("home.def.myWoDeisolation") },
           ]}
           openLabel={t("home.open.workOrders")}
           openTo={homeLinks.workOrders}
@@ -115,6 +116,23 @@ function MyWorkBody({ data }: { data: HomeMyWork }) {
               to: homeLinks.workOrder(i.id),
             }))}
           />
+          {wo.deisolation_pending > 0 ? (
+            <HomeRecordList
+              ariaLabel={t("home.myWork.wo.deisolationAria")}
+              emptyText=""
+              total={wo.deisolation_pending}
+              rows={wo.deisolation_items.map((i) => ({
+                key: `deisolation-${i.id}`,
+                primary: `${i.code} — ${i.title}`,
+                secondary: [tOt(`status.${statusToI18nKey(i.status_code)}` as never), i.asset_label]
+                  .filter(Boolean)
+                  .join(" · "),
+                badge: t("home.myWork.wo.deisolation"),
+                tone: "attention",
+                to: homeLinks.workOrder(i.id),
+              }))}
+            />
+          ) : null}
         </HomeSection>
       ) : null}
 

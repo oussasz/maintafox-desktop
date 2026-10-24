@@ -443,8 +443,9 @@ pub async fn list_work_orders_in_scope(
     let row_limit = filter.limit.clamp(1, 200);
     let offset = filter.offset.max(0);
 
+    let deisolation = crate::permit::wo_gate::deisolation_pending_sql("wo");
     let data_sql = format!(
-        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state \
+        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state, {deisolation} AS deisolation_pending \
          FROM work_orders wo \
          {joins} \
          WHERE {where_sql} \
@@ -471,8 +472,9 @@ pub async fn list_work_orders_in_scope(
 
 pub async fn get_work_order(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<WorkOrder>> {
     let (join_cols, joins) = (wo_join_cols(), wo_joins());
+    let deisolation = crate::permit::wo_gate::deisolation_pending_sql("wo");
     let sql = format!(
-        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state \
+        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state, {deisolation} AS deisolation_pending \
          FROM work_orders wo \
          {joins} \
          WHERE wo.id = ?"

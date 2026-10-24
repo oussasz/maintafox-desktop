@@ -430,16 +430,40 @@ pub(crate) struct PermitHolds {
     pub fitted_locks: i64,
 }
 
+/// The locks fitted under the permits of the work order whose id is the SQL expression `wo`:
+/// `applied_at` set and `removal_verified_at` empty, whatever the permit's status
+/// ([`PermitHolds::fitted_locks`]). `FROM … WHERE …` of a sub-query, so every reader counts the same.
+fn fitted_locks_from(wo: &str) -> String {
+    format!(
+        "FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id \
+         WHERE p.linked_work_order_id = {wo} AND pi.applied_at IS NOT NULL AND pi.removal_verified_at IS NULL"
+    )
+}
+
+/// "Déconsignation à faire" (owner decision D4, CMMS Advisor condition 1, 2026-10-24), derived on
+/// read, never stored: the work order whose row is aliased `wo` is mechanically complete
+/// ("Terminé") and a lock is still fitted under one of its permits. It stays so until the removal of
+/// its last lock is verified; its downtime ends at that moment, not at "Terminé"
+/// (`wo::execution::end_downtime_after_lock_removal`). SQL boolean (0 / 1).
+pub(crate) fn deisolation_pending_sql(wo: &str) -> String {
+    format!(
+        "((SELECT dps.code FROM work_order_statuses dps WHERE dps.id = {wo}.status_id) = 'completed' \
+         AND EXISTS (SELECT 1 {}))",
+        fitted_locks_from(&format!("{wo}.id"))
+    )
+}
+
 /// The [`PermitHolds`] of work order `wo_id`, on the state held here.
 pub(crate) async fn permit_holds(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<PermitHolds> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT (SELECT COUNT(*) FROM work_permits p WHERE p.linked_work_order_id = ? \
-             AND p.status NOT IN ('closed', 'handed_back', 'cancelled', 'expired')) AS permits, \
-             (SELECT COUNT(*) FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id \
-             WHERE p.linked_work_order_id = ? AND pi.applied_at IS NOT NULL \
-             AND pi.removal_verified_at IS NULL) AS locks",
+            format!(
+                "SELECT (SELECT COUNT(*) FROM work_permits p WHERE p.linked_work_order_id = ? \
+                 AND p.status NOT IN ('closed', 'handed_back', 'cancelled', 'expired')) AS permits, \
+                 (SELECT COUNT(*) {}) AS locks",
+                fitted_locks_from("?")
+            ),
             [wo_id.into(), wo_id.into()],
         ))
         .await?

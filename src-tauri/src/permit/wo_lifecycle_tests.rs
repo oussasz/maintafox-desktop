@@ -9,7 +9,7 @@ use serde_json::{json, Map, Value};
 
 use super::tests::{
     action, add_isolation, admin_id, advance_to_issued, apply_and_verify, assigned_wo_requiring_permit, create_from_wo,
-    insert_equipment, scalar_i64, set_status, setup, start, take_off, VERIFIER,
+    insert_equipment, scalar_i64, set_status, setup, start, take_off, APPLIER, VERIFIER,
 };
 use crate::errors::AppError;
 use crate::permit::queries;
@@ -850,4 +850,263 @@ async fn a_received_end_left_waiting_raises_nothing_until_it_applies() {
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     assert_eq!(review_conflicts(&db, &wp.entity_sync_id).await.len(), 1);
     assert_eq!(notices(&db, "permit_ended_under_work").await, 1);
+}
+
+// ── D4 conditions (CMMS Advisor, 2026-10-24): "Terminé" with locks fitted ──────────────
+
+/// A LOTO permit with `points` locks applied and verified, active, its work order started.
+async fn running_loto_work(
+    db: &DatabaseConnection,
+    asset_code: &str,
+    points: &[&str],
+) -> (i64, Vec<crate::permit::domain::PermitIsolation>) {
+    let asset = insert_equipment(db, asset_code).await;
+    let (wo_id, rv) = assigned_wo_requiring_permit(db, asset).await;
+    let wp = advance_to_issued(db, create_from_wo(db, "loto", wo_id).await.expect("permit")).await;
+    let mut locks = Vec::new();
+    for p in points {
+        locks.push(apply_and_verify(db, &add_isolation(db, wp.id, p).await).await);
+    }
+    set_status(db, &wp, "active").await.expect("active");
+    start(db, wo_id, rv).await.expect("started");
+    (wo_id, locks)
+}
+
+async fn open_downtime(db: &DatabaseConnection, wo_id: i64) -> i64 {
+    crate::wo::delay::open_downtime_segment(
+        db,
+        crate::wo::delay::OpenDowntimeInput {
+            wo_id,
+            downtime_type: "full".into(),
+            comment: None,
+            actor_id: admin_id(db).await,
+            classification_code: None,
+        },
+    )
+    .await
+    .expect("downtime opened")
+    .id
+}
+
+/// Every completion gate met but the downtime: labour closed, no parts, failure coding.
+async fn complete(db: &DatabaseConnection, wo_id: i64) -> Result<(), AppError> {
+    let actor = admin_id(db).await;
+    crate::wo::labor::add_labor_entry(
+        db,
+        crate::wo::labor::AddLaborInput {
+            wo_id,
+            intervener_id: actor,
+            skill_id: None,
+            started_at: Some("2026-04-10T08:00:00Z".into()),
+            ended_at: Some("2026-04-10T10:00:00Z".into()),
+            hours_worked: None,
+            hourly_rate: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("labour");
+    crate::wo::parts::confirm_no_parts_used(db, wo_id, actor)
+        .await
+        .expect("no parts");
+    let symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+        .await
+        .expect("lookup symptom")
+        .expect("seeded symptom");
+    crate::wo::closeout::save_failure_detail(
+        db,
+        crate::wo::closeout::SaveFailureDetailInput {
+            wo_id,
+            symptom_id: Some(symptom),
+            failure_mode_id: None,
+            failure_cause_id: None,
+            failure_effect_id: None,
+            is_temporary_repair: false,
+            is_permanent_repair: true,
+            cause_not_determined: true,
+            notes: Some("Disjoncteur remplacé".into()),
+        },
+    )
+    .await
+    .expect("failure detail");
+    crate::wo::closeout::update_wo_rca(
+        db,
+        crate::wo::closeout::UpdateWoRcaInput {
+            wo_id,
+            root_cause_summary: Some("Usure".into()),
+            corrective_action_summary: Some("Remplacement".into()),
+        },
+    )
+    .await
+    .expect("rca");
+    crate::wo::execution::complete_wo_mechanically(
+        db,
+        crate::wo::execution::WoMechCompleteInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: wo_row_version(db, wo_id).await,
+            actual_end: None,
+            actual_duration_hours: None,
+            conclusion: None,
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
+async fn segment_end(db: &DatabaseConnection, segment_id: i64) -> Option<String> {
+    db.query_one(Statement::from_string(
+        DbBackend::Sqlite,
+        format!("SELECT ended_at FROM work_order_downtime_segments WHERE id = {segment_id}"),
+    ))
+    .await
+    .expect("query")
+    .expect("segment")
+    .try_get_by_index::<Option<String>>(0)
+    .expect("ended_at")
+}
+
+async fn deisolation_pending(db: &DatabaseConnection, wo_id: i64) -> bool {
+    crate::wo::queries::get_work_order(db, wo_id)
+        .await
+        .expect("read")
+        .expect("work order")
+        .deisolation_pending
+}
+
+async fn verify_removal(db: &DatabaseConnection, iso: &crate::permit::domain::PermitIsolation) -> String {
+    let off = take_off(db, iso).await;
+    queries::verify_permit_isolation_removal(db, action(&off), VERIFIER)
+        .await
+        .expect("removal verified")
+        .removal_verified_at
+        .expect("verified at")
+}
+
+/// D4 conditions 1 and 2: "Terminé" is allowed with locks fitted and the downtime still open; the
+/// work order shows "Déconsignation à faire"; the downtime cannot be ended by hand, nor the work
+/// order closed; lock removal is allowed from "Terminé"; the downtime ends at the moment the removal
+/// of the LAST fitted lock is verified, audited; then the close is no longer held by them.
+#[tokio::test]
+async fn completion_with_locks_fitted_keeps_the_equipment_down_until_the_last_removal_is_verified() {
+    let db = setup().await;
+    let (wo_id, locks) = running_loto_work(&db, "EQ-D4C-1", &["MCC-D4C-1", "MCC-D4C-2"]).await;
+    let segment = open_downtime(&db, wo_id).await;
+    assert!(
+        !deisolation_pending(&db, wo_id).await,
+        "running work is not de-isolation"
+    );
+
+    complete(&db, wo_id).await.expect("Terminé with locks fitted");
+    assert_eq!(wo_status(&db, wo_id).await, "completed");
+    assert!(deisolation_pending(&db, wo_id).await);
+    assert_eq!(segment_end(&db, segment).await, None, "the equipment stays down");
+
+    let msgs = messages(
+        crate::wo::delay::close_downtime_segment(&db, segment, None)
+            .await
+            .expect_err("not by hand"),
+    );
+    assert!(has(&msgs, "GATE_DOWNTIME_HELD_BY_LOCKS"), "{msgs:?}");
+    let refusals = close_refusals(&db, wo_id).await;
+    assert!(has(&refusals, "GATE_CLOSEOUT_LOCKS_FITTED"), "{refusals:?}");
+    assert!(has(&refusals, "GATE_CLOSEOUT_OPEN_DOWNTIME"), "{refusals:?}");
+
+    // First lock: one is still fitted, nothing ends.
+    verify_removal(&db, &locks[0]).await;
+    assert_eq!(segment_end(&db, segment).await, None);
+    assert!(deisolation_pending(&db, wo_id).await);
+
+    // Last lock: the downtime ends at that verification, in its transaction, audited.
+    let verified_at = verify_removal(&db, &locks[1]).await;
+    assert_eq!(segment_end(&db, segment).await.as_deref(), Some(verified_at.as_str()));
+    assert!(!deisolation_pending(&db, wo_id).await);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = '{}' AND target_id = '{wo_id}'",
+                crate::wo::execution::AUDIT_DOWNTIME_ENDED_BY_LOCK_REMOVAL
+            )
+        )
+        .await,
+        1
+    );
+    let refusals = close_refusals(&db, wo_id).await;
+    assert!(!has(&refusals, "GATE_CLOSEOUT_LOCKS_FITTED"), "{refusals:?}");
+    assert!(!has(&refusals, "GATE_CLOSEOUT_OPEN_DOWNTIME"), "{refusals:?}");
+}
+
+/// Without a fitted lock, open downtime still refuses "Terminé" (the gate as it was).
+#[tokio::test]
+async fn without_a_fitted_lock_open_downtime_still_refuses_completion() {
+    let db = setup().await;
+    let (wo_id, _) = running_work(&db, "EQ-D4C-2").await;
+    let segment = open_downtime(&db, wo_id).await;
+    let msgs = messages(complete(&db, wo_id).await.expect_err("open downtime"));
+    assert!(has(&msgs, "GATE_COMPLETE_OPEN_DOWNTIME"), "{msgs:?}");
+    assert_eq!(wo_status(&db, wo_id).await, "in_progress");
+    // Ended by hand (no lock holds it): completion goes through.
+    crate::wo::delay::close_downtime_segment(&db, segment, None)
+        .await
+        .expect("closed by hand");
+    complete(&db, wo_id).await.expect("completed");
+}
+
+/// Lock removal stays refused while the work runs, and is open once the work is "Terminé".
+#[tokio::test]
+async fn lock_removal_is_refused_under_running_work_and_open_once_terminated() {
+    let db = setup().await;
+    let (wo_id, locks) = running_loto_work(&db, "EQ-D4C-3", &["MCC-D4C-3"]).await;
+    let refused = queries::record_permit_isolation_removed(&db, action(&locks[0]), APPLIER)
+        .await
+        .expect_err("work running");
+    assert!(
+        format!("{refused:?}").contains("PERMIT_REMOVAL_WORK_IN_PROGRESS"),
+        "{refused:?}"
+    );
+    complete(&db, wo_id).await.expect("completed");
+    verify_removal(&db, &locks[0]).await;
+    assert!(!deisolation_pending(&db, wo_id).await);
+}
+
+/// The permit holders keep the work order on their list: its responsible, and whoever fitted one of
+/// its locks; nobody else; until the last removal is verified.
+#[tokio::test]
+async fn a_terminated_work_order_with_a_lock_fitted_stays_on_its_permit_holders_list() {
+    let db = setup().await;
+    let (wo_id, locks) = running_loto_work(&db, "EQ-D4C-4", &["MCC-D4C-4"]).await;
+    let other = i64::from(crate::auth::scope_tests::user(&db, "d4c_other").await);
+    complete(&db, wo_id).await.expect("completed");
+    let now = chrono::Utc::now();
+    let mine = crate::home::my_work::my_work_orders(&db, admin_id(&db).await, now)
+        .await
+        .expect("my work");
+    assert_eq!(mine.deisolation_pending, 1);
+    assert_eq!(mine.deisolation_items[0].id, wo_id);
+    assert!(
+        mine.items.iter().all(|i| i.id != wo_id),
+        "work done: not in the open list"
+    );
+    let theirs = crate::home::my_work::my_work_orders(&db, other, now)
+        .await
+        .expect("their work");
+    assert_eq!(theirs.deisolation_pending, 0);
+
+    // The lock's fitter, not responsible, sees it too.
+    db.execute_unprepared(&format!(
+        "UPDATE permit_isolations SET applied_by_id = {other} WHERE id = {}",
+        locks[0].id
+    ))
+    .await
+    .expect("fitted by another person");
+    db.execute_unprepared(&format!(
+        "UPDATE work_orders SET primary_responsible_id = NULL WHERE id = {wo_id}"
+    ))
+    .await
+    .expect("no responsible");
+    let theirs = crate::home::my_work::my_work_orders(&db, other, now)
+        .await
+        .expect("their work");
+    assert_eq!(theirs.deisolation_pending, 1);
 }

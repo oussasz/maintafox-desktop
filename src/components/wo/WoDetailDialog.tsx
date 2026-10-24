@@ -50,6 +50,7 @@ import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
 import { WoCloseOutPanel } from "@/components/wo/WoCloseOutPanel";
 import { WoCompletionDialog } from "@/components/wo/WoCompletionDialog";
 import { completionGatesProgress } from "@/components/wo/WoCompletionGatesChecklist";
+import { WoDeisolationBadge } from "@/components/wo/WoDeisolationBadge";
 import {
   WoExecutionControls,
   type WoExecutionControlsHandle,
@@ -254,6 +255,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                     {t(`lifecycle.${wo.lifecycle_state}`)}
                   </Badge>
                 ) : null}
+                <WoDeisolationBadge wo={wo} />
                 {wo.requires_shutdown ? <WoShutdownBadge /> : null}
                 <UrgencyBadge code={wo.urgency_code} size="md" />
                 <WoNoSiteBadge wo={wo} size="md" />
