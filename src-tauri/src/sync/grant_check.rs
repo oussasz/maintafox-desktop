@@ -183,151 +183,181 @@ async fn admin_rights_may_still_arrive(conn: &impl ConnectionTrait, user_sync_id
 
 // ── Grants accepted for review ─────────────────────────────────────────────────────────────────
 
-/// A grant applied although its author does not hold the right here now, for the review notice.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Granted {
-    Assignment(String),
-    RolePermission { role_sync: String, permission: String },
-}
-
+/// A grant applied although its author does not hold the right here now, for the review notice:
+/// one readable line (what, to whom, by whom, the day it was made).
 #[derive(Debug, Clone)]
 struct ReviewItem {
-    granted: Granted,
+    /// The row the notice is about (`notification_events` source).
+    entity_type: &'static str,
+    source: String,
     line: String,
 }
 
+/// The day of a timestamp (`YYYY-MM-DD`) for the lines of a notice; "?" when unreadable.
+fn day(raw: Option<&str>) -> String {
+    raw.and_then(crate::settings::site::instant)
+        .map_or_else(|| "?".to_string(), |t| t.format("%Y-%m-%d").to_string())
+}
+
+/// Message key of the review notice of grants applied from authors without the right.
+const REVIEW_MESSAGE_KEY: &str = "grants_from_former_authors";
+
 tokio::task_local! {
-    /// Grants accepted for review during a materialization run ([`with_review_collection`]): one
-    /// notice for the whole run, written after it.
-    static REVIEWS: std::sync::Mutex<Vec<ReviewItem>>;
+    /// The review notice of the current materialization run ([`with_review_collection`]): its
+    /// event, once one grant was listed, so the next grants of the run join the same notice.
+    static RUN_NOTICE: std::sync::Mutex<Option<i64>>;
     /// Set while the rows still waiting are applied after a complete pull
-    /// ([`release_after_complete_pull`]): nothing more can arrive, so nothing waits any longer.
-    static CAUGHT_UP: ();
+    /// ([`release_after_complete_pull`]); `true` in its last pass, when nothing waits any longer.
+    static CAUGHT_UP: bool;
 }
 
+/// After a complete pull: an author who never arrived will not arrive.
 fn caught_up() -> bool {
-    CAUGHT_UP.try_with(|()| ()).is_ok()
+    CAUGHT_UP.try_with(|_| ()).is_ok()
 }
 
-/// Accepts a grant whose author does not hold the right here now and whose loss of it is not known
-/// here (see the module rule): never silently, it is listed in the administrators' review notice;
-/// within a materialization run, in one notice for the run, otherwise (a conflict taken from the
-/// Sync centre) at once, in the transaction of the apply.
-async fn accept_for_review(conn: &impl ConnectionTrait, item: ReviewItem) -> AppResult<Option<ApplyOutcome>> {
-    let pushed = REVIEWS
-        .try_with(|r| r.lock().map(|mut v| v.push(item.clone())).is_ok())
-        .unwrap_or(false);
-    if !pushed {
-        send_review_notice(conn, &[item]).await?;
-    }
-    Ok(None)
+/// The last pass after a complete pull: rights still waiting in the inbox will not apply either.
+fn final_pass() -> bool {
+    CAUGHT_UP.try_with(|f| *f).unwrap_or(false)
 }
 
-async fn send_review_notice(conn: &impl ConnectionTrait, items: &[ReviewItem]) -> AppResult<()> {
-    let (entity_type, source) = match items.first().map(|i| &i.granted) {
-        Some(Granted::Assignment(sync_id)) => ("user_scope_assignments", sync_id.clone()),
-        Some(Granted::RolePermission { role_sync, permission }) => {
-            ("role_permissions", format!("{role_sync}:{permission}"))
-        }
-        None => return Ok(()),
-    };
-    let shown: Vec<&str> = items.iter().take(NOTICE_MAX_LINES).map(|i| i.line.as_str()).collect();
-    let more = items.len().saturating_sub(shown.len());
+fn review_texts(lines: &[String]) -> (String, String) {
+    let shown: Vec<&str> = lines.iter().take(NOTICE_MAX_LINES).map(String::as_str).collect();
+    let more = lines.len().saturating_sub(shown.len());
     let list = if more > 0 {
         format!("{}; … (+{more})", shown.join("; "))
     } else {
         shown.join("; ")
     };
+    let body = format!(
+        "Reçu par synchronisation et appliqué (ce poste ne sait pas quand l'auteur a perdu le droit) : {list}. / \
+         Received by sync and applied (this PC does not know when the author lost the right): {list}."
+    );
+    (list, body)
+}
+
+/// Adds a line to the notice of this run (`event_id`); `false` when that notice is not here (its
+/// row was rolled back with the grant that raised it).
+async fn append_to_notice(conn: &impl ConnectionTrait, event_id: i64, line: &str) -> AppResult<bool> {
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT message_params_json FROM notification_events WHERE id = ? AND message_key = ?",
+            [event_id.into(), REVIEW_MESSAGE_KEY.into()],
+        ))
+        .await?
+    else {
+        return Ok(false);
+    };
+    let params: Option<String> = row.try_get("", "message_params_json").map_err(err)?;
+    let mut lines: Vec<String> = params
+        .as_deref()
+        .and_then(|p| serde_json::from_str::<Value>(p).ok())
+        .and_then(|p| p.get("lines").cloned())
+        .and_then(|l| serde_json::from_value(l).ok())
+        .unwrap_or_default();
+    lines.push(line.to_string());
+    let (list, body) = review_texts(&lines);
+    let params = json!({ "grants": list, "count": lines.len(), "lines": lines }).to_string();
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE notification_events SET message_params_json = ? WHERE id = ?",
+        [params.into(), event_id.into()],
+    ))
+    .await?;
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE notifications SET body = ? WHERE notification_event_id = ?",
+        [body.into(), event_id.into()],
+    ))
+    .await?;
+    Ok(true)
+}
+
+/// Lists a grant in the review notice, in the transaction of its apply: the notice of this run when
+/// there is one, a new one otherwise. A grant whose apply is undone (waiting, refused, failed) takes
+/// its line with it, so nothing is listed twice or for a grant not applied.
+async fn record_for_review(conn: &impl ConnectionTrait, item: &ReviewItem) -> AppResult<()> {
+    let run_event = RUN_NOTICE.try_with(|n| n.lock().ok().and_then(|g| *g)).ok().flatten();
+    if let Some(event_id) = run_event {
+        if append_to_notice(conn, event_id, &item.line).await? {
+            return Ok(());
+        }
+    }
+    let lines = vec![item.line.clone()];
+    let (list, body) = review_texts(&lines);
     crate::settings::received_notice::send_grant_review_notice(
         conn,
-        entity_type,
-        &source,
+        item.entity_type,
+        &item.source,
         "Accès reçus d'un auteur qui n'a plus le droit : à revoir / Grants received from an author who no longer \
          holds the right: to review"
             .to_string(),
-        format!(
-            "Reçu par synchronisation et appliqué (ce poste ne sait pas quand l'auteur a perdu le droit) : {list}. \
-             / Received by sync and applied (this PC does not know when the author lost the right): {list}."
-        ),
+        body,
         crate::notifications::emitter::NotificationMessage::new(
-            "grants_from_former_authors",
-            json!({ "grants": list, "count": items.len() }),
+            REVIEW_MESSAGE_KEY,
+            json!({ "grants": list, "count": 1, "lines": lines }),
         ),
+        true,
     )
-    .await
+    .await?;
+    let event_id = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT MAX(id) AS id FROM notification_events WHERE message_key = ?",
+            [REVIEW_MESSAGE_KEY.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<i64>>("", "id").ok().flatten());
+    // Outside a run (a conflict taken from the Sync centre) there is nothing to remember.
+    let _ = RUN_NOTICE.try_with(|n| {
+        if let Ok(mut g) = n.lock() {
+            *g = event_id;
+        }
+    });
+    Ok(())
 }
 
-/// Whether a grant accepted for review is still held here (its row applied, not rolled back).
-async fn still_held(conn: &impl ConnectionTrait, granted: &Granted) -> AppResult<bool> {
-    let row = match granted {
-        Granted::Assignment(sync_id) => {
-            conn.query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT 1 AS h FROM user_scope_assignments WHERE entity_sync_id = ? AND deleted_at IS NULL",
-                [sync_id.as_str().into()],
-            ))
-            .await?
+/// Accepts a grant whose author does not hold the right here now and whose loss of it is not known
+/// here (see the module rule): never silently. It is listed in the administrators' review notice in
+/// the transaction of its apply; when the notice cannot be written, the grant is not applied: it
+/// waits and is tried again at the next synchronisation (fail closed).
+async fn accept_for_review(conn: &impl ConnectionTrait, item: ReviewItem) -> AppResult<Option<ApplyOutcome>> {
+    conn.execute_unprepared("SAVEPOINT grant_review").await?;
+    match record_for_review(conn, &item).await {
+        Ok(()) => {
+            conn.execute_unprepared("RELEASE grant_review").await?;
+            Ok(None)
         }
-        Granted::RolePermission { role_sync, permission } => {
-            conn.query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT 1 AS h FROM role_permissions rp JOIN roles r ON r.id = rp.role_id \
-                   JOIN permissions p ON p.id = rp.permission_id WHERE r.entity_sync_id = ? AND p.name = ?",
-                [role_sync.as_str().into(), permission.as_str().into()],
-            ))
-            .await?
+        Err(e) => {
+            conn.execute_unprepared("ROLLBACK TO grant_review").await?;
+            conn.execute_unprepared("RELEASE grant_review").await?;
+            tracing::error!(error = %e, source = %item.source, "grant for review: notice not written, the grant waits");
+            Ok(wait(format!(
+                "{}: the administrators' review notice could not be written; tried again later",
+                item.source
+            )))
         }
-    };
-    Ok(row.is_some())
+    }
 }
 
-/// Runs a materialization (`sync::materialize::materialize_inbox`) collecting the grants accepted
-/// for review, then writes ONE notice listing those still applied. A notice that cannot be written
-/// is logged: the rows are applied already.
-pub(crate) async fn with_review_collection<T>(
-    db: &sea_orm::DatabaseConnection,
-    run: impl std::future::Future<Output = AppResult<T>>,
-) -> AppResult<T> {
-    use sea_orm::TransactionTrait;
-    let (out, items) = REVIEWS
-        .scope(std::sync::Mutex::new(Vec::new()), async {
-            let out = run.await;
-            let items = REVIEWS.with(|r| r.lock().map(|mut v| std::mem::take(&mut *v)).unwrap_or_default());
-            (out, items)
-        })
-        .await;
-    let out = out?;
-    if items.is_empty() {
-        return Ok(out);
+/// Runs a materialization (`sync::materialize::materialize_inbox`) so that the grants it applies for
+/// review are listed in ONE notice for the run ([`record_for_review`]).
+pub(crate) async fn with_review_collection<T>(run: impl std::future::Future<Output = AppResult<T>>) -> AppResult<T> {
+    // Already within a run (the passes after a complete pull): the same notice.
+    if RUN_NOTICE.try_with(|_| ()).is_ok() {
+        return run.await;
     }
-    let written = async {
-        let tx = db.begin().await?;
-        let mut seen = BTreeSet::new();
-        let mut kept = Vec::new();
-        for item in items {
-            if seen.insert(item.granted.clone()) && still_held(&tx, &item.granted).await? {
-                kept.push(item);
-            }
-        }
-        if !kept.is_empty() {
-            send_review_notice(&tx, &kept).await?;
-        }
-        tx.commit().await?;
-        AppResult::Ok(())
-    }
-    .await;
-    if let Err(e) = written {
-        tracing::error!(error = %e, "grants accepted for review: the review notice could not be written");
-    }
-    Ok(out)
+    RUN_NOTICE.scope(std::sync::Mutex::new(None), run).await
 }
 
 /// After a complete pull (`sync::transport::worker`: the exchanges reached the server head, every
-/// received row materialized): the grants still waiting are applied once more knowing that nothing
-/// more will arrive, so a grant whose author was never received, or whose author's rights wait on
-/// another such grant (two accounts waiting on each other), no longer waits for ever: it is judged
-/// as a grant whose author does not hold the right, loss time unknown when it is not known here
-/// (applied, listed for review).
+/// received row materialized): the grants still waiting are applied again knowing that nothing more
+/// will arrive, so none waits for ever:
+/// - first until nothing more applies, an author never received being judged as one whose loss is
+///   not known here (applied, listed for review), while rights still waiting in the inbox keep their
+///   grants waiting: a grant by B then waits for B's own role if that role can still apply;
+/// - then once more with those waits ended: each grant is decided ([`author_check`]).
 pub(crate) async fn release_after_complete_pull(db: &sea_orm::DatabaseConnection) -> AppResult<()> {
     let waiting = db
         .query_one(Statement::from_string(
@@ -341,10 +371,26 @@ pub(crate) async fn release_after_complete_pull(db: &sea_orm::DatabaseConnection
     if !waiting {
         return Ok(());
     }
-    CAUGHT_UP
-        .scope((), crate::sync::materialize::materialize_inbox(db, 200, true))
-        .await?;
-    Ok(())
+    // `materialize_inbox` sweeps the waiting rows until a sweep applies nothing: a fixpoint. Both
+    // passes share one review notice.
+    with_review_collection(async {
+        CAUGHT_UP
+            .scope(false, crate::sync::materialize::materialize_inbox(db, 200, true))
+            .await?;
+        CAUGHT_UP
+            .scope(true, crate::sync::materialize::materialize_inbox(db, 200, true))
+            .await?;
+        AppResult::Ok(())
+    })
+    .await
+}
+
+/// When an author's account stopped giving its rights ([`loss_time`]).
+#[derive(Debug, Clone, Copy)]
+enum AccountLoss {
+    Active,
+    At(chrono::DateTime<Utc>),
+    Unknown,
 }
 
 /// What this PC knows of the loss of a right by an author who does not hold it now ([`loss_time`]).
@@ -380,10 +426,25 @@ async fn loss_time(conn: &impl ConnectionTrait, author: i64, permission: &str, a
     let deleted_at: Option<String> = account.try_get("", "deleted_at").map_err(err)?;
     let is_admin = account.try_get::<i64>("", "is_admin").map_err(err)? == 1;
     let active = account.try_get::<i64>("", "is_active").map_err(err)? == 1 && deleted_at.is_none();
+    // When the account stopped giving its rights: deleted (`deleted_at`), or disabled at the time
+    // its ledger records (`admin_change_events`, `user_deactivated`, synchronised with it). Never
+    // `updated_at`: any later edit of the account moves it. Disabled with no such record here: not
+    // known.
     let account_lost = if active {
-        None
+        AccountLoss::Active
+    } else if let Some(t) = instant(deleted_at) {
+        AccountLoss::At(t)
     } else {
-        instant(deleted_at).or(instant(account.try_get("", "updated_at").map_err(err)?))
+        let disabled: Option<String> = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT MAX(acted_at) AS t FROM admin_change_events \
+                  WHERE action = 'user_deactivated' AND target_user_id = ? AND apply_result = 'applied'",
+                [author.into()],
+            ))
+            .await?
+            .and_then(|r| r.try_get::<Option<String>>("", "t").ok().flatten());
+        instant(disabled).map_or(AccountLoss::Unknown, AccountLoss::At)
     };
     let placeholders = vec!["?"; ADMIN_ROLE_NAMES.len()].join(", ");
     let mut values: Vec<sea_orm::Value> = Vec::new();
@@ -426,10 +487,13 @@ async fn loss_time(conn: &impl ConnectionTrait, author: i64, permission: &str, a
         return Ok(Loss::Never);
     }
     Ok(match (account_lost, live || is_admin, last_end) {
-        (Some(a), true, _) | (Some(a), false, None) => Loss::At(a),
-        (Some(a), false, Some(e)) => Loss::At(a.min(e)),
-        (None, _, Some(e)) => Loss::At(e),
-        (None, _, None) => Loss::Unknown,
+        (AccountLoss::At(a), true, _) | (AccountLoss::At(a), false, None) => Loss::At(a),
+        (AccountLoss::At(a), false, Some(e)) => Loss::At(a.min(e)),
+        // Disabled at a time not known here: the loss is not known either (never later than an
+        // assignment's end, but maybe earlier).
+        (AccountLoss::Unknown, _, _) => Loss::Unknown,
+        (AccountLoss::Active, _, Some(e)) => Loss::At(e),
+        (AccountLoss::Active, _, None) => Loss::Unknown,
     })
 }
 
@@ -466,7 +530,7 @@ async fn author_check(
     } else {
         return Ok(None);
     };
-    if !caught_up()
+    if !final_pass()
         && (crate::permit::sync_check::rights_may_still_arrive(conn, author_sync, permission).await?
             || admin_rights_may_still_arrive(conn, author_sync).await?)
     {
@@ -496,6 +560,20 @@ async fn author_check(
         "{what}: made after its author lost {needed} (here: on {lost}), or at a time that cannot be read; not \
          applied, for an administrator to decide"
     )))
+}
+
+/// How a person is named in a notice: display name, else username, else the sync id (an account
+/// not received).
+async fn person_label(conn: &impl ConnectionTrait, user_sync: &str) -> AppResult<String> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(display_name, username) AS n FROM user_accounts WHERE entity_sync_id = ?",
+            [user_sync.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<String>>("", "n").ok().flatten())
+        .unwrap_or_else(|| user_sync.to_string()))
 }
 
 /// Name and system flag of a role named by its sync id; `None` when not here.
@@ -682,10 +760,13 @@ async fn assignment_check(
         field(received, "created_at")
     };
     let review = ReviewItem {
-        granted: Granted::Assignment(entity_sync_id.to_string()),
+        entity_type: "user_scope_assignments",
+        source: entity_sync_id.to_string(),
         line: format!(
-            "{} role {role_name} -> {user_sync} (by {author_sync})",
-            granted_at.unwrap_or("?")
+            "{} : rôle / role {role_name}, par / by {}, {}",
+            person_label(conn, user_sync).await?,
+            person_label(conn, author_sync).await?,
+            day(granted_at)
         ),
     };
     author_check(conn, &what, author_sync, ADM_USERS, admin_role, granted_at, review).await
@@ -794,13 +875,12 @@ async fn role_permission_check(conn: &impl ConnectionTrait, received: &Payload) 
     };
     let granted_at = field(received, "granted_at");
     let review = ReviewItem {
-        granted: Granted::RolePermission {
-            role_sync: role_sync.to_string(),
-            permission: permission.to_string(),
-        },
+        entity_type: "role_permissions",
+        source: format!("{role_sync}:{permission}"),
         line: format!(
-            "{} permission {permission} -> role {role_name} (by {author_sync})",
-            granted_at.unwrap_or("?")
+            "{role_name} : droit / right {permission}, par / by {}, {}",
+            person_label(conn, author_sync).await?,
+            day(granted_at)
         ),
     };
     author_check(
@@ -974,13 +1054,13 @@ async fn grants_made_by(
     let rows = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT usa.created_at AS at, 'role ' || r.name || ' -> ' || COALESCE(u.display_name, u.username) \
-                    || ' (' || usa.scope_type || ')' AS line \
+            "SELECT usa.created_at AS at, COALESCE(u.display_name, u.username) || ' : rôle / role ' || r.name \
+                    AS line \
                FROM user_scope_assignments usa JOIN roles r ON r.id = usa.role_id \
                JOIN user_accounts u ON u.id = usa.user_id \
               WHERE usa.assigned_by_id = ? AND usa.deleted_at IS NULL \
              UNION ALL \
-             SELECT rp.granted_at AS at, 'permission ' || p.name || ' -> role ' || r.name AS line \
+             SELECT rp.granted_at AS at, r.name || ' : droit / right ' || p.name AS line \
                FROM role_permissions rp JOIN roles r ON r.id = rp.role_id \
                JOIN permissions p ON p.id = rp.permission_id \
               WHERE rp.granted_by_id = ? \
@@ -1051,8 +1131,8 @@ pub(crate) async fn after_rights_change(
         }
         for g in theirs {
             grants.push(LateGrant {
+                line: format!("{}, par / by {name}, {}", g.line, day(Some(&g.at))),
                 at: g.at,
-                line: format!("{} ({name})", g.line),
             });
         }
         people.push(name);
@@ -1063,11 +1143,7 @@ pub(crate) async fn after_rights_change(
     let rights: BTreeSet<&str> = lost.iter().map(|(_, p)| *p).collect();
     let rights = rights.into_iter().collect::<Vec<_>>().join(", ");
     let since_text = since.map_or_else(|| "?".to_string(), |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string());
-    let shown: Vec<String> = grants
-        .iter()
-        .take(NOTICE_MAX_LINES)
-        .map(|g| format!("{} {}", g.at, g.line))
-        .collect();
+    let shown: Vec<String> = grants.iter().take(NOTICE_MAX_LINES).map(|g| g.line.clone()).collect();
     let more = grants.len().saturating_sub(shown.len());
     let list = if more > 0 {
         format!("{}; … (+{more})", shown.join("; "))
@@ -1098,6 +1174,7 @@ pub(crate) async fn after_rights_change(
                 "count": grants.len(),
             }),
         ),
+        false,
     )
     .await
 }

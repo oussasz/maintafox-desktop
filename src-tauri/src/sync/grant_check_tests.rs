@@ -582,12 +582,18 @@ async fn a_first_pull_replays_old_grants_of_authors_who_lost_the_right() {
     let managers = role_id(&p.db, "user-managers").await;
     let former = user(&p.db, "former").await;
     assign(&p.db, "former-role", former, managers, Some(p.chef), &three_days_ago).await;
-    exec(
-        &p.db,
-        "UPDATE user_accounts SET is_active = 0, updated_at = ? WHERE id = ?",
-        vec![now().into(), former.into()],
+    // Disabled since, through the command: its ledger records when (`user_deactivated`).
+    crate::commands::admin_users::set_user_active_impl(
+        &crate::state::AppState::new(p.db.clone()),
+        &caller(p.chef, "chef"),
+        crate::commands::admin_users::SetUserActiveInput {
+            user_id: former,
+            reason: "Left the plant".into(),
+        },
+        false,
     )
-    .await;
+    .await
+    .expect("disabled");
     let legacy = user(&p.db, "legacy").await;
     let old_managers = custom_role(&p.db, "old-managers", &["ot.view"]).await;
     assign(
@@ -638,11 +644,8 @@ async fn a_first_pull_replays_old_grants_of_authors_who_lost_the_right() {
         .expect("events");
     assert_eq!(notices.len(), 1, "one review notice");
     let params: String = notices[0].try_get("", "params").expect("params");
-    assert!(
-        params.contains("hire-3-sync") && params.contains("hire-4-sync"),
-        "{params}"
-    );
-    assert!(!params.contains("hire-1-sync"), "known loss, made before: {params}");
+    assert!(params.contains("hire-3 :") && params.contains("hire-4 :"), "{params}");
+    assert!(!params.contains("hire-1 :"), "known loss, made before: {params}");
 }
 
 /// An author never received waits while sync catches up; after a complete pull it waits no longer
@@ -681,13 +684,17 @@ async fn waits_end_after_a_complete_pull() {
         .await,
         1
     );
+    // Neither author ever held the right here: both end as conflicts, for an administrator.
     for sync_id in ["x-by-y", "y-by-x"] {
-        assert_ne!(
-            inbox_status(&p.db, sync_id).await,
-            "deferred",
-            "{sync_id} waits no longer"
-        );
+        assert_eq!(inbox_status(&p.db, sync_id).await, "conflict", "{sync_id}");
     }
+    // The author never received stays named: a local change of the row sends it again.
+    let sent = payload(&p.db, "user_scope_assignments", "by-ghost").await;
+    assert_eq!(
+        sent.get("assigned_by_sync_id").and_then(Value::as_str),
+        Some("ghost-sync"),
+        "{sent:?}"
+    );
 }
 
 /// An author whose rights are still in the inbox: the grant waits for them.
@@ -871,4 +878,313 @@ async fn a_new_bootstrap_account_is_refused_once_this_pc_has_its_first_administr
         .expect("marker");
     let outcome = receive(&p.db, "user_accounts", "first-elsewhere-sync", "upsert", row).await;
     assert!(is_grant_conflict(&outcome), "second first administrator: {outcome:?}");
+}
+
+// ── Review round 2 ──────────────────────────────────────────────────────────────────────────────
+
+fn caller(user_id: i64, username: &str) -> crate::auth::session_manager::AuthenticatedUser {
+    crate::auth::session_manager::AuthenticatedUser {
+        user_id: i32::try_from(user_id).expect("fits"),
+        username: username.into(),
+        display_name: None,
+        is_admin: false,
+        force_password_change: false,
+        tenant_id: "tenant-test".into(),
+        token_tenant_id: "tenant-test".into(),
+    }
+}
+
+async fn review_notices(db: &DatabaseConnection) -> Vec<String> {
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT COALESCE(message_params_json, '') AS params FROM notification_events \
+          WHERE message_key = 'grants_from_former_authors' ORDER BY id"
+            .to_string(),
+    ))
+    .await
+    .expect("events")
+    .iter()
+    .map(|r| r.try_get::<String>("", "params").expect("params"))
+    .collect()
+}
+
+fn minus(at: chrono::DateTime<chrono::Utc>, minutes: i64) -> String {
+    (at - chrono::Duration::minutes(minutes))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+/// A disabled author: the cutoff is the disable recorded by its ledger (`user_deactivated`), not
+/// the account's `updated_at` that a later edit moves; the clock skew boundary holds on both sides.
+/// Disabled with no record of it here: not known, the grant is applied for review.
+#[tokio::test]
+async fn a_disabled_authors_cutoff_is_the_recorded_disable_time() {
+    let p = plant().await;
+    let state = crate::state::AppState::new(p.db.clone());
+    let chef = caller(p.chef, "chef");
+    crate::commands::admin_users::set_user_active_impl(
+        &state,
+        &chef,
+        crate::commands::admin_users::SetUserActiveInput {
+            user_id: p.manager,
+            reason: "Left the plant".into(),
+        },
+        false,
+    )
+    .await
+    .expect("disabled");
+    let disabled_at: String =
+        p.db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT acted_at FROM admin_change_events WHERE action = 'user_deactivated' AND target_user_id = ?",
+            [p.manager.into()],
+        ))
+        .await
+        .unwrap()
+        .expect("ledger")
+        .try_get("", "acted_at")
+        .unwrap();
+    let disabled_at = crate::settings::site::instant(&disabled_at).expect("time");
+    // A later edit of the account moves `updated_at` only.
+    exec(
+        &p.db,
+        "UPDATE user_accounts SET display_name = 'Former manager', updated_at = ? WHERE id = ?",
+        vec![stamp(chrono::Duration::days(2)).into(), p.manager.into()],
+    )
+    .await;
+
+    for (sync_id, minutes) in [
+        ("well-before", 120),
+        ("just-before-skew", 11),
+        ("within-skew", 9),
+        ("after-disable", -60),
+    ] {
+        let hire = user(&p.db, &format!("hire-{sync_id}")).await;
+        let row = remote_assignment_at(
+            &p.db,
+            sync_id,
+            hire,
+            p.operator,
+            Some(p.manager),
+            &minus(disabled_at, minutes),
+        )
+        .await;
+        inbox(&p.db, "user_scope_assignments", sync_id, &row).await;
+    }
+    crate::sync::materialize::materialize_inbox(&p.db, 200, true)
+        .await
+        .expect("materialize");
+    for (sync_id, applies) in [
+        ("well-before", true),
+        ("just-before-skew", true),
+        ("within-skew", false),
+        ("after-disable", false),
+    ] {
+        let status = inbox_status(&p.db, sync_id).await;
+        assert_eq!(status == "applied", applies, "{sync_id}: {status}");
+        if !applies {
+            assert_eq!(status, "conflict", "{sync_id}");
+        }
+    }
+    assert!(review_notices(&p.db).await.is_empty(), "known loss: nothing to review");
+
+    // Disabled with no ledger record here: the loss is not known.
+    let quiet = user(&p.db, "quiet-manager").await;
+    let managers = role_id(&p.db, "user-managers").await;
+    assign(&p.db, "quiet-role", quiet, managers, Some(p.chef), &now()).await;
+    exec(
+        &p.db,
+        "UPDATE user_accounts SET is_active = 0 WHERE id = ?",
+        vec![quiet.into()],
+    )
+    .await;
+    let row = remote_assignment(&p.db, "by-quiet", p.worker, p.operator, Some(quiet)).await;
+    inbox(&p.db, "user_scope_assignments", "by-quiet", &row).await;
+    crate::sync::materialize::materialize_inbox(&p.db, 200, true)
+        .await
+        .expect("materialize");
+    assert!(assignment_held(&p.db, "by-quiet").await);
+    let notices = review_notices(&p.db).await;
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    // Readable: the person, the role, who gave it, the day only.
+    let params: Value = serde_json::from_str(&notices[0]).expect("params");
+    let grants = params.get("grants").and_then(Value::as_str).unwrap_or_default();
+    assert!(
+        grants.contains("worker") && grants.contains("quiet-manager"),
+        "{grants}"
+    );
+    assert!(
+        grants.contains(&chrono::Utc::now().format("%Y-%m-%d").to_string()) && !grants.contains('Z'),
+        "a day, no timestamp: {grants}"
+    );
+}
+
+/// After a complete pull, a grant by B waits for B's own role still waiting (its author never
+/// received): the role applies for review first, then the grant applies (a fixpoint).
+#[tokio::test]
+async fn after_a_complete_pull_a_grant_waits_for_its_authors_own_role() {
+    let p = plant().await;
+    let managers = role_id(&p.db, "user-managers").await;
+    let b = user(&p.db, "author-b").await;
+    let mut b_role = remote_assignment(&p.db, "b-role", b, managers, Some(p.chef)).await;
+    b_role.insert("assigned_by_sync_id".into(), "ghost-sync".into());
+    let by_b = remote_assignment(&p.db, "by-b", p.worker, p.operator, Some(b)).await;
+    // The grant first: judged before the role in every sweep.
+    inbox(&p.db, "user_scope_assignments", "by-b", &by_b).await;
+    inbox(&p.db, "user_scope_assignments", "b-role", &b_role).await;
+    crate::sync::materialize::materialize_inbox(&p.db, 200, true)
+        .await
+        .expect("materialize");
+    assert_eq!(inbox_status(&p.db, "by-b").await, "deferred");
+
+    crate::sync::grant_check::release_after_complete_pull(&p.db)
+        .await
+        .expect("release");
+    assert_eq!(inbox_status(&p.db, "b-role").await, "applied");
+    assert_eq!(inbox_status(&p.db, "by-b").await, "applied");
+    assert_eq!(review_notices(&p.db).await.len(), 1, "one notice for the run");
+}
+
+/// A widening that waits after the check (its team not received) lists nothing, however often it
+/// is tried; a notice that cannot be written leaves the grant waiting (fail closed), then it applies.
+#[tokio::test]
+async fn a_grant_for_review_is_listed_once_and_only_when_applied() {
+    let p = plant().await;
+    let legacy = user(&p.db, "legacy").await;
+    let old_managers = custom_role(&p.db, "old-managers", &["ot.view"]).await;
+    assign(&p.db, "legacy-role", legacy, old_managers, Some(p.chef), &now()).await;
+    assign(&p.db, "held", p.worker, p.operator, Some(legacy), &now()).await;
+    let mut widened = payload(&p.db, "user_scope_assignments", "held").await;
+    widened.insert("scope_type".into(), "team".into());
+    widened.insert("scope_reference_sync_id".into(), "team-not-here".into());
+    // Tried on three synchronisations: it waits each time (the team), and its line goes with it
+    // (a row not applied is rolled back with everything its apply wrote, as the inbox does).
+    for _ in 0..3 {
+        use sea_orm::TransactionTrait;
+        let tx = p.db.begin().await.expect("begin");
+        let outcome = apply_inbound_payload(
+            &tx,
+            "user_scope_assignments",
+            "held",
+            "upsert",
+            2,
+            &Value::Object(widened.clone()).to_string(),
+        )
+        .await
+        .expect("apply");
+        tx.rollback().await.expect("rollback");
+        assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    }
+    assert!(
+        review_notices(&p.db).await.is_empty(),
+        "nothing applied, nothing listed"
+    );
+
+    exec(
+        &p.db,
+        "CREATE TRIGGER refuse_review_notice BEFORE INSERT ON notification_events \
+         WHEN NEW.message_key = 'grants_from_former_authors' BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+        vec![],
+    )
+    .await;
+    let newcomer = user(&p.db, "newcomer").await;
+    let row = remote_assignment(&p.db, "new-by-legacy", newcomer, p.operator, Some(legacy)).await;
+    let outcome = receive(&p.db, "user_scope_assignments", "new-by-legacy", "upsert", row.clone()).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    assert!(!assignment_held(&p.db, "new-by-legacy").await);
+    exec(&p.db, "DROP TRIGGER refuse_review_notice", vec![]).await;
+    let outcome = receive(&p.db, "user_scope_assignments", "new-by-legacy", "upsert", row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(review_notices(&p.db).await.len(), 1);
+}
+
+/// Role permissions: an author whose role lost the right (loss unknown) gives it for review; an
+/// author who never held `adm.roles` here is refused.
+#[tokio::test]
+async fn role_permission_review_and_never_held() {
+    let p = plant().await;
+    let legacy = user(&p.db, "legacy").await;
+    let old_managers = custom_role(&p.db, "old-managers", &["ot.view"]).await;
+    assign(&p.db, "legacy-role", legacy, old_managers, Some(p.chef), &now()).await;
+    let layout = crate::sync::row_layout::layout(&p.db, "role_permissions")
+        .await
+        .expect("layout");
+    let format = payload(&p.db, "user_accounts", "worker-sync")
+        .await
+        .get("_sync_format")
+        .cloned()
+        .expect("format marker");
+    let permission = |name: &str, by: &str| {
+        let mut row = Payload::new();
+        row.insert("_sync_format".into(), format.clone());
+        row.insert("role_sync_id".into(), "field-operators-sync".into());
+        row.insert("permission_key".into(), name.into());
+        row.insert("granted_at".into(), now().into());
+        row.insert("granted_by_sync_id".into(), by.into());
+        row
+    };
+    let send = |row: Payload| {
+        let sync_id = crate::sync::row_codec::natural_entity_sync_id(&layout, &row).expect("natural key");
+        let db = &p.db;
+        async move { receive(db, "role_permissions", &sync_id, "upsert", row).await }
+    };
+    let outcome = send(permission("ot.edit", "legacy-sync")).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "loss unknown: {outcome:?}");
+    let notices = review_notices(&p.db).await;
+    assert_eq!(notices.len(), 1);
+    assert!(
+        notices[0].contains("ot.edit") && notices[0].contains("legacy"),
+        "{}",
+        notices[0]
+    );
+
+    let outcome = send(permission("ot.create", "worker-sync")).await;
+    assert!(is_grant_conflict(&outcome), "never held: {outcome:?}");
+}
+
+/// Re-enabling an administration account through `reactivate_user` on another PC is a conflict
+/// here. `update_user` cannot re-enable an account (`GATE_ADMIN_USE_DISABLE`): a details edit of a
+/// disabled one is applied, still disabled.
+#[tokio::test]
+async fn reactivating_through_the_commands_is_checked() {
+    let p = plant().await;
+    let state = crate::state::AppState::new(p.db.clone());
+    let chef = caller(p.chef, "chef");
+    let input = |user_id| crate::commands::admin_users::SetUserActiveInput {
+        user_id,
+        reason: "Back at the plant".into(),
+    };
+    crate::commands::admin_users::set_user_active_impl(&state, &chef, input(p.manager), false)
+        .await
+        .expect("disabled");
+    crate::commands::admin_users::set_user_active_impl(&state, &chef, input(p.manager), true)
+        .await
+        .expect("re-enabled on the other PC");
+    let enabled = payload(&p.db, "user_accounts", "manager-sync").await;
+    crate::commands::admin_users::set_user_active_impl(&state, &chef, input(p.manager), false)
+        .await
+        .expect("disabled here");
+    let outcome = receive(&p.db, "user_accounts", "manager-sync", "upsert", enabled).await;
+    assert!(is_grant_conflict(&outcome), "{outcome:?}");
+
+    let refused = crate::commands::admin_users::update_user_impl(
+        &state,
+        &chef,
+        crate::commands::admin_users::UpdateUserInput {
+            user_id: p.manager,
+            username: None,
+            display_name: None,
+            email: None,
+            phone: None,
+            personnel_id: None,
+            force_password_change: None,
+            is_active: Some(true),
+        },
+    )
+    .await;
+    assert!(refused.is_err(), "update_user never re-enables: {refused:?}");
+    let mut edited = payload(&p.db, "user_accounts", "manager-sync").await;
+    edited.insert("display_name".into(), "Renamed elsewhere".into());
+    let outcome = receive(&p.db, "user_accounts", "manager-sync", "upsert", edited).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
 }

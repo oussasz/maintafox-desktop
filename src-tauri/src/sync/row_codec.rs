@@ -645,11 +645,36 @@ pub(crate) async fn load_row_payload(
         PAYLOAD_FORMAT_KEY.to_string(),
         Value::String(PAYLOAD_FORMAT.to_string()),
     );
-    let payload: Map<String, Value> = payload.into_iter().collect();
+    let mut payload: Map<String, Value> = payload.into_iter().collect();
     let entity_sync_id = match identity {
         Some(id) => id,
         None => natural_entity_sync_id(layout, &payload)?,
     };
+    // A soft reference received before its target is empty here until the target arrives
+    // (`sync_pending_refs`): the row sent again (a local change) still names the target, so the
+    // other devices never lose the link.
+    for column in &layout.columns {
+        if let Role::Ref { key, soft: true, .. } = &column.role {
+            if payload.get(key).is_none_or(Value::is_null) {
+                let pending = conn
+                    .query_one(Statement::from_sql_and_values(
+                        DatabaseBackend::Sqlite,
+                        "SELECT target_sync_id FROM sync_pending_refs \
+                          WHERE entity_type = ? AND entity_sync_id = ? AND column_name = ?",
+                        [
+                            layout.def.entity_type.into(),
+                            entity_sync_id.as_str().into(),
+                            column.name.as_str().into(),
+                        ],
+                    ))
+                    .await?
+                    .and_then(|r| r.try_get::<String>("", "target_sync_id").ok());
+                if let Some(target) = pending {
+                    payload.insert(key.clone(), Value::String(target));
+                }
+            }
+        }
+    }
     let owner_user_sync_id = match layout.owner_payload_key()? {
         None => None,
         Some(key) => Some(

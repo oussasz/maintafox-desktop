@@ -160,11 +160,8 @@ enum Selection<'a> {
 /// at most `limit` rows, pending rows first).
 pub async fn materialize_inbox_batch(db: &DatabaseConnection, limit: Option<i64>) -> AppResult<MaterializeInboxResult> {
     // Grants applied for review are listed in one notice for the run (`sync::grant_check`).
-    crate::sync::grant_check::with_review_collection(
-        db,
-        materialize_selection(db, Selection::Any, limit.unwrap_or(200)),
-    )
-    .await
+    crate::sync::grant_check::with_review_collection(materialize_selection(db, Selection::Any, limit.unwrap_or(200)))
+        .await
 }
 
 /// Apply every pending inbox row (passes of `batch` rows, parents first). With `retry_deferred`,
@@ -177,7 +174,7 @@ pub async fn materialize_inbox(
     retry_deferred: bool,
 ) -> AppResult<MaterializeInboxResult> {
     // Grants applied for review are listed in one notice for the run (`sync::grant_check`).
-    crate::sync::grant_check::with_review_collection(db, materialize_inbox_run(db, batch, retry_deferred)).await
+    crate::sync::grant_check::with_review_collection(materialize_inbox_run(db, batch, retry_deferred)).await
 }
 
 async fn materialize_inbox_run(
