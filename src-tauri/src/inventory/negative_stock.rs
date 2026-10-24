@@ -119,6 +119,10 @@ pub const REFUSED_COUNT_NOT_PENDING: &str = "NEGATIVE_STOCK_COUNT_NOT_PENDING";
 /// would no longer bring the stock to the counted quantity; the location is counted again.
 pub const REFUSED_COUNT_STALE: &str = "NEGATIVE_STOCK_COUNT_STALE";
 
+/// Notification category of the notice to the counter of a list count whose approval was refused
+/// because the stock on record moved since it (migration 259): count again.
+pub const RECOUNT_CATEGORY: &str = "stock_count_recount";
+
 /// A balance to reconcile (open) or reconciled (closed), with the location's balance now.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NegativeStockReview {
@@ -2221,7 +2225,11 @@ pub async fn resolve_by_count(
             after_hash: None,
             retention_class: "standard".to_string(),
             details_json: Some(serde_json::json!({
-                "summary": "Stock to reconcile resolved by a count",
+                "summary": if posted.pending_approval {
+                    "Count recorded from the stock to reconcile, waiting for a second person's approval (nothing posted)"
+                } else {
+                    "Stock to reconcile resolved by a count"
+                },
                 "article_id": input.article_id,
                 "location_id": input.location_id,
                 "negative_review_id": item_id,
@@ -2242,6 +2250,7 @@ pub async fn resolve_by_count(
                 "four_eyes_tolerance": posted.tolerance_json,
                 "pending_approval": posted.pending_approval,
                 "self_approved": posted.self_approved,
+                "replaced_session_codes": posted.replaced_sessions,
             })),
         },
     )
@@ -2308,11 +2317,21 @@ pub async fn approve_pending_count(
         ]));
     }
     let actor_id = i64::from(user_id);
-    let self_approved =
-        crate::inventory::count_four_eyes::check_approval(&tx, pending.is_critical, pending.counted_by_id, actor_id)
-            .await?;
+    let self_approved = crate::inventory::count_four_eyes::check_approval(
+        &tx,
+        true,
+        pending.is_critical,
+        pending.counted_by_id,
+        actor_id,
+    )
+    .await?;
+    // The stock on record, whatever moved it: a movement made here or received from another PC
+    // (applied to the balance when it arrives).
     let (_, on_hand) = crate::inventory::controls::get_balance(&tx, pending.article_id, pending.location_id).await?;
     if (on_hand - pending.system_qty).abs() > QTY_TOLERANCE {
+        tx.rollback().await?;
+        // The counter is told to count again (the approver sees the refusal).
+        notify_recount(db, &pending, on_hand).await;
         return Err(refused(
             REFUSED_COUNT_STALE,
             format!(
@@ -2367,6 +2386,7 @@ pub async fn approve_pending_count(
                 "count_line_id": posted.line_id,
                 "transaction_id": posted.transaction_id,
                 "negative_review_id": item_id,
+                "four_eyes_tolerance": posted.tolerance_json,
             })),
         },
     )
@@ -2384,4 +2404,63 @@ pub async fn approve_pending_count(
         pending_approval: false,
         self_approved,
     })
+}
+
+/// The in-app notice to the counter of a list count whose approval was refused because the stock on
+/// record moved since the count: the article, the location and why, to count again (fire-and-log:
+/// the refusal stands whatever happens to the notice).
+async fn notify_recount(
+    db: &DatabaseConnection,
+    pending: &crate::inventory::controls::PendingLocationCount,
+    on_hand: f64,
+) {
+    let names = db
+        .query_one(sqlite(
+            "SELECT a.article_code, a.article_name, w.code AS warehouse_code, sl.code AS location_code
+             FROM articles a, stock_locations sl JOIN warehouses w ON w.id = sl.warehouse_id
+             WHERE a.id = ? AND sl.id = ?",
+            vec![pending.article_id.into(), pending.location_id.into()],
+        ))
+        .await;
+    let row = match names {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(err) => {
+            tracing::warn!(error = %err, line_id = pending.line_id, "recount notice: names not read");
+            return;
+        }
+    };
+    let text = |col: &str| row.try_get::<String>("", col).unwrap_or_default();
+    let (code, name) = (text("article_code"), text("article_name"));
+    let location = format!("{}/{}", text("warehouse_code"), text("location_code"));
+    let input = crate::notifications::emitter::NotificationEventInput {
+        source_module: "inventory_count_lines".into(),
+        source_record_id: Some(pending.line_id.to_string()),
+        event_code: "stock_count_stale".into(),
+        category_code: RECOUNT_CATEGORY.into(),
+        severity: "warning".into(),
+        dedupe_key: Some(format!("stock-count-recount-{}", pending.line_id)),
+        payload_json: None,
+        title: format!("Recomptage demandé — {code} à {location}"),
+        body: Some(format!(
+            "{name} : le stock de {location} a bougé depuis le comptage {} (de {} à {on_hand}) ; \
+             son approbation a été refusée. Recomptez l'emplacement.",
+            pending.session_code, pending.system_qty
+        )),
+        action_url: Some(LIST_URL.to_string()),
+    };
+    let message = crate::notifications::emitter::NotificationMessage::new(
+        RECOUNT_CATEGORY,
+        serde_json::json!({
+            "code": code,
+            "title": name,
+            "location": location,
+            "session": pending.session_code,
+            "system_qty": pending.system_qty,
+            "on_hand": on_hand,
+        }),
+    );
+    if let Err(err) = crate::notifications::emitter::emit_event_with(db, input, Some(&message)).await {
+        tracing::warn!(error = %err, line_id = pending.line_id, "recount notice not raised");
+    }
 }

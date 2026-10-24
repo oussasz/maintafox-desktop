@@ -190,7 +190,8 @@
     "pm_concurrent_versions": "Concurrent PM plan versions",
     "permit_suspended_work_held": "Work order put on hold by its permit’s suspension",
     "permit_ended_under_work": "Permit ended on another PC during or before the work",
-    "stock_to_reconcile": "Stock to reconcile after sync"
+    "stock_to_reconcile": "Stock to reconcile after sync",
+    "stock_count_recount": "Count to do again"
   },
   "messages": {
     "wo_assigned": {
@@ -347,6 +348,10 @@
     "stock_double_count": {
       "title": "{{code}} counted twice at {{location}}",
       "body": "{{title}}: {{count}} counts recorded on different PCs. Check the stock and record a new count."
+    },
+    "stock_count_recount": {
+      "title": "Count {{code}} at {{location}} again",
+      "body": "{{title}}: the approval of your count {{session}} was refused, the stock moved since (from {{system_qty}} to {{on_hand}}). Count the location again from the stock to reconcile."
     }
   },
   "audience": {

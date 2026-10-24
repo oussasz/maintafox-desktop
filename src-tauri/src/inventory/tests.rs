@@ -3463,3 +3463,52 @@ async fn a_count_line_is_entered_again_only_against_its_current_version() {
     );
     assert_eq!(lines[0].row_version, again.row_version);
 }
+
+/// D11 review (blocking 1): a variance whose counter was not recorded (entered before migration
+/// 259) is never approved without four-eyes, even when its flag says within the tolerance (the
+/// flag of the retired rule): it is entered again.
+#[tokio::test]
+async fn a_variance_without_a_recorded_counter_is_entered_again_whatever_its_flag() {
+    let db = setup_db().await;
+    set_tenant_setting(&db, "inventory.count_four_eyes_percent_threshold", "25").await;
+    let within = counted_line(&db, "INV-4E-OLD-WITHIN", 8.0, None).await;
+    assert_eq!((within.is_critical, within.counted_by_id), (0, None));
+    let refused = controls::approve_count_line(&db, approval(&within, count_reviewer(&db).await))
+        .await
+        .expect_err("no counter recorded");
+    assert_eq!(
+        gate_code(refused),
+        crate::inventory::count_four_eyes::REFUSED_COUNTER_UNKNOWN
+    );
+}
+
+/// D11 review: a line entered again by another person records that person as its counter and loses
+/// the approval given to the previous entry, its self-approval flag included.
+#[tokio::test]
+async fn a_line_entered_again_by_another_person_changes_its_counter_and_drops_the_self_approval() {
+    let db = setup_db().await;
+    let mut factory = crate::sync::test_support::RowFactory::new();
+    single_site_opting_out(&db, &mut factory, true).await;
+    let line = counted_line(&db, "INV-4E-REENTRY", 6.0, Some(1)).await;
+    let approved = controls::approve_count_line(&db, approval(&line, 1))
+        .await
+        .expect("self-approval under the opt-out");
+    assert_eq!(approved.self_approved, 1);
+    let reviewer = count_reviewer(&db).await;
+    let again = controls::upsert_count_line(
+        &db,
+        UpsertInventoryCountLineInput {
+            session_id: line.session_id,
+            article_id: line.article_id,
+            location_id: line.location_id,
+            counted_qty: 6.0,
+            variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: Some(approved.row_version),
+            actor_id: Some(reviewer),
+        },
+    )
+    .await
+    .expect("entered again");
+    assert_eq!(again.counted_by_id, Some(reviewer));
+    assert_eq!((again.self_approved, again.approved_by_id), (0, None));
+}

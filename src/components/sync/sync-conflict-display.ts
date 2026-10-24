@@ -192,6 +192,7 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   // Four-eyes on a stock count variance above the tolerance (D11).
   "COUNT_SELF_APPROVAL",
   "COUNT_APPROVAL_RECORD_INVALID",
+  "COUNT_APPROVAL_RECORD_CHANGED",
   // The notice of a safety rule changed on another PC cannot be muted or re-routed by sync.
   "NOTIFICATION_CATEGORY_LOCKED",
   "LAST_ADMINISTRATOR_REQUIRED",

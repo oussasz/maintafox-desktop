@@ -202,6 +202,7 @@
       "PERMIT_APPROVAL_RECORD_INVALID": "A permit received with an incomplete or inconsistent record of its submission or approval",
       "COUNT_SELF_APPROVAL": "A stock count variance above the four-eyes tolerance approved on another PC by the person who counted it, where the stores require a second person, or not recorded as a self-approval",
       "COUNT_APPROVAL_RECORD_INVALID": "A stock count line received flagged as a self-approval although it was not approved by its counter above the tolerance",
+      "COUNT_APPROVAL_RECORD_CHANGED": "A stock count line received that clears or changes the person who counted it, recorded here, or brings its variance back within the tolerance, without a new entry of the counted quantity",
       "NOTIFICATION_CATEGORY_LOCKED": "A change from another PC that would switch off or re-route the notice of a safety rule changed on another PC",
       "LAST_ADMINISTRATOR_REQUIRED": "A change from another PC that would leave this PC without an active administrator",
       "ADMIN_RECOVERY_NOTICE_CHANGED": "A notice about an administrator created with a recovery code was changed on another PC: notices are never changed",

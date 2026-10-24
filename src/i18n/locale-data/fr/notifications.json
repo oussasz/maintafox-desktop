@@ -190,7 +190,8 @@
     "pm_concurrent_versions": "Versions concurrentes d’un plan préventif",
     "permit_suspended_work_held": "OT mis en attente par la suspension de son permis",
     "permit_ended_under_work": "Permis terminé sur un autre poste pendant ou avant le travail",
-    "stock_to_reconcile": "Stock à rapprocher après synchronisation"
+    "stock_to_reconcile": "Stock à rapprocher après synchronisation",
+    "stock_count_recount": "Comptage à refaire"
   },
   "messages": {
     "wo_assigned": {
@@ -347,6 +348,10 @@
     "stock_double_count": {
       "title": "{{code}} compté deux fois à {{location}}",
       "body": "{{title}} : {{count}} comptages enregistrés sur des postes différents. Vérifiez le stock et enregistrez un nouveau comptage."
+    },
+    "stock_count_recount": {
+      "title": "Recomptez {{code}} à {{location}}",
+      "body": "{{title}} : l'approbation de votre comptage {{session}} a été refusée, le stock a bougé depuis (de {{system_qty}} à {{on_hand}}). Recomptez l'emplacement depuis le stock à rapprocher."
     }
   },
   "audience": {

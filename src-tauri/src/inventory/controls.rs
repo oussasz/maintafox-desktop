@@ -38,7 +38,7 @@ fn next_doc(prefix: &str) -> String {
     format!("{prefix}-{}", Utc::now().timestamp_millis())
 }
 
-async fn ensure_count_session(db: &DatabaseConnection, session_id: i64) -> AppResult<InventoryCountSession> {
+async fn ensure_count_session<C: ConnectionTrait>(db: &C, session_id: i64) -> AppResult<InventoryCountSession> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -611,25 +611,36 @@ pub async fn approve_count_line(
             "GATE_INV_COUNT_EVIDENCE: reviewer_evidence must be explicit and at least 8 characters.".to_string(),
         ]));
     }
-    let line = get_count_line(db, input.line_id).await?;
+    // The line the four-eyes check judges (its flag, its counter, its version) is read in the
+    // approval's transaction: a sync apply in between cannot change it under the check.
+    let tx = db.begin().await?;
+    let line = get_count_line(&tx, input.line_id).await?;
     if line.row_version != input.expected_row_version {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_RECORD_CHANGED_ELSEWHERE: count line row_version mismatch.".to_string(),
-        ]));
+        return Err(count_line_changed_elsewhere());
     }
     if line.approval_required == 0 {
         return Err(AppError::ValidationFailed(vec![
             "GATE_INV_COUNT_NO_APPROVAL_NEEDED: Approval is not required for zero variance lines.".to_string(),
         ]));
     }
-    let tx = db.begin().await?;
+    refuse_reconciliation_list_count(&tx, line.session_id).await?;
     // Above the four-eyes tolerance, someone other than the counter approves, unless the site
     // opted out (then it is an "auto-approbation", flagged).
     let self_approved = crate::inventory::count_four_eyes::check_approval(
         &tx,
+        true,
         line.is_critical == 1,
         line.counted_by_id,
         input.reviewer_id,
+    )
+    .await?;
+    // The tolerance in force at the approval, kept with it (the line's flag was judged at entry).
+    let tolerance = crate::inventory::count_four_eyes::evaluate(
+        &tx,
+        line.article_id,
+        line.location_id,
+        line.variance_qty,
+        line.system_qty,
     )
     .await?;
     let written = tx
@@ -675,12 +686,51 @@ pub async fn approve_count_line(
                 "counted_by_id": line.counted_by_id,
                 "self_approved": self_approved,
                 "note": input.reviewer_evidence.trim(),
+                "four_eyes_tolerance": approval_tolerance_json(line.is_critical == 1, &tolerance),
             })),
         },
     )
     .await?;
     tx.commit().await?;
     get_count_line(db, input.line_id).await
+}
+
+/// The tolerance kept in an approval's audit: the line's flag (judged at entry, as the entry's
+/// audit records with the thresholds then) and the thresholds in force at the approval.
+pub(crate) fn approval_tolerance_json(
+    above_at_entry: bool,
+    at_approval: &crate::inventory::count_four_eyes::ToleranceVerdict,
+) -> serde_json::Value {
+    serde_json::json!({
+        "above_tolerance_at_entry": above_at_entry,
+        "at_approval": at_approval.audit_json(),
+    })
+}
+
+/// Refusal of the generic count steps (line approval, posting) on a count recorded from the
+/// stock-to-reconcile list: it is approved there, where its posting closes the item in the same
+/// step and is refused when the stock moved since the count (D11 Q4a).
+pub const REFUSED_RECONCILE_LIST_COUNT: &str = "GATE_INV_COUNT_RECONCILE_LIST";
+
+async fn refuse_reconciliation_list_count<C: ConnectionTrait>(conn: &C, session_id: i64) -> AppResult<()> {
+    let listed = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS listed FROM inventory_count_lines WHERE session_id = ? AND count_path = ? LIMIT 1",
+            [
+                session_id.into(),
+                crate::inventory::negative_stock::COUNT_PATH_RECONCILIATION.into(),
+            ],
+        ))
+        .await?
+        .is_some();
+    if listed {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{REFUSED_RECONCILE_LIST_COUNT}: this count was recorded from the stock-to-reconcile list: approve it \
+             there (stock to reconcile, count waiting for approval)."
+        )]));
+    }
+    Ok(())
 }
 
 pub async fn post_count_session(
@@ -698,6 +748,7 @@ pub async fn post_count_session(
             "GATE_INV_COUNT_NOT_APPROVED: Count session must be approved before posting.".to_string(),
         ]));
     }
+    refuse_reconciliation_list_count(db, input.session_id).await?;
     let lines = list_count_lines(db, input.session_id).await?;
     if lines.is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -1020,8 +1071,11 @@ pub(crate) struct PostedLocationCount {
     pub self_approved: bool,
     /// Counted, not posted: it waits for a second person's approval.
     pub pending_approval: bool,
-    /// The tolerance applied, as kept in the audit (at the count).
+    /// The tolerance applied, as kept in the audit (at the count; at an approval, the line's flag
+    /// judged at the count and the thresholds in force at the approval).
     pub tolerance_json: serde_json::Value,
+    /// The codes of the waiting counts of the pair this count replaced (their sessions cancelled).
+    pub replaced_sessions: Vec<String>,
 }
 
 /// The pending list counts of an article and location (counted, waiting for a second person):
@@ -1076,16 +1130,47 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
             [count.article_id.into(), count.location_id.into()],
         ))
         .await?;
-    for row in pending_sessions {
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE inventory_count_sessions SET status = 'cancelled', row_version = row_version + 1, updated_at = ?
-             WHERE id = ? AND status = 'submitted'",
-            [now.clone().into(), row.try_get::<i64>("", "session_id")?.into()],
-        ))
-        .await?;
-    }
     let session_code = next_doc("CC");
+    // A waiting count replaced is cancelled, audited on its session: who replaced it, by which count.
+    let mut replaced_sessions = Vec::new();
+    for row in pending_sessions {
+        let replaced_id: i64 = row.try_get("", "session_id")?;
+        let replaced = ensure_count_session(tx, replaced_id).await?;
+        let written = tx
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE inventory_count_sessions SET status = 'cancelled', row_version = row_version + 1, updated_at = ?
+                 WHERE id = ? AND status = 'submitted'",
+                [now.clone().into(), replaced_id.into()],
+            ))
+            .await?;
+        if written.rows_affected() != 1 {
+            continue;
+        }
+        crate::audit::writer::write_audit_event_in(
+            tx,
+            crate::audit::writer::AuditEventInput {
+                action_code: "inventory.count.replaced".to_string(),
+                target_type: Some("inventory_count_sessions".to_string()),
+                target_id: Some(session_audit_target(tx, replaced_id).await?),
+                actor_id: Some(count.actor_id),
+                auth_context: "session".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "standard".to_string(),
+                details_json: Some(serde_json::json!({
+                    "summary": "Count waiting for approval replaced by a new count of the same article and location (cancelled)",
+                    "count_session_code": replaced.session_code,
+                    "article_id": count.article_id,
+                    "location_id": count.location_id,
+                    "replaced_by_session_code": session_code,
+                })),
+            },
+        )
+        .await?;
+        replaced_sessions.push(replaced.session_code);
+    }
     let posted_by = if pending_approval {
         Value::BigInt(None)
     } else {
@@ -1195,6 +1280,7 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
         self_approved,
         pending_approval,
         tolerance_json: verdict.audit_json(),
+        replaced_sessions,
     })
 }
 
@@ -1331,6 +1417,14 @@ pub(crate) async fn approve_location_count_in<C: ConnectionTrait>(
     self_approved: bool,
 ) -> AppResult<PostedLocationCount> {
     let now = now_iso();
+    let tolerance = crate::inventory::count_four_eyes::evaluate(
+        tx,
+        pending.article_id,
+        pending.location_id,
+        pending.variance_qty,
+        pending.system_qty,
+    )
+    .await?;
     let written = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1393,7 +1487,8 @@ pub(crate) async fn approve_location_count_in<C: ConnectionTrait>(
         above_tolerance: pending.is_critical,
         self_approved,
         pending_approval: false,
-        tolerance_json: serde_json::Value::Null,
+        tolerance_json: approval_tolerance_json(pending.is_critical, &tolerance),
+        replaced_sessions: Vec::new(),
     })
 }
 
@@ -1584,7 +1679,7 @@ pub async fn list_reconciliation_findings(
     rows.into_iter().map(map_recon_finding).collect()
 }
 
-async fn get_count_line(db: &DatabaseConnection, line_id: i64) -> AppResult<InventoryCountLine> {
+async fn get_count_line<C: ConnectionTrait>(db: &C, line_id: i64) -> AppResult<InventoryCountLine> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

@@ -202,6 +202,7 @@
       "PERMIT_APPROVAL_RECORD_INVALID": "Un permis reçu avec une trace de soumission ou d'approbation incomplète ou incohérente",
       "COUNT_SELF_APPROVAL": "Un écart de comptage au-dessus de la tolérance de double validation approuvé sur un autre poste par la personne qui l'a compté, alors que les magasins exigent une deuxième personne, ou sans être enregistré comme auto-approbation",
       "COUNT_APPROVAL_RECORD_INVALID": "Une ligne de comptage reçue marquée auto-approbation alors qu'elle n'a pas été approuvée par la personne qui l'a comptée au-dessus de la tolérance",
+      "COUNT_APPROVAL_RECORD_CHANGED": "Une ligne de comptage reçue qui efface ou change la personne qui l'a comptée, enregistrée ici, ou qui ramène son écart sous la tolérance, sans nouvelle saisie de la quantité comptée",
       "NOTIFICATION_CATEGORY_LOCKED": "Un changement d'un autre poste qui couperait ou redirigerait l'avis de règle de sécurité modifiée sur un autre poste",
       "LAST_ADMINISTRATOR_REQUIRED": "Une modification venue d'un autre poste qui laisserait ce poste sans administrateur actif",
       "ADMIN_RECOVERY_NOTICE_CHANGED": "Un avis sur un administrateur créé avec un code de récupération a été modifié sur un autre poste : un avis n'est jamais modifié",

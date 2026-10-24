@@ -23,6 +23,10 @@
 //!   during the rebuild only, so the count lines still point to the same sessions). A table already
 //!   nullable there is left alone; a table whose definition is not the one expected is refused
 //!   (nothing is guessed).
+//! - The notification category `stock_count_recount` and its rule (audience `assignee`: the counter
+//!   of the count line, `notifications::router`): a count from the stock-to-reconcile list whose
+//!   approval is refused because the stock moved since it tells its counter to count again
+//!   (`inventory::negative_stock`, CMMS Advisor Q7). Seeded identities, as migration 251.
 
 use regex::Regex;
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, TransactionTrait};
@@ -180,6 +184,50 @@ async fn threshold_nullable<C: ConnectionTrait + TransactionTrait>(db: &C) -> Re
     rebuilt
 }
 
+/// The recount notice's category and rule (see the module documentation).
+async fn recount_notice<C: ConnectionTrait + TransactionTrait>(db: &C) -> Result<(), DbErr> {
+    const CATEGORY: &str = crate::inventory::negative_stock::RECOUNT_CATEGORY;
+    let txn = db.begin().await?;
+    // Made by this migration on every PC with the same identities: nothing is sent.
+    let capture = capture_present(&txn).await?;
+    if capture {
+        crate::sync::capture::begin_suppression(&txn)
+            .await
+            .map_err(|e| DbErr::Custom(e.to_string()))?;
+    }
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "INSERT OR IGNORE INTO notification_categories \
+         (entity_sync_id, code, label, default_severity, default_requires_ack, is_user_configurable, \
+          module_code, is_offered) VALUES (?, ?, 'Stock count to do again', 'warning', 0, 1, 'inv', 1)",
+        [
+            crate::sync::identity::seeded_entity_sync_id("notification_categories", CATEGORY).into(),
+            CATEGORY.into(),
+        ],
+    ))
+    .await?;
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "INSERT INTO notification_rules \
+         (entity_sync_id, category_code, routing_mode, requires_ack, dedupe_window_minutes, \
+          escalation_policy_id, is_active, lead_time_minutes, audiences_json) \
+         SELECT ?, ?, 'manual', 0, 0, NULL, 1, NULL, '[\"assignee\"]' \
+         WHERE NOT EXISTS (SELECT 1 FROM notification_rules WHERE category_code = ?)",
+        [
+            crate::sync::identity::seeded_entity_sync_id("notification_rules", CATEGORY).into(),
+            CATEGORY.into(),
+            CATEGORY.into(),
+        ],
+    ))
+    .await?;
+    if capture {
+        crate::sync::capture::end_suppression(&txn)
+            .await
+            .map_err(|e| DbErr::Custom(e.to_string()))?;
+    }
+    txn.commit().await
+}
+
 /// The retired setting's last value goes to the change history, then its row is deleted.
 async fn retire_critical_variance<C: ConnectionTrait + TransactionTrait>(db: &C) -> Result<(), DbErr> {
     let txn = db.begin().await?;
@@ -250,7 +298,8 @@ impl MigrationTrait for Migration {
             .await?;
         }
         threshold_nullable(db).await?;
-        retire_critical_variance(db).await
+        retire_critical_variance(db).await?;
+        recount_notice(db).await
     }
 
     async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
@@ -329,6 +378,24 @@ mod tests {
         );
         let rows_before = sessions_snapshot(&db).await;
         assert!(!rows_before.is_empty());
+        let lines_before = strings(
+            &db,
+            "SELECT entity_sync_id || '|' || session_id || '|' || variance_qty FROM inventory_count_lines ORDER BY id",
+        )
+        .await;
+        // A deleted session leaves the AUTOINCREMENT counter above every live id: it must stay so.
+        exec(
+            &db,
+            "UPDATE sqlite_sequence SET seq = seq + 40 WHERE name = 'inventory_count_sessions'",
+            vec![],
+        )
+        .await;
+        let sequence_before = scalar_i64(
+            &db,
+            "SELECT seq FROM sqlite_sequence WHERE name = 'inventory_count_sessions'",
+            vec![],
+        )
+        .await;
         let triggers_before = strings(
             &db,
             "SELECT name FROM sqlite_master WHERE type IN ('trigger', 'index') AND tbl_name = 'inventory_count_sessions'
@@ -347,6 +414,25 @@ mod tests {
             sessions_snapshot(&db).await,
             rows_before,
             "every session kept as it was"
+        );
+        assert_eq!(
+            strings(
+                &db,
+                "SELECT entity_sync_id || '|' || session_id || '|' || variance_qty FROM inventory_count_lines ORDER BY id",
+            )
+            .await,
+            lines_before,
+            "every count line kept, on its session"
+        );
+        assert_eq!(
+            scalar_i64(
+                &db,
+                "SELECT seq FROM sqlite_sequence WHERE name = 'inventory_count_sessions'",
+                vec![],
+            )
+            .await,
+            sequence_before,
+            "the AUTOINCREMENT counter is kept"
         );
         assert_eq!(
             strings(

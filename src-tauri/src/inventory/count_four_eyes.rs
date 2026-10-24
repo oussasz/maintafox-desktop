@@ -10,9 +10,11 @@
 //! A variance is above the tolerance ("critique", `is_critical` on the line) when ANY threshold that
 //! is set is exceeded — "exceeds" is strictly greater (`>`): a variance exactly at a threshold is
 //! within it. A blank threshold (never set: no row) is ignored, never read as zero. Both blank:
-//! strict, every variance is above. An article without a unit cost at the location is judged on the
-//! percent only, and is strict when the percent is blank. A system quantity of zero or less is always
-//! above (no percent can be computed). No variance is never above.
+//! strict, every variance is above. An article without a unit cost at the location — no average
+//! cost, or a cost of exactly zero (or less): a value threshold cannot judge a variance worth
+//! nothing — is judged on the percent only, and is strict when the percent is blank. A system
+//! quantity of zero or less is always above (no percent can be computed). No variance is never
+//! above.
 //!
 //! Approval. Every variance is approved with a note of at least 8 characters, as before. Within the
 //! tolerance the counter may approve it. Above it, the approver is someone other than the counter
@@ -21,14 +23,20 @@
 //! `reliability::study::decisions::SELF_APPROVAL_SETTING`): stores have no site yet, so an
 //! organisation with exactly ONE planning site follows that site's rule and any other organisation
 //! applies four-eyes ([`store_rule`]). Under the opt-out the counter's approval is flagged
-//! `self_approved` ("auto-approbation"), shown on screen and in the audit. A line whose counter was
-//! not recorded (entered before this version) cannot show the separation and is entered again.
+//! `self_approved` ("auto-approbation"), shown on screen and in the audit. A variance whose counter
+//! was not recorded (entered before this version) cannot show the separation — whether or not it is
+//! flagged above the tolerance: its flag was set under the retired rule — and is entered again.
 //!
 //! Synchronisation. A count line received from another PC is judged again here
 //! ([`inbound_count_line_check`], as `permit::sync_check` judges a permit's approval): approved by its
 //! counter above the tolerance and not flagged — or flagged where this PC's store rule is four-eyes —
 //! is a sync conflict for a person to decide; while a change of the site's opt-out is still in the
-//! inbox the line waits for it.
+//! inbox, or while no planning site is applied here yet, the line waits. What is held here is kept
+//! (as `permit::sync_check` keeps a permit's author and approval): a received row cannot clear the
+//! counter of a line held here, nor give it another counter or lower its "above the tolerance" flag
+//! without a new entry (another counted or system quantity) — `COUNT_APPROVAL_RECORD_CHANGED`. A
+//! re-entry by another person of the same quantity on another PC is therefore a conflict for a
+//! person to decide, the safe direction.
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::Serialize;
@@ -55,6 +63,9 @@ pub const REFUSED_COUNTER_UNKNOWN: &str = "GATE_INV_COUNT_COUNTER_UNKNOWN";
 pub const SYNC_SELF_APPROVAL: &str = "COUNT_SELF_APPROVAL";
 /// Sync conflict: a received count line whose approval record contradicts itself.
 pub const SYNC_APPROVAL_RECORD_INVALID: &str = "COUNT_APPROVAL_RECORD_INVALID";
+/// Sync conflict: a received count line clears or changes the counter held here, or lowers its
+/// "above the tolerance" flag, without a new entry.
+pub const SYNC_APPROVAL_RECORD_CHANGED: &str = "COUNT_APPROVAL_RECORD_CHANGED";
 
 const LINES: &str = "inventory_count_lines";
 
@@ -79,7 +90,8 @@ impl CountTolerance {
     }
 
     /// Whether a variance is above the tolerance (see the module documentation). `unit_cost`: the
-    /// location's unit cost, `None` when the article has none there.
+    /// location's unit cost, `None` when the article has none there; a cost of zero (or less) is no
+    /// cost: the percent alone judges.
     pub fn is_above(&self, variance_qty: f64, system_qty: f64, unit_cost: Option<f64>) -> bool {
         let variance = variance_qty.abs();
         if variance <= QTY_TOLERANCE {
@@ -89,7 +101,7 @@ impl CountTolerance {
             return true;
         }
         let by_value = match (self.value_threshold, unit_cost) {
-            (Some(threshold), Some(cost)) => Some(variance * cost > threshold),
+            (Some(threshold), Some(cost)) if cost > 0.0 => Some(variance * cost > threshold),
             _ => None,
         };
         let by_percent = self
@@ -145,6 +157,8 @@ pub struct StoreRule {
     pub rule: SelfApprovalRule,
     /// The organisation's only planning site, when it has exactly one.
     pub site_id: Option<i64>,
+    /// No planning site at all here (none applied yet on a PC still receiving the organisation).
+    pub no_site: bool,
 }
 
 /// Stores have no site yet: an organisation with exactly one planning site (live node whose type
@@ -154,19 +168,20 @@ pub async fn store_rule<C: ConnectionTrait>(conn: &C) -> AppResult<StoreRule> {
     let rows = conn
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT n.id FROM org_nodes n
-             JOIN org_node_types t ON t.id = n.node_type_id AND t.can_own_work = 1
-             WHERE n.deleted_at IS NULL
-               AND NOT EXISTS (SELECT 1 FROM org_structure_models m
-                               WHERE m.id = n.structure_model_id AND m.status = 'draft')
-             LIMIT 2"
-                .to_string(),
+            format!(
+                "SELECT n.id FROM org_nodes n
+                 JOIN org_node_types t ON t.id = n.node_type_id AND t.can_own_work = 1
+                 WHERE n.deleted_at IS NULL AND {}
+                 LIMIT 2",
+                crate::settings::site::NOT_A_DRAFT_NODE_SQL
+            ),
         ))
         .await?;
     if rows.len() != 1 {
         return Ok(StoreRule {
             rule: SelfApprovalRule::SiteUnresolved,
             site_id: None,
+            no_site: rows.is_empty(),
         });
     }
     let site: i64 = rows[0].try_get("", "id")?;
@@ -181,28 +196,32 @@ pub async fn store_rule<C: ConnectionTrait>(conn: &C) -> AppResult<StoreRule> {
             SelfApprovalRule::FourEyes
         },
         site_id: Some(site),
+        no_site: false,
     })
 }
 
 /// The four-eyes check of an approval of a counted variance by `approver_id`. Returns whether it is
 /// a self-approval ("auto-approbation", allowed only under the store's opt-out); refused where
-/// four-eyes applies, or when the counter of a variance above the tolerance was not recorded.
+/// four-eyes applies, or when the counter of a variance was not recorded (whatever its flag: a line
+/// entered before the update carries the flag of the retired rule, so its separation cannot be
+/// shown).
 pub async fn check_approval<C: ConnectionTrait>(
     conn: &C,
+    has_variance: bool,
     above_tolerance: bool,
     counted_by_id: Option<i64>,
     approver_id: i64,
 ) -> AppResult<bool> {
-    if !above_tolerance {
+    if !has_variance {
         return Ok(false);
     }
     let Some(counter) = counted_by_id else {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{REFUSED_COUNTER_UNKNOWN}: this variance is above the four-eyes tolerance and its counter was not \
-             recorded (entered before the update): enter the counted quantity again."
+            "{REFUSED_COUNTER_UNKNOWN}: the person who counted this variance was not recorded (entered before the \
+             update): enter the counted quantity again."
         )]));
     };
-    if counter != approver_id {
+    if !above_tolerance || counter != approver_id {
         return Ok(false);
     }
     if store_rule(conn).await?.rule == SelfApprovalRule::Allowed {
@@ -238,7 +257,9 @@ fn conflict(code: &'static str, message: String) -> AppResult<Option<InboundVerd
 /// - `self_approved` is set only on such a line (never without an approver, by a second person, or
 ///   within the tolerance);
 /// - a line whose counter or approver is not recorded (entered on a PC before the update) passes;
-/// - an approval held here as received passes (judged when it arrived).
+/// - an approval held here as received passes (judged when it arrived);
+/// - the record held here is kept: its counter is never cleared, and is changed, like its "above the
+///   tolerance" flag is lowered, only with a new entry (another counted or system quantity).
 pub(crate) async fn inbound_count_line_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -251,9 +272,44 @@ pub(crate) async fn inbound_count_line_check(
     let self_approved = flag(&line, "self_approved");
     let above = flag(&line, "is_critical");
     if let Some(l) = &local {
-        let same = ["approved_by_sync_id", "approved_at", "counted_by_sync_id"]
-            .iter()
-            .all(|k| field(l, k) == field(&line, k))
+        let quantity =
+            |p: &serde_json::Map<String, serde_json::Value>, key: &str| p.get(key).and_then(serde_json::Value::as_f64);
+        let same_quantities =
+            ["counted_qty", "system_qty", "variance_qty"]
+                .iter()
+                .all(|k| match (quantity(l, k), quantity(&line, k)) {
+                    (Some(held), Some(got)) => (held - got).abs() <= QTY_TOLERANCE,
+                    (held, got) => held.is_none() && got.is_none(),
+                });
+        let held_counter = field(l, "counted_by_sync_id");
+        if held_counter.is_some() && counter.is_none() {
+            return conflict(
+                SYNC_APPROVAL_RECORD_CHANGED,
+                format!("count line {entity_sync_id}: the person who counted it, recorded here, cannot be removed"),
+            );
+        }
+        if same_quantities && held_counter.is_some() && held_counter != counter {
+            return conflict(
+                SYNC_APPROVAL_RECORD_CHANGED,
+                format!(
+                    "count line {entity_sync_id}: the person who counted it, recorded here, changed without a new \
+                     entry of the counted quantity"
+                ),
+            );
+        }
+        if same_quantities && flag(l, "is_critical") && !above {
+            return conflict(
+                SYNC_APPROVAL_RECORD_CHANGED,
+                format!(
+                    "count line {entity_sync_id}: its variance, above the four-eyes tolerance here, was marked within \
+                     it without a new entry of the counted quantity"
+                ),
+            );
+        }
+        let same = same_quantities
+            && ["approved_by_sync_id", "approved_at", "counted_by_sync_id"]
+                .iter()
+                .all(|k| field(l, k) == field(&line, k))
             && flag(l, "self_approved") == self_approved
             && flag(l, "is_critical") == above;
         if same {
@@ -307,6 +363,11 @@ pub(crate) async fn inbound_count_line_check(
                 ),
             )
         }
+        // No planning site here yet: the organisation is still arriving (a self-approval is only
+        // ever recorded where there is exactly one site) — the line waits for it.
+        _ if store.no_site => Ok(Some(InboundVerdict::Defer(format!(
+            "count line {entity_sync_id}: self-approved; no site is applied here yet"
+        )))),
         _ => conflict(
             SYNC_SELF_APPROVAL,
             format!(
@@ -356,6 +417,15 @@ mod tests {
     fn without_unit_cost_only_the_percent_counts_and_blank_percent_is_strict() {
         assert!(!tolerance(Some(1.0), Some(50.0)).is_above(3.0, 10.0, None));
         assert!(tolerance(Some(1_000.0), None).is_above(3.0, 10.0, None));
+    }
+
+    #[test]
+    fn a_unit_cost_of_exactly_zero_is_no_cost() {
+        // Percent alone judges: 30 % is within 50 %, the value threshold is not read as "worth 0".
+        assert!(!tolerance(Some(1.0), Some(50.0)).is_above(3.0, 10.0, Some(0.0)));
+        assert!(tolerance(Some(1.0), Some(20.0)).is_above(3.0, 10.0, Some(0.0)));
+        // Percent blank: strict, although 3 × 0 = 0 would be within any value threshold.
+        assert!(tolerance(Some(1_000.0), None).is_above(3.0, 10.0, Some(0.0)));
     }
 
     #[test]
