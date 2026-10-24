@@ -14,25 +14,36 @@
 //!   `ensure_may_grant_role`);
 //! - `role_permissions` new here: `granted_by_id` holds `adm.roles` (a plant administrator for an
 //!   administrator role);
-//! - `user_accounts` held here without the bootstrap flag (`is_admin`) and received with it: no
-//!   command sets that flag on an existing account (only the first-start account and the dev-only
-//!   built-in "admin" are created with it), and the row does not say who changed it: refused.
+//! - `user_accounts` (the row never names who changed it, [`account_check`]): the bootstrap flag
+//!   (`is_admin`) set on an account held here, a new account with it while this PC has its first
+//!   administrator, or an account holding a right to give access re-enabled or restored: refused.
 //!
-//! "Now" and not "at the time of the row": role permissions are deleted, so a past set of rights
-//! cannot be rebuilt, and the row's times come from the sender's clock. Judging now fails closed.
-//! A failure is a [`GRANT_BY_UNAUTHORISED_ADMIN`] conflict, decided by an administrator in the
-//! Sync centre; "take the received version" goes through this check again (it never bypasses it):
-//! the grant is applied once its author holds the right here again, or an administrator makes the
-//! grant here themselves. An author not applied here yet makes the row wait for that account, as
-//! for any missing parent; so do rights of the author still waiting in the inbox (the precedent of
-//! `qualification::sync_check`, `permit::sync_check::rights_may_still_arrive`).
+//! An author who does not hold the right now (lead decision on review BLOCKING 1; role permissions
+//! are deleted, so a past set of rights cannot be rebuilt, and the row's times come from the
+//! sender's clock):
+//! - when this PC knows when the author lost it ([`loss_time`]: the end of the assignment that gave
+//!   it, the account disabled or deleted), a grant dated before that time minus
+//!   `settings::site::MAX_CLOCK_SKEW_MINUTES` is applied (it was made while the author held it); a
+//!   grant dated after, or whose date cannot be read, is a [`GRANT_BY_UNAUTHORISED_ADMIN`] conflict;
+//! - when this PC cannot tell (typically the first pull of a new PC, or a role permission deleted),
+//!   the grant is applied and listed in ONE review notice to the administrators for the run
+//!   ([`with_review_collection`]): never blocked, never applied silently.
+//!
+//! A conflict is decided by an administrator in the Sync centre; "take the received version" goes
+//! through this check again (it never bypasses it). An author not applied here yet makes the row
+//! wait for that account, as for any missing parent; so do rights of the author still waiting in
+//! the inbox (the precedent of `qualification::sync_check`,
+//! `permit::sync_check::rights_may_still_arrive`). Those waits end with the next complete pull
+//! ([`release_after_complete_pull`]): nothing more can arrive, the grant is judged as above.
 //!
 //! Rows without an author that this check accepts: an assignment to an account holding the
 //! bootstrap flag (the first administrator, `product_license`; the dev seeder's built-in account),
 //! which the flag makes a plant administrator anyway; the Administrator role given by a vendor
 //! recovery code (`auth::recovery_code`, its `admin_recovery.used` audit record here; waiting while
 //! that record is in the inbox); a permission of a system role (migrations and the seeder grant
-//! them on every PC). Any other new grant without an author is a conflict.
+//! them on every PC). Any other new grant without an author is a conflict. The recovery-code
+//! exception trusts a synchronised audit row: the trust model of sync is that activated PCs are
+//! honest replicas (this check stops a demoted administrator using the app, not a forged peer).
 //!
 //! Revocations and deletes are never checked: they only take access away.
 //!
@@ -170,46 +181,321 @@ async fn admin_rights_may_still_arrive(conn: &impl ConnectionTrait, user_sync_id
         .is_some())
 }
 
-/// The author named by `key` may make this grant here (see the module rule); `None` when they may.
+// ── Grants accepted for review ─────────────────────────────────────────────────────────────────
+
+/// A grant applied although its author does not hold the right here now, for the review notice.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Granted {
+    Assignment(String),
+    RolePermission { role_sync: String, permission: String },
+}
+
+#[derive(Debug, Clone)]
+struct ReviewItem {
+    granted: Granted,
+    line: String,
+}
+
+tokio::task_local! {
+    /// Grants accepted for review during a materialization run ([`with_review_collection`]): one
+    /// notice for the whole run, written after it.
+    static REVIEWS: std::sync::Mutex<Vec<ReviewItem>>;
+    /// Set while the rows still waiting are applied after a complete pull
+    /// ([`release_after_complete_pull`]): nothing more can arrive, so nothing waits any longer.
+    static CAUGHT_UP: ();
+}
+
+fn caught_up() -> bool {
+    CAUGHT_UP.try_with(|()| ()).is_ok()
+}
+
+/// Accepts a grant whose author does not hold the right here now and whose loss of it is not known
+/// here (see the module rule): never silently, it is listed in the administrators' review notice;
+/// within a materialization run, in one notice for the run, otherwise (a conflict taken from the
+/// Sync centre) at once, in the transaction of the apply.
+async fn accept_for_review(conn: &impl ConnectionTrait, item: ReviewItem) -> AppResult<Option<ApplyOutcome>> {
+    let pushed = REVIEWS
+        .try_with(|r| r.lock().map(|mut v| v.push(item.clone())).is_ok())
+        .unwrap_or(false);
+    if !pushed {
+        send_review_notice(conn, &[item]).await?;
+    }
+    Ok(None)
+}
+
+async fn send_review_notice(conn: &impl ConnectionTrait, items: &[ReviewItem]) -> AppResult<()> {
+    let (entity_type, source) = match items.first().map(|i| &i.granted) {
+        Some(Granted::Assignment(sync_id)) => ("user_scope_assignments", sync_id.clone()),
+        Some(Granted::RolePermission { role_sync, permission }) => {
+            ("role_permissions", format!("{role_sync}:{permission}"))
+        }
+        None => return Ok(()),
+    };
+    let shown: Vec<&str> = items.iter().take(NOTICE_MAX_LINES).map(|i| i.line.as_str()).collect();
+    let more = items.len().saturating_sub(shown.len());
+    let list = if more > 0 {
+        format!("{}; … (+{more})", shown.join("; "))
+    } else {
+        shown.join("; ")
+    };
+    crate::settings::received_notice::send_grant_review_notice(
+        conn,
+        entity_type,
+        &source,
+        "Accès reçus d'un auteur qui n'a plus le droit : à revoir / Grants received from an author who no longer \
+         holds the right: to review"
+            .to_string(),
+        format!(
+            "Reçu par synchronisation et appliqué (ce poste ne sait pas quand l'auteur a perdu le droit) : {list}. \
+             / Received by sync and applied (this PC does not know when the author lost the right): {list}."
+        ),
+        crate::notifications::emitter::NotificationMessage::new(
+            "grants_from_former_authors",
+            json!({ "grants": list, "count": items.len() }),
+        ),
+    )
+    .await
+}
+
+/// Whether a grant accepted for review is still held here (its row applied, not rolled back).
+async fn still_held(conn: &impl ConnectionTrait, granted: &Granted) -> AppResult<bool> {
+    let row = match granted {
+        Granted::Assignment(sync_id) => {
+            conn.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS h FROM user_scope_assignments WHERE entity_sync_id = ? AND deleted_at IS NULL",
+                [sync_id.as_str().into()],
+            ))
+            .await?
+        }
+        Granted::RolePermission { role_sync, permission } => {
+            conn.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS h FROM role_permissions rp JOIN roles r ON r.id = rp.role_id \
+                   JOIN permissions p ON p.id = rp.permission_id WHERE r.entity_sync_id = ? AND p.name = ?",
+                [role_sync.as_str().into(), permission.as_str().into()],
+            ))
+            .await?
+        }
+    };
+    Ok(row.is_some())
+}
+
+/// Runs a materialization (`sync::materialize::materialize_inbox`) collecting the grants accepted
+/// for review, then writes ONE notice listing those still applied. A notice that cannot be written
+/// is logged: the rows are applied already.
+pub(crate) async fn with_review_collection<T>(
+    db: &sea_orm::DatabaseConnection,
+    run: impl std::future::Future<Output = AppResult<T>>,
+) -> AppResult<T> {
+    use sea_orm::TransactionTrait;
+    let (out, items) = REVIEWS
+        .scope(std::sync::Mutex::new(Vec::new()), async {
+            let out = run.await;
+            let items = REVIEWS.with(|r| r.lock().map(|mut v| std::mem::take(&mut *v)).unwrap_or_default());
+            (out, items)
+        })
+        .await;
+    let out = out?;
+    if items.is_empty() {
+        return Ok(out);
+    }
+    let written = async {
+        let tx = db.begin().await?;
+        let mut seen = BTreeSet::new();
+        let mut kept = Vec::new();
+        for item in items {
+            if seen.insert(item.granted.clone()) && still_held(&tx, &item.granted).await? {
+                kept.push(item);
+            }
+        }
+        if !kept.is_empty() {
+            send_review_notice(&tx, &kept).await?;
+        }
+        tx.commit().await?;
+        AppResult::Ok(())
+    }
+    .await;
+    if let Err(e) = written {
+        tracing::error!(error = %e, "grants accepted for review: the review notice could not be written");
+    }
+    Ok(out)
+}
+
+/// After a complete pull (`sync::transport::worker`: the exchanges reached the server head, every
+/// received row materialized): the grants still waiting are applied once more knowing that nothing
+/// more will arrive, so a grant whose author was never received, or whose author's rights wait on
+/// another such grant (two accounts waiting on each other), no longer waits for ever: it is judged
+/// as a grant whose author does not hold the right, loss time unknown when it is not known here
+/// (applied, listed for review).
+pub(crate) async fn release_after_complete_pull(db: &sea_orm::DatabaseConnection) -> AppResult<()> {
+    let waiting = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT 1 AS w FROM sync_inbox WHERE apply_status = 'deferred' \
+               AND entity_type IN ('user_scope_assignments', 'role_permissions') LIMIT 1"
+                .to_string(),
+        ))
+        .await?
+        .is_some();
+    if !waiting {
+        return Ok(());
+    }
+    CAUGHT_UP
+        .scope((), crate::sync::materialize::materialize_inbox(db, 200, true))
+        .await?;
+    Ok(())
+}
+
+/// What this PC knows of the loss of a right by an author who does not hold it now ([`loss_time`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Loss {
+    /// Lost at this time.
+    At(chrono::DateTime<Utc>),
+    /// Held through a role that does not carry it any more (a role permission deleted, which
+    /// leaves no trace), or through the bootstrap flag removed: when is not known here.
+    Unknown,
+    /// Never held here: no assignment (live or ended) could have given it, and no bootstrap flag.
+    /// Assignments are ended, never deleted, by the commands (`commands::admin_users`).
+    Never,
+}
+
+/// When `author` lost the right to make this grant, as this PC knows it: the end of the last
+/// plant-wide permanent assignment that gave it (ended, or past its end), or the account disabled
+/// or deleted (its `deleted_at`, else `updated_at`), whichever came first. `admin_only`: the right
+/// is plant administration (an administrator role), else `permission` (an administrator role or a
+/// role carrying it).
+async fn loss_time(conn: &impl ConnectionTrait, author: i64, permission: &str, admin_only: bool) -> AppResult<Loss> {
+    let instant = |raw: Option<String>| raw.as_deref().and_then(crate::settings::site::instant);
+    let Some(account) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT is_active, is_admin, deleted_at, updated_at FROM user_accounts WHERE id = ?",
+            [author.into()],
+        ))
+        .await?
+    else {
+        return Ok(Loss::Never);
+    };
+    let deleted_at: Option<String> = account.try_get("", "deleted_at").map_err(err)?;
+    let is_admin = account.try_get::<i64>("", "is_admin").map_err(err)? == 1;
+    let active = account.try_get::<i64>("", "is_active").map_err(err)? == 1 && deleted_at.is_none();
+    let account_lost = if active {
+        None
+    } else {
+        instant(deleted_at).or(instant(account.try_get("", "updated_at").map_err(err)?))
+    };
+    let placeholders = vec!["?"; ADMIN_ROLE_NAMES.len()].join(", ");
+    let mut values: Vec<sea_orm::Value> = Vec::new();
+    values.extend(ADMIN_ROLE_NAMES.iter().map(|n| (*n).into()));
+    values.push(i64::from(admin_only).into());
+    values.push(permission.into());
+    values.push(author.into());
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT usa.deleted_at, usa.valid_from, usa.valid_to, \
+                        CASE WHEN r.name IN ({placeholders}) OR (? = 0 AND EXISTS ( \
+                          SELECT 1 FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id \
+                           WHERE rp.role_id = r.id AND p.name = ?)) THEN 1 ELSE 0 END AS gives \
+                   FROM user_scope_assignments usa JOIN roles r ON r.id = usa.role_id \
+                  WHERE usa.user_id = ? AND usa.scope_type = 'tenant' AND usa.is_emergency = 0"
+            ),
+            values,
+        ))
+        .await?;
+    let now = Utc::now();
+    let (mut live, mut any_role) = (false, false);
+    let mut last_end: Option<chrono::DateTime<Utc>> = None;
+    for r in rows {
+        any_role = true;
+        if r.try_get::<i64>("", "gives").map_err(err)? == 0 {
+            continue;
+        }
+        let deleted = instant(r.try_get("", "deleted_at").map_err(err)?);
+        let to = instant(r.try_get("", "valid_to").map_err(err)?);
+        let from = instant(r.try_get("", "valid_from").map_err(err)?);
+        match deleted.or(to.filter(|t| *t < now)) {
+            Some(end) => last_end = Some(last_end.map_or(end, |l| l.max(end))),
+            None if from.is_none_or(|f| f <= now) => live = true,
+            None => {}
+        }
+    }
+    if !is_admin && !live && last_end.is_none() && (admin_only || !any_role) {
+        return Ok(Loss::Never);
+    }
+    Ok(match (account_lost, live || is_admin, last_end) {
+        (Some(a), true, _) | (Some(a), false, None) => Loss::At(a),
+        (Some(a), false, Some(e)) => Loss::At(a.min(e)),
+        (None, _, Some(e)) => Loss::At(e),
+        (None, _, None) => Loss::Unknown,
+    })
+}
+
+/// The author of a received grant may make it here (see the module rule); `None` when the grant is
+/// applied. `granted_at`: when the row says it was made (sender's clock); `review`: how it is
+/// listed when it is applied for review.
 async fn author_check(
     conn: &impl ConnectionTrait,
     what: &str,
     author_sync: &str,
     permission: &str,
     admin_role: bool,
+    granted_at: Option<&str>,
+    review: ReviewItem,
 ) -> AppResult<Option<ApplyOutcome>> {
     let Some(author) = local_id(conn, "user_accounts", author_sync).await? else {
+        if caught_up() {
+            // A complete pull did not bring the author: it will never arrive.
+            return accept_for_review(conn, review).await;
+        }
         return Ok(wait_for(
             "user_accounts",
             author_sync,
             format!("{what}: its author {author_sync} is not applied yet"),
         ));
     };
-    if !holds(conn, author, permission).await? {
-        if crate::permit::sync_check::rights_may_still_arrive(conn, author_sync, permission).await?
-            || admin_rights_may_still_arrive(conn, author_sync).await?
-        {
-            return Ok(wait(format!(
-                "{what}: the rights of its author {author_sync} are still arriving"
-            )));
-        }
-        return Ok(conflict(format!(
-            "{what}: made by someone who does not hold {permission} here now (withdrawn on another PC, or never \
-             held); not applied, for an administrator to decide"
+    // Emergency grants never count (`holds_tenant_right`, `auth::rbac::elevated_admin_sql`): an
+    // author holding the right only through an emergency elevation is judged as one without it, by
+    // design (an emergency never lets its holder grant anything, `admin_users::caller_permissions`).
+    let admin_only = if !holds(conn, author, permission).await? {
+        false
+    } else if admin_role && !is_plant_admin(conn, author).await? {
+        true
+    } else {
+        return Ok(None);
+    };
+    if !caught_up()
+        && (crate::permit::sync_check::rights_may_still_arrive(conn, author_sync, permission).await?
+            || admin_rights_may_still_arrive(conn, author_sync).await?)
+    {
+        return Ok(wait(format!(
+            "{what}: the rights of its author {author_sync} are still arriving"
         )));
     }
-    if admin_role && !is_plant_admin(conn, author).await? {
-        if admin_rights_may_still_arrive(conn, author_sync).await? {
-            return Ok(wait(format!(
-                "{what}: the administrator rights of its author {author_sync} are still arriving"
-            )));
+    let needed = if admin_only { "plant administration" } else { permission };
+    let lost = match loss_time(conn, author, permission, admin_only).await? {
+        Loss::Unknown => return accept_for_review(conn, review).await,
+        Loss::Never => {
+            return Ok(conflict(format!(
+                "{what}: made by someone who never held {needed} here; not applied, for an administrator to decide"
+            )))
         }
-        return Ok(conflict(format!(
-            "{what}: an administrator role given by someone who is not a plant administrator here now; not applied, \
-             for an administrator to decide"
-        )));
+        Loss::At(lost) => lost,
+    };
+    let cutoff = lost - chrono::Duration::minutes(crate::settings::site::MAX_CLOCK_SKEW_MINUTES);
+    if granted_at
+        .and_then(crate::settings::site::instant)
+        .is_some_and(|at| at < cutoff)
+    {
+        // Made while its author still held the right, as far as this PC knows.
+        return Ok(None);
     }
-    Ok(None)
+    Ok(conflict(format!(
+        "{what}: made after its author lost {needed} (here: on {lost}), or at a time that cannot be read; not \
+         applied, for an administrator to decide"
+    )))
 }
 
 /// Name and system flag of a role named by its sync id; `None` when not here.
@@ -239,7 +525,7 @@ pub(crate) async fn inbound_grant_check(
     match layout.def.entity_type {
         "user_scope_assignments" => assignment_check(conn, entity_sync_id, received).await,
         "role_permissions" => role_permission_check(conn, received).await,
-        "user_accounts" => account_flag_check(conn, entity_sync_id, received).await,
+        "user_accounts" => account_check(conn, entity_sync_id, received).await,
         _ => Ok(None),
     }
 }
@@ -304,12 +590,16 @@ async fn scope_changed(
     let Some(held_node) = local_id(conn, "org_nodes", held_ref).await? else {
         return Ok(Ok(true));
     };
-    Ok(Ok(!crate::org::validation::node_replaces_deleted_node(
-        conn,
-        held_node,
-        received_node,
-    )
-    .await?))
+    if crate::org::validation::node_replaces_deleted_node(conn, held_node, received_node).await? {
+        return Ok(Ok(false));
+    }
+    // The publish moving it has only partly arrived: wait for the activation of its structure.
+    if crate::org::validation::node_copy_awaits_activation(conn, Some(held_node), received_node).await? {
+        return Ok(Err(wait(format!(
+            "role assignment moved to node {received_ref}, whose structure is not active here yet"
+        ))));
+    }
+    Ok(Ok(true))
 }
 
 /// Whether the received assignment gives access the one held here does not (new, restored,
@@ -386,7 +676,19 @@ async fn assignment_check(
             "{what}: a role given by an account to itself; not applied, for an administrator to decide"
         )));
     }
-    author_check(conn, &what, author_sync, ADM_USERS, admin_role).await
+    let granted_at = if held.is_some() {
+        field(received, "updated_at")
+    } else {
+        field(received, "created_at")
+    };
+    let review = ReviewItem {
+        granted: Granted::Assignment(entity_sync_id.to_string()),
+        line: format!(
+            "{} role {role_name} -> {user_sync} (by {author_sync})",
+            granted_at.unwrap_or("?")
+        ),
+    };
+    author_check(conn, &what, author_sync, ADM_USERS, admin_role, granted_at, review).await
 }
 
 /// An assignment that names no author (see the module rule for the ones accepted).
@@ -490,33 +792,106 @@ async fn role_permission_check(conn: &impl ConnectionTrait, received: &Payload) 
             "{what}: a permission given without saying who gave it; not applied, for an administrator to decide"
         )));
     };
+    let granted_at = field(received, "granted_at");
+    let review = ReviewItem {
+        granted: Granted::RolePermission {
+            role_sync: role_sync.to_string(),
+            permission: permission.to_string(),
+        },
+        line: format!(
+            "{} permission {permission} -> role {role_name} (by {author_sync})",
+            granted_at.unwrap_or("?")
+        ),
+    };
     author_check(
         conn,
         &what,
         author_sync,
         ADM_ROLES,
         ADMIN_ROLE_NAMES.contains(&role_name.as_str()),
+        granted_at,
+        review,
     )
     .await
 }
 
-async fn account_flag_check(
+/// The account holds, or gets back once active, a right to give access here: the bootstrap flag, or
+/// a plant-wide permanent assignment in force to an administrator role or to a role carrying
+/// `adm.users` / `adm.roles` (whatever the account's own state).
+async fn account_carries_granting_rights(conn: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(crate::rbac::resolver::permanent_binds(&now));
+    values.push(ADM_USERS.into());
+    values.push(ADM_ROLES.into());
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT 1 AS c FROM user_accounts ua WHERE ua.id = ? AND (ua.is_admin = 1 OR EXISTS ( \
+                   SELECT 1 FROM user_scope_assignments usa JOIN roles r ON r.id = usa.role_id \
+                    WHERE usa.user_id = ua.id AND usa.scope_type = 'tenant' AND {in_force} \
+                      AND r.deleted_at IS NULL AND (r.name IN {admin_roles} OR EXISTS ( \
+                        SELECT 1 FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id \
+                         WHERE rp.role_id = r.id AND p.name IN (?, ?)))))",
+                in_force = crate::rbac::resolver::PERMANENT_ASSIGNMENT_IN_FORCE_SQL,
+                admin_roles = crate::auth::rbac::ELEVATED_ADMIN_ROLES_SQL,
+            ),
+            values,
+        ))
+        .await?
+        .is_some())
+}
+
+/// A received account (the row never says who changed it):
+/// - new here with the bootstrap flag, while this PC records its first administrator
+///   (`auth::builtin_admin::first_admin_marker_closes`): a second first administrator; refused
+///   (the first-start and join flows create one only on an empty plant, `sync::plant_join`);
+/// - held here without the bootstrap flag and received with it: no command does that; refused;
+/// - held here disabled or deleted and received active or restored (`reactivate_user`, a restore)
+///   while it holds a right to give access here ([`account_carries_granting_rights`]): refused.
+///   The dev-only built-in "admin" whose password was never changed is left to its own rule
+///   (`auth::builtin_admin::after_inbound_user_account`).
+async fn account_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<ApplyOutcome>> {
-    if !truthy(received, "is_admin") {
-        return Ok(None);
-    }
     let Some(held) = crate::permit::sync_check::local_wire(conn, "user_accounts", entity_sync_id).await? else {
+        if truthy(received, "is_admin") && crate::auth::builtin_admin::first_admin_marker_closes(conn).await? {
+            return Ok(conflict(format!(
+                "account {entity_sync_id}: a new account with the bootstrap administrator flag, while this PC already \
+                 has its first administrator; not applied, for an administrator to decide"
+            )));
+        }
         return Ok(None);
     };
-    if truthy(&held, "is_admin") {
+    if truthy(received, "is_admin") && !truthy(&held, "is_admin") {
+        return Ok(conflict(format!(
+            "account {entity_sync_id}: the bootstrap administrator flag set on an existing account (no screen does \
+             that, and the row does not say who did it); not applied, for an administrator to decide"
+        )));
+    }
+    let reactivated =
+        received.contains_key("is_active") && truthy(received, "is_active") && !truthy(&held, "is_active");
+    let restored = received.contains_key("deleted_at")
+        && field(received, "deleted_at").is_none()
+        && field(&held, "deleted_at").is_some();
+    if !reactivated && !restored {
+        return Ok(None);
+    }
+    let Some(user_id) = local_id(conn, "user_accounts", entity_sync_id).await? else {
+        return Ok(None);
+    };
+    let builtin = crate::auth::builtin_admin::builtin_admin_row(conn)
+        .await?
+        .is_some_and(|b| b.user_id == user_id && b.password_never_changed);
+    if builtin || !account_carries_granting_rights(conn, user_id).await? {
         return Ok(None);
     }
     Ok(conflict(format!(
-        "account {entity_sync_id}: the bootstrap administrator flag set on an existing account (no screen does \
-         that, and the row does not say who did it); not applied, for an administrator to decide"
+        "account {entity_sync_id}: an account holding administration rights here was re-enabled or restored on \
+         another PC (the row does not say who did it); not applied, for an administrator to decide"
     )))
 }
 
