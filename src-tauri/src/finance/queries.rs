@@ -329,7 +329,9 @@ fn optional_trimmed(value: &Option<String>) -> Option<String> {
 fn required_trimmed(field: &str, value: &str) -> AppResult<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(AppError::ValidationFailed(vec![format!("{field} is required.")]));
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_FIN_FIELD_REQUIRED: {field} is required."
+        )]));
     }
     Ok(trimmed.to_string())
 }
@@ -2996,7 +2998,7 @@ pub async fn record_erp_export_batch(
 
     if lines_arr.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Nothing to export for the selected kind.".to_string(),
+            "GATE_FIN_EXPORT_EMPTY: Nothing to export for the selected kind.".to_string(),
         ]));
     }
 
@@ -3202,7 +3204,7 @@ pub async fn update_integration_exception(
         .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Integration exception update failed.".to_string()
+            "GATE_RECORD_CHANGED_ELSEWHERE: Integration exception update failed.".to_string(),
         ]));
     }
     let row = txn
@@ -3257,20 +3259,20 @@ pub async fn create_budget_alert_config(
     let alert_type = required_trimmed("Alert type", &input.alert_type)?;
     if !valid_alert_type(&alert_type) {
         return Err(AppError::ValidationFailed(vec![
-            "alert_type is not supported by budget controls.".to_string(),
+            "GATE_FIN_ALERT_TYPE_UNSUPPORTED: alert_type is not supported by budget controls.".to_string(),
         ]));
     }
     if let Some(version_id) = input.budget_version_id {
         let version = get_budget_version(&txn, version_id).await?;
         if version.status != "frozen" {
             return Err(AppError::ValidationFailed(vec![
-                "Only frozen control baselines may be bound to production alert configs.".to_string(),
+                "GATE_FIN_ALERT_BASELINE_NOT_FROZEN: Only frozen control baselines may be bound to production alert configs.".to_string(),
             ]));
         }
     }
     if input.dedupe_window_minutes.unwrap_or(240) <= 0 {
         return Err(AppError::ValidationFailed(vec![
-            "dedupe_window_minutes must be > 0.".to_string()
+            "GATE_FIN_DEDUPE_WINDOW_POSITIVE: dedupe_window_minutes must be > 0.".to_string(),
         ]));
     }
 
@@ -3355,7 +3357,7 @@ pub async fn update_budget_alert_config(
         .unwrap_or(current.try_get::<i64>("", "dedupe_window_minutes")?);
     if dedupe_window_minutes <= 0 {
         return Err(AppError::ValidationFailed(vec![
-            "dedupe_window_minutes must be > 0.".to_string()
+            "GATE_FIN_DEDUPE_WINDOW_POSITIVE: dedupe_window_minutes must be > 0.".to_string(),
         ]));
     }
     let budget_bucket = if input.budget_bucket.is_some() {
@@ -3472,7 +3474,8 @@ pub async fn evaluate_budget_alerts(
     let version = get_budget_version(db, input.budget_version_id).await?;
     if version.status != "frozen" {
         return Err(AppError::ValidationFailed(vec![
-            "Only frozen control baselines may drive production alerts.".to_string(),
+            "GATE_FIN_ALERT_BASELINE_NOT_FROZEN: Only frozen control baselines may drive production alerts."
+                .to_string(),
         ]));
     }
 
@@ -4081,7 +4084,7 @@ pub async fn export_budget_report_pack(
     let format = required_trimmed("Export format", &input.format)?.to_lowercase();
     if !matches!(format.as_str(), "pdf" | "excel") {
         return Err(AppError::ValidationFailed(vec![
-            "format must be one of: pdf, excel".to_string()
+            "GATE_REPORT_FORMAT_INVALID: format must be one of: pdf, excel".to_string(),
         ]));
     }
     let report = build_budget_report_pack(db, input.filter).await?;

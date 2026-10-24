@@ -87,7 +87,7 @@ fn validate_team_type(value: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Invalid team_type '{value}'. Allowed: {}.",
+            "GATE_REPO_TEAM_TYPE_INVALID: Invalid team_type '{value}'. Allowed: {}.",
             TEAM_TYPES.join(", ")
         )]))
     }
@@ -98,7 +98,7 @@ fn validate_team_status(value: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Invalid team status '{value}'. Allowed: {}.",
+            "GATE_REPO_TEAM_STATUS_INVALID: Invalid team status '{value}'. Allowed: {}.",
             TEAM_STATUSES.join(", ")
         )]))
     }
@@ -112,7 +112,7 @@ fn validate_icon_key(value: Option<&str>) -> AppResult<Option<String>> {
         Ok(Some(raw.to_string()))
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Invalid icon_key '{raw}'. Allowed: {}.",
+            "GATE_REPO_TEAM_ICON_INVALID: Invalid icon_key '{raw}'. Allowed: {}.",
             TEAM_ICON_KEYS.join(", ")
         )]))
     }
@@ -127,7 +127,7 @@ fn validate_accent_color(value: Option<&str>) -> AppResult<Option<String>> {
         Ok(Some(raw.to_ascii_lowercase()))
     } else {
         Err(AppError::ValidationFailed(vec![
-            "accent_color must be a #RRGGBB hex color.".into(),
+            "GATE_REPO_TEAM_COLOR_INVALID: accent_color must be a #RRGGBB hex color.".into(),
         ]))
     }
 }
@@ -145,7 +145,7 @@ pub async fn assert_active_crew_exists(db: &impl ConnectionTrait, team_id: i64) 
         .await?;
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Crew (team_id={team_id}) introuvable ou inactif."
+            "GATE_REPO_TEAM_NOT_FOUND:team_id={team_id}: Crew (team_id={team_id}) introuvable ou inactif."
         )]));
     }
     Ok(())
@@ -238,10 +238,14 @@ pub async fn create_team(db: &DatabaseConnection, input: TeamCreateInput) -> App
     let code = input.code.trim().to_string();
     let name = input.name.trim().to_string();
     if code.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Crew code is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REPO_TEAM_CODE_REQUIRED: Crew code is required.".into(),
+        ]));
     }
     if name.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Crew name is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REPO_TEAM_NAME_REQUIRED: Crew name is required.".into(),
+        ]));
     }
     validate_team_type(input.team_type.trim())?;
     let status = input.status.unwrap_or_else(|| "active".to_string());
@@ -278,7 +282,7 @@ pub async fn create_team(db: &DatabaseConnection, input: TeamCreateInput) -> App
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec!["Crew code already exists.".into()])
+            AppError::ValidationFailed(vec!["GATE_REPO_TEAM_CODE_EXISTS: Crew code already exists.".into()])
         } else {
             AppError::Database(e)
         }
@@ -305,7 +309,9 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
     if let Some(code) = input.code {
         let trimmed = code.trim().to_string();
         if trimmed.is_empty() {
-            return Err(AppError::ValidationFailed(vec!["Crew code is required.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_REPO_TEAM_CODE_REQUIRED: Crew code is required.".into(),
+            ]));
         }
         sets.push("code = ?".into());
         values.push(trimmed.into());
@@ -313,7 +319,9 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
     if let Some(name) = input.name {
         let trimmed = name.trim().to_string();
         if trimmed.is_empty() {
-            return Err(AppError::ValidationFailed(vec!["Crew name is required.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_REPO_TEAM_NAME_REQUIRED: Crew name is required.".into(),
+            ]));
         }
         sets.push("name = ?".into());
         values.push(trimmed.into());
@@ -367,7 +375,7 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
         .await
         .map_err(|e| {
             if e.to_string().contains("UNIQUE") {
-                AppError::ValidationFailed(vec!["Crew code already exists.".into()])
+                AppError::ValidationFailed(vec!["GATE_REPO_TEAM_CODE_EXISTS: Crew code already exists.".into()])
             } else {
                 AppError::Database(e)
             }

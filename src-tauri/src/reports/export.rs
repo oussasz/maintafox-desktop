@@ -214,7 +214,7 @@ pub async fn export_report_document(
     let fmt = export_format.to_ascii_lowercase();
     if fmt != "pdf" && fmt != "xlsx" {
         return Err(AppError::ValidationFailed(vec![
-            "export_format must be pdf or xlsx.".into()
+            "GATE_REPORT_FORMAT_INVALID: export_format must be pdf or xlsx.".into(),
         ]));
     }
 
@@ -225,7 +225,7 @@ pub async fn export_report_document(
             crate::reports::monthly::export_monthly_management(db, &fmt, locale, audience).await
         }
         _ => Err(AppError::ValidationFailed(vec![format!(
-            "Unknown template: {template_code}"
+            "GATE_REPORTS_TEMPLATE_UNKNOWN: Unknown template: {template_code}"
         )])),
     }
 }

@@ -52,7 +52,7 @@ async fn ensure_schema_not_newer(backup_db: &DatabaseConnection) -> AppResult<()
         .await
         .map_err(|e| {
             AppError::ValidationFailed(vec![format!(
-                "the file is not a Maintafox backup (no migration history): {e}"
+                "GATE_BACKUP_NOT_A_BACKUP: the file is not a Maintafox backup (no migration history): {e}"
             )])
         })?;
     let known = known_migrations();
@@ -106,7 +106,7 @@ pub async fn stage_restore(
     }
     if same_file(backup_path, live_db_path) {
         return Err(AppError::ValidationFailed(vec![
-            "the selected file is the live database, not a backup".to_string(),
+            "GATE_BACKUP_IS_LIVE_DATABASE: the selected file is the live database, not a backup".to_string(),
         ]));
     }
     preflight(db, backup_path, key).await?;
