@@ -2382,3 +2382,74 @@ async fn a_received_cancel_of_a_routed_anomaly_is_applied_and_a_route_of_a_cance
         assert_eq!(conflict_code(&outcome), Some(expected), "{outcome:?}");
     }
 }
+
+/// Option B, request-linked (AU-72 R4-N6): an anomaly routed to a request whose reading is then
+/// corrected is cancelled with its link kept; the request is not changed and its reviewer is told
+/// (a request has no responsible or planner), not the inspection technician.
+#[tokio::test]
+async fn a_request_linked_anomaly_cancelled_keeps_its_request_and_tells_its_reviewer() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let reviewer = i64::from(crate::auth::scope_tests::user(&db, "insp_di_reviewer").await);
+    let bystander = i64::from(crate::auth::scope_tests::user(&db, "insp_di_bystander").await);
+    let (anomaly_id, rv) = hot_bearing_anomaly(&db, &r).await;
+    let (di, _) = routing::route_inspection_anomaly_to_di(
+        &db,
+        anomaly_id,
+        rv,
+        admin,
+        Some("Bearing too hot on PMP-101".into()),
+        None,
+    )
+    .await
+    .expect("route to DI");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE intervention_requests SET reviewer_id = ? WHERE id = ?",
+        [reviewer.into(), di.id.into()],
+    ))
+    .await
+    .expect("reviewer");
+    let di_version = scalar_i64(
+        &db,
+        &format!("SELECT row_version FROM intervention_requests WHERE id = {}", di.id),
+    )
+    .await;
+    correct_bearing_reading(&db, &r).await;
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM inspection_anomalies WHERE id = {anomaly_id} AND resolution_status = 'cancelled' \
+                 AND routing_decision = 'di' AND linked_di_id = {}",
+                di.id
+            ),
+        )
+        .await,
+        1,
+        "cancelled, its decision and link kept"
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!("SELECT row_version FROM intervention_requests WHERE id = {}", di.id),
+        )
+        .await,
+        di_version,
+        "the request is not changed"
+    );
+    assert_eq!(origin_cancelled_notices(&db, reviewer).await, 1, "its reviewer is told");
+    assert_eq!(origin_cancelled_notices(&db, bystander).await, 0);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+             WHERE e.category_code = 'insp_anomaly_origin_cancelled' \
+               AND (n.body LIKE '%corrected%' OR n.body LIKE '%corrigée%')",
+        )
+        .await,
+        0,
+        "the text claims no cause"
+    );
+}

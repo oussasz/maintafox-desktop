@@ -975,9 +975,9 @@ pub(crate) async fn announce_anomaly_origin_cancelled(conn: &impl ConnectionTrai
         &route,
         format!("Anomalie d'origine annulée : {code} / Originating anomaly cancelled: {code}"),
         format!(
-            "L'anomalie d'inspection à l'origine de {code} a été annulée : la lecture a été corrigée ({description}). \
+            "L'anomalie d'inspection à l'origine de {code} a été annulée : son défaut n'est plus détecté ({description}). \
              {code} n'est pas modifié : vérifiez s'il reste nécessaire. Une revue permis requise reste en place. / \
-             The inspection anomaly {code} was raised from was cancelled: the reading was corrected ({description}). \
+             The inspection anomaly {code} was raised from was cancelled: its condition is no longer detected ({description}). \
              {code} is not changed: check whether it is still needed. A required permit review stays in place."
         ),
         &action_url,
