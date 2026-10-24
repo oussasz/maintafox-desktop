@@ -480,6 +480,70 @@ async fn a_close_received_without_failure_mode_here_is_a_conflict() {
     assert_eq!(wo_status(&db, wo_id).await, "completed");
 }
 
+/// AU-02 (owner decision D4): a close received while a permit of the work order is still open
+/// here is refused by the close gate (`close_preflight`), nothing written; applied once the permit
+/// no longer holds the plant here.
+#[tokio::test]
+async fn a_close_received_while_a_permit_is_open_here_is_a_conflict() {
+    let db = setup().await;
+    let (wo_id, rv) = create_wo_in_progress(&db).await;
+    advance_to_completed_verified(&db, wo_id, rv).await;
+    let hot_work: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM permit_types WHERE code = 'hot_work'".to_string(),
+        ))
+        .await
+        .expect("query")
+        .expect("type")
+        .try_get_by_index(0)
+        .expect("id");
+    let permit = crate::permit::queries::create_work_permit(
+        &db,
+        crate::permit::domain::WorkPermitCreateInput {
+            permit_type_id: hot_work,
+            asset_id: None,
+            entity_id: None,
+            linked_work_order_id: Some(wo_id),
+            expires_at: Some((chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339()),
+        },
+        admin_id(&db).await,
+    )
+    .await
+    .expect("permit");
+    let sync = wo_sync(&db, wo_id).await;
+    let closed = status_sync(&db, "closed").await;
+    let wo_row = with(
+        wire(&db, "work_orders", &sync).await,
+        &[("status_sync_id", json!(closed)), ("closed_at", json!(now()))],
+    );
+    let outcome = apply(&db, "work_orders", &sync, &wo_row).await;
+    match &outcome {
+        ApplyOutcome::Conflict { code, message } => {
+            assert_eq!(code, codes::CLOSE_GATE);
+            assert!(message.contains("GATE_CLOSEOUT_PERMIT_OPEN"), "{message}");
+        }
+        other => panic!("expected a conflict, got {other:?}"),
+    }
+    assert_eq!(wo_status(&db, wo_id).await, "completed", "nothing written");
+
+    // The permit cancelled here (the work order is not running): the same close applies.
+    crate::permit::queries::set_work_permit_status(
+        &db,
+        crate::permit::domain::WorkPermitStatusInput {
+            id: permit.id,
+            status: "cancelled".into(),
+            expected_row_version: permit.row_version,
+        },
+        admin_id(&db).await,
+    )
+    .await
+    .expect("permit cancelled");
+    let outcome = apply(&db, "work_orders", &sync, &wo_row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(wo_status(&db, wo_id).await, "closed");
+}
+
 #[tokio::test]
 async fn a_change_after_close_here_is_a_conflict() {
     use crate::wo::closeout::{self, WoCloseInput};

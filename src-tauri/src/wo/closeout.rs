@@ -1487,6 +1487,14 @@ pub(crate) async fn close_preflight(
         ));
     }
 
+    // (g) Nothing of its permits still holds the plant (AU-02, owner decision D4): every permit
+    // closed, handed back, cancelled or expired, and every lock fitted under them with its removal
+    // verified.
+    let holds = crate::permit::wo_gate::permit_holds(conn, wo_id).await?;
+    for refusal in crate::permit::wo_gate::end_of_work_refusals(holds, crate::permit::wo_gate::WorkOrderEnd::Close) {
+        preflight.add(refusal);
+    }
+
     Ok((preflight.errors, profile_id, signer_password_checked))
 }
 

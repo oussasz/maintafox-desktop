@@ -415,6 +415,86 @@ async fn assert_live_permits_ready(
     Ok(())
 }
 
+/// What the permits of a work order still hold on the plant at the end of the work (owner decision
+/// D4, AU-02): read by the close and the cancellation of a work order (and their re-check on a row
+/// received by synchronisation), and by the change of a draft's equipment
+/// (`wo::queries::refuse_equipment_change_with_old_items`). One query, so they never drift.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PermitHolds {
+    /// Permits linked to the work order not yet at an end: anything but closed, handed back,
+    /// cancelled or expired.
+    pub open_permits: i64,
+    /// Locks fitted under any permit of the work order, whatever that permit's status (a
+    /// cancelled or expired permit can leave locks on the plant), whose removal is not verified:
+    /// `applied_at` set and `removal_verified_at` empty.
+    pub fitted_locks: i64,
+}
+
+/// The [`PermitHolds`] of work order `wo_id`, on the state held here.
+pub(crate) async fn permit_holds(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<PermitHolds> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT (SELECT COUNT(*) FROM work_permits p WHERE p.linked_work_order_id = ?                        AND p.status NOT IN ('closed', 'handed_back', 'cancelled', 'expired')) AS permits,                     (SELECT COUNT(*) FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id                      WHERE p.linked_work_order_id = ? AND pi.applied_at IS NOT NULL                        AND pi.removal_verified_at IS NULL) AS locks",
+            [wo_id.into(), wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("permit holds check returned no row")))?;
+    Ok(PermitHolds {
+        open_permits: row
+            .try_get("", "permits")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("open permits decode: {e}")))?,
+        fitted_locks: row
+            .try_get("", "locks")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("fitted locks decode: {e}")))?,
+    })
+}
+
+/// The end of a work order its permits are checked against (AU-02).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkOrderEnd {
+    /// `close_wo` (and a close received by synchronisation).
+    Close,
+    /// `cancel_work_order` (and a cancellation received by synchronisation).
+    Cancel,
+}
+
+/// Why a work order cannot end while its permits still hold the plant (owner decision D4): a lock
+/// still fitted (removal not verified) refuses the close and the cancellation; so does a permit not
+/// yet closed, handed back, cancelled or expired. Mechanical completion is not refused by an open
+/// permit (the normal permit-to-work order: completion before the hand-back). Empty: nothing holds.
+pub(crate) fn end_of_work_refusals(holds: PermitHolds, end: WorkOrderEnd) -> Vec<String> {
+    let mut out = Vec::new();
+    let (permits, locks) = (holds.open_permits, holds.fitted_locks);
+    match end {
+        WorkOrderEnd::Close => {
+            if permits > 0 {
+                out.push(format!(
+                    "GATE_CLOSEOUT_PERMIT_OPEN: Clôture bloquée : {permits} permis de travail de cet OT pas encore                      clôturé(s) ou restitué(s). ({permits} permit(s) of this work order not closed or handed back yet.)"
+                ));
+            }
+            if locks > 0 {
+                out.push(format!(
+                    "GATE_CLOSEOUT_LOCKS_FITTED: Clôture bloquée : {locks} cadenas posé(s) sous les permis de cet OT                      sans dépose vérifiée. ({locks} lock(s) still fitted under this work order's permits.)"
+                ));
+            }
+        }
+        WorkOrderEnd::Cancel => {
+            if permits > 0 {
+                out.push(format!(
+                    "GATE_WO_CANCEL_PERMIT_OPEN: Annulation bloquée : {permits} permis de travail de cet OT pas                      encore clôturé(s), restitué(s) ou annulé(s). ({permits} permit(s) of this work order still open.)"
+                ));
+            }
+            if locks > 0 {
+                out.push(format!(
+                    "GATE_WO_CANCEL_LOCKS_FITTED: Annulation bloquée : {locks} cadenas posé(s) sous les permis de cet                      OT sans dépose vérifiée. ({locks} lock(s) still fitted under this work order's permits.)"
+                ));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Duration, TimeZone, Utc};

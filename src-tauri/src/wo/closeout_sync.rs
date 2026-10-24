@@ -22,7 +22,15 @@
 //!   the `close` transition of this close (dated at its `closed_at`); the override signer's
 //!   password cannot be checked again on this PC (the signer, the role and "distinct from the
 //!   closer" are) -> `WO_CLOSE_GATE`.
+//!   Its permits are judged there too (AU-02, owner decision D4): a permit not closed, handed back,
+//!   cancelled or expired, or a lock fitted under one without a verified removal, refuses the close.
 //!   A refused completion or close writes nothing: the work order and its group are rolled back.
+//! - R4b entering `cancelled`, the same permit rule as `wo::queries::cancel_work_order`
+//!   (`permit::wo_gate::end_of_work_refusals`) on the written state -> `WO_CANCEL_PERMIT_GATE`;
+//!   refused, nothing of it is written. The permit rows are judged as held here: a permit closed or
+//!   handed back on the other PC before its work order was cancelled arrives before it (the delta
+//!   keeps the order of recording); one still waiting in the inbox here makes the cancellation a
+//!   conflict for a person, never applied over a permit held open here.
 //! - R5 a task new, changed or deleted while its work order is completed, closed or cancelled here
 //!   (in its group: before and after the change) -> `WO_TASK_AFTER_COMPLETION`; a mandatory task
 //!   deleted, or made optional, unless its work order is a draft or in planning here ->
@@ -85,6 +93,9 @@ use crate::sync::materialize::ApplyOutcome;
 pub(crate) mod codes {
     pub const COMPLETION_GATE: &str = "WO_COMPLETION_GATE";
     pub const CLOSE_GATE: &str = "WO_CLOSE_GATE";
+    /// A cancellation received while a permit of the work order is still open, or a lock fitted
+    /// under one, here (AU-02).
+    pub const CANCEL_GATE: &str = "WO_CANCEL_PERMIT_GATE";
     pub const TASK_AFTER_COMPLETION: &str = "WO_TASK_AFTER_COMPLETION";
     pub const MANDATORY_TASK_REMOVED: &str = "WO_MANDATORY_TASK_REMOVED";
     pub const VERIFICATION_WRONG_STATUS: &str = "WO_VERIFICATION_WRONG_STATUS";
@@ -137,6 +148,8 @@ const BEFORE_PLANNING_FROZEN: &[&str] = &["draft", "planning"];
 pub(crate) enum CloseoutTarget {
     Completed,
     Closed,
+    /// Entering `cancelled`: its permits are judged after it (R4b).
+    Cancelled,
     /// Any other status change (or a work order new here): its children come with it; nothing
     /// more is judged after it.
     Other,
@@ -202,6 +215,7 @@ pub(crate) async fn closeout_entry(
     let target = match to.as_str() {
         "completed" => CloseoutTarget::Completed,
         "closed" => CloseoutTarget::Closed,
+        "cancelled" => CloseoutTarget::Cancelled,
         _ => CloseoutTarget::Other,
     };
     let judged = local.is_some() || !crate::sync::materialize::applying_snapshot_row();
@@ -328,6 +342,7 @@ pub(crate) async fn judge_closeout(
     let as_received = match entry.target {
         CloseoutTarget::Completed => "completed",
         CloseoutTarget::Closed => "closed",
+        CloseoutTarget::Cancelled => "cancelled",
         CloseoutTarget::Other => return Ok(None),
     };
     if !entry.judged {
@@ -348,6 +363,23 @@ pub(crate) async fn judge_closeout(
         .ok_or_else(|| sync_err("work order vanished after its apply"))?;
     let text = |c: &str| row.try_get::<Option<String>>("", c).map_err(sync_err);
     let code = text("code")?.unwrap_or_else(|| entry.wo_sync_id.clone());
+    if entry.target == CloseoutTarget::Cancelled {
+        // R4b: the cancellation's permit rule on the state held here (`permit::wo_gate`, the same
+        // function as `wo::queries::cancel_work_order`).
+        let holds = crate::permit::wo_gate::permit_holds(conn, wo_id).await?;
+        let refusals =
+            crate::permit::wo_gate::end_of_work_refusals(holds, crate::permit::wo_gate::WorkOrderEnd::Cancel);
+        if refusals.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(ApplyOutcome::Conflict {
+            code: codes::CANCEL_GATE.into(),
+            message: format!(
+                "work order {code} received as cancelled while here its permits still hold the plant: {}",
+                refusals.join("; ")
+            ),
+        }));
+    }
     let multi_step = entry.target == CloseoutTarget::Closed && entry.previous_status.as_deref() != Some("completed");
     if entry.target == CloseoutTarget::Completed || multi_step {
         let failing: Vec<String> = crate::wo::execution::collect_completion_gates(conn, wo_id)

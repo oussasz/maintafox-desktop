@@ -18,3 +18,5 @@ mod requirement_rules_tests;
 mod sync_check_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wo_lifecycle_tests;
