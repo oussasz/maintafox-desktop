@@ -191,6 +191,7 @@
     "permit_suspended_work_held": "Work order put on hold by its permit’s suspension",
     "permit_ended_under_work": "Permit ended on another PC during or before the work",
     "wo_permit_rule_missing": "Work order received started without its plant permit rule",
+    "insp_anomaly_origin_cancelled": "Originating inspection anomaly cancelled",
     "stock_to_reconcile": "Stock to reconcile after sync"
   },
   "messages": {
@@ -304,6 +305,10 @@
     "loto_forced_removal": {
       "title": "Forced lock removal: {{point}} (permit {{permit}})",
       "body": "{{authorised_by}} authorised {{removed_by}} to take off the lock of {{worker}}, who was absent, on {{removed_at}} — reason: {{reason}}. The worker must be told (Work permits › forced removals to follow up)."
+    },
+    "insp_anomaly_origin_cancelled": {
+      "title": "Originating anomaly cancelled: {{code}}",
+      "body": "The inspection anomaly {{code}} was raised from was cancelled: the reading was corrected ({{anomaly}}). {{code}} is not changed: check whether it is still needed. A required permit review stays in place."
     },
     "wo_permit_rule_missing_on_arrival": {
       "title": "Work order {{code}} received started without permit rule {{rule}}",
@@ -422,7 +427,8 @@
       "pm_concurrent_versions": "Always the people holding the PM planning right (pm.edit) plant-wide, and those holding it at the site of the plan's equipment.",
       "permit_suspended_work_held": "Always the responsible of the permit’s work order; when it has none, the people holding the permit close right at the permit’s site.",
       "permit_ended_under_work": "Always the responsible of the permit’s work order and the people holding the permit close right at the permit’s site.",
-      "wo_permit_rule_missing": "Always the people holding the permit issue right at the work order’s site (and plant-wide); when nobody holds it, the settings administrators."
+      "wo_permit_rule_missing": "Always the people holding the permit issue right at the work order’s site (and plant-wide); when nobody holds it, the settings administrators.",
+      "insp_anomaly_origin_cancelled": "Always the responsible of the work order raised from the anomaly (or from its request); when there is none, the work order’s planner or the request’s reviewer."
     },
     "minutes": "min",
     "minutesAfterAlert": "min after the alert",

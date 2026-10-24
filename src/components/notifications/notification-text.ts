@@ -66,6 +66,8 @@ export const MESSAGE_KEYS = [
   "permit_suspended_during_work",
   // A work order received started without its plant permit rule (permit issuers of its site).
   "wo_permit_rule_missing_on_arrival",
+  // An inspection anomaly cancelled after it was routed (its follow-up's responsible).
+  "insp_anomaly_origin_cancelled",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;
